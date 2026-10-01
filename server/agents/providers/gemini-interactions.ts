@@ -35,7 +35,7 @@ const IdentifierSchema = z
   .min(1)
   .max(256)
   .refine(value => !containsControlCharacter(value), 'identifier contains a control character')
-// Google intentionally leaves the interaction ID empty when store:false.
+// Stateless responses may omit the interaction ID or explicitly leave it empty.
 // Tool call IDs still require the nonempty IdentifierSchema above.
 const InteractionIdentifierSchema = z
   .string()
@@ -243,7 +243,6 @@ const STREAM_PROTOCOL_ISSUES: Readonly<Record<string, string>> = {
   'stream created interaction is missing': 'protocol_stream_created_interaction_missing',
   'stream created interaction is null': 'protocol_stream_created_interaction_null',
   'stream created interaction has an invalid type': 'protocol_stream_created_interaction_type',
-  'stream created identity is missing': 'protocol_stream_created_id_missing',
   'stream created identity is null': 'protocol_stream_created_id_null',
   'stream created identity has an invalid type': 'protocol_stream_created_id_type',
   'stream created identity exceeds the length limit': 'protocol_stream_created_id_length',
@@ -730,7 +729,7 @@ const usageResponse = (model: string, usage: Usage): NonNullable<AxChatResponse[
 }
 
 const responseResult = (
-  id: string,
+  id: string | undefined,
   status: z.infer<typeof InteractionSchema>['status'],
   steps: readonly OutputStep[],
   includePresentation = true
@@ -740,7 +739,7 @@ const responseResult = (
   const calls = stepCalls(native.steps)
   const result: AxChatResponseResult = {
     index: 0,
-    ...(id.length === 0 ? {} : { id }),
+    ...(id === undefined || id.length === 0 ? {} : { id }),
     ...(includePresentation && content.length > 0 ? { content } : {}),
     ...(!includePresentation || calls.length === 0
       ? {}
@@ -819,7 +818,7 @@ const bufferedResponse = async (response: Response, expectedModel: string, googl
     throw invalidResponse('returned an unrequested native search step')
   return {
     ...(!parsed.data.id ? {} : { remoteId: parsed.data.id }),
-    results: [responseResult(parsed.data.id ?? '', parsed.data.status, parsed.data.steps)],
+    results: [responseResult(parsed.data.id, parsed.data.status, parsed.data.steps)],
     modelUsage: usageResponse(expectedModel, parsed.data.usage)
   }
 }
@@ -845,7 +844,7 @@ const CreatedEventSchema = z.strictObject({
   event_type: z.literal('interaction.created'),
   event_id: z.string().optional(),
   metadata: StreamMetadataSchema.optional(),
-  interaction: z.object({ id: InteractionIdentifierSchema, model: z.string().min(1).max(255).optional(), status: z.literal('in_progress') }).passthrough()
+  interaction: z.object({ id: InteractionIdentifierSchema.optional(), model: z.string().min(1).max(255).optional(), status: z.literal('in_progress') }).passthrough()
 })
 const StatusEventSchema = z.strictObject({
   event_type: z.literal('interaction.status_update'),
@@ -1023,7 +1022,8 @@ interface ActiveStreamStep {
   stopped: boolean
 }
 interface StreamState {
-  interactionId: string | null
+  createdSeen: boolean
+  interactionId: string | undefined
   readonly expectedModel: string
   readonly googleSearchEnabled: boolean
   readonly active: Map<number, ActiveStreamStep>
@@ -1034,10 +1034,19 @@ interface StreamState {
 }
 
 const streamedChunk = (state: StreamState, result: AxChatResponseResult, usage?: Usage): AxChatResponse => ({
-  ...(state.interactionId === null || state.interactionId.length === 0 ? {} : { remoteId: state.interactionId }),
+  ...(state.interactionId === undefined || state.interactionId.length === 0 ? {} : { remoteId: state.interactionId }),
   results: [result],
   ...(usage === undefined ? {} : { modelUsage: usageResponse(state.expectedModel, usage) })
 })
+
+// Identity is optional correlation metadata, independent of creation/order.
+// The first explicit value (including '') binds this stateless response.
+const bindStreamIdentity = (state: StreamState, id: string | undefined): boolean => {
+  if (id === undefined) return true
+  if (state.interactionId !== undefined) return state.interactionId === id
+  state.interactionId = id
+  return true
+}
 
 // Schema failures precede duplicate/model checks. Diagnose only fixed fields in
 // this order, never provider-owned keys, values, paths, or validator messages.
@@ -1047,11 +1056,12 @@ const invalidCreatedEvent = (value: object): AgentRepositoryError => {
   if (interaction === null) return invalidResponse('stream created interaction is null')
   if (typeof interaction !== 'object' || Array.isArray(interaction)) return invalidResponse('stream created interaction has an invalid type')
   const id = Reflect.get(interaction, 'id')
-  if (id === undefined) return invalidResponse('stream created identity is missing')
-  if (id === null) return invalidResponse('stream created identity is null')
-  if (typeof id !== 'string') return invalidResponse('stream created identity has an invalid type')
-  if (id.length > 256) return invalidResponse('stream created identity exceeds the length limit')
-  if (containsControlCharacter(id)) return invalidResponse('stream created identity contains a control character')
+  if (id !== undefined) {
+    if (id === null) return invalidResponse('stream created identity is null')
+    if (typeof id !== 'string') return invalidResponse('stream created identity has an invalid type')
+    if (id.length > 256) return invalidResponse('stream created identity exceeds the length limit')
+    if (containsControlCharacter(id)) return invalidResponse('stream created identity contains a control character')
+  }
   const status = Reflect.get(interaction, 'status')
   if (status === undefined) return invalidResponse('stream created status is missing')
   if (status === null) return invalidResponse('stream created status is null')
@@ -1078,9 +1088,10 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
   if (eventType === 'interaction.created') {
     const parsed = CreatedEventSchema.safeParse(value)
     if (!parsed.success) throw invalidCreatedEvent(value)
-    if (state.interactionId !== null) throw invalidResponse('stream contains a duplicate created event')
+    if (state.createdSeen) throw invalidResponse('stream contains a duplicate created event')
     if (parsed.data.interaction.model !== undefined && parsed.data.interaction.model !== state.expectedModel)
       throw invalidResponse('stream created model does not match the requested model')
+    state.createdSeen = true
     state.interactionId = parsed.data.interaction.id
     return []
   }
@@ -1090,13 +1101,18 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     const providerErrorCode = parsed.data.error?.code
     throw new GeminiStreamProviderError(
       typeof providerErrorCode === 'string' && /^[a-z0-9_]{1,64}$/u.test(providerErrorCode) ? providerErrorCode : 'unknown_error',
-      state.interactionId === null
+      !state.createdSeen
     )
   }
-  if (state.interactionId === null || state.completed) throw invalidResponse('stream event is out of order')
+  if (!state.createdSeen || state.completed) throw invalidResponse('stream event is out of order')
   if (eventType === 'interaction.status_update') {
     const parsed = StatusEventSchema.safeParse(value)
-    if (!parsed.success || parsed.data.interaction_id !== state.interactionId || parsed.data.status === 'failed' || parsed.data.status === 'cancelled')
+    if (
+      !parsed.success ||
+      parsed.data.status === 'failed' ||
+      parsed.data.status === 'cancelled' ||
+      !bindStreamIdentity(state, parsed.data.interaction_id)
+    )
       throw invalidResponse('stream contains an invalid status event')
     return []
   }
@@ -1228,7 +1244,7 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     return [
       streamedChunk(state, {
         index: 0,
-        ...(state.interactionId.length === 0 ? {} : { id: state.interactionId }),
+        ...(state.interactionId === undefined || state.interactionId.length === 0 ? {} : { id: state.interactionId }),
         functionCalls: [{ id: step.id, type: 'function', function: { name: step.name, params: step.arguments } }],
         finishReason: 'function_call'
       })
@@ -1238,10 +1254,10 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     const parsed = CompletedEventSchema.safeParse(value)
     if (
       !parsed.success ||
-      (parsed.data.interaction.id ?? '') !== state.interactionId ||
       (parsed.data.interaction.model !== undefined && parsed.data.interaction.model !== state.expectedModel) ||
       parsed.data.interaction.status === 'failed' ||
-      parsed.data.interaction.status === 'cancelled'
+      parsed.data.interaction.status === 'cancelled' ||
+      !bindStreamIdentity(state, parsed.data.interaction.id)
     )
       throw invalidResponse('stream contains an invalid completed event')
     if ([...state.active.values()].some(step => !step.stopped)) throw invalidResponse('stream completed with an unfinished step')
@@ -1287,7 +1303,8 @@ const streamingResponse = (response: Response, expectedModel: string, googleSear
   if (contentType !== 'text/event-stream' || !response.body) throw invalidResponse('stream response has an invalid content type')
   const decoder = new TextDecoder('utf-8', { fatal: true })
   const state: StreamState = {
-    interactionId: null,
+    createdSeen: false,
+    interactionId: undefined,
     expectedModel,
     googleSearchEnabled,
     active: new Map(),

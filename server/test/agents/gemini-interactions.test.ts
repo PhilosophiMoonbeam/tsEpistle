@@ -93,6 +93,13 @@ const metadataTextEvents = (): Record<string, unknown>[] => [
   },
   { event_type: 'interaction.completed', interaction: { id: '', model, status: 'completed', usage }, metadata: { total_usage: { total_tokens: 5 } } }
 ]
+const statelessTextEvents = (): Record<string, unknown>[] => {
+  const events = metadataTextEvents()
+  events[0]!.interaction = { status: 'in_progress', model }
+  events.splice(1, 1)
+  events[4]!.interaction = { model, status: 'completed', usage }
+  return events
+}
 const streamWire = (events: readonly Record<string, unknown>[], done = true): string =>
   `${events.map(value => `event: ${String(value.event_type)}\ndata: ${JSON.stringify(value)}`).join('\n\n')}\n\n${done ? 'event: done\ndata: [DONE]\n\n' : ''}`
 const textStreamService = (body: string | ReadableStream<Uint8Array>) =>
@@ -418,6 +425,39 @@ describe('Gemini Interactions Google Search grounding', () => {
     expect(readGeminiInteractionStatus(chunks.at(-1)!.results[0]!)).toBe('completed')
   })
 
+  it('accepts a stateless creation without identity through completed text, terminal usage, and reader EOF', async () => {
+    const events = statelessTextEvents()
+    const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Give a short greeting' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    const chunks = await Array.fromAsync(response)
+    expect(chunks.flatMap(chunk => chunk.results).map(result => result.content ?? '').join('')).toBe('Hello 🔍')
+    expect(chunks.every(chunk => chunk.remoteId === undefined && chunk.results.every(result => result.id === undefined))).toBe(true)
+    expect(chunks.slice(0, -1).every(chunk => chunk.modelUsage === undefined)).toBe(true)
+    expect(readAgentProviderUsage('gemini-api', chunks.at(-1)!)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+    expect(readGeminiInteractionStatus(chunks.at(-1)!.results[0]!)).toBe('completed')
+  })
+
+  it.each([
+    ['completion first binds identity', undefined, undefined, 'response_1', undefined, 'response_1'],
+    ['status first binds identity', undefined, 'response_1', undefined, 'response_1', 'response_1'],
+    ['creation retains identity when completion omits it', 'response_1', undefined, undefined, 'response_1', 'response_1'],
+    ['empty status identity stays bound without fabricated IDs', undefined, '', undefined, undefined, undefined]
+  ] as const)('accepts %s through the completed text stream', async (_name, createdId, statusId, completedId, textRemoteId, finalId) => {
+    const events = statelessTextEvents()
+    events[0]!.interaction = { ...(createdId === undefined ? {} : { id: createdId }), status: 'in_progress', model }
+    events[4]!.interaction = { ...(completedId === undefined ? {} : { id: completedId }), model, status: 'completed', usage }
+    if (statusId !== undefined) events.splice(1, 0, { event_type: 'interaction.status_update', interaction_id: statusId, status: 'in_progress' })
+    const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Give a short greeting' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    const chunks = await Array.fromAsync(response)
+    expect(chunks.flatMap(chunk => chunk.results).map(result => result.content ?? '').join('')).toBe('Hello 🔍')
+    expect(chunks[0]!.remoteId).toBe(textRemoteId)
+    expect(chunks.at(-1)!.remoteId).toBe(finalId)
+    expect(chunks.at(-1)!.results[0]!.id).toBe(finalId)
+    expect(readAgentProviderUsage('gemini-api', chunks.at(-1)!)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+    expect(readGeminiInteractionStatus(chunks.at(-1)!.results[0]!)).toBe('completed')
+  })
+
   it.each([
     ['negative', { total_input_tokens: -1 }],
     ['fractional', { total_output_tokens: 0.5 }],
@@ -473,9 +513,9 @@ describe('Gemini Interactions Google Search grounding', () => {
   })
 
   it('does not let metadata substitute for the complete final usage receipt', async () => {
-    const events = metadataTextEvents()
-    events[5]!.interaction = { id: '', model, status: 'completed', usage: { total_tokens: 5 } }
-    events[5]!.metadata = { total_usage: usage }
+    const events = statelessTextEvents()
+    events[4]!.interaction = { model, status: 'completed', usage: { total_tokens: 5 } }
+    events[4]!.metadata = { total_usage: usage }
     const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
     if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
     await expect(Array.fromAsync(response)).rejects.toMatchObject({
@@ -495,12 +535,38 @@ describe('Gemini Interactions Google Search grounding', () => {
     })
   })
 
+  it('does not retry a transient provider error after identity-less creation', async () => {
+    let requests = 0
+    const events = [
+      statelessTextEvents()[0]!,
+      { event_type: 'error', error: { code: 'service_unavailable' }, metadata: { total_usage: { total_input_tokens: 3 } } }
+    ]
+    const service = createGeminiInteractionsService({
+      apiKey: 'test-key',
+      baseUrl: 'https://gemini.example.test',
+      model,
+      timeoutMs: 10_000,
+      streamRetryDelayMs: 0,
+      fetch: (async () => {
+        requests++
+        return new Response(streamWire(events, false), { headers: { 'content-type': 'text/event-stream' } })
+      }) as typeof globalThis.fetch
+    })
+    const response = await service.chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    await expect(Array.fromAsync(response)).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+      agentDiagnostics: { providerErrorCode: 'service_unavailable' }
+    })
+    expect(requests).toBe(1)
+  })
+
   it('requires genuine reader EOF even after terminal usage and the done marker', async () => {
     let source!: ReadableStreamDefaultController<Uint8Array>
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         source = controller
-        controller.enqueue(new TextEncoder().encode(streamWire(metadataTextEvents())))
+        controller.enqueue(new TextEncoder().encode(streamWire(statelessTextEvents())))
       }
     })
     const response = await textStreamService(body).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
@@ -518,7 +584,6 @@ describe('Gemini Interactions Google Search grounding', () => {
     ['missing interaction', [{ event_type: 'interaction.created' }], 'protocol_stream_created_interaction_missing'],
     ['null interaction', [{ event_type: 'interaction.created', interaction: null }], 'protocol_stream_created_interaction_null'],
     ['array interaction', [{ event_type: 'interaction.created', interaction: [] }], 'protocol_stream_created_interaction_type'],
-    ['missing identity', [{ event_type: 'interaction.created', interaction: { status: 'in_progress', model } }], 'protocol_stream_created_id_missing'],
     ['null identity', [{ event_type: 'interaction.created', interaction: { id: null, status: 'in_progress', model } }], 'protocol_stream_created_id_null'],
     ['non-string identity', [{ event_type: 'interaction.created', interaction: { id: 7, status: 'in_progress', model } }], 'protocol_stream_created_id_type'],
     [
@@ -531,7 +596,7 @@ describe('Gemini Interactions Google Search grounding', () => {
       [{ event_type: 'interaction.created', interaction: { id: 'private-provider-detail\n', status: 'in_progress', model } }],
       'protocol_stream_created_id_control'
     ],
-    ['missing status', [{ event_type: 'interaction.created', interaction: { id: '', model } }], 'protocol_stream_created_status_missing'],
+    ['missing status without identity', [{ event_type: 'interaction.created', interaction: { model } }], 'protocol_stream_created_status_missing'],
     ['null status', [{ event_type: 'interaction.created', interaction: { id: '', model, status: null } }], 'protocol_stream_created_status_null'],
     ['non-string status', [{ event_type: 'interaction.created', interaction: { id: '', model, status: 7 } }], 'protocol_stream_created_status_type'],
     [
@@ -552,8 +617,8 @@ describe('Gemini Interactions Google Search grounding', () => {
       'protocol_stream_created_model_length'
     ],
     [
-      'mismatched model',
-      [{ event_type: 'interaction.created', interaction: { id: '', model: 'private-provider-detail', status: 'in_progress' } }],
+      'mismatched model without identity',
+      [{ event_type: 'interaction.created', interaction: { model: 'private-provider-detail', status: 'in_progress' } }],
       'protocol_stream_created_model_mismatch'
     ],
     [
@@ -588,6 +653,57 @@ describe('Gemini Interactions Google Search grounding', () => {
     ],
     ['duplicate creation', [metadataTextEvents()[0]!, metadataTextEvents()[0]!], 'protocol_stream_created_duplicate'],
     [
+      'duplicate creation without identity',
+      [
+        { event_type: 'interaction.created', interaction: { status: 'in_progress', model } },
+        { event_type: 'interaction.created', interaction: { status: 'in_progress', model } }
+      ],
+      'protocol_stream_created_duplicate'
+    ],
+    [
+      'missing required status identity after identity-less creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', status: 'in_progress' }],
+      'protocol_stream_status_invalid'
+    ],
+    [
+      'null status identity after identity-less creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: null, status: 'in_progress' }],
+      'protocol_stream_status_invalid'
+    ],
+    [
+      'non-string status identity after identity-less creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: 7, status: 'in_progress' }],
+      'protocol_stream_status_invalid'
+    ],
+    [
+      'null final identity after identity-less creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.completed', interaction: { id: null, model, status: 'completed', usage } }],
+      'protocol_stream_completed_invalid'
+    ],
+    [
+      'non-string final identity after identity-less creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.completed', interaction: { id: 7, model, status: 'completed', usage } }],
+      'protocol_stream_completed_invalid'
+    ],
+    [
+      'status identity changing after its first binding',
+      [
+        statelessTextEvents()[0]!,
+        { event_type: 'interaction.status_update', interaction_id: 'response_1', status: 'in_progress' },
+        { event_type: 'interaction.status_update', interaction_id: 'response_2', status: 'in_progress' }
+      ],
+      'protocol_stream_status_invalid'
+    ],
+    [
+      'final identity changing after status first binds it',
+      [
+        statelessTextEvents()[0]!,
+        { event_type: 'interaction.status_update', interaction_id: 'response_1', status: 'in_progress' },
+        { event_type: 'interaction.completed', interaction: { id: 'response_2', model, status: 'completed', usage } }
+      ],
+      'protocol_stream_completed_invalid'
+    ],
+    [
       'identity before status and metadata diagnostics',
       [{ event_type: 'interaction.created', interaction: { id: null, status: null }, event_id: 7, metadata: null }],
       'protocol_stream_created_id_null'
@@ -616,10 +732,10 @@ describe('Gemini Interactions Google Search grounding', () => {
       'protocol_stream_completed_invalid'
     ],
     [
-      'mismatched final model despite valid metadata',
+      'mismatched final model without identity despite valid metadata',
       [
-        ...metadataTextEvents().slice(0, 5),
-        { event_type: 'interaction.completed', interaction: { id: '', model: 'private-provider-detail', status: 'completed', usage }, metadata: {} }
+        ...statelessTextEvents().slice(0, 4),
+        { event_type: 'interaction.completed', interaction: { model: 'private-provider-detail', status: 'completed', usage }, metadata: {} }
       ],
       'protocol_stream_completed_invalid'
     ],
