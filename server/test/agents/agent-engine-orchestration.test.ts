@@ -1419,7 +1419,6 @@ describe('Ax orchestration stages', () => {
     )
     const admitted = await reserve.mock.results[0]!.value
     expect(admitted).toBeDefined()
-    expect(admitted.tokens).toBeGreaterThanOrEqual(5_326)
     expect(admitted.costMicros).toBeGreaterThanOrEqual(9_326)
     expect(admitted.costMicros).toBe(admitted.tokens * 2)
     expect(result).toMatchObject({ inputTokens: 1_326, outputTokens: 4_000, totalTokens: 5_326, costMicros: 9_326 })

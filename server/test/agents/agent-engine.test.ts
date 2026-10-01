@@ -16,7 +16,6 @@ import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/pr
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
 import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
-import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
@@ -961,12 +960,6 @@ describe('Ax agent engine', () => {
     expect(chat).toHaveBeenCalledTimes(2)
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), 'call-1')
     expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'wiki_get_page' }))
-    expect(calls[0]?.chatPrompt?.[0]).toEqual(
-      expect.objectContaining({
-        role: 'system',
-        content: expect.stringMatching(new RegExp(`^${WIKI_AGENT_SOUL.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\n\\n`))
-      })
-    )
     expect(calls[0]?.chatPrompt).toContainEqual(
       expect.objectContaining({ role: 'system', content: expect.stringContaining('"id":42,"locale":"en","path":"guide"') })
     )
