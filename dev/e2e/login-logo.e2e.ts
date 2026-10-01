@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer'
 import type { Locator, Page, Request, TestInfo } from '@playwright/test'
 import { expect } from '@playwright/test'
 import sharp from 'sharp'
+import qr from 'qr-image'
 import type { ParticleBackendKind, ParticleBackendRequest } from '../../client/components/login-logo/particle-renderer.ts'
 import type {
   LogoBackendDiagnostic,
@@ -2403,6 +2404,50 @@ test.describe('managed login logo auth independence', () => {
     await expect(page.locator('.loader-dialog')).toBeVisible()
     await expect(page.locator('.login-success-animation')).toBeVisible()
     await expect(page.locator('.login-success-animation__page--turn-1')).toHaveCSS('animation-name', 'none')
+  })
+
+  test('paints contrasting TFA setup QR modules and quiet space from genuine SVG', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, ['responsive-chromium-desktop'])
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const secret = 'JBSWY3DPEHPK3PXP'
+    const qrImage = qr.imageSync(`otpauth://totp/NativeQR:qr@example.test?secret=${secret}`, { type: 'svg' })
+    await page.route(/\/_api\/auth\/login$/, route => route.fulfill({
+      json: {
+        authenticated: false,
+        mustSetupTFA: true,
+        continuationToken: 'native-qr-fixture',
+        tfaQRImage: qrImage,
+        tfaSecret: secret
+      }
+    }))
+    await page.goto('/login?native-qr=paint')
+    await page.getByLabel('Email Address', { exact: true }).fill('qr@example.test')
+    await page.getByLabel('Password', { exact: true }).fill('native-qr-fixture-password')
+    await page.getByRole('button', { name: 'Log In', exact: true }).click()
+    const dialog = page.getByRole('dialog').filter({ has: page.locator('.login-tfa-qr') })
+    await expect(dialog).toBeVisible()
+    const surface = dialog.locator('.login-tfa-qr')
+    await expect(surface.locator(':scope > svg')).toHaveCount(1)
+    await expect(surface.locator(':scope > svg')).toBeVisible()
+    const image = await surface.screenshot({ animations: 'disabled' })
+    const pixels = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    expect(pixels.info.channels).toBe(4)
+    let dark = 0
+    let light = 0
+    for (let offset = 0; offset < pixels.data.length; offset += 4) {
+      const red = pixels.data[offset]!
+      const green = pixels.data[offset + 1]!
+      const blue = pixels.data[offset + 2]!
+      if (pixels.data[offset + 3]! < 250) continue
+      if (red < 90 && green < 90 && blue < 90) dark += 1
+      if (red > 180 && green > 180 && blue > 180) light += 1
+    }
+    const area = pixels.info.width * pixels.info.height
+    expect(dark / area, 'Actual QR modules paint dark pixels, not a blank white square').toBeGreaterThan(0.05)
+    expect(light / area, 'Actual QR modules have contrasting light quiet space, not black-on-black paint').toBeGreaterThan(0.15)
+    // This deterministic public fixture is not a real enrollment key. Transport is
+    // controlled; this case protects native QR paint, not OTP authentication.
+    await testInfo.attach('native-tfa-qr-contrast', { body: image, contentType: 'image/png' })
   })
 
   test('keeps the book hidden when authentication fails', async ({ page }, testInfo) => {
