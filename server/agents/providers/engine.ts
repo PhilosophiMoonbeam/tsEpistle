@@ -1872,11 +1872,14 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
   const matches = terms.filter(term => unit.terms.has(term))
   const minimumMatches = terms.length <= 2 ? 1 : 2
   const exactPolarity = hasCompatibleMarkerBindings(clause, unit.text, term => negativeTerms[term] === true)
-  const colon = clause.search(/:(?=\s|$)/u)
+  // Locate the label delimiter in rendered text: a Markdown closing delimiter
+  // after "Label:**" must not move the split to a later field such as "Cell:".
+  const semanticClause = semanticMarkdownText(clause)
+  const colon = semanticClause.search(/:(?=\s|$)/u)
   let exactNumbers: boolean
   if (colon >= 0) {
-    const idClause = clause.slice(0, colon)
-    const factClause = clause.slice(colon + 1)
+    const idClause = semanticClause.slice(0, colon)
+    const factClause = semanticClause.slice(colon + 1)
     const contextNumericSegments = numericSegments(unit.context)
     const idSegments = numericSegments(idClause)
     const idOk = idSegments.every(seg => contextNumericSegments.some(s => s.includes(seg) || seg.includes(s)) || unit.terms.has(seg))
@@ -1897,9 +1900,9 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
       JSON.stringify(markerBindings(unit.text, term => unit.qualifiers.has(term) && attachmentQualifiers[term] === true))
   const exactConstraints = orderedSubset(constraintTerms(clause), significantTokens(`${unit.context}\n${unit.text}`))
   const exactIdentifiers = !hasIdentifierSubstitution(clause, unit)
-  const identifyingTerms = colon < 0 ? [] : normalizedTerms(clause.slice(0, colon))
+  const identifyingTerms = colon < 0 ? [] : normalizedTerms(semanticClause.slice(0, colon))
   const identifyingSupport = identifyingTerms.length === 0 || identifyingTerms.filter(term => unit.terms.has(term)).length / identifyingTerms.length >= 0.6
-  const factualTerms = colon < 0 ? [] : normalizedTerms(clause.slice(colon + 1))
+  const factualTerms = colon < 0 ? [] : normalizedTerms(semanticClause.slice(colon + 1))
   const factualTextMatches = factualTerms.filter(term => unit.textTerms.has(term))
   const factualAllMatches = factualTerms.filter(term => unit.terms.has(term))
   const factualSupport =
