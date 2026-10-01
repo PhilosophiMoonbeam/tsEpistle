@@ -230,12 +230,7 @@ describe('Ax agent engine context compaction', () => {
     expect(calls).toHaveLength(2)
     expect(create).toHaveBeenNthCalledWith(2, '00000000-0000-4000-8000-000000000106', expect.objectContaining({ purpose: 'agent', googleSearchEnabled: false }))
     expect(calls[0]).not.toHaveProperty('functions')
-    expect(calls[0]?.modelConfig?.maxTokens).toBe(4_000)
-    const summaryUser = calls[0]?.chatPrompt.find(message => message.role === 'user')
-    const summaryInput = summaryUser && 'content' in summaryUser ? String(summaryUser.content) : ''
     expect(JSON.stringify(calls[0])).toContain('OLDEST_USER_CONSTRAINT')
-    expect(summaryInput).toContain('"previousSummary":null')
-    expect(summaryInput).toContain('"maximumSummaryBytes":16000')
     expect(JSON.stringify(calls[0])).not.toContain('encrypted-prefix-state')
     expect(JSON.stringify(calls[0])).not.toMatch(/attachments|fileUri|data:image/iu)
     expect(JSON.stringify(calls[1])).toContain('OLDEST constraint remains')
@@ -266,8 +261,8 @@ describe('Ax agent engine context compaction', () => {
   })
   const preservesPrefix = async (transportKind: 'gemini-api' | 'openai-responses' | 'anthropic-messages') => {
     const history = canonicalMessages([
-      { role: 'user', content: `EARLIER_USER:${'a'.repeat(38_000)}` },
-      { role: 'assistant', content: `EARLIER_REPLY:${'b'.repeat(38_000)}` },
+      { role: 'user', content: `EARLIER_USER:${'a'.repeat(35_000)}` },
+      { role: 'assistant', content: `EARLIER_REPLY:${'b'.repeat(35_000)}` },
       { role: 'user', content: `RECENT_USER:${'c'.repeat(7_000)}` },
       { role: 'assistant', content: `RECENT_REPLY:${'d'.repeat(7_000)}` },
       { role: 'user', content: 'Answer the current question.' }

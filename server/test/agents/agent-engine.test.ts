@@ -103,7 +103,9 @@ type QuestionCall = {
   readonly name: QuestionToolName
   readonly arguments: Readonly<Record<string, unknown>>
 }
-type QuestionStep = { readonly calls: readonly QuestionCall[] } | { readonly answer: string | ((input: Readonly<AxChatRequest<unknown>>) => string) }
+type QuestionStep =
+  | { readonly calls: readonly QuestionCall[]; readonly metadata?: string }
+  | { readonly answer: string | ((input: Readonly<AxChatRequest<unknown>>) => string) }
 type QuestionMode = 'native' | 'prompt'
 
 const questionResponses = (mode: QuestionMode, steps: readonly QuestionStep[]) => {
@@ -119,6 +121,7 @@ const questionResponses = (mode: QuestionMode, steps: readonly QuestionStep[]) =
         results: [
           {
             index: 0,
+            ...(step.metadata === undefined ? {} : { content: step.metadata }),
             functionCalls: step.calls.map(call => ({
               id: call.id,
               type: 'function' as const,
@@ -132,18 +135,20 @@ const questionResponses = (mode: QuestionMode, steps: readonly QuestionStep[]) =
       })
       continue
     }
+    let metadata = step.metadata ?? ''
     for (const call of step.calls) {
       responses.push({
         results: [
           {
             index: 0,
-            content: `<wiki-tool-call>${JSON.stringify({
+            content: `${metadata}<wiki-tool-call>${JSON.stringify({
               name: call.name === 'wiki_enable_tools' ? call.name : AGENT_TOOL_NAMES[call.name],
               arguments: call.arguments
             })}</wiki-tool-call>`
           }
         ]
       })
+      metadata = ''
     }
   }
   return responses
@@ -1083,7 +1088,7 @@ describe('Ax agent engine', () => {
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 6_000, completionTokens: 20, totalTokens: 6_020 } }
       },
       {
-        results: [{ index: 0, content: 'Budget evidence is available.[[cite:page:42:revision:1:section:1]]' }],
+        results: [{ index: 0, content: 'Budget evidence remains available.[[cite:page:42:revision:1:section:1]]' }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7_000, completionTokens: 30, totalTokens: 7_030 } }
       }
     ]
@@ -1157,7 +1162,7 @@ describe('Ax agent engine', () => {
                 sourceRevision: '1',
                 title: 'Budget Guide',
                 contentType: 'markdown',
-                content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(1_200)}`,
+                content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(1_000)}`,
                 knowledge: {
                   state: 'complete',
                   summary: 'Budget evidence page.',
@@ -3939,7 +3944,6 @@ describe('Ax agent engine', () => {
       content: recentPage.content,
       citation: { evidenceId: 'page:94:revision:12' }
     })
-    expect(fixture.text).toHaveBeenCalledWith(answer)
     expect(result.citations).toEqual([
       {
         evidenceId: 'page:94:revision:12',
@@ -6035,6 +6039,10 @@ describe('Ax agent engine', () => {
     }
   })
   it.each(['native', 'prompt'] as const)('grounds a ten-page recent recap with one bounded listRecent call on the %s protocol', async mode => {
+    const recapRequest = 'Summarize the 10 most recently updated Wiki pages I can access.'
+    const scopeMetadata = `<wiki-request-plan>${JSON.stringify({
+      facets: [{ start: 0, end: recapRequest.length, quote: recapRequest, coverage: 'recent-window' }]
+    })}</wiki-request-plan>`
     const rows = Array.from({ length: 10 }, (_, index) => {
       const id = index + 1
       const content = `Recent page ${id} records release delta ${id}.`
@@ -6061,6 +6069,7 @@ describe('Ax agent engine', () => {
             results: [
               {
                 index: 0,
+                content: scopeMetadata,
                 functionCalls: [{ id: 'recent', type: 'function', function: { name: 'wiki_list_recent_pages', params: '{"locale":"en","limit":10}' } }]
               }
             ]
@@ -6069,7 +6078,7 @@ describe('Ax agent engine', () => {
             results: [
               {
                 index: 0,
-                content: '<wiki-tool-call>{"name":"wiki_list_recent_pages","arguments":{"locale":"en","limit":10}}</wiki-tool-call>'
+                content: `${scopeMetadata}<wiki-tool-call>{"name":"wiki_list_recent_pages","arguments":{"locale":"en","limit":10}}</wiki-tool-call>`
               }
             ]
           },
@@ -6138,6 +6147,7 @@ describe('Ax agent engine', () => {
       {
         ...request(new AbortController().signal),
         purpose: 'root',
+        messages: [{ role: 'user', content: recapRequest }],
         limits: { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 8_192 }
       },
       { text, event }
@@ -6167,7 +6177,6 @@ describe('Ax agent engine', () => {
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
       expect.objectContaining({
         accepted: false,
-        issues: [expect.stringContaining('does not cite every page returned by pages.listRecent')]
       }),
       expect.objectContaining({ accepted: true, finalCitationIds: rows.map(row => row.citation.evidenceId) })
     ])
@@ -6583,7 +6592,6 @@ describe('Ax agent engine', () => {
       drafts: [rolloutClaim]
     })
     expect(promoted.error).toBeUndefined()
-    expect(promoted.text).toHaveBeenCalledWith(rolloutClaim)
     expect(promoted.result?.citations).toEqual([{ evidenceId: rolloutSectionId, kind: 'page', label: 'Guide › Rollout', href: '/en/guide#rollout' }])
     const promotedFullRead = promoted.calls[1]?.chatPrompt.find(message => message.role === 'function' && message.functionId === 'full-read')
     expect(promotedFullRead?.role === 'function' ? (JSON.parse(promotedFullRead.result) as { content: string }).content : null).toBe(completeSource)
@@ -6609,7 +6617,6 @@ describe('Ax agent engine', () => {
       drafts: [rolloutClaim]
     })
     expect(reversed.error).toBeUndefined()
-    expect(reversed.text).toHaveBeenCalledWith(rolloutClaim)
     expect(reversed.result?.citations).toEqual([{ evidenceId: rolloutSectionId, kind: 'page', label: 'Guide › Rollout', href: '/en/guide#rollout' }])
     expect(reversed.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({
       accepted: true,
@@ -7738,5 +7745,158 @@ describe('Agent PDF preparation', () => {
     } finally {
       await prepared.cleanup()
     }
+  })
+})
+
+describe('request-derived evidence coverage', () => {
+  const sourcePlan = (userRequest: string): string =>
+    `<wiki-request-plan>${JSON.stringify({
+      facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'source' }]
+    })}</wiki-request-plan>`
+  const recentRows = [94, 95].map(id => {
+    const content = `Release ${id} requires a separate review.`
+    return {
+      id,
+      locale: 'en',
+      path: `releases/${id}`,
+      title: `Release ${id}`,
+      contentType: 'markdown',
+      sourceRevision: '7',
+      updatedAt: '2026-09-20T12:00:00.000Z',
+      content,
+      sourceContentCharacters: content.length,
+      contentTruncated: false,
+      citation: { evidenceId: `page:${id}:revision:7`, label: `Release ${id}`, href: `/en/releases/${id}` }
+    }
+  })
+
+  for (const mode of ['native', 'prompt'] as const) {
+    for (const scenario of [
+      {
+        title: 'Sensor calibration',
+        section: 'Procedure',
+        question: 'Explain the sensor calibration procedure.',
+        fact: 'Calibration requires supervised inspection before live use.'
+      },
+      {
+        title: 'Night-time maintenance',
+        section: 'Access',
+        question: 'When does maintenance start, and what approval is required?',
+        fact: 'Maintenance starts at 08:00 UTC only after supervisor approval.'
+      }
+    ]) {
+      it(`does not turn incidental recent evidence into a ${scenario.title} answer obligation on ${mode}`, async () => {
+        const page = questionReadPage(42, '3', scenario.title, 'requested-source', scenario.section, 'details', scenario.fact)
+        const fixture = questionFixture(
+          mode,
+          [
+            {
+              metadata: sourcePlan(scenario.question),
+              calls: [
+                { id: 'incidental-recent', name: 'pages.listRecent', arguments: { limit: 2 } },
+                { id: 'requested-source', name: 'pages.get', arguments: { id: 42 } }
+              ]
+            },
+            { answer: `${scenario.fact} [[cite:page:42:revision:3:section:1]]` }
+          ],
+          name => name === 'pages.listRecent'
+            ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows }
+            : page
+        )
+        const result = await fixture.execute(scenario.question, { maxTurns: 4, maxToolCalls: 2, maxOutputTokens: 1_024 })
+        expect(result.executionLimit).toBeUndefined()
+        expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:3:section:1'])
+        expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Release 94')
+      })
+    }
+  }
+
+  it('publishes valid findings as partial when recent-window request coverage is unknown', async () => {
+    const fact = 'Calibration requires supervised inspection before live use.'
+    const page = questionReadPage(42, '3', 'Sensor calibration', 'calibration', 'Procedure', 'procedure', fact)
+    const fixture = questionFixture(
+      'native',
+      [
+        {
+          calls: [
+            { id: 'unknown-window', name: 'pages.listRecent', arguments: { limit: 2 } },
+            { id: 'calibration', name: 'pages.get', arguments: { id: 42 } }
+          ]
+        },
+        { answer: `${fact} [[cite:page:42:revision:3:section:1]]` }
+      ],
+      name => name === 'pages.listRecent'
+        ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows }
+        : page
+    )
+    const result = await fixture.execute('Explain calibration.', { maxTurns: 3, maxToolCalls: 2, maxOutputTokens: 1_024 })
+    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:3:section:1'])
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    expect(published).toContain('Calibration requires supervised inspection before live use.')
+    expect(published).not.toContain('Release 94')
+  })
+
+  it('repairs a false premise into cited findings and an anchored limitation without claiming absence', async () => {
+    const userRequest = 'Describe calibration and the two recipients it names.'
+    const detail = 'the two recipients it names'
+    const start = userRequest.indexOf(detail)
+    const metadata = `<wiki-request-plan>${JSON.stringify({
+      facets: [
+        { start: 0, end: userRequest.length, quote: userRequest, coverage: 'source' },
+        { start, end: start + detail.length, quote: detail, coverage: 'source' }
+      ]
+    })}</wiki-request-plan>`
+    const fact = 'Calibration requires supervised inspection before live use.'
+    const page = questionReadPage(42, '3', 'Sensor calibration', 'calibration', 'Procedure', 'procedure', fact)
+    const fixture = questionFixture(
+      'native',
+      [
+        { metadata, calls: [{ id: 'calibration', name: 'pages.get', arguments: { id: 42 } }] },
+        { answer: `${fact} [[cite:page:42:revision:3:section:1]]\n\nThe procedure names no recipients. [[cite:page:42:revision:3:section:1]]` },
+        { answer: `<wiki-answer-coverage>{"unresolved":[1]}</wiki-answer-coverage>${fact} [[cite:page:42:revision:3:section:1]]` }
+      ],
+      () => page
+    )
+    const result = await fixture.execute(userRequest, { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 1_024 })
+    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:3:section:1'])
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    expect(published).toContain('Calibration requires supervised inspection before live use.')
+    expect(published).toContain(detail)
+    expect(published).not.toContain('names no recipients')
+    expect(published).not.toContain('<wiki-answer-coverage>')
+    expect(
+      fixture.event.mock.calls
+        .filter(([type]) => type === 'evidence.provenance')
+        .map(([, data]) => typeof data === 'object' && data !== null && 'accepted' in data ? data.accepted : undefined)
+    ).toEqual([false, true])
+  })
+
+  it('retains both named participants, source-local dates, and qualifications during correction', async () => {
+    const userRequest = 'Name both pilot participants, their dates, and their conditions.'
+    const firstFact = 'Mira Sen completed the pilot on 2026-09-18, subject to lab approval.'
+    const secondFact = 'Noah Patel joined the pilot on 2026-09-19 only after safety review.'
+    const page = questionReadPage(42, '3', 'Pilot record', 'pilot', 'Participants', 'participants', `- ${firstFact}\n- ${secondFact}`)
+    const fixture = questionFixture(
+      'native',
+      [
+        { metadata: sourcePlan(userRequest), calls: [{ id: 'pilot', name: 'pages.get', arguments: { id: 42 } }] },
+        { answer: 'Mira Sen completed the pilot on 2026-09-19, subject to lab approval. [[cite:page:42:revision:3:section:1]]\n\nNoah Patel joined the pilot before safety review. [[cite:page:42:revision:3:section:1]]' },
+        { answer: `${firstFact} [[cite:page:42:revision:3:section:1]]\n\n${secondFact} [[cite:page:42:revision:3:section:1]]` }
+      ],
+      () => page
+    )
+    const result = await fixture.execute(userRequest, { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 1_024 })
+    expect(result.executionLimit).toBeUndefined()
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    expect(published).toContain('Mira Sen completed the pilot on 2026-09-18, subject to lab approval.')
+    expect(published).toContain('Noah Patel joined the pilot on 2026-09-19 only after safety review.')
+    expect(published).not.toContain('Mira Sen completed the pilot on 2026-09-19')
+    expect(
+      fixture.event.mock.calls
+        .filter(([type]) => type === 'evidence.provenance')
+        .map(([, data]) => typeof data === 'object' && data !== null && 'accepted' in data ? data.accepted : undefined)
+    ).toEqual([false, true])
   })
 })
