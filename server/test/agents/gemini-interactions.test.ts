@@ -63,6 +63,47 @@ const resultOf = (response: AxChatResponse | ReadableStream<AxChatResponse>): Ax
   return response.results[0]!
 }
 
+// Synthetic public protocol fixture, not a recorded Wiki answer or provider call.
+const metadataTextEvents = (): Record<string, unknown>[] => [
+  {
+    event_type: 'interaction.created',
+    interaction: { id: '', status: 'in_progress', model },
+    metadata: { total_usage: { total_input_tokens: 3, total_output_tokens: 0, total_tokens: 3 } }
+  },
+  { event_type: 'interaction.status_update', interaction_id: '', status: 'in_progress', metadata: {} },
+  { event_type: 'step.start', index: 0, step: { type: 'model_output' }, metadata: { total_usage: {} } },
+  {
+    event_type: 'step.delta',
+    index: 0,
+    delta: { type: 'text', text: 'Hello 🔍' },
+    metadata: {
+      total_usage: {
+        total_output_tokens: 2,
+        output_tokens_by_modality: [{ modality: 'text', tokens: 2 }],
+        grounding_tool_count: [{ type: 'google_search', count: 0 }]
+      }
+    }
+  },
+  {
+    event_type: 'step.stop',
+    index: 0,
+    step_usage: { total_output_tokens: 2 },
+    usage,
+    metadata: { total_usage: { total_cached_tokens: 0 } }
+  },
+  { event_type: 'interaction.completed', interaction: { id: '', model, status: 'completed', usage }, metadata: { total_usage: { total_tokens: 5 } } }
+]
+const streamWire = (events: readonly Record<string, unknown>[], done = true): string =>
+  `${events.map(value => `event: ${String(value.event_type)}\ndata: ${JSON.stringify(value)}`).join('\n\n')}\n\n${done ? 'event: done\ndata: [DONE]\n\n' : ''}`
+const textStreamService = (body: string | ReadableStream<Uint8Array>) =>
+  createGeminiInteractionsService({
+    apiKey: 'test-key',
+    baseUrl: 'https://gemini.example.test',
+    model,
+    fetch: (async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })) as typeof globalThis.fetch,
+    timeoutMs: 10_000
+  })
+
 describe('Gemini Interactions Google Search grounding', () => {
   it('preserves the raw interaction status so truncated turns stay diagnosable', async () => {
     const textInteraction = { model, status: 'budget_exceeded', usage, steps: [{ type: 'model_output', content: [{ type: 'text', text: 'The poem so far' }] }] }
@@ -313,7 +354,10 @@ describe('Gemini Interactions Google Search grounding', () => {
       ['step.delta', { index: 2, delta: { text: 'Alpha', type: 'text' }, event_type: 'step.delta' }],
       ['step.delta', { index: 2, delta: { annotations: [annotation], type: 'text_annotation_delta' }, event_type: 'step.delta' }],
       ['step.stop', { index: 2, event_type: 'step.stop' }],
-      ['interaction.completed', { interaction: { id: '', model, status: 'completed', usage: { ...usage, total_cached_tokens: 2 } }, event_type: 'interaction.completed' }]
+      [
+        'interaction.completed',
+        { interaction: { id: '', model, status: 'completed', usage: { ...usage, total_cached_tokens: 2 } }, event_type: 'interaction.completed' }
+      ]
     ] as const
     const wire = `${events.map(([name, value]) => `event: ${name}\ndata: ${JSON.stringify(value)}`).join('\n\n')}\n\nevent: done\ndata: [DONE]\n\n`
     const service = createGeminiInteractionsService({
@@ -336,7 +380,13 @@ describe('Gemini Interactions Google Search grounding', () => {
       totalTokens: 5,
       cachedInputTokens: 2
     })
-    expect(chunks.slice(0, -1).flatMap(chunk => chunk.results).map(result => result.content ?? '').join('')).toBe('Alpha')
+    expect(
+      chunks
+        .slice(0, -1)
+        .flatMap(chunk => chunk.results)
+        .map(result => result.content ?? '')
+        .join('')
+    ).toBe('Alpha')
     expect(chunks.slice(0, -1).every(chunk => chunk.modelUsage === undefined)).toBe(true)
     expect(readGeminiGoogleSearchGrounding(terminal.results[0]!)).toEqual({
       citations: [{ url: 'https://grounding.example.test/source', title: 'Example source', startIndex: 0, endIndex: 5 }],
@@ -344,7 +394,250 @@ describe('Gemini Interactions Google Search grounding', () => {
     })
   })
 
+  it('accepts documented inert metadata on every event and separate cumulative stop usage through split UTF-8 framing', async () => {
+    const bytes = new TextEncoder().encode(streamWire(metadataTextEvents()).replaceAll('\n', '\r\n'))
+    let offset = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset === bytes.length) controller.close()
+        else controller.enqueue(bytes.subarray(offset, ++offset))
+      }
+    })
+    const response = await textStreamService(body).chat({ chatPrompt: [{ role: 'user', content: 'Give a short greeting' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    const chunks = await Array.fromAsync(response)
+    expect(
+      chunks
+        .flatMap(chunk => chunk.results)
+        .map(result => result.content ?? '')
+        .join('')
+    ).toBe('Hello 🔍')
+    expect(chunks.slice(0, -1).every(chunk => chunk.modelUsage === undefined)).toBe(true)
+    expect(readAgentProviderUsage('gemini-api', chunks.at(-1)!)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+    expect(chunks.every(chunk => chunk.remoteId === undefined && chunk.results.every(result => result.id === undefined))).toBe(true)
+    expect(readGeminiInteractionStatus(chunks.at(-1)!.results[0]!)).toBe('completed')
+  })
+
   it.each([
+    ['negative', { total_input_tokens: -1 }],
+    ['fractional', { total_output_tokens: 0.5 }],
+    ['wrong primitive', { total_tokens: '5' }],
+    ['unsafe integer', { total_tokens: Number.MAX_SAFE_INTEGER + 1 }],
+    ['overflowing sum', { total_input_tokens: Number.MAX_SAFE_INTEGER, total_output_tokens: 1 }],
+    ['inconsistent total', { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 4 }],
+    ['input above total', { total_input_tokens: 3, total_tokens: 2 }],
+    ['cached above input', { total_input_tokens: 3, total_cached_tokens: 4 }],
+    ['negative modality count', { input_tokens_by_modality: [{ modality: 'text', tokens: -1 }] }],
+    ['modality sum above input', { total_input_tokens: 3, input_tokens_by_modality: [{ modality: 'text', tokens: 4 }] }],
+    ['unsafe grounding count', { grounding_tool_count: [{ type: 'google_search', count: Number.MAX_SAFE_INTEGER + 1 }] }],
+    ['oversized modality list', { input_tokens_by_modality: Array.from({ length: 17 }, () => ({ tokens: 0 })) }],
+    ['arbitrary nested field', { input_tokens_by_modality: [{ private: 'private-provider-detail' }] }],
+    ['arbitrary usage field', { private: 'private-provider-detail' }]
+  ])('rejects %s sparse metadata counters rather than treating them as usage receipts', async (_name, totalUsage) => {
+    const events = metadataTextEvents()
+    events[0]!.metadata = { total_usage: totalUsage }
+    const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    await expect(Array.fromAsync(response)).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      agentDiagnostics: { providerErrorCode: 'protocol_stream_created_metadata_usage_invalid' }
+    })
+  })
+
+  it.each([
+    [1, 'protocol_stream_status_invalid'],
+    [2, 'protocol_stream_step_start_invalid'],
+    [3, 'protocol_stream_step_delta_invalid'],
+    [4, 'protocol_stream_step_stop_invalid'],
+    [5, 'protocol_stream_completed_invalid']
+  ] as const)('validates metadata on later event %s without skipping its envelope guard', async (index, providerErrorCode) => {
+    const events = metadataTextEvents()
+    events[index]!.metadata = { total_usage: { total_tokens: -1 } }
+    const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    await expect(Array.fromAsync(response)).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      agentDiagnostics: { providerErrorCode }
+    })
+  })
+
+  it.each(['step_usage', 'usage'])('validates step.stop %s independently of metadata and the final receipt', async field => {
+    const events = metadataTextEvents()
+    events[4]![field] = { total_input_tokens: 3, total_cached_tokens: 4 }
+    const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    await expect(Array.fromAsync(response)).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      agentDiagnostics: { providerErrorCode: 'protocol_stream_step_stop_invalid' }
+    })
+  })
+
+  it('does not let metadata substitute for the complete final usage receipt', async () => {
+    const events = metadataTextEvents()
+    events[5]!.interaction = { id: '', model, status: 'completed', usage: { total_tokens: 5 } }
+    events[5]!.metadata = { total_usage: usage }
+    const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    await expect(Array.fromAsync(response)).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      agentDiagnostics: { providerErrorCode: 'protocol_stream_completed_invalid' }
+    })
+  })
+
+  it('accepts inert metadata on error events without converting a provider failure into completion', async () => {
+    const events = metadataTextEvents().slice(0, 1)
+    events.push({ event_type: 'error', error: { code: 'invalid_request' }, metadata: { total_usage: { total_input_tokens: 3 } } })
+    const response = await textStreamService(streamWire(events, false)).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    await expect(Array.fromAsync(response)).rejects.toMatchObject({
+      code: 'PROVIDER_REQUEST_REJECTED',
+      agentDiagnostics: { providerErrorCode: 'invalid_request' }
+    })
+  })
+
+  it('requires genuine reader EOF even after terminal usage and the done marker', async () => {
+    let source!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        source = controller
+        controller.enqueue(new TextEncoder().encode(streamWire(metadataTextEvents())))
+      }
+    })
+    const response = await textStreamService(body).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    const reader = response.getReader()
+    expect((await reader.read()).value?.results[0]?.content).toBe('Hello 🔍')
+    expect(readAgentProviderUsage('gemini-api', (await reader.read()).value!)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+    const eof = reader.read()
+    source.error(new Error('synthetic transport failed before EOF'))
+    await expect(eof).rejects.toThrow('synthetic transport failed before EOF')
+    reader.releaseLock()
+  })
+
+  it.each([
+    ['missing interaction', [{ event_type: 'interaction.created' }], 'protocol_stream_created_interaction_missing'],
+    ['null interaction', [{ event_type: 'interaction.created', interaction: null }], 'protocol_stream_created_interaction_null'],
+    ['array interaction', [{ event_type: 'interaction.created', interaction: [] }], 'protocol_stream_created_interaction_type'],
+    ['missing identity', [{ event_type: 'interaction.created', interaction: { status: 'in_progress', model } }], 'protocol_stream_created_id_missing'],
+    ['null identity', [{ event_type: 'interaction.created', interaction: { id: null, status: 'in_progress', model } }], 'protocol_stream_created_id_null'],
+    ['non-string identity', [{ event_type: 'interaction.created', interaction: { id: 7, status: 'in_progress', model } }], 'protocol_stream_created_id_type'],
+    [
+      'oversized identity',
+      [{ event_type: 'interaction.created', interaction: { id: 'x'.repeat(257), status: 'in_progress', model } }],
+      'protocol_stream_created_id_length'
+    ],
+    [
+      'identity control character',
+      [{ event_type: 'interaction.created', interaction: { id: 'private-provider-detail\n', status: 'in_progress', model } }],
+      'protocol_stream_created_id_control'
+    ],
+    ['missing status', [{ event_type: 'interaction.created', interaction: { id: '', model } }], 'protocol_stream_created_status_missing'],
+    ['null status', [{ event_type: 'interaction.created', interaction: { id: '', model, status: null } }], 'protocol_stream_created_status_null'],
+    ['non-string status', [{ event_type: 'interaction.created', interaction: { id: '', model, status: 7 } }], 'protocol_stream_created_status_type'],
+    [
+      'unsupported status',
+      [{ event_type: 'interaction.created', interaction: { id: '', model, status: 'private-provider-detail' } }],
+      'protocol_stream_created_status_unsupported'
+    ],
+    ['null model', [{ event_type: 'interaction.created', interaction: { id: '', model: null, status: 'in_progress' } }], 'protocol_stream_created_model_null'],
+    [
+      'non-string model',
+      [{ event_type: 'interaction.created', interaction: { id: '', model: 7, status: 'in_progress' } }],
+      'protocol_stream_created_model_type'
+    ],
+    ['empty model', [{ event_type: 'interaction.created', interaction: { id: '', model: '', status: 'in_progress' } }], 'protocol_stream_created_model_length'],
+    [
+      'oversized model',
+      [{ event_type: 'interaction.created', interaction: { id: '', model: 'x'.repeat(256), status: 'in_progress' } }],
+      'protocol_stream_created_model_length'
+    ],
+    [
+      'mismatched model',
+      [{ event_type: 'interaction.created', interaction: { id: '', model: 'private-provider-detail', status: 'in_progress' } }],
+      'protocol_stream_created_model_mismatch'
+    ],
+    [
+      'null event identifier',
+      [{ event_type: 'interaction.created', event_id: null, interaction: { id: '', model, status: 'in_progress' } }],
+      'protocol_stream_created_event_id_null'
+    ],
+    [
+      'non-string event identifier',
+      [{ event_type: 'interaction.created', event_id: 7, interaction: { id: '', model, status: 'in_progress' } }],
+      'protocol_stream_created_event_id_type'
+    ],
+    [
+      'null metadata',
+      [{ event_type: 'interaction.created', interaction: { id: '', model, status: 'in_progress' }, metadata: null }],
+      'protocol_stream_created_metadata_null'
+    ],
+    [
+      'array metadata',
+      [{ event_type: 'interaction.created', interaction: { id: '', model, status: 'in_progress' }, metadata: [] }],
+      'protocol_stream_created_metadata_type'
+    ],
+    [
+      'unknown metadata field',
+      [{ event_type: 'interaction.created', interaction: { id: '', model, status: 'in_progress' }, metadata: { private: 'private-provider-detail' } }],
+      'protocol_stream_created_metadata_usage_invalid'
+    ],
+    [
+      'unknown root field',
+      [{ event_type: 'interaction.created', interaction: { id: '', model, status: 'in_progress' }, private: 'private-provider-detail' }],
+      'protocol_stream_created_root_unknown_field'
+    ],
+    ['duplicate creation', [metadataTextEvents()[0]!, metadataTextEvents()[0]!], 'protocol_stream_created_duplicate'],
+    [
+      'identity before status and metadata diagnostics',
+      [{ event_type: 'interaction.created', interaction: { id: null, status: null }, event_id: 7, metadata: null }],
+      'protocol_stream_created_id_null'
+    ],
+    [
+      'schema before duplicate and model mismatch diagnostics',
+      [metadataTextEvents()[0]!, { event_type: 'interaction.created', interaction: { id: null, status: 'in_progress', model: 'private-provider-detail' } }],
+      'protocol_stream_created_id_null'
+    ],
+    [
+      'duplicate before model mismatch diagnostics',
+      [metadataTextEvents()[0]!, { event_type: 'interaction.created', interaction: { id: '', status: 'in_progress', model: 'private-provider-detail' } }],
+      'protocol_stream_created_duplicate'
+    ],
+    [
+      'mismatched status identity despite valid metadata',
+      [metadataTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: 'private-provider-detail', status: 'in_progress', metadata: {} }],
+      'protocol_stream_status_invalid'
+    ],
+    [
+      'mismatched final identity despite valid metadata',
+      [
+        ...metadataTextEvents().slice(0, 5),
+        { event_type: 'interaction.completed', interaction: { id: 'private-provider-detail', model, status: 'completed', usage }, metadata: {} }
+      ],
+      'protocol_stream_completed_invalid'
+    ],
+    [
+      'mismatched final model despite valid metadata',
+      [
+        ...metadataTextEvents().slice(0, 5),
+        { event_type: 'interaction.completed', interaction: { id: '', model: 'private-provider-detail', status: 'completed', usage }, metadata: {} }
+      ],
+      'protocol_stream_completed_invalid'
+    ],
+    [
+      'failed final status despite valid metadata',
+      [...metadataTextEvents().slice(0, 5), { event_type: 'interaction.completed', interaction: { id: '', model, status: 'failed', usage }, metadata: {} }],
+      'protocol_stream_completed_invalid'
+    ],
+    [
+      'unrequested native search despite valid metadata',
+      [metadataTextEvents()[0]!, { event_type: 'step.start', index: 0, step: { type: 'google_search_call', id: 'search_1' }, metadata: {} }],
+      'protocol_grounding_invalid'
+    ],
+    [
+      'invalid error metadata',
+      [metadataTextEvents()[0]!, { event_type: 'error', error: { code: 'invalid_request' }, metadata: { total_usage: { total_tokens: -1 } } }],
+      'protocol_stream_error_invalid'
+    ],
     ['out-of-order event', [{ event_type: 'step.stop', index: 0 }], 'protocol_stream_event_out_of_order'],
     [
       'unknown event',

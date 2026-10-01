@@ -152,10 +152,72 @@ const UsageSchema = z
       usage.total_tokens >= usage.total_input_tokens + usage.total_output_tokens,
     'total token count is inconsistent'
   )
-  .refine(
-    usage => usage.total_cached_tokens === undefined || usage.total_cached_tokens <= usage.total_input_tokens,
-    'cached token count is inconsistent'
+  .refine(usage => usage.total_cached_tokens === undefined || usage.total_cached_tokens <= usage.total_input_tokens, 'cached token count is inconsistent')
+// Intermediate usage is sparse, inert telemetry, never a settlement receipt.
+// OpenAPI StepDeltaMetadata accompanies ANY streamed event; StepStop.usage is
+// cumulative while step_usage describes only that step.
+const StreamModalityTokenCountsSchema = z
+  .array(z.strictObject({ modality: z.enum(['text', 'image', 'audio', 'video', 'document']).optional(), tokens: SafeTokenCountSchema.optional() }))
+  .max(16)
+const StreamInvocationTokenCountsSchema = z
+  .array(
+    z.strictObject({
+      prompt_tokens_details: StreamModalityTokenCountsSchema.optional(),
+      candidates_tokens_details: StreamModalityTokenCountsSchema.optional(),
+      thoughts_tokens_details: StreamModalityTokenCountsSchema.optional()
+    })
   )
+  .max(64)
+const SparseUsageSchema = z
+  .strictObject({
+    total_input_tokens: SafeTokenCountSchema.optional(),
+    total_output_tokens: SafeTokenCountSchema.optional(),
+    total_tokens: SafeTokenCountSchema.optional(),
+    total_thought_tokens: SafeTokenCountSchema.optional(),
+    total_tool_use_tokens: SafeTokenCountSchema.optional(),
+    total_cached_tokens: SafeTokenCountSchema.optional(),
+    input_tokens_by_modality: StreamModalityTokenCountsSchema.optional(),
+    output_tokens_by_modality: StreamModalityTokenCountsSchema.optional(),
+    cached_tokens_by_modality: StreamModalityTokenCountsSchema.optional(),
+    tool_use_tokens_by_modality: StreamModalityTokenCountsSchema.optional(),
+    grounding_tool_count: z
+      .array(z.strictObject({ type: z.enum(['google_search', 'google_maps', 'retrieval']).optional(), count: SafeTokenCountSchema.optional() }))
+      .max(16)
+      .optional(),
+    raw_prompt_token: SafeTokenCountSchema.optional(),
+    model_invocation_token_counts: StreamInvocationTokenCountsSchema.optional(),
+    non_grounding_model_invocation_token_counts: StreamInvocationTokenCountsSchema.optional()
+  })
+  .refine(usage => {
+    const input = usage.total_input_tokens
+    const output = usage.total_output_tokens
+    const total = usage.total_tokens
+    if (input !== undefined && output !== undefined) {
+      if (output > Number.MAX_SAFE_INTEGER - input || (total !== undefined && total < input + output)) return false
+    }
+    if (
+      total !== undefined &&
+      [input, output, usage.total_thought_tokens, usage.total_tool_use_tokens, usage.total_cached_tokens].some(count => count !== undefined && count > total)
+    )
+      return false
+    if (input !== undefined && usage.total_cached_tokens !== undefined && usage.total_cached_tokens > input) return false
+    for (const [counts, bound] of [
+      [usage.input_tokens_by_modality, input],
+      [usage.output_tokens_by_modality, output],
+      [usage.cached_tokens_by_modality, usage.total_cached_tokens],
+      [usage.tool_use_tokens_by_modality, usage.total_tool_use_tokens]
+    ] as const) {
+      let sum = 0
+      for (const count of counts ?? []) {
+        if (count.tokens === undefined) continue
+        if (count.tokens > Number.MAX_SAFE_INTEGER - sum) return false
+        sum += count.tokens
+      }
+      if (bound !== undefined && sum > bound) return false
+    }
+    return true
+  }, 'intermediate usage counts are inconsistent')
+const StreamMetadataSchema = z.strictObject({ total_usage: SparseUsageSchema.optional() })
 const InteractionSchema = z
   .object({
     id: InteractionIdentifierSchema.optional(),
@@ -178,6 +240,29 @@ type ThoughtBlock = NonNullable<AxChatResponseResult['thoughtBlocks']>[number]
 const STREAM_PROTOCOL_ISSUES: Readonly<Record<string, string>> = {
   'stream event is not an object': 'protocol_stream_event_invalid',
   'stream contains an invalid created event': 'protocol_stream_created_invalid',
+  'stream created interaction is missing': 'protocol_stream_created_interaction_missing',
+  'stream created interaction is null': 'protocol_stream_created_interaction_null',
+  'stream created interaction has an invalid type': 'protocol_stream_created_interaction_type',
+  'stream created identity is missing': 'protocol_stream_created_id_missing',
+  'stream created identity is null': 'protocol_stream_created_id_null',
+  'stream created identity has an invalid type': 'protocol_stream_created_id_type',
+  'stream created identity exceeds the length limit': 'protocol_stream_created_id_length',
+  'stream created identity contains a control character': 'protocol_stream_created_id_control',
+  'stream created status is missing': 'protocol_stream_created_status_missing',
+  'stream created status is null': 'protocol_stream_created_status_null',
+  'stream created status has an invalid type': 'protocol_stream_created_status_type',
+  'stream created status is unsupported': 'protocol_stream_created_status_unsupported',
+  'stream created model is null': 'protocol_stream_created_model_null',
+  'stream created model has an invalid type': 'protocol_stream_created_model_type',
+  'stream created model has an invalid length': 'protocol_stream_created_model_length',
+  'stream created event identifier is null': 'protocol_stream_created_event_id_null',
+  'stream created event identifier has an invalid type': 'protocol_stream_created_event_id_type',
+  'stream created metadata is null': 'protocol_stream_created_metadata_null',
+  'stream created metadata has an invalid type': 'protocol_stream_created_metadata_type',
+  'stream created metadata usage is invalid': 'protocol_stream_created_metadata_usage_invalid',
+  'stream created envelope contains an unknown field': 'protocol_stream_created_root_unknown_field',
+  'stream contains a duplicate created event': 'protocol_stream_created_duplicate',
+  'stream created model does not match the requested model': 'protocol_stream_created_model_mismatch',
   'stream contains an invalid error event': 'protocol_stream_error_invalid',
   'stream event is out of order': 'protocol_stream_event_out_of_order',
   'stream contains an invalid status event': 'protocol_stream_status_invalid',
@@ -759,17 +844,20 @@ const StreamStartStepSchema = z.discriminatedUnion('type', [
 const CreatedEventSchema = z.strictObject({
   event_type: z.literal('interaction.created'),
   event_id: z.string().optional(),
+  metadata: StreamMetadataSchema.optional(),
   interaction: z.object({ id: InteractionIdentifierSchema, model: z.string().min(1).max(255).optional(), status: z.literal('in_progress') }).passthrough()
 })
 const StatusEventSchema = z.strictObject({
   event_type: z.literal('interaction.status_update'),
   event_id: z.string().optional(),
+  metadata: StreamMetadataSchema.optional(),
   interaction_id: InteractionIdentifierSchema,
   status: z.enum(['in_progress', 'requires_action', 'completed', 'incomplete', 'failed', 'cancelled', 'budget_exceeded'])
 })
 const StartEventSchema = z.strictObject({
   event_type: z.literal('step.start'),
   event_id: z.string().optional(),
+  metadata: StreamMetadataSchema.optional(),
   index: z
     .number()
     .int()
@@ -780,6 +868,7 @@ const StartEventSchema = z.strictObject({
 const DeltaEventSchema = z.strictObject({
   event_type: z.literal('step.delta'),
   event_id: z.string().optional(),
+  metadata: StreamMetadataSchema.optional(),
   index: z
     .number()
     .int()
@@ -807,16 +896,19 @@ const DeltaEventSchema = z.strictObject({
 const StopEventSchema = z.strictObject({
   event_type: z.literal('step.stop'),
   event_id: z.string().optional(),
+  metadata: StreamMetadataSchema.optional(),
   index: z
     .number()
     .int()
     .nonnegative()
     .max(MAX_STEPS - 1),
-  step_usage: UsageSchema.optional()
+  step_usage: SparseUsageSchema.optional(),
+  usage: SparseUsageSchema.optional()
 })
 const CompletedEventSchema = z.strictObject({
   event_type: z.literal('interaction.completed'),
   event_id: z.string().optional(),
+  metadata: StreamMetadataSchema.optional(),
   interaction: z
     .object({
       id: InteractionIdentifierSchema.optional(),
@@ -830,6 +922,7 @@ const CompletedEventSchema = z.strictObject({
 const ErrorEventSchema = z.strictObject({
   event_type: z.literal('error'),
   event_id: z.string().optional(),
+  metadata: StreamMetadataSchema.optional(),
   error: z.object({ code: z.string().optional(), message: z.string().optional() }).passthrough().optional()
 })
 
@@ -946,17 +1039,48 @@ const streamedChunk = (state: StreamState, result: AxChatResponseResult, usage?:
   ...(usage === undefined ? {} : { modelUsage: usageResponse(state.expectedModel, usage) })
 })
 
+// Schema failures precede duplicate/model checks. Diagnose only fixed fields in
+// this order, never provider-owned keys, values, paths, or validator messages.
+const invalidCreatedEvent = (value: object): AgentRepositoryError => {
+  const interaction = Reflect.get(value, 'interaction')
+  if (interaction === undefined) return invalidResponse('stream created interaction is missing')
+  if (interaction === null) return invalidResponse('stream created interaction is null')
+  if (typeof interaction !== 'object' || Array.isArray(interaction)) return invalidResponse('stream created interaction has an invalid type')
+  const id = Reflect.get(interaction, 'id')
+  if (id === undefined) return invalidResponse('stream created identity is missing')
+  if (id === null) return invalidResponse('stream created identity is null')
+  if (typeof id !== 'string') return invalidResponse('stream created identity has an invalid type')
+  if (id.length > 256) return invalidResponse('stream created identity exceeds the length limit')
+  if (containsControlCharacter(id)) return invalidResponse('stream created identity contains a control character')
+  const status = Reflect.get(interaction, 'status')
+  if (status === undefined) return invalidResponse('stream created status is missing')
+  if (status === null) return invalidResponse('stream created status is null')
+  if (typeof status !== 'string') return invalidResponse('stream created status has an invalid type')
+  if (status !== 'in_progress') return invalidResponse('stream created status is unsupported')
+  const model = Reflect.get(interaction, 'model')
+  if (model === null) return invalidResponse('stream created model is null')
+  if (model !== undefined && typeof model !== 'string') return invalidResponse('stream created model has an invalid type')
+  if (typeof model === 'string' && (model.length < 1 || model.length > 255)) return invalidResponse('stream created model has an invalid length')
+  const eventId = Reflect.get(value, 'event_id')
+  if (eventId === null) return invalidResponse('stream created event identifier is null')
+  if (eventId !== undefined && typeof eventId !== 'string') return invalidResponse('stream created event identifier has an invalid type')
+  const metadata = Reflect.get(value, 'metadata')
+  if (metadata === null) return invalidResponse('stream created metadata is null')
+  if (metadata !== undefined && (typeof metadata !== 'object' || Array.isArray(metadata))) return invalidResponse('stream created metadata has an invalid type')
+  if (metadata !== undefined && !StreamMetadataSchema.safeParse(metadata).success) return invalidResponse('stream created metadata usage is invalid')
+  if (Object.keys(value).some(key => !Object.hasOwn(CreatedEventSchema.shape, key))) return invalidResponse('stream created envelope contains an unknown field')
+  return invalidResponse('stream contains an invalid created event')
+}
+
 const processStreamEvent = (value: unknown, state: StreamState): readonly AxChatResponse[] => {
   if (typeof value !== 'object' || value === null) throw invalidResponse('stream event is not an object')
   const eventType = Reflect.get(value, 'event_type')
   if (eventType === 'interaction.created') {
     const parsed = CreatedEventSchema.safeParse(value)
-    if (
-      !parsed.success ||
-      state.interactionId !== null ||
-      (parsed.data.interaction.model !== undefined && parsed.data.interaction.model !== state.expectedModel)
-    )
-      throw invalidResponse('stream contains an invalid created event')
+    if (!parsed.success) throw invalidCreatedEvent(value)
+    if (state.interactionId !== null) throw invalidResponse('stream contains a duplicate created event')
+    if (parsed.data.interaction.model !== undefined && parsed.data.interaction.model !== state.expectedModel)
+      throw invalidResponse('stream created model does not match the requested model')
     state.interactionId = parsed.data.interaction.id
     return []
   }
