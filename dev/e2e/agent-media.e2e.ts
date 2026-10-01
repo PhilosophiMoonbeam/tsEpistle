@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, type Request } from '@playwright/test'
 import type { AgentMediaView, AgentThreadState } from '../../shared/agents/contracts.ts'
-import { installEnabledAgentFixture } from './agent-fixture.ts'
+import { installEnabledAgentFixture, renewFixtureThreadResolution } from './agent-fixture.ts'
 import { expectLocatorWithinViewport, openSearch, responsiveTest as test } from './helpers.ts'
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==', 'base64')
@@ -160,7 +160,10 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
       removed.push(path.split('/').at(-1)!)
       return route.fulfill({ status: 204 })
     }
-    if (thread && path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') return route.fulfill({ json: thread })
+    if (thread && path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') {
+      thread = renewFixtureThreadResolution(thread)
+      return route.fulfill({ json: thread })
+    }
     if (thread && path.endsWith(`/sessions/${fixture.sessionId}/messages`) && request.method() === 'POST') {
       const body = request.postDataJSON() as { content: string; attachmentIds: string[]; generationTools: string[]; responseMode?: string }
       sent.push(body)
@@ -378,7 +381,10 @@ test('Agent combines selected creation tools in a normal conversation', async ({
       const isVideo = outputs.get(path.split('/').at(-2)!)
       return route.fulfill({ contentType: isVideo ? 'video/mp4' : 'audio/mpeg', body: isVideo ? videoBytes : musicBytes })
     }
-    if (thread && path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') return route.fulfill({ json: thread })
+    if (thread && path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') {
+      thread = renewFixtureThreadResolution(thread)
+      return route.fulfill({ json: thread })
+    }
     if (thread && path.endsWith(`/sessions/${fixture.sessionId}/messages`) && request.method() === 'POST') {
       const body = request.postDataJSON() as { content: string; generationTools: string[]; responseMode?: string }
       sent.push(body)

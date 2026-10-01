@@ -56,6 +56,74 @@ import {
   type VisibleAgentSkill
 } from '../helpers/agents-api.ts'
 
+interface AgentAdmissionPins {
+  readonly v: 1
+  readonly ownerId: number
+  readonly sessionId: string
+  readonly sessionVersion: number
+  readonly profileId: string
+  readonly profileVersionId: string
+  readonly profileVersion: number
+  readonly profilePolicyVersion: number
+  readonly defaultGeneration: number
+  readonly executionMode: 'agent'
+  readonly googleSearchEnabled: boolean
+}
+
+const admissionPinFields = [
+  'v', 'kid', 'ownerId', 'sessionId', 'sessionVersion', 'profileId', 'profileVersionId',
+  'profileVersion', 'profilePolicyVersion', 'defaultGeneration', 'executionMode', 'exp'
+] as const
+const positiveAdmissionInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
+// Continuity only: the server still authenticates and validates the fresh signed token.
+const readAdmissionPins = (token: string): AgentAdmissionPins | null => {
+  if (typeof token !== 'string' || token.length > 16_384) return null
+  const parts = token.split('.')
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null
+  try {
+    const decoded: unknown = JSON.parse(atob(parts[1].replace(/-/gu, '+').replace(/_/gu, '/')))
+    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) return null
+    const payload = decoded as Record<string, unknown>
+    for (const field of admissionPinFields) if (!Object.hasOwn(payload, field)) return null
+    const consent = Object.hasOwn(payload, 'googleSearchEnabled') ? payload.googleSearchEnabled : false
+    if (
+      payload.v !== 1 ||
+      typeof payload.kid !== 'string' || !payload.kid ||
+      !positiveAdmissionInteger(payload.ownerId) ||
+      !isAgentSessionId(payload.sessionId) ||
+      !positiveAdmissionInteger(payload.sessionVersion) ||
+      !isAgentSessionId(payload.profileId) ||
+      !isAgentSessionId(payload.profileVersionId) ||
+      !positiveAdmissionInteger(payload.profileVersion) ||
+      !positiveAdmissionInteger(payload.profilePolicyVersion) ||
+      typeof payload.defaultGeneration !== 'number' || !Number.isSafeInteger(payload.defaultGeneration) || payload.defaultGeneration < 0 ||
+      payload.executionMode !== 'agent' ||
+      !positiveAdmissionInteger(payload.exp) ||
+      typeof consent !== 'boolean'
+    ) return null
+    payload.googleSearchEnabled = consent
+    return payload as unknown as AgentAdmissionPins
+  } catch {
+    return null
+  }
+}
+
+const sameAdmissionPins = (previous: AgentAdmissionPins | null, next: AgentAdmissionPins | null): boolean =>
+  previous !== null && next !== null &&
+  previous.v === next.v &&
+  previous.ownerId === next.ownerId &&
+  previous.sessionId === next.sessionId &&
+  previous.sessionVersion === next.sessionVersion &&
+  previous.profileId === next.profileId &&
+  previous.profileVersionId === next.profileVersionId &&
+  previous.profileVersion === next.profileVersion &&
+  previous.profilePolicyVersion === next.profilePolicyVersion &&
+  previous.defaultGeneration === next.defaultGeneration &&
+  previous.executionMode === next.executionMode &&
+  previous.googleSearchEnabled === next.googleSearchEnabled
+
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.partial', 'run.failed', 'run.cancelled', 'run.recovery_required'])
 const fetchFromWindow: typeof fetch = (input, init) => window.fetch(input, init)
 const SSE_INACTIVITY_MS = 15_000
@@ -1113,10 +1181,12 @@ export const useAgentsStore = defineStore('agents', {
       const trimmed = content.trim()
       const draftSnapshot = JSON.parse(JSON.stringify(this.drafts[thread?.session.id ?? ''] ?? emptyAgentDraft())) as AgentDraft
       const currentPage = draftSnapshot.includeCurrentPage ? (this.contextPage ?? this.launchPage) : null
+      const clickedCurrentPage = currentPage ? { ...currentPage } : null
       if (
         !thread ||
         (!trimmed && !media?.attachmentIds.length) ||
         this.sending ||
+        this.googleSearchPending !== null ||
         thread.session.currentRun?.canCancel ||
         (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))
       )
@@ -1125,18 +1195,63 @@ export const useAgentsStore = defineStore('agents', {
       const sessionId = thread.session.id
       const ownerId = this.pinOwnerId
       const ownerGeneration = this.ownerGeneration
+      const capturedPins = readAdmissionPins(thread.session.profileResolutionToken)
+      const capturedSessionVersion = thread.session.version
+      const capturedProfileId = thread.session.providerProfileId
+      const capturedExecutionMode = thread.session.executionMode
+      const capturedGoogleSearch = thread.session.googleSearchEnabled === true
       const mutationToken = this.beginSessionMutation()
       if (mutationToken === null) return false
       this.sending = true
       this.error = ''
       try {
+        const clickedSkillVersionIds = invokedSkillVersionIds.length > 0 ? [...invokedSkillVersionIds] : undefined
+        const clickedMedia = media ? {
+          attachmentIds: [...media.attachmentIds],
+          ...(media.generationTools ? { generationTools: [...media.generationTools] } : {})
+        } : undefined
         try {
+          const refreshed = await this.refreshThread()
+          if (
+            !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
+            !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
+            !this.isSessionMutationOwned(mutationToken)
+          ) return false
+          if (!refreshed.accepted || !refreshed.current || !this.isWorkspaceReady() || this.googleSearchPending !== null) {
+            if (refreshed.current) this.error = 'The conversation could not be refreshed. Nothing was sent; retry when ready.'
+            return false
+          }
+          const freshThread = this.thread
+          if (!freshThread || freshThread.session.id !== sessionId) return false
+          if (freshThread.session.currentRun?.canCancel || (freshThread.goal && ['active', 'paused', 'blocked'].includes(freshThread.goal.status))) {
+            this.connectCurrentRun()
+            return false
+          }
+          const freshPins = readAdmissionPins(freshThread.session.profileResolutionToken)
+          if (
+            !sameAdmissionPins(capturedPins, freshPins) ||
+            freshPins?.ownerId !== ownerId ||
+            freshPins?.sessionId !== sessionId ||
+            freshPins?.sessionVersion !== freshThread.session.version ||
+            freshThread.session.version !== capturedSessionVersion ||
+            freshThread.session.providerProfileId !== capturedProfileId ||
+            (freshThread.session.providerProfileId !== null && freshPins?.profileId !== freshThread.session.providerProfileId) ||
+            freshThread.session.executionMode !== capturedExecutionMode ||
+            freshPins?.executionMode !== freshThread.session.executionMode ||
+            (freshThread.session.googleSearchEnabled === true) !== capturedGoogleSearch ||
+            freshPins?.googleSearchEnabled !== (freshThread.session.googleSearchEnabled === true)
+          ) {
+            this.error = freshPins
+              ? `Agent settings changed (profile ${freshPins.profileId}, revision ${freshPins.profileVersion}). Review the current settings before sending again. Nothing was sent.`
+              : 'Agent admission metadata changed. Review the current settings before sending again. Nothing was sent.'
+            return false
+          }
           const request = {
             clientRequestId: crypto.randomUUID(),
-            expectedSessionVersion: thread.session.version,
-            profileResolutionToken: thread.session.profileResolutionToken,
-            ...(invokedSkillVersionIds.length > 0 ? { invokedSkillVersionIds } : {}),
-            ...(currentPage ? { currentPage } : {}),
+            expectedSessionVersion: freshThread.session.version,
+            profileResolutionToken: freshThread.session.profileResolutionToken,
+            ...(clickedSkillVersionIds ? { invokedSkillVersionIds: clickedSkillVersionIds } : {}),
+            ...(clickedCurrentPage ? { currentPage: clickedCurrentPage } : {}),
             knowledgeContext: AgentKnowledgeContextSchema.parse({
               scope: draftSnapshot.scope,
               sources: draftSnapshot.sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({
@@ -1154,13 +1269,13 @@ export const useAgentsStore = defineStore('agents', {
               ...request,
               goalId: crypto.randomUUID(),
               objective: trimmed,
-              ...(media?.generationTools ? { generationTools: media.generationTools } : {})
+              ...(clickedMedia?.generationTools ? { generationTools: clickedMedia.generationTools } : {})
             })
           } else {
             await submitAgentMessage(fetchFromWindow, this.csrfToken, sessionId, {
               ...request,
               content: trimmed,
-              ...(media ? { attachmentIds: media.attachmentIds, generationTools: media.generationTools } : {})
+              ...(clickedMedia ? { attachmentIds: clickedMedia.attachmentIds, generationTools: clickedMedia.generationTools } : {})
             })
           }
         } catch (error) {

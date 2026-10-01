@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -558,10 +559,21 @@ const settle = async (): Promise<void> => {
 
 const sessionId = '00000000-0000-4000-8000-000000000001'
 const timestamp = '2026-09-15T10:00:00.000Z'
+// Fixture-only signing material; this harness exercises client continuity, not server authorization.
+const profileResolutionToken = (id: string, version: number): string => {
+  const kid = 'inline-agent-interaction'
+  const payload = Buffer.from(JSON.stringify({
+    v: 1, kid, ownerId: 2, sessionId: id, sessionVersion: version,
+    profileId: profileFixture.id, profileVersionId: '00000000-0000-4000-8000-000000000011',
+    profileVersion: 1, profilePolicyVersion: profileFixture.policyVersion, defaultGeneration: 1,
+    executionMode: 'agent', googleSearchEnabled: false, exp: 4_000_000_000
+  })).toString('base64url')
+  return `${kid}.${payload}.${createHmac('sha256', 'inline-agent-interaction-fixture-key').update(payload).digest('base64url')}`
+}
 const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved'): AgentThreadState => ({
   session: {
     id, title: 'Release planning', retention, folderId: null, status: 'active', executionMode: 'agent',
-    version: 1, providerProfileId: null, profileResolutionToken: 'token', skills: [], currentRun: null,
+    version: 1, providerProfileId: null, profileResolutionToken: profileResolutionToken(id, 1), googleSearchEnabled: false, skills: [], currentRun: null,
     createdAt: timestamp, updatedAt: timestamp, lastActivityAt: timestamp,
     expiresAt: retention === 'temporary' ? '2026-09-16T10:00:00.000Z' : null
   },
@@ -579,7 +591,6 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
   const store = useAgentsStore(createPinia())
   let serverThread = threadFixture(sessionId, retention)
   const creations: Array<{ retention: 'saved' | 'temporary'; thread: AgentThreadState }> = []
-  const messages: Array<Record<string, unknown>> = []
   const authorization = { pending: null as Promise<Response> | null }
   const summary = () => {
     const { session } = serverThread
@@ -602,16 +613,18 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     }
     if (path === `/_api/agents/sessions/${serverThread.session.id}` && method === 'PATCH') {
       if (body.retention !== 'saved' || body.expectedSessionVersion !== serverThread.session.version) throw new Error('Unexpected retention mutation')
-      serverThread = { ...serverThread, session: { ...serverThread.session, retention: 'saved', version: serverThread.session.version + 1, expiresAt: null } }
+      const version = serverThread.session.version + 1
+      serverThread = { ...serverThread, session: { ...serverThread.session, retention: 'saved', version, profileResolutionToken: profileResolutionToken(serverThread.session.id, version), expiresAt: null } }
       return Response.json(serverThread)
     }
     if (path === `/_api/agents/sessions/${serverThread.session.id}` && method === 'GET') return Response.json(serverThread)
     if (path === `/_api/agents/sessions/${serverThread.session.id}/messages` && method === 'POST') {
-      messages.push(body)
-      return Response.json({
-        run: { id: '00000000-0000-4000-8000-000000000020', sessionId: serverThread.session.id, status: 'succeeded', attempt: 1, eventSequence: 1, canCancel: false, createdAt: timestamp, startedAt: timestamp, completedAt: timestamp, errorCode: null, errorMessage: null },
-        replayed: false
-      })
+      const run: NonNullable<AgentThreadState['session']['currentRun']> = {
+        id: '00000000-0000-4000-8000-000000000020', sessionId: serverThread.session.id, status: 'succeeded', attempt: 1, eventSequence: 1,
+        canCancel: false, createdAt: timestamp, startedAt: timestamp, completedAt: timestamp, errorCode: null, errorMessage: null
+      }
+      serverThread = { ...serverThread, session: { ...serverThread.session, currentRun: run } }
+      return Response.json({ run, replayed: false })
     }
     if (method === 'DELETE' && /^\/_api\/agents\/sessions\/[a-f0-9-]+$/.test(path)) return new Response(null, { status: 204 })
     throw new Error(`Unexpected Agent request: ${method} ${path}`)
@@ -623,7 +636,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
   })
   const state = () => loadGoalLockState(null, false, null, true, false, page, store)
   stateCleanups.push(() => { store.closeWorkspace(); store.$dispose() })
-  return { store, state, creations, messages, authorization }
+  return { store, state, creations, authorization }
 }
 
 const menuAction = (items: HTMLElement[], name: string): HTMLElement => {
@@ -935,7 +948,7 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.root.querySelector('textarea')).not.toBeNull()
   })
 
-  it('offers labelled no-page starters and submits a Wiki-wide prompt', async () => {
+  it('offers labelled no-page starters and admits a Wiki-wide run', async () => {
     const workspace = realWorkspace()
     const mounted = mountInlineAgent(workspace.state())
     const group = mounted.root.querySelector('[role="group"][aria-label="Conversation starters"]')
@@ -944,13 +957,10 @@ describe('Inline Agent workspace actions', () => {
     if (!starter) throw new Error('No-page exploration starter missing')
     starter.click()
     await settle()
-    expect(workspace.messages).toEqual([expect.objectContaining({
-      content: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.',
-      knowledgeContext: { scope: { kind: 'all' }, sources: [] }
-    })])
-    expect(workspace.messages[0]).not.toHaveProperty('currentPage')
+    expect(workspace.store.thread?.session.currentRun).toMatchObject({ sessionId, status: 'succeeded' })
+    expect(workspace.store.error).toBe('')
   })
-  it('keeps the Included page synchronized with Wiki navigation and submitted context', async () => {
+  it('keeps the Included page synchronized with Wiki navigation across a send and reopen', async () => {
     const firstPage: TestPageHint = {
       id: 41,
       locale: 'en',
@@ -972,7 +982,8 @@ describe('Inline Agent workspace actions', () => {
     }
     expect(first.currentPage.value).toEqual(firstPage)
     expectIncluded(mounted.root, firstPage)
-    workspace.creations.push({ retention: 'saved', thread: threadFixture('00000000-0000-4000-8000-000000000004') })
+    const next = threadFixture('00000000-0000-4000-8000-000000000004')
+    workspace.creations.push({ retention: 'saved', thread: next })
     first.componentProps.pageId = secondPage.id
     first.componentProps.pageLocale = secondPage.locale
     first.componentProps.pagePath = secondPage.path
@@ -980,8 +991,20 @@ describe('Inline Agent workspace actions', () => {
     await settle()
     expect(first.currentPage.value).toEqual(secondPage)
     expectIncluded(mounted.root, secondPage)
-    expect(await first.sendPrompt('Explain this page')).toBe(true)
-    expect(workspace.messages[0]?.currentPage).toEqual(secondPage)
+    expect(workspace.store.thread?.session.id).toBe(next.session.id)
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    const submit = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    if (!textarea || !submit) throw new Error('Composer send controls missing')
+    textarea.value = 'Explain this page'
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+    expect(workspace.store.drafts[next.session.id]?.text).toBe('Explain this page')
+    submit.click()
+    await settle()
+    expect(workspace.store.thread?.session.currentRun).toMatchObject({ sessionId: next.session.id, status: 'succeeded' })
+    expect(workspace.store.drafts[next.session.id]?.text).toBe('')
+    expect(textarea.value).toBe('')
+    expectIncluded(mounted.root, secondPage)
     mounted.unmount()
     const reopenedState = loadGoalLockState(null, false, null, true, false, secondPage, workspace.store)
     const reopened = mountInlineAgent(reopenedState)
