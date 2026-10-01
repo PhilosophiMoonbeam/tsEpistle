@@ -504,7 +504,7 @@ describe('Gemini Interactions Google Search grounding', () => {
     [2, 'protocol_stream_step_start_invalid'],
     [3, 'protocol_stream_step_delta_invalid'],
     [4, 'protocol_stream_step_stop_invalid'],
-    [5, 'protocol_stream_completed_invalid']
+    [5, 'protocol_stream_completed_metadata_invalid']
   ] as const)('validates metadata on later event %s without skipping its envelope guard', async (index, providerErrorCode) => {
     const events = metadataTextEvents()
     events[index]!.metadata = { total_usage: { total_tokens: -1 } }
@@ -538,7 +538,7 @@ describe('Gemini Interactions Google Search grounding', () => {
     if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
     await expect(Array.fromAsync(response)).rejects.toMatchObject({
       code: 'INVALID_PROVIDER_RESPONSE',
-      agentDiagnostics: { providerErrorCode: 'protocol_stream_completed_invalid' }
+      agentDiagnostics: { providerErrorCode: 'protocol_stream_completed_usage_invalid' }
     })
   })
 
@@ -759,17 +759,17 @@ describe('Gemini Interactions Google Search grounding', () => {
     [
       'missing final status after sparse creation',
       [...statelessTextEvents().slice(0, 4), { event_type: 'interaction.completed', interaction: { model, usage } }],
-      'protocol_stream_completed_invalid'
+      'protocol_stream_completed_status_invalid'
     ],
     [
       'null final identity after identity-less creation',
       [statelessTextEvents()[0]!, { event_type: 'interaction.completed', interaction: { id: null, model, status: 'completed', usage } }],
-      'protocol_stream_completed_invalid'
+      'protocol_stream_completed_id_invalid'
     ],
     [
       'non-string final identity after identity-less creation',
       [statelessTextEvents()[0]!, { event_type: 'interaction.completed', interaction: { id: 7, model, status: 'completed', usage } }],
-      'protocol_stream_completed_invalid'
+      'protocol_stream_completed_id_invalid'
     ],
     [
       'status identity changing after its first binding',
@@ -787,7 +787,7 @@ describe('Gemini Interactions Google Search grounding', () => {
         { event_type: 'interaction.status_update', interaction_id: 'response_1', status: 'in_progress' },
         { event_type: 'interaction.completed', interaction: { id: 'response_2', model, status: 'completed', usage } }
       ],
-      'protocol_stream_completed_invalid'
+      'protocol_stream_completed_id_mismatch'
     ],
     [
       'identity before status and metadata diagnostics',
@@ -815,7 +815,7 @@ describe('Gemini Interactions Google Search grounding', () => {
         ...metadataTextEvents().slice(0, 5),
         { event_type: 'interaction.completed', interaction: { id: 'private-provider-detail', model, status: 'completed', usage }, metadata: {} }
       ],
-      'protocol_stream_completed_invalid'
+      'protocol_stream_completed_id_mismatch'
     ],
     [
       'mismatched final model without identity despite valid metadata',
@@ -823,12 +823,22 @@ describe('Gemini Interactions Google Search grounding', () => {
         ...statelessTextEvents().slice(0, 4),
         { event_type: 'interaction.completed', interaction: { model: 'private-provider-detail', status: 'completed', usage }, metadata: {} }
       ],
-      'protocol_stream_completed_invalid'
+      'protocol_stream_completed_model_mismatch'
     ],
     [
       'failed final status despite valid metadata',
       [...metadataTextEvents().slice(0, 5), { event_type: 'interaction.completed', interaction: { id: '', model, status: 'failed', usage }, metadata: {} }],
-      'protocol_stream_completed_invalid'
+      'protocol_stream_completed_failed'
+    ],
+    [
+      'cancelled final status despite valid metadata',
+      [...metadataTextEvents().slice(0, 5), { event_type: 'interaction.completed', interaction: { id: '', model, status: 'cancelled', usage }, metadata: {} }],
+      'protocol_stream_completed_cancelled'
+    ],
+    [
+      'invalid final steps without exposing provider-owned content',
+      [...metadataTextEvents().slice(0, 5), { event_type: 'interaction.completed', interaction: { id: '', model, status: 'completed', usage, steps: [{ type: 'private-provider-detail' }] } }],
+      'protocol_stream_completed_steps_invalid'
     ],
     [
       'unrequested native search despite valid metadata',
