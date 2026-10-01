@@ -145,8 +145,8 @@ Final drafts are buffered before publication and checked as follows:
 
 1. Every `[[cite:...]]` marker must resolve to successful active-run source evidence.
 2. The immediately preceding clause is retained as the claim associated with that marker.
-3. Complete page reads are compared with their complete content. Recent-page evidence is compared only with its supplied bounded excerpt and page-level citation; it cannot support claims about an unread suffix or a revision diff. Markdown section claims remain scoped to the corresponding heading and section citation.
-4. Each conjunction- or colon-delimited subclause must have at least 60 percent significant normalized term overlap with the evidence, with a one- or two-term minimum for short subclauses. Claim negation must also occur in the evidence.
+3. Complete page reads use their parsed source-backed units; recent-page evidence uses only its exact bounded opening excerpt and page-level citation. Canonical OKF contributes its Markdown body, not frontmatter or derived knowledge. Parsed heading ancestry binds section claims; unread suffixes and revision diffs remain unavailable.
+4. Each factual clause needs a complete local assertion or explicitly owned record with intact dependencies, preserved field/value associations, identity, numbers, links, polarity, and applicable qualifiers. Only then does the unchanged 60-percent significant-term alignment threshold apply. Nested lists, labeled records, tables, and supported Markdown-embedded HTML share this structural path; unrelated prose cannot be pooled. This deterministic gate is not general semantic entailment and adds no provider call. See the [grounding and partial-delivery contract](agents-deployment.md#catch-up-and-result-capacity) for closure and EOF rules.
 5. Verification language such as “I verified,” “I checked,” or “the page says” requires both a completed page read and an associated citation.
 6. A final answer may contain at most 20 citation markers.
 

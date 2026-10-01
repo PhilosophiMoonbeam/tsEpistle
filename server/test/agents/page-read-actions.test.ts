@@ -134,12 +134,7 @@ const setup = (
   }
   registerPageReadActions(kernel, pageReadDependencies)
   const validatePageEvidence = createPageEvidenceValidator(pageReadDependencies)
-  const execute = (
-    name: AgentActionName,
-    input: unknown,
-    knowledgeContext?: AgentKnowledgeContext,
-    executionAuth: RequestAuthContext<Express.User> = auth
-  ) =>
+  const execute = (name: AgentActionName, input: unknown, knowledgeContext?: AgentKnowledgeContext, executionAuth: RequestAuthContext<Express.User> = auth) =>
     kernel.execute({
       authority: createActionAuthority(name, requestId, executionAuth, admission),
       actionCallId,
@@ -1126,28 +1121,32 @@ describe('permission-safe page read actions', () => {
   it('continues cited graph traversal with a principal-bound opaque cursor', async () => {
     const secondPrincipal = { ...principal, id: 8 } as Express.User
     const secondAuth = { kind: 'user', userId: 8, ownershipUserId: 8, principal: secondPrincipal } as const
-    const { execute, operations } = setup({
-      get: async input => page(Number(input.id) === 43 ? { id: 43, path: 'docs/next', title: 'Next', tags: [{ tag: 'Runbook' }] } : {}),
-      listRelated: vi.fn(async input =>
-        Number(input.offset) === 0
-          ? {
-              pages: [
-                page({
-                  id: 43,
-                  path: 'docs/next',
-                  title: 'Next',
-                  tags: [{ tag: 'Runbook' }],
-                  distance: 2,
-                  direction: 'incoming',
-                  viaPageId: 41
-                })
-              ],
-              truncated: true,
-              nextOffset: 1
-            }
-          : { pages: [], truncated: false, nextOffset: null }
-      )
-    }, undefined, async authority => authority.requester.kind === 'user' && authority.requester.userId === 8 ? secondPrincipal : principal)
+    const { execute, operations } = setup(
+      {
+        get: async input => page(Number(input.id) === 43 ? { id: 43, path: 'docs/next', title: 'Next', tags: [{ tag: 'Runbook' }] } : {}),
+        listRelated: vi.fn(async input =>
+          Number(input.offset) === 0
+            ? {
+                pages: [
+                  page({
+                    id: 43,
+                    path: 'docs/next',
+                    title: 'Next',
+                    tags: [{ tag: 'Runbook' }],
+                    distance: 2,
+                    direction: 'incoming',
+                    viaPageId: 41
+                  })
+                ],
+                truncated: true,
+                nextOffset: 1
+              }
+            : { pages: [], truncated: false, nextOffset: null }
+        )
+      },
+      undefined,
+      async authority => (authority.requester.kind === 'user' && authority.requester.userId === 8 ? secondPrincipal : principal)
+    )
     const first = (await execute('pages.related', { pageId: 42, limit: 1, cursor: null })) as {
       pages: Array<Record<string, unknown>>
       nextCursor: string | null
@@ -1281,6 +1280,36 @@ describe('live page evidence validation', () => {
 
     const changed = { ...historic, content: '# Spoofed historic content' }
     expect(await validateEvidence('pages.getVersion', changed)).toBe(false)
+  })
+
+  it.each([
+    ['current Markdown', 'pages.get', { id: 42 }],
+    ['historical Markdown', 'pages.getVersion', { pageId: 42, versionId: 9 }],
+    ['canonical OKF', 'pages.getOkf', { id: 42 }]
+  ] as const)('keeps formatting-equivalent %s edits subject to exact raw receipt binding', async (_case, action, input) => {
+    const original = '# Start\r\n\r\n**Name:** Zoë Quinn\r\nEmail: zoe@example.test\r\n'
+    const reformatted = '# Start\n\nName: Zoë Quinn  \nEmail: zoe@example.test\n'
+    let content = original
+    const { execute, validateEvidence } = setup({
+      get: async () => page({ content, extra: { okf: validOkfMetadata } }),
+      getVersion: async () =>
+        page({
+          id: undefined,
+          pageId: 42,
+          versionId: 9,
+          sourceRevision: '6',
+          versionDate: '2026-08-16T00:00:00.000Z',
+          content,
+          extra: { okf: validOkfMetadata }
+        })
+    })
+    const receipt = await execute(action, input)
+    expect(await validateEvidence(action, receipt)).toBe(true)
+    content = reformatted
+    expect(await validateEvidence(action, receipt)).toBe(false)
+    const refreshedReceipt = await execute(action, input)
+    expect(await validateEvidence(action, refreshedReceipt)).toBe(true)
+    expect(await validateEvidence(action, receipt)).toBe(false)
   })
 
   it('rejects live receipts outside selected, locale, and section scope', async () => {

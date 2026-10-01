@@ -560,7 +560,12 @@ describe('Ax orchestration stages', () => {
       } satisfies AxChatResponse
     })
     const invoke = vi.fn(async () => ({
-      id: 1, locale: 'en', path: 'alpha', sourceRevision: 'rev-1', title: 'Alpha', contentType: 'markdown',
+      id: 1,
+      locale: 'en',
+      path: 'alpha',
+      sourceRevision: 'rev-1',
+      title: 'Alpha',
+      contentType: 'markdown',
       content: 'Alpha requires review.',
       citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
       citationSections: []
@@ -569,28 +574,45 @@ describe('Ax orchestration stages', () => {
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
-        invoke, snapshot: async () => ({}), close, authoritySha256: 'b'.repeat(64)
+        invoke,
+        snapshot: async () => ({}),
+        close,
+        authoritySha256: 'b'.repeat(64)
       })
     }
     const text = vi.fn(async () => {})
-    await expect(new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute({
-      ...baseRequest(new AbortController().signal),
-      purpose: 'subagent',
-      task: {
-        id: '00000000-0000-4000-8000-000000000041', kind: 'source_scout', title: 'Review alpha',
-        question: 'What does alpha require?', sourceScope: ['alpha'], requiredEvidenceCount: 1
-      },
-      subagentRunId: '00000000-0000-4000-8000-000000000042',
-      actionAllowlist: ['pages.get'],
-      limits: { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
-    }, { text, event: async () => {} })).rejects.toMatchObject({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
+    await expect(
+      new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          purpose: 'subagent',
+          task: {
+            id: '00000000-0000-4000-8000-000000000041',
+            kind: 'source_scout',
+            title: 'Review alpha',
+            question: 'What does alpha require?',
+            sourceScope: ['alpha'],
+            requiredEvidenceCount: 1
+          },
+          subagentRunId: '00000000-0000-4000-8000-000000000042',
+          actionAllowlist: ['pages.get'],
+          limits: { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
+        },
+        { text, event: async () => {} }
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
 
     expect(providerRequests).toHaveLength(1)
     expect(providerRequests[0]!.modelConfig?.maxTokens).toBe(2_048)
     expect(JSON.stringify(providerRequests[0])).not.toContain('private preference')
     expect(JSON.stringify(providerRequests[0])).not.toContain('private note')
     expect(invoke).toHaveBeenCalledOnce()
-    expect(invoke).toHaveBeenCalledWith('pages.get', { id: 1 }, expect.any(AbortSignal), expect.stringMatching(/^sa_00000000-0000-4000-8000-000000000042_[a-f0-9]{24}$/u))
+    expect(invoke).toHaveBeenCalledWith(
+      'pages.get',
+      { id: 1 },
+      expect.any(AbortSignal),
+      expect.stringMatching(/^sa_00000000-0000-4000-8000-000000000042_[a-f0-9]{24}$/u)
+    )
     expect(text).not.toHaveBeenCalled()
     expect(close).toHaveBeenCalledOnce()
   })
@@ -681,10 +703,7 @@ describe('Ax orchestration stages', () => {
     expect(result).toMatchObject({ totalTokens: 4, executionLimit: { reason: 'tools', publication: 'inability' } })
     expect(text.mock.calls.map(([delta]) => delta).join('')).toContain("I couldn't complete a source-verified answer")
     expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('unsupported conclusion')
-    expect(event.mock.calls).toContainEqual([
-      'model.turn',
-      expect.objectContaining({ outcome: 'answer_rejected', turn: 2, totalTokens: 2 })
-    ])
+    expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_rejected', turn: 2, totalTokens: 2 })])
   })
 
   it('delivers a full authorized page into a protected one-slot synthesis instead of omitting it for hypothetical correction', async () => {
@@ -753,7 +772,9 @@ describe('Ax orchestration stages', () => {
 
     expect(invoke).toHaveBeenCalledOnce()
     expect(chat).toHaveBeenCalledTimes(2)
-    expect(chat.mock.calls[1]?.[0].chatPrompt).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'function', result: expect.stringContaining('Alpha requires review.') })]))
+    expect(chat.mock.calls[1]?.[0].chatPrompt).toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: 'function', result: expect.stringContaining('Alpha requires review.') })])
+    )
     expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:1:revision:rev-1' })])
     expect(resizeUndispatched).toHaveBeenCalled()
     expect(reserveSequence).toHaveBeenCalledOnce()
@@ -763,13 +784,16 @@ describe('Ax orchestration stages', () => {
   it('never publishes a citation-free model analysis of its own correction after a Wiki page was read', async () => {
     let turn = 0
     const draft = 'The provider reached its final turn. The sourceUnits show Alpha requires review, but I will now discuss validator behavior.'
-    const chat = vi.fn(async () => ({
-      results: [
-        ++turn === 1
-          ? { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
-          : { index: 0, content: draft }
-      ]
-    }) satisfies AxChatResponse)
+    const chat = vi.fn(
+      async () =>
+        ({
+          results: [
+            ++turn === 1
+              ? { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
+              : { index: 0, content: draft }
+          ]
+        }) satisfies AxChatResponse
+    )
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
@@ -849,7 +873,6 @@ describe('Ax orchestration stages', () => {
     expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('cannot verify either page')
     expect(result.citations).toBeUndefined()
   })
-
 
   it('does not dispatch actions from the final available model turn', async () => {
     const chat = vi.fn(
@@ -1003,6 +1026,138 @@ describe('Ax orchestration stages', () => {
       expect.objectContaining({ accepted: true, finalCitationIds: ['page:1:revision:rev-1', 'page:2:revision:rev-2'] })
     ])
     expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1:revision:rev-1]] Beta requires audit. [[cite:page:2:revision:rev-2]]')
+  })
+
+  it.each([
+    ['parent identity', '- Name: Maya Quinn{{padding}}\n  - Phone: 555-0100 x42', 'Name: Maya Quinn; Phone: 555-0100 x42'],
+    [
+      'required condition',
+      '- Only after audit before 2026-10-15{{padding}}:\n  - Maya Quinn may approve release.',
+      'Maya Quinn may approve release only after audit before 2026-10-15.'
+    ],
+    [
+      'sibling field',
+      '- Name: Maya Quinn\n  - Email: [maya@example.test](mailto:maya@example.test){{padding}}\n  - Phone: 555-0100 x42',
+      'Name: Maya Quinn; Email: [maya@example.test](mailto:maya@example.test); Phone: 555-0100 x42'
+    ],
+    ['table header', 'Name{{padding}} | Phone\n--- | ---\nMaya Quinn | 555-0100 x42', 'Name: Maya Quinn; Phone: 555-0100 x42'],
+    [
+      'reference definition',
+      '[maya]: mailto:maya@example.test "{{title}}"\n\n- Name: Maya Quinn\n  - Email: [maya@example.test][maya]',
+      'Name: Maya Quinn; Email: [maya@example.test](mailto:maya@example.test)'
+    ]
+  ] as const)('adaptable child transfer requires a resident complete %s dependency', async (_dependency, template, fact) => {
+    const citation = 'page:1:revision:rev-1'
+    const answer = `${fact} [[cite:${citation}]]`
+    const independentFact = 'The contact office opens at 09:00.'
+    const independentAnswer = `${independentFact} [[cite:${citation}]]`
+    for (const complete of [true, false]) {
+      const content = `# Contacts\n\n${independentFact}\n\n${template.replace('{{padding}}', complete ? '' : ` <!--${'presentational padding '.repeat(700)}-->`).replace('{{title}}', complete ? 'Contact' : 'presentational padding '.repeat(700))}\n\n${'Neutral office background. '.repeat(900)}`
+      const evidence = {
+        id: 1,
+        locale: 'en',
+        path: 'contacts',
+        title: 'Contacts',
+        contentType: 'markdown',
+        sourceRevision: 'rev-1',
+        content,
+        citation: { evidenceId: citation, label: 'Contacts', href: '/en/contacts' },
+        citationSections: []
+      }
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (..._args: [string, unknown]) => {})
+      let turn = 0
+      const chat = vi.fn(async () => ({ results: [{ index: 0, content: ++turn === 1 ? answer : independentAnswer }] }) satisfies AxChatResponse)
+      const result = await new AxAgentEngine(
+        factoryFor(chat),
+        pageEvidenceActions(async () => true)
+      ).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          messages: [{ role: 'user', content: `Contact office lookup: what does the contact record establish about ${fact}?` }],
+          limits: { maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 512 },
+          research: {
+            packets: [],
+            incompleteTasks: [],
+            evidenceSeeds: [
+              {
+                taskId: '00000000-0000-4000-8000-000000000021',
+                subagentRunId: '00000000-0000-4000-8000-000000000031',
+                actionCallId: 'child-contact-read',
+                actionName: 'pages.get',
+                output: evidence
+              }
+            ]
+          }
+        },
+        { text, event }
+      )
+      const published = text.mock.calls.map(([delta]) => delta).join('')
+      if (complete) {
+        expect(published).toBe(answer)
+        expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+        expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
+      } else {
+        expect(published).not.toContain(fact)
+        expect(published).toBe(independentAnswer)
+        expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+        expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+        expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
+      }
+    }
+  })
+
+  it('adaptable child transfer cannot summarize undelivered facts from a partial section', async () => {
+    const citation = 'page:42:revision:1:section:1'
+    const visibleFact = 'Maya Quinn handles northern orders.'
+    const unseenFact = 'Noah Bell handles southern orders.'
+    const content = `# Contacts\n\n${visibleFact}\n\n${unseenFact} ${'Operational background remains unchanged. '.repeat(900)}`
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (..._args: [string, unknown]) => {})
+    let turn = 0
+    const chat = vi.fn(
+      async () => ({ results: [{ index: 0, content: `${++turn === 1 ? unseenFact : visibleFact} [[cite:${citation}]]` }] }) satisfies AxChatResponse
+    )
+    const result = await new AxAgentEngine(
+      factoryFor(chat),
+      pageEvidenceActions(async () => true)
+    ).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        currentPage: { id: 42, locale: 'en', path: 'contacts' },
+        messages: [{ role: 'user', content: 'Summarize the current page.' }],
+        limits: { maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 512 },
+        research: {
+          packets: [],
+          incompleteTasks: [],
+          evidenceSeeds: [
+            {
+              taskId: '00000000-0000-4000-8000-000000000021',
+              subagentRunId: '00000000-0000-4000-8000-000000000031',
+              actionCallId: 'child-partial-summary',
+              actionName: 'pages.get',
+              output: {
+                id: 42,
+                locale: 'en',
+                path: 'contacts',
+                title: 'Contacts',
+                contentType: 'markdown',
+                sourceRevision: '1',
+                content,
+                citation: { evidenceId: 'page:42:revision:1', label: 'Contacts', href: '/en/contacts' },
+                citationSections: [{ evidenceId: citation, label: 'Contacts', href: '/en/contacts#contacts' }]
+              }
+            }
+          ]
+        }
+      },
+      { text, event }
+    )
+    const published = text.mock.calls.map(([delta]) => delta).join('')
+    expect(published).not.toContain(unseenFact)
+    expect(published).toContain(`${visibleFact} [[cite:${citation}]]`)
+    expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
   })
   it('does not trust child evidence seeds without a host page validator', async () => {
     const evidence = {
@@ -1599,13 +1754,12 @@ describe('Ax orchestration stages', () => {
       const event = vi.fn(async (_type: string, _data: unknown) => {})
       let failure: unknown
       await expect(
-        new AxAgentEngine(factory).execute(
-          { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
-          { text, event }
-        ).catch(error => {
-          failure = error
-          throw error
-        })
+        new AxAgentEngine(factory)
+          .execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text, event })
+          .catch(error => {
+            failure = error
+            throw error
+          })
       ).rejects.toMatchObject({ message: 'Agent inference failed' })
       return { release, reconcile, text, event, failure }
     }
@@ -2212,10 +2366,15 @@ describe('engine preflight', () => {
     const release = vi.fn(async () => {})
     const consumeTool = vi.fn(async () => {})
     const text = vi.fn(async () => {})
-    await expect(engine.execute({
-      ...request,
-      dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
-    }, { text, event: async () => {} })).rejects.toMatchObject({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
+    await expect(
+      engine.execute(
+        {
+          ...request,
+          dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
+        },
+        { text, event: async () => {} }
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
     expect(reserve).not.toHaveBeenCalled()
     expect(reconcile).not.toHaveBeenCalled()
     expect(release).not.toHaveBeenCalled()
