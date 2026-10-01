@@ -344,7 +344,9 @@ describe('additional provider transports', () => {
         model: 'gpt-5.6-terra',
         parallel_tool_calls: false,
         previous_response_id: null,
-        output: [{ type: 'message', id: 'msg_implicit', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'implicit', annotations: [] }] }],
+        output: [
+          { type: 'message', id: 'msg_implicit', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'implicit', annotations: [] }] }
+        ],
         usage: {
           input_tokens: 2,
           input_tokens_details: cachedTokenCount === undefined ? {} : { cached_tokens: cachedTokenCount },
@@ -403,11 +405,16 @@ describe('additional provider transports', () => {
       usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 }
     }
     const finalEvents = [
-      { event_type: 'interaction.created', interaction: { id: 'interaction_final', model: 'gemini-3.7-flash', status: 'in_progress', object: 'interaction' } },
-      { event_type: 'step.start', index: 0, step: { type: 'model_output', content: [{ type: 'text', text: 'gemini' }] } },
-      { event_type: 'step.stop', index: 0 },
+      {
+        event_type: 'interaction.created',
+        interaction: { id: 'interaction_final', status: 'in_progress', object: 'interaction', service_tier: 'standard' },
+        metadata: { total_usage: { total_tokens: 0 } }
+      },
+      { event_type: 'step.start', index: 0, step: { type: 'model_output', content: [{ type: 'text', text: 'gemini' }] }, metadata: {} },
+      { event_type: 'step.stop', index: 0, step_usage: { total_output_tokens: 1 }, usage: { total_input_tokens: 6 }, metadata: {} },
       {
         event_type: 'interaction.completed',
+        metadata: { total_usage: {} },
         interaction: {
           id: 'interaction_final',
           status: 'completed',
@@ -1040,7 +1047,7 @@ describe('Gemini Interactions protocol validation', () => {
               })}`
             ]
           : []),
-        `event: error\ndata: ${JSON.stringify({ event_type: 'error', error: { code: testCase.code, message: 'safe test message' } })}`
+        `event: error\ndata: ${JSON.stringify({ event_type: 'error', error: { code: testCase.code, message: 'safe test message' }, metadata: { total_usage: { total_tokens: 0 } } })}`
       ]
       const fetchImplementation = vi.fn(async () => new Response(`${frames.join('\n\n')}\n\n`, { headers: { 'content-type': 'text/event-stream' } }))
       const response = await service(fetchImplementation as typeof fetch).chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
