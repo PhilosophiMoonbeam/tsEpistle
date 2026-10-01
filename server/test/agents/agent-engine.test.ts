@@ -1395,6 +1395,41 @@ describe('Ax agent engine', () => {
     return { chat, correctionIssues, correctionRequest, event, rejectedIssues, result, settledUsage, text }
   }
 
+  const contactRow = '**Account Manager/Customer Service questions:** Maya Quinn | [maya@example.test](mailto:maya@example.test) | ☎️ [555.010.1000 ext.142](tel:+15550101000) | Cell: [555.010.2000](tel:+15550102000)'
+
+  it('accepts an intact formatted contact row with several numeric fields and a later colon', async () => {
+    const citation = 'page:42:revision:1:section:1'
+    const answer = `- ${contactRow} [[cite:${citation}]]`
+    const page = questionReadPage(42, '1', 'Supplier Contacts', 'supplier-contacts', 'Contacts', 'contacts', `* ${contactRow}`)
+    const fixture = questionFixture('native', [
+      { calls: [{ id: 'read-contact', name: 'pages.get', arguments: { id: 42 } }] },
+      { answer }
+    ], () => page)
+    const result = await fixture.execute('Who is our supplier contact?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+    expect(fixture.providerCalls).toHaveLength(2)
+  })
+
+  it.each([
+    ['changed contact name', contactRow.replace('Maya Quinn', 'Noah Bell')],
+    ['changed phone number', contactRow.replace('555.010.1000', '555.010.9999')],
+    ['changed link destination', contactRow.replace('mailto:maya@example.test', 'mailto:noah@example.test')],
+    ['borrowed adjacent phone number', contactRow.replace('[555.010.2000](tel:+15550102000)', '[555.010.3000](tel:+15550103000)')]
+  ])('rejects a formatted contact row with a %s', async (_name, rejectedRow) => {
+    const citation = 'page:42:revision:1:section:1'
+    const corrected = `- ${contactRow} [[cite:${citation}]]`
+    const run = await runEvidenceCorrection({
+      title: 'Supplier Contacts', path: 'supplier-contacts', question: 'Who is our supplier contact?',
+      content: `# Supplier Contacts\n\n## Contacts\n\n* ${contactRow}\n* **Warehouse:** [555.010.3000](tel:+15550103000)`,
+      citationSections: [{ evidenceId: citation, label: 'Supplier Contacts › Contacts', href: '/en/supplier-contacts#contacts' }],
+      rejectedDraft: `- ${rejectedRow} [[cite:${citation}]]`, correctedDraft: corrected
+    })
+    expect(run.rejectedIssues.length).toBeGreaterThan(0)
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    expect(run.result.executionLimit).toBeUndefined()
+  })
+
   it('repairs a contact lookup from nested source facts without publishing an expanded unsupported directory', async () => {
     const citation = 'page:42:revision:1:section:1'
     const corrected = [
