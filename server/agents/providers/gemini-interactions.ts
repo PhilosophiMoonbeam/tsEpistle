@@ -264,7 +264,6 @@ const STREAM_PROTOCOL_ISSUES: Readonly<Record<string, string>> = {
   'stream contains an invalid error event': 'protocol_stream_error_invalid',
   'stream event is out of order': 'protocol_stream_event_out_of_order',
   'stream contains an invalid status event': 'protocol_stream_status_invalid',
-  'stream status update identity is missing': 'protocol_stream_status_id_missing',
   'stream status update identity is null': 'protocol_stream_status_id_null',
   'stream status update identity has an invalid type': 'protocol_stream_status_id_type',
   'stream status update status is missing': 'protocol_stream_status_status_missing',
@@ -857,7 +856,7 @@ const StatusEventSchema = z.strictObject({
   event_type: z.literal('interaction.status_update'),
   event_id: z.string().optional(),
   metadata: StreamMetadataSchema.optional(),
-  interaction_id: InteractionIdentifierSchema,
+  interaction_id: InteractionIdentifierSchema.optional(),
   status: z.enum(['in_progress', 'requires_action', 'completed', 'incomplete', 'failed', 'cancelled', 'budget_exceeded'])
 })
 const StartEventSchema = z.strictObject({
@@ -1092,9 +1091,8 @@ const invalidCreatedEvent = (value: object): AgentRepositoryError => {
 
 const invalidStatusEvent = (value: object): AgentRepositoryError => {
   const id = Reflect.get(value, 'interaction_id')
-  if (id === undefined) return invalidResponse('stream status update identity is missing')
   if (id === null) return invalidResponse('stream status update identity is null')
-  if (typeof id !== 'string') return invalidResponse('stream status update identity has an invalid type')
+  if (id !== undefined && typeof id !== 'string') return invalidResponse('stream status update identity has an invalid type')
   const status = Reflect.get(value, 'status')
   if (status === undefined) return invalidResponse('stream status update status is missing')
   if (typeof status !== 'string') return invalidResponse('stream status update status has an invalid type')
