@@ -14,7 +14,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const origin = 'https://generativelanguage.googleapis.com'
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==', 'base64')
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==', 'base64')
 const file = (state = 'ACTIVE') => ({
   name: 'files/abc123',
   uri: `${origin}/v1beta/files/abc123`,

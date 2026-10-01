@@ -23,6 +23,8 @@ When auditing existing tests, trace each candidate to its supported behavior, ca
 
 UI layout and paint claims need a native normal-application browser flow; compiled template/style spelling and copied DOM geometry are not runtime proof. Exercise admission and authorization through current repository/runtime or HTTP consumers. Retire an unsupported private helper and its exclusive tests together, while preserving independently live callers, server endpoints, and their behavioral coverage.
 
+Generate TFA setup QR fixtures through the real `qr-image` dependency and check native dark modules against light quiet space; SVG presence alone does not prove usable contrast. A controlled login response proves QR paint, not OTP authentication or enrollment. Positive raster media fixtures must fully decode rather than merely match a PNG signature.
+
 Presentation preference resets restore only the active locale's original `L`, `LT`, and `LTS` formats, preserving unrelated locale customizations. Regressions must exercise consecutive overrides, switching locales, and explicit timezone clearing with real Moment instances in isolated processes; do not seed the built-in locale with a prior update that masks its reset failure.
 
 The license inventory includes the lockfile's optional dependencies for every platform, not just packages installed on the current host. When a pinned platform package is skipped by Bun, review its exact published version metadata and add an exact-version entry in `server/scripts/generate-license-inventory.ts`; do not infer a license from `license-policy.json` or the generated inventory. Regenerate with `bun run licenses:inventory` and verify with `bun run licenses:check` after a frozen install.
