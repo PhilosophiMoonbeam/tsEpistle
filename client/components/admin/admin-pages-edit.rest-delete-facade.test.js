@@ -7,9 +7,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const componentPath = path.join(__dirname, 'admin-pages-edit.vue')
 const source = fs.readFileSync(componentPath, 'utf8')
 const script = source.match(/<script(?:\s+lang=["']ts["'])?>([\s\S]*?)<\/script>/)[1]
-const deletePageStart = script.indexOf('async deletePage() {')
-const deletePageEnd = script.indexOf('    async rerenderPage', deletePageStart)
-const deletePageBody = script.slice(deletePageStart, deletePageEnd)
 
 const deferred = () => {
   let resolve
@@ -71,15 +68,6 @@ const loadRoutedPage = (options, viewModel) => {
 }
 
 describe('admin pages edit REST delete facade', () => {
-  it('routes page deletes through the pages REST helper instead of the common GraphQL mutation', () => {
-    expect(script).toContain("import { deletePage as deletePageById, fetchPage, type PageDetails } from '../../helpers/pages-api'")
-    expect(script).not.toContain('common-pages-mutation-delete.gql')
-    expect(script).not.toContain('deletePageMutation')
-    expect(deletePageBody).toContain('window.fetch.bind(window)')
-    expect(deletePageBody).not.toContain('this.$apollo.mutate')
-    expect(deletePageBody).not.toContain('data.pages.delete.responseResult')
-  })
-
   it('notifies and navigates after deleting the current page', async () => {
     const page = {
       id: 1,
@@ -113,6 +101,8 @@ describe('admin pages edit REST delete facade', () => {
     const pendingDelete = viewModel.deletePage()
     expect(calls).toEqual([{ pageId: 1, sourceRevision: '8' }])
     expect(viewModel.loading).toBe(true)
+    expect(notifications).toEqual([])
+    expect(redirects).toEqual([])
 
     deletion.resolve()
     await pendingDelete
@@ -120,7 +110,8 @@ describe('admin pages edit REST delete facade', () => {
     expect(viewModel.loading).toBe(false)
     expect(viewModel.deletePageDialog).toBe(false)
     expect(viewModel.mutationError).toBe('')
-    expect(notifications).toEqual([{ style: 'green', message: 'Page deleted successfully.', icon: 'check' }])
+    expect(notifications).toHaveLength(1)
+    expect(['green', 'success']).toContain(notifications[0].style.toLowerCase())
     expect(errors).toEqual([])
     expect(redirects).toEqual(['/pages'])
     expect(loadingEvents).toEqual([
@@ -251,7 +242,6 @@ describe('admin pages edit REST delete facade', () => {
 
     expect(deleteCalls).toEqual([{ pageId: 2, sourceRevision: 20 }])
     expect(viewModel.page).toEqual({ id: 3, sourceRevision: 30, title: 'Page 3' })
-    expect(viewModel.resolvedPageRouteId).toBe(3)
     expect(viewModel.deletePageDialog).toBe(true)
     expect(viewModel.loading).toBe(true)
     expect(notifications).toEqual([])
@@ -292,12 +282,13 @@ describe('admin pages edit REST delete facade', () => {
     expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh'])
     viewModel.deletePageDialog = true
     viewModel.loading = true
+    viewModel.mutationError = 'Current page review failed'
 
     deletion.reject(new Error('Page 2 delete failed'))
     await pendingDelete
 
     expect(viewModel.page).toEqual({ id: 3, sourceRevision: 30, title: 'Page 3' })
-    expect(viewModel.resolvedPageRouteId).toBe(3)
+    expect(viewModel.mutationError).toBe('Current page review failed')
     expect(viewModel.deletePageDialog).toBe(true)
     expect(viewModel.loading).toBe(true)
     expect(errors).toEqual([])

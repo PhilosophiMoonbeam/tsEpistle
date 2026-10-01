@@ -349,6 +349,10 @@ describe('LogoParticleScene resource path', () => {
     const particles = makeParticles()
     const resources = createParticleSceneResources(particles, effect)
     const before = new Uint8Array(particles.buffer).slice()
+    const scene = new Three.Scene()
+    scene.add(resources.mesh, resources.camera)
+    expect(resources.mesh.parent).toBe(scene)
+    expect(resources.camera.parent).toBe(scene)
     let geometryDisposals = 0
     let materialDisposals = 0
     const disposeGeometry = resources.geometry.dispose.bind(resources.geometry)
@@ -363,6 +367,8 @@ describe('LogoParticleScene resource path', () => {
     }
 
     disposeParticleSceneResources(resources)
+    expect(resources.mesh.parent).toBeNull()
+    expect(resources.camera.parent).toBeNull()
     disposeParticleSceneResources(resources)
     expect(geometryDisposals).toBe(1)
     expect(materialDisposals).toBe(1)
@@ -373,8 +379,6 @@ describe('LogoParticleScene resource path', () => {
 
 describe('LogoParticleScene frame fence and loop', () => {
   it('proves first frames from renderer draw and triangle deltas, then requires pending before a resumed proof', () => {
-    const benchmark = makeBenchmark()
-    const resources = createParticleSceneResources(makeParticles(), effect)
     const events: string[] = []
     const harness = makeRenderer()
     const fence = new ParticleSceneEventFence(effect.count, {
@@ -387,9 +391,34 @@ describe('LogoParticleScene frame fence and loop', () => {
     fence.ready(harness.renderer)
 
     try {
+      fence.beforeRender(harness.renderer)
       fence.rendered(harness.renderer, true)
       expect(fence.lastRenderDrawCalls).toBe(0)
       expect(fence.lastRenderTriangles).toBe(0)
+      expect(events).toEqual([])
+
+      harness.renderer.info.render.drawCalls = 0
+      harness.renderer.info.render.triangles = 0
+      fence.beforeRender(harness.renderer)
+      harness.renderer.info.render.triangles = effect.count * 2
+      fence.rendered(harness.renderer, true)
+      expect(fence.lastRenderDrawCalls).toBe(0)
+      expect(fence.lastRenderTriangles).toBe(effect.count * 2)
+      expect(events).toEqual([])
+
+      harness.renderer.info.render.drawCalls = 0
+      harness.renderer.info.render.triangles = 0
+      fence.beforeRender(harness.renderer)
+      harness.renderer.info.render.drawCalls = 1
+      harness.renderer.info.render.triangles = effect.count * 2 - 1
+      fence.rendered(harness.renderer, true)
+      expect(fence.lastRenderDrawCalls).toBe(1)
+      expect(fence.lastRenderTriangles).toBe(effect.count * 2 - 1)
+      expect(events).toEqual([])
+
+      harness.renderer.info.render.drawCalls = 0
+      harness.renderer.info.render.triangles = 0
+      fence.beforeRender(harness.renderer)
       harness.renderer.info.render.drawCalls = 1
       harness.renderer.info.render.triangles = effect.count * 2
       fence.rendered(harness.renderer, true)
@@ -398,14 +427,17 @@ describe('LogoParticleScene frame fence and loop', () => {
       expect(events).toEqual(['submission', 'first-frame'])
 
       fence.markPending()
+      fence.markPending()
       expect(events).toEqual(['submission', 'first-frame', 'frame-pending'])
-      harness.renderer.info.render.drawCalls += 1
-      harness.renderer.info.render.triangles += effect.count * 2
+      harness.renderer.info.render.drawCalls = 0
+      harness.renderer.info.render.triangles = 0
+      fence.beforeRender(harness.renderer)
+      harness.renderer.info.render.drawCalls = 1
+      harness.renderer.info.render.triangles = effect.count * 2
       fence.rendered(harness.renderer, true)
       expect(events).toEqual(['submission', 'first-frame', 'frame-pending', 'submission', 'first-frame'])
     } finally {
       fence.dispose()
-      disposeParticleSceneResources(resources)
     }
   })
 

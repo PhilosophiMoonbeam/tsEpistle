@@ -1,10 +1,8 @@
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
 import { createAcmeStateStore, type AcmeSavedState } from '../../repositories/acme-state.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_ssl_test') && password ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password } : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_ssl_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 suite('ACME persistence and exclusion on PostgreSQL', () => {
   let db: Knex, fallback: AcmeSavedState, store: ReturnType<typeof createAcmeStateStore>
@@ -71,7 +69,8 @@ suite('ACME persistence and exclusion on PostgreSQL', () => {
     expect(results.filter(result => result.status === 'rejected')).toHaveLength(1)
   })
   it('does not admit a second owner during certificate work and releases the guard after failure', async () => {
-    const other = createAcmeStateStore(db, () => ({}))
+    const otherDb = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 1 } })
+    const other = createAcmeStateStore(otherDb, () => ({}))
     let release!: () => void, entered!: () => void
     const gate = new Promise<void>(resolve => {
         release = resolve
@@ -84,11 +83,17 @@ suite('ACME persistence and exclusion on PostgreSQL', () => {
       await gate
       throw new Error('fixture failure')
     })
-    await waiting
-    await expect(other.exclusive(async () => 'should not run')).rejects.toThrow('already in progress')
-    release()
-    await expect(first).rejects.toThrow('fixture failure')
-    expect(await other.exclusive(async () => 'next owner')).toBe('next owner')
+    try {
+      await waiting
+      await expect(other.exclusive(async () => 'should not run')).rejects.toThrow('already in progress')
+      release()
+      await expect(first).rejects.toThrow('fixture failure')
+      expect(await other.exclusive(async () => 'next owner')).toBe('next owner')
+    } finally {
+      release()
+      await first.catch(() => {})
+      await otherDb.destroy()
+    }
   })
   it('does not keep a transaction open while certificate work is running', async () => {
     await store.exclusive(async () => {
@@ -113,7 +118,13 @@ suite('ACME persistence and exclusion on PostgreSQL', () => {
     }
     const interrupted = createAcmeStateStore(transport as unknown as Knex, () => ({}))
     await expect(interrupted.exclusive(async () => 'unreachable')).rejects.toThrow('lost response')
-    expect(await store.exclusive(async () => 'recovered')).toBe('recovered')
+    const otherDb = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 1 } })
+    try {
+      const recovered = createAcmeStateStore(otherDb, () => ({}))
+      expect(await recovered.exclusive(async () => 'recovered')).toBe('recovered')
+    } finally {
+      await otherDb.destroy()
+    }
   })
   it('destroys a connection after unlock failure instead of returning a held lock to the pool', async () => {
     const original = db.raw.bind(db)
@@ -130,7 +141,13 @@ suite('ACME persistence and exclusion on PostgreSQL', () => {
     }
     const interrupted = createAcmeStateStore(transport as unknown as Knex, () => ({}))
     expect(await interrupted.exclusive(async () => 'completed')).toBe('completed')
-    expect(await store.exclusive(async () => 'recovered')).toBe('recovered')
+    const otherDb = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 1 } })
+    try {
+      const recovered = createAcmeStateStore(otherDb, () => ({}))
+      expect(await recovered.exclusive(async () => 'recovered')).toBe('recovered')
+    } finally {
+      await otherDb.destroy()
+    }
   })
   it('fences further effects when the request connection loses its lock', async () => {
     await store.exclusive(async assertHeld => {

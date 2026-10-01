@@ -335,6 +335,7 @@ describe('Gemini Interactions Google Search grounding', () => {
       totalTokens: 5,
       cachedInputTokens: 2
     })
+    expect(chunks.slice(0, -1).flatMap(chunk => chunk.results).map(result => result.content ?? '').join('')).toBe('Alpha')
     expect(chunks.slice(0, -1).every(chunk => chunk.modelUsage === undefined)).toBe(true)
     expect(readGeminiGoogleSearchGrounding(terminal.results[0]!)).toEqual({
       citations: [{ url: 'https://grounding.example.test/source', title: 'Example source', startIndex: 0, endIndex: 5 }],

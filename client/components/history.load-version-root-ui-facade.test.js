@@ -3,14 +3,56 @@ import path from 'node:path'
 import { onWatcherCleanup, reactive, watch } from 'vue'
 import { createPatch as createRealPatch } from 'diff'
 import * as RealDiff2Html from 'diff2html'
+import { createPinia } from 'pinia'
+import { JSDOM } from 'jsdom'
+import { loadingStart, loadingStop, setLoading } from '../helpers/root-ui-store.ts'
+import { createInstance as createI18nInstance } from 'i18next'
+import { afterEach, beforeEach } from '../../server/test/bun-test.mts'
+
+const fixtureSiteConfig = {
+  company: '', contentLicense: '', footerOverride: '', banner: {},
+  darkMode: false, tocPosition: 'left', title: 'Test', logoUrl: '',
+  product: { name: 'Test', version: '1.0.0' }
+}
+const installSiteConfig = () => {
+  const browserWindow = global.window
+  const descriptor = Object.getOwnPropertyDescriptor(browserWindow, 'siteConfig')
+  Object.defineProperty(browserWindow, 'siteConfig', { configurable: true, value: fixtureSiteConfig })
+  return () => {
+    if (descriptor) Object.defineProperty(browserWindow, 'siteConfig', descriptor)
+    else Reflect.deleteProperty(browserWindow, 'siteConfig')
+  }
+}
+let useWikiStore
+const restoreImportConfig = installSiteConfig()
+try {
+  ;({ useWikiStore } = await import('../store/index.ts'))
+} finally {
+  restoreImportConfig()
+}
 const source = fs.readFileSync(path.join(process.cwd(), 'client/components/history.vue'), 'utf8')
 
 describe('history revision list and comparison behavior', () => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)[1]
   const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '')).replace('export default {', 'return {')
+  let restoreSiteConfig
+  const ownedInstances = []
+  const ownedWatchers = []
+  beforeEach(() => { restoreSiteConfig = installSiteConfig() })
+  afterEach(() => {
+    try {
+      for (const stop of ownedWatchers.splice(0)) stop()
+      for (const { component, instance, wikiStore } of ownedInstances.splice(0)) {
+        if (!instance.isUnmounted) component.beforeUnmount.call(instance)
+        wikiStore.$dispose?.()
+      }
+    } finally {
+      restoreSiteConfig?.()
+    }
+  })
 
   const createHistoryInstance = (overrides = {}, dependencies = {}) => {
-    const wikiStore = dependencies.wikiStore ?? { page: {} }
+    const wikiStore = dependencies.wikiStore ?? useWikiStore(createPinia())
     const component = new Function(
       'markRaw',
       'onWatcherCleanup',
@@ -42,9 +84,9 @@ describe('history revision list and comparison behavior', () => {
       () => '',
       () => '',
       dependencies.getErrorMessage ?? (error => (error instanceof Error ? error.message : String(error))),
-      dependencies.loadingStart ?? (() => {}),
-      dependencies.loadingStop ?? (() => {}),
-      dependencies.setLoading ?? (() => {}),
+      dependencies.loadingStart ?? loadingStart,
+      dependencies.loadingStop ?? loadingStop,
+      dependencies.setLoading ?? setLoading,
       dependencies.showNotification ?? (() => {}),
       wikiStore,
       () => ({})
@@ -103,6 +145,7 @@ describe('history revision list and comparison behavior', () => {
       }
     })
 
+    ownedInstances.push({ component, instance, wikiStore })
     return { component, instance, wikiStore }
   }
 
@@ -117,10 +160,12 @@ describe('history revision list and comparison behavior', () => {
       value => component.watch.diffTarget.call(instance, value),
       { flush: 'sync' }
     )
-    return () => {
+    const stop = () => {
       stopSource()
       stopTarget()
     }
+    ownedWatchers.push(stop)
+    return stop
   }
 
   const page = versionId => ({
@@ -149,27 +194,52 @@ describe('history revision list and comparison behavior', () => {
     await Promise.resolve()
     await Promise.resolve()
   }
+  const seedUnrelatedOwner = store => store.startLoading('unrelated-reader')
+  const expectHistoryOwners = (store, count) => {
+    expect(store.loadingCounts['unrelated-reader']).toBe(1)
+    const historyOwners = Object.entries(store.loadingCounts)
+      .filter(([name]) => name !== 'unrelated-reader')
+      .reduce((total, [, owners]) => total + owners, 0)
+    expect(historyOwners).toBe(count)
+    expect(store.isLoading).toBe(true)
+  }
+  const releaseUnrelatedOwner = store => {
+    store.stopLoading('unrelated-reader')
+    expect(store.isLoading).toBe(false)
+  }
 
   test('uses explicit comparison format choices and preserves trail scroll position', () => {
-    const trailEl = { scrollTop: 75 }
+    const trailEl = { scrollTop: 0 }
     const { instance } = createHistoryInstance({
-      $refs: { trailContainer: trailEl }
-    })
+      $refs: { trailContainer: trailEl },
+      source: { ...page(1), content: 'Original paragraph\n' },
+      target: { ...page(2), content: 'Updated paragraph\n' },
+      sourceReady: true,
+      targetReady: true,
+      diffSource: 1,
+      diffTarget: 2
+    }, { createPatch: createRealPatch, Diff2Html: RealDiff2Html })
 
     instance.trailScrollTop = 75
-    expect(instance.viewMode).toBe('line-by-line')
 
     instance.setViewMode('side-by-side')
     expect(instance.viewMode).toBe('side-by-side')
     expect(trailEl.scrollTop).toBe(75)
+    const sideBySide = JSDOM.fragment(instance.diffHTML)
+    expect(sideBySide.querySelectorAll('.d2h-file-side-diff')).toHaveLength(2)
+    expect(sideBySide.querySelector('.d2h-file-diff')).toBeNull()
 
+    trailEl.scrollTop = 0
     instance.setViewMode('line-by-line')
     expect(instance.viewMode).toBe('line-by-line')
     expect(trailEl.scrollTop).toBe(75)
+    const unified = JSDOM.fragment(instance.diffHTML)
+    expect(unified.querySelectorAll('.d2h-file-diff')).toHaveLength(1)
+    expect(unified.querySelector('.d2h-file-side-diff')).toBeNull()
   })
 
   test('supports live, historical, and initial-empty comparison selections', () => {
-    const trailEl = { scrollTop: 120 }
+    const trailEl = { scrollTop: 0 }
     const { instance } = createHistoryInstance({
       $refs: { trailContainer: trailEl }
     })
@@ -183,12 +253,14 @@ describe('history revision list and comparison behavior', () => {
     expect(trailEl.scrollTop).toBe(120)
 
     expect(instance.canSelectVersion(1)).toBe(true)
+    trailEl.scrollTop = 0
     instance.selectVersion(1)
     expect(instance.diffTarget).toBe(2)
     expect(instance.diffSource).toBe(1)
     expect(trailEl.scrollTop).toBe(120)
 
     expect(instance.canSelectVersion(2)).toBe(true)
+    trailEl.scrollTop = 0
     instance.selectVersion(2)
     expect(instance.diffTarget).toBe(1)
     expect(instance.diffSource).toBe(-1)
@@ -203,6 +275,7 @@ describe('history revision list and comparison behavior', () => {
 
     try {
       global.window = {
+        siteConfig: fixtureSiteConfig,
         scrollY: 150,
         innerWidth: 600,
         scrollTo: options => {
@@ -215,7 +288,7 @@ describe('history revision list and comparison behavior', () => {
       }
       global.document = { documentElement: {} }
 
-      const trailEl = { scrollTop: 60 }
+      const trailEl = { scrollTop: 0 }
       const headingEl = {
         getBoundingClientRect: () => ({ top: 450 }),
         focus: options => {
@@ -237,8 +310,10 @@ describe('history revision list and comparison behavior', () => {
 
       scrolledTo = null
       global.window.innerWidth = 1200
+      trailEl.scrollTop = 0
       instance.selectVersion(1)
       expect(scrolledTo).toBeNull()
+      expect(trailEl.scrollTop).toBe(60)
     } finally {
       global.window = originalWindow
       global.document = originalDocument
@@ -253,26 +328,25 @@ describe('history revision list and comparison behavior', () => {
           pending.set(versionId, resolve)
         })
     )
-    const loadingStart = vi.fn()
-    const loadingStop = vi.fn()
-    const { component, instance, wikiStore } = createHistoryInstance({ cache: [] }, { fetchPageVersion, loadingStart, loadingStop })
+    const { component, instance, wikiStore } = createHistoryInstance({ cache: [] }, { fetchPageVersion })
+    seedUnrelatedOwner(wikiStore)
     const stop = watchSelections(component, instance)
 
     instance.diffSource = 1
     instance.diffSource = 2
+    expectHistoryOwners(wikiStore, 2)
     pending.get(1)(page(1))
     await flushPendingWatch()
     expect(instance.source.versionId).toBe(0)
     expect(instance.sourceLoading).toBe(true)
+    expectHistoryOwners(wikiStore, 1)
 
     pending.get(2)(page(2))
     await flushPendingWatch()
     expect(instance.source.versionId).toBe(2)
     expect(instance.sourceLoading).toBe(false)
-    expect(loadingStart).toHaveBeenNthCalledWith(1, wikiStore, 'history-version-1')
-    expect(loadingStart).toHaveBeenNthCalledWith(2, wikiStore, 'history-version-2')
-    expect(loadingStop).toHaveBeenNthCalledWith(1, wikiStore, 'history-version-1')
-    expect(loadingStop).toHaveBeenNthCalledWith(2, wikiStore, 'history-version-2')
+    expectHistoryOwners(wikiStore, 0)
+    releaseUnrelatedOwner(wikiStore)
     stop()
   })
 
@@ -307,29 +381,36 @@ describe('history revision list and comparison behavior', () => {
           pending.set(versionId, resolve)
         })
     )
-    const loadingStart = vi.fn()
-    const loadingStop = vi.fn()
-    const { component, instance, wikiStore } = createHistoryInstance({ cache: [] }, { fetchPageVersion, loadingStart, loadingStop })
+    const { component, instance, wikiStore } = createHistoryInstance({ cache: [] }, { fetchPageVersion })
+    seedUnrelatedOwner(wikiStore)
     const stop = watchSelections(component, instance)
 
     instance.diffSource = 5
     instance.diffTarget = 6
     expect(instance.sourceLoading).toBe(true)
     expect(instance.targetLoading).toBe(true)
+    expectHistoryOwners(wikiStore, 2)
+    const sourceSignal = instance.sourceVersionController.signal
+    const targetSignal = instance.targetVersionController.signal
     component.beforeUnmount.call(instance)
     stop()
+    expect(sourceSignal.aborted).toBe(true)
+    expect(targetSignal.aborted).toBe(true)
 
     pending.get(5)(page(5))
+    await flushPendingWatch()
+    expectHistoryOwners(wikiStore, 1)
     pending.get(6)(page(6))
     await flushPendingWatch()
     expect(instance.source.versionId).toBe(0)
     expect(instance.target.versionId).toBe(0)
-    expect(instance.sourceLoading).toBe(true)
-    expect(instance.targetLoading).toBe(true)
-    expect(loadingStart).toHaveBeenNthCalledWith(1, wikiStore, 'history-version-5')
-    expect(loadingStart).toHaveBeenNthCalledWith(2, wikiStore, 'history-version-6')
-    expect(loadingStop).toHaveBeenNthCalledWith(1, wikiStore, 'history-version-5')
-    expect(loadingStop).toHaveBeenNthCalledWith(2, wikiStore, 'history-version-6')
+    expect(instance.sourceReady).toBe(false)
+    expect(instance.targetReady).toBe(false)
+    expect(instance.source.content).toBe('')
+    expect(instance.target.content).toBe('')
+    expect(instance.cache).toEqual([])
+    expectHistoryOwners(wikiStore, 0)
+    releaseUnrelatedOwner(wikiStore)
   })
 
   test('keeps the latest authoritative history refresh and loading state when responses resolve out of order', async () => {
@@ -340,28 +421,28 @@ describe('history revision list and comparison behavior', () => {
           pending.push({ offsetPage, offsetSize, resolve, reject })
         })
     )
-    const setLoading = vi.fn()
-    const { instance, wikiStore } = createHistoryInstance({ trail: [], cache: [] }, { fetchPageHistory, setLoading })
+    const { instance, wikiStore } = createHistoryInstance({ trail: [], cache: [] }, { fetchPageHistory })
+    seedUnrelatedOwner(wikiStore)
 
     const first = instance.loadHistory()
     const second = instance.loadHistory()
     expect(fetchPageHistory).toHaveBeenCalledTimes(2)
     expect(pending[0].offsetSize).toBe(25)
     expect(pending[1].offsetSize).toBe(25)
+    expectHistoryOwners(wikiStore, 2)
 
     pending[0].resolve({ total: 1, trail: [trailItem(2)] })
     expect(await first).toBe(false)
     expect(instance.trail).toEqual([])
     expect(instance.trailLoading).toBe(true)
+    expectHistoryOwners(wikiStore, 1)
 
     pending[1].resolve({ total: 1, trail: [trailItem(3)] })
     expect(await second).toBe(true)
     expect(instance.trail.map(item => item.versionId)).toEqual([3])
     expect(instance.trailLoading).toBe(false)
-    expect(setLoading).toHaveBeenNthCalledWith(1, wikiStore, 'history-trail-refresh', true)
-    expect(setLoading).toHaveBeenNthCalledWith(2, wikiStore, 'history-trail-refresh', true)
-    expect(setLoading).toHaveBeenNthCalledWith(3, wikiStore, 'history-trail-refresh', false)
-    expect(setLoading).toHaveBeenNthCalledWith(4, wikiStore, 'history-trail-refresh', false)
+    expectHistoryOwners(wikiStore, 0)
+    releaseUnrelatedOwner(wikiStore)
   })
 
   test('allows consecutive history pages after a successful load', async () => {
@@ -382,7 +463,6 @@ describe('history revision list and comparison behavior', () => {
 
     expect(await instance.loadMore()).toBe(true)
     expect(instance.loadingMore).toBe(false)
-    expect(instance.historyMoreController).toBeNull()
     expect(await instance.loadMore()).toBe(true)
     expect(instance.loadingMore).toBe(false)
     expect(instance.trail.map(item => item.versionId)).toEqual([3, 2, 1])
@@ -397,7 +477,6 @@ describe('history revision list and comparison behavior', () => {
           pending.push({ offsetPage, offsetSize, resolve, reject })
         })
     )
-    const setLoading = vi.fn()
     const { instance, wikiStore } = createHistoryInstance(
       {
         trailLoaded: true,
@@ -407,31 +486,32 @@ describe('history revision list and comparison behavior', () => {
         offsetPage: 0,
         cache: []
       },
-      { fetchPageHistory, setLoading }
+      { fetchPageHistory }
     )
+    seedUnrelatedOwner(wikiStore)
 
     const more = instance.loadMore()
     const refresh = instance.loadHistory()
     expect(fetchPageHistory).toHaveBeenCalledTimes(2)
     expect(pending[0].offsetPage).toBe(1)
     expect(pending[1].offsetPage).toBe(0)
+    expectHistoryOwners(wikiStore, 2)
 
     pending[0].resolve({ total: 3, trail: [trailItem(2)] })
     expect(await more).toBe(false)
     expect(instance.trail.map(item => item.versionId)).toEqual([3])
     expect(instance.trailLoading).toBe(true)
+    expectHistoryOwners(wikiStore, 1)
 
     pending[1].resolve({ total: 3, trail: [trailItem(3)] })
     expect(await refresh).toBe(true)
     expect(instance.trail.map(item => item.versionId)).toEqual([3])
     expect(instance.trailLoading).toBe(false)
-    expect(setLoading).toHaveBeenNthCalledWith(1, wikiStore, 'history-trail-refresh', true)
-    expect(setLoading).toHaveBeenNthCalledWith(2, wikiStore, 'history-trail-refresh', true)
-    expect(setLoading).toHaveBeenNthCalledWith(3, wikiStore, 'history-trail-refresh', false)
-    expect(setLoading).toHaveBeenNthCalledWith(4, wikiStore, 'history-trail-refresh', false)
+    expectHistoryOwners(wikiStore, 0)
+    releaseUnrelatedOwner(wikiStore)
   })
 
-  test('balances history refresh loading on unmount without clearing in-flight state', async () => {
+  test('releases history refresh ownership on unmount without publishing late revisions', async () => {
     const pending = []
     const fetchPageHistory = vi.fn(
       (_fetch, _pageId, offsetPage, offsetSize) =>
@@ -439,47 +519,73 @@ describe('history revision list and comparison behavior', () => {
           pending.push({ offsetPage, offsetSize, resolve, reject })
         })
     )
-    const setLoading = vi.fn()
-    const { component, instance, wikiStore } = createHistoryInstance({ trail: [], cache: [] }, { fetchPageHistory, setLoading })
+    const { component, instance, wikiStore } = createHistoryInstance({ trail: [], cache: [] }, { fetchPageHistory })
+    seedUnrelatedOwner(wikiStore)
 
     const first = instance.loadHistory()
     const second = instance.loadHistory()
     expect(instance.trailLoading).toBe(true)
+    expectHistoryOwners(wikiStore, 2)
     component.beforeUnmount.call(instance)
 
     pending[0].resolve({ total: 1, trail: [trailItem(2)] })
-    pending[1].resolve({ total: 1, trail: [trailItem(3)] })
     expect(await first).toBe(false)
+    expectHistoryOwners(wikiStore, 1)
+    pending[1].resolve({ total: 1, trail: [trailItem(3)] })
     expect(await second).toBe(false)
     expect(instance.trail).toEqual([])
-    expect(instance.trailLoading).toBe(true)
-    expect(setLoading).toHaveBeenNthCalledWith(1, wikiStore, 'history-trail-refresh', true)
-    expect(setLoading).toHaveBeenNthCalledWith(2, wikiStore, 'history-trail-refresh', true)
-    expect(setLoading).toHaveBeenNthCalledWith(3, wikiStore, 'history-trail-refresh', false)
-    expect(setLoading).toHaveBeenNthCalledWith(4, wikiStore, 'history-trail-refresh', false)
+    expectHistoryOwners(wikiStore, 0)
+    releaseUnrelatedOwner(wikiStore)
   })
 
-  test('balances restore loading on unmount without clearing the in-flight flag', async () => {
+  test('releases restore ownership on unmount without late notification or navigation', async () => {
+    const originalWindow = global.window
     let resolveRestore
-    const restorePageVersion = vi.fn(
-      () =>
-        new Promise(resolve => {
-          resolveRestore = resolve
-        })
-    )
-    const loadingStart = vi.fn()
-    const loadingStop = vi.fn()
-    const { component, instance, wikiStore } = createHistoryInstance({}, { restorePageVersion, loadingStart, loadingStop })
+    let restoreSignal
+    const notifications = vi.fn()
+    const setTimeout = vi.fn()
+    const assign = vi.fn()
+    const i18n = createI18nInstance()
+    await i18n.init({
+      lng: 'en',
+      resources: { en: { history: { restore: { success: 'Revision restored' } } } }
+    })
+    try {
+      global.window = {
+        siteConfig: fixtureSiteConfig,
+        fetch: (_url, init) => {
+          restoreSignal = init.signal
+          return new Promise(resolve => { resolveRestore = resolve })
+        },
+        setTimeout,
+        clearTimeout: vi.fn(),
+        location: { assign }
+      }
+      const restorePageVersion = fetch => fetch('/restore', {})
+      const { component, instance, wikiStore } = createHistoryInstance({
+        $t: i18n.t.bind(i18n),
+        isRestoreConfirmDialogShown: true
+      }, { restorePageVersion, showNotification: notifications })
+      seedUnrelatedOwner(wikiStore)
 
-    const restore = instance.restoreConfirm()
-    expect(instance.restoreLoading).toBe(true)
-    component.beforeUnmount.call(instance)
-    resolveRestore()
+      const restore = instance.restoreConfirm()
+      expect(instance.restoreLoading).toBe(true)
+      expectHistoryOwners(wikiStore, 1)
+      expect(restoreSignal.aborted).toBe(false)
+      component.beforeUnmount.call(instance)
+      expect(restoreSignal.aborted).toBe(true)
+      resolveRestore()
 
-    await restore
-    expect(instance.restoreLoading).toBe(true)
-    expect(loadingStart).toHaveBeenCalledWith(wikiStore, 'history-restore')
-    expect(loadingStop).toHaveBeenCalledWith(wikiStore, 'history-restore')
+      await restore
+      expectHistoryOwners(wikiStore, 0)
+      releaseUnrelatedOwner(wikiStore)
+      expect(notifications).not.toHaveBeenCalled()
+      expect(setTimeout).not.toHaveBeenCalled()
+      expect(assign).not.toHaveBeenCalled()
+      expect(instance.isRestoreConfirmDialogShown).toBe(true)
+    } finally {
+      global.window = originalWindow
+    }
   })
 
   test('blocks concurrent pagination and deduplicates overlapping revision IDs', async () => {
@@ -512,7 +618,6 @@ describe('history revision list and comparison behavior', () => {
     resolvePage({ total: 3, trail: [trailItem(3), trailItem(2), trailItem(2)] })
     expect(await first).toBe(true)
     expect(instance.trail.map(item => item.versionId)).toEqual([3, 2])
-    expect(new Set(instance.trail.map(item => item.versionId)).size).toBe(instance.trail.length)
   })
 
   test('surfaces pagination failures without dropping existing revisions and retries the same page', async () => {
@@ -536,10 +641,13 @@ describe('history revision list and comparison behavior', () => {
     expect(instance.paginationError).toBe('Older revisions unavailable')
     expect(instance.trail.map(item => item.versionId)).toEqual([3])
     expect(instance.loadingMore).toBe(false)
+    expect(instance.offsetPage).toBe(0)
 
     expect(await instance.loadMore()).toBe(true)
     expect(instance.paginationError).toBe('')
     expect(instance.trail.map(item => item.versionId)).toEqual([3, 2])
+    expect(fetchPageHistory.mock.calls.map(([, , offset]) => offset)).toEqual([1, 1])
+    expect(instance.offsetPage).toBe(1)
   })
 
   test('keeps failed revisions out of comparison and reports the error on either side', async () => {

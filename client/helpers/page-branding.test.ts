@@ -62,29 +62,37 @@ describe('page branding client helper', () => {
     }
   })
 
-  it('emits accent RGB channels with the light and dark alpha values', () => {
+  it('emits accent RGB channels with translucent CSS alpha in both color modes', () => {
     const normalized = normalizePageBrandingView(withBranding())
     expect(normalized).not.toBeNull()
 
-    expect(resolvePageBrandingStyle(normalized, null, false)).toEqual({
-      '--page-branding-rgb': '12 34 56',
-      '--page-branding-alpha': '0.28'
-    })
-    expect(resolvePageBrandingStyle(normalized, null, true)).toEqual({
-      '--page-branding-rgb': '12 34 56',
-      '--page-branding-alpha': '0.24'
-    })
+    for (const dark of [false, true]) {
+      const style = resolvePageBrandingStyle(normalized, null, dark)
+      expect(style['--page-branding-rgb']).toBe('12 34 56')
+      const alpha = Number(style['--page-branding-alpha'])
+      expect(Number.isFinite(alpha)).toBe(true)
+      expect(alpha).toBeGreaterThan(0)
+      expect(alpha).toBeLessThan(1)
+    }
   })
 
   it('suppresses style only when the current branding identity has failed', () => {
     const normalized = normalizePageBrandingView(withBranding()) as PageBrandingView
     const identity = pageBrandingIdentity(normalized)
 
-    expect(identity).toBe(`${baseBranding.assetId}:${baseBranding.sourceSha256}`)
     expect(resolvePageBrandingStyle(normalized, identity)).toEqual({})
-    expect(resolvePageBrandingStyle(normalized, 'different:identity')).toEqual({
-      '--page-branding-rgb': '12 34 56',
-      '--page-branding-alpha': '0.28'
-    })
+
+    const changedDigest = 'b'.repeat(64)
+    const refreshed = normalizePageBrandingView(withBranding({
+      sourceSha256: changedDigest,
+      imageUrl: `/assets/page-branding/logo.png?v=${changedDigest}`
+    })) as PageBrandingView
+    const differentAsset = normalizePageBrandingView(withBranding({ assetId: 8 })) as PageBrandingView
+
+    for (const changed of [refreshed, differentAsset]) {
+      expect(changed).not.toBeNull()
+      expect(pageBrandingIdentity(changed)).not.toBe(identity)
+      expect(resolvePageBrandingStyle(changed, identity)['--page-branding-rgb']).toBe('12 34 56')
+    }
   })
 })

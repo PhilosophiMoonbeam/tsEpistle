@@ -9,18 +9,25 @@ const unsigned = {
   action: { kind: 'navigate' as const, url: 'https://example.com/docs', attestedUrls: ['https://example.com/docs'] }
 }
 
+const expectProtocolError = (verify: () => unknown, code: string): void => {
+  let error: unknown
+  try { verify() } catch (caught) { error = caught }
+  expect(error).toBeInstanceOf(BrowserProtocolError)
+  expect(error).toMatchObject({ code, status: 401 })
+}
+
 describe('browser worker signed envelopes', () => {
   it('authenticates one fresh request and rejects replay', () => {
     const envelope = signBrowserEnvelope(unsigned, secret, now)
     const verifier = new BrowserEnvelopeVerifier(new Map([['current', secret]]), { now: () => now.getTime() })
     expect(verifier.verify(envelope)).toEqual(envelope)
-    expect(() => verifier.verify(envelope)).toThrowError(new BrowserProtocolError('BROWSER_NONCE_REPLAYED', 'Browser request nonce has already been used'))
+    expectProtocolError(() => verifier.verify(envelope), 'BROWSER_NONCE_REPLAYED')
   })
 
   it('rejects tampering, unknown keys and expired requests', () => {
     const envelope = signBrowserEnvelope(unsigned, secret, now)
-    expect(() => new BrowserEnvelopeVerifier(new Map([['current', secret]]), { now: () => now.getTime() }).verify({ ...envelope, ownerId: 8 })).toThrow('signature is invalid')
-    expect(() => new BrowserEnvelopeVerifier(new Map(), { now: () => now.getTime() }).verify(envelope)).toThrow('signing key is unknown')
-    expect(() => new BrowserEnvelopeVerifier(new Map([['current', secret]]), { now: () => now.getTime() + 31_000 }).verify(envelope)).toThrow('outside the accepted window')
+    expectProtocolError(() => new BrowserEnvelopeVerifier(new Map([['current', secret]]), { now: () => now.getTime() }).verify({ ...envelope, ownerId: 8 }), 'BROWSER_SIGNATURE_INVALID')
+    expectProtocolError(() => new BrowserEnvelopeVerifier(new Map(), { now: () => now.getTime() }).verify(envelope), 'BROWSER_KEY_UNKNOWN')
+    expectProtocolError(() => new BrowserEnvelopeVerifier(new Map([['current', secret]]), { now: () => now.getTime() + 31_000 }).verify(envelope), 'BROWSER_ENVELOPE_EXPIRED')
   })
 })

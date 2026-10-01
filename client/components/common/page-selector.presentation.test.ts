@@ -339,7 +339,6 @@ describe('Browse page selector presentation', () => {
     candidate!.checked = true
     candidate!.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
     await settle()
-    expect(host.querySelector('.page-selector__candidate-reason')?.textContent).toContain('Automatically included self-link changes')
     const referrerCard = Array.from(host.querySelectorAll('.page-selector__candidate'))
       .find(card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Referrer page')
     expect(referrerCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Release notes](/en/docs/current)')
@@ -347,11 +346,21 @@ describe('Browse page selector presentation', () => {
     const selfLinkCard = Array.from(host.querySelectorAll('.page-selector__candidate'))
       .find(card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Moved page')
     expect(selfLinkCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Current](/en/docs/current)')
+    expect(selfLinkCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Current](/en/docs/archive)')
+    expect(selfLinkCard?.querySelector('input[type="checkbox"]')).toBeNull()
 
     await clickButton('Review selected changes')
     expect(requests[1]?.input.selectedPageIds).toEqual([21])
-    expect(host.querySelector('.page-selector__link-review h3')?.textContent).toBe('Review exact source edits')
-    expect(host.querySelectorAll('.page-selector__diff code')).toHaveLength(4)
+    const confirmation = host.querySelector('section.page-selector__link-review')
+    const confirmationHeading = confirmation?.querySelector('h3')
+    expect(confirmationHeading?.id).toBeTruthy()
+    expect(confirmation?.getAttribute('aria-labelledby')).toBe(confirmationHeading?.id)
+    expect(Array.from(confirmation?.querySelectorAll('.page-selector__diff code') ?? [], code => code.textContent)).toEqual([
+      '[Release notes](/en/docs/current)',
+      '[Release notes](/en/docs/archive)',
+      '[Current](/en/docs/current)',
+      '[Current](/en/docs/archive)'
+    ])
 
     await clickButton('Move and update selected links')
     expect(submittedMove).toEqual({
@@ -364,7 +373,6 @@ describe('Browse page selector presentation', () => {
     expect(host.querySelector('.page-selector__move-result')?.textContent).toContain('source revision 6')
     expect(host.querySelector('.page-selector__projection-notice')?.textContent).toContain('pending')
     expect(acknowledgement).toBeUndefined()
-    expect(browserWindow.location.pathname).toBe('/en/docs/current')
     instance.currentLocale = 'fr'
     instance.currentPath = 'docs/another-destination'
     await settle()
@@ -428,9 +436,17 @@ describe('Browse page selector presentation', () => {
     await settle()
 
     expect(submissions).toBe(1)
-    expect(host.querySelector('.page-selector__link-review h3')?.textContent).toBe('Move outcome could not be confirmed')
+    const uncertainAlert = host.querySelector('section.page-selector__link-review[role="alert"]')
+    const uncertainHeading = uncertainAlert?.querySelector('h3')
+    expect(uncertainAlert).not.toBeNull()
+    expect(uncertainHeading?.id).toBeTruthy()
+    expect(uncertainAlert?.getAttribute('aria-labelledby')).toBe(uncertainHeading?.id)
+    expect(Array.from(uncertainAlert?.querySelectorAll('button') ?? [], button => button.textContent?.trim())).toEqual(['Refresh page'])
     expect(host.querySelector('.page-selector__move-result')).toBeNull()
     expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Refresh page')).toBe(true)
     expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Select')).toBe(false)
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .filter(button => !button.disabled)
+      .every(button => button.textContent?.trim() === 'Refresh page')).toBe(true)
   })
 })

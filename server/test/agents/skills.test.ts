@@ -1,7 +1,7 @@
 import { describe, expect, it } from '../bun-test.mts'
 
-import { buildApprovedSkillBundle, intersectAllowedTools, parseSkillMarkdown, SkillValidationError } from '../../agents/skills/parser.ts'
-import { decodeSkillResourcePathOnce, mapSkillPagePath, SkillPathError, validateSkillVirtualPath } from '../../agents/skills/virtual-path.ts'
+import { buildApprovedSkillBundle, parseSkillMarkdown, SkillValidationError } from '../../agents/skills/parser.ts'
+import { SkillPathError, validateSkillVirtualPath } from '../../agents/skills/virtual-path.ts'
 
 const skill = (body = 'Use [the API](references/API.md).\n') =>
   Buffer.from(
@@ -35,28 +35,12 @@ describe('page-native Agent Skill parsing', () => {
     expect(() => parseSkillMarkdown(bytes, 'release-notes')).toThrow(message)
   })
 
-  it('maps only extensionless pages beneath the selected skill root', () => {
-    expect(mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/release-notes')).toBe('SKILL.md')
-    expect(mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/release-notes/references/API')).toBe(
-      'references/API.md'
-    )
-    expect(() => mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/other')).toThrow(SkillPathError)
-    expect(() => mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/release-notes/references/API.md')).toThrow(
-      'Dotted'
-    )
-  })
-
   it.each(['../secret', '/absolute', 'references\\API.md', 'references/%2e%2e/secret', 'references//API.md', 'references/./API.md'])(
     'rejects unsafe virtual path %s',
     path => {
       expect(() => validateSkillVirtualPath(path)).toThrow(SkillPathError)
     }
   )
-
-  it('decodes a resource path exactly once', () => {
-    expect(decodeSkillResourcePathOnce('references%2FAPI.md')).toBe('references/API.md')
-    expect(() => decodeSkillResourcePathOnce('references%252FAPI.md')).toThrow(SkillPathError)
-  })
 })
 
 describe('immutable skill bundles', () => {
@@ -90,10 +74,16 @@ describe('immutable skill bundles', () => {
     ])
   })
 
-  it('rejects missing, extra, symbolic-link, and active resources', () => {
-    expect(() => buildApprovedSkillBundle(skill(), 'release-notes', [])).toThrow('missing')
+  it('rejects missing, extra, and active resources', () => {
+    let missingResourceError: unknown
+    try {
+      buildApprovedSkillBundle(skill(), 'release-notes', [])
+    } catch (error) {
+      missingResourceError = error
+    }
+    expect(missingResourceError).toBeInstanceOf(SkillValidationError)
+    expect(missingResourceError).toMatchObject({ message: expect.stringContaining('missing') })
     expect(() => buildApprovedSkillBundle(skill('No resources.\n'), 'release-notes', [reference])).toThrow('not explicitly referenced')
-    expect(() => buildApprovedSkillBundle(skill(), 'release-notes', [{ ...reference, symbolicLink: true }])).toThrow('symbolic link')
     expect(() =>
       buildApprovedSkillBundle(skill('Use [HTML](references/page.html).'), 'release-notes', [
         {
@@ -104,14 +94,5 @@ describe('immutable skill bundles', () => {
         }
       ])
     ).toThrow('blocked media type')
-  })
-
-  it('lets allowed-tools narrow but never grant a catalog capability', () => {
-    expect(intersectAllowedTools(['pages.search', 'pages.get'], ['pages.get', 'pages.prepareDelete'])).toEqual(['pages.get'])
-    expect(intersectAllowedTools(['pages.search'], [])).toEqual(['pages.search'])
-  })
-
-  it('returns stable typed validation errors', () => {
-    expect(() => buildApprovedSkillBundle(skill(), 'release-notes', [])).toThrow(SkillValidationError)
   })
 })

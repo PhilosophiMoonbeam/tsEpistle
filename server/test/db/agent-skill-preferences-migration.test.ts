@@ -9,6 +9,8 @@ const latestSessionId = '00000000-0000-4000-8000-000000000002'
 const skillId = '00000000-0000-4000-8000-000000000003'
 const oldVersionId = '00000000-0000-4000-8000-000000000004'
 const currentVersionId = '00000000-0000-4000-8000-000000000005'
+const olderOnlySkillId = '00000000-0000-4000-8000-000000000006'
+const olderOnlyVersionId = '00000000-0000-4000-8000-000000000007'
 
 const createLegacySchema = async (db: Knex): Promise<void> => {
   await db.schema.createTable('users', table => table.integer('id').primary())
@@ -46,13 +48,18 @@ describe('agent skill preference migration', () => {
       { id: oldSessionId, ownerId: userId, updatedAt: new Date('2026-08-16T00:00:00.000Z'), deletedAt: null },
       { id: latestSessionId, ownerId: userId, updatedAt: new Date('2026-08-17T00:00:00.000Z'), deletedAt: null }
     ])
-    await db('agentSkills').insert({ id: skillId, currentVersionId })
+    await db('agentSkills').insert([
+      { id: skillId, currentVersionId },
+      { id: olderOnlySkillId, currentVersionId: olderOnlyVersionId }
+    ])
     await db('agentSkillVersions').insert([
       { id: oldVersionId, skillId },
-      { id: currentVersionId, skillId }
+      { id: currentVersionId, skillId },
+      { id: olderOnlyVersionId, skillId: olderOnlySkillId }
     ])
     await db('agentSessionSkills').insert([
       { sessionId: oldSessionId, skillVersionId: currentVersionId, ordinal: 0, selectedBy: userId, selectedAt: new Date('2026-08-16T00:00:00.000Z') },
+      { sessionId: oldSessionId, skillVersionId: olderOnlyVersionId, ordinal: 1, selectedBy: userId, selectedAt: new Date('2026-08-16T00:00:00.000Z') },
       { sessionId: latestSessionId, skillVersionId: oldVersionId, ordinal: 0, selectedBy: userId, selectedAt: new Date('2026-08-17T00:00:00.000Z') }
     ])
   })
@@ -64,7 +71,7 @@ describe('agent skill preference migration', () => {
 
     expect(await db.schema.hasTable('agentSessionSkills')).toBe(false)
     expect(await db('agentUserSkillPreferences').select('ownerId', 'skillId', 'ordinal')).toEqual([{ ownerId: userId, skillId, ordinal: 0 }])
-    expect(await db('agentSkillVersions').orderBy('id').pluck('id')).toEqual([oldVersionId, currentVersionId])
+    expect(await db('agentSkillVersions').orderBy('id').pluck('id')).toEqual([oldVersionId, currentVersionId, olderOnlyVersionId])
 
     await down(db)
     expect(await db.schema.hasTable('agentUserSkillPreferences')).toBe(false)

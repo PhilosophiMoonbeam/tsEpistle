@@ -58,6 +58,8 @@ describe('graph/resolvers/authentication metrics state', () => {
     const resolver = await loadResolver()
 
     expect(resolver.AuthenticationQuery.metricsState()).toBe(false)
+    global.WIKI.config.metrics.isEnabled = true
+    expect(resolver.AuthenticationQuery.metricsState()).toBe(true)
   })
 
   it('updates the metrics state and reinitializes metrics', async () => {
@@ -73,12 +75,17 @@ describe('graph/resolvers/authentication metrics state', () => {
 
   it('rolls back the runtime state when saving fails', async () => {
     saveToDb.mockRejectedValueOnce(new Error('save failed'))
+    const initializedStates = []
+    initMetrics.mockImplementation(async () => {
+      initializedStates.push(global.WIKI.config.metrics.isEnabled)
+      return true
+    })
     const resolver = await loadResolver()
 
     const result = await resolver.AuthenticationMutation.setMetricsState(null, { enabled: true }, null)
 
     expect(global.WIKI.config.metrics.isEnabled).toBe(false)
-    expect(initMetrics).toHaveBeenCalledTimes(2)
+    expect(initializedStates).toEqual([true, false])
     expect(result.responseResult.succeeded).toBe(false)
   })
 

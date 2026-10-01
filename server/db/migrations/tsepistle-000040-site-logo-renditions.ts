@@ -331,7 +331,8 @@ export const up = async (knex: Knex): Promise<void> => {
       }
       const legacyRevisionIds = legacyWork.map(row => row.id)
       if (legacyRevisionIds.length > 0) {
-        await transaction(REVISIONS).whereIn('id', legacyRevisionIds).update({
+        // Cancelling work supersedes unstarted history without inventing a processing start.
+        await transaction(REVISIONS).whereIn('id', legacyRevisionIds).whereNotNull('startedAt').update({
           status: 'failed',
           errorCode: 'PROCESSING_FAILED',
           completedAt: now,

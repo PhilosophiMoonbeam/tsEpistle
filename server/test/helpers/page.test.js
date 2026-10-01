@@ -49,31 +49,9 @@ describe('helpers/page/injectPageMetadata', () => {
     createdAt: new Date('2019-01-01')
   }
 
-  it('returns the page content by default when content type is unknown', () => {
+  it('preserves supported AsciiDoc content without a metadata envelope', () => {
     const expected = 'TEST CONTENT'
-    const result = injectPageMetadata(page)
-    expect(result).toEqual(expected)
-  })
-
-  it('injects metadata for markdown contents', () => {
-    const markdownPage = {
-      ...page,
-      contentType: 'markdown',
-      editorKey: 'markdown'
-    }
-
-    const expected = `---
-title: ${markdownPage.title}
-description: ${markdownPage.description}
-published: ${markdownPage.isPublished.toString()}
-date: ${markdownPage.updatedAt}
-tags:\x20
-editor: ${markdownPage.editorKey}
-dateCreated: ${markdownPage.createdAt}\n---
-
-TEST CONTENT`
-
-    const result = injectPageMetadata(markdownPage)
+    const result = injectPageMetadata({ ...page, contentType: 'asciidoc', editorKey: 'asciidoc' })
     expect(result).toEqual(expected)
   })
 

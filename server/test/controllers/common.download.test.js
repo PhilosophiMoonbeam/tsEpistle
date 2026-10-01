@@ -203,7 +203,7 @@ describe('common page downloads', () => {
     global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce({ ...currentPage, extra: { okf: { type: '' } } })
     const res = response()
 
-    await expect(download(request({}, ['read:source']), res)).rejects.toThrow('extra.okf must contain valid OKF metadata')
+    await expect(download(request({}, ['read:source']), res)).rejects.toThrow(TypeError)
     expect(res.send).not.toHaveBeenCalled()
   })
 })

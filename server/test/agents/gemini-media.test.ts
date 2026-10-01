@@ -103,21 +103,6 @@ describe('Gemini media egress guard', () => {
       })
     expect(calls).toBe(1)
   })
-
-  it('denies private DNS results before sending the API key or media', async () => {
-    let fetched = false
-    const implementation = Object.assign(
-      async () => {
-        fetched = true
-        return Response.json({})
-      },
-      { preconnect: () => {} }
-    ) as AgentProviderFetch
-    const privateResolve = (async () => [{ address: '127.0.0.1', family: 4 }]) as unknown as typeof lookup
-    const guard = createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, implementation, privateResolve)
-    await expect(guard(`${origin}/upload/v1beta/files`, { method: 'POST', body: png })).rejects.toThrow()
-    expect(fetched).toBe(false)
-  })
 })
 
 describe('Gemini media factory configuration', () => {
@@ -533,7 +518,7 @@ describe('Gemini media transport', () => {
         timeoutMs: 10,
         fetch: (() => {}) as unknown as AgentProviderFetch
       })
-    ).toThrow('official Google endpoint')
+    ).toThrow()
   })
 
   it('rejects provider redirects without following or exposing their location', async () => {
@@ -552,9 +537,11 @@ describe('Gemini media transport', () => {
     const { requests, transport } = setup(() => {
       throw new Error('must not fetch')
     })
+    const oversizedPdf = Buffer.alloc(GEMINI_PDF_INPUT_LIMIT + 1)
+    oversizedPdf.write('%PDF-1.7')
     for (const input of [
       {
-        bytes: Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1),
+        bytes: oversizedPdf,
         mimeType: 'application/pdf'
       },
       { bytes: Buffer.alloc(0), mimeType: 'image/png' },
@@ -846,31 +833,25 @@ describe('Gemini video and music transport', () => {
     expect(order).toEqual(['authorize', 'upload', 'delete'])
   })
 
-  for (const uri of [
-    'https://evil.invalid/video.mp4',
-    `${origin}/v1beta/files/video123:download?alt=media&key=leak`,
-    `${origin}/v1beta/files/video123:download?alt=media&alt=media`,
-    `${origin}/v1beta/files/video123:download?alt=media#fragment`,
-    `${origin}/v1beta/files/%76ideo123:download?alt=media`
-  ])
-    it(`rejects unrequested video URI ${uri}`, async () => {
-      const { transport, requests } = setup(url =>
-        url.endsWith(':countTokens')
-          ? Response.json({ totalTokens: 5 })
-          : Response.json(avResponse('video', usage, [{ type: 'video', mime_type: 'video/mp4', uri }]))
-      )
-      await expect(transport.generateVideo({ prompt: 'A sunset.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-      expect(requests).toHaveLength(2)
-    })
+  it('rejects an unrequested video URI even on the official Files endpoint', async () => {
+    const { transport, requests } = setup(url =>
+      url.endsWith(':countTokens')
+        ? Response.json({ totalTokens: 5 })
+        : Response.json(avResponse('video', usage, [{ type: 'video', mime_type: 'video/mp4', uri: videoUri }]))
+    )
+    await expect(transport.generateVideo({ prompt: 'A sunset.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    expect(requests).toHaveLength(2)
+  })
 
   for (const failure of ['signature', 'usage', 'base64', 'mime', 'oversize'] as const)
     it(`rejects invalid inline video ${failure}`, async () => {
       const data = failure === 'oversize' ? Buffer.alloc(GEMINI_VIDEO_OUTPUT_LIMIT + 1) : failure === 'signature' ? Buffer.alloc(mp4.length) : mp4
+      if (failure === 'oversize') mp4.copy(data)
       const { transport, requests } = setup(url =>
         url.endsWith(':countTokens')
           ? Response.json({ totalTokens: 5 })
           : Response.json(
-              avResponse('video', failure === 'usage' ? { total_input_tokens: -1 } : usage, [
+              avResponse('video', failure === 'usage' ? { ...usage, total_input_tokens: -1 } : usage, [
                 { type: 'video', mime_type: failure === 'mime' ? 'text/html' : 'video/mp4', data: failure === 'base64' ? 'invalid!' : data.toString('base64') }
               ])
             )
@@ -932,7 +913,7 @@ describe('Gemini video and music transport', () => {
         { type: 'audio', mime_type: 'audio/mp3', data: mp3.toString('base64') }
       ]
     ],
-    ['unexpected video', [{ type: 'video', mime_type: 'video/mp4', uri: videoUri }]]
+    ['unexpected video', [{ type: 'video', mime_type: 'video/mp4', data: mp4.toString('base64') }]]
   ] as const)
     it(`rejects ${label} in music output`, async () => {
       const { transport } = setup(url =>

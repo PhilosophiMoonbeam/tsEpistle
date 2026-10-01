@@ -1,7 +1,6 @@
 import { describe, expect, it } from './bun-test.mts'
 
 import {
-  createOkfPageDocument,
   exportOkfLinks,
   importOkfLinks,
   mutateOkfMetadata,
@@ -107,7 +106,9 @@ describe('OKF v0.2 documents', () => {
     const first = renderOkfDocument(parsed.metadata, parsed.body)
     const second = renderOkfDocument(parseOkfDocument(first).metadata, parseOkfDocument(first).body)
     expect(second).toBe(first)
-    expect(first.indexOf('type: Playbook')).toBeLessThan(first.indexOf('extension_family:'))
+    const roundTripped = parseOkfDocument(first)
+    expect(roundTripped.metadata).toEqual(parsed.metadata)
+    expect(roundTripped.body).toBe(parsed.body)
   })
 
   it('bounds aggregate canonical frontmatter across validation, mutation, import, and rendering', () => {
@@ -244,28 +245,6 @@ describe('OKF page interchange', () => {
       expect(parseOkfFilePath(invalid)).toBeNull()
   })
 
-  it('exports legacy pages as conformant concepts with explicit authorship', () => {
-    const result = createOkfPageDocument({
-      locale: 'en',
-      path: 'handbook/start',
-      title: 'Start here',
-      description: 'Entry point.',
-      tags: ['handbook'],
-      content: '# Start here\n\nSee [Core](/en/services/core).\n',
-      updatedAt: '2026-08-22T12:00:00Z',
-      authorId: 7
-    })
-    expect(result).toMatchObject({
-      version: '0.2',
-      conceptId: 'en/handbook/start',
-      filePath: 'en/handbook/start.md',
-      metadata: { type: 'Reference', title: 'Start here', tags: ['handbook'], generated: { by: 'human:7' } },
-      trust: { trustTier: 'unverified', status: 'stable' }
-    })
-    expect(result.markdown).toContain('[Core](/en/services/core.md)')
-    expect(result.sha256).toMatch(/^[a-f0-9]{64}$/u)
-  })
-
   it('strictly mutates metadata, preserves extensions, and owns trust provenance', () => {
     const existing = {
       type: 'Metric',
@@ -307,19 +286,9 @@ describe('OKF page interchange', () => {
         knowledgeChanged: true
       })
     ).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_VERIFIED' }))
-    expect(() =>
-      createOkfPageDocument({
-        locale: 'en',
-        path: 'bad',
-        title: 'Bad',
-        description: '',
-        tags: [],
-        content: '# Bad',
-        updatedAt: '2026-08-22T12:00:00Z',
-        authorId: 7,
-        metadata: { type: 'Reference', tags: [''] }
-      })
-    ).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_TAGS' }))
+    expect(() => renderOkfDocument({ type: 'Reference', tags: [''] }, '# Bad')).toThrow(
+      expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_TAGS' })
+    )
   })
 
   it('replaces editable authority without replacing server-owned trust', () => {

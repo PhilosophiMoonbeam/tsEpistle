@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto'
-import fs from 'node:fs'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
 import type { DurableJob } from '../../core/durable-jobs.ts'
 import { MigrationPreflightError, preflightMigrations } from '../../db/migration-preflight.ts'
 import { MIGRATION_LINEAGE_V1 } from '../../db/migration-contract.ts'
 import { up as createSiteLogoAuthority } from '../../db/migrations/tsepistle-000013-site-logo-authority.ts'
 import { up as upgradeSiteLogoRenditions } from '../../db/migrations/tsepistle-000040-site-logo-renditions.ts'
+import { up as upgradeSiteLogoTransparentIcons } from '../../db/migrations/tsepistle-000041-site-logo-transparent-icons.ts'
 import { down as downScarlettNativeAdaptations, up as upScarlettNativeAdaptations } from '../../db/migrations/tsepistle-000048-scarlett-native-adaptations.ts'
 import { cleanupSiteLogoRevisions } from '../../jobs/site-logo-process.ts'
 
@@ -309,19 +310,7 @@ describe('database migration preflight', () => {
   })
 })
 
-const siteLogoDatabaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const siteLogoPasswordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const siteLogoPassword = siteLogoPasswordFile ? fs.readFileSync(siteLogoPasswordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const siteLogoConnection =
-  siteLogoDatabaseName.endsWith('_site_logo_test') && siteLogoPassword
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        password: siteLogoPassword,
-        database: siteLogoDatabaseName
-      }
-    : null
+const siteLogoConnection = getPostgresTestConnection('_site_logo_test', import.meta.path)
 const siteLogoMigrationSuite = siteLogoConnection ? describe : describe.skip
 
 const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
@@ -606,22 +595,28 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
       medianStroke: 4
     })
   })
-  it('backfills one v6 successor, cancels legacy work, and preserves the active v5 bundle', async () => {
+  it.each([false, true])('backfills successors, cancels legacy work, and preserves the active v5 bundle (continue to v7: %s)', async continueToV7 => {
     await createSiteLogoAuthority(postgres)
 
     const now = new Date('2026-09-10T00:00:00.000Z')
     const sourceBytes = Buffer.from('legacy-source')
+    const desiredSourceBytes = continueToV7 ? sourceBytes : Buffer.from('legacy-desired-source')
     const logoBytes = Buffer.from('legacy-logo')
     const particleBytes = Buffer.alloc(68, 1)
     const staticBytes = Buffer.from('legacy-static')
     const sourceHash = digest(sourceBytes)
+    const desiredSourceHash = digest(desiredSourceBytes)
     const logoHash = digest(logoBytes)
     const particleHash = digest(particleBytes)
     const staticHash = digest(staticBytes)
     const activeRevisionId = '00000000-0000-4000-8000-000000000021'
     const desiredRevisionId = '00000000-0000-4000-8000-000000000022'
     const legacyJobId = '00000000-0000-4000-8000-000000000023'
+    const runningRevisionId = '00000000-0000-4000-8000-000000000024'
+    const runningJobId = '00000000-0000-4000-8000-000000000025'
+    const startedAt = new Date('2026-09-10T00:01:00.000Z')
 
+    await postgres('users').insert({ id: 7 })
     await postgres('siteLogoObjects').insert([
       { kind: 'source', sha256: sourceHash, bytes: sourceBytes, byteLength: sourceBytes.byteLength, contentType: 'image/png', createdAt: now },
       { kind: 'logo-png', sha256: logoHash, bytes: logoBytes, byteLength: logoBytes.byteLength, contentType: 'image/png', createdAt: now },
@@ -640,6 +635,48 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
         byteLength: staticBytes.byteLength,
         contentType: 'image/png',
         createdAt: now
+      }
+    ])
+    if (!continueToV7) {
+      await postgres('siteLogoObjects').insert({
+        kind: 'source',
+        sha256: desiredSourceHash,
+        bytes: desiredSourceBytes,
+        byteLength: desiredSourceBytes.byteLength,
+        contentType: 'image/png',
+        createdAt: now
+      })
+    }
+    const pendingJob = {
+      id: legacyJobId,
+      type: 'process-site-logo',
+      version: 3,
+      payload: JSON.stringify({ revisionId: desiredRevisionId, retrySequence: 0 }),
+      state: 'pending',
+      attempts: 0,
+      maxAttempts: 5,
+      nextRunAt: now,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: null,
+      deduplicationKey: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null
+    }
+    await postgres('durableJobs').insert([
+      pendingJob,
+      {
+        ...pendingJob,
+        id: runningJobId,
+        payload: JSON.stringify({ revisionId: runningRevisionId, retrySequence: 0 }),
+        state: 'running',
+        attempts: 1,
+        leaseOwner: 'legacy-logo-worker',
+        leaseToken: '00000000-0000-4000-8000-000000000026',
+        leaseExpiresAt: new Date('2099-09-10T00:02:00.000Z'),
+        updatedAt: startedAt
       }
     ])
     await postgres('siteLogoRevisions').insert([
@@ -668,63 +705,159 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
       {
         id: desiredRevisionId,
         sourceKind: 'source',
-        sourceHash,
+        sourceHash: desiredSourceHash,
         pipelineVersion: 5,
         status: 'pending',
         jobId: legacyJobId,
         retrySequence: 0,
+        requestedBy: 7,
         createdAt: now,
         updatedAt: now
+      },
+      {
+        id: runningRevisionId,
+        sourceKind: 'source',
+        sourceHash,
+        pipelineVersion: 5,
+        status: 'running',
+        jobId: runningJobId,
+        retrySequence: 0,
+        requestedBy: 7,
+        createdAt: now,
+        updatedAt: startedAt,
+        startedAt
       }
     ])
-    await postgres('durableJobs').insert({
-      id: legacyJobId,
-      type: 'process-site-logo',
-      version: 3,
-      payload: JSON.stringify({ revisionId: desiredRevisionId, retrySequence: 0 }),
-      state: 'pending',
-      attempts: 0,
-      maxAttempts: 5,
-      nextRunAt: now,
-      leaseOwner: null,
-      leaseToken: null,
-      leaseExpiresAt: null,
-      lastError: null,
-      deduplicationKey: null,
-      createdAt: now,
-      updatedAt: now,
-      completedAt: null
-    })
     await postgres('siteLogoState').where({ id: 1 }).update({ desiredRevisionId, activeRevisionId, updatedAt: now })
+    const historicalPending = await postgres('siteLogoRevisions').where({ id: desiredRevisionId }).first()
+    const historicalActive = await postgres('siteLogoRevisions').where({ id: activeRevisionId }).first()
+    const historicalRunning = await postgres('siteLogoRevisions').where({ id: runningRevisionId }).first()
+    const historicalObjects = await postgres('siteLogoObjects').orderBy(['kind', 'sha256'])
+    const historicalJobs = await postgres('durableJobs').orderBy('id')
+    const historicalState = await postgres('siteLogoState').where({ id: 1 }).first()
 
     await upgradeSiteLogoRenditions(postgres)
 
     const state = await postgres('siteLogoState').where({ id: 1 }).first()
+    expect(state).toEqual({ ...historicalState, desiredRevisionId: state.desiredRevisionId, updatedAt: state.updatedAt })
     expect(state?.activeRevisionId).toBe(activeRevisionId)
     expect(state?.desiredRevisionId).not.toBe(desiredRevisionId)
-    expect(await postgres('siteLogoObjects').where({ kind: 'logo-png', sha256: logoHash }).first('bytes')).toEqual({ bytes: logoBytes })
-    expect(await postgres('siteLogoRevisions').where({ id: activeRevisionId }).first('status', 'pipelineVersion', 'logoPngHash')).toEqual({
-      status: 'ready',
-      pipelineVersion: 5,
-      logoPngHash: logoHash
+    expect(await postgres('siteLogoObjects').orderBy(['kind', 'sha256'])).toEqual(historicalObjects)
+    expect(await postgres('siteLogoRevisions').where({ id: activeRevisionId }).first(Object.keys(historicalActive))).toEqual(historicalActive)
+    expect(await postgres('siteLogoRevisions').where({ id: desiredRevisionId }).first(Object.keys(historicalPending))).toEqual(historicalPending)
+    const retiredRunning = await postgres('siteLogoRevisions').where({ id: runningRevisionId }).first(Object.keys(historicalRunning))
+    expect(retiredRunning.completedAt).toEqual(expect.any(Date))
+    expect(retiredRunning).toEqual({
+      ...historicalRunning,
+      status: 'failed',
+      errorCode: 'PROCESSING_FAILED',
+      completedAt: retiredRunning.completedAt,
+      retiredAt: retiredRunning.completedAt,
+      updatedAt: retiredRunning.completedAt
     })
-    expect(await postgres('siteLogoRevisions').where({ id: desiredRevisionId }).first('status', 'errorCode', 'retiredAt')).toEqual(
-      expect.objectContaining({ status: 'failed', errorCode: 'PROCESSING_FAILED', retiredAt: expect.anything() })
-    )
-    expect(await postgres('durableJobs').where({ id: legacyJobId }).first('state', 'version')).toEqual({ state: 'cancelled', version: 3 })
+    for (const historicalJob of historicalJobs) {
+      const cancelled = await postgres('durableJobs').where({ id: historicalJob.id }).first()
+      expect(cancelled.completedAt).toEqual(expect.any(Date))
+      expect(cancelled).toEqual({
+        ...historicalJob,
+        state: 'cancelled',
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        lastError: expect.any(String),
+        completedAt: cancelled.completedAt,
+        updatedAt: cancelled.completedAt
+      })
+    }
 
     const successors = await postgres('siteLogoRevisions').where({ pipelineVersion: 6 })
     expect(successors).toHaveLength(1)
+    expect(state?.desiredRevisionId).toBe(successors[0]?.id)
     expect(successors[0]).toEqual(
       expect.objectContaining({
-        sourceHash,
+        sourceKind: 'source',
+        sourceHash: desiredSourceHash,
         pipelineVersion: 6,
         status: 'pending',
-        retrySequence: 0
+        retrySequence: 0,
+        requestedBy: 7,
+        startedAt: null,
+        completedAt: null,
+        retiredAt: null,
+        errorCode: null
       })
     )
-    const successorJob = await postgres('durableJobs').where({ id: successors[0]?.jobId }).first('version', 'type', 'state')
-    expect(successorJob).toEqual({ version: 4, type: 'process-site-logo', state: 'pending' })
+    const successorJob = await postgres('durableJobs').where({ id: successors[0]?.jobId }).first()
+    expect(successorJob).toEqual(expect.objectContaining({
+      version: 4,
+      type: 'process-site-logo',
+      state: 'pending',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      completedAt: null
+    }))
+    expect(JSON.parse(successorJob.payload)).toEqual({ revisionId: successors[0].id, retrySequence: 0 })
+    expect(await postgres('durableJobs').where({ type: 'process-site-logo', version: 4 })).toHaveLength(1)
+
+    if (continueToV7) {
+      await upgradeSiteLogoTransparentIcons(postgres)
+
+      const currentState = await postgres('siteLogoState').where({ id: 1 }).first()
+      expect(currentState).toEqual({
+        ...state,
+        generation: state.generation + 1,
+        desiredRevisionId: currentState.desiredRevisionId,
+        updatedAt: currentState.updatedAt
+      })
+      expect(await postgres('siteLogoObjects').orderBy(['kind', 'sha256'])).toEqual(historicalObjects)
+      expect(await postgres('siteLogoRevisions').where({ id: activeRevisionId }).first(Object.keys(historicalActive))).toEqual(historicalActive)
+      expect(await postgres('siteLogoRevisions').where({ id: desiredRevisionId }).first(Object.keys(historicalPending))).toEqual(historicalPending)
+      expect(await postgres('siteLogoRevisions').where({ id: runningRevisionId }).first(Object.keys(historicalRunning))).toEqual(retiredRunning)
+      expect(await postgres('siteLogoRevisions').where({ id: successors[0].id }).first()).toEqual(successors[0])
+      const cancelledSuccessorJob = await postgres('durableJobs').where({ id: successorJob.id }).first()
+      expect(cancelledSuccessorJob.completedAt).toEqual(expect.any(Date))
+      expect(cancelledSuccessorJob).toEqual({
+        ...successorJob,
+        state: 'cancelled',
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        lastError: expect.any(String),
+        completedAt: cancelledSuccessorJob.completedAt,
+        updatedAt: cancelledSuccessorJob.completedAt
+      })
+      const currentSuccessors = await postgres('siteLogoRevisions').where({ pipelineVersion: 7 })
+      expect(currentSuccessors).toHaveLength(1)
+      expect(currentState.desiredRevisionId).toBe(currentSuccessors[0].id)
+      expect(currentSuccessors[0]).toEqual(expect.objectContaining({
+        sourceKind: 'source',
+        sourceHash,
+        pipelineVersion: 7,
+        status: 'pending',
+        retrySequence: 0,
+        requestedBy: 7,
+        startedAt: null,
+        completedAt: null,
+        retiredAt: null,
+        errorCode: null
+      }))
+      const currentJobs = await postgres('durableJobs').where({ type: 'process-site-logo', version: 5 })
+      expect(currentJobs).toHaveLength(1)
+      expect(currentJobs[0]).toEqual(expect.objectContaining({
+        id: currentSuccessors[0].jobId,
+        type: 'process-site-logo',
+        version: 5,
+        state: 'pending',
+        attempts: 0,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        completedAt: null
+      }))
+      expect(JSON.parse(currentJobs[0].payload)).toEqual({ revisionId: currentSuccessors[0].id, retrySequence: 0 })
+    }
   })
 
   it('fences stale v5 writers after migration commit while preserving reads and allowing v6 activation', async () => {
@@ -802,6 +935,7 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
       activeRevisionId: historicalActiveId,
       updatedAt: now
     })
+    const historicalJoblessPending = await postgres('siteLogoRevisions').where({ id: staleRevisionId }).first()
 
     await upgradeSiteLogoRenditions(postgres)
 
@@ -817,15 +951,16 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
     })
     expect(await postgres('siteLogoRevisions').where({ id: staleRevisionId }).first('pipelineVersion', 'status', 'errorCode')).toEqual({
       pipelineVersion: 5,
-      status: 'failed',
-      errorCode: 'PROCESSING_FAILED'
+      status: 'pending',
+      errorCode: null
     })
+    expect(await postgres('siteLogoRevisions').where({ id: staleRevisionId }).first(Object.keys(historicalJoblessPending))).toEqual(historicalJoblessPending)
 
     const stateBeforeStaleActions = await postgres('siteLogoState').where({ id: 1 }).first()
     const staleRevisionBeforeReadyAttempt = await postgres('siteLogoRevisions').where({ id: staleRevisionId }).first()
 
     await expect(
-      postgres.transaction(async transaction => {
+      Promise.resolve(postgres.transaction(async transaction => {
         await transaction('siteLogoRevisions').insert({
           id: staleInsertId,
           sourceKind: 'source',
@@ -836,13 +971,13 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
           createdAt: now,
           updatedAt: now
         })
-      })
-    ).rejects.toThrow()
+      }))
+    ).rejects.toMatchObject({ code: '23514' })
     expect(await postgres('siteLogoRevisions').where({ id: staleInsertId }).first()).toBeUndefined()
     expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
 
     await expect(
-      postgres.transaction(async transaction => {
+      Promise.resolve(postgres.transaction(async transaction => {
         await transaction('siteLogoRevisions').where({ id: staleRevisionId }).update({
           status: 'ready',
           logoPngKind: 'logo-png',
@@ -859,23 +994,23 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
           startedAt: now,
           completedAt: now
         })
-      })
-    ).rejects.toThrow()
+      }))
+    ).rejects.toMatchObject({ code: '23514' })
     expect(await postgres('siteLogoRevisions').where({ id: staleRevisionId }).first()).toEqual(staleRevisionBeforeReadyAttempt)
     expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
 
     await expect(
-      postgres.transaction(async transaction => {
+      Promise.resolve(postgres.transaction(async transaction => {
         await transaction('siteLogoState').where({ id: 1 }).update({ desiredRevisionId: staleRevisionId, updatedAt: now })
-      })
-    ).rejects.toThrow()
+      }))
+    ).rejects.toMatchObject({ code: '23514' })
     expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
 
     await expect(
-      postgres.transaction(async transaction => {
+      Promise.resolve(postgres.transaction(async transaction => {
         await transaction('siteLogoState').where({ id: 1 }).update({ activeRevisionId: staleRevisionId, updatedAt: now })
-      })
-    ).rejects.toThrow()
+      }))
+    ).rejects.toMatchObject({ code: '23514' })
     expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
 
     expect(
@@ -898,26 +1033,36 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
       { kind: 'favicon-ico', sha256: icoHash, bytes: icoBytes, byteLength: icoBytes.byteLength, contentType: 'image/x-icon', createdAt: now }
     ])
 
+    const readySuccessorUpdate = {
+      status: 'ready',
+      logoPngKind: 'logo-png',
+      logoPngHash: logoHash,
+      iconPngKind: 'icon-png',
+      favicon16Hash: iconHash,
+      favicon32Hash: iconHash,
+      tile150Hash: iconHash,
+      apple180Hash: iconHash,
+      app192Hash: iconHash,
+      app512Hash: iconHash,
+      maskable512Hash: iconHash,
+      faviconIcoKind: 'favicon-ico',
+      faviconIcoHash: icoHash,
+      errorCode: null,
+      enhancementErrorCode: 'UNSUITABLE_LOGO',
+      startedAt: now,
+      completedAt: now
+    }
+    const pendingSuccessorBeforeInvalidStart = await postgres('siteLogoRevisions').where({ id: successorId }).first()
+    await expect(
+      Promise.resolve(postgres.transaction(async transaction => {
+        await transaction('siteLogoRevisions').where({ id: successorId }).update({ ...readySuccessorUpdate, startedAt: null })
+      }))
+    ).rejects.toMatchObject({ code: '23514', constraint: 'site_logo_revisions_started_check' })
+    expect(await postgres('siteLogoRevisions').where({ id: successorId }).first()).toEqual(pendingSuccessorBeforeInvalidStart)
+    expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
+
     await postgres.transaction(async transaction => {
-      await transaction('siteLogoRevisions').where({ id: successorId }).update({
-        status: 'ready',
-        logoPngKind: 'logo-png',
-        logoPngHash: logoHash,
-        iconPngKind: 'icon-png',
-        favicon16Hash: iconHash,
-        favicon32Hash: iconHash,
-        tile150Hash: iconHash,
-        apple180Hash: iconHash,
-        app192Hash: iconHash,
-        app512Hash: iconHash,
-        maskable512Hash: iconHash,
-        faviconIcoKind: 'favicon-ico',
-        faviconIcoHash: icoHash,
-        errorCode: null,
-        enhancementErrorCode: 'UNSUITABLE_LOGO',
-        startedAt: now,
-        completedAt: now
-      })
+      await transaction('siteLogoRevisions').where({ id: successorId }).update(readySuccessorUpdate)
       await transaction('siteLogoState').where({ id: 1 }).update({ activeRevisionId: successorId, updatedAt: now })
     })
 

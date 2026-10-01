@@ -13,6 +13,7 @@ describe('setup handoff', () => {
     vi.resetModules()
     const order: string[] = []
     const setupFinished = Promise.withResolvers<void>()
+    const notificationsReady = Promise.withResolvers<void>()
     const workerDrain = Promise.withResolvers<void>()
     const workers = {
       start: vi.fn(() => order.push('workers-start')),
@@ -47,7 +48,11 @@ describe('setup handoff', () => {
         refreshTargetsFromDisk: method('storage-ready'),
         initTargets: method('storage-start')
       },
-      subscribeToNotifications: method('notifications-start'),
+      subscribeToNotifications: vi.fn(async () => {
+        order.push('notifications-start')
+        await notificationsReady.promise
+        order.push('notifications-ready')
+      }),
       unsubscribeToNotifications: method('notifications-stop'),
       knex: { destroy: method('database-stop') }
     }
@@ -101,21 +106,36 @@ describe('setup handoff', () => {
 
     const { default: kernel } = await vi.importFresh<typeof KernelModule>('../../core/kernel.ts', import.meta.url)
     const initializing = kernel.init()
+    let initializationSettled = false
+    void initializing.then(
+      () => {
+        initializationSettled = true
+      },
+      () => {
+        initializationSettled = true
+      }
+    )
     await vi.waitFor(() => expect(setup).toHaveBeenCalledTimes(1))
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
 
     expect(telemetry.init).toHaveBeenCalledTimes(1)
     expect(master).not.toHaveBeenCalled()
     expect(workers.start).not.toHaveBeenCalled()
+    expect(initializationSettled).toBe(false)
 
     setupFinished.resolve()
+    await vi.waitFor(() => expect(models.subscribeToNotifications).toHaveBeenCalledTimes(1))
+    expect(workers.start).not.toHaveBeenCalled()
+    expect(initializationSettled).toBe(false)
+
+    notificationsReady.resolve()
     await initializing
-    expect(setTimeoutSpy).not.toHaveBeenCalled()
 
     expect(setup).toHaveBeenCalledTimes(1)
     expect(master).toHaveBeenCalledTimes(1)
     expect(workers.start).toHaveBeenCalledTimes(1)
-    expect(order.indexOf('workers-start')).toBeGreaterThan(order.indexOf('notifications-start'))
+    expect(models.subscribeToNotifications).toHaveBeenCalledTimes(1)
+    expect(order).toContain('notifications-ready')
+    expect(order.indexOf('workers-start')).toBeGreaterThan(order.indexOf('notifications-ready'))
 
     const shutdown = kernel.shutdown()
     await vi.waitFor(() => expect(workers.shutdown).toHaveBeenCalledTimes(1))

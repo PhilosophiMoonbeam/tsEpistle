@@ -122,8 +122,10 @@ describe('page knowledge projection', () => {
   })
   it('computes staleness at read time without rewriting the projection', () => {
     const projection = projectPageKnowledge(source)
+    const original = structuredClone(projection)
     expect(knowledgeProjectionView(projection, new Date('2026-08-19T00:00:00.000Z')).lifecycle.stale).toBe(false)
     expect(knowledgeProjectionView(projection, new Date('2026-08-21T00:00:00.000Z')).lifecycle.stale).toBe(true)
+    expect(projection).toEqual(original)
   })
   it('degrades invalid or unvalidated lifecycle metadata to unverified defaults', () => {
     const malformedMetadata = [
@@ -317,6 +319,14 @@ stale_after: 2026-08-20T00:00:00.000Z
 
     expect(ids).toEqual(['a'.repeat(255), `${'a'.repeat(253)}-2`, `${'a'.repeat(253)}-3`])
     expect(new Set(ids).size).toBe(ids.length)
+
+    const naturalSuffixProjection = projectPageKnowledge({
+      ...source,
+      content: ['# Alpha', '# Alpha 2', '# Alpha'].join('\n')
+    })
+    const naturalSuffixIds = naturalSuffixProjection.concept.sections.map(section => section.id)
+    expect(naturalSuffixIds).toEqual(['alpha', 'alpha-2', 'alpha-3'])
+    expect(new Set(naturalSuffixIds).size).toBe(naturalSuffixIds.length)
   })
 
   it('bounds long headings by UTF-16 length without splitting astral characters', () => {
@@ -335,7 +345,7 @@ stale_after: 2026-08-20T00:00:00.000Z
       content: [
         '# Visible before',
         '````ts',
-        '```not-a-close',
+        '````not-a-close',
         '# Hidden one',
         '```',
         '# Hidden two',

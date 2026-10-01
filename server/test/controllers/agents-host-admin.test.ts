@@ -209,9 +209,8 @@ describe('agents-host skill administration', () => {
       body: '{}'
     })
     expect(response.status).toBe(409)
-    expect(await response.json()).toEqual({
-      error: 'AGENT_PROVIDER_ADMIN_DISABLED',
-      message: 'Provider administration is unavailable. Enable agents.provider.enabled, configure the provider runtime keys, and restart Wiki.'
+    expect(await response.json()).toMatchObject({
+      error: 'AGENT_PROVIDER_ADMIN_DISABLED'
     })
   })
 

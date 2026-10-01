@@ -20,10 +20,9 @@ const { default: renderPage } = await import('../../jobs/render-page.ts')
 const { default: rebuildTree } = await import('../../jobs/rebuild-tree.ts')
 
 const renderModels = page => ({
-  knex: { destroy: vi.fn().mockResolvedValue(undefined) },
+  knex: Object.assign(vi.fn(), { destroy: vi.fn().mockResolvedValue(undefined) }),
   pages: {
     getPageFromDb: vi.fn().mockResolvedValue(page),
-    query: vi.fn(),
     savePageToCache: vi.fn()
   },
   renderers: {
@@ -53,7 +52,8 @@ describe('worker job database lifecycle', () => {
     await renderPage(18)
 
     expect(models.renderers.fetchDefinitions).not.toHaveBeenCalled()
-    expect(models.pages.query).not.toHaveBeenCalled()
+    expect(models.knex).not.toHaveBeenCalled()
+    expect(models.pages.savePageToCache).not.toHaveBeenCalled()
     expect(models.knex.destroy).toHaveBeenCalledOnce()
   })
 

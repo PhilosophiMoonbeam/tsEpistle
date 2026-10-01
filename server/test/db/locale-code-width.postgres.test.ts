@@ -1,13 +1,9 @@
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, afterEach, describe, it, expect } from '../bun-test.mts'
 import { up, down } from '../../db/migrations/tsepistle-000021-locale-code-width.ts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_locale_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_locale_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const references = ['pages', 'pageHistory', 'pageLinks', 'pageTree', 'users', 'pageWatchNotifications']
 suite('PostgreSQL upgrade from legacy language-code widths', () => {

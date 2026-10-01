@@ -596,7 +596,7 @@ onBeforeUnmount(() => {
   uploadController?.abort()
   for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
 })
-defineExpose({ clear, addFiles, editImage, startRecording, stopRecording, cancelDictation, beginDictationSubmit, waitForDictationTranscript, recording, requesting, transcribing, seconds, speechDetected, dictationIntent, dictationError, getAudioLevel, getAudioLevelDb, chooseUpload, browseAssets, toggleGenerationTool, generationOptions, selectedGenerationTools })
+defineExpose({ clear, addFiles, editImage, reattachMedia, attachments, startRecording, stopRecording, cancelDictation, beginDictationSubmit, waitForDictationTranscript, recording, requesting, transcribing, seconds, speechDetected, dictationIntent, dictationError, getAudioLevel, getAudioLevelDb, chooseUpload, browseAssets, toggleGenerationTool, generationOptions, selectedGenerationTools })
 </script>
 <style scoped>
 .agent-media-composer { min-width: 0; }

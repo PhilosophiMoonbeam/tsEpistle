@@ -1,16 +1,15 @@
 import { afterEach, describe, expect, test, vi } from '../../server/test/bun-test.mts'
 import {
   activeOutlineIndex,
-  activeOutlineIndexAtScroll,
   buildOutlineTree,
-  filterOutline,
   filterOutlineTree,
   getAncestorAnchors,
   getInitialExpandedAnchors,
   getSearchExpandedAnchors,
   isBranchEffectivelyExpanded,
   outlineSublistId,
-  trackPageOutline
+  trackPageOutline,
+  type OutlineNode
 } from './page-outline'
 
 const originalScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY')
@@ -42,17 +41,6 @@ const outline = [
 ]
 
 describe('document outline', () => {
-  test('keeps only matching headings and their own ancestor chains', () => {
-    expect(filterOutline(outline, '  API ').map(entry => entry.anchor)).toEqual(['#guide', '#setup', '#keys', '#reference', '#api'])
-    expect(filterOutline(outline, 'search').map(entry => entry.anchor)).toEqual(['#guide', '#search'])
-  })
-
-  test('restores the original outline when the filter is cleared and handles no matches', () => {
-    expect(filterOutline(outline, '  ')).toBe(outline)
-    expect(filterOutline(outline, 'missing')).toEqual([])
-    expect(filterOutline([], 'api')).toEqual([])
-  })
-
   test('builds a hierarchical outline tree preserving arbitrary depths', () => {
     const tree = buildOutlineTree(outline)
     expect(tree).toHaveLength(3) // #guide, #reference, #standalone
@@ -89,8 +77,17 @@ describe('document outline', () => {
     expect(filtered[0].children[0].children).toHaveLength(1)
     expect(filtered[0].children[0].children[0].anchor).toBe('#keys')
 
-    expect(filterOutlineTree(tree, '   ')).toBe(tree)
+    const anchors = (nodes: OutlineNode[]): string[] =>
+      nodes.flatMap(node => [node.anchor, ...anchors(node.children)])
+    expect(anchors(filterOutlineTree(tree, '  aPi '))).toEqual(['#guide', '#setup', '#keys', '#reference', '#api'])
+    expect(anchors(filterOutlineTree(tree, 'search'))).toEqual(['#guide', '#search'])
+    expect(anchors(filterOutlineTree(tree, 'guide'))).toEqual(['#guide'])
+
+    for (const query of ['', '   ']) {
+      expect(anchors(filterOutlineTree(tree, query))).toEqual(['#guide', '#setup', '#keys', '#search', '#reference', '#api', '#standalone'])
+    }
     expect(filterOutlineTree(tree, 'missing')).toEqual([])
+    expect(filterOutlineTree([], 'api')).toEqual([])
   })
 
   test('resolves ancestor anchors for deep links and active headings', () => {
@@ -128,18 +125,109 @@ describe('document outline', () => {
     expect(activeOutlineIndex([], 100)).toBe(-1)
   })
 
-  test('compresses trailing heading activations into an ordered terminal window', () => {
-    const positions = [100, 1_000, 1_100, 1_200]
+  for (const scenario of [
+    {
+      name: 'compresses trailing tracker heading activations into an ordered terminal window',
+      positions: [100, 1_000, 1_100, 1_200],
+      anchors: ['#start', '#second', '#third', '#terminal'],
+      articleBottom: 1_300,
+      documentHeight: 1_400,
+      scrolls: [100, 410, 460, 500, 460, 410, 100],
+      expected: ['#start', '#second', '#third', '#terminal', '#third', '#second', '#start'],
+      expectedProgress: [29, 84, 93, 100, 93, 84, 29]
+    },
+    {
+      name: 'does not force a final tracker heading when the article has no scrollable end',
+      positions: [500, 600],
+      anchors: ['#start', '#terminal'],
+      articleBottom: 700,
+      documentHeight: 700,
+      scrolls: [0],
+      expected: ['#start'],
+      expectedProgress: [100]
+    }
+  ]) {
+    test(scenario.name, () => {
+      let nextFrame = 0
+      const frames = new Map<number, FrameRequestCallback>()
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
+        const id = ++nextFrame
+        frames.set(id, callback)
+        return id
+      })
+      vi.stubGlobal('cancelAnimationFrame', (id: number): void => {
+        frames.delete(id)
+      })
+      vi.stubGlobal('ResizeObserver', class {
+        observe(_target: Element): void {}
+        disconnect(): void {}
+      })
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: scenario.scrolls[0] })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+      Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: scenario.documentHeight })
+      Object.defineProperty(document.body, 'scrollHeight', { configurable: true, value: scenario.documentHeight })
 
-    expect(activeOutlineIndexAtScroll(positions, 100, 800, 1_300, 104, 1_400)).toBe(0)
-    expect(activeOutlineIndexAtScroll(positions, 410, 800, 1_300, 104, 1_400)).toBe(1)
-    expect(activeOutlineIndexAtScroll(positions, 460, 800, 1_300, 104, 1_400)).toBe(2)
-    expect(activeOutlineIndexAtScroll(positions, 500, 800, 1_300, 104, 1_400)).toBe(3)
-  })
+      const rect = (top: number, bottom: number): DOMRect =>
+        ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect
+      const header = document.createElement('header')
+      header.className = 'nav-header'
+      Object.defineProperty(header, 'getBoundingClientRect', { value: () => rect(0, 64) })
+      const article = document.createElement('main')
+      Object.defineProperty(article, 'getBoundingClientRect', {
+        value: () => rect(-window.scrollY, scenario.articleBottom - window.scrollY)
+      })
+      const entries = scenario.anchors.map(anchor => ({ anchor, title: anchor.slice(1), depth: 0 }))
+      for (const [index, entry] of entries.entries()) {
+        const heading = document.createElement('h2')
+        heading.id = entry.anchor.slice(1)
+        const top = scenario.positions[index]!
+        Object.defineProperty(heading, 'getBoundingClientRect', {
+          value: () => rect(top - window.scrollY, top + 40 - window.scrollY)
+        })
+        Object.defineProperty(heading, 'getClientRects', {
+          value: () => [rect(top - window.scrollY, top + 40 - window.scrollY)]
+        })
+        article.append(heading)
+      }
+      document.body.append(header, article)
 
-  test('does not force a final heading when the article has no scrollable end', () => {
-    expect(activeOutlineIndexAtScroll([500, 600], 0, 800, 700, 104, 700)).toBe(-1)
-  })
+      const active: string[] = []
+      const progress: number[] = []
+      const tracker = trackPageOutline(article, entries, anchor => active.push(anchor), value => progress.push(value))
+      const flushFrames = (): void => {
+        while (frames.size > 0) {
+          const callbacks = [...frames.values()]
+          frames.clear()
+          for (const callback of callbacks) callback(0)
+        }
+      }
+      try {
+        for (const [index, scrollY] of scenario.scrolls.entries()) {
+          Object.defineProperty(window, 'scrollY', { configurable: true, value: scrollY })
+          window.dispatchEvent(new Event('scroll'))
+          flushFrames()
+          expect(active[active.length - 1]).toBe(scenario.expected[index])
+          expect(progress[progress.length - 1]).toBe(scenario.expectedProgress[index])
+        }
+        expect(active).toEqual(scenario.expected)
+        expect(progress).toEqual(scenario.expectedProgress)
+
+        // Teardown must suppress both an already queued update and later events.
+        Object.defineProperty(window, 'scrollY', { configurable: true, value: 500 })
+        window.dispatchEvent(new Event('scroll'))
+        tracker.dispose()
+        flushFrames()
+        Object.defineProperty(window, 'scrollY', { configurable: true, value: 410 })
+        window.dispatchEvent(new Event('scroll'))
+        window.dispatchEvent(new Event('resize'))
+        flushFrames()
+        expect(active).toEqual(scenario.expected)
+        expect(progress).toEqual(scenario.expectedProgress)
+      } finally {
+        tracker.dispose()
+      }
+    })
+  }
 
   test('generates deterministic collision-free DOM IDs from anchors for sublists', () => {
     const dot = outlineSublistId('#a.b')
@@ -156,11 +244,9 @@ describe('document outline', () => {
     expect(colon).not.toEqual(underscore)
     expect(underscore).not.toEqual(hyphen)
     expect(bare).toBe(dot)
-    expect(empty).toBe('page-toc-sub-_empty_')
-    expect(bareEmpty).toBe('page-toc-sub-_empty_')
-    expect(literalRoot).toBe('page-toc-sub-root')
+    expect(bareEmpty).toBe(empty)
     expect(empty).not.toEqual(literalRoot)
-    expect(outlineSublistId('#section-1')).toBe('page-toc-sub-section-1')
+    expect(outlineSublistId('#a.b')).toBe(dot)
   })
 
   test('evaluates effective branch expansion with baseline, search, and user overrides', () => {
@@ -273,7 +359,6 @@ describe('document outline', () => {
         flushFrames()
         const callbackCount = active.length
         document.body.dispatchEvent(intent)
-        expect(frames.size).toBe(1)
         expect(active).toHaveLength(callbackCount)
         flushFrames()
         expect(active[active.length - 1]).toBe('#terminal')

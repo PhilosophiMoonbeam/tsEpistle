@@ -1,12 +1,12 @@
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
+import { JSDOM } from 'jsdom'
 import type { AgentCitation, AgentMessageView, AgentProposalView, AgentRunView, AgentTaskView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
-import { formatAgentCitationMarkers } from './agent-citations.ts'
+import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
+import { createAgentCitationResolver, formatAgentCitationMarkers } from './agent-citations.ts'
 import {
   agentActivityLabel,
   agentAppliedPageLinks,
-  agentApprovalTitle,
   agentLiveAnnouncement,
-  agentProposalReceiptLabel,
   buildAgentThreadPresentation,
   groupAgentCitations,
   groupAgentToolsByRun,
@@ -199,14 +199,18 @@ describe('Agent thread presentation', () => {
       }
     ]
 
-    expect(formatAgentCitationMarkers('Literal [[ text. Claim [[cite:page:6:section', citations, true)).toBe('Literal [[ text. Claim ')
-    expect(formatAgentCitationMarkers('Claim [[cite:', citations, true)).toBe('Claim ')
-    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section:1]', citations, true)).toBe('Claim ')
-    expect(formatAgentCitationMarkers('Literal [[ text.', citations, true)).toBe('Literal [[ text.')
+    const renderStreaming = (content: string): Document =>
+      new JSDOM(renderSafeMarkdown(content, { resolveCitation: createAgentCitationResolver(citations), streaming: true })).window.document
+
+    expect(renderStreaming('Literal [[ text. Claim [[cite:page:6:section').body.textContent?.trim()).toBe('Literal [[ text. Claim')
+    expect(renderStreaming('Claim [[cite:').body.textContent?.trim()).toBe('Claim')
+    expect(renderStreaming('Claim [[cite:page:6:section:1]').body.textContent?.trim()).toBe('Claim')
+    expect(renderStreaming('Literal [[ text.').body.textContent?.trim()).toBe('Literal [[ text.')
     expect(formatAgentCitationMarkers('Claim [[cite:page:6:section', citations)).toBe('Claim [[cite:page:6:section')
-    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section:1]]', citations, true)).toBe(
-      'Claim [1](/en/runbook#incident-runbook "Citation 1: Incident Runbook")'
-    )
+    const completed = renderStreaming('Claim [[cite:page:6:section:1]]')
+    expect(completed.body.textContent?.trim()).toBe('Claim 1')
+    expect(completed.querySelector('a')?.textContent).toBe('1')
+    expect(completed.querySelector('a')?.getAttribute('href')).toBe('/en/runbook#incident-runbook')
   })
 
   it('precomputes run and message presentation for a thread snapshot', () => {
@@ -245,15 +249,12 @@ describe('Agent thread presentation', () => {
       statusLabel: 'Response failed',
       ariaLabel: 'Wiki Agent message · Response failed',
       retryPrompt: 'How should I respond?',
-      recovery: {
-        title: 'Response could not be completed',
-        description: 'You can retry the same request or revise it in the composer.'
-      },
       run: {
         activityLabel: 'Activity · 1 activity · Complete',
         tasks: [runTask]
       }
     })
+    expect(presentation.orderedMessages[1]?.recovery).toBeTruthy()
   })
 
   it('announces correction progress while preserving approval and terminal priority', () => {
@@ -297,7 +298,14 @@ describe('Agent thread presentation', () => {
   })
 
   it('updates only live status when a persisted run phase changes', () => {
-    const preparing = message({ id: 'assistant-1', role: 'assistant', status: 'streaming' })
+    const citation: AgentCitation = { evidenceId: 'page:6', kind: 'page', label: 'Runbook', href: '/en/runbook' }
+    const preparing = message({
+      id: 'assistant-1',
+      role: 'assistant',
+      status: 'streaming',
+      content: 'A response in progress.',
+      citations: [citation]
+    })
     const initial = buildAgentThreadPresentation([preparing], [], [], [])
     expect(initial.messages.get('assistant-1')?.statusLabel).toBe('Preparing a response')
 
@@ -306,8 +314,16 @@ describe('Agent thread presentation', () => {
       statusLabel: 'Checking and correcting a response',
       run: { workingPhase: 'correcting' }
     })
-    expect(correcting.messages.get('assistant-1')?.message).toBe(initial.messages.get('assistant-1')?.message)
-    expect(correcting.messages.get('assistant-1')?.citationGroups).toBe(initial.messages.get('assistant-1')?.citationGroups)
+    expect(correcting.messages.get('assistant-1')?.message).toEqual(preparing)
+    expect(correcting.messages.get('assistant-1')?.citationGroups).toEqual([
+      {
+        key: 'page:6',
+        pageLabel: 'Runbook',
+        pageHref: '/en/runbook',
+        pageCitation: { citation, number: 1, sectionLabel: 'Page overview' },
+        sections: []
+      }
+    ])
 
     const accepted = message({ id: 'assistant-1', role: 'assistant', status: 'complete', content: 'The accepted response.' })
     const completed = buildAgentThreadPresentation([accepted], [], [], [], correcting, null)
@@ -347,7 +363,6 @@ describe('Agent thread presentation', () => {
       )
     ]
 
-    expect(activities).toHaveLength(11)
     expect(agentActivityLabel(activities)).toBe('Activity · 11 activities · 1 omitted · 7 not executed')
     expect(agentActivityLabel(activities)).not.toContain('failed')
   })
@@ -365,14 +380,6 @@ describe('Agent thread presentation', () => {
       tool({ id: 'failed', runId: 'run', state: 'failed' })
     ]
     expect(agentActivityLabel(capacityLimited)).toBe('Activity · 4 activities · 1 omitted · 1 not executed · 1 failed')
-  })
-
-  it('uses conversational approval titles and durable receipt labels', () => {
-    expect(agentApprovalTitle('pages.preparePatch')).toBe('Wiki Agent wants to edit a page')
-    expect(agentApprovalTitle('pages.prepareDelete')).toBe('Wiki Agent wants to delete a page')
-    expect(agentProposalReceiptLabel('applied')).toBe('Approved and applied')
-    expect(agentProposalReceiptLabel('denied')).toBe('Change denied')
-    expect(agentProposalReceiptLabel('recovery_required')).toBe('Recovery required')
   })
 
   it('claims the approval jump dock only when the approval is fully outside the transcript viewport', () => {

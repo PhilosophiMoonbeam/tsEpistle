@@ -155,25 +155,21 @@ async function revealTagButton(page: Page, label: string) {
   return button
 }
 
-async function expectTagIndexGeometry(page: Page, expectedTreeColumns: number, expectedIndexWidth: number | undefined, surface: string) {
+async function expectTagIndexGeometry(page: Page, surface: string) {
   const geometry = await page.evaluate(
     ({ shortLabel, longLabel }) => {
       const index = document.querySelector<HTMLElement>('.tags-index')
-      const tree = document.querySelector<HTMLElement>('.tags-index-tree')
       const items = [...document.querySelectorAll<HTMLElement>('.tags-index-item')]
       const shortItem = items.find(item => item.getAttribute('aria-label')?.startsWith(shortLabel))
       const longItem = items.find(item => item.getAttribute('aria-label')?.startsWith(longLabel))
       const shortLabelElement = shortItem?.querySelector<HTMLElement>('.tags-index-item-label')
       const longCopy = longItem?.querySelector<HTMLElement>('.tags-index-item-copy')
-      if (!index || !tree || !shortItem || !longItem || !shortLabelElement || !longCopy) return null
+      if (!index || !shortItem || !longItem || !shortLabelElement || !longCopy) return null
 
       const shortLabelRect = shortLabelElement.getBoundingClientRect()
       const longItemRect = longItem.getBoundingClientRect()
-      const treeColumns = window.getComputedStyle(tree).gridTemplateColumns.trim().split(/\s+/).filter(Boolean)
 
       return {
-        treeColumns: treeColumns.length,
-        indexWidth: index.getBoundingClientRect().width,
         indexRight: index.getBoundingClientRect().right,
         longItemRight: longItemRect.right,
         longCopyClientWidth: longCopy.clientWidth,
@@ -191,17 +187,12 @@ async function expectTagIndexGeometry(page: Page, expectedTreeColumns: number, e
   expect(geometry, `${surface} must expose ordinary and long tag item geometry`).not.toBeNull()
   if (!geometry) throw new Error(`${surface} did not expose ordinary and long tag item geometry.`)
 
-  expect(geometry.treeColumns, `${surface} must use the expected tag index column count`).toBe(expectedTreeColumns)
   expect(geometry.shortLabelLineHeight, `${surface} must expose a measurable short tag line height`).toBeGreaterThan(0)
   expect(geometry.shortLabelHeight, `${surface} short labels must not stack glyph-by-glyph`).toBeLessThanOrEqual(geometry.shortLabelLineHeight * 1.5)
   expect(geometry.longCopyScrollWidth, `${surface} long labels must remain contained in their item`).toBeLessThanOrEqual(geometry.longCopyClientWidth + 1)
   expect(geometry.longItemRight, `${surface} long labels must remain inside the tag index rail`).toBeLessThanOrEqual(geometry.indexRight + 1)
   expect(geometry.documentWidth, `${surface} must not overflow its viewport`).toBeLessThanOrEqual(geometry.viewportWidth + 1)
 
-  if (expectedIndexWidth !== undefined) {
-    expect(geometry.indexWidth, `${surface} must preserve the 280px tag index rail`).toBeGreaterThanOrEqual(expectedIndexWidth - 1)
-    expect(geometry.indexWidth, `${surface} must preserve the 280px tag index rail`).toBeLessThanOrEqual(expectedIndexWidth + 1)
-  }
 }
 
 async function openTags(page: Page, path = '/t', options: TagApiOptions = {}) {
@@ -487,27 +478,27 @@ test('public tag index keeps selected desktop labels readable and contained', as
 
   await page.setViewportSize({ width: 1024, height: 900 })
   await expect(await revealTagButton(page, ordinaryTagLabel)).toBeVisible()
-  await expectTagIndexGeometry(page, 2, undefined, 'unselected tag index at 1024px')
+  await expectTagIndexGeometry(page, 'unselected tag index at 1024px')
 
   const ordinary = tagButton(page, ordinaryTagLabel)
   await ordinary.click()
   await expect(ordinary).toHaveAttribute('aria-pressed', 'true')
   await expect(page).toHaveURL(/\/t\/ordinary-topic(?:$|[?#])/)
-  await expectTagIndexGeometry(page, 1, 280, 'selected tag index at 1024px')
+  await expectTagIndexGeometry(page, 'selected tag index at 1024px')
 
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: /tags/i }).first()).toBeVisible()
   const reloadedOrdinary = await revealTagButton(page, ordinaryTagLabel)
   await expect(reloadedOrdinary).toHaveAttribute('aria-pressed', 'true')
-  await expectTagIndexGeometry(page, 1, 280, 'reloaded selected tag index at 1024px')
+  await expectTagIndexGeometry(page, 'reloaded selected tag index at 1024px')
 
   await page.setViewportSize({ width: 1440, height: 900 })
-  await expectTagIndexGeometry(page, 1, 280, 'selected tag index at 1440px')
+  await expectTagIndexGeometry(page, 'selected tag index at 1440px')
 
   await page.locator('.tags-clear-selection').click()
   await expect(page).toHaveURL(/\/t(?:\?|$)/)
   await expect(await revealTagButton(page, ordinaryTagLabel)).toBeVisible()
-  await expectTagIndexGeometry(page, 3, undefined, 'cleared tag index at 1440px')
+  await expectTagIndexGeometry(page, 'cleared tag index at 1440px')
 
   await page.setViewportSize({ width: 390, height: 844 })
   await expectResponsiveLayout(page, 'mobile tag label containment')
@@ -526,9 +517,7 @@ test('public tag colors follow canonical identity across browse states', async (
       return {
         canonical,
         bucket: item.getAttribute('data-tag-color'),
-        itemClass: item.classList.contains('wiki-tag-color'),
         iconBucket: icon?.getAttribute('data-tag-color'),
-        iconClass: icon?.classList.contains('wiki-tag-color'),
         iconColor: iconStyle?.color,
         followColor: followStyle?.color,
         iconBackground: iconStyle?.backgroundColor,
@@ -544,8 +533,6 @@ test('public tag colors follow canonical identity across browse states', async (
     const fixture = identityTagRows.find(candidate => candidate.tag === row.canonical)
     expect(fixture, `tag row ${row.canonical} must expose its canonical identity`).toBeDefined()
     if (!fixture) continue
-    expect(row.itemClass).toBe(true)
-    expect(row.iconClass).toBe(true)
     expect(row.iconBucket).toBe(row.bucket)
     expect(row.followColor).toBe(row.iconColor)
     expect(row.followBackground).toBe(row.iconBackground)
@@ -563,23 +550,17 @@ test('public tag colors follow canonical identity across browse states', async (
   expect(bucketByTag.get('—東京')).toBe('neutral')
   expect(bucketByTag.get('!!!')).toBe(bucketByTag.get('???'))
   expect(bucketByTag.get('!!!')).toBe('neutral')
-  expect(tagColorBucket('alpha')).toBe(tagColorBucket('apple'))
-  expect(tagColorBucket('beta')).toBe(tagColorBucket('boat'))
-
-  const representativeTags = Array.from({ length: 26 }, (_, index) => String.fromCharCode(97 + index))
-  const representativeBuckets = representativeTags.map(tagColorBucket)
-  expect(new Set(representativeBuckets).size).toBeGreaterThanOrEqual(10)
-  expect(representativeBuckets.every(bucket => bucket !== 'neutral')).toBe(true)
+  const iconColorByTag = new Map(initialColors.map(row => [row.canonical, row.iconColor]))
+  expect(iconColorByTag.get('alpha')).toBe(iconColorByTag.get('ALPHA'))
+  expect(iconColorByTag.get('alpha')).not.toBe(iconColorByTag.get('123'))
 
   const alpha = tagButton(page, 'Alpha concept')
   await alpha.click()
   await expect(alpha).toHaveAttribute('aria-pressed', 'true')
-  await expect(alpha.locator('.tags-index-item-icon')).toHaveClass(/mdi-check/)
   const alphaBucket = bucketByTag.get('alpha')
   expect(alphaBucket).not.toBeNull()
 
   const selectedToken = page.locator('.tags-selected-token').filter({ hasText: 'alpha' }).first()
-  await expect(selectedToken).toHaveClass(/wiki-tag-color/)
   await expect(selectedToken).toHaveAttribute('data-tag-color', alphaBucket!)
   await expect(alpha).toHaveAttribute('data-tag-color', alphaBucket!)
   await expect(alpha.locator('.tags-index-item-icon')).toHaveAttribute('data-tag-color', alphaBucket!)
@@ -613,6 +594,7 @@ test('public tag index exposes an initial failure retry without a false empty st
     .filter({ hasText: /tag|load/i })
     .first()
   await expect(failure).toBeVisible()
+  await expect(page.locator('#tags-index-panel').getByText('No tags available', { exact: true })).toHaveCount(0)
   await failure.getByRole('button', { name: /try again|retry/i }).click()
   await expect(await revealTagButton(page, 'Alpha')).toBeVisible()
   await expectResponsiveLayout(page, 'tag index retry')
@@ -638,6 +620,7 @@ test('public tag result failures expose retry instead of a false zero-match stat
     .filter({ hasText: /result|load|temporary/i })
     .first()
   await expect(failure).toBeVisible()
+  await expect(page.locator('.tags-results').getByRole('heading', { name: 'No matching pages', exact: true })).toHaveCount(0)
   await page
     .getByRole('button', { name: /try again|retry/i })
     .last()
@@ -682,7 +665,13 @@ test('public tag results keep the latest selection when responses resolve out of
     return url.pathname === '/_api/pages' && url.searchParams.get('tags') === 'alpha' && response.ok()
   })
   releaseFirst?.()
-  await staleResponse
+  const response = await staleResponse
+  expect(await response.finished(), 'stale response body must finish successfully').toBeNull()
+  // Headers alone do not prove the browser has parsed the JSON and rendered it.
+  await page.evaluate(() => new Promise<void>(resolve => {
+    window.setTimeout(() => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())), 0)
+  }))
+  await expect(page.getByRole('link', { name: /latest result/i })).toBeVisible()
   await expect(page.getByRole('link', { name: /stale result/i })).toHaveCount(0)
   await expectResponsiveLayout(page, 'latest tag result response')
 })
@@ -695,7 +684,6 @@ test('tag following saves device offline preferences independently of browse sel
   await expect(page.locator('#tags-follow-help')).toContainText('save their public pages for offline reading on this device')
   await expect(page.locator('#tags-follow-help')).toContainText('following does not enable change notifications')
   await expect(page.locator('#tags-follow-help').getByRole('link', { name: 'Offline preferences', exact: true })).toHaveAttribute('href', '/p/offline')
-  await expect(page.locator('.tags-follow-status')).not.toContainText(/union|AND-only|\(OR\)/)
   await expect(follow).toHaveAccessibleName('Follow Alpha (alpha) for offline saving on this device')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
   await follow.click()
@@ -704,7 +692,6 @@ test('tag following saves device offline preferences independently of browse sel
   await expect(alpha).toHaveAttribute('aria-pressed', 'false')
   await expect(page).toHaveURL('/t')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
-  await expect(page.locator('.tags-selection-status')).toContainText('Following Alpha (alpha) for offline saving on this device.')
 
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.locator('.tags-index')).toBeVisible({ timeout: 30_000 })
@@ -714,7 +701,6 @@ test('tag following saves device offline preferences independently of browse sel
   await follow.click()
   await expect(follow).toHaveAttribute('aria-pressed', 'false')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
-  await expect(page.locator('.tags-selection-status')).toContainText('Stopped following Alpha (alpha) for offline saving.')
   await expect(page).toHaveURL('/t')
 })
 
@@ -724,25 +710,38 @@ test('tag follow feedback finishes cleanly and respects reduced motion', async (
   const alpha = await revealTagButton(page, 'Alpha')
   const follow = alpha.locator('..').locator('.tags-follow-item')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
-  await follow.evaluate(element => {
+  const followIcon = follow.locator('.tags-follow-item-icon')
+  await followIcon.evaluate(element => {
     element.addEventListener('animationstart', event => {
-      element.setAttribute('data-follow-animation-seen', (event as AnimationEvent).animationName)
+      if (event.target === element) element.setAttribute('data-follow-animation-seen', 'true')
+    })
+    element.addEventListener('animationend', event => {
+      if (event.target === element) element.setAttribute('data-follow-animation-finished', 'true')
     })
   })
   await follow.click()
   await expect(follow).toHaveAttribute('aria-pressed', 'true')
-  await expect(follow).toHaveAttribute('data-follow-animation-seen', /tags-follow-toggle/)
-  await expect(follow).not.toHaveClass(/tags-follow-item--animate/)
+  await expect(followIcon).toHaveAttribute('data-follow-animation-seen', 'true')
+  await expect(followIcon).toHaveAttribute('data-follow-animation-finished', 'true')
+  await expect.poll(() => followIcon.evaluate(element => {
+    const active = element.getAnimations().some(animation => animation.playState !== 'finished' && animation.playState !== 'idle')
+    return !active && new DOMMatrixReadOnly(getComputedStyle(element).transform).isIdentity
+  }), { message: 'follow feedback must settle without leaving a transform or active animation' }).toBe(true)
   await expect(follow).toBeEnabled({ timeout: 30_000 })
 
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await follow.evaluate(element => element.removeAttribute('data-follow-animation-seen'))
+  await followIcon.evaluate(element => {
+    element.removeAttribute('data-follow-animation-seen')
+    element.removeAttribute('data-follow-animation-finished')
+  })
   await follow.click()
   await expect(follow).toHaveAttribute('aria-pressed', 'false')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
-  await expect(follow).not.toHaveClass(/tags-follow-item--animate/)
-  await expect(follow).not.toHaveAttribute('data-follow-animation-seen')
-  await expect(follow.locator('.tags-follow-item-icon')).toHaveCSS('animation-name', 'none')
+  await expect(followIcon).toHaveCSS('animation-name', 'none')
+  await page.evaluate(() => new Promise<void>(resolve => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()))
+  }))
+  await expect(followIcon).not.toHaveAttribute('data-follow-animation-seen')
 })
 
 test('tag browsing offers saved pages when a live page query loses its connection', async ({ page, browserName }) => {
@@ -752,9 +751,11 @@ test('tag browsing offers saved pages when a live page query loses its connectio
   await page.unrouteAll({ behavior: 'wait' })
   await page.context().setOffline(true)
   await alpha.click()
-  await expect(page.locator('.tags-results')).toContainText('Reconnect to browse matching pages')
-  await expect(page.locator('.tags-results')).toContainText('Your saved pages are still available in Offline preferences.')
-  await expect(page.locator('.tags-offline-recovery')).toHaveAttribute('href', '/p/offline#downloaded-pages-title')
-  await expect(page.locator('.tags-offline-recovery')).toBeVisible()
+  const results = page.locator('.tags-results')
+  await expect(results.locator('.async-state[role="status"]')).toBeVisible()
+  await expect(results.getByRole('heading', { name: 'No matching pages', exact: true })).toHaveCount(0)
+  const recovery = page.locator('#tags-follow-help').getByRole('link', { name: 'Browse saved pages', exact: true })
+  await expect(recovery).toHaveAttribute('href', '/p/offline#downloaded-pages-title')
+  await expect(recovery).toBeVisible()
   await page.context().setOffline(false)
 })

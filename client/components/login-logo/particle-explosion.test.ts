@@ -33,6 +33,7 @@ describe('particle explosion envelope', () => {
       previous = value
     }
 
+    expect(explosionEnvelope(0.8)).toBeGreaterThan(0)
     expect(explosionEnvelope(LOGO_POINTER_EXPLOSION_RECOVERY_END_SECONDS)).toBe(0)
     expect(explosionEnvelope(LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS)).toBe(0)
     expect(explosionEnvelope(Number.POSITIVE_INFINITY)).toBe(0)
@@ -49,6 +50,7 @@ describe('particle explosion envelope', () => {
 
   it('adds overlapping slots and lets a larger scale reach a farther particle', () => {
     const one = displacement(1, 40, 20)
+    expect(magnitude(one)).toBeGreaterThan(0)
     const overlap = new Float32Array(2)
     addExplosionDisplacement(overlap, 0, 40, 20, 0, 0, 800, 800, 800, 0.25, 0.2, 1, 0.8)
     addExplosionDisplacement(overlap, 0, 40, 20, 0, 0, 800, 800, 800, 0.25, 0.2, 1, 0.8)

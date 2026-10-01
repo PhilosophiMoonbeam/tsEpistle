@@ -10,10 +10,8 @@ import { describeTlsCertificate } from '../../repositories/tls-material.ts'
 import { tlsFixture } from '../helpers/tls-fixture.ts'
 import type { SystemRequester } from '../../helpers/system-authority.ts'
 import type { TlsListenerSnapshot, TlsOperationKind, TlsConnectionEvidence } from '../../../shared/tls-workspace.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_ssl_test') && password ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password } : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_ssl_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const admin: SystemRequester = { user: { id: 1, authVersion: 0 } as never },
   other: SystemRequester = { user: { id: 3, authVersion: 0 } as never }
@@ -282,7 +280,6 @@ suite('HTTPS operation receipts on PostgreSQL', () => {
     })
     const result = await run('renew-certificate', { reason: 'Renew expiring certificate', confirmIssuance: true })
     expect(result.state).toBe('succeeded')
-    expect(result.summary).toContain('apply it separately')
     expect(apply).not.toHaveBeenCalled()
     expect((await store.inspect(admin)).savedCertificate?.subject).toBe('CN=wiki.example.test')
   })

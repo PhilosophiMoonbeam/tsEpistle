@@ -18,6 +18,7 @@ const maintenanceBatch = (changes: Partial<AgentMaintenanceResult> = {}): AgentM
   purgedSkillUses: 0,
   purgedUsageRows: 0,
   compactedEvents: 0,
+  scrubbedGroundedMessages: 0,
   reconciledReservations: 0,
   ...changes
 })

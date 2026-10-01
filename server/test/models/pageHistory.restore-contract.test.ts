@@ -227,6 +227,22 @@ describe('page history restore metadata contract', () => {
       versionDate: '2026-08-15T00:00:01.000Z'
     })
     await addHistoryTags(hiddenId, [3])
+    const deniedPathId = await insertHistoryRow({
+      path: 'restricted/path',
+      versionDate: '2026-08-15T00:00:01.100Z'
+    })
+    await addHistoryTags(deniedPathId, [2])
+    const deniedLocaleId = await insertHistoryRow({
+      path: 'old/path',
+      localeCode: 'fr',
+      versionDate: '2026-08-15T00:00:01.200Z'
+    })
+    await addHistoryTags(deniedLocaleId, [2])
+    const deniedTagsId = await insertHistoryRow({
+      path: 'old/path',
+      versionDate: '2026-08-15T00:00:01.300Z'
+    })
+    await addHistoryTags(deniedTagsId, [3])
     const latestId = await insertHistoryRow({
       path: 'new/path',
       title: 'New',
@@ -260,6 +276,9 @@ describe('page history restore metadata contract', () => {
       valueAfter: null
     })
     expect(await PageHistory.getVersion({ pageId: 42, versionId: hiddenId, requester, authority })).toBeNull()
+    for (const versionId of [deniedPathId, deniedLocaleId, deniedTagsId]) {
+      expect(await PageHistory.getVersion({ pageId: 42, versionId, requester, authority })).toBeNull()
+    }
     expect(await PageHistory.getVersion({ pageId: 42, versionId: latestId, requester, authority })).toMatchObject({
       content: '# New\n',
       path: 'new/path',

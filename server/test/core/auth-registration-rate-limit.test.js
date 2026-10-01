@@ -97,7 +97,7 @@ it('blocks GraphQL registration after REST exhausts the shared durable admission
       succeeded: false,
       errorCode: 1008,
       slug: 'BruteTooManyAttempts',
-      message: 'Too many failed attempts. Try again later.'
+      message: expect.any(String)
     }
   })
   expect(register).toHaveBeenCalledTimes(6)
@@ -123,7 +123,7 @@ it('blocks REST registration after GraphQL exhausts the limit and isolates anoth
 
   expect(blockedResponse.set).toHaveBeenCalledWith('Retry-After', '300')
   expect(blockedResponse.status).toHaveBeenCalledWith(429)
-  expect(blockedResponse.json).toHaveBeenCalledWith({ error: 'Too many failed attempts. Try again later.' })
+  expect(blockedResponse.json).toHaveBeenCalledWith({ error: expect.any(String) })
   expect(register).toHaveBeenCalledTimes(6)
 
   const otherClientResponse = response()

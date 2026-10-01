@@ -1,25 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+: "${WIKI_TEST_NAMESPACE:?WIKI_TEST_NAMESPACE is required}"
+if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
+  echo 'WIKI_TEST_NAMESPACE must be a Docker-safe tsepistle-ci- namespace.' >&2
+  exit 1
+fi
+
 POSTGRES_TEST_IMAGE=${POSTGRES_TEST_IMAGE:-postgres:15-alpine}
-container=wiki-page-index-benchmark-db
+container="${WIKI_TEST_NAMESPACE}-page-index-db"
 requested_port=${PAGE_INDEX_POSTGRES_PORT:-0}
 report=${PAGE_INDEX_BENCHMARK_FILE:-page-index-benchmark.json}
+if docker container inspect "$container" >/dev/null 2>&1; then
+  echo "Docker namespace $WIKI_TEST_NAMESPACE is already in use." >&2
+  exit 1
+fi
+container_id=
 
 cleanup() {
-  docker rm -f "$container" >/dev/null 2>&1 || true
+  if [ -n "$container_id" ]; then docker rm -f "$container_id" >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT
-cleanup
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-docker run -d --name "$container" -p "127.0.0.1:${requested_port}:5432" \
+if ! container_id=$(docker run -d --name "$container" -p "127.0.0.1:${requested_port}:5432" \
   -e POSTGRES_PASSWORD='Password123!' \
   -e POSTGRES_USER=wiki \
   -e POSTGRES_DB=wiki_page_index_benchmark \
-  "$POSTGRES_TEST_IMAGE" >/dev/null
-port=$(docker port "$container" 5432/tcp | cut -d: -f2)
+  "$POSTGRES_TEST_IMAGE"); then
+  echo "Could not create Docker container $container (name collision or Docker error)." >&2
+  exit 1
+fi
+port=$(docker port "$container_id" 5432/tcp | cut -d: -f2)
 for attempt in {1..90}; do
-  if docker exec "$container" psql --username=wiki --dbname=wiki_page_index_benchmark --command='SELECT 1' >/dev/null 2>&1; then
+  if docker exec "$container_id" psql --username=wiki --dbname=wiki_page_index_benchmark --command='SELECT 1' >/dev/null 2>&1; then
     break
   fi
   if [ "$attempt" -eq 90 ]; then

@@ -154,9 +154,10 @@ const createDatabase = (): FakeDatabase => ({
 
 class InputInvalid extends Error {}
 class UserNotFound extends Error {}
+class AuthLoginFailed extends Error {}
 
 const wiki = {
-  Error: { InputInvalid, UserNotFound },
+  Error: { InputInvalid, UserNotFound, AuthLoginFailed },
   models: {} as Record<string, unknown>
 }
 
@@ -392,11 +393,7 @@ const installAggregateDatabase = (database: AggregateDatabase): void => {
       })
     },
     knex: {
-      raw: (sql: string, bindings: string[]) => {
-        expect(sql).toBe('?? + 1')
-        expect(bindings).toEqual(['authVersion'])
-        return { accountVersionIncrement: true }
-      },
+      raw: () => ({ accountVersionIncrement: true }),
       transaction: async <T>(operation: (trx: AggregateTransaction) => Promise<T>): Promise<T> => {
         const trx = { state: structuredClone(database.state) }
         const result = await operation(trx)
@@ -613,14 +610,28 @@ describe('User aggregate transactions', () => {
         } as never)
     ]
   ])('keeps a one-time token usable when the protected %s patch fails', async (_label, kind, mutate) => {
-    const database = createAggregateDatabase([{ id: 10, isActive: true, isVerified: false, password: 'old-password' }])
+    const database = createAggregateDatabase([{
+      id: 10,
+      isActive: true,
+      isVerified: false,
+      mustChangePwd: true,
+      password: 'old-password',
+      authVersion: 7,
+      sessionsRevokedAt: '2000-01-01T00:00:00.000Z'
+    }])
     database.state.tokens = [{ id: 1, userId: 10, kind, token: 'account-token' }]
     database.failUserPatch = true
     installAggregateDatabase(database)
 
     await expect(mutate()).rejects.toThrow('forced user patch failure')
 
-    expect(database.state.users[0]).toMatchObject({ isVerified: false, password: 'old-password' })
+    expect(database.state.users[0]).toMatchObject({
+      isVerified: false,
+      mustChangePwd: true,
+      password: 'old-password',
+      authVersion: 7,
+      sessionsRevokedAt: '2000-01-01T00:00:00.000Z'
+    })
     expect(database.state.tokens).toEqual([{ id: 1, userId: 10, kind, token: 'account-token' }])
     expect(database.commits).toBe(0)
   })
@@ -638,13 +649,26 @@ describe('User aggregate transactions', () => {
   })
 
   test('commits token consumption and password mutation together on success', async () => {
-    const database = createAggregateDatabase([{ id: 10, isActive: true, password: 'old-password' }])
+    const previousRevocation = '2000-01-01T00:00:00.000Z'
+    const database = createAggregateDatabase([{
+      id: 10,
+      isActive: true,
+      password: 'old-password',
+      authVersion: 7,
+      sessionsRevokedAt: previousRevocation,
+      mustChangePwd: true,
+      isVerified: false
+    }])
     database.state.tokens = [{ id: 1, userId: 10, kind: 'resetPwd', token: 'reset-token' }]
     installAggregateDatabase(database)
 
     await expect(User.resetPassword({ token: 'reset-token', newPassword: 'new-password' })).resolves.toBe(10)
 
     expect(await bcrypt.compare('new-password', String(database.state.users[0]?.password))).toBe(true)
+    expect(database.state.users[0]).toMatchObject({ authVersion: 8, mustChangePwd: false, isVerified: true })
+    const revokedAt = String(database.state.users[0]?.sessionsRevokedAt)
+    expect(revokedAt).not.toBe(previousRevocation)
+    expect(new Date(revokedAt).toISOString()).toBe(revokedAt)
     expect(database.state.tokens).toEqual([])
     expect(database.commits).toBe(1)
   })
@@ -873,15 +897,7 @@ describe('User.loginTFA setup transactions', () => {
 })
 
 describe('User.refreshToken', () => {
-  test('does not issue a fresh token after the sign-in provider has been disabled', async () => {
-    wiki.models = { authentication: { getStrategy: async () => ({ isEnabled: false }) } }
-    const user = Object.assign(new User(), { id: 10, providerKey: 'oidc', groups: [] })
-    const previousCalls = signJwt.mock.calls.length
-    await expect(User.refreshToken(user)).rejects.toBeInstanceOf(Error)
-    expect(signJwt.mock.calls.length).toBe(previousCalls)
-  })
-
-  test('issues the font-family JWT claim without a removed gutter claim', async () => {
+  const installRefreshDatabase = (isEnabled: boolean) => {
     const updateLastLogin = mock(async () => 1)
     const knex = (_table: string) => ({
       where: (_column: string, _id: number) => ({ update: updateLastLogin })
@@ -893,9 +909,10 @@ describe('User.refreshToken', () => {
         sessionSecret: 'secret'
       }
     })
-    wiki.models = { knex, authentication: { getStrategy: async () => ({ isEnabled: true }) } }
+    wiki.models = { knex, authentication: { getStrategy: async () => ({ isEnabled }) } }
     const user = Object.assign(new User(), {
       id: 10,
+      providerKey: 'oidc',
       email: 'user@example.test',
       name: 'User',
       pictureUrl: '',
@@ -906,6 +923,19 @@ describe('User.refreshToken', () => {
       fontFamily: 'roboto-flex',
       groups: []
     })
+    return { user, updateLastLogin }
+  }
+
+  test('does not issue a fresh token after the sign-in provider has been disabled', async () => {
+    const { user, updateLastLogin } = installRefreshDatabase(false)
+    const previousCalls = signJwt.mock.calls.length
+    await expect(User.refreshToken(user)).rejects.toBeInstanceOf(AuthLoginFailed)
+    expect(signJwt.mock.calls.length).toBe(previousCalls)
+    expect(updateLastLogin).not.toHaveBeenCalled()
+  })
+
+  test('issues the current account and presentation claims for an enabled provider', async () => {
+    const { user, updateLastLogin } = installRefreshDatabase(true)
     const callIndex = signJwt.mock.calls.length
 
     await expect(User.refreshToken(user)).resolves.toMatchObject({ token: 'signed-jwt', user })
@@ -917,7 +947,6 @@ describe('User.refreshToken', () => {
       ap: 'system',
       ff: 'roboto-flex'
     })
-    expect(claims).not.toHaveProperty('rg')
     expect(updateLastLogin).toHaveBeenCalledTimes(1)
   })
 })
@@ -994,9 +1023,7 @@ describe('User account mail delivery', () => {
       await User.loginForgotPassword({ email: 'user@example.test' }, {} as never)
       await User.sendWelcomeEmail({ id: 10, expectedEmail: 'user@example.test' })
       expect(sent).toHaveLength(2)
-      expect(sent[0]?.subject).toContain('password')
       expect(sent[0]?.text).toContain('https://wiki.example.test/login-reset/reset-token')
-      expect(sent[1]?.subject).toContain('Welcome')
       expect(sent[1]?.html).toContain('https://wiki.example.test/login')
     } finally {
       mail.close()

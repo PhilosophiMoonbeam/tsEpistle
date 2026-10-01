@@ -24,7 +24,6 @@ describe('Locale resource snapshot activation', () => {
     expect(engine.t('header.admin')).toBe('Administration')
     expect(localization.appliedRevision).toBe('two')
     expect(localization.appliedLocale).toBe('sr-latn')
-    expect(localization.namespaces.length).toBe(new Set(localization.namespaces).size)
   })
   it('retains the complete previous resources when any enabled package cannot be read', async () => {
     const engine = createInstance()

@@ -108,12 +108,11 @@ describe('GraphQL profile transport results', () => {
     expect(result.data).toEqual({
       users: {
         updateProfile: {
-          responseResult: {
+          responseResult: expect.objectContaining({
             succeeded: true,
             errorCode: 0,
-            slug: 'ok',
-            message: 'User profile updated successfully'
-          }
+            slug: 'ok'
+          })
         }
       }
     })

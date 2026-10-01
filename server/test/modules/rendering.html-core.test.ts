@@ -80,11 +80,20 @@ describe('HTML core page-link projection boundary', () => {
     expect(harness.pageLinksQuery).not.toHaveBeenCalled()
   })
 
-  it('can render concurrently because link persistence is owned by the fenced outbox consumer', async () => {
+  it('keeps concurrent render outputs isolated without persisting page links', async () => {
     const harness = await rendererHarness()
     const outputs = await Promise.all([harness.render('<a href="/target">first render</a>'), harness.render('<a href="/target">second render</a>')])
 
-    expect(outputs).toHaveLength(2)
+    for (const [index, text] of ['first render', 'second render'].entries()) {
+      const $ = cheerio.load(outputs[index]!)
+      const anchor = $('a')
+      expect(anchor).toHaveLength(1)
+      expect(anchor.attr('href')).toBe('/target')
+      expect(anchor.hasClass('is-internal-link')).toBe(true)
+      expect(anchor.hasClass('is-valid-page')).toBe(true)
+      expect(anchor.text()).toBe(text)
+      expect($('body').text()).not.toContain(index === 0 ? 'second render' : 'first render')
+    }
     expect(harness.pageLinksQuery).not.toHaveBeenCalled()
   })
 })

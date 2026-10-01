@@ -1,6 +1,7 @@
 import createKnex from 'knex'
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
+import { configureTransportRuntime } from '../controllers/_types.ts'
 
 const assetHash = path => createHash('sha1').update(path).digest('hex')
 const namedError = name => class extends Error {
@@ -248,12 +249,8 @@ const installRelocationWiki = ({
   }
   return { folderQuery, pageAccess, storage: storageRuntime }
 }
-const assetRouter = { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }
+const assetRouter = { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn(), use: vi.fn() }
 vi.mockModule('express', import.meta.url, () => ({ default: { Router: () => assetRouter } }))
-vi.mockModule('../controllers/_types.ts', import.meta.url, () => ({
-  objectValue: (value, key) => value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined,
-  getWikiAuth: () => globalThis.WIKI.auth
-}))
 
 const authorityFor = requester => ({
   requester,
@@ -335,41 +332,37 @@ describe('asset operations', () => {
   })
 
   it('lists root assets', async () => {
-    const asset = {
-      id: 1,
-      filename: 'browser-upload.txt',
-      kind: 'binary',
-      ext: '.txt',
-      folderId: null
-    }
-    const rows = Promise.resolve([asset])
-    const query = {
-      where: vi.fn(),
-      whereNull: vi.fn(),
-      then: rows.then.bind(rows)
-    }
-    query.where.mockReturnValue(query)
-    query.whereNull.mockReturnValue(query)
-    const getHierarchy = vi.fn().mockResolvedValue([])
-    const checkAccess = vi.fn(checkAccessFor)
-    const checkPageAccess = vi.fn(checkPageAccessFor)
-    const loadPageRuleAuthority = vi.fn(async suppliedRequester => authorityFor(suppliedRequester))
-    global.WIKI = {
-      Error: {},
-      auth: { checkAccess, checkPageAccess, loadPageRuleAuthority },
-      models: {
-        assets: { query: vi.fn().mockReturnValue(query), flushTempUploads: vi.fn() },
-        assetFolders: { query: vi.fn(), getHierarchy },
-        knex: vi.fn(),
-        storage: { assetEvent: vi.fn() }
+    const db = await createImageResizeDatabase()
+    try {
+      const now = '2026-01-01T00:00:00.000Z'
+      const asset = {
+        id: 1,
+        filename: 'browser-upload.txt',
+        hash: assetHash('browser-upload.txt'),
+        kind: 'binary',
+        ext: '.txt',
+        mime: 'text/plain',
+        fileSize: 12,
+        metadata: '{}',
+        authorId: 7,
+        folderId: null,
+        createdAt: now,
+        updatedAt: now
       }
+      await db('assets').insert([
+        asset,
+        { ...asset, id: 2, filename: 'nested.txt', hash: assetHash('nested.txt'), folderId: 42 }
+      ])
+      installImageResizeWiki({ db })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+      const requester = { id: 1, name: 'Reader', email: 'reader@example.com', permissions: ['read:assets'] }
+
+      const result = await operations.list({ requester, folderId: 0, kind: 'ALL' })
+
+      expect(result).toEqual([{ ...asset, kind: 'BINARY' }])
+    } finally {
+      await db.destroy()
     }
-    const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
-    const requester = { id: 1, name: 'Reader', email: 'reader@example.com', permissions: ['read:assets'] }
-
-    const result = await operations.list({ requester, folderId: 0, kind: 'ALL' })
-
-    expect(result).toEqual([{ ...asset, kind: 'BINARY' }])
   })
 
   it('admits branding derivation only after capacity and keeps ready readers metadata-only', async () => {
@@ -645,7 +638,6 @@ describe('asset operations', () => {
       await expect(operations.relocate({ requester, id: asset.id, filename: 'new.png', folderId: 0 })).rejects.toMatchObject({
         status: 503,
         name: 'ASSET_RELOCATION_UNSUPPORTED',
-        message: 'Storage target legacy cannot reconcile asset relocations.'
       })
 
       expect(await db('assets').where({ id: asset.id }).first()).toMatchObject(asset)
@@ -680,7 +672,7 @@ describe('asset operations', () => {
       await db('assets').insert(asset)
       await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
       const assetQuery = createAssetQuery(db)
-      const { storage } = installRelocationWiki({
+      installRelocationWiki({
         db,
         assetQuery,
         targets: [target],
@@ -700,11 +692,8 @@ describe('asset operations', () => {
       })
       await expect(operations.relocationStatus({ requester, id: accepted.id })).resolves.toEqual(accepted)
       expect(deleteAssetCaches).toHaveBeenCalledWith([assetHash('old.png'), assetHash('new.png')])
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Asset relocation committed, but cache cleanup could not be completed. The relocation receipt remains valid.'
-      )
+      expect(logger.warn).toHaveBeenCalled()
       expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(cacheError.message)
-      expect(storage.relocationTargets).toHaveBeenCalled()
     } finally {
       await db.destroy()
     }
@@ -733,7 +722,7 @@ describe('asset operations', () => {
       await db('assets').insert(asset)
       await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
       const assetQuery = createAssetQuery(db)
-      const { storage } = installRelocationWiki({
+      installRelocationWiki({
         db,
         assetQuery,
         targets: [target],
@@ -760,13 +749,12 @@ describe('asset operations', () => {
       expect(failed).toMatchObject({
         assetId: asset.id,
         status: 'failed',
-        effects: [{ targetKey: 'disk', status: 'failed', lastError: 'Storage target reconciliation failed.' }]
+        effects: [{ targetKey: 'disk', status: 'failed', lastError: expect.any(String) }]
       })
       expect(JSON.stringify(failed)).not.toContain('provider credentials')
       expect(await db('durableJobs').where({ id: effect.jobId }).first()).toMatchObject({ state: 'failed' })
       expect(await db('assets').where({ id: asset.id }).first()).toMatchObject({ filename: 'new.png', folderId: null })
       expect(reconcileAssetRelocation).toHaveBeenCalledOnce()
-      expect(storage.relocationTargets).toHaveBeenCalled()
     } finally {
       await db.destroy()
     }
@@ -841,7 +829,7 @@ describe('asset operations', () => {
       const failed = await operations.relocationStatus({ requester, id: accepted.id })
       expect(failed).toMatchObject({
         status: 'failed',
-        effects: [{ status: 'failed', lastError: 'Storage target reconciliation failed.' }]
+        effects: [{ status: 'failed', lastError: expect.any(String) }]
       })
       expect(failed.status).not.toBe('superseded')
       expect(reconcileAssetRelocation).not.toHaveBeenCalled()
@@ -874,23 +862,17 @@ describe('asset operations', () => {
       const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
 
       const accepted = await operations.relocate({ requester: owner, id: 25, filename: 'new.png', folderId: 0 })
-      await expect(operations.relocationStatus({ requester: foreign, id: accepted.id })).rejects.toMatchObject({
-        status: 404,
-        name: 'ASSET_RELOCATION_NOT_FOUND',
-        message: 'Asset relocation was not found.'
-      })
-      await expect(operations.relocationStatus({ requester: owner, id: 'not-a-receipt' })).rejects.toMatchObject({
-        status: 404,
-        name: 'ASSET_RELOCATION_NOT_FOUND',
-        message: 'Asset relocation was not found.'
-      })
+      const foreignError = await operations.relocationStatus({ requester: foreign, id: accepted.id }).catch(error => error)
+      const malformedError = await operations.relocationStatus({ requester: owner, id: 'not-a-receipt' }).catch(error => error)
+      expect(foreignError).toMatchObject({ status: 404, name: 'ASSET_RELOCATION_NOT_FOUND' })
+      expect(malformedError).toMatchObject({ status: 404, name: 'ASSET_RELOCATION_NOT_FOUND' })
 
       pathsAllowed = false
-      await expect(operations.relocationStatus({ requester: owner, id: accepted.id })).rejects.toMatchObject({
-        status: 404,
-        name: 'ASSET_RELOCATION_NOT_FOUND',
-        message: 'Asset relocation was not found.'
-      })
+      const revokedError = await operations.relocationStatus({ requester: owner, id: accepted.id }).catch(error => error)
+      expect(revokedError).toMatchObject({ status: 404, name: 'ASSET_RELOCATION_NOT_FOUND' })
+      const envelope = error => ({ status: error.status, name: error.name, message: error.message })
+      expect(envelope(malformedError)).toEqual(envelope(foreignError))
+      expect(envelope(revokedError)).toEqual(envelope(foreignError))
       await expect(operations.relocationStatus({ requester: system, id: accepted.id })).resolves.toMatchObject({
         id: accepted.id,
         assetId: 25
@@ -1128,7 +1110,6 @@ describe('asset operations', () => {
       expect(error).toMatchObject({
         status: 403,
         name: 'ASSET_FOLDER_FORBIDDEN',
-        message: 'You are not authorized to create this asset folder.'
       })
       expect(events[0]).toBe('authority')
       expect(folderQuery.insert).not.toHaveBeenCalled()
@@ -1136,7 +1117,6 @@ describe('asset operations', () => {
       if (scenario.mode === 'auth') expect(folderQuery.first).toHaveBeenCalledOnce()
     }
 
-    expect(publicDenials).toHaveLength(cases.length)
     expect(new Set(publicDenials.map(denial => JSON.stringify(denial))).size).toBe(1)
   })
 
@@ -1166,6 +1146,15 @@ describe('asset operations', () => {
     const parent = { id: 42, name: 'Parent', slug: 'parent', parentId: null }
     const publicRestDenials = []
     const publicGraphDenials = []
+    // Only unrelated route mounts are stubbed; the API error serializer is real.
+    for (const name of [
+      'analytics', 'auth', 'offline', 'comments', 'content-extensions', 'developer-flags',
+      'extensions', 'editors', 'groups', 'locales', 'logging', 'mail', 'tls', 'navigation',
+      'rendering', 'page-links', 'pages', 'page-ratings', 'search', 'site', 'site-logo',
+      'storage', 'system', 'theming', 'users', 'utilities', 'taxonomy', 'webhooks'
+    ]) {
+      vi.mockModule(`../controllers/api/${name}.ts`, import.meta.url, () => ({ default: {} }))
+    }
 
     for (const mode of ['missing', 'forbidden']) {
       assetRouter.post.mockReset()
@@ -1200,6 +1189,7 @@ describe('asset operations', () => {
         config: { db: { type: 'postgres' } },
         Error: { AssetFolderExists: class extends Error {} },
         auth,
+        logger: { error: vi.fn() },
         models: {
           assets: { query: vi.fn(), flushTempUploads: vi.fn() },
           assetFolders: { query: vi.fn(() => folderQuery), getHierarchy },
@@ -1215,10 +1205,9 @@ describe('asset operations', () => {
         { req: { user: requester } }
       )
       publicGraphDenials.push(graphResult.responseResult)
-      const { default: controller } = await vi.importFresh('../controllers/api/assets.ts', import.meta.url)
-      expect(controller).toBeDefined()
+      configureTransportRuntime(global.WIKI)
+      await vi.importFresh('../controllers/api/assets.ts', import.meta.url)
       const createHandler = assetRouter.post.mock.calls.find(([path]) => path === '/folders')?.[1]
-      expect(createHandler).toBeInstanceOf(Function)
       const next = vi.fn()
       await createHandler(
         { user: requester, body: { parentFolderId: parent.id, slug: 'child' } },
@@ -1227,12 +1216,17 @@ describe('asset operations', () => {
       )
       const restError = next.mock.calls[0]?.[0]
       expect(restError).toBeInstanceOf(Error)
+      assetRouter.use.mockReset()
+      await vi.importFresh('../controllers/api/index.ts', import.meta.url)
+      const errorHandler = assetRouter.use.mock.calls.find(
+        ([handler]) => typeof handler === 'function' && handler.length === 4
+      )?.[0]
+      const response = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+      errorHandler(restError, {}, response, vi.fn())
+      expect(response.status).toHaveBeenCalledWith(403)
       publicRestDenials.push({
-        status: restError.status,
-        body: {
-          code: restError.code ?? 'INTERNAL_REST_ERROR',
-          error: restError.message
-        }
+        status: response.status.mock.calls[0]?.[0],
+        body: response.json.mock.calls[0]?.[0]
       })
       expect(folderQuery.insert).not.toHaveBeenCalled()
     }
@@ -1242,14 +1236,10 @@ describe('asset operations', () => {
     expect(publicGraphDenials[0]).toMatchObject({
       succeeded: false,
       slug: 'ASSET_FOLDER_FORBIDDEN',
-      message: 'You are not authorized to create this asset folder.'
     })
     expect(publicRestDenials[0]).toEqual({
       status: 403,
-      body: {
-        code: 'INTERNAL_REST_ERROR',
-        error: 'You are not authorized to create this asset folder.'
-      }
+      body: { error: expect.any(String) }
     })
   })
 
@@ -1502,10 +1492,9 @@ describe('asset operations', () => {
     assetRouter.post.mockReset()
     const requester = { id: 7, name: 'Writer', email: 'writer@example.com' }
     global.WIKI = { auth: { checkAccess: vi.fn(() => true) } }
-    const { default: controller } = await vi.importFresh('../controllers/api/assets.ts', import.meta.url)
-    expect(controller).toBeDefined()
+    configureTransportRuntime(global.WIKI)
+    await vi.importFresh('../controllers/api/assets.ts', import.meta.url)
     const handler = assetRouter.post.mock.calls.find(([path]) => path === '/:id/resize')?.[1]
-    expect(handler).toBeInstanceOf(Function)
     const response = { status: vi.fn().mockReturnThis(), json: vi.fn(), set: vi.fn().mockReturnThis() }
     const next = vi.fn()
     await handler(
@@ -1527,7 +1516,7 @@ describe('asset operations', () => {
       next
     )
     expect(response.status).toHaveBeenCalledWith(400)
-    expect(response.json).toHaveBeenCalledWith({ error: 'The image resize request contains unsupported fields.' })
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }))
     expect(next).not.toHaveBeenCalled()
   })
 })

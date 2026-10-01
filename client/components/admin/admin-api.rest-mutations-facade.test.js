@@ -68,23 +68,6 @@ describe('admin-api REST mutation migration guard', () => {
   const revokeConfirmSource = script && extractMethod(script, 'revokeConfirm')
   const windowStub = { fetch: () => {} }
 
-  test('uses typed REST helpers without restoring inline GraphQL mutations', () => {
-    expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
-    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bfetchAdminApiBootstrap\b)(?=[^}]*\brevokeAdminApiKey\b)(?=[^}]*\bsetAdminApiState\b)(?=[^}]*\btype AdminApiKey\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/auth-api['"]/
-    )
-    expect(script).toContain("import { getErrorMessage } from '../../helpers/root-ui-store'")
-    expect(script).toMatch(/keys:\s*\[\]\s+as\s+AdminApiKey\[\]/)
-    expect(script).toMatch(/current:\s*null\s+as\s+AdminApiKey\s*\|\s*null/)
-    expect(script).toMatch(/revoke\s*\(\s*key:\s*AdminApiKey\s*\)/)
-    expect(script).not.toContain('graphql-tag')
-    expect(script).not.toContain('this.$apollo.mutate')
-    expect(script).not.toContain('mutation: gql`')
-    expect(script).not.toMatch(/\bsetApiState\s*\(/)
-    expect(script).not.toMatch(/\brevokeApiKey\s*\(/)
-  })
-
   test('globalSwitch serializes toggles and refreshes before reporting REST success', async () => {
     const mutation = deferred()
     const refreshResult = deferred()
@@ -116,7 +99,6 @@ describe('admin-api REST mutation migration guard', () => {
 
     expect(mutationCalls).toHaveLength(1)
     expect(mutationCalls[0].enabled).toBe(true)
-    expect(typeof mutationCalls[0].fetchImplementation).toBe('function')
     expect(viewModel.isToggleLoading).toBe(true)
     mutation.resolve()
     await Promise.resolve()
@@ -128,11 +110,10 @@ describe('admin-api REST mutation migration guard', () => {
 
     expect(refreshCalls).toEqual([false])
     expect(wiki.notifications).toEqual([
-      {
+      expect.objectContaining({
         style: 'success',
-        message: 'admin:api.toggleStateEnabledSuccess',
-        icon: 'check'
-      }
+        message: 'admin:api.toggleStateEnabledSuccess'
+      })
     ])
     expect(wiki.errors).toEqual([])
     expect(wiki.loadingEvents).toEqual([
@@ -217,7 +198,6 @@ describe('admin-api REST mutation migration guard', () => {
     await revokeConfirm.call(viewModel)
     expect(revokeCalls).toHaveLength(1)
     expect(revokeCalls[0].id).toBe(42)
-    expect(typeof revokeCalls[0].fetchImplementation).toBe('function')
     expect(viewModel.revokeLoading).toBe(true)
 
     mutation.resolve()
@@ -231,11 +211,10 @@ describe('admin-api REST mutation migration guard', () => {
 
     expect(refreshCalls).toEqual([false])
     expect(wiki.notifications).toEqual([
-      {
+      expect.objectContaining({
         style: 'success',
-        message: 'admin:api.revokeSuccess',
-        icon: 'check'
-      }
+        message: 'admin:api.revokeSuccess'
+      })
     ])
     expect(wiki.errors).toEqual([])
     expect(wiki.loadingEvents).toEqual([

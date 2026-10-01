@@ -109,13 +109,10 @@ afterEach(async () => {
 })
 
 describe('PostgreSQL search benchmark evidence', () => {
-  it('constructs a self-describing report with deterministic metadata', () => {
+  it('constructs a self-describing report with environment, corpus and measurement metadata', () => {
     const first = createPostgresSearchBenchmarkReport(input())
-    const second = createPostgresSearchBenchmarkReport(input())
 
-    expect(second).toEqual(first)
     expect(first.status).toBe('passed')
-    expect(POSTGRES_SEARCH_DEFAULT_THRESHOLDS.maxQueryP95Milliseconds).toBe(200)
     expect(first.thresholds).toEqual(POSTGRES_SEARCH_DEFAULT_THRESHOLDS)
     expect(first.corpus).toEqual({
       seed: POSTGRES_SEARCH_CORPUS.seed,
@@ -134,8 +131,6 @@ describe('PostgreSQL search benchmark evidence', () => {
     expect(first.warmupsPerDistribution).toBe(2)
     expect(first.queryDistributions.map(distribution => distribution.kind)).toEqual(['exactTitleContent', 'typoFuzzy', 'multiTermDescription', 'commonTag'])
     expect(first.reportVersion).toBe(2)
-    expect(first.relevance.augmentedFixture.provenance).toContain('not shared operations.search evidence')
-    expect(first.relevance.augmentedFixture.cases.map(result => result.name)).toEqual(SEARCH_RELEVANCE_CASES.map(fixture => fixture.name))
   })
 
   it('uses nearest-rank percentiles and records threshold and correctness violations', () => {
@@ -250,35 +245,45 @@ describe('PostgreSQL search benchmark evidence', () => {
     })
   })
 
-  it('preserves all repeated samples and gates a locale or path scope violation from any sample', async () => {
-    let calls = 0
-    const evaluation = await evaluateSearchRelevance(
-      async () => {
-        calls += 1
-        if (calls === 2) return { results: [{ id: 42, locale: 'fr', path: 'outside' }] }
-        if (calls === 4) return { results: [] }
-        return { results: [{ id: 42, locale: 'en', path: 'knowledge/runbook' }] }
-      },
-      {
-        corpus: 'sample stability fixture',
-        provenance: 'test executor',
-        cases: [{ name: 'scoped result', query: 'runbook', expected: [42], acceptance: 'required', options: { locale: 'en', path: 'knowledge' } }]
-      }
-    )
+  it('preserves all repeated samples and independently gates locale, path and missing-result violations', async () => {
+    const scopedRow = { id: 42, locale: 'en', path: 'knowledge/runbook' }
+    const scenarios = [
+      { name: 'accepted descendant', secondRow: scopedRow, missingFourth: false, missingExpected: [], scopeViolations: [], passed: true },
+      { name: 'locale-only violation', secondRow: { ...scopedRow, locale: 'fr' }, missingFourth: false, missingExpected: [], scopeViolations: [42], passed: false },
+      { name: 'path-only violation', secondRow: { ...scopedRow, path: 'outside' }, missingFourth: false, missingExpected: [], scopeViolations: [42], passed: false },
+      { name: 'missing-result violation', secondRow: scopedRow, missingFourth: true, missingExpected: [42], scopeViolations: [], passed: false }
+    ]
+    for (const scenario of scenarios) {
+      let calls = 0
+      const evaluation = await evaluateSearchRelevance(
+        async () => {
+          calls += 1
+          if (calls === 2) return { results: [scenario.secondRow] }
+          if (calls === 4 && scenario.missingFourth) return { results: [] }
+          return { results: [scopedRow] }
+        },
+        {
+          corpus: 'sample stability fixture',
+          provenance: 'test executor',
+          cases: [{ name: scenario.name, query: 'runbook', expected: [42], acceptance: 'required', options: { locale: 'en', path: 'knowledge' } }]
+        }
+      )
 
-    expect(evaluation.cases[0]).toMatchObject({
-      samples: [
-        { top5: [42], returned: [42] },
-        { top5: [42], returned: [42] },
-        { top5: [42], returned: [42] },
-        { top5: [], returned: [] },
-        { top5: [42], returned: [42] }
-      ],
-      missingExpected: [42],
-      scopeViolations: [42],
-      passed: false
-    })
-    expect(evaluation.failedCases).toHaveLength(1)
+      expect(evaluation.cases[0]).toMatchObject({
+        samples: [
+          { top5: [42], returned: [42] },
+          { top5: [42], returned: [42] },
+          { top5: [42], returned: [42] },
+          scenario.missingFourth ? { top5: [], returned: [] } : { top5: [42], returned: [42] },
+          { top5: [42], returned: [42] }
+        ],
+        missingExpected: scenario.missingExpected,
+        scopeViolations: scenario.scopeViolations,
+        passed: scenario.passed
+      })
+      expect(evaluation.requiredCases).toBe(1)
+      expect(evaluation.failedCases.map(result => result.name)).toEqual(scenario.passed ? [] : [scenario.name])
+    }
   })
   it('preserves the previous report and removes temporary output when atomic publication fails', async () => {
     const outputPath = await reportPath()

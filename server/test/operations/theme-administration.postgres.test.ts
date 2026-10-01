@@ -3,13 +3,9 @@ import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
 import { createThemeAdministrationStore } from '../../operations/theme-administration.ts'
 import { themePolicyFromConfiguration, type ThemePolicy } from '../../../shared/theme-policy.ts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 const themePolicyDefaults = themePolicyFromConfiguration({})
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_theme_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_theme_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 suite('PostgreSQL reviewed Theme settings', () => {
@@ -79,7 +75,7 @@ suite('PostgreSQL reviewed Theme settings', () => {
     await write({ palettes: [...policy.palettes, second], activePaletteId: second.id, reading: { textSize: 19, lineHeight: 1.8, copyWidth: 68 } })
     expect((await db('settings').where('key', 'theming').first()).value.colors.dark.primary).toBe('#123456')
     await write({ palettes: [second] })
-    expect((await read()).policy.palettes).toHaveLength(1)
+    expect((await read()).policy.palettes).toEqual([second])
     expect((await read()).policy.reading).toEqual({ textSize: 19, lineHeight: 1.8, copyWidth: 68 })
   })
   it('rejects concurrent and ABA reviews', async () => {
@@ -197,7 +193,7 @@ suite('PostgreSQL reviewed Theme settings', () => {
       await themingOperations.updateConfig({ theme: 'default', iconset: 'mdi', darkMode: false, colors, injectCSS: '/* intact */\n.contents { color: red; }\n' }, admin)
       expect((await read()).policy.palettes[0].colors.light.primary).toBe('#123456')
       expect(themingOperations.getConfig().injectCSS).toBe('/* intact */\n.contents { color: red; }\n')
-      expect((await read()).history[0].reason).toContain('compatibility')
+      expect((await read()).history[0]).toMatchObject({ actorId: 1, fields: expect.arrayContaining(['palettes', 'injectCSS']) })
       await expect(themingOperations.updateConfig({ activePaletteId: 'missing' }, admin)).rejects.toMatchObject({ status: 400 })
       await expect(themingOperations.updateConfig({ title: 'not owned' }, admin)).rejects.toMatchObject({ status: 400 })
       await expect(themingOperations.updateConfig({ tocPosition: 'right' }, { id: 3, authVersion: 0 } as never)).rejects.toMatchObject({ status: 403 })

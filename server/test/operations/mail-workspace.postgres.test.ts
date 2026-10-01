@@ -1,17 +1,13 @@
 import { generateKeyPairSync, randomUUID } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createMailWorkspaceStore } from '../../operations/mail-workspace.ts'
 import { mailConfigurationKey } from '../../repositories/mail-configuration.ts'
 import { up as migration } from '../../db/migrations/tsepistle-000024-mail-diagnostics.ts'
 import type { MailRuntime } from '../../core/mail.ts'
 import type { MailConfigurationWorkspace, MailDraft } from '../../../shared/mail-workspace.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_mail_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_mail_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 const initial = () => ({
@@ -235,6 +231,11 @@ suite('Mail workspace diagnostics on PostgreSQL', () => {
   })
   it('requires an enabled current runtime, current access and a non-offline workspace before effects', async () => {
     let saved = await workspace.inspect(admin)
+    runtimeEnabled = false
+    await expect(workspace.startCheck(admin, { id: randomUUID(), kind: 'connection', fingerprint: saved.fingerprint })).rejects.toMatchObject({ status: 409 })
+    expect(verify).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    runtimeEnabled = true
     runtimeKey = 'stale'
     await expect(workspace.startCheck(admin, { id: randomUUID(), kind: 'connection', fingerprint: saved.fingerprint })).rejects.toMatchObject({ status: 409 })
     runtimeKey = mailConfigurationKey(await raw())
@@ -326,8 +327,7 @@ suite('Mail workspace diagnostics on PostgreSQL', () => {
     expect(verify).not.toHaveBeenCalled()
   })
   it('previews only bundled templates with fixed sample data and without SMTP effects', async () => {
-    const result = await workspace.preview(admin, 'account-welcome')
-    expect(result.title).toBe('Account invitation')
+    await workspace.preview(admin, 'account-welcome')
     expect(render.mock.calls[0]![0]).toMatchObject({
       template: 'account-welcome',
       to: 'preview@example.test',

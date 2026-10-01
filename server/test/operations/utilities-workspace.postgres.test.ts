@@ -6,13 +6,9 @@ import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { up, down } from '../../db/migrations/tsepistle-000026-utilities-operations.ts'
 import type { UtilitiesWorkspaceStore } from '../../operations/utilities-workspace.ts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_utilities_workspace_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_utilities_workspace_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const administrator = { user: { id: 1, authVersion: 0 } } as never
 
@@ -50,6 +46,15 @@ suite('Utilities workspace persistence on PostgreSQL', () => {
   let operation: Deferred
   let effectDispatched: Deferred
   let flushTemporaryUploadsCalls: number
+  const waitForSequence = async (name: string, minimum: number) => {
+    // observeExport uses node:timers/promises with a live clock; poll the real PostgreSQL fault, not a guessed completion delay.
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const { rows } = await db.raw(`SELECT last_value, is_called FROM "${name}"`)
+      if (rows[0].is_called && Number(rows[0].last_value) >= minimum) return
+      await Bun.sleep(20)
+    }
+    throw new Error(`Fixture fault sequence ${name} did not reach ${minimum} attempts.`)
+  }
   let previousWiki: unknown
   const runtime: FixtureRuntime = {
     ROOTPATH: process.cwd(),
@@ -343,13 +348,18 @@ suite('Utilities workspace persistence on PostgreSQL', () => {
     const sequence = 'utilities_operations_export_heartbeat_fault_sequence'
     const functionName = 'utilities_operations_export_heartbeat_fault_fn'
     const destination = `utilities-export-${randomUUID()}`
+    const id = randomUUID()
     await db.raw(`CREATE SEQUENCE "${sequence}"`)
     await db.raw(`
       CREATE FUNCTION "${functionName}"() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN
-        IF NEW.summary = 'The local export service is running. Its destination is intentionally not retained in this receipt.'
-          AND nextval('"${sequence}"') = 1 THEN
-          RAISE EXCEPTION 'fixture heartbeat persistence fault';
+        IF NEW.id = '${id}' AND NEW.kind = 'export'
+          AND OLD.state = 'running' AND NEW.state = 'running'
+          AND OLD.phase = 'working' AND NEW.phase = 'working'
+          AND NEW."heartbeatAt" IS DISTINCT FROM OLD."heartbeatAt" THEN
+          IF nextval('"${sequence}"') = 1 THEN
+            RAISE EXCEPTION 'fixture heartbeat persistence fault';
+          END IF;
         END IF;
         RETURN NEW;
       END;
@@ -358,7 +368,7 @@ suite('Utilities workspace persistence on PostgreSQL', () => {
     try {
       const review = await store.inspect(administrator)
       const first = {
-        id: randomUUID(),
+        id,
         kind: 'export' as const,
         fingerprint: review.fingerprint,
         reason: 'Verify that a transient export heartbeat write does not release ownership',
@@ -366,14 +376,16 @@ suite('Utilities workspace persistence on PostgreSQL', () => {
         payload: { entities: ['pages'], path: destination }
       }
       await store.start(administrator, first)
-      // observeExport uses node's live timer; this PostgreSQL integration test deliberately waits for that persisted heartbeat boundary.
-      const heartbeat = Promise.withResolvers<void>()
-      setTimeout(heartbeat.resolve, 1_100)
-      await heartbeat.promise
+      // Sequence advancement survives the failed heartbeat UPDATE transaction.
+      await waitForSequence(sequence, 1)
       await expect(store.start(administrator, await request())).rejects.toMatchObject({ status: 409 })
       operation.resolve()
       await waitFor(async () => ((await store.receipt(administrator, first.id)).state === 'succeeded' ? true : undefined))
     } finally {
+      operation.resolve()
+      const row = await db('utilitiesOperations').where('id', id).first()
+      if (row?.state === 'running')
+        await waitFor(async () => ((await store.receipt(administrator, id)).state !== 'running' ? true : undefined))
       await db.raw(`DROP TRIGGER IF EXISTS "${trigger}" ON "utilitiesOperations"`)
       await db.raw(`DROP FUNCTION IF EXISTS "${functionName}"()`)
       await db.raw(`DROP SEQUENCE IF EXISTS "${sequence}"`)
@@ -387,25 +399,36 @@ suite('Utilities workspace persistence on PostgreSQL', () => {
   })
 
   it('leaves a recoverable interrupted receipt when both terminal writes fail', async () => {
+    const sequence = 'utilities_operations_terminal_failure_sequence'
+    const input = await request()
+    await db.raw(`CREATE SEQUENCE "${sequence}"`)
     await db.raw(`CREATE FUNCTION independent_terminal_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-      IF NEW.state <> 'running' THEN RAISE EXCEPTION 'fixture terminal persistence failure'; END IF;
+      IF NEW.id = '${input.id}' AND NEW.state <> 'running' THEN
+        PERFORM nextval('"${sequence}"');
+        RAISE EXCEPTION 'fixture terminal persistence failure';
+      END IF;
       RETURN NEW;
     END $$`)
     await db.raw('CREATE TRIGGER independent_terminal_failure BEFORE UPDATE ON "utilitiesOperations" FOR EACH ROW EXECUTE FUNCTION independent_terminal_failure()')
     try {
-      const input = await request()
       await store.start(administrator, input)
       await effectDispatched.promise
       operation.resolve()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await waitForSequence(sequence, 2)
       // A lost terminal receipt must not reject the detached executor or replay its effect.
       await db('utilitiesOperations').where('id', input.id).update({ heartbeatAt: new Date(Date.now() - 180_000).toISOString() })
-      const receipt = await store.receipt(administrator, input.id)
+      const receipt = await waitFor(async () => {
+        const value = await store.receipt(administrator, input.id)
+        return value.state === 'uncertain' ? value : undefined
+      })
       expect(receipt.state).toBe('uncertain')
+      expect(flushTemporaryUploadsCalls).toBe(1)
+      await expect(store.start(administrator, input)).resolves.toMatchObject({ id: input.id, state: 'uncertain' })
       expect(flushTemporaryUploadsCalls).toBe(1)
     } finally {
       await db.raw('DROP TRIGGER independent_terminal_failure ON "utilitiesOperations"')
       await db.raw('DROP FUNCTION independent_terminal_failure()')
+      await db.raw(`DROP SEQUENCE IF EXISTS "${sequence}"`)
     }
   })
 

@@ -359,7 +359,7 @@ describe('provider usage accounting', () => {
       )
     ).toBe(9)
     expect(() => agentProviderCostMicros(premium, Number.MAX_SAFE_INTEGER, 0, Number.MAX_SAFE_INTEGER)).toThrow(
-      'Provider usage cost exceeds the supported range'
+      expect.objectContaining({ code: 'PROVIDER_USAGE_INVALID', status: 502 })
     )
   })
 
@@ -369,12 +369,12 @@ describe('provider usage accounting', () => {
         results: [],
         modelUsage: { ai: 'test', model: 'model-test', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 311 } }
       })
-    ).toThrow('Provider returned incomplete or invalid token usage')
+    ).toThrow(expect.objectContaining({ code: 'PROVIDER_USAGE_INVALID', status: 502 }))
     expect(() => readAgentUsageEvent({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 311, costMicros: 1 })).toThrow(
-      'Stored agent usage event data is invalid'
+      expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
     )
     expect(() => readAgentUsageEvent({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580 })).toThrow(
-      'Stored agent usage event data is invalid'
+      expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
     )
     expect(() =>
       readAgentProviderUsage('legacy-completions', {
@@ -385,7 +385,7 @@ describe('provider usage accounting', () => {
           tokens: { promptTokens: Number.MAX_SAFE_INTEGER, completionTokens: 1, totalTokens: Number.MAX_SAFE_INTEGER }
         }
       })
-    ).toThrow('Provider returned incomplete or invalid token usage')
+    ).toThrow(expect.objectContaining({ code: 'PROVIDER_USAGE_INVALID', status: 502 }))
     expect(readAgentUsageEvent({ inputTokens: 3, outputTokens: 309 })).toEqual({
       inputTokens: 3,
       outputTokens: 309,
@@ -805,6 +805,8 @@ describe('Ax provider factory', () => {
       table.boolean('conformed')
     })
     const factory = new AgentProviderFactory(db, { get: () => null })
-    await expect(Promise.resolve(factory.create('00000000-0000-4000-8000-000000000099'))).rejects.toBeInstanceOf(AgentRepositoryError)
+    const creation = Promise.resolve(factory.create('00000000-0000-4000-8000-000000000099'))
+    await expect(creation).rejects.toBeInstanceOf(AgentRepositoryError)
+    await expect(creation).rejects.toMatchObject({ code: 'PROFILE_VERSION_UNAVAILABLE', status: 409 })
   })
 })

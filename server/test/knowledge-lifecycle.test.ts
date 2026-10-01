@@ -248,12 +248,15 @@ describe('page knowledge lifecycle', () => {
     await enqueueKnowledge('1', String(current.content), 'create')
     const lifecycle = new PageKnowledgeLifecycle(db, 'repair-worker')
     await lifecycle.runOnce()
+    const healthy = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('sourceSha256')
+    const healthySourceSha256 = healthy.sourceSha256
 
     const expectRepair = async () => {
       await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
       const stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('sourceSha256', 'projection')
       const projection = JSON.parse(String(stored.projection))
       expect(stored.sourceSha256).toBe(projection.source.sha256)
+      expect(stored.sourceSha256).toBe(healthySourceSha256)
       expect(projection.source).toMatchObject({ pageId: 42, sourceRevision: '1' })
       expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status')).toEqual({ status: 'succeeded' })
     }
@@ -905,6 +908,7 @@ describe('page knowledge lifecycle', () => {
     expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status')).toEqual({ status: 'succeeded' })
   })
   it('keeps private pages deterministic and never sends them to the utility provider', async () => {
+    await enableUtilityEnrichment()
     const current = page({ visibility: 'private', ownerId: 5 })
     await db('pages').insert(current)
     await enqueuePageMutationEffects(db, {
@@ -916,7 +920,7 @@ describe('page knowledge lifecycle', () => {
       location: { locale: 'en', path: 'ops/runbook', visibility: 'private', ownerId: 5 },
       effects: ['knowledge']
     })
-    const enrichKnowledge = vi.fn()
+    const enrichKnowledge = vi.fn(async () => utilityResult('private-leak'))
 
     await new PageKnowledgeLifecycle(db, 'private-worker', { enrichKnowledge }).runOnce()
 

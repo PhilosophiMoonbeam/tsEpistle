@@ -23,7 +23,17 @@ vi.mockModule('express', import.meta.url, () => {
 
 const { default: express } = await import('express')
 const handler = (method, path) => express.__router[method].mock.calls.find(([registered]) => registered === path)[1]
-const response = () => ({ set: vi.fn(), status: vi.fn().mockReturnThis(), json: vi.fn(), sendStatus: vi.fn() })
+const response = () => {
+  const headers = new Map()
+  const res = {
+    headers,
+    set: vi.fn((name, value) => { headers.set(name.toLowerCase(), value); return res }),
+    status: vi.fn().mockReturnThis(),
+    json: vi.fn(),
+    sendStatus: vi.fn()
+  }
+  return res
+}
 const systemUser = { id: 1, authVersion: 0, permissions: ['manage:system'] }
 
 describe('system API clean cutover', () => {
@@ -63,7 +73,7 @@ describe('system API clean cutover', () => {
       effectId: 'effect-42',
       requester: { user: systemUser }
     })
-    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    expect(res.headers.get('cache-control')).toBe('private, no-store')
     expect(res.json).toHaveBeenCalledWith(status)
   })
 
@@ -120,6 +130,7 @@ describe('system API clean cutover', () => {
     const res = response()
     await handler('post', '/cache/flush')({ user: { id: 4 } }, res)
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'System administration is required.' })
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('/_api/utilities/workspace')
   })
 })

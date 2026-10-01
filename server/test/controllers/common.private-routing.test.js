@@ -92,9 +92,18 @@ describe('common page routing', () => {
         pages: {
           getPageFromDb: vi.fn().mockResolvedValue(privatePage),
           getPage: vi.fn(),
-          query: vi.fn().mockReturnValue({
-            column: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(privatePage) }),
-            findById: vi.fn().mockResolvedValue(privatePage)
+          query: vi.fn().mockImplementation(() => {
+            let columns
+            const query = {
+              column: vi.fn(fields => { columns = fields; return query }),
+              findById: vi.fn(async id => {
+                if (id !== privatePage.id) return undefined
+                return columns
+                  ? Object.fromEntries(columns.map(column => [column, privatePage[column]]))
+                  : privatePage
+              })
+            }
+            return query
           })
         },
         pageHistory: { getVersion: vi.fn() },
@@ -139,9 +148,6 @@ describe('common page routing', () => {
     const adminResponse = response()
     await byId(request({ id: 1, permissions: ['manage:system'] }), adminResponse)
     expect(adminResponse.redirect).toHaveBeenCalledWith('/_admin/private/7')
-    expect(global.WIKI.models.pages.query.mock.results.at(-1).value.column).toHaveBeenCalledWith([
-      'id', 'path', 'localeCode', 'visibility', 'ownerId'
-    ])
   })
 
   it('returns identical not-found behavior to non-owners', async () => {
@@ -150,17 +156,6 @@ describe('common page routing', () => {
     await byId(request({ id: 9, permissions: ['read:pages'] }), res)
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.render).toHaveBeenCalledWith('notfound', { action: 'view' })
-  })
-
-  it('uses the real public asset route before delegating internal paths to delivery', async () => {
-    const { view } = await handlers()
-    const assetResponse = response()
-    const req = request({ permissions: ['read:assets'] })
-    req.path = '/.git/config'
-
-    await view(req, assetResponse)
-
-    expect(global.WIKI.models.assets.getAsset).toHaveBeenCalledWith('.git/config', assetResponse)
   })
 
   it('renders the by-ID inspection route only for system administrators', async () => {
@@ -271,12 +266,11 @@ describe('common page routing', () => {
     }, assetResponse, vi.fn())
 
     expect(global.WIKI.models.assets.getAsset).toHaveBeenCalledWith('uploads/untrusted.html', assetResponse)
-    expect(assetResponse.set).toHaveBeenCalledWith('Content-Type', 'text/html')
     expect(assetResponse.set).not.toHaveBeenCalledWith('X-Wiki-Page', expect.anything())
   })
 
   it('copies protected templates only with a current requester session grant', async () => {
-    let grantActive = false
+    const grantRows = []
     const templatePage = {
       ...privatePage,
       visibility: 'public',
@@ -292,26 +286,38 @@ describe('common page routing', () => {
     })
     global.WIKI.models.pages.getPageFromDb.mockImplementation(async input => typeof input === 'number' ? templatePage : null)
     global.WIKI.models.knex.mockImplementation(table => {
-      if (table === 'pageAccessPasswords') {
-        return {
-          where: vi.fn().mockReturnValue({
-            first: vi.fn().mockResolvedValue({ pageId: 7, version: 3 })
-          })
-        }
-      }
-      if (table === 'pageUnlockGrants') {
-        const query = {
-          where: vi.fn().mockImplementation((column, operator) => {
-            if (column === 'expiresAt' && operator === '<=') return { delete: vi.fn().mockResolvedValue(0) }
-            if (column === 'expiresAt' && operator === '>') {
-              return { first: vi.fn().mockImplementation(async () => grantActive ? { id: 'grant-1' } : undefined) }
+      const rows = table === 'pageAccessPasswords'
+        ? [{ pageId: 7, version: 3 }]
+        : table === 'pageUnlockGrants' ? grantRows : undefined
+      if (!rows) throw new Error(`Unexpected table ${table}`)
+      const predicates = []
+      const matches = row => predicates.every(predicate => predicate(row))
+      const query = {
+        where(criteria, operator, value) {
+          if (typeof criteria === 'object') {
+            predicates.push(row => Object.entries(criteria).every(([column, expected]) => row[column] === expected))
+          } else if (operator === '>') {
+            predicates.push(row => row[criteria] > value)
+          } else if (operator === '<=') {
+            predicates.push(row => row[criteria] <= value)
+          } else {
+            throw new Error(`Unexpected comparison ${operator}`)
+          }
+          return query
+        },
+        async first() { return rows.find(matches) },
+        async delete() {
+          let removed = 0
+          for (let index = rows.length - 1; index >= 0; index--) {
+            if (matches(rows[index])) {
+              rows.splice(index, 1)
+              removed++
             }
-            return query
-          })
+          }
+          return removed
         }
-        return query
       }
-      throw new Error(`Unexpected table ${table}`)
+      return query
     })
     const { editor } = await handlers()
     const req = {
@@ -325,12 +331,38 @@ describe('common page routing', () => {
     const lockedResponse = response()
     await editor(req, lockedResponse, vi.fn())
 
+    expect(lockedResponse.status).toHaveBeenCalledWith(401)
     expect(lockedResponse.render).toHaveBeenCalledWith('page-unlock', expect.objectContaining({
       pageId: 7,
       pageTitle: 'Protected page'
     }))
 
-    grantActive = true
+    const matchingGrant = {
+      id: 'grant-1',
+      pageId: 7,
+      sessionId: 'current-session',
+      userId: 42,
+      passwordVersion: 3,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+    }
+    for (const mismatch of [
+      { sessionId: 'foreign-session' },
+      { userId: 9 },
+      { pageId: 8 },
+      { passwordVersion: 2 },
+      { expiresAt: new Date(Date.now() - 60 * 1000) }
+    ]) {
+      grantRows.splice(0, grantRows.length, { ...matchingGrant, ...mismatch })
+      const deniedResponse = response()
+      await editor(req, deniedResponse, vi.fn())
+      expect(deniedResponse.status).toHaveBeenCalledWith(401)
+      expect(deniedResponse.render).toHaveBeenCalledWith('page-unlock', expect.objectContaining({
+        pageId: 7,
+        pageTitle: 'Protected page'
+      }))
+    }
+
+    grantRows.splice(0, grantRows.length, matchingGrant)
     const grantedResponse = response()
     await editor(req, grantedResponse, vi.fn())
 

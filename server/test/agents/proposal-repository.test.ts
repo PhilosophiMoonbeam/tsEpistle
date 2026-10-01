@@ -286,6 +286,10 @@ describe('agent proposal repository', () => {
       authorize
     })
     const mutate = vi.fn(async () => {
+      expect(await knex('agentActionExecutions').where({ proposalId: persisted.proposal.id }).select('proposalId', 'runId', 'inputHash', 'status')).toEqual([
+        { proposalId: persisted.proposal.id, runId: draft.runId, inputHash: persisted.proposal.inputHash, status: 'applying' }
+      ])
+      expect(await knex('agentProposals').where({ id: persisted.proposal.id }).first('status')).toEqual({ status: 'applying' })
       await knex('appliedPages').insert({ id: 42, path: 'docs/next' })
       return { page: { id: 42, path: 'docs/next' } }
     })
@@ -607,9 +611,15 @@ describe('agent proposal repository', () => {
     expect(operations.move).toHaveBeenCalledOnce()
     expect(operations.move).toHaveBeenCalledWith(
       expect.objectContaining({
+        input: { id: 42, destinationPath: 'docs/next', destinationLocale: 'en', expectedSourceRevision: '8' },
         [OKF_PRODUCER_CONTEXT]: `agent:${runId}`
       })
     )
+    expect({ path: currentPage.path, locale: currentPage.locale, sourceRevision: currentPage.sourceRevision }).toEqual({
+      path: 'docs/next',
+      locale: 'en',
+      sourceRevision: '9'
+    })
     expect(await knex('agentProposals').where({ id: approval.proposalId }).first('status')).toEqual({ status: 'applied' })
     expect(await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).toEqual({ status: 'committed' })
     expect(await knex('agentEvents').orderBy('sequence').pluck('type')).toEqual(['proposal.created', 'approval.requested', 'approval.resolved'])

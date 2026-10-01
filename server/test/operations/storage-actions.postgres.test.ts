@@ -16,12 +16,8 @@ import { DurableJobStore, runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { createStorageActionHandler } from '../../jobs/storage-action.ts'
 import { createStorageWorkspaceStore } from '../../operations/storage-workspace-runtime.ts'
 import type { StorageModuleDefinition } from '../../../shared/storage-workspace.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_storage_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_storage_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 const result = { outcome: 'succeeded', message: 'Operation completed.', counts: null, items: [], targets: [] }
@@ -170,8 +166,13 @@ suite('Reviewed storage operations on PostgreSQL', () => {
   })
   it('rejects unreviewed, unsupported, inactive and unauthorized actions without enqueueing', async () => {
     const draft = await input()
-    for (const change of [{ confirmation: 'EXPORT' }, { handler: 'constructor' }, { fingerprint: '0'.repeat(64) }, { targetKey: 'missing' }])
-      await expect(actions.enqueue(admin, { ...draft, ...change })).rejects.toBeInstanceOf(Error)
+    for (const { change, status } of [
+      { change: { confirmation: 'EXPORT' }, status: 400 },
+      { change: { handler: 'constructor' }, status: 400 },
+      { change: { fingerprint: '0'.repeat(64) }, status: 409 },
+      { change: { targetKey: 'missing' }, status: 400 }
+    ])
+      await expect(actions.enqueue(admin, { ...draft, ...change })).rejects.toMatchObject({ status })
     await expect(actions.enqueue({ id: 3, authVersion: 0 } as never, draft)).rejects.toMatchObject({ status: 403 })
     runtime[0]!.active = false
     await expect(actions.enqueue(admin, draft)).rejects.toMatchObject({ status: 409 })
@@ -222,7 +223,7 @@ suite('Reviewed storage operations on PostgreSQL', () => {
         .where('key', 'disk')
         .update({ config: JSON.stringify({ path: '/tmp/changed' }) })
     if (kind === 'runtime') runtime[0]!.generation = randomUUID()
-    await expect(actions.begin(job)).rejects.toBeInstanceOf(Error)
+    await expect(actions.begin(job)).rejects.toMatchObject({ status: kind === 'account' ? 403 : 409 })
     await actions.rejectBeforeStart(job)
     expect(await db('storageOperations').first()).toMatchObject({ state: 'failed', startedAt: null })
   })
@@ -259,11 +260,15 @@ suite('Reviewed storage operations on PostgreSQL', () => {
     executing = true
     await expect(actions.decide(admin, await decision(queued.id, 'PRIOR WORKER STOPPED'), 'resolve')).rejects.toMatchObject({ status: 409 })
     executing = false
-    await expect(actions.decide(admin, await decision(queued.id, 'STOPPED'), 'resolve')).rejects.toBeInstanceOf(Error)
+    await expect(actions.decide(admin, await decision(queued.id, 'STOPPED'), 'resolve')).rejects.toMatchObject({ status: 400 })
     await actions.decide(admin, await decision(queued.id, 'PRIOR WORKER STOPPED'), 'resolve')
     expect((await actions.list(admin))[0]).toMatchObject({ state: 'resolved', resolution: { actorId: 1, reason: 'Review recovery evidence' } })
     await expect(actions.finish(job, result)).rejects.toMatchObject({ status: 409 })
-    await actions.enqueue(admin, await input())
+    const recovered = await actions.enqueue(admin, await input())
+    expect(await db('storageOperations').where('id', recovered.id).first()).toMatchObject({ state: 'queued', jobId: recovered.jobId })
+    const recoveredJob = await db('durableJobs').where('id', recovered.jobId).first()
+    expect(recoveredJob).toMatchObject({ type: 'storage-action', version: 1, state: 'pending' })
+    expect(JSON.parse(recoveredJob.payload)).toEqual({ operationId: recovered.id })
   })
   it('never reclaims exhausted work and retains its unresolved receipt after job cleanup', async () => {
     const queued = await actions.enqueue(admin, await input()),

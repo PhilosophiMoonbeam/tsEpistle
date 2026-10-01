@@ -1,14 +1,10 @@
-import { generateKeyPairSync } from 'node:crypto'
+import { createPublicKey, generateKeyPairSync } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createMailConfigurationStore } from '../../operations/mail-configuration.ts'
 import type { MailConfigurationWorkspace, MailDraft } from '../../../shared/mail-workspace.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_mail_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_mail_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 const initial = () => ({
@@ -219,15 +215,20 @@ suite('Reviewed mail configuration on PostgreSQL', () => {
     await expect(store.save(admin, input)).rejects.toMatchObject({ status: 400 })
     expect(await raw()).toEqual(before)
     expect((await read()).history).toEqual([])
+    const valid = body(await read())
     for (const malformed of [
-      { ...body(await read()), pass: 'unreviewed' },
-      { ...body(await read()), secrets: { pass: { action: 'keep' } } },
-      { ...body(await read()), policy: { ...input.policy, port: 0 } }
-    ])
+      { ...valid, pass: 'unreviewed' },
+      { ...valid, secrets: { pass: { action: 'keep' } } },
+      { ...valid, policy: { ...valid.policy, port: 0 } }
+    ]) {
       await expect(store.save(admin, malformed)).rejects.toMatchObject({ status: 400 })
+      expect(await raw()).toEqual(before)
+      expect((await read()).history).toEqual([])
+    }
   })
   it('derives DNS publication from the actual saved signing key and never exposes private key material', async () => {
-    const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs8' }).toString()
+    const pair = generateKeyPairSync('rsa', { modulusLength: 2048 }),
+      pem = pair.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString()
     const input = body(await read())
     input.policy.useDKIM = true
     input.secrets.dkimPrivateKey = { action: 'replace', value: pem }
@@ -235,6 +236,8 @@ suite('Reviewed mail configuration on PostgreSQL', () => {
     const workspace = await read()
     expect(workspace.dkimRecord).toMatchObject({ name: 'wiki._domainkey.example.test', bits: 2048 })
     expect(workspace.dkimRecord!.value).toStartWith('v=DKIM1; k=rsa; p=')
+    const decoded = createPublicKey({ key: Buffer.from(workspace.dkimRecord!.value.split('p=')[1]!, 'base64'), format: 'der', type: 'spki' })
+    expect(decoded.export({ format: 'der', type: 'spki' })).toEqual(pair.publicKey.export({ format: 'der', type: 'spki' }))
     expect(JSON.stringify(workspace)).not.toContain(pem)
     expect(workspace.issues).toEqual([])
   })

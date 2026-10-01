@@ -140,7 +140,7 @@ describe('asset aggregate persistence', () => {
     localLookup = vi.fn().mockResolvedValue([])
     const models: Record<string, unknown> = {
       knex: db,
-      assetFolders: { getHierarchy: vi.fn().mockResolvedValue([]) },
+      assetFolders: { getHierarchy: vi.fn(async (folderId: number) => folderId === 42 ? [{ slug: '.git' }] : []) },
       storage: { assetEvent: storageEvent, getLocalLocations: localLookup }
     }
     wikiGlobal.WIKI = {
@@ -330,7 +330,7 @@ describe('asset aggregate persistence', () => {
   })
 
   it('rejects persisted internal paths and canonical path mismatches before local delivery', async () => {
-    await insertAsset('.git/config', Buffer.from('private'), { filename: '.git/config' })
+    await insertAsset('.git/config', Buffer.from('private'), { filename: 'config', folderId: 42 })
     const internalResponse = responseForAsset()
     await Asset.getAsset('.git/config', asResponse(internalResponse))
     expect(internalResponse.statusCode).toBe(404)

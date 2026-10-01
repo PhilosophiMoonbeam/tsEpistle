@@ -274,7 +274,7 @@ afterEach(async () => {
 })
 
 describe('site logo v7 HA authority', () => {
-  it('deduplicates the same pending source and publishes an identical active snapshot on another node', async () => {
+  it('processes uploaded database source into public branding and reuses the active snapshot for an identical upload', async () => {
     const first: SiteLogoMutationResult = await uploadSiteLogoCandidate(sourceBytes, 42, db)
     expect(first.statusCode).toBe(202)
     const candidate = first.status.candidate!
@@ -282,7 +282,6 @@ describe('site logo v7 HA authority', () => {
     expect(await db('siteLogoRevisions')).toHaveLength(1)
     expect(await db('durableJobs').where({ type: 'process-site-logo' })).toHaveLength(1)
     const firstJob = await startAndClaim(db, 'node-a', revisionId, digest(sourceBytes))
-    expect(first.status.candidate?.revisionId).toBe(revisionId)
 
     await processNext(db, firstJob, async (bytes, sourceHash) => {
       expect(Buffer.from(bytes)).toEqual(sourceBytes)

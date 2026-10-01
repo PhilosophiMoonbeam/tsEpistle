@@ -7,7 +7,7 @@ const scanRoots = [
 ]
 
 const skippedDirs = new Set(['node_modules', 'dist', '.git'])
-const scannedExtensions = new Set(['.js', '.vue'])
+const scannedExtensions = new Set(['.js', '.ts', '.vue'])
 
 const collectFiles = dir => {
   const entries = fs.readdirSync(dir, { withFileTypes: true })

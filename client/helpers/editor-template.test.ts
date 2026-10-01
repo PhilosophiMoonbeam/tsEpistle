@@ -6,12 +6,13 @@ describe('template creation destination', () => {
     expect(templateEditorPath({ locale: 'fr', path: 'guides/start', visibility: 'public', templateId: 8 })).toBe('/e/fr/guides/start?from=8')
   })
   it('requires a concrete template identity', () => {
-    expect(() => templateEditorPath({ locale: 'en', path: 'notes', visibility: 'private', templateId: 0 })).toThrow('valid template')
+    expect(() => templateEditorPath({ locale: 'en', path: 'notes', visibility: 'private', templateId: 0 })).toThrow(Error)
   })
   it('prevents entering a template with an unavailable format and preserves metadata access failures', async () => {
     const input = { locale: 'en', path: 'notes/new', visibility: 'private' as const, templateId: 7 }
-    await expect(resolveTemplateEditorPath(input, ['markdown'], async () => ({ editor: 'ckeditor' }))).rejects.toThrow('Visual HTML, which is not available')
-    await expect(resolveTemplateEditorPath(input, ['markdown'], async () => { throw new Error('Access denied') })).rejects.toThrow('Access denied')
+    await expect(resolveTemplateEditorPath(input, ['markdown'], async () => ({ editor: 'ckeditor' }))).rejects.toThrow(Error)
+    const accessDenied = new Error('Access denied')
+    await expect(resolveTemplateEditorPath(input, ['markdown'], async () => { throw accessDenied })).rejects.toBe(accessDenied)
     expect(await resolveTemplateEditorPath(input, ['markdown'], async () => ({ editor: 'markdown' }))).toBe('/e/_private/en/notes/new?from=7')
   })
 

@@ -707,6 +707,8 @@ describe('controllers/api pages endpoints', () => {
     await watchList(notificationRequest({ query: { cursor } }), forwarded, vi.fn())
 
     expect(listPageWatchNotifications).toHaveBeenCalledWith(notificationUser, cursor)
+    expect(forwarded.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(forwarded.vary).toHaveBeenCalledWith('Cookie')
     expect(forwarded.json).toHaveBeenCalledWith({
       ownerId: 7,
       items: [],
@@ -762,19 +764,6 @@ describe('controllers/api pages endpoints', () => {
     expect(res.status).not.toHaveBeenCalled()
     expect(res.json).not.toHaveBeenCalled()
   })
-
-  it('forwards only a valid watch cursor before invoking the private operation', async () => {
-    const { watchList } = await loadHandler()
-    const cursor = '123e4567-e89b-42d3-a456-426614174000'
-    const res = notificationResponse()
-
-    await watchList(notificationRequest({ query: { cursor } }), res, vi.fn())
-
-    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
-    expect(res.vary).toHaveBeenCalledWith('Cookie')
-    expect(listPageWatchNotifications).toHaveBeenCalledWith(notificationUser, cursor)
-  })
-
 
   it('forwards a single approval cursor and preserves cursor expiry errors', async () => {
     const { approvalInbox } = await loadHandler()
@@ -957,7 +946,7 @@ describe('controllers/api pages endpoints', () => {
 
     await updatePage(
       {
-        body: { expectedSourceRevision: '8', title: 'Updated', okfMetadata },
+        body: { expectedSourceRevision: '8', title: 'Updated', okfMetadata, user: { id: 999 }, okfProducer: 'human:999' },
         params: { id: '7' },
         sessionID: 'session-write',
         user: requester
@@ -966,6 +955,15 @@ describe('controllers/api pages endpoints', () => {
       vi.fn()
     )
 
+    expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledWith({
+      id: 7,
+      expectedSourceRevision: '8',
+      title: 'Updated',
+      okfMetadata,
+      replaceOkfMetadata: true,
+      user: requester
+    })
     expect(res.json).toHaveBeenCalledWith({
       page: {
         id: 7,
@@ -1055,6 +1053,7 @@ describe('controllers/api pages endpoints', () => {
 
     await collaborationSession(req, res, vi.fn())
 
+    expect(global.WIKI.collaboration.issueSession).toHaveBeenCalledWith({ pageId: 7, expectedUpdatedAt, requester })
     expect(res.json).toHaveBeenCalledWith({ pageId: 7, protocolVersion: 1 })
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
@@ -1099,6 +1098,7 @@ describe('controllers/api pages endpoints', () => {
 
     await collaborationDiscard(req, res, vi.fn())
 
+    expect(global.WIKI.collaboration.discardDraft).toHaveBeenCalledWith({ pageId: 7, expectedUpdatedAt, expectedSourceRevision, requester })
     expect(res.json).toHaveBeenCalledWith({ discarded: true })
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
@@ -1206,7 +1206,7 @@ describe('controllers/api pages endpoints', () => {
   })
 
 
-  it('resolves historical tag filters while preserving query semantics and access filtering', async () => {
+  it('resolves historical tag filters and applies AND matching with private response projection', async () => {
     const rows = [
       {
         id: 10,
@@ -1453,13 +1453,25 @@ describe('controllers/api pages endpoints', () => {
     expect(page.isSearchable).toBe(true)
   })
 
-  it('returns permission-filtered tag suggestions through a correlated candidate query', async () => {
+  it('returns only matching tag suggestions from accessible candidates', async () => {
     const rows = [{
       path: 'docs/alpha',
       locale: 'en',
       visibility: 'public',
       ownerId: null,
       tags: [{ tag: 'alpha' }]
+    }, {
+      path: 'private/denied',
+      locale: 'en',
+      visibility: 'private',
+      ownerId: 8,
+      tags: [{ tag: 'alpha-secret' }]
+    }, {
+      path: 'docs/unrelated',
+      locale: 'en',
+      visibility: 'public',
+      ownerId: null,
+      tags: [{ tag: 'beta' }]
     }]
     const existsBuilder = {
       select: vi.fn().mockReturnThis(),
@@ -2264,8 +2276,10 @@ describe('controllers/api pages endpoints', () => {
     const req = { user: { id: 5, permissions: ['read:pages', 'delete:pages'] }, sessionID: 'delete-session', params: { id: '7' }, body: { expectedSourceRevision: '8' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     await deletePage(req, res, vi.fn())
-    expect(res.json).toHaveBeenCalledWith({ message: 'Page has been deleted.' })
-
+    expect(global.WIKI.models.pages.deletePage).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.pages.deletePage).toHaveBeenCalledWith({ id: 7, expectedSourceRevision: '8', user: req.user })
+    expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) })
+    expect(res.json.mock.calls[0][0].message.length).toBeGreaterThan(0)
   })
 
   it('maps page delete not-found failures to JSON 404 errors', async () => {
@@ -2320,7 +2334,7 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
-    expect(global.WIKI.models.tags.query).not.toHaveBeenCalled()
+    expect(taxonomyLegacyChange).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -2337,6 +2351,7 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
+    expect(taxonomyLegacyChange).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -2351,6 +2366,7 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error })
+    expect(taxonomyLegacyChange).not.toHaveBeenCalled()
   })
 
   it('updates a tag through the reviewed lifecycle', async () => {
@@ -2358,7 +2374,12 @@ describe('controllers/api pages endpoints', () => {
     const req = { user: { id: 1, permissions: ['manage:system'] }, sessionID: 'session', params: { id: '7' }, body: { tag: '  News  ', title: ' Current News ' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     await updateTag(req, res, vi.fn())
-    expect(res.json).toHaveBeenCalledWith({ message: 'Tag has been updated successfully.' })
+    expect(taxonomyLegacyChange).toHaveBeenCalledTimes(1)
+    expect(taxonomyLegacyChange).toHaveBeenCalledWith(
+      { requester: req.user, sessionId: 'session' },
+      { action: 'edit', tagId: 7, tag: '  News  ', title: ' Current News ' }
+    )
+    expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) })
   })
 
   it('returns lifecycle validation and review conflicts through the operation error policy', async () => {
@@ -2390,7 +2411,7 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
-    expect(global.WIKI.models.tags.query).not.toHaveBeenCalled()
+    expect(taxonomyLegacyChange).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -2407,7 +2428,7 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
-    expect(global.WIKI.models.tags.query).not.toHaveBeenCalled()
+    expect(taxonomyLegacyChange).not.toHaveBeenCalled()
   })
 
   it('archives a tag through the reviewed lifecycle with administrator context', async () => {
@@ -2415,7 +2436,12 @@ describe('controllers/api pages endpoints', () => {
     const req = { user: { id: 1, permissions: ['manage:system'] }, sessionID: 'tag-session', params: { id: '7' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     await deleteTag(req, res, vi.fn())
-    expect(res.json).toHaveBeenCalledWith({ message: 'Tag has been archived. Historical references are preserved.' })
+    expect(taxonomyLegacyChange).toHaveBeenCalledTimes(1)
+    expect(taxonomyLegacyChange).toHaveBeenCalledWith(
+      { requester: req.user, sessionId: 'tag-session' },
+      { action: 'archive', tagId: 7 }
+    )
+    expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) })
   })
 
   it('returns a JSON 404 when archiving a missing tag', async () => {

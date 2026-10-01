@@ -2,13 +2,9 @@ import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { DateTime } from 'luxon'
 import { decryptWebhookSecret, encryptWebhookSecret } from '../../core/webhooks.ts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_utility_auth_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_utility_auth_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const originalWiki = globalThis.WIKI
 interface UtilityAuth {

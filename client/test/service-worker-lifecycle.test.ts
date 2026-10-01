@@ -82,10 +82,8 @@ class MemoryCaches {
   readonly stores = new Map<string, MemoryCache>()
   denyOpen = false
   failPut = false
-  openCalls = 0
 
   async open(name: string): Promise<MemoryCache> {
-    this.openCalls += 1
     if (this.denyOpen) throw new Error('Cache Storage denied')
     let cache = this.stores.get(name)
     if (!cache) {
@@ -523,6 +521,7 @@ describe('service worker lifecycle', () => {
 
   it.each(['headers', 'body'] as const)('retries only a transient asset %s transport failure before publishing a complete cache', async failure => {
     const calls = new Map<string, number>()
+    const cssBody = 'body { color: rebeccapurple; }'
     const harness = await createHarness({ fetch: async url => {
       const attempt = (calls.get(url) ?? 0) + 1
       calls.set(url, attempt)
@@ -530,14 +529,44 @@ describe('service worker lifecycle', () => {
         if (failure === 'headers') throw new TypeError('Failed to fetch')
         return new Response(new ReadableStream({ start(controller) { controller.error(new TypeError('Network changed during body read')) } }))
       }
-      return new Response(url === SHELL_URL ? shell() : 'asset')
+      return new Response(url === SHELL_URL ? shell() : url === CSS_URL ? cssBody : 'asset')
     } })
     try {
       await harness.dispatchInstall()
       expect(calls.get(CSS_URL)).toBe(3)
       expect(calls.get(SHELL_URL)).toBe(1)
       const cache = harness.caches.stores.get(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)!
-      expect((await cache.keys()).some(request => new URL(request.url).searchParams.has('__tsepistle_pwa_complete'))).toBe(true)
+      expect(await (await cache.match(CSS_URL))?.text()).toBe(cssBody)
+      const cacheName = harness.worker.PWA_SERVICE_WORKER_CACHE_NAME
+      const digest = cacheName.slice(PRECACHE_CACHE_PREFIX.length)
+      expect(await (await cache.match(completeMarkerURL(digest)))?.json()).toEqual({
+        release: harness.worker.PWA_SERVICE_WORKER_RELEASE,
+        manifestDigest: digest,
+        cacheName
+      })
+      const source = client('ready')
+      harness.clients.list = [source]
+      const channel = new MessageChannel()
+      let readiness: unknown
+      channel.port1.onmessage = event => { readiness = event.data }
+      try {
+        const request = harness.hub.emit('message', { source, ports: [channel.port2], data: {
+          type: 'PWA_PORT_REQUEST', message: { type: 'PWA_OFFLINE_READY_REQUEST' }
+        } })
+        await Promise.all(request.waits)
+        await vi.waitFor(() => expect(readiness).toMatchObject({
+          type: 'PWA_OFFLINE_READY',
+          complete: true,
+          release: harness.worker.PWA_SERVICE_WORKER_RELEASE,
+          manifestDigest: digest,
+          cacheName,
+          shellPath: '/_offline',
+          markerURL: completeMarkerURL(digest)
+        }))
+      } finally {
+        channel.port1.close()
+        channel.port2.close()
+      }
     } finally { harness.restore() }
   })
 
@@ -579,47 +608,98 @@ describe('service worker lifecycle', () => {
     })
   }
 
-  it('shares one asset deadline across retries and cancels a retry backoff when it expires', async () => {
-    const controller = new AbortController()
+  it.each(['backoff', 'retry'] as const)('expires the shared asset budget during %s without another attempt or a complete candidate', async phase => {
+    vi.useFakeTimers()
+    const controllers: AbortController[] = []
     const deadline = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
-      expect(milliseconds).toBe(10_000)
+      const controller = new AbortController()
+      controllers.push(controller)
+      setTimeout(() => controller.abort(new DOMException('Asset deadline exceeded', 'TimeoutError')), milliseconds)
       return controller.signal
     })
+    const firstFailureAt = phase === 'retry' ? 9_000 : 9_950
     let attempts = 0
-    const harness = await createHarness({ fetch: async url => {
-      if (url === CSS_URL) { attempts += 1; throw new TypeError('Failed to fetch') }
-      return new Response(url === SHELL_URL ? shell() : 'asset')
+    let cancelled = false
+    let installation: Promise<void> | undefined
+    const requestsStarted = [Promise.withResolvers<void>(), Promise.withResolvers<void>()]
+    const rejectRequests: Array<(reason: unknown) => void> = []
+    const harness = await createHarness({ fetch: async (url, init) => {
+      if (url !== CSS_URL) return new Response(url === SHELL_URL ? shell() : 'asset')
+      attempts += 1
+      const { promise, reject } = Promise.withResolvers<Response>()
+      rejectRequests.push(reject)
+      requestsStarted[attempts - 1]?.resolve()
+      if (attempts === 1) {
+        const onAbort = (): void => reject(init?.signal?.reason)
+        init?.signal?.addEventListener('abort', onAbort, { once: true })
+        setTimeout(() => {
+          init?.signal?.removeEventListener('abort', onAbort)
+          reject(new TypeError('Failed to fetch'))
+        }, firstFailureAt)
+      } else {
+        init?.signal?.addEventListener('abort', () => { cancelled = true; reject(init.signal?.reason) }, { once: true })
+      }
+      return promise
     } })
     try {
-      const installation = harness.dispatchInstall()
-      await vi.waitFor(() => expect(attempts).toBe(1))
-      controller.abort(new DOMException('Asset deadline exceeded', 'TimeoutError'))
+      let settled = false
+      installation = harness.dispatchInstall()
+      void installation.then(() => { settled = true }, () => { settled = true })
+      await requestsStarted[0]!.promise
+      await vi.advanceTimersByTimeAsync(firstFailureAt)
+      if (phase === 'retry') {
+        await vi.advanceTimersByTimeAsync(100)
+        await requestsStarted[1]!.promise
+      }
+      const elapsed = firstFailureAt + (phase === 'retry' ? 100 : 0)
+      await vi.advanceTimersByTimeAsync(10_000 - elapsed - 1)
+      expect(settled).toBe(false)
+      expect(cancelled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
       await expect(installation).rejects.toThrow('Asset deadline exceeded')
-      expect(attempts).toBe(1)
+      expect(cancelled).toBe(phase === 'retry')
+      expect(attempts).toBe(phase === 'retry' ? 2 : 1)
       expect(harness.caches.stores.has(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)).toBe(false)
-    } finally { harness.restore(); deadline.mockRestore() }
+    } finally {
+      for (const reject of rejectRequests) reject(new DOMException('Test finished', 'AbortError'))
+      for (const controller of controllers) controller.abort(new DOMException('Test finished', 'AbortError'))
+      await installation?.catch(() => undefined)
+      vi.clearAllTimers()
+      harness.restore()
+      deadline.mockRestore()
+      vi.useRealTimers()
+    }
   })
 
   it('cancels a stalled asset request at its deadline without retrying or publishing readiness', async () => {
     const controller = new AbortController()
     const deadline = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
-    let pending = false
+    const requestStarted = Promise.withResolvers<void>()
+    let rejectRequest: ((reason: unknown) => void) | undefined
+    let installation: Promise<void> | undefined
     let cancelled = false
     const harness = await createHarness({ fetch: async (url, init) => {
       if (url !== CSS_URL) return new Response(url === SHELL_URL ? shell() : 'asset')
-      pending = true
-      return new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => { cancelled = true; reject(init.signal?.reason) }, { once: true })
-      })
+      const response = Promise.withResolvers<Response>()
+      rejectRequest = response.reject
+      init?.signal?.addEventListener('abort', () => { cancelled = true; response.reject(init.signal?.reason) }, { once: true })
+      requestStarted.resolve()
+      return response.promise
     } })
     try {
-      const installation = harness.dispatchInstall()
-      await vi.waitFor(() => expect(pending).toBe(true))
+      installation = harness.dispatchInstall()
+      await requestStarted.promise
       controller.abort(new DOMException('Asset deadline exceeded', 'TimeoutError'))
       await expect(installation).rejects.toThrow('Asset deadline exceeded')
       expect(cancelled).toBe(true)
       expect(harness.caches.stores.has(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)).toBe(false)
-    } finally { harness.restore(); deadline.mockRestore() }
+    } finally {
+      controller.abort(new DOMException('Test finished', 'AbortError'))
+      rejectRequest?.(new DOMException('Test finished', 'AbortError'))
+      await installation?.catch(() => undefined)
+      harness.restore()
+      deadline.mockRestore()
+    }
   })
 
   it.each(['fetch', 'put'] as const)('preserves the prior complete cache and removes a failed %s candidate', async failure => {
@@ -692,12 +772,18 @@ describe('service worker lifecycle', () => {
     })
     try {
       harness.caches.denyOpen = true
+      let cacheConsultedBeforeNetwork = false
+      const open = harness.caches.open.bind(harness.caches)
+      harness.caches.open = async name => {
+        if (networkRequests.length === 0) cacheConsultedBeforeNetwork = true
+        return open(name)
+      }
       const navigation = await harness.dispatchFetch(requestLike(`${ORIGIN}/en/guide`, 'navigate'))
       expect(await navigation.text()).toBe(`online:${ORIGIN}/en/guide`)
       const asset = await harness.dispatchFetch(requestLike(JS_URL, 'no-cors', '*/*'))
       expect(await asset.text()).toBe(`online:${JS_URL}`)
       expect(networkRequests).toEqual([`${ORIGIN}/en/guide`, JS_URL])
-      expect(harness.caches.openCalls).toBe(1)
+      expect(cacheConsultedBeforeNetwork).toBe(false)
     } finally {
       harness.restore()
     }
@@ -716,12 +802,43 @@ describe('service worker lifecycle', () => {
         roundNonce: string
       }
       expect(preparing).toBeDefined()
-      expect(first.messages.filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')).toHaveLength(1)
-      expect(second.messages.filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')).toHaveLength(1)
+      const expectCurrentRound = (): void => {
+        for (const participant of [first, second]) {
+          const requests = participant.messages.filter(message =>
+            message !== null && typeof message === 'object' && 'type' in message && message.type === 'PWA_RELOAD_SAFETY_REQUEST')
+          expect(requests).toContainEqual(expect.objectContaining({
+            workerId: preparing.workerId, release: preparing.release, roundNonce: preparing.roundNonce, clientId: participant.id
+          }))
+          for (const message of participant.messages) {
+            if (message === null || typeof message !== 'object' || !('type' in message) ||
+              (message.type !== 'PWA_UPDATE_PREPARING' && message.type !== 'PWA_RELOAD_SAFETY_REQUEST')) continue
+            expect(message).toMatchObject({
+              workerId: preparing.workerId, release: preparing.release, roundNonce: preparing.roundNonce
+            })
+            if (message.type === 'PWA_RELOAD_SAFETY_REQUEST') expect(message).toMatchObject({ clientId: participant.id })
+          }
+        }
+      }
+      expectCurrentRound()
 
+      const secondMessagesBeforeInitiation = second.messages.length
       await harness.dispatchMessage(second, { type: 'PWA_PREPARE_UPDATE' })
-      expect(first.messages.filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')).toHaveLength(1)
-      expect(second.messages.filter(message => (message as { type?: unknown }).type === 'PWA_UPDATE_PREPARING')).toHaveLength(2)
+      expectCurrentRound()
+      const replayedMessages = second.messages.slice(secondMessagesBeforeInitiation)
+      expect(replayedMessages).toContainEqual(expect.objectContaining({
+        type: 'PWA_UPDATE_PREPARING',
+        phase: 'collecting',
+        workerId: preparing.workerId,
+        release: preparing.release,
+        roundNonce: preparing.roundNonce
+      }))
+      expect(replayedMessages).toContainEqual(expect.objectContaining({
+        type: 'PWA_RELOAD_SAFETY_REQUEST',
+        clientId: second.id,
+        workerId: preparing.workerId,
+        release: preparing.release,
+        roundNonce: preparing.roundNonce
+      }))
 
       const vote = (source: TestClient, revision: string, safe: boolean) => harness.dispatchMessage(source, {
         type: 'PWA_RELOAD_SAFETY',
@@ -819,10 +936,23 @@ describe('service worker lifecycle', () => {
       ) as Array<{ workerId: string; release: string; roundNonce: string }>
       const rounds = new Set(preparingMessages.map(message => `${message.workerId}:${message.roundNonce}`))
       expect(rounds).toHaveLength(1)
-      expect(first.messages.filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')).toHaveLength(1)
-      expect(second.messages.filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')).toHaveLength(2)
-
       const preparing = preparingMessages[0]!
+      for (const participant of [first, second]) {
+        const requests = participant.messages.filter(message =>
+          message !== null && typeof message === 'object' && 'type' in message && message.type === 'PWA_RELOAD_SAFETY_REQUEST')
+        expect(requests).toContainEqual(expect.objectContaining({
+          workerId: preparing.workerId, release: preparing.release, roundNonce: preparing.roundNonce, clientId: participant.id
+        }))
+        for (const message of participant.messages) {
+          if (message === null || typeof message !== 'object' || !('type' in message) ||
+            (message.type !== 'PWA_UPDATE_PREPARING' && message.type !== 'PWA_RELOAD_SAFETY_REQUEST')) continue
+          expect(message).toMatchObject({
+            workerId: preparing.workerId, release: preparing.release, roundNonce: preparing.roundNonce
+          })
+          if (message.type === 'PWA_RELOAD_SAFETY_REQUEST') expect(message).toMatchObject({ clientId: participant.id })
+        }
+      }
+
       const vote = (source: TestClient, revision: string) => harness.dispatchMessage(source, {
         type: 'PWA_RELOAD_SAFETY',
         workerId: preparing.workerId,

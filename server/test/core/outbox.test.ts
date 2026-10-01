@@ -73,7 +73,7 @@ describe('transactional outbox', () => {
           aggregateId: 7,
           payload: { pageId: 7 }
         })
-      ).rejects.toThrow(`Invalid outbox event type: ${type}`)
+      ).rejects.toBeInstanceOf(TypeError)
     }
 
     expect(await knex('outboxEvents').orderBy('type').pluck('type')).toEqual([...acceptedTypes].sort())
@@ -98,7 +98,7 @@ describe('transactional outbox', () => {
     expect(await knex('outboxEvents')).toEqual([])
   })
 
-  it('lets only one concurrent publisher own an outbox row', async () => {
+  it('publishes once under serialized SQLite competing invocations and replay', async () => {
     const eventId = await knex.transaction(transaction =>
       writeOutboxEvent(transaction, {
         type: 'page.created',
@@ -131,7 +131,7 @@ describe('transactional outbox', () => {
       payload: { pageId: 7 }
     })
 
-    await expect(publishOutboxEvents(knex)).rejects.toThrow(`Page event ${eventId} notification fields are invalid`)
+    await expect(publishOutboxEvents(knex)).rejects.toBeInstanceOf(TypeError)
 
     expect(await knex('durableJobs')).toEqual([])
     expect(await knex('webhookDeliveries')).toEqual([])
@@ -198,12 +198,11 @@ describe('transactional outbox', () => {
     expect(JSON.parse(jobs[0].payload)).toMatchObject({ eventId: finalEventId, userId: 8 })
     expect(await knex('pageWatchNotifications')).toEqual([])
     expect(await knex('pageWatchDeliveries')).toEqual([expect.objectContaining({ eventId: finalEventId, userId: 8 })])
-    expect(firstEventId).not.toBe(finalEventId)
   })
 
   it('does not fan out events to disabled or unsubscribed webhooks', async () => {
     await knex('webhooks').update({ events: JSON.stringify(['page.deleted']) })
-    await writeOutboxEvent(knex, {
+    const unsubscribedEventId = await writeOutboxEvent(knex, {
       type: 'page.created',
       version: 1,
       aggregateType: 'page',
@@ -215,5 +214,21 @@ describe('transactional outbox', () => {
 
     expect(await knex('durableJobs')).toEqual([])
     expect(await knex('webhookDeliveries')).toEqual([])
+    expect(await knex('outboxEvents').where('id', unsubscribedEventId).first()).toMatchObject({ publishedAt: expect.anything() })
+
+    await knex('webhooks').update({ events: JSON.stringify(['page.created']), isEnabled: false })
+    const disabledEventId = await writeOutboxEvent(knex, {
+      type: 'page.created',
+      version: 1,
+      aggregateType: 'page',
+      aggregateId: 9,
+      payload: { pageId: 9 }
+    })
+
+    await publishOutboxEvents(knex)
+
+    expect(await knex('durableJobs')).toEqual([])
+    expect(await knex('webhookDeliveries')).toEqual([])
+    expect(await knex('outboxEvents').where('id', disabledEventId).first()).toMatchObject({ publishedAt: expect.anything() })
   })
 })

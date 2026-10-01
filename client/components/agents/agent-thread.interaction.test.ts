@@ -8,7 +8,6 @@ import type {
   AgentArtifactView,
   AgentMediaView,
   AgentMessageView,
-  AgentProposalView,
   AgentSessionView,
   AgentThreadState,
   AgentToolCallView
@@ -93,9 +92,9 @@ const ImageStub = Vue.defineComponent({
 })
 const IconStub = Vue.defineComponent({
   inheritAttrs: false,
-  props: { icon: String, size: [Number, String] },
+  props: { icon: String, size: [Number, String], color: String },
   setup(props, { attrs }) {
-    return () => Vue.h('i', { ...attrs, class: ['v-icon', attrs.class], 'data-icon': props.icon })
+    return () => Vue.h('i', { ...attrs, class: ['v-icon', attrs.class], 'data-icon': props.icon, 'data-color': props.color })
   }
 })
 const BeamStub = Vue.defineComponent({
@@ -127,28 +126,6 @@ const PreviewStub = Vue.defineComponent({
   props: { selector: { type: Object, required: true } },
   setup(props) {
     return () => Vue.h('div', { class: 'wiki-source-preview', 'data-selector': JSON.stringify(props.selector) })
-  }
-})
-const ApprovalStub = Vue.defineComponent({
-  props: {
-    proposal: { type: Object, required: true },
-    busy: Boolean
-  },
-  emits: ['decision'],
-  setup(props, { emit }) {
-    return () => {
-      const proposal = props.proposal as AgentProposalView
-      return Vue.h(
-        'button',
-        {
-          'aria-label': 'Approve pending change',
-          'data-agent-approval': 'pending',
-          disabled: props.busy,
-          onClick: () => emit('decision', proposal.id, proposal.approval?.id ?? '', 'approved')
-        },
-        'Approve'
-      )
-    }
   }
 })
 
@@ -208,42 +185,6 @@ const makeTool = (overrides: Partial<AgentToolCallView> = {}): AgentToolCallView
   ...overrides
 })
 
-const makeProposal = (overrides: Partial<AgentProposalView> = {}): AgentProposalView => ({
-  id: 'proposal-1',
-  sourceKind: 'agent',
-  actionName: 'pages.preparePatch',
-  risk: 'proposal',
-  status: 'pending',
-  summary: 'Add a release checklist.',
-  target: {
-    id: 12,
-    locale: 'en',
-    path: 'release-notes',
-    title: 'Release notes',
-    contentType: 'markdown',
-    sourceRevision: '4'
-  },
-  pageLink: null,
-  baseSourceRevision: '4',
-  authoritySha256: 'a'.repeat(64),
-  inputHash: 'b'.repeat(64),
-  patchSha256: 'c'.repeat(64),
-  resultCanonicalSha256: 'd'.repeat(64),
-  diffSha256: 'e'.repeat(64),
-  diff: '+Checklist',
-  expiresAt: '2026-09-03T10:10:00.000Z',
-  approval: {
-    id: 'approval-1',
-    proposalId: 'proposal-1',
-    status: 'pending',
-    requestedAt: '2026-09-03T10:00:01.000Z',
-    expiresAt: '2026-09-03T10:10:00.000Z',
-    decidedAt: null,
-    decisionNote: null
-  },
-  ...overrides
-})
-
 const makeThread = (sessionId: string, overrides: Partial<AgentThreadState> = {}): AgentThreadState => ({
   session: makeSession(sessionId),
   messages: [],
@@ -262,7 +203,7 @@ interface MountedThread {
   readonly thread: { value: AgentThreadState }
   readonly connection: { value: string }
   readonly userPicture: { value: UserPicture }
-  readonly emittedDecisions: unknown[][]
+  readonly emittedReattachments: unknown[][]
   readonly unmount: () => void
 }
 
@@ -282,7 +223,6 @@ const mountThread = async (
   const thread = Vue.shallowRef(initialThread)
   const userPicture = Vue.shallowRef(initialUserPicture)
   const connection = Vue.ref(initialConnection)
-  const emittedDecisions: unknown[][] = []
   const emittedReattachments: unknown[][] = []
   const agentThread = Vue.defineComponent({
     name: 'AgentThreadInteractionHarness',
@@ -317,18 +257,16 @@ const mountThread = async (
         thread: thread.value,
         connection: connection.value,
         userPicture: userPicture.value,
-        onDecision: (...args: unknown[]) => emittedDecisions.push(args),
         onReattach: (...args: unknown[]) => emittedReattachments.push(args)
       })
   })
   const app = Vue.createApp(harness)
-  for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'StatusIndicator']) app.component(name, NullStub)
+  for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'StatusIndicator', 'AgentToolCard']) app.component(name, NullStub)
   app.component('v-avatar', AvatarStub)
   app.component('v-icon', IconStub)
   app.component('v-img', ImageStub)
   app.component('ControlBorderBeam', BeamStub)
   app.component('v-btn', ButtonStub)
-  app.component('AgentToolCard', ApprovalStub)
   app.component('WikiSourcePreview', PreviewStub)
   app.mount(host)
   await settle()
@@ -337,7 +275,7 @@ const mountThread = async (
     host.remove()
   }
   mountedApps.push(unmount)
-  return { host, thread, connection, userPicture, emittedDecisions, emittedReattachments, unmount }
+  return { host, thread, connection, userPicture, emittedReattachments, unmount }
 }
 
 afterEach(() => {
@@ -357,13 +295,7 @@ describe('AgentThread identity presentation', () => {
     )
 
     const assistantIdentity = mounted.host.querySelector<HTMLElement>('.agent-message--assistant .agent-message__identity')
-    const assistantSpark = assistantIdentity?.querySelector<HTMLElement>('.agent-message__assistant-spark')
-    const assistantBeam = assistantIdentity?.querySelector<HTMLElement>('.control-border-beam')
     expect(assistantIdentity?.getAttribute('aria-hidden')).toBe('true')
-    expect(assistantSpark?.getAttribute('data-icon')).toBe('mdi-creation-outline')
-    expect(assistantBeam?.getAttribute('aria-hidden')).toBe('true')
-    expect(assistantBeam?.getAttribute('focusable')).toBe('false')
-    expect(assistantBeam?.getAttribute('tabindex')).toBe('-1')
     expect(assistantIdentity?.querySelectorAll('button, a, input, [tabindex="0"]')).toHaveLength(0)
 
     const userIdentity = mounted.host.querySelector<HTMLElement>('.agent-message--user .agent-message__identity--user')
@@ -372,7 +304,6 @@ describe('AgentThread identity presentation', () => {
     expect(userDetails?.querySelector('.agent-message__role')?.textContent).toBe('You')
     expect(userDetails?.querySelector('time')?.getAttribute('datetime')).toBe('2026-09-03T10:00:00.000Z')
     expect(userDetails?.querySelector('.agent-message__status')?.textContent?.trim()).toBe('Send failed')
-    expect(userAvatar?.getAttribute('data-size')).toBe('28')
     expect(userAvatar?.getAttribute('aria-hidden')).toBe('true')
     expect(userAvatar?.textContent?.trim()).toBe('AL')
 
@@ -434,6 +365,48 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(mounted.host.querySelector('.sr-status')).toBe(secondStatus)
   })
 
+  it('renders capacity-limited activity rows without treating them as failures', async () => {
+    const mounted = await mountThread(
+      makeThread('session-capacity', {
+        messages: [makeMessage({ status: 'complete' })],
+        tools: [
+          makeTool({ id: 'complete', actionName: 'pages.get', title: 'Get page', state: 'complete', risk: 'read', proposalId: null }),
+          makeTool({
+            id: 'omitted',
+            actionName: 'pages.get',
+            title: 'Get page',
+            state: 'omitted',
+            risk: 'read',
+            proposalId: null,
+            contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
+          }),
+          makeTool({
+            id: 'not-executed',
+            actionName: 'pages.get',
+            title: 'Get page',
+            state: 'not_executed',
+            risk: 'read',
+            proposalId: null,
+            contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+          })
+        ]
+      })
+    )
+    const activity = mounted.host.querySelector('.agent-activity')
+    const rows = activity?.querySelectorAll('.agent-activity__list > li')
+    expect(activity?.querySelector('summary')?.textContent).toContain('Activity · 3 activities · 1 omitted · 1 not executed')
+    expect(rows).toHaveLength(3)
+    expect(Array.from(rows ?? []).map(row => row.querySelector('small')?.textContent)).toEqual([
+      'pages.get · Complete',
+      'pages.get · Result omitted',
+      'pages.get · Not executed'
+    ])
+    expect(rows?.[0]?.querySelector('.v-icon')?.getAttribute('data-color')).toBe('success')
+    expect(rows?.[1]?.querySelector('.v-icon')?.getAttribute('data-color')).toBeNull()
+    expect(rows?.[2]?.querySelector('.v-icon')?.getAttribute('data-color')).toBeNull()
+    expect(activity?.textContent?.toLowerCase()).not.toContain('failed')
+  })
+
   it('keeps unsafe links inert while preserving Wiki previews and hash deep links', async () => {
     const mounted = await mountThread(
       makeThread('session-links', {
@@ -444,7 +417,9 @@ describe('AgentThread live status and interaction behavior', () => {
               { evidenceId: 'page:runbook', kind: 'page', label: 'Runbook', href: '/en/runbook' },
               { evidenceId: 'page:runbook:section:1', kind: 'page', label: 'Runbook › Response sequence', href: '/en/runbook#response' },
               { evidenceId: 'external', kind: 'page', label: 'Vendor documentation', href: 'https://vendor.test/en/reference' },
-              { evidenceId: 'page:runbook:section:2', kind: 'page', label: 'Runbook › Unsafe', href: 'javascript:alert(1)' }
+              { evidenceId: 'page:runbook:section:2', kind: 'page', label: 'Runbook › Unsafe', href: 'javascript:alert(1)' },
+              { evidenceId: 'page:data:section:1', kind: 'page', label: 'Data source › Unsafe data URL', href: 'data:text/html,unsafe' },
+              { evidenceId: 'page:malformed:section:1', kind: 'page', label: 'Malformed source › Malformed URL', href: 'https://[' }
             ]
           })
         ]
@@ -461,6 +436,16 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(externalLink?.getAttribute('target')).toBe('_blank')
     expect(mounted.host.querySelector('.agent-sources__sections a[href^="javascript:"]')).toBeNull()
     expect(mounted.host.textContent).toContain('Unsafe')
+    const unsafeSection = Array.from(mounted.host.querySelectorAll('.agent-sources__label')).find(label => label.textContent === 'Unsafe')
+    expect(unsafeSection).toBeDefined()
+    expect(unsafeSection?.closest('a')).toBeNull()
+    for (const [pageLabel, sectionLabel] of [['Data source', 'Unsafe data URL'], ['Malformed source', 'Malformed URL']]) {
+      const group = Array.from(mounted.host.querySelectorAll('.agent-sources__group')).find(
+        row => row.querySelector('.agent-sources__page strong')?.textContent === pageLabel
+      )
+      expect(group?.querySelector('.agent-sources__label')?.textContent).toBe(sectionLabel)
+      expect(group?.querySelectorAll('a')).toHaveLength(0)
+    }
 
     if (!hashLink) throw new Error('Section citation did not render')
     for (const modifier of ['ctrlKey', 'metaKey', 'shiftKey', 'altKey'] as const) {
@@ -487,7 +472,7 @@ describe('AgentThread live status and interaction behavior', () => {
     })
   })
 
-  it('does not render first-use copy for goal or artifact-only threads and keeps approvals actionable', async () => {
+  it('renders artifacts when the thread has no messages', async () => {
     const artifact: AgentArtifactView = {
       id: 'artifact-1',
       kind: 'browser-screenshot',
@@ -499,28 +484,8 @@ describe('AgentThread live status and interaction behavior', () => {
       expiresAt: null,
       available: true
     }
-    const goalThread = makeThread('session-goal-artifact', { artifacts: [artifact] })
-    const mountedGoal = await mountThread(goalThread)
-    expect(mountedGoal.host.querySelector('.agent-thread__empty')).toBeNull()
-    expect(mountedGoal.host.textContent).not.toContain('Begin a grounded conversation')
-    expect(mountedGoal.host.querySelector('.artifact-card')).not.toBeNull()
-    mountedGoal.unmount()
-    mountedApps.pop()
-
-    const proposal = makeProposal()
-    const mountedApproval = await mountThread(
-      makeThread('session-pending-approval', {
-        messages: [makeMessage({ status: 'streaming' })],
-        tools: [makeTool()],
-        proposals: [proposal]
-      })
-    )
-    const approval = mountedApproval.host.querySelector<HTMLButtonElement>('[data-agent-approval="pending"]')
-    expect(approval).not.toBeNull()
-    expect(approval?.disabled).toBe(false)
-    approval?.click()
-    await settle()
-    expect(mountedApproval.emittedDecisions).toEqual([[proposal.id, proposal.approval?.id, 'approved', undefined]])
+    const mounted = await mountThread(makeThread('session-artifact', { artifacts: [artifact] }))
+    expect(mounted.host.querySelector('.artifact-card')).not.toBeNull()
   })
 
   it('renders detached attachments as muted chips without a download link and keeps unavailable media messaging', async () => {

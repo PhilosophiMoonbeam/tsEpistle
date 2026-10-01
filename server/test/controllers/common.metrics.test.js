@@ -36,7 +36,7 @@ describe('controllers/common metrics endpoint', () => {
         }
       },
       auth: {
-        checkAccess: vi.fn()
+        checkAccess: vi.fn((user, permissions) => permissions.every(permission => user?.permissions?.includes(permission)))
       },
       metrics: {
         render: vi.fn()
@@ -61,16 +61,10 @@ describe('controllers/common metrics endpoint', () => {
     return metricsCall && metricsCall[1]
   }
 
-  it('registers a metrics route', async () => {
+  it.each([false, true])('returns 403 to an ordinary page reader when metrics enabled=%s', async isEnabled => {
+    global.WIKI.config.metrics.isEnabled = isEnabled
     const handler = await loadMetricsHandler()
-
-    expect(typeof handler).toBe('function')
-  })
-
-  it('returns 403 when the user is unauthorized', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = await loadMetricsHandler()
-    const req = { user: { permissions: [] } }
+    const req = { user: { permissions: ['read:pages'] } }
     const res = { sendStatus: vi.fn() }
     const next = vi.fn()
 
@@ -78,10 +72,10 @@ describe('controllers/common metrics endpoint', () => {
 
     expect(res.sendStatus).toHaveBeenCalledWith(403)
     expect(next).not.toHaveBeenCalled()
+    expect(global.WIKI.metrics.render).not.toHaveBeenCalled()
   })
 
   it('falls through when metrics are disabled', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.metrics.isEnabled = false
     const handler = await loadMetricsHandler()
     const req = { user: { permissions: ['manage:system'] } }
@@ -94,17 +88,37 @@ describe('controllers/common metrics endpoint', () => {
     expect(global.WIKI.metrics.render).not.toHaveBeenCalled()
   })
 
-  it('renders metrics when enabled and authorized', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
+  it('serves plain-text Prometheus metrics when enabled and authorized', async () => {
     global.WIKI.config.metrics.isEnabled = true
-    const handler = await loadMetricsHandler()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { sendStatus: vi.fn() }
-    const next = vi.fn()
+    const { Gauge, register } = await import('prom-client')
+    const { default: metrics } = await vi.importFresh('../../core/metrics.ts', import.meta.url)
+    global.WIKI.metrics = metrics
+    const gauge = new Gauge({
+      name: 'wiki_controller_metrics_probe',
+      help: 'Deterministic metric for the controller response',
+      registers: [register]
+    })
+    try {
+      gauge.set(17)
+      const handler = await loadMetricsHandler()
+      const req = { user: { permissions: ['manage:system'] } }
+      const res = {
+        headers: {},
+        body: undefined,
+        contentType(value) { this.headers['Content-Type'] = value },
+        send(value) { this.body = value },
+        status(value) { this.statusCode = value; return this },
+        end(value) { this.body = value }
+      }
+      const next = vi.fn()
 
-    await handler(req, res, next)
+      await handler(req, res, next)
 
-    expect(global.WIKI.metrics.render).toHaveBeenCalledWith(res)
-    expect(next).not.toHaveBeenCalled()
+      expect(res.headers['Content-Type']).toMatch(/^text\/plain(?:;|$)/)
+      expect(res.body).toMatch(/^wiki_controller_metrics_probe 17$/m)
+      expect(next).not.toHaveBeenCalled()
+    } finally {
+      register.removeSingleMetric(gauge.name)
+    }
   })
 })

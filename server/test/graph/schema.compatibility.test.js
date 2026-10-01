@@ -1,6 +1,7 @@
 import path from 'node:path'
 
-import { lexicographicSortSchema, printSchema, printType, validateSchema, graphql } from 'graphql/index.js'
+import { lexicographicSortSchema, printSchema, validateSchema, graphql } from 'graphql/index.js'
+import errors from '../../operations/errors.ts'
 const pageOperationMocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
@@ -100,11 +101,6 @@ describe('GraphQL external compatibility', () => {
 
     const sortedSchema = lexicographicSortSchema(schema)
     expect(printSchema(sortedSchema)).toMatchSnapshot('public schema SDL')
-    expect([
-      sortedSchema.getQueryType(),
-      sortedSchema.getMutationType(),
-      sortedSchema.getSubscriptionType()
-    ].map(rootType => printType(rootType)).join('\n\n')).toMatchSnapshot('root operation contract')
   })
   it('executes the searchable page contract through the production schema', async () => {
     const { createGraphQLArtifacts } = await import('../../graph/index.ts')
@@ -200,11 +196,11 @@ describe('GraphQL external compatibility', () => {
     expect(explicitTrueUpdate.errors).toBeUndefined()
     expect(explicitTrueUpdate.data?.pages?.update?.page).toEqual({ id: 42, isSearchable: true })
 
+    // This operation boundary protects nullable GraphQL input and error transport,
+    // not the page operation's domain validation.
     pageOperationMocks.update.mockReset().mockImplementation(async ({ input }) => {
       if (input.isSearchable === null) {
-        const error = new Error('isSearchable must be a boolean')
-        Object.assign(error, { status: 422, code: 400, name: 'ValidationError' })
-        throw error
+        throw new errors.ApplicationError('isSearchable must be a boolean', { code: 'INVALID_INPUT' })
       }
       return { id: input.id, isSearchable: input.isSearchable }
     })
@@ -218,12 +214,12 @@ describe('GraphQL external compatibility', () => {
     expect(explicitNull.errors).toBeUndefined()
     expect(explicitNull.data?.pages?.update?.responseResult).toMatchObject({
       succeeded: false,
-      errorCode: 400,
-      slug: 'ValidationError'
+      errorCode: 1,
+      slug: 'INVALID_INPUT'
     })
     expect(pageOperationMocks.update).toHaveBeenCalledWith({
       requester,
-      input: expect.objectContaining({ isSearchable: null })
+      input: expect.objectContaining({ id: 42, expectedSourceRevision: '1', isSearchable: null })
     })
 
     pageOperationMocks.get.mockResolvedValue({ id: 42, path: 'guide', isSearchable: false })

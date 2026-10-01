@@ -7,7 +7,10 @@ describe('Locale package boundary', () => {
   it('keeps translated strings and omits blanks so English fallback can work', () => {
     const strings = parseLocaleStrings(response([row('common:actions.save', 'Enregistrer'), row('admin:title', ''), row('admin::malformed'), row('common:message', '  Preserve source spacing  ')]))
     expect(JSON.parse(JSON.stringify(strings))).toEqual({ common: { actions: { save: 'Enregistrer' }, message: '  Preserve source spacing  ' } })
-    expect([...flattenLocaleStrings(strings).keys()]).toEqual(['common.actions.save', 'common.message'])
+    const flattened = flattenLocaleStrings(strings)
+    expect(flattened.size).toBe(2)
+    expect(flattened.get('common.actions.save')).toBe('Enregistrer')
+    expect(flattened.get('common.message')).toBe('  Preserve source spacing  ')
   })
   it('rejects prototype keys, conflicting leaves, duplicate keys and empty packages', () => {
     for (const strings of [[], [row('common:__proto__.value')], [row('common:constructor.prototype')], [row('common:message'), row('common:message.child')], [row('common:message.child'), row('common:message')], [row('common:message'), row('common:message')], [row('common:message', ' ')], [row('common:.message')]]) expect(() => parseLocaleStrings(response(strings))).toThrow()

@@ -3,7 +3,7 @@ import { describe, expect, it } from '../bun-test.mts'
 import { TOOL_DISCOVERY_CONTROL_NAME, type AgentActionName } from '../../../shared/agents/contracts.ts'
 import type { ActionGroup } from '../../agents/actions/catalog.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
-import { createToolDiscovery, deriveToolDiscovery, resolveToolDiscoveryCall, type ToolDiscoveryCategory } from '../../agents/providers/tool-discovery.ts'
+import { createToolDiscovery, resolveToolDiscoveryCall, type ToolDiscoveryCategory } from '../../agents/providers/tool-discovery.ts'
 
 const action = (name: AgentActionName, group: ActionGroup): AxHarnessFunction => ({
   name,
@@ -208,14 +208,6 @@ describe('flat Wiki tool discovery', () => {
     expect(second.beginTurn().activeFunctions.map(item => item.name)).not.toContain('pages.searchTags')
   })
 
-  it('derives an ephemeral view without carrying a prior execution state', () => {
-    const enabled = deriveToolDiscovery(allActions, ['canonical'])
-    const fresh = deriveToolDiscovery(allActions)
-
-    expect(enabled.activeFunctions.map(item => item.name)).toContain('pages.getOkf')
-    expect(fresh.activeFunctions.map(item => item.name)).not.toContain('pages.getOkf')
-    expect(enabled.visibleNames).toEqual(enabled.activeFunctions.map(item => item.name))
-  })
   it('previews pending and candidate categories without activating the candidate', () => {
     const discovery = createToolDiscovery(allActions)
     const firstTurn = discovery.beginTurn()

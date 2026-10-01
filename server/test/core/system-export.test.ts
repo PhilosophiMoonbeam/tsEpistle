@@ -174,25 +174,12 @@ const setModels = (models: Record<string, unknown>): void => {
 const readGzipJson = (file: string): unknown => JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString('utf8'))
 
 describe('system export pipelines', () => {
-  it('settles the export as an error when a later query batch fails', async () => {
-    const offsets: number[] = []
-    setModels({
-      comments: createQueryModel(51, async offset => {
-        offsets.push(offset)
-        if (offset === 0) return Array.from({ length: 50 }, (_, id) => ({ id }))
-        throw new Error('second batch failed')
-      })
-    })
-
-    await system.export({ path: createExportDirectory(), entities: ['comments'] })
-
-    expect(offsets).toEqual([0, 50])
-    expect(system.exportStatus).toMatchObject({ status: 'error', message: 'second batch failed' })
-  })
-
-  it('settles the export as an error when an asset output file fails', async () => {
+  it.each(['directory preparation', 'file publication'])('settles the export as an error after failed asset %s', async failure => {
     const exportDirectory = createExportDirectory()
-    fs.writeFileSync(path.join(exportDirectory, 'assets'), 'not a directory')
+    const assetsDirectory = path.join(exportDirectory, 'assets')
+    const outputPath = path.join(assetsDirectory, 'logo.png')
+    if (failure === 'directory preparation') fs.writeFileSync(assetsDirectory, 'not a directory')
+    else fs.mkdirSync(outputPath, { recursive: true })
     setModels({
       assetFolders: { getAllPaths: async () => ({}) },
       assets: createQueryModel(1, async () => []),
@@ -210,6 +197,12 @@ describe('system export pipelines', () => {
     await system.export({ path: exportDirectory, entities: ['assets'] })
     expect(system.exportStatus.status).toBe('error')
     expect(system.exportStatus.message).toContain('assets')
+    if (failure === 'file publication') {
+      expect(fs.statSync(outputPath).isFile()).toBe(false)
+      expect(fs.readdirSync(assetsDirectory)).toEqual(['logo.png'])
+    } else {
+      expect(fs.readFileSync(assetsDirectory, 'utf8')).toBe('not a directory')
+    }
   })
 
   it('does not fetch the next batch while the output pipeline is backpressured', async () => {
@@ -469,8 +462,10 @@ describe('system export pipelines', () => {
 
   it('creates atomic private artifacts and leaves no completed gzip after a failed batch', async () => {
     const directory = createExportDirectory()
+    const offsets: number[] = []
     setModels({
       comments: createQueryModel(51, async offset => {
+        offsets.push(offset)
         if (offset === 0) return Array.from({ length: 50 }, (_, id) => ({ id, page: { visibility: 'public' } }))
         throw new Error('second batch failed')
       })
@@ -478,7 +473,8 @@ describe('system export pipelines', () => {
 
     await system.export({ path: directory, entities: ['comments'] })
 
-    expect(system.exportStatus.status).toBe('error')
+    expect(offsets).toEqual([0, 50])
+    expect(system.exportStatus).toMatchObject({ status: 'error', message: 'second batch failed' })
     expect(fs.existsSync(path.join(directory, 'comments.json.gz'))).toBe(false)
     expect(fs.readdirSync(directory).some(entry => entry.includes('.tmp'))).toBe(false)
   })
@@ -501,14 +497,11 @@ describe('system export pipelines', () => {
       setImmediate(turn.resolve)
       return turn.promise
     }
-    const awaitProgress = async (progress: number): Promise<void> => {
-      while (system.exportStatus.progress < progress) await nextTurn()
-    }
     async function* assetRows(): AsyncGenerator<AssetRow> {
       for (let id = 0; id < 100; id += 1) {
         if (id === 50) {
           await fiftyPublished.promise
-          await awaitProgress(50)
+          await nextTurn()
           halfWritten.resolve()
           await release.promise
         }

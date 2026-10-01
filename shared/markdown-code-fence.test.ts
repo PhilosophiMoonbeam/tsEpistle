@@ -42,12 +42,11 @@ describe('Markdown code fences', () => {
   it('renders Prism metadata safely and counts a trailing newline as part of the fence, not an extra row', () => {
     const rendered = renderMarkdownCodeFence({
       source: 'const first = 1\nconst second = 2\n',
-      info: 'typescript title="src/<entry>.ts" linesStart=30 linesHighlight="31,30"',
-      sourceLine: 12
+      info: 'typescript title="src/<entry>.ts" linesStart=30 linesHighlight="31,30"'
     })
 
     expect(rendered).toBe(
-      '<figure class="codeblock-framed" data-source-line="12"><figcaption class="codeblock-title">src/&lt;entry&gt;.ts</figcaption>' +
+      '<figure class="codeblock-framed"><figcaption class="codeblock-title">src/&lt;entry&gt;.ts</figcaption>' +
         '<pre class="prismjs language-typescript line-numbers" data-start="30" data-line-offset="29" data-line="30-31">' +
         '<code class="language-typescript">const first = 1\nconst second = 2\n</code></pre></figure>\n'
     )
@@ -71,12 +70,10 @@ describe('Markdown code fences', () => {
   it('preserves diagram rendering contracts and ignores code presentation metadata', () => {
     expect(
       renderMarkdownCodeFence({
-        source: 'encoded',
-        info: 'diagram title="Not a code title" linesHighlight=1',
-        sourceLine: 4,
-        decodeDiagram: source => `decoded:${source}`
+        source: '<svg>fixture</svg>',
+        info: 'diagram title="Not a code title" linesHighlight=1'
       })
-    ).toBe('<pre class="diagram" data-source-line="4">decoded:encoded</pre>\n')
+    ).toBe('<pre class="diagram"><svg>fixture</svg></pre>\n')
 
     expect(renderMarkdownCodeFence({ source: '<graph>', info: 'mermaid title="Ignored"' })).toBe(
       '<pre class="codeblock-mermaid"><code>&lt;graph&gt;</code></pre>\n'

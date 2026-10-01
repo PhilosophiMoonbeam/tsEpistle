@@ -1,3 +1,5 @@
+const realExpress = (await import('express')).default
+
 vi.mockModule('express', import.meta.url, () => {
   const routers = []
   const express = {
@@ -79,6 +81,7 @@ describe('Navigation workspace and compatibility API', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
     for (const handler of Object.values(routes)) { const res = response(); await handler({ user: { id: 3 } }, res); expect(res.status).toHaveBeenCalledWith(403) }
     expect(store.inspect).not.toHaveBeenCalled(); expect(store.save).not.toHaveBeenCalled(); expect(operations.update).not.toHaveBeenCalled()
+    expect(operations.get).not.toHaveBeenCalled(); expect(store.initialize).not.toHaveBeenCalled()
   })
   it('passes the current actor and review values to the durable store', async () => {
     const req = { user: { id: 7 }, body: { policy: { mode: 'STATIC' }, fingerprint: 'review', reason: 'Clarify navigation' } }, res = response()
@@ -101,6 +104,38 @@ describe('Navigation workspace and compatibility API', () => {
     const req = { user: { id: 7 }, body: { fingerprint: 'review' } }, res = response()
     store.inspect.mockResolvedValue({ fingerprint: 'review' }); await routes['get/workspace'](req, res); expect(res.json).toHaveBeenCalledWith({ fingerprint: 'review' })
     store.initialize.mockResolvedValue({ activation: 'needs-attention' }); await routes['post/workspace/activate'](req, res); expect(store.initialize).toHaveBeenCalledWith(req.user, 'review')
+  })
+  it('denies unauthorized navigation workspace requests through the API index over HTTP', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const indexUrl = new URL('../../controllers/api/index.ts', import.meta.url)
+    const imports = new Bun.Transpiler({ loader: 'ts' }).scan(await Bun.file(indexUrl).text()).imports
+    for (const { path } of imports) {
+      if (path.startsWith('./') && path !== './navigation.ts') {
+        vi.mockModule(new URL(path, indexUrl).href, import.meta.url, () => ({ default: realExpress.Router() }))
+      }
+    }
+    vi.mockModule('express', import.meta.url, () => ({ default: realExpress, ...realExpress }))
+    let server
+    try {
+      const { default: apiRouter } = await vi.importFresh('../../controllers/api/index.ts', import.meta.url)
+      const user = { id: 3 }
+      const app = realExpress()
+      app.use((req, _res, next) => { req.user = user; next() })
+      app.use('/_api', apiRouter)
+      server = app.listen(0, '127.0.0.1')
+      await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject) })
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Navigation test server did not bind a TCP port')
+      const denied = await fetch(`http://127.0.0.1:${address.port}/_api/navigation/workspace`)
+      expect(denied.status).toBe(403)
+      expect(await denied.json()).toEqual({ error: 'Navigation administration is required.' })
+      expect(denied.headers.get('cache-control')).toBe('no-store')
+      expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(user, ['manage:navigation', 'manage:system'])
+      expect(store.inspect).not.toHaveBeenCalled()
+    } finally {
+      if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      vi.mockModule('express', import.meta.url, () => ({ default: express, ...express }))
+    }
   })
   it('is mounted by the API index router', async () => { const { apiRouter, subrouters } = await loadApiIndexRouter(); expect(apiRouter.use).toHaveBeenCalledWith('/navigation', subrouters.navigation) })
 })

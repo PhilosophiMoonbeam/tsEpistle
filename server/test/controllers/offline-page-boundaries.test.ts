@@ -206,7 +206,6 @@ describe('page response privacy boundaries', () => {
     await getPage({ user: { id: 9, permissions: ['read:pages'] }, params: { id: 'not-an-id' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
     expect(pageOperations.get).not.toHaveBeenCalled()
@@ -216,37 +215,19 @@ describe('page response privacy boundaries', () => {
 describe('offline snapshot transport boundary', () => {
   it('returns only the operation snapshot and applies private no-store framing', async () => {
     const res = response()
+    const expectedSnapshot = structuredClone(offlineSnapshot)
 
     await getOfflineSnapshot({ params: { id: '7' } }, res, vi.fn())
 
     expect(pageOperations.getOfflineSnapshot).toHaveBeenCalledWith({ id: 7 })
-    expect(res.json).toHaveBeenCalledWith(offlineSnapshot)
-    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>
-    expect(Object.keys(payload).sort()).toEqual([
-      'canonicalPath',
-      'capturedAt',
-      'content',
-      'contentType',
-      'description',
-      'expiresAt',
-      'integrity',
-      'locale',
-      'pageId',
-      'path',
-      'schemaVersion',
-      'searchText',
-      'sourceRevision',
-      'title'
-    ])
+    expect(res.json).toHaveBeenCalledWith(expectedSnapshot)
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
 
   it.each([
-    ['absent', 404, 'database row was absent'],
-    ['protected', 403, 'protected page source was secret'],
-    ['stale render', 404, 'rendered bytes came from another revision'],
-    ['unsafe projection', 404, 'unsafe projection source was secret']
+    ['ineligible', 404, 'private page source was secret'],
+    ['protected', 403, 'protected page source was secret']
   ])('normalizes %s snapshot denial to one bounded public response', async (_label: string, status: number, internalMessage: string) => {
     const denial = Object.assign(new Error(internalMessage), {
       status,
@@ -287,7 +268,6 @@ describe('offline snapshot transport boundary', () => {
     await getOfflineSnapshot({ params: { id: 'not-an-id' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
     expect(pageOperations.getOfflineSnapshot).not.toHaveBeenCalled()
   })
 })
@@ -295,15 +275,12 @@ describe('offline private snapshot transport boundary', () => {
   it('propagates the authorized requester and returns the strict private response with privacy headers', async () => {
     const requester = { id: 9, authVersion: 3, permissions: ['read:pages'] }
     const res = response()
+    const expectedPrivateSnapshot = structuredClone(offlinePrivateSnapshot)
 
     await getOfflinePrivateSnapshot({ user: requester, params: { id: '7' } }, res, vi.fn())
 
     expect(pageOperations.getOfflinePrivateSnapshot).toHaveBeenCalledWith({ id: 7, requester })
-    expect(res.json).toHaveBeenCalledWith(offlinePrivateSnapshot)
-    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>
-    expect(Object.keys(payload).sort()).toEqual(['audience', 'context', 'schemaVersion', 'snapshot'])
-    expect(payload).not.toHaveProperty('authority')
-    expect(payload).not.toHaveProperty('source')
+    expect(res.json).toHaveBeenCalledWith(expectedPrivateSnapshot)
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
   })

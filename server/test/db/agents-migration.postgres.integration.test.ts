@@ -1,6 +1,5 @@
 import { up as upAgentMedia, down as downAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { randomUUID } from 'node:crypto'
-import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { projectAgentThread } from '../../agents/projection.ts'
 import { SkillRuntime } from '../../agents/skills/runtime.ts'
@@ -16,19 +15,9 @@ import { down as downAgentTasks, up as upAgentTasks } from '../../db/migrations/
 import { down as downAgentGoals, up as upAgentGoals } from '../../db/migrations/2.5.157.ts'
 import { up as upAgentTotalTokens } from '../../db/migrations/tsepistle-000031-agent-total-token-accounting.ts'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = databaseName.endsWith('_agents_test')
-  ? {
-      host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
-      port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-      user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-      password,
-      database: databaseName
-    }
-  : null
+const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const isolatedSchema = `agent_total_tokens_${randomUUID().replaceAll('-', '')}`
 
@@ -317,8 +306,22 @@ suite('PostgreSQL first-class agent migration', () => {
       updatedBy: 7
     })
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: db.fn.now() })
-    await expect(Promise.resolve(downProviderProfileLifecycle(db))).rejects.toThrow('contains removed profiles')
-    await expect(Promise.resolve(downAgentLedger(db))).rejects.toThrow('agentProviderProfiles contains data')
+    const removedProfile = await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).first()
+    const tablesBeforeRollback = await db('information_schema.tables').where({ table_schema: 'public', table_type: 'BASE TABLE' }).orderBy('table_name').pluck('table_name')
+    await expect(Promise.resolve(downProviderProfileLifecycle(db))).rejects.toThrow()
+    expect(await db('information_schema.tables').where({ table_schema: 'public', table_type: 'BASE TABLE' }).orderBy('table_name').pluck('table_name')).toEqual(tablesBeforeRollback)
+    expect(await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).first()).toEqual(removedProfile)
+    expect(await db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).toBe(true)
+    expect(await db.schema.hasTable('agentSessions')).toBe(true)
+    expect(await db.schema.hasColumn('pages', 'sourceRevision')).toBe(true)
+    expect(await db.schema.hasColumn('pageHistory', 'sourceRevision')).toBe(true)
+    await expect(Promise.resolve(downAgentLedger(db))).rejects.toThrow()
+    expect(await db('information_schema.tables').where({ table_schema: 'public', table_type: 'BASE TABLE' }).orderBy('table_name').pluck('table_name')).toEqual(tablesBeforeRollback)
+    expect(await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).first()).toEqual(removedProfile)
+    expect(await db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).toBe(true)
+    expect(await db.schema.hasTable('agentSessions')).toBe(true)
+    expect(await db.schema.hasColumn('pages', 'sourceRevision')).toBe(true)
+    expect(await db.schema.hasColumn('pageHistory', 'sourceRevision')).toBe(true)
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
     await downAgentMedia(db)
     await downAgentGoals(db)

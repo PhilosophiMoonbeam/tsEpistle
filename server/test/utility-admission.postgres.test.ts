@@ -1,24 +1,17 @@
-import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 
 import knexModule, { type Knex } from 'knex'
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
-import { claimPageMutationEffects, enqueuePageMutationEffects, executePageMutationEffect } from '../core/page-mutation-outbox.ts'
+import {
+  claimPageMutationEffects,
+  enqueuePageMutationEffects,
+  executePageMutationEffect,
+  type ClaimedPageProjectionEffect
+} from '../core/page-mutation-outbox.ts'
+import { getPostgresTestConnection } from './postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database === 'wiki_search_audit' && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        database,
-        password
-      }
-    : null
+const connection = getPostgresTestConnection('_utility_admission_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const schema = `utility_admission_${randomUUID().replaceAll('-', '')}`
 
@@ -198,37 +191,70 @@ suite('Utility admission on PostgreSQL', () => {
   it('starts an implicit lease clock after waiting for the scoped admission lock', async () => {
     await enqueueKnowledge(1)
     const initial = new Date('2100-08-20T00:00:00.000Z')
-    const ready = Promise.withResolvers<void>()
+    const claimant = knexModule({
+      client: 'pg',
+      connection: connection ?? undefined,
+      searchPath: [schema],
+      pool: { min: 0, max: 1 }
+    })
+    const ready = Promise.withResolvers<number>()
     const release = Promise.withResolvers<void>()
     const heldLock = db.transaction(async transaction => {
       await transaction.raw('SELECT pg_advisory_xact_lock(?, hashtext(?))', [0x57494b4f, 'knowledge'])
-      ready.resolve()
+      const holder = await transaction.raw<{ rows: { pid: number }[] }>('SELECT pg_backend_pid() AS pid')
+      if (!holder.rows[0]) throw new Error('admission lock holder backend missing')
+      ready.resolve(holder.rows[0].pid)
       await release.promise
     })
-    await ready.promise
-    vi.useFakeTimers()
-    vi.setSystemTime(initial)
-    const pendingClaim = claimPageMutationEffects(db, {
-      leaseOwner: 'waited-worker',
-      limit: 1,
-      maxActive: 1,
-      leaseMs: 1_000,
-      effects: ['knowledge']
-    })
+    void heldLock.catch(ready.reject)
+    let pendingClaim: Promise<readonly ClaimedPageProjectionEffect[]> | undefined
     try {
-      // The database lock is real; fake time deterministically advances while the claimant cannot acquire it.
+      const holderPid = await ready.promise
+      // A one-connection pool pins the observed backend to the actual claimant transaction.
+      const backend = await claimant.raw<{ rows: { pid: number }[] }>('SELECT pg_backend_pid() AS pid')
+      if (!backend.rows[0]) throw new Error('claimant backend missing')
+      const claimantPid = backend.rows[0].pid
+      vi.useFakeTimers()
+      vi.setSystemTime(initial)
+      pendingClaim = claimPageMutationEffects(claimant, {
+        leaseOwner: 'waited-worker',
+        limit: 1,
+        maxActive: 1,
+        leaseMs: 1_000,
+        effects: ['knowledge']
+      })
+      const settledClaim = Promise.allSettled([pendingClaim])
+      const deadline = process.hrtime.bigint() + 2_000_000_000n
+      while (true) {
+        const observation = await db.raw<{ rows: { blocked: boolean }[] }>(
+          `SELECT EXISTS (
+            SELECT 1 FROM pg_locks
+            WHERE pid = ? AND locktype = 'advisory' AND NOT granted
+              AND ?::integer = ANY(pg_blocking_pids(pid))
+          ) AS blocked`,
+          [claimantPid, holderPid]
+        )
+        if (observation.rows[0]?.blocked) break
+        if (process.hrtime.bigint() >= deadline) throw new Error('claimant did not wait for the held admission lock')
+        // Server-side sleep and monotonic time remain real while the lease clock is faked.
+        await db.raw('SELECT pg_sleep(0.01)')
+      }
       vi.setSystemTime(new Date(initial.valueOf() + 1_001))
       release.resolve()
       await heldLock
 
-      const [claim] = await pendingClaim
+      const [result] = await settledClaim
+      if (!result) throw new Error('knowledge claim result missing')
+      if (result.status === 'rejected') throw result.reason
+      const [claim] = result.value
       if (!claim) throw new Error('knowledge claim missing after admission lock release')
       const stored = await db('pageMutationOutbox').where({ id: claim.id }).first('leaseExpiresAt')
       expect(new Date(String(stored?.leaseExpiresAt)).valueOf()).toBeGreaterThan(Date.now())
     } finally {
       release.resolve()
-      await heldLock
+      await Promise.allSettled([heldLock, ...(pendingClaim ? [pendingClaim] : [])])
       vi.useRealTimers()
+      await claimant.destroy()
     }
   })
 })

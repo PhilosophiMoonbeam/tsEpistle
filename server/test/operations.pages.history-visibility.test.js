@@ -119,7 +119,6 @@ describe('page history visibility boundaries', () => {
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
     await expect(Promise.resolve(operations.getHistory({ requester, id: page.id }))).resolves.toEqual(history)
-    expect(global.WIKI.models.pages.getPageFromDb).toHaveBeenCalledWith(page.id)
     expect(global.WIKI.auth.checkPageAccess).toHaveBeenCalledWith(
       requester,
       ['read:history'],
@@ -128,8 +127,6 @@ describe('page history visibility boundaries', () => {
     )
     expect(global.WIKI.models.pageHistory.getHistory).toHaveBeenCalledWith(expect.objectContaining({
       pageId: page.id,
-      offsetPage: 0,
-      offsetSize: 100,
       requester,
       authority: expect.objectContaining({ requester })
     }))
@@ -215,5 +212,28 @@ describe('page history visibility boundaries', () => {
       requester,
       sessionId: 'session-1'
     }))).rejects.toBeInstanceOf(PageMoveForbidden)
+
+    global.WIKI.auth.checkAccess.mockClear()
+    global.WIKI.auth.checkAccess.mockImplementation((user, permissions, context) =>
+      permissions.some(permission => user?.permissions?.includes(permission)) && context?.path !== 'published'
+    )
+    await expect(Promise.resolve(operations.authorizeMutation({
+      kind: 'move',
+      input: { id: 17, destinationPath: 'allowed/next', destinationLocale: 'en' },
+      requester,
+      sessionId: 'session-1'
+    }))).rejects.toBeInstanceOf(PageMoveForbidden)
+    expect(global.WIKI.auth.checkPageAccess).toHaveBeenCalledWith(
+      requester,
+      ['write:pages', 'manage:pages', 'manage:system'],
+      expect.objectContaining({ path: 'published', locale: 'en', tags: [{ tag: 'release' }] }),
+      expect.anything()
+    )
+    expect(global.WIKI.auth.checkPageAccess).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ path: 'allowed/next' }),
+      expect.anything()
+    )
   })
 })

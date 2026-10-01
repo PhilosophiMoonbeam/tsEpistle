@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { createInstance } from 'i18next'
 import { afterEach, describe, expect, it, vi } from './bun-test.mts'
 import englishLocale from '../locales/en.json'
 
@@ -13,11 +14,8 @@ afterEach(() => {
 
 describe('bundled English locale fallback', () => {
   it('keeps installed English rows from overriding the bundled translation', async () => {
-    const engine = {
-      addResourceBundle: vi.fn(),
-      removeResourceBundle: vi.fn(),
-      changeLanguage: vi.fn()
-    }
+    const engine = createInstance()
+    await engine.init({ load: 'all', fallbackLng: 'en', lng: 'fr', ns: ['admin'], defaultNS: 'admin' })
     vi.mockModule('i18next', import.meta.url, () => ({ default: engine }))
     Reflect.set(globalThis, 'WIKI', {
       IS_DEBUG: false,
@@ -40,12 +38,7 @@ describe('bundled English locale fallback', () => {
     const localization = (await vi.importFresh('../core/localization.ts', import.meta.url)).default
     await localization.refreshNamespaces()
 
-    const adminBundles = engine.addResourceBundle.mock.calls
-      .filter(([, namespace]) => namespace === 'admin')
-    expect(adminBundles).toHaveLength(1)
-    expect(adminBundles[0]?.slice(0, 2)).toEqual(['en', 'admin'])
-    expect(adminBundles[0]?.[2]).toMatchObject({ dashboard: { title: englishLocale.admin.dashboard.title } })
-    expect(adminBundles[0]?.slice(3)).toEqual([true, true])
-    expect(engine.changeLanguage).toHaveBeenCalledWith('en')
+    expect(engine.t('dashboard.title', { lng: 'en', ns: 'admin' })).toBe(englishLocale.admin.dashboard.title)
+    expect(engine.language).toBe('en')
   })
 })

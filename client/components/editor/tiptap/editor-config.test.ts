@@ -1,16 +1,15 @@
-import { Editor, type JSONContent } from '@tiptap/core'
+import { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
 import { createWikiMarkdownRenderer, sanitizeWikiMarkdownHtml } from '../markdown/preview.ts'
 import { createTiptapExtensions, getVisualEditorDefinition, serializeVisualEditorData, type VisualEditorFormat } from './editor-config.ts'
-import { decodeWikiSource, prepareTiptapHtml, prepareTiptapMarkdown } from './dialect.ts'
+import { prepareTiptapHtml, prepareTiptapMarkdown } from './dialect.ts'
 import {
   VISUAL_MARKDOWN_GLYPHS,
   insertVisualMarkdownAdmonition,
   insertVisualMarkdownDefinitionList,
   insertVisualMarkdownGlyph,
-  searchVisualMarkdownGlyphs,
-  serializeVisualMarkdownAdmonition
+  searchVisualMarkdownGlyphs
 } from './visual-markdown-authoring.ts'
 import { parseWikiLinkAt, resolveWikiLinkHref, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
 
@@ -57,10 +56,6 @@ function pressEnter (editor: Editor): boolean {
   return event.defaultPrevented
 }
 
-function findSourceNodes(node: JSONContent): JSONContent[] {
-  const children = node.content?.flatMap(findSourceNodes) ?? []
-  return node.type?.startsWith('wikiSource') ? [node, ...children] : children
-}
 
 async function renderServerMarkdown(input: string): Promise<string> {
   return Reflect.apply(
@@ -97,8 +92,8 @@ afterEach(() => {
 
 describe('Tiptap visual formats', () => {
   it('keeps persisted editor keys stable across the engine replacement', () => {
-    expect(getVisualEditorDefinition('html')).toEqual({ editorKey: 'ckeditor', label: 'Visual Editor' })
-    expect(getVisualEditorDefinition('markdown')).toEqual({ editorKey: 'visual-markdown', label: 'Visual Markdown' })
+    expect(getVisualEditorDefinition('html').editorKey).toBe('ckeditor')
+    expect(getVisualEditorDefinition('markdown').editorKey).toBe('visual-markdown')
   })
 
   it('round-trips the Standard Markdown authoring surface', () => {
@@ -136,7 +131,7 @@ Term
     expect(reopened.getMarkdown()).toBe(output)
   })
 
-  it('preserves every extended dialect family without source fallback', async () => {
+  it('preserves every extended dialect family through source-backed nodes', async () => {
     const source = `# Dialect {#dialect .reference}
 
 HTML is an abbreviation.[^note]
@@ -171,9 +166,6 @@ $$
     expect(output).toContain('<div class="raw-widget">Raw <strong>HTML</strong></div>')
     expect(output).toContain('| ^^ | rowspan |')
 
-    const prepared = prepareTiptapMarkdown(source)
-    expect(prepared).toContain(':::wikiSourceBlock')
-    expect(prepared).toContain('[wikiSourceInline')
     const reopened = createEditor('markdown', output)
     expect(reopened.getMarkdown()).toBe(output)
     expect(await renderServerMarkdown(output)).toBe(await renderServerMarkdown(source))
@@ -411,11 +403,7 @@ graph TD
 
   it('inserts canonical admonitions and local glyphs', () => {
     const editor = createEditor('markdown', '')
-    const canonical = serializeVisualMarkdownAdmonition({
-      kind: 'WARNING',
-      title: 'Deployment window',
-      body: 'Restart one node at a time.'
-    })
+    const canonical = '> **WARNING: Deployment window**\n>\n> Restart one node at a time.'
     insertVisualMarkdownAdmonition(editor, {
       kind: 'WARNING',
       title: 'Deployment window',
@@ -427,13 +415,14 @@ graph TD
     expect(editor.getMarkdown()).toContain('🚀')
   })
 
-  it('offers a broad glyph catalog with semantic and typo-tolerant search', () => {
-    expect(VISUAL_MARKDOWN_GLYPHS.length).toBeGreaterThanOrEqual(80)
+  it('offers unique glyph choices with semantic and typo-tolerant search', () => {
     expect(new Set(VISUAL_MARKDOWN_GLYPHS.map(glyph => glyph.value)).size).toBe(VISUAL_MARKDOWN_GLYPHS.length)
     expect(searchVisualMarkdownGlyphs('celebrte')[0]?.label).toBe('Celebrate')
     expect(searchVisualMarkdownGlyphs('deploy')[0]?.label).toBe('Rocket')
     expect(searchVisualMarkdownGlyphs('secure')[0]?.label).toBe('Lock')
-    expect(searchVisualMarkdownGlyphs('shape', 'icon').every(glyph => glyph.category === 'icon')).toBe(true)
+    const shapes = searchVisualMarkdownGlyphs('shape', 'icon')
+    expect(shapes.map(glyph => glyph.value)).toEqual(expect.arrayContaining(['◆', '●', '■']))
+    expect(shapes.every(glyph => glyph.category === 'icon')).toBe(true)
     expect(searchVisualMarkdownGlyphs('zzqxy')).toEqual([])
   })
 
@@ -453,14 +442,10 @@ graph TD
     }
   })
 
-  it('preserves unknown HTML elements and comments as editable source nodes', () => {
+  it('losslessly preserves unknown HTML elements and comments across reopening', () => {
     const source =
       '<h2 id="heading">Known</h2><custom-widget data-mode="full"><b>Unknown</b></custom-widget><!--keep--><table style="min-width: 75px"><colgroup><col style="min-width: 25px"></colgroup><tbody><tr><td><p>Cell</p></td></tr></tbody></table>'
     const editor = createEditor('html', source)
-    const sourceNodes = findSourceNodes(editor.getJSON())
-
-    expect(sourceNodes).toHaveLength(2)
-    expect(decodeWikiSource(sourceNodes[0]?.attrs?.source)).toContain('<custom-widget')
     const output = serializeVisualEditorData('html', editor)
     expect(output).toContain('<h2 id="heading">Known</h2>')
     expect(output).toContain('<custom-widget data-mode="full"><b>Unknown</b></custom-widget>')

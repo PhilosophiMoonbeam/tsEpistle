@@ -93,7 +93,8 @@ const pageDocument = (): string => `<!doctype html>
   </body>
 </html>`
 
-const loadComponent = (fetchResponse: Response): WikiPageComponentOptions => {
+const loadComponent = (fetchResponse: Response) => {
+  const fetch = vi.fn(async () => fetchResponse)
   const evaluate = new Function(
     'defineComponent',
     'markRaw',
@@ -114,7 +115,7 @@ const loadComponent = (fetchResponse: Response): WikiPageComponentOptions => {
     `${executableScript}\nreturn wikiPageComponent`
   ) as (...dependencies: unknown[]) => WikiPageComponentOptions
 
-  return evaluate(
+  const component = evaluate(
     (options: WikiPageComponentOptions) => options,
     <Value>(value: Value): Value => value,
     () => Promise.resolve(),
@@ -129,12 +130,13 @@ const loadComponent = (fetchResponse: Response): WikiPageComponentOptions => {
     () => false,
     parseWikiNavigationDocument,
     {},
-    vi.fn(async () => fetchResponse),
+    fetch,
     (callback: FrameRequestCallback) => {
       callback(0)
       return 1
     }
   )
+  return { component, fetch }
 }
 
 const response = (options: { url: string; headers?: HeadersInit; body?: string }) => {
@@ -172,7 +174,7 @@ const navigationVm = (): NavigationVm => ({
 })
 
 const navigate = async (fetchResponse: Response): Promise<NavigationVm> => {
-  const component = loadComponent(fetchResponse)
+  const { component } = loadComponent(fetchResponse)
   const vm = navigationVm()
   await component.methods.navigate.call(vm, new URL('/en/requested', window.location.href), { popState: true })
   return vm
@@ -180,7 +182,7 @@ const navigate = async (fetchResponse: Response): Promise<NavigationVm> => {
 
 describe('wiki page feature visibility', () => {
   test('visibility flags respect page policy and the rating site gate as pages change', () => {
-    const component = loadComponent(new Response())
+    const { component } = loadComponent(new Response())
     const vm = navigationVm()
     const enabledFeatures: WikiPagePayload['pageFeatures'] = {
       schemaVersion: 1,
@@ -230,27 +232,38 @@ describe('wiki page navigation response boundary', () => {
   })
 
   test('switches Article and Talk through same-page history without fetching', async () => {
-    const { value, readBody } = response({ url: window.location.href })
-    const component = loadComponent(value)
-    const vm = navigationVm()
-    const destination = new URL(vm.currentUrl)
-    destination.hash = 'discussion'
+    const original = window.location.href
+    const originalState = window.history.state
+    const articleUrl = new URL(original)
+    articleUrl.hash = ''
+    try {
+      window.history.replaceState({}, '', articleUrl)
+      const { value, readBody } = response({ url: articleUrl.href })
+      const { component, fetch } = loadComponent(value)
+      const vm = navigationVm()
+      const destination = new URL(vm.currentUrl)
+      destination.hash = 'discussion'
 
-    await component.methods.navigate.call(vm, destination)
+      await component.methods.navigate.call(vm, destination)
 
-    expect(readBody).not.toHaveBeenCalled()
-    expect(vm.activePageView).toBe('talk')
-    expect(vm.currentUrl).toBe(destination.href)
-    expect(vm.restoreScroll).toHaveBeenCalledWith(destination, undefined)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(readBody).not.toHaveBeenCalled()
+      expect(vm.activePageView).toBe('talk')
+      expect(vm.currentUrl).toBe(destination.href)
+      expect(vm.restoreScroll).toHaveBeenCalledWith(destination, undefined)
+    } finally {
+      window.history.replaceState(originalState, '', original)
+    }
   })
 
   test('opens the Links view when an article fragment changes without a network request', async () => {
     const original = window.location.href
+    const originalState = window.history.state
     const articleUrl = new URL(original)
     articleUrl.hash = ''
     window.history.replaceState({}, '', articleUrl)
     const { value, readBody } = response({ url: articleUrl.href })
-    const component = loadComponent(value)
+    const { component, fetch } = loadComponent(value)
     const vm = navigationVm() as NavigationVm & { navigate: WikiPageComponentOptions['methods']['navigate'] }
     vm.navigate = (destination, options) => component.methods.navigate.call(vm, destination, options)
     vm.currentPage.pageFeatures.linksVisible = true
@@ -261,12 +274,15 @@ describe('wiki page navigation response boundary', () => {
       await vi.waitFor(() => expect(vm.activePageView).toBe('links'))
       expect(vm.currentUrl).toBe(window.location.href)
       expect(readBody).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
 
       window.history.replaceState({}, '', articleUrl)
       component.methods.handleHashChange.call(vm)
       await vi.waitFor(() => expect(vm.activePageView).toBe('article'))
+      expect(fetch).not.toHaveBeenCalled()
+      expect(readBody).not.toHaveBeenCalled()
     } finally {
-      window.history.replaceState({}, '', original)
+      window.history.replaceState(originalState, '', original)
     }
   })
 

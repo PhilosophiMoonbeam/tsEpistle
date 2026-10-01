@@ -1,10 +1,32 @@
 import fs from 'node:fs'
 import { buildRenderingPlan, formatTitle, rendererTitle, renderingIssues, renderingSettings } from '../../../shared/rendering-policy.ts'
+import { document } from '../../test/browser-dom.mts'
+import { compileTemplate } from '@vue/compiler-sfc'
+import { renderToString } from '@vue/server-renderer'
+
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const compileRender = (content, filename) => {
+  const template = compileTemplate({
+    source: content.match(/<template>([\s\S]*?)<\/template>\s*<script/)[1],
+    filename, id: filename,
+    compilerOptions: { mode: 'function', prefixIdentifiers: true, expressionPlugins: ['typescript'] }
+  })
+  if (template.errors.length) throw template.errors[0]
+  return new Function('Vue', new Bun.Transpiler({ loader: 'ts' }).transformSync(template.code))(Vue)
+}
+const asyncStateSource = fs.readFileSync('client/components/common/async-state.vue', 'utf8')
+const AsyncState = {
+  props: ['state', 'title', 'message', 'retryLabel', 'announce'],
+  emits: ['retry'],
+  render: compileRender(asyncStateSource, 'async-state.vue')
+}
 const source = fs.readFileSync('client/components/admin/admin-rendering.vue', 'utf8')
 const script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1]
 const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .+$/gm, '').replace('export default', 'const component ='))
 const dependencies = {
-  AsyncState: {},
+  AsyncState,
   buildRenderingPlan,
   formatTitle,
   rendererTitle,
@@ -44,6 +66,20 @@ function arrange(overrides = {}) {
   for (const [key, method] of Object.entries(component.methods)) state[key] = method.bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => getter.call(state) })
   return { state, component, transport }
+}
+const renderWorkspace = async ({ component, state }) => {
+  const data = Object.fromEntries(Object.keys(component.data()).map(key => [key, state[key]]))
+  const app = Vue.createSSRApp({
+    ...component, data: () => data,
+    render: compileRender(source, 'admin-rendering.vue')
+  })
+  app.config.globalProperties.$route = state.$route
+  app.config.globalProperties.$router = state.$router
+  app.use(createVuetify({ components: vuetifyComponents }))
+  app.component('admin-hero', { render: () => null })
+  const host = document.createElement('div')
+  host.innerHTML = await renderToString(app)
+  return host
 }
 describe('rendering workspace draft and asynchronous lifecycle', () => {
   it('keeps saved configuration separate from edits across module selection and resets it deliberately', async () => {
@@ -101,7 +137,8 @@ describe('rendering workspace draft and asynchronous lifecycle', () => {
   })
 
   it('keeps worker completion distinct from an output inspection failure', async () => {
-    const { state, transport } = arrange()
+    const harness = arrange()
+    const { state, transport } = harness
     await state.reload()
     state.pageId = 7
     state.output = { page: { id: 7 } }
@@ -123,11 +160,22 @@ describe('rendering workspace draft and asynchronous lifecycle', () => {
     transport.fetchRenderingOutput.mockRejectedValue(new Error('Inspection temporarily unavailable'))
     await state.rerender()
     expect(state.renderFailed).toBe(false)
-    expect(state.renderNotice).toContain('The render completed.')
+    expect(state.renderStatus).toMatchObject({ pageId: 7, effectId: 'effect-7', status: 'succeeded' })
     expect(state.renderNoticeFor).toBe(7)
     expect(state.outputError).toBe('Inspection temporarily unavailable')
     expect(state.output).toBeNull()
     expect(state.rendering).toBe(false)
+    state.section = 'output'
+    const host = await renderWorkspace(harness)
+    const panel = host.querySelector('#rendering-panel-output')
+    expect(panel.style.display).not.toBe('none')
+    const completion = panel.querySelector('.v-alert.text-success')
+    expect(completion).not.toBeNull()
+    expect(completion.textContent).toContain('effect-7')
+    expect(completion.textContent).toContain('Status: succeeded')
+    const inspectionError = panel.querySelector('[role="alert"].async-state--error')
+    expect(inspectionError).not.toBeNull()
+    expect(inspectionError.textContent).toContain('Inspection temporarily unavailable')
   })
   it('retains an accepted receipt as unknown on status loss without resubmitting', async () => {
     const { state, transport } = arrange()

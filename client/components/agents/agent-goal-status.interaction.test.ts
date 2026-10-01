@@ -169,15 +169,17 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
   return { ...harness, emit }
 }
 
-const renderGoalStatus = async (goal: AgentGoalView, expanded = false): Promise<string> => {
-  const harness = loadGoal(goal, expanded)
-  const component = Object.assign(
+const goalStatusComponent = (goal: AgentGoalView, harness: GoalHarness) =>
+  Object.assign(
     defineComponent({
       setup: () => ({ ...harness, goal, busy: false }),
       render: renderGoalTemplate
     }),
     { __scopeId: componentScopeId }
   )
+
+const renderGoalStatus = async (goal: AgentGoalView, expanded = false): Promise<string> => {
+  const component = goalStatusComponent(goal, loadGoal(goal, expanded))
   const app = createSSRApp(component)
   app.use(createVuetify({ components: vuetifyComponents }))
   return renderToString(app)
@@ -195,18 +197,18 @@ describe('Agent goal status interaction', () => {
     expect(loadGoal(makeGoal({ status: 'failed' }), false).statusColor.value).toBe('error')
   })
 
-  it('calculates the peak resource budget across tokens, tools, and continuations', () => {
-    const goal = makeGoal({
-      consumedTokens: 750,
-      maxTokens: 1_000,
-      consumedToolCalls: 2,
-      maxToolCalls: 10,
-      continuationCount: 1,
-      maxContinuations: 4
-    })
-    expect(loadGoal(goal, true).budgetPercent.value).toBe(75)
-
-    expect(loadGoal(makeGoal({ consumedTokens: 2_000, maxTokens: 1_000 }), true).budgetPercent.value).toBe(100)
+  it('renders the peak resource budget across tokens, tools, and continuations, capped at 100 percent', async () => {
+    const scenarios = [
+      { goal: makeGoal({ consumedTokens: 750 }), percent: 75 },
+      { goal: makeGoal({ consumedTokens: 100, consumedToolCalls: 8 }), percent: 80 },
+      { goal: makeGoal({ consumedTokens: 100, continuationCount: 3 }), percent: 75 },
+      { goal: makeGoal({ consumedTokens: 2_000 }), percent: 100 }
+    ]
+    for (const { goal, percent } of scenarios) {
+      const document = new JSDOM(await renderGoalStatus(goal, true)).window.document
+      expect(document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe(String(percent))
+      expect(document.querySelector('.agent-goal__progress-heading strong')?.textContent).toMatch(new RegExp(`\\b${percent}%`))
+    }
   })
 
   it('surfaces the goal error alongside completion blocker details', () => {
@@ -224,13 +226,14 @@ describe('Agent goal status interaction', () => {
     expect(harness.blockerMessages.value).toEqual([{ code: 'PROVIDER_FAILED', message: 'The provider stopped responding.', retryable: false }, issue])
   })
 
-  it('describes the objective and current expansion state in the toggle label', () => {
-    expect(loadGoal(makeGoal({ objective: 'Review the incident report' }), false).toggleAriaLabel.value).toBe(
-      'Show durable goal details: Review the incident report'
-    )
-    expect(loadGoal(makeGoal({ objective: 'Review the incident report' }), true).toggleAriaLabel.value).toBe(
-      'Hide durable goal details: Review the incident report'
-    )
+  it('describes the objective and current expansion state in the rendered toggle label', async () => {
+    for (const expanded of [false, true]) {
+      const document = new JSDOM(await renderGoalStatus(makeGoal({ objective: 'Review the incident report' }), expanded)).window.document
+      const toggle = document.querySelector<HTMLButtonElement>('.agent-goal__toggle')
+      expect(toggle?.getAttribute('aria-expanded')).toBe(String(expanded))
+      expect(toggle?.getAttribute('aria-label')).toContain('Review the incident report')
+      expect(toggle?.getAttribute('aria-label')).toMatch(expanded ? /\bhide\b/i : /\bshow\b/i)
+    }
   })
 
   it('renders both goal-toggle dimensions at least 44px with a compact control height', async () => {
@@ -256,30 +259,50 @@ describe('Agent goal status interaction', () => {
     expect(expanded.emit).toHaveBeenCalledWith('update:expanded', false)
   })
   it('shows distinct cycle and lifetime usage with an explicit no-rollover renewal action', async () => {
-    const renewable = await renderGoalStatus(
-      makeGoal({
-        status: 'budget_limited',
-        consumedTokens: 1_450,
-        maxTokens: 1_500,
-        budgetPolicyVersion: 2,
-        budgetSelection: 'utility',
-        tokenTier: 'small',
-        tokenAllowance: 500,
-        budgetCycle: 2,
-        budgetLimitReason: 'tokens',
-        canRenewTokenBudget: true
-      }),
-      true
-    )
+    const renewableGoal = makeGoal({
+      status: 'budget_limited',
+      consumedTokens: 1_450,
+      maxTokens: 1_500,
+      budgetPolicyVersion: 2,
+      budgetSelection: 'utility',
+      tokenTier: 'small',
+      tokenAllowance: 500,
+      budgetCycle: 2,
+      budgetLimitReason: 'tokens',
+      canRenewTokenBudget: true
+    })
+    const renewable = await renderGoalStatus(renewableGoal, true)
     const renewableDocument = new JSDOM(renewable).window.document
-    const renewableText = renewableDocument.body.textContent ?? ''
-    expect(renewableText).toContain('Current cycle usage')
-    expect(renewableText).toContain('450 of 500 tokens')
-    expect(renewableText).toContain('Lifetime usage')
-    expect(renewableText).toContain('1,450 tokens')
-    const continueButton = renewableDocument.querySelector<HTMLButtonElement>('.agent-goal__renewal button')
-    expect(continueButton?.disabled).toBe(false)
-    expect(continueButton?.textContent).toContain('500')
+    const facts = Array.from(renewableDocument.querySelectorAll('.agent-goal__renewal-facts > div'))
+    const cycleFact = facts.find(fact => /\bcycle\b.*\busage\b/i.test(fact.querySelector('dt')?.textContent ?? ''))
+    const lifetimeFact = facts.find(fact => /\blifetime\b.*\busage\b/i.test(fact.querySelector('dt')?.textContent ?? ''))
+    expect(cycleFact?.querySelector('dd')?.textContent).toBe('450 of 500 tokens')
+    expect(lifetimeFact?.querySelector('dd')?.textContent).toBe('1,450 tokens')
+    const nextAllowanceFact = facts.find(fact => /\bnext\b.*\bcycle\b.*\ballowance\b/i.test(fact.querySelector('dt')?.textContent ?? ''))
+    expect(nextAllowanceFact?.querySelector('dd')?.textContent).toMatch(/\bexactly\b.*\b500\b.*\btokens?\b/i)
+    const disclosure = renewableDocument.querySelector('.agent-goal__renewal-copy[role="status"]')?.textContent ?? ''
+    expect(disclosure).toMatch(/\bone\b.*\bcontinuation\b.*\b500-token\b.*\bcycle\b/i)
+    expect(disclosure).toMatch(/\bunused\b.*\btokens?\b.*\bdo not\b.*\broll\s*over\b/i)
+
+    const harness = loadGoal(renewableGoal, true)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp(goalStatusComponent(renewableGoal, harness))
+    app.use(createVuetify({ components: vuetifyComponents }))
+    try {
+      app.mount(host)
+      const continueButton = host.querySelector<HTMLButtonElement>('.agent-goal__renewal button')
+      if (!continueButton) throw new Error('Renewable token-budget action did not render')
+      expect(continueButton.disabled).toBe(false)
+      expect(continueButton.textContent).toContain('500')
+      continueButton.click()
+      await Vue.nextTick()
+      expect(harness.emit).toHaveBeenCalledTimes(1)
+      expect(harness.emit).toHaveBeenCalledWith('renew-budget')
+    } finally {
+      app.unmount()
+      host.remove()
+    }
 
     const nonRenewable = await renderGoalStatus(
       makeGoal({

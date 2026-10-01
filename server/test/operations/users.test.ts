@@ -49,7 +49,6 @@ const installWiki = (overrides: Record<string, unknown> = {}) => {
     Error: { AuthRequired, AuthAccountBanned, AuthAccountNotVerified, AuthProviderInvalid, AuthPasswordInvalid, InputInvalid },
     auth: {
       strategies: {},
-      checkAssignUserToGroupAccess: vi.fn(async () => true),
       revokeUserTokens
     },
     config: { host: 'https://wiki.example.test', metrics: { isEnabled: false } },
@@ -92,26 +91,43 @@ beforeEach(() => {
 describe('user authority revocation', () => {
   it('revokes local and peer JWT authorization after an administrative group commit', async () => {
     const { emit, lifecycle, revokeUserTokens, updateUser } = installWiki()
+    const administrator = { id: 11, ownershipUserId: 11 } as Express.User
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
 
-    accountStore.updateProfile.mockImplementationOnce(async () => { lifecycle.push('commit'); return adminWorkspace() })
-    await operations.default.update({ requester, input: { id: 10, groups: [3] } })
+    const entered = Promise.withResolvers<void>()
+    const committed = Promise.withResolvers<void>()
+    accountStore.updateProfile.mockImplementationOnce(async () => {
+      entered.resolve()
+      await committed.promise
+      lifecycle.push('commit')
+      return adminWorkspace()
+    })
+    const pending = operations.default.update({ requester: administrator, input: { id: 10, groups: [3] } })
+    try {
+      await entered.promise
+      expect(revokeUserTokens).not.toHaveBeenCalled()
+      expect(emit).not.toHaveBeenCalled()
+    } finally {
+      committed.resolve()
+      await pending
+    }
 
-    expect(accountStore.updateProfile).toHaveBeenCalledWith(requester, 10, expect.objectContaining({ fingerprint: 'reviewed-version', profile: expect.objectContaining({ groups: [3] }) }))
+    expect(accountStore.updateProfile).toHaveBeenCalledWith(administrator, 10, expect.objectContaining({ fingerprint: 'reviewed-version', profile: expect.objectContaining({ groups: [3] }) }))
     expect(updateUser).not.toHaveBeenCalled()
     expect(lifecycle).toEqual(['commit', 'revoke-local', 'revoke-peer'])
     expect(revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
     expect(emit).toHaveBeenCalledWith('addAuthRevoke', { id: 10, kind: 'u' })
   })
 
-  it('does not revoke when reconciliation committed without changing authority', async () => {
-    const { revokeUserTokens, updateUser } = installWiki()
-    updateUser.mockResolvedValueOnce(false)
+  it('does not persist or revoke an unchanged reviewed profile', async () => {
+    const { emit, revokeUserTokens } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
 
     await operations.default.update({ requester, input: { id: 10, name: 'User' } })
 
     expect(revokeUserTokens).not.toHaveBeenCalled()
+    expect(accountStore.updateProfile).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
   })
 
   it('revokes prior sessions after a self-service password commit and before issuing the replacement cookie', async () => {
@@ -177,30 +193,37 @@ describe('profile preferences operation', () => {
   it.each([
     ['appearance', { appearance: 'dark' }],
     ['font family', { fontFamily: 'roboto-flex' }],
-    ['editorial blend', { fontFamily: 'blend' }]
-  ])('updates an independent %s preference and refreshes the session cookie', async (_label, input) => {
-    const { refreshToken, updateUser } = installWiki()
+    ['editorial blend', { fontFamily: 'blend' }],
+    ['combined', { appearance: 'light', fontFamily: 'newsreader' }]
+  ])('waits for the %s preference commit before refreshing the private session cookie', async (_label, input) => {
+    const { lifecycle, refreshToken, updateUser } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
     const response = { cookie: vi.fn(), set: vi.fn() }
+    const entered = Promise.withResolvers<void>()
+    const persisted = Promise.withResolvers<void>()
+    updateUser.mockImplementationOnce(async () => {
+      entered.resolve()
+      await persisted.promise
+      lifecycle.push('commit')
+      return true
+    })
 
-    await expect(operations.default.updateProfilePreferences({ requester, input, response })).resolves.toBeUndefined()
-
-    expect(updateUser).toHaveBeenCalledWith({ id: 10, ...input })
+    const pending = operations.default.updateProfilePreferences({ requester, input, response })
+    try {
+      await entered.promise
+      expect(updateUser).toHaveBeenCalledWith(expect.objectContaining({ id: 10 }))
+      expect(refreshToken).not.toHaveBeenCalled()
+      expect(response.cookie).not.toHaveBeenCalled()
+      expect(response.set).not.toHaveBeenCalled()
+    } finally {
+      persisted.resolve()
+      await pending
+    }
+    await expect(pending).resolves.toBeUndefined()
+    expect(lifecycle).toEqual(['commit', 'refresh'])
     expect(refreshToken).toHaveBeenCalledWith(10)
     expect(response.cookie).toHaveBeenCalledWith('jwt', 'replacement-jwt', expect.any(Object))
-  })
-
-  it('updates a combined preference patch exactly', async () => {
-    const { refreshToken, updateUser } = installWiki()
-    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
-    const response = { cookie: vi.fn(), set: vi.fn() }
-    const input = { appearance: 'light', fontFamily: 'newsreader' }
-
-    await expect(operations.default.updateProfilePreferences({ requester, input, response })).resolves.toBeUndefined()
-
-    expect(updateUser).toHaveBeenCalledWith({ id: 10, ...input })
-    expect(refreshToken).toHaveBeenCalledWith(10)
-    expect(response.cookie).toHaveBeenCalledWith('jwt', 'replacement-jwt', expect.any(Object))
+    expect(response.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
   })
 
   it.each([

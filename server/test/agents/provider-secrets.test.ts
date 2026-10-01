@@ -41,6 +41,12 @@ describe('encrypted provider secret vault', () => {
     expect(Buffer.from(rows[0]?.ciphertext ?? '').toString('utf8')).not.toContain('same-provider-key')
     expect(await vault.get(first)).toBe('same-provider-key')
     expect(await vault.get(second)).toBe('same-provider-key')
+
+    const secondPayload = await db('agentProviderSecrets')
+      .where({ id: second.slice('managed:'.length) })
+      .first('keyId', 'algorithm', 'nonce', 'ciphertext', 'authTag')
+    await db('agentProviderSecrets').where({ id: first.slice('managed:'.length) }).update(secondPayload)
+    await expect(Promise.resolve(vault.get(first))).rejects.toMatchObject({ code: 'PROVIDER_SECRET_DECRYPTION_FAILED', status: 503 })
   })
 
   it('fails closed for tampering, missing keys, invalid references, and rolled-back writes', async () => {

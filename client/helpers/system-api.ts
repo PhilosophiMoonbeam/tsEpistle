@@ -15,20 +15,6 @@ export type SystemSummary = {
   usersTotal: number
   tagsTotal: number
 }
-export type SystemInfo = SystemSummary & {
-  configFile: string
-  cpuCores: number
-  dbHost: string
-  dbType: string
-  dbVersion: string
-  hostname: string
-  bunVersion: string
-  operatingSystem: string
-  platform: string
-  ramTotal: string
-  workingDirectory: string
-  upgradeCapable: boolean
-}
 export type RenderEffectStatus = 'pending' | 'leased' | 'succeeded' | 'failed' | 'superseded'
 export interface RenderPageReceipt {
   readonly message: string
@@ -97,17 +83,6 @@ const normalizeSummary = (payload: unknown, fallbackMessage: string): SystemSumm
 
 export const fetchSystemSummary = async (fetchImpl: FetchImpl, fallbackMessage = 'System summary response is invalid') =>
   normalizeSummary(await request(fetchImpl, 'GET', '/_api/system/summary', undefined, fallbackMessage), fallbackMessage)
-
-export const fetchSystemInfo = async (fetchImpl: FetchImpl, fallbackMessage = 'System info response is invalid'): Promise<SystemInfo> => {
-  const payload = await request(fetchImpl, 'GET', '/_api/system/info', undefined, fallbackMessage)
-  const summary = normalizeSummary(payload, fallbackMessage)
-  if (!isRecord(payload)) throw new Error(fallbackMessage)
-  for (const key of ['configFile', 'dbHost', 'dbType', 'dbVersion', 'hostname', 'bunVersion', 'operatingSystem', 'platform', 'ramTotal', 'workingDirectory'])
-    if (typeof payload[key] !== 'string') throw new Error(fallbackMessage)
-  if (typeof payload.cpuCores !== 'number' || !Number.isFinite(payload.cpuCores) || typeof payload.upgradeCapable !== 'boolean')
-    throw new Error(fallbackMessage)
-  return { ...summary, ...payload } as SystemInfo
-}
 
 export const fetchSystemHost = async (fetchImpl: FetchImpl, fallbackMessage = 'Site host response is invalid') => {
   const payload = await request(fetchImpl, 'GET', '/_api/system/host', undefined, fallbackMessage)

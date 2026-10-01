@@ -35,6 +35,8 @@ import {
   updateAgentSession
 } from '../../agents/repository.ts'
 import { type AgentAdmissionResolver, type AgentEngine, AgentProductRuntime } from '../../agents/runtime.ts'
+import type { AgentEngineRequest, AgentResolvedAdmission } from '../../agents/runtime.ts'
+import { SkillRuntime } from '../../agents/skills/runtime.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
@@ -259,6 +261,20 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.uuid('skillVersionId').notNullable()
     table.integer('ordinal').notNullable()
   })
+  await knex.schema.createTable('agentSkillUses', table => {
+    table.uuid('id').primary()
+    table.uuid('skillVersionId').notNullable()
+    table.uuid('runId').nullable()
+    table.uuid('sessionId').nullable()
+    table.integer('requesterUserId').nullable()
+    table.integer('requesterApiKeyId').nullable()
+    table.uuid('transportRequestId').notNullable()
+    table.string('externalSessionSha256').nullable()
+    table.text('resourcePath').nullable()
+    table.string('purpose').notNullable()
+    table.string('contentHash').notNullable()
+    table.dateTime('createdAt').defaultTo(knex.fn.now())
+  })
   await knex.schema.createTable('agentSkillVersions', table => {
     table.uuid('id').primary()
     table.uuid('skillId').notNullable()
@@ -331,6 +347,8 @@ const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('agentProviderProfileVersions', table => {
     table.uuid('id').primary()
     table.text('policies').notNullable()
+    table.boolean('conformed').notNullable().defaultTo(true)
+    table.text('capabilities').nullable()
   })
   await knex.schema.createTable('agentQuotaDaily', table => {
     table.bigInteger('tokenResetCredit').notNullable().defaultTo(0)
@@ -709,13 +727,25 @@ describe('durable agent repositories', () => {
       data: { suggestions: [{ id: 'next', label: 'Continue', prompt: 'Continue' }] }
     })
     const events = await listOwnedAgentEvents(knex, 7, runId)
-    const reduced = reduceAgentEvents(events, runId)
     const projected = await projectAgentThread(knex, 7, sessionId, {
       profileResolutionToken: session => `profile:${session.id}:${session.version}`,
       now: new Date('2026-08-17T00:00:00.000Z')
     })
-    expect(projected.tools).toEqual(reduced.tools)
-    expect(projected.suggestions).toEqual(reduced.suggestions)
+    expect(projected.tools).toEqual([
+      {
+        id: 'call-1',
+        runId,
+        actionName: 'pages.get',
+        title: 'Read page',
+        state: 'complete',
+        risk: 'read',
+        summary: 'Read one page',
+        proposalId: null,
+        startedAt: events[0].createdAt,
+        completedAt: events[1].createdAt
+      }
+    ])
+    expect(projected.suggestions).toEqual([{ id: 'next', label: 'Continue', prompt: 'Continue' }])
     expect(projected.session.currentRun).toMatchObject({ id: runId, eventSequence: 3, canCancel: true })
     expect(projected.messages.map(message => message.content)).toEqual(['Question', ''])
   })
@@ -770,7 +800,6 @@ describe('durable agent repositories', () => {
     expect(JSON.stringify(correcting)).not.toContain('PRIVATE REJECTED DRAFT')
     expect(JSON.stringify(correcting)).not.toContain('PRIVATE REJECTION ISSUE')
     expect(JSON.stringify(correcting)).not.toContain('PRIVATE REJECTED CLAIM TEXT')
-    expect((await projectAgentThread(knex, 7, sessionId, projectionOptions)).session.currentRun).toEqual(correcting.session.currentRun)
 
     await appendAgentEvent(knex, {
       id: '00000000-0000-4000-8000-000000000027',
@@ -1047,10 +1076,6 @@ describe('durable agent repositories', () => {
     const events = calls.flatMap(call => [call.start, call.terminal])
     const reduced = reduceAgentEvents(events, projectionRunId)
 
-    expect(events.filter(event => event.type === 'tool.started')).toHaveLength(calls.length)
-    expect(events.filter(event => event.type === 'tool.completed' || event.type === 'tool.notExecuted' || event.type === 'tool.failed')).toHaveLength(
-      calls.length
-    )
     expect(reduced.tools).toHaveLength(calls.length)
     expect(
       reduced.tools.every(
@@ -2167,6 +2192,7 @@ describe('durable agent repositories', () => {
   it('reports a durably applied page proposal as partial success when only final provider synthesis fails', async () => {
     const now = new Date('2026-08-17T00:00:00.000Z')
     const proposalId = '00000000-0000-4000-8000-000000000073'
+    const unacceptedDraft = 'PRIVATE UNACCEPTED POST-ACTION PROVIDER DRAFT'
     await knex('agentProposals').insert({
       id: proposalId,
       sessionId,
@@ -2213,6 +2239,7 @@ describe('durable agent repositories', () => {
       preflight: preflightAgentRequest,
       async execute(request, sink) {
         executions += 1
+        await sink.text(unacceptedDraft)
         await request.dispatchBudget?.reserve({ tokens: 20, costMicros: 30 })
         await sink.event('model.turn', {
           turn: 1,
@@ -2255,13 +2282,9 @@ describe('durable agent repositories', () => {
       outputTokens: 3,
       totalTokens: 10
     })
-    expect(await knex('agentMessages').where({ id: assistantMessageId }).first('status', 'content', 'citations', 'providerStateCiphertext')).toEqual({
-      status: 'complete',
-      content:
-        'The approved Wiki change was applied, but the final assistant response could not be completed. The applied proposal card and any page link below show the authoritative result.',
-      citations: null,
-      providerStateCiphertext: null
-    })
+    const assistant = await knex('agentMessages').where({ id: assistantMessageId }).first('status', 'content', 'citations', 'providerStateCiphertext')
+    expect(assistant).toMatchObject({ status: 'complete', citations: null, providerStateCiphertext: null })
+    expect(assistant.content).not.toContain(unacceptedDraft)
     expect(await knex('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
       status: 'consumed',
       consumedTokens: 30,
@@ -2587,6 +2610,207 @@ describe('durable agent repositories', () => {
       otherVersionId
     ])
     await runtime.shutdown()
+  })
+
+  it.each(['disabled', 'cleared'] as const)('executes the admitted skill version after its preference is %s', async change => {
+    const skillSessionId = '00000000-0000-4000-8000-000000000101'
+    const skillId = '00000000-0000-4000-8000-000000000102'
+    const versionId = '00000000-0000-4000-8000-000000000103'
+    const requestId = '00000000-0000-4000-8000-000000000104'
+    const skillMarkdown =
+      '---\nname: release-notes\ndescription: Release notes\nallowed-tools:\n  - wiki_get_page\n  - wiki_prepare_page_delete\n---\nRead [guidance](references/GUIDE.md).\n'
+    await knex('agentRuns').where({ id: runId }).update({ status: 'succeeded', completedAt: new Date() })
+    await createAgentSession(knex, { id: skillSessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+    await knex('userGroups').insert({ userId: 7, groupId: 1 })
+    await knex('agentSkills').insert({
+      id: skillId,
+      name: 'release-notes',
+      rootPath: 'skills/release-notes',
+      status: 'enabled',
+      exposureMode: 'groups',
+      currentVersionId: versionId
+    })
+    await knex('agentSkillGrants').insert({ skillId, groupId: 1 })
+    await knex('agentSkillVersions').insert({
+      id: versionId,
+      skillId,
+      frontmatter: JSON.stringify({ 'allowed-tools': ['wiki_get_page', 'wiki_prepare_page_delete'] }),
+      contentHash: 'a'.repeat(64),
+      skillMarkdown,
+      createdAt: new Date()
+    })
+    const preferences = new SkillRuntime(knex)
+    await preferences.setUserSkillPreferences({ skillIds: [skillId], principal: { userId: 7, groupIds: [1] }, transportRequestId: requestId })
+    expect(await knex('agentSkillUses').select('skillVersionId', 'purpose', 'resourcePath')).toEqual([
+      { skillVersionId: versionId, purpose: 'selected', resourcePath: null }
+    ])
+    await knex('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000007' })
+      .update({
+        capabilities: JSON.stringify({
+          streaming: true,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'stream',
+          cancellation: true,
+          maxContextTokens: 128_000,
+          maxOutputTokens: 8_192
+        })
+      })
+    const resolve = async (): Promise<AgentResolvedAdmission> => ({
+      profileResolutionSha256: 'd'.repeat(64),
+      googleSearchEnabled: false,
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000007',
+      transportKind: 'openai-responses',
+      model: 'test',
+      executionMode: 'agent',
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'v1',
+      pricingRevision: 'v1',
+      promptVersion: 1,
+      quota: { tokens: 100, costMicros: 100 },
+      quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      reservationMilliseconds: 60_000
+    })
+    const originalWiki = Reflect.get(globalThis, 'WIKI')
+    const user = { id: 7, isActive: true, groups: [{ id: 1 }], getGlobalPermissions: async () => ['use:agents', 'read:pages'] }
+    Reflect.set(globalThis, 'WIKI', {
+      models: { users: { query: () => ({ findById: () => ({ withGraphFetched: () => ({ modifyGraph: async () => user }) }) }) } }
+    })
+    let runtime: AgentProductRuntime | undefined
+    try {
+      // Static import cannot work: page operations capture the fixture WIKI at module initialization.
+      const { createWikiActionSessionProvider } = await import('../../agents/providers/wiki-actions.ts')
+      const actions = createWikiActionSessionProvider(knex, {
+        enabled: true,
+        providerEnabled: true,
+        orchestrationEnabled: true,
+        skillsEnabled: true,
+        browserEnabled: false,
+        proposalsEnabled: true,
+        writesEnabled: true,
+        writeCreateEnabled: true,
+        writePatchEnabled: true,
+        writeMoveEnabled: true,
+        writeRestoreEnabled: true,
+        writeDeleteEnabled: true,
+        snapshotSigningSecret: Buffer.alloc(32, 7)
+      })
+      let observedSkills: AgentEngineRequest['skills'] | null = null
+      const dispatchedRunIds: string[] = []
+      let offeredPageActions: string[] | null = null
+      runtime = new AgentProductRuntime(
+        knex,
+        { resolve, resolveCurrent: resolve },
+        {
+          preflight: preflightAgentRequest,
+          async execute(request, sink) {
+            dispatchedRunIds.push(request.run.id)
+            observedSkills = request.skills
+            const session = await actions.open(request)
+            try {
+              offeredPageActions = session?.functions.filter(action => action.name.startsWith('pages.')).map(action => action.name) ?? null
+            } finally {
+              session?.close()
+            }
+            await sink.text('Release guidance retained.')
+            return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
+          }
+        },
+        { workerId: `skill-pin-${change}`, globalConcurrency: 1, perUserConcurrency: 1 }
+      )
+      const admitted = await runtime.submit({
+        ownerId: 7,
+        sessionId: skillSessionId,
+        profileResolutionToken: 'token',
+        clientRequestId: requestId,
+        expectedSessionVersion: 1,
+        content: 'Use the selected release guidance.'
+      })
+      expect(await knex('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([
+        { skillVersionId: versionId, ordinal: 0 }
+      ])
+      expect(await knex('agentRuns').where({ id: admitted.run.id }).first('status', 'attempts')).toEqual({ status: 'queued', attempts: 0 })
+      if (change === 'disabled') {
+        await knex('agentSkills').where({ id: skillId }).update({ status: 'disabled' })
+        expect(await knex('agentUserSkillPreferences').select('ownerId', 'skillId')).toEqual([{ ownerId: 7, skillId }])
+      } else {
+        await preferences.setUserSkillPreferences({ skillIds: [], principal: { userId: 7, groupIds: [1] }, transportRequestId: requestId })
+        expect(await knex('agentUserSkillPreferences')).toEqual([])
+      }
+      expect(await runtime.runOnce()).toBe(true)
+      expect(dispatchedRunIds).toEqual([admitted.run.id])
+      expect(observedSkills).toEqual([{ id: versionId, name: 'release-notes', skillMarkdown }])
+      expect(offeredPageActions).toEqual(['pages.get'])
+      expect(await knex('agentRuns').where({ id: admitted.run.id }).first('status')).toEqual({ status: 'succeeded' })
+      expect(await knex('agentMessages').where({ id: admitted.run.assistantMessageId }).first('status', 'content')).toEqual({
+        status: 'complete',
+        content: 'Release guidance retained.'
+      })
+      expect(await knex('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([
+        { skillVersionId: versionId, ordinal: 0 }
+      ])
+
+      const currentSession = await getOwnedAgentSession(knex, 7, skillSessionId)
+      if (change === 'disabled') {
+        const runsBeforeDenial = await knex('agentRuns').where({ sessionId: skillSessionId })
+        const messagesBeforeDenial = await knex('agentMessages').where({ sessionId: skillSessionId }).orderBy('ordinal')
+        const reservationsBeforeDenial = await knex('agentQuotaReservations').where({ ownerId: 7 }).orderBy('runId')
+        const eventsBeforeDenial = await knex('agentEvents').where({ runId: admitted.run.id }).orderBy('sequence')
+        await expect(
+          runtime.submit({
+            ownerId: 7,
+            sessionId: skillSessionId,
+            profileResolutionToken: 'token',
+            clientRequestId: '00000000-0000-4000-8000-000000000105',
+            expectedSessionVersion: currentSession.version,
+            content: 'Explicitly invoke the now-disabled release guidance.',
+            invokedSkillVersionIds: [versionId]
+          })
+        ).rejects.toMatchObject({ code: 'INVALID_SKILL' })
+        expect(await knex('agentRuns').where({ sessionId: skillSessionId })).toEqual(runsBeforeDenial)
+        expect(await knex('agentMessages').where({ sessionId: skillSessionId }).orderBy('ordinal')).toEqual(messagesBeforeDenial)
+        expect(await knex('agentQuotaReservations').where({ ownerId: 7 }).orderBy('runId')).toEqual(reservationsBeforeDenial)
+        expect(await knex('agentEvents').where({ runId: admitted.run.id }).orderBy('sequence')).toEqual(eventsBeforeDenial)
+        expect(dispatchedRunIds).toEqual([admitted.run.id])
+      }
+
+      const future = await runtime.submit({
+        ownerId: 7,
+        sessionId: skillSessionId,
+        profileResolutionToken: 'token',
+        clientRequestId: '00000000-0000-4000-8000-000000000106',
+        expectedSessionVersion: currentSession.version,
+        content: 'Continue without preferred release guidance.'
+      })
+      expect(await knex('agentRunSkills').where({ runId: future.run.id })).toEqual([])
+      expect(await runtime.runOnce()).toBe(true)
+      expect(dispatchedRunIds).toEqual([admitted.run.id, future.run.id])
+      expect(observedSkills).toEqual([])
+      expect(await knex('agentRuns').where({ id: future.run.id }).first('status')).toEqual({ status: 'succeeded' })
+      expect(await knex('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([
+        { skillVersionId: versionId, ordinal: 0 }
+      ])
+      for (const completedRun of [admitted.run, future.run]) {
+        expect(await knex('agentQuotaReservations').where({ runId: completedRun.id }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
+          status: 'consumed',
+          consumedTokens: 2,
+          consumedCostMicros: 2
+        })
+        const events = await knex('agentEvents').where({ runId: completedRun.id }).pluck('data')
+        const messages = await knex('agentMessages').where({ runId: completedRun.id }).pluck('content')
+        expect([...events, ...messages].join('\n')).not.toContain('references/GUIDE.md')
+      }
+    } finally {
+      try {
+        await runtime?.shutdown()
+      } finally {
+        if (originalWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI')
+        else Reflect.set(globalThis, 'WIKI', originalWiki)
+      }
+    }
   })
 
   it('passes remaining hard goal limits to execution and transitions budget_limited on the host fence', async () => {

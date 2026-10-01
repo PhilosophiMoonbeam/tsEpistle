@@ -19,6 +19,15 @@ describe('TFA QR image sanitization', () => {
     expect(sanitized).not.toContain('script')
     expect(sanitized).not.toContain('onclick')
     expect(sanitized).not.toContain('data-payload')
+
+    const root = new DOMParser().parseFromString(sanitized, 'image/svg+xml').documentElement
+    expect(root.localName).toBe('svg')
+    expect(root.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(root.getAttribute('viewBox')).toBe('0 0 3 3')
+    expect(root.childNodes).toHaveLength(1)
+    expect(root.firstElementChild?.localName).toBe('path')
+    expect(root.firstElementChild?.namespaceURI).toBe(root.namespaceURI)
+    expect(root.firstElementChild?.getAttribute('d')).toBe('M0 0h3v3H0z')
   })
 
   it('rejects malformed or structurally unexpected QR images', () => {

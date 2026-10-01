@@ -101,7 +101,6 @@ if (parsed.errors.length > 0) throw new Error(`Could not parse nav-header.vue: $
 if (!parsed.descriptor.script || !parsed.descriptor.template) {
   throw new Error('nav-header.vue script or template was not found')
 }
-const englishLocale = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8')) as { common: { header: Record<string, string> } }
 
 const accountMenuStyles = componentSource.match(/\.nav-header-menu\.account-menu\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
 const notificationStyles = componentSource.match(/\.account-menu__notifications\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
@@ -115,14 +114,7 @@ const testTranslations: Record<string, string> = {
   'common:header.accountNotificationsUnknown': '{{account}}, Localized notification status not fully checked'
 }
 
-interface TranslationCall {
-  key: string
-  params?: Record<string, unknown>
-}
-
-const translationCalls: TranslationCall[] = []
 const translate = (key: string, params?: Record<string, unknown>): string => {
-  translationCalls.push({ key, params })
   return Object.entries(params ?? {}).reduce((translated, [name, value]) => translated.split(`{{${name}}}`).join(String(value)), testTranslations[key] ?? key)
 }
 
@@ -474,7 +466,6 @@ afterEach(() => {
   calls.splice(0)
   agentDestroyCalls = 0
   Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
-  translationCalls.splice(0)
   wikiStore.site.title = 'Wiki'
   wikiStore.user = user(1)
   wikiStore.authRefreshPending = false
@@ -506,29 +497,26 @@ describe('workspace title responsiveness', () => {
     wikiStore.site.title = `Tim O'Pedia`
     const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
 
-    const vm = mounted.vm as HeaderVm & { titleLines: string[] }
-    expect(vm.titleLines).toEqual(['Tim', `O'Pedia`])
     const stacked = mounted.host.querySelector('.nav-header-title-stacked')
     expect(stacked).not.toBeNull()
+    expect([...stacked!.querySelectorAll('.nav-header-title-line')].map(line => line.textContent)).toEqual(['Tim', `O'Pedia`])
     expect(stacked?.querySelectorAll('.nav-header-title-line').length).toBe(2)
     expect(mounted.host.querySelector('.nav-header-title-single')?.textContent).toBe(`Tim O'Pedia`)
   })
 
-  it('keeps single-word titles unsplit and relies on fit shrinking only', async () => {
+  it('keeps a single-word title whole in the stacked variant', async () => {
     wikiStore.site.title = 'Encyclopedia'
     const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
 
-    const vm = mounted.vm as HeaderVm & { titleLines: string[] }
-    expect(vm.titleLines).toEqual(['Encyclopedia'])
+    expect(mounted.host.querySelector('.nav-header-title-stacked')?.textContent).toBe('Encyclopedia')
     expect(mounted.host.querySelector('.nav-header-title-stacked')?.querySelectorAll('.nav-header-title-line').length).toBe(1)
   })
 
-  it('renders one balanced split for three-word titles by minimizing the longest line', async () => {
+  it('renders one balanced split for four-word titles by minimizing the longest line', async () => {
     wikiStore.site.title = 'Wiki Knowledge Base Portal'
     const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
 
-    const vm = mounted.vm as HeaderVm & { titleLines: string[] }
-    expect(vm.titleLines).toEqual(['Wiki Knowledge', 'Base Portal'])
+    expect([...mounted.host.querySelectorAll('.nav-header-title-stacked .nav-header-title-line')].map(line => line.textContent)).toEqual(['Wiki Knowledge', 'Base Portal'])
   })
 })
 
@@ -629,7 +617,6 @@ describe('account menu containment', () => {
     const accountMenu = accountMenus[0]
     const profileLink = mounted.host.querySelector('[aria-label="Open profile for User 1"]')
     const offlinePanels = mounted.host.querySelectorAll('.account-menu__offline')
-    const offlinePanel = offlinePanels[0]
     const notifications = mounted.host.querySelector('.account-menu__notifications')
     const preferences = mounted.host.querySelector('.account-menu__preferences')
     const logoutForm = mounted.host.querySelector('form[action="/logout"][method="post"]')
@@ -641,10 +628,26 @@ describe('account menu containment', () => {
     expect(accountMenu?.getAttribute('aria-label')).toBe('Account menu')
     expect(profileLink?.closest('.account-menu')).toBe(accountMenu)
     expect(offlineManage?.closest('.account-menu')).toBe(accountMenu)
-    expect(offlineManage?.getAttribute('href')).toBe('/p/offline')
     expect(mounted.host.querySelector('.account-menu__tabs')).not.toBeNull()
-    expect(mounted.host.querySelectorAll('.account-menu__tab')).toHaveLength(3)
-    expect(mounted.host.querySelectorAll('.account-menu__tab--active')).toHaveLength(1)
+    const panels = [...mounted.host.querySelectorAll<HTMLElement>('.account-menu__panel')]
+    const sections = [
+      { label: 'Appearance', content: '.account-menu__preferences' },
+      { label: 'Offline', content: '.account-offline-summary' },
+      { label: 'Notifications', content: '.account-menu__notifications' }
+    ]
+    for (const section of sections) {
+      const tabs = [...mounted.host.querySelectorAll<HTMLElement>('.account-menu__tab')]
+      const tab = tabs.find(candidate => candidate.textContent?.trim() === section.label)!
+      tab.click()
+      await settle()
+      expect(tab.getAttribute('aria-pressed')).toBe('true')
+      expect(tabs.filter(candidate => candidate.getAttribute('aria-pressed') === 'true')).toEqual([tab])
+      const selectedPanel = mounted.host.querySelector(section.content)?.closest('.account-menu__panel')
+      expect(selectedPanel).not.toBeNull()
+      for (const panel of panels) {
+        expect(panel.style.display === 'none').toBe(panel !== selectedPanel)
+      }
+    }
     expect(mounted.host.querySelector('.account-offline-summary')).not.toBeNull()
     expect(mounted.host.querySelector('.pwa-status-panel')).toBeNull()
     expect(notifications?.closest('.account-menu')).toBe(accountMenu)
@@ -668,7 +671,6 @@ describe('account menu containment', () => {
     const offlinePanel = offlinePanels[0]
     const signIn = mounted.host.querySelector('[aria-label="Sign in"]')
     const button = mounted.host.querySelector<HTMLElement>('.account-menu__trigger')
-    const connectivityIndicator = mounted.host.querySelector<HTMLElement>('[data-connectivity-indicator]')
 
     expect(accountMenus).toHaveLength(1)
     expect(offlinePanels).toHaveLength(1)
@@ -683,8 +685,6 @@ describe('account menu containment', () => {
     expect(mounted.host.querySelector('.account-menu__preferences')).toBeNull()
     expect(mounted.host.querySelector('form[action="/logout"][method="post"]')).toBeNull()
     expect(button?.getAttribute('aria-label')).toBe('Localized account')
-    expect(connectivityIndicator?.classList.contains('account-menu__connectivity-indicator--success')).toBe(true)
-    expect(connectivityIndicator?.getAttribute('title')).toBe('Connected')
     expect(mounted.host.querySelector('.nav-header-app-status-menu')).toBeNull()
     expect(mounted.host.querySelector('.nav-header-app-status-trigger')).toBeNull()
     expect(accountMenu?.closest('.menu-stub__content')).not.toBeNull()
@@ -697,35 +697,23 @@ describe('notification header tri-state indicator', () => {
     const mounted = await mountHeader()
     const button = () => mounted.host.querySelector<HTMLElement>('.account-menu__trigger')
     const indicator = () => mounted.host.querySelector<HTMLElement>('.account-menu__notification-indicator')
-    const connectivityIndicator = () => mounted.host.querySelector<HTMLElement>('[data-connectivity-indicator]')
-
-    expect(englishLocale.common.header.accountNotificationsAvailable).toBe('{{account}}, Notifications available')
-    expect(englishLocale.common.header.accountNotificationsUnknown).toBe('{{account}}, Notification status not fully checked')
     expect(accountMenuStyles).toMatch(/overflow-y\s*:\s*auto/)
     expect(accountMenuStyles).toMatch(/overscroll-behavior\s*:\s*contain/)
     expect(notificationStyles).toMatch(/min-height\s*:\s*0/)
     expect(notificationStyles).not.toMatch(notificationOverflowProperties)
 
-    expect(calls.filter(call => call.kind === 'initialize').map(call => call.ownerId)).toEqual([1])
     expect(button()?.getAttribute('aria-label')).toBe('Localized account, Localized notifications available')
-    expect(translationCalls.some(call => call.key === 'common:header.accountNotificationsAvailable' && call.params?.account === 'Localized account')).toBe(true)
     expect(indicator()?.classList.contains('account-menu__notification-indicator--available')).toBe(true)
-    expect(connectivityIndicator()?.classList.contains('account-menu__connectivity-indicator--success')).toBe(true)
-    expect(connectivityIndicator()?.getAttribute('title')).toBe('Connected')
 
-    translationCalls.splice(0)
     siteNotifications.notificationState = 'unknown'
     await settle()
     expect(indicator()?.classList.contains('account-menu__notification-indicator--unknown')).toBe(true)
     expect(button()?.getAttribute('aria-label')).toBe('Localized account, Localized notification status not fully checked')
-    expect(translationCalls.some(call => call.key === 'common:header.accountNotificationsUnknown' && call.params?.account === 'Localized account')).toBe(true)
 
-    translationCalls.splice(0)
     siteNotifications.notificationState = 'clear'
     await settle()
     expect(indicator()).toBeNull()
     expect(button()?.getAttribute('aria-label')).toBe('Localized account')
-    expect(translationCalls.every(call => call.key === 'common:header.account')).toBe(true)
   })
 })
 

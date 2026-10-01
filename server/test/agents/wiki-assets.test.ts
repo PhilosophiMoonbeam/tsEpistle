@@ -40,13 +40,27 @@ describe('Wiki asset attachment snapshots', () => {
   const read = (authorize: (path: string) => Promise<void> = async () => {}) =>
     readAgentWikiAsset(db, { assetId: 1, signal: new AbortController().signal, authorize })
   it('uses authoritative folder identity and returns a validated private snapshot', async () => {
-    const paths: string[] = []
     expect(
       await read(async path => {
-        paths.push(path)
+        expect(path).toBe('documents/brief.pdf')
       })
     ).toEqual({ filename: 'brief.pdf', mimeType: 'application/pdf', payload })
-    expect(paths).toEqual(['documents/brief.pdf', 'documents/brief.pdf'])
+    let revoked = false
+    const revokeAfterReadStarts = (query: { sql: string }) => {
+      if (query.sql.includes('from `assetData`')) revoked = true
+    }
+    db.on('query', revokeAfterReadStarts)
+    try {
+      await expect(
+        read(async path => {
+          expect(path).toBe('documents/brief.pdf')
+          if (revoked) throw Object.assign(new Error('access revoked'), { status: 403 })
+        })
+      ).rejects.toMatchObject({ status: 403 })
+    } finally {
+      db.removeListener('query', revokeAfterReadStarts)
+      revoked = false
+    }
   })
   it('denies unreadable or locked assets before loading their bytes', async () => {
     const queries: string[] = []

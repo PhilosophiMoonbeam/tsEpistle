@@ -159,6 +159,7 @@ describe('page links operation', () => {
     await expect(getPageLinks({ pageId: 1, direction: 'outgoing', cursor: `${first.nextCursor}x`, requester })).rejects.toMatchObject({ status: 400 })
 
     await db('pages').where({ id: 1 }).update({ sourceRevision: 4 })
+    await addReceipt(db, 1, 4)
     const staleCursor = await getPageLinks({ pageId: 1, direction: 'outgoing', cursor: first.nextCursor!, requester })
     expect(staleCursor).toEqual({ schemaVersion: 1, state: 'refresh', pageId: 1, direction: 'outgoing', sourceRevision: '4' })
   })

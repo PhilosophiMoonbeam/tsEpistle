@@ -93,10 +93,16 @@ const makeUsersQueryFactory = (users) => {
 
 describe('graph/resolvers/user list pagination', () => {
   let previousWiki
+  let users
 
   beforeEach(() => {
     vi.resetModules()
     previousWiki = global.WIKI
+    users = [
+      { id: 2, name: 'Bob', email: 'bob@example.com', providerKey: 'github', isSystem: false, isActive: true, createdAt: '2024-01-02', lastLoginAt: '2024-01-09' },
+      { id: 3, name: 'Charlie', email: 'charlie@example.com', providerKey: 'local', isSystem: false, isActive: false, createdAt: '2024-01-03', lastLoginAt: null },
+      { id: 1, name: 'Alice', email: 'alice@example.com', providerKey: 'local', isSystem: false, isActive: true, createdAt: '2024-01-01', lastLoginAt: '2024-01-10' }
+    ]
     global.WIKI = {
       Error: {},
       auth: {
@@ -111,11 +117,7 @@ describe('graph/resolvers/user list pagination', () => {
       models: {
         pages: {},
         users: {
-          query: makeUsersQueryFactory([
-            { id: 1, name: 'Alice', email: 'alice@example.com', providerKey: 'local', isSystem: false, isActive: true, createdAt: '2024-01-01', lastLoginAt: '2024-01-10' },
-            { id: 2, name: 'Bob', email: 'bob@example.com', providerKey: 'github', isSystem: false, isActive: true, createdAt: '2024-01-02', lastLoginAt: '2024-01-09' },
-            { id: 3, name: 'Charlie', email: 'charlie@example.com', providerKey: 'local', isSystem: false, isActive: false, createdAt: '2024-01-03', lastLoginAt: null }
-          ])
+          query: makeUsersQueryFactory(users)
         }
       }
     }
@@ -138,9 +140,23 @@ describe('graph/resolvers/user list pagination', () => {
     expect(result.total).toBe(3)
     expect(result.users).toHaveLength(1)
     expect(result.users[0].name).toBe('Bob')
+
+    const firstPage = await resolver.UserQuery.list(null, {
+      page: 1,
+      pageSize: 1,
+      orderBy: 'name',
+      orderByDirection: 'asc'
+    })
+    expect(firstPage.total).toBe(3)
+    expect(firstPage.users).toHaveLength(1)
+    expect(firstPage.users[0].name).toBe('Alice')
   })
 
   it('filters by search string and provider key', async () => {
+    users.push(
+      { id: 4, name: 'External Alice', email: 'alice@external.example.com', providerKey: 'github', isSystem: false, isActive: true, createdAt: '2024-01-04', lastLoginAt: null },
+      { id: 5, name: 'alice@ support', email: 'support@example.com', providerKey: 'local', isSystem: false, isActive: true, createdAt: '2024-01-05', lastLoginAt: null }
+    )
     const { default: resolver } = await vi.importFresh('../../graph/resolvers/user.ts', import.meta.url)
 
     const result = await resolver.UserQuery.list(null, {
@@ -150,10 +166,14 @@ describe('graph/resolvers/user list pagination', () => {
       pageSize: 10
     })
 
-    expect(result.total).toBe(1)
+    expect(result.total).toBe(2)
     expect(result.users).toEqual([
       expect.objectContaining({
         name: 'Alice',
+        providerKey: 'local'
+      }),
+      expect.objectContaining({
+        name: 'alice@ support',
         providerKey: 'local'
       })
     ])

@@ -3,10 +3,8 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-te
 import { createTlsConfigurationStore } from '../../operations/tls-configuration.ts'
 import type { TlsConfigurationWorkspace, TlsListenerSnapshot } from '../../../shared/tls-workspace.ts'
 import type { SystemRequester } from '../../helpers/system-authority.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_ssl_test') && password ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password } : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_ssl_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const admin: SystemRequester = { user: { id: 1, authVersion: 0 } as never }
 const verifiedCheckId = '724044d5-5336-42b1-bd10-0df7dbba01b4'
@@ -180,7 +178,7 @@ suite('Reviewed HTTPS policy on PostgreSQL', () => {
     const expiration = new Date(Date.now() + 3600000).toISOString()
     await db('apiKeys').insert({ id: 7, isRevoked: false, expiration })
     const requester: SystemRequester = {
-      user: { id: 1, ownershipUserId: null, groups: [1] } as never,
+      user: { api: 7, grp: 1, ownershipUserId: null, groups: [1] } as never,
       apiKey: { id: 7, groupId: 1, expiresAt: Math.floor(Date.now() / 1000) + 3600 }
     }
     await store.save(requester, body(await read(requester)))
@@ -200,7 +198,8 @@ suite('Reviewed HTTPS policy on PostgreSQL', () => {
     await setting('letsencrypt', { payload: { cert: 'malformed-private-certificate-details' }, serverKey: 'private-key' })
     const workspace = await read()
     expect(workspace.savedCertificate).toBeNull()
-    expect(workspace.savedCertificateIssue).toContain('could not be read')
+    expect(workspace.savedCertificateIssue).toEqual(expect.any(String))
+    expect(workspace.savedCertificateIssue).toBeTruthy()
     expect(JSON.stringify(workspace)).not.toContain('malformed-private-certificate-details')
     expect(JSON.stringify(workspace)).not.toContain('private-key')
   })

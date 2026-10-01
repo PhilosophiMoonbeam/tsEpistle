@@ -53,7 +53,14 @@ describe('operations/system locale migration', () => {
     expect(migrateToLocale).toHaveBeenCalledWith({ sourceLocale: 'en', targetLocale: 'fr', user: requester })
   })
   it('rejects a locale migration without an authenticated actor', () => {
-    expect(() => systemOperations.migratePagesToLocale({ sourceLocale: 'en', targetLocale: 'fr' })).toThrow('Authentication is required')
+    let error: unknown
+    try {
+      systemOperations.migratePagesToLocale({ sourceLocale: 'en', targetLocale: 'fr' })
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).toBeInstanceOf(Error)
+    expect(error).toMatchObject({ name: 'AUTH_REQUIRED', status: 401 })
     expect(migrateToLocale).not.toHaveBeenCalled()
   })
 })

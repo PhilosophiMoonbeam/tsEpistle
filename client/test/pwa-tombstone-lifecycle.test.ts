@@ -1,3 +1,4 @@
+import { setImmediate } from 'node:timers/promises'
 import vm from 'node:vm'
 import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
 type ViteConfigEnvironment = {
@@ -16,6 +17,7 @@ type TombstoneClient = {
   url: string
   messages: unknown[]
   navigations: string[]
+  readonly safetyRequest: Promise<unknown>
   postMessage(message: unknown): void
   navigate(url: string): Promise<unknown>
 }
@@ -25,22 +27,30 @@ type HarnessEvent = {
   readonly waitUntil?: (promise: Promise<unknown>) => void
 }
 
+type MatchAllOptions = { readonly type?: string; readonly includeUncontrolled?: boolean }
+
 type RuntimeHarness = {
   readonly self: Record<string, unknown>
   readonly clients: TombstoneClient[]
   readonly events: Map<string, (event: HarnessEvent) => void>
   readonly log: string[]
+  readonly matchAllOptions: Array<MatchAllOptions | undefined>
   dispatch(type: string, values?: Record<string, unknown>): Promise<unknown>
 }
 
 const makeClient = (id: string, url: string, log: string[]): TombstoneClient => {
+  const safetyRequest = Promise.withResolvers<unknown>()
   const client: TombstoneClient = {
     id,
     url,
     messages: [],
     navigations: [],
+    safetyRequest: safetyRequest.promise,
     postMessage(message: unknown) {
       client.messages.push(message)
+      if (message !== null && typeof message === 'object' && 'type' in message && message.type === 'PWA_RELOAD_SAFETY_REQUEST') {
+        safetyRequest.resolve(message)
+      }
     },
     async navigate(target: string) {
       log.push(`navigate:${id}`)
@@ -58,6 +68,7 @@ type RuntimeOptions = {
 const createRuntime = (source: string, options: RuntimeOptions = {}): RuntimeHarness => {
   const events = new Map<string, (event: HarnessEvent) => void>()
   const log: string[] = []
+  const matchAllOptions: Array<MatchAllOptions | undefined> = []
   const safe = makeClient('safe', 'https://wiki.example.test/en/safe', log)
   const unsafe = makeClient('unsafe', 'https://wiki.example.test/en/unsafe', log)
   const outside = makeClient('outside', 'https://other.example.test/en/outside', log)
@@ -87,8 +98,8 @@ const createRuntime = (source: string, options: RuntimeOptions = {}): RuntimeHar
       async claim() {
         log.push('claim')
       },
-      async matchAll(options?: unknown) {
-        log.push(`match-all:${JSON.stringify(options)}`)
+      async matchAll(options?: MatchAllOptions) {
+        matchAllOptions.push(options)
         return clients
       }
     },
@@ -118,6 +129,7 @@ const createRuntime = (source: string, options: RuntimeOptions = {}): RuntimeHar
     clients,
     events,
     log,
+    matchAllOptions,
     async dispatch(type, values = {}) {
       const waits: Promise<unknown>[] = []
       const listener = events.get(type)
@@ -166,10 +178,7 @@ describe('generated PWA tombstone lifecycle', () => {
     expect(harness.log).toContain('skip-waiting')
 
     const activation = harness.dispatch('activate')
-    await vi.waitFor(() => {
-      const requests = harness.clients.flatMap(client => client.messages).filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')
-      expect(requests).toHaveLength(2)
-    })
+    await Promise.all(harness.clients.slice(0, 2).map(client => client.safetyRequest))
     const requests = harness.clients.flatMap(client => client.messages).filter(message => (message as {
       type?: unknown
       workerId?: unknown
@@ -202,25 +211,68 @@ describe('generated PWA tombstone lifecycle', () => {
     expect(harness.clients[1]?.navigations).toEqual([])
     expect(harness.clients[2]?.messages).toEqual([])
     expect(harness.clients[2]?.navigations).toEqual([])
-    expect(harness.log.some(entry => entry.startsWith('match-all:{"type":"window"'))).toBe(true)
+    expect(harness.matchAllOptions).toContainEqual(expect.objectContaining({ type: 'window' }))
+    for (const options of harness.matchAllOptions) {
+      expect(options?.type).toBe('window')
+      expect(options?.includeUncontrolled).not.toBe(true)
+    }
   })
 
-  it('keeps every IndexedDB-like client document untouched until it reports safety', async () => {
+  it('keeps unsafe documents in place and completes once every client reports false without waiting for the deadline', async () => {
     const source = await generatedTombstone()
+    vi.useFakeTimers()
     const harness = createRuntime(source)
-    const activation = harness.dispatch('activate')
-    await vi.waitFor(() => expect(harness.clients[0]?.messages.length).toBeGreaterThan(1))
-    const request = harness.clients[0]?.messages.find(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST') as {
-      workerId: string
-      release: string
-      roundNonce: string
+    try {
+      let settled = false
+      const activation = harness.dispatch('activate').then(() => { settled = true })
+      await Promise.all(harness.clients.slice(0, 2).map(client => client.safetyRequest))
+      expect(settled).toBe(false)
+      const request = harness.clients[0]?.messages.find(message =>
+        message !== null && typeof message === 'object' && 'type' in message && message.type === 'PWA_RELOAD_SAFETY_REQUEST') as {
+        workerId: string
+        release: string
+        roundNonce: string
+      }
+      expect(harness.clients[0]?.navigations).toHaveLength(0)
+      expect(harness.clients[1]?.navigations).toHaveLength(0)
+      const messageListener = harness.events.get('message')!
+      for (const target of harness.clients.slice(0, 2)) {
+        messageListener({
+          source: target,
+          data: { workerId: request.workerId, release: request.release, roundNonce: request.roundNonce, safe: false, type: 'PWA_RELOAD_SAFETY' }
+        })
+      }
+      await activation
+      expect(harness.clients[0]?.navigations).toHaveLength(0)
+      expect(harness.clients[1]?.navigations).toHaveLength(0)
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
     }
-    const messageListener = harness.events.get('message')!
-    messageListener({ source: harness.clients[0], data: { type: 'PWA_RELOAD_SAFETY', ...request, safe: false } })
-    messageListener({ source: harness.clients[1], data: { type: 'PWA_RELOAD_SAFETY', ...request, safe: false } })
-    await activation
-    expect(harness.clients[0]?.navigations).toHaveLength(0)
-    expect(harness.clients[1]?.navigations).toHaveLength(0)
+  })
+
+  it('finishes at the safety deadline without navigating clients that never report', async () => {
+    const source = await generatedTombstone()
+    vi.useFakeTimers()
+    const harness = createRuntime(source)
+    try {
+      let settled = false
+      const activation = harness.dispatch('activate').then(() => { settled = true })
+      await Promise.all(harness.clients.slice(0, 2).map(client => client.safetyRequest))
+      // Let the concurrent cleanup settle and the safety deadline start before advancing its clock.
+      await setImmediate()
+      await vi.advanceTimersByTimeAsync(1_999)
+      expect(settled).toBe(false)
+      expect(harness.clients[0]?.navigations).toHaveLength(0)
+      expect(harness.clients[1]?.navigations).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await activation
+      expect(harness.clients[0]?.navigations).toHaveLength(0)
+      expect(harness.clients[1]?.navigations).toHaveLength(0)
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
   })
   it('removes only owned precache and public branding caches during retirement cleanup', async () => {
     const source = await generatedTombstone()
@@ -228,7 +280,7 @@ describe('generated PWA tombstone lifecycle', () => {
     const ownedTwo = 'tsepistle-pwa-precache-v1-fedcba9876543210'
     const harness = createRuntime(source, { cacheNames: [ownedOne, ownedTwo, 'tsepistle-pwa-branding-v1', 'tsepistle-pwa-branding-v2', 'unrelated-cache'] })
     const activation = harness.dispatch('activate')
-    await vi.waitFor(() => expect(harness.clients[0]?.messages.length).toBeGreaterThan(1))
+    await Promise.all(harness.clients.slice(0, 2).map(client => client.safetyRequest))
     const request = harness.clients[0]?.messages.find(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST') as {
       workerId: string
       release: string
@@ -236,7 +288,10 @@ describe('generated PWA tombstone lifecycle', () => {
     }
     const messageListener = harness.events.get('message')!
     for (const target of harness.clients.slice(0, 2)) {
-      messageListener({ source: target, data: { type: 'PWA_RELOAD_SAFETY', ...request, safe: false } })
+      messageListener({
+        source: target,
+        data: { workerId: request.workerId, release: request.release, roundNonce: request.roundNonce, safe: false, type: 'PWA_RELOAD_SAFETY' }
+      })
     }
     await activation
     expect(harness.log).toContain(`cache-delete:${ownedOne}`)

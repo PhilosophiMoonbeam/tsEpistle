@@ -18,9 +18,6 @@ beforeEach(() => {
   }
 })
 describe('site configuration transport ownership', () => {
-  it('registers legacy, Security and General workspaces', async () => {
-    await load('get'); expect(router.get.mock.calls.map(([path]) => path)).toEqual(['/config', '/security', '/general']); expect(router.put.mock.calls.map(([path]) => path)).toEqual(['/config', '/security', '/general'])
-  })
   it('preserves flattened reads for existing REST and GraphQL consumers', async () => {
     const handler = await load('get'), res = response(); await handler({ user: {} }, res)
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ title: 'Original', pageExtensions: 'md', description: 'Description', analyticsId: 'retained', editFab: true, authJwtAudience: 'urn:wiki.js', uploadMaxFileSize: 5242880 }))

@@ -13,7 +13,7 @@ const build = (banner: SiteBannerConfig, preview = false) => {
     (fn: () => void) => { mount = fn }, (fn: () => void) => { unmount = fn }, siteBannerState, (text: string) => text,
     { now: () => now, parse: Date.parse },
     { setTimeout: (fn: () => void, delay: number) => { timers.set(++nextId, { fn, delay }); return nextId }, clearTimeout: (id: number) => timers.delete(id) },
-    { addEventListener: (name: string, fn: () => void) => listeners.set(name, fn), removeEventListener: (name: string) => listeners.delete(name) }
+    { addEventListener: (name: string, fn: () => void) => listeners.set(name, fn), removeEventListener: (name: string, fn: () => void) => { if (listeners.get(name) === fn) listeners.delete(name) } }
   )
   mount()
   return { view, timers, listeners, unmount, advance: (value: string) => { now = Date.parse(value) } }
@@ -23,7 +23,14 @@ describe('reader announcement lifetime', () => {
     const h = build({ isEnabled: true, title: 'Notice', content: '', endsAt: '2026-09-07T11:00:00Z' })
     expect(h.view.isVisible.value).toBe(true); expect([...h.timers.values()][0]?.delay).toBe(3600000)
     h.advance('2026-09-07T11:00:00Z'); [...h.timers.values()][0]!.fn(); expect(h.view.isVisible.value).toBe(false)
-    h.unmount(); expect(h.timers.size).toBe(0); expect(h.listeners.size).toBe(0)
+    h.unmount(); expect(h.listeners.size).toBe(0)
+    const open = build({ isEnabled: true, title: 'Notice', content: '', endsAt: '2026-09-07T11:00:00Z' })
+    expect(open.view.isVisible.value).toBe(true)
+    expect(open.timers.size).toBe(1)
+    expect(open.listeners.has('visibilitychange')).toBe(true)
+    open.unmount()
+    expect(open.timers.size).toBe(0)
+    expect(open.listeners.size).toBe(0)
   })
   it('rechecks expired notices when a suspended document becomes visible', () => {
     const h = build({ isEnabled: true, title: 'Notice', content: '', endsAt: '2026-09-07T11:00:00Z' })

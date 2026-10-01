@@ -89,6 +89,7 @@ const browserGlobals: Record<string, unknown> = {
   Node: browserWindow.Node,
   ResizeObserver: ObserverStub,
   SVGElement: browserWindow.SVGElement,
+  ShadowRoot: browserWindow.ShadowRoot,
   Text: browserWindow.Text,
   cancelAnimationFrame: (browserWindow.cancelAnimationFrame as (h: number) => void).bind(browserWindow),
   devicePixelRatio: 1,

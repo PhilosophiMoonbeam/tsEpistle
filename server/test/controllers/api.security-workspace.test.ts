@@ -34,14 +34,18 @@ describe('Security workspace transport', () => {
   it('forwards the exact policy review, actor and session action without caching responses', async () => {
     const user = { id: 1, authVersion: 2 },
       body = { policy: { authEnforce2FA: true }, fingerprint: 'review', reason: 'Require a second factor', endSessions: true },
-      res = response()
-    await read({ user }, res)
+      readResponse = response(),
+      saveResponse = response(),
+      initializeResponse = response()
+    await read({ user }, readResponse)
     expect(store.inspect).toHaveBeenCalledWith(user)
-    await save({ user, body }, res)
+    expect(readResponse.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    await save({ user, body }, saveResponse)
     expect(store.save).toHaveBeenCalledWith(user, body)
-    await initialize({ user, body }, res)
+    expect(saveResponse.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    await initialize({ user, body }, initializeResponse)
     expect(store.initialize).toHaveBeenCalledWith(user, 'review')
-    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    expect(initializeResponse.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
   })
   it('preserves expected authority, validation and conflict errors', async () => {
     for (const status of [400, 403, 409]) {

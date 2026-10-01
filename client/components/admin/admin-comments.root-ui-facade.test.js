@@ -24,7 +24,9 @@ describe('discussion workspace drafts and action recovery', () => {
     expect(discussionIssues(providers)).toEqual([])
     expect(discussionEnumOptions(providers[1].props.theme)).toEqual([{ value: 'preferred_color_scheme', title: 'Follow the reader' }, { value: 'light', title: 'Light' }])
     providers[1].config.theme = 'sepia'
-    expect(discussionIssues(providers)).toEqual([{ provider: 'giscus', field: 'theme', message: 'Giscus · Theme must use one of the listed options.' }])
+    const issues = discussionIssues(providers)
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatchObject({ provider: 'giscus', field: 'theme' })
   })
   it('isolates draft settings and keeps the saved secret masked until explicitly replaced', async () => {
     const { state } = arrange(); await state.reload(); state.current.config.minDelay = 60
@@ -51,7 +53,7 @@ describe('discussion workspace drafts and action recovery', () => {
   it('keeps a committed save distinct from a failed runtime refresh', async () => {
     const { state, transport } = arrange(); await state.reload(); state.enabled = false; state.pageRatingsEnabled = true; state.current.config.minDelay = 45
     transport.saveDiscussionWorkspace.mockResolvedValue({ ...snapshot, providers: [{ ...provider, config: { ...provider.config, minDelay: 45 } }], enabled: false, pageRatingsEnabled: true, fingerprint: 'second', warnings: [] }); transport.fetchDiscussionWorkspace.mockRejectedValue(new Error('Unavailable'))
-    await state.savePolicy(); expect(state.dirty).toBe(false); expect(state.saved.enabled).toBe(false); expect(state.saved.pageRatingsEnabled).toBe(true); expect(state.pageRatingsEnabled).toBe(true); expect(state.current.config.minDelay).toBe(45); expect(state.notice).toContain('saved.'); expect(state.notice).toContain('could not be refreshed'); expect(state.saveError).toBe('')
+    await state.savePolicy(); expect(state.dirty).toBe(false); expect(state.saved.enabled).toBe(false); expect(state.saved.pageRatingsEnabled).toBe(true); expect(state.pageRatingsEnabled).toBe(true); expect(state.current.config.minDelay).toBe(45); expect(state.noticeWarning).toBe(true); expect(state.saveError).toBe('')
     expect(transport.saveDiscussionWorkspace).toHaveBeenCalledTimes(1)
     expect(transport.saveDiscussionWorkspace).toHaveBeenCalledWith(false, [{ key: 'default', isEnabled: true, config: { akismet: '********', minDelay: 45 } }], 'first', 'thumbs', true)
   })

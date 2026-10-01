@@ -76,12 +76,6 @@ afterEach(() => {
 })
 
 describe('page-convert root UI facade contract', () => {
-  test('keeps conversion on the REST pages helper boundary', () => {
-    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(script).toContain("import { convertPage } from '../../helpers/pages-api'")
-    expect(script).not.toMatch(/graphql-tag|\$apollo/)
-  })
-
   test('submits the current source revision once and redirects private pages after success', async () => {
     const browserWindow = setup()
     browserWindow.fetch.mockResolvedValue(makeResponse({}))

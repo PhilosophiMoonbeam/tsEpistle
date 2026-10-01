@@ -16,7 +16,9 @@ const summary = {
 }
 describe('Storage operation result contract', () => {
   it('distinguishes an uncounted export from an empty successful import', () => {
-    expect(storageOperationResult('dump', summary, [])).toMatchObject({ outcome: 'succeeded', counts: null, items: [], message: 'Operation completed.' })
+    const exported = storageOperationResult('dump', summary, [])
+    expect(exported).toMatchObject({ outcome: 'succeeded', counts: null, items: [] })
+    expect(JSON.stringify(exported)).not.toContain(summary.message)
     expect(storageOperationResult('importAll', summary, []).counts).toMatchObject({ total: 0, succeeded: 0, failed: 0 })
     expect(storageOperationResult('importAll', { ...summary, outcome: 'failed', message: 'https://user:secret@example.test' }, [])).toMatchObject({
       outcome: 'failed',
@@ -64,6 +66,6 @@ describe('Storage operation result contract', () => {
     expect(result.items[0]!.diagnostics).toHaveLength(8)
     expect(result.items[0]!.diagnostics[0]).toHaveLength(512)
     expect(storageOperationResult('importAll', { ...summary, total: 2, succeeded: 3 }, [])).toMatchObject({ outcome: 'failed', counts: null })
-    expect(StorageOperationResultSchema.safeParse({ ...result, counts: { ...result.counts, total: 1 } }).success).toBe(false)
+    expect(StorageOperationResultSchema.safeParse({ ...result, counts: { ...result.counts, total: 101 } }).success).toBe(false)
   })
 })

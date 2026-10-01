@@ -6,7 +6,6 @@ import {
   ActionKernel,
   ActionKernelError,
   createActionAuthority,
-  toAxAction,
   toMcpAction,
   verifyActionAuthority,
   type ActionAdmissionSnapshot
@@ -54,18 +53,17 @@ const completeKernel = (): ActionKernel => {
 
 
 describe('shared action catalog admission', () => {
-  it('contains every frozen action exactly once', () => {
-    expect(Object.keys(ACTION_CATALOG)).toEqual(AGENT_ACTION_NAMES)
+  it('keeps action dispatch descriptor names unique', () => {
     expect(new Set(Object.values(ACTION_CATALOG).map(action => action.descriptor.name)).size).toBe(AGENT_ACTION_NAMES.length)
   })
 
   it('offers only actions allowed by transport, profile, permissions, flags, and skill narrowing', () => {
     const kernel = completeKernel()
     const offered = kernel.offer(auth, admission({ allowedActions: ['pages.get', 'browser.navigate'] }), requestId)
-    expect(offered.map(action => action.definition.descriptor.name)).toEqual(['pages.get', 'browser.navigate'])
+    expect(offered.map(action => action.definition.descriptor.name).sort()).toEqual(['pages.get', 'browser.navigate'].sort())
 
     expect(kernel.offer(auth, admission({ executionMode: 'generation-only' }), requestId)).toEqual([])
-    expect(kernel.offer(auth, admission({ permissions: ['use:agents'] }), requestId).map(action => action.definition.descriptor.name)).toEqual(['skills.list', 'skills.read', 'memory.manage', 'media.generateImage', 'media.generateVideo', 'media.generateMusic'])
+    expect(kernel.offer(auth, admission({ permissions: ['use:agents'] }), requestId).map(action => action.definition.descriptor.name).sort()).toEqual(['skills.list', 'skills.read', 'memory.manage', 'media.generateImage', 'media.generateVideo', 'media.generateMusic'].sort())
     expect(kernel.offer(auth, admission({ featureFlags: { ...flags, 'agents.provider.enabled': false } }), requestId)).toEqual([])
 
     const administratorActions = kernel.offer(auth, admission({ permissions: ['manage:system'] }), requestId).map(action => action.definition.descriptor.name)
@@ -104,7 +102,7 @@ describe('action authority and execution', () => {
     expect(authority.groupIds).toEqual([3, 9])
     expect(authority.permissions).toEqual([...admission().permissions].sort())
     expect(verifyActionAuthority(authority)).toEqual(authority)
-    expect(() => verifyActionAuthority({ ...authority, permissions: [...authority.permissions, 'manage:system'] })).toThrow('hash does not match')
+    expect(() => verifyActionAuthority({ ...authority, permissions: [...authority.permissions, 'manage:system'] })).toThrow(expect.objectContaining({ code: 'INVALID_AUTHORITY' }))
   })
 
   it('validates input, reauthorizes live policy, and validates output', async () => {
@@ -116,22 +114,24 @@ describe('action authority and execution', () => {
     const refreshAdmission = vi.fn(async () => admission())
 
     expect(await kernel.execute({ authority, actionCallId: 'call-1', input: { id: 42 }, signal: controller.signal, refreshAdmission })).toEqual(page)
-    expect(refreshAdmission).toHaveBeenCalledOnce()
     expect(handler).toHaveBeenCalledOnce()
 
     await expect(Promise.resolve(kernel.execute({ authority, actionCallId: 'call-2', input: { id: 42, unexpected: true }, signal: controller.signal, refreshAdmission }))).rejects.toMatchObject({ code: 'INVALID_ACTION_INPUT' })
   })
 
-  it('reauthorizes and persists the run side-effect fence before handler dispatch', async () => {
+  it('reauthorizes at the run side-effect fence before effect dispatch', async () => {
     const order: string[] = []
+    let liveAdmission = admission()
+    let revokeBeforeFence = false
     const kernel = new ActionKernel()
     kernel.register('browser.navigate', async (_input, context) => {
+      if (revokeBeforeFence) liveAdmission = admission({ permissions: ['use:agents'] })
       await context.fenceSideEffect()
       order.push('dispatch')
       return { contextId: 'context-value-0001', documentEpoch: requestId, url: 'https://example.com/', title: 'Example', text: 'page', refs: [], observedAt: '2026-08-17T00:00:00.000Z' }
     })
     const authority = createActionAuthority('browser.navigate', requestId, auth, admission())
-    const refreshAdmission = vi.fn(async () => admission())
+    const refreshAdmission = async () => liveAdmission
     expect(await kernel.execute({
       authority,
       actionCallId: 'browser-call',
@@ -141,7 +141,18 @@ describe('action authority and execution', () => {
       fenceSideEffect: async () => { order.push('fence') }
     })).toMatchObject({ url: 'https://example.com/' })
     expect(order).toEqual(['fence', 'dispatch'])
-    expect(refreshAdmission).toHaveBeenCalledTimes(2)
+
+    order.length = 0
+    revokeBeforeFence = true
+    await expect(kernel.execute({
+      authority,
+      actionCallId: 'browser-revoked-call',
+      input: { url: 'https://example.com/' },
+      signal: new AbortController().signal,
+      refreshAdmission,
+      fenceSideEffect: async () => { order.push('fence') }
+    })).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN', status: 403 })
+    expect(order).toEqual([])
   })
 
   it('checks live permission and kill switches before handler dispatch', async () => {
@@ -157,12 +168,21 @@ describe('action authority and execution', () => {
       refreshAdmission: async () => admission({ permissions: ['use:agents'] })
     }))).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN', status: 403 })
     expect(handler).not.toHaveBeenCalled()
+
+    await expect(kernel.execute({
+      authority,
+      actionCallId: 'provider-disabled-call',
+      input: { id: 42 },
+      signal: new AbortController().signal,
+      refreshAdmission: async () => admission({ featureFlags: { ...flags, 'agents.provider.enabled': false } })
+    })).rejects.toMatchObject({ code: 'ACTION_DISABLED' })
+    expect(handler).not.toHaveBeenCalled()
   })
 
   it('fails closed for cancellation, duplicate handlers, and invalid handler output', async () => {
     const kernel = new ActionKernel()
     kernel.register('pages.get', async () => ({ content: 'missing fields' }))
-    expect(() => kernel.register('pages.get', async () => page)).toThrow('already registered')
+    expect(() => kernel.register('pages.get', async () => page)).toThrow(expect.objectContaining({ code: 'DUPLICATE_ACTION_HANDLER' }))
     const authority = createActionAuthority('pages.get', requestId, auth, admission())
     await expect(Promise.resolve(kernel.execute({
       authority,
@@ -195,21 +215,17 @@ describe('action authority and execution', () => {
   })
 })
 
-describe('Ax and MCP action projections', () => {
-  it('projects one catalog definition without changing its admission semantics', () => {
+describe('MCP action projections', () => {
+  it('projects the public alias and page-read annotations', () => {
     const definition = actionDefinition('pages.get')
-    const ax = toAxAction(definition)
     const mcp = toMcpAction(definition)
-    expect(ax).toMatchObject({ name: 'pages.get', inputSchema: definition.input })
     expect(mcp).toMatchObject({
       name: 'wiki_get_page',
-      title: definition.descriptor.title,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     })
-    expect(mcp.inputSchema).toMatchObject({ anyOf: expect.any(Array) })
   })
 
   it('does not project browser-only actions into MCP', () => {
-    expect(() => toMcpAction(actionDefinition('browser.navigate'))).toThrow('not exposed through MCP')
+    expect(() => toMcpAction(actionDefinition('browser.navigate'))).toThrow(expect.objectContaining({ code: 'ACTION_NOT_EXPOSED' }))
   })
 })

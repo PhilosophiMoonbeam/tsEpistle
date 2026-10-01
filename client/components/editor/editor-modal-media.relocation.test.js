@@ -48,7 +48,7 @@ const receiptFor = status => ({
   effects: []
 })
 
-const createHarness = ({ waitForRelocation, loadMedia, fetchAssets, fetchAssetFolders } = {}) => {
+const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {}) => {
   const notifications = []
   const errors = []
   const loading = []
@@ -95,7 +95,6 @@ const createHarness = ({ waitForRelocation, loadMedia, fetchAssets, fetchAssetFo
   }
   for (const [name, method] of Object.entries(component.methods)) context[name] = method.bind(context)
   context.waitForRelocation = waitForRelocation ?? (async receipt => receipt)
-  if (loadMedia) context.loadMedia = loadMedia
   Object.defineProperty(context, 'relocationStatusMessage', {
     configurable: true,
     get: () => component.computed.relocationStatusMessage.call(context)
@@ -104,7 +103,7 @@ const createHarness = ({ waitForRelocation, loadMedia, fetchAssets, fetchAssetFo
 }
 
 describe('editor media relocation admission state', () => {
-  test('invalidates the old path before polling and keeps a timed-out receipt stale without resubmitting', async () => {
+  test('invalidates the old path before polling and keeps a pending poll result stale without resubmitting', async () => {
     const pending = receiptFor('pending')
     let observedAtPoll
     const harness = createHarness({
@@ -129,6 +128,7 @@ describe('editor media relocation admission state', () => {
     ])
     expect(harness.relocationCalls).toHaveLength(1)
 
+    harness.context.currentFileId = 7
     await harness.context.relocateAsset()
     expect(harness.relocationCalls).toHaveLength(1)
   })
@@ -149,11 +149,9 @@ describe('editor media relocation admission state', () => {
     const mediaController = harness.context.mediaAbortController
     const initialAssets = harness.context.assets
     expect(mediaController).not.toBeNull()
-    expect(harness.context.mediaRequest).toBe(1)
     await harness.context.relocateAsset()
 
     expect(mediaController.signal.aborted).toBe(true)
-    expect(harness.context.mediaRequest).toBe(2)
     expect(harness.context.staleAssetIds).toEqual([7])
 
     resolveAssets([{ id: 7, filename: 'old.png', folderId: 0 }])
@@ -189,10 +187,8 @@ describe('editor media relocation admission state', () => {
     const succeeded = { ...receiptFor('succeeded'), effects: [{ id: 'effect-1', targetKey: 'page-1', status: 'succeeded', lastError: null }] }
     const harness = createHarness({
       waitForRelocation: async () => succeeded,
-      loadMedia: async () => {
-        harness.context.assets = [{ id: 7, filename: 'new.png', folderId: 0 }]
-        return true
-      }
+      fetchAssets: async () => [{ id: 7, filename: 'new.png', folderId: 0 }],
+      fetchAssetFolders: async () => []
     })
 
     await harness.context.relocateAsset()
@@ -204,6 +200,27 @@ describe('editor media relocation admission state', () => {
     expect(harness.notifications).toEqual([
       { message: 'editor:assets.relocationSubmitted', style: 'info', icon: 'clock-outline' },
       { message: 'editor:assets.relocationSuccess', style: 'success', icon: 'check' }
+    ])
+
+    const refreshError = new Error('canonical asset refresh unavailable')
+    const failedRefresh = createHarness({
+      waitForRelocation: async () => succeeded,
+      fetchAssets: async () => { throw refreshError },
+      fetchAssetFolders: async () => []
+    })
+    const oldAssets = failedRefresh.context.assets
+
+    await failedRefresh.context.relocateAsset()
+
+    expect(failedRefresh.context.relocationReceipt).toEqual(succeeded)
+    expect(failedRefresh.context.assets).toBe(oldAssets)
+    expect(failedRefresh.context.assets[0].filename).toBe('old.png')
+    expect(failedRefresh.context.staleAssetIds).toEqual([7])
+    expect(failedRefresh.context.currentFileId).toBeNull()
+    expect(failedRefresh.context.isAssetActionable(7)).toBe(false)
+    expect(failedRefresh.errors).toEqual([refreshError])
+    expect(failedRefresh.notifications).toEqual([
+      { message: 'editor:assets.relocationSubmitted', style: 'info', icon: 'clock-outline' }
     ])
   })
 })

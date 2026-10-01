@@ -657,10 +657,10 @@ export async function run(operation: string, payload: Record<string, unknown> = 
     }
     if (operation === 'invalidateAccount') return { ok: true, value: await storageFor(payload.id).invalidateAccountSession(Number(payload.accountId), payload.options as never) };
     if (operation === 'finalize') return { ok: true, value: await storageFor(payload.id).finalizeSubmission(payload.options as never) };
-    if (operation === 'clear') {
-      if (payload.confirmed !== true) return { ok: true, value: { cancelled: true, generation: await storageFor(payload.id).currentSessionGeneration() } };
-      return { ok: true, value: { cancelled: false, generation: await storageFor(payload.id).clearDeviceData() } };
-    }
+    if (operation === 'clear') return {
+      ok: true,
+      value: { generation: await storageFor(payload.id).clearDeviceData() }
+    };
     if (operation === 'cleanup') {
       for (const storage of handles.values()) storage.close();
       handles.clear();
@@ -878,8 +878,8 @@ describe('real IndexedDB offline storage adapter', () => {
     const draft = makeEnvelope('stale-draft', { generation: 0 })
     await succeeded('open', { id: 'stale', name })
     await failedWith('putDraft', { id: 'stale', envelope: draft }, 'generation-fenced')
-    const clearResult = await succeeded<{ cancelled: boolean; generation: number }>('clear', { id: 'second', confirmed: true })
-    expect(clearResult).toEqual({ cancelled: false, generation: 3 })
+    const clearResult = await succeeded<{ generation: number }>('clear', { id: 'second' })
+    expect(clearResult).toEqual({ generation: 3 })
     await failedWith('putDraft', { id: 'first', envelope: makeEnvelope('after-clear', { generation: 2 }) }, 'generation-fenced')
   })
 
@@ -1479,8 +1479,18 @@ describe('real IndexedDB offline storage adapter', () => {
       },
       'draft-conflict'
     )
+    await failedWith(
+      'putDraft',
+      {
+        id: 'storage',
+        envelope: makeEnvelope('mutable', { revision: 2, seed: 34 }),
+        options: { expectedDraftRevision: second.draftRevision, expectedSubmissionId: second.submissionId }
+      },
+      'draft-conflict'
+    )
     const dump = await readDump(name)
     expect(bytes(dump.drafts[0]?.ciphertext)).toEqual(Array.from(second.ciphertext))
+    expect(dump.drafts).toEqual([{ ...second, nonce: Array.from(second.nonce), ciphertext: Array.from(second.ciphertext) }])
   })
 
   test('preserves immutable receipts and aborts finalization atomically on a stale source selector', async () => {
@@ -1541,16 +1551,13 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('putDraft', { id: 'recovered', envelope: makeEnvelope('growth', { generation: 1, seed: 22 }) })
   })
 
-  test('keeps a cancelled clear side-effect free and advances generation only after confirmation', async () => {
+  test('clears stored drafts and advances the device generation', async () => {
     const name = freshDatabase('clear')
     await succeeded('open', { id: 'storage', name })
     const draft = makeEnvelope('clearable')
     await succeeded('putDraft', { id: 'storage', envelope: draft })
-    const cancelled = await succeeded<{ cancelled: boolean; generation: number }>('clear', { id: 'storage', confirmed: false })
-    expect(cancelled).toEqual({ cancelled: true, generation: 0 })
-    expect((await readDump(name)).drafts).toHaveLength(1)
-    const confirmed = await succeeded<{ cancelled: boolean; generation: number }>('clear', { id: 'storage', confirmed: true })
-    expect(confirmed).toEqual({ cancelled: false, generation: 1 })
+    const cleared = await succeeded<{ generation: number }>('clear', { id: 'storage' })
+    expect(cleared).toEqual({ generation: 1 })
     expect((await readDump(name)).drafts).toHaveLength(0)
   })
 
@@ -1577,7 +1584,7 @@ describe('real IndexedDB offline storage adapter', () => {
     const before = await succeeded<unknown>('dumpLegacy', { name })
     await succeeded('open', { id: 'unknown', name })
     await failedWith('estimate', { id: 'unknown' }, 'unsupported-schema')
-    await failedWith('clear', { id: 'unknown', confirmed: true }, 'unsupported-schema')
+    await failedWith('clear', { id: 'unknown' }, 'unsupported-schema')
     const after = await succeeded<unknown>('dumpLegacy', { name })
     expect(after).toEqual(before)
     expect(await succeeded<string[]>('storeNames', { name })).toEqual(
@@ -1598,6 +1605,6 @@ test('reader status reads only the selected snapshot and retains generation/poli
     options: { ...options, selector: { ...options.selector, pageId: 3 } }
   })
   expect(missing.snapshots).toEqual([])
-  const fenced = await invoke('readScopedCorpus', { id: 'storage', options: { ...options, expectedPolicyRevision: 999 } })
-  expect(fenced.ok).toBe(false)
+  await failedWith('readScopedCorpus', { id: 'storage', options: { ...options, expectedPolicyRevision: 999 } }, 'policy-revision-fenced')
+  await failedWith('readScopedCorpus', { id: 'storage', options: { ...options, expectedSessionGeneration: 1 } }, 'generation-fenced')
 })

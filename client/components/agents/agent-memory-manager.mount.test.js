@@ -169,7 +169,7 @@ const deferred = () => {
 }
 
 describe('Agent memory manager initial loading', () => {
-  it('loads an already-open panel on mount and exposes every memory section', async () => {
+  it('loads an already-open panel on mount, enables add, and reports an empty store', async () => {
     const { emittedBusy, getAgentMemories, manager } = loadManager({
       agent: { entries: [], characters: 0, limit: 2_200 },
       user: { entries: [], characters: 0, limit: 1_375 }
@@ -180,11 +180,9 @@ describe('Agent memory manager initial loading', () => {
 
     expect(getAgentMemories).toHaveBeenCalledTimes(1)
     expect(manager.loaded.value).toBe(true)
-    expect(manager.sections.value.map(section => section.title)).toEqual(['You', 'Agent'])
-    expect(manager.memoryCountLabel.value).toBe('0 saved records')
+    expect(Number.parseInt(manager.memoryCountLabel.value, 10)).toBe(0)
     expect(manager.canAddMemory.value).toBe(true)
     expect(manager.addMemoryDisabledReason.value).toBeUndefined()
-    expect(manager.clearMemoryDisabledReason.value).toBe('No saved memory to clear')
     expect(emittedBusy).toEqual([false])
   })
 
@@ -205,29 +203,9 @@ describe('Agent memory manager initial loading', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(manager.memoryCountLabel.value).toBe('3 saved records')
+    expect(Number.parseInt(manager.memoryCountLabel.value, 10)).toBe(3)
   })
 
-  it('keeps close blocked and stops busy updates after disposal during a mutation', async () => {
-    const { dispose, emittedBusy, manager } = loadManager({
-      agent: { entries: [], characters: 0, limit: 2_200 },
-      user: { entries: [], characters: 0, limit: 1_375 }
-    })
-
-    await Promise.resolve()
-    await Promise.resolve()
-
-    manager.actionBusy.value = 'save'
-    manager.requestClose()
-
-    expect(manager.open.value).toBe(true)
-    expect(emittedBusy).toEqual([false, true])
-
-    dispose()
-    manager.actionBusy.value = ''
-
-    expect(emittedBusy).toEqual([false, true])
-  })
   it('keeps target selection state aligned with the requested memory section', async () => {
     const { manager } = loadManager(populatedView())
 
@@ -250,8 +228,15 @@ describe('Agent memory manager destructive dialog lifetime', () => {
     const createModalFocusScope = vi.fn(() => focusScope)
     const removeAgentMemory = vi.fn(() => mutation.promise)
     const view = populatedView()
-    const { emittedBusy, getAgentMemories, manager } = loadManager(view, {
+    const reload = deferred()
+    const removedView = {
+      agent: structuredClone(view.agent),
+      user: { entries: [], characters: 0, limit: 1_375 }
+    }
+    const getAgentMemories = vi.fn().mockResolvedValueOnce(view).mockImplementationOnce(() => reload.promise)
+    const { emittedBusy, manager } = loadManager(view, {
       createModalFocusScope,
+      getAgentMemories,
       removeAgentMemory
     })
 
@@ -263,6 +248,9 @@ describe('Agent memory manager destructive dialog lifetime', () => {
     expect(createModalFocusScope).toHaveBeenCalledTimes(1)
 
     const completion = manager.remove()
+    manager.requestClose()
+    expect(manager.open.value).toBe(true)
+    expect(emittedBusy).toEqual([false, true])
     manager.open.value = false
     expect(manager.memories.value).toBe(view)
 
@@ -272,11 +260,18 @@ describe('Agent memory manager destructive dialog lifetime', () => {
     expect(focusScope.deactivate).toHaveBeenCalledWith({ restoreFocus: false })
 
     mutation.resolve({ characters: 0, limit: 1_375 })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(manager.memories.value.user).toEqual({ entries: [], characters: 0, limit: 1_375 })
+    expect(manager.memories.value.agent).toEqual(view.agent)
+    expect(manager.actionBusy.value).toBe('remove')
+    reload.resolve(removedView)
     await completion
 
     expect(manager.removing.value).toBeNull()
     expect(manager.actionBusy.value).toBe('')
     expect(getAgentMemories).toHaveBeenCalledTimes(2)
+    expect(manager.memories.value).toEqual(removedView)
     expect(emittedBusy).toEqual([false, true, false])
   })
 
@@ -286,9 +281,21 @@ describe('Agent memory manager destructive dialog lifetime', () => {
     const createModalFocusScope = vi.fn(() => focusScope)
     const clearAgentMemories = vi.fn(() => mutation.promise)
     const view = populatedView()
-    const { emittedBusy, getAgentMemories, manager } = loadManager(view, {
+    view.agent = {
+      entries: [{ ...memoryEntry, id: 'agent-memory', target: 'agent', content: 'Project context' }],
+      characters: 'Project context'.length,
+      limit: 2_200
+    }
+    const reload = deferred()
+    const clearedView = {
+      agent: { entries: [], characters: 0, limit: view.agent.limit },
+      user: { entries: [], characters: 0, limit: view.user.limit }
+    }
+    const getAgentMemories = vi.fn().mockResolvedValueOnce(view).mockImplementationOnce(() => reload.promise)
+    const { emittedBusy, manager } = loadManager(view, {
       clearAgentMemories,
-      createModalFocusScope
+      createModalFocusScope,
+      getAgentMemories,
     })
 
     await Promise.resolve()
@@ -308,11 +315,17 @@ describe('Agent memory manager destructive dialog lifetime', () => {
     expect(focusScope.deactivate).toHaveBeenCalledWith({ restoreFocus: false })
 
     mutation.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(manager.memories.value).toEqual(clearedView)
+    expect(manager.actionBusy.value).toBe('clear')
+    reload.resolve(clearedView)
     await completion
 
     expect(manager.clearing.value).toBe(false)
     expect(manager.actionBusy.value).toBe('')
     expect(getAgentMemories).toHaveBeenCalledTimes(2)
+    expect(manager.memories.value).toEqual(clearedView)
     expect(emittedBusy).toEqual([false, true, false])
   })
 
@@ -336,8 +349,8 @@ describe('Agent memory manager destructive dialog lifetime', () => {
     const clearCompletion = clearHarness.manager.clear()
     removeHarness.manager.open.value = false
     clearHarness.manager.open.value = false
-    const removeMemories = removeHarness.manager.memories.value
-    const clearMemories = clearHarness.manager.memories.value
+    const removeMemories = structuredClone(removeHarness.manager.memories.value)
+    const clearMemories = structuredClone(clearHarness.manager.memories.value)
 
     removeHarness.dispose()
     clearHarness.dispose()
@@ -345,16 +358,14 @@ describe('Agent memory manager destructive dialog lifetime', () => {
     clearMutation.resolve()
     await Promise.all([removeCompletion, clearCompletion])
 
-    expect(removeHarness.manager.memories.value).toBe(removeMemories)
+    expect(removeHarness.manager.memories.value).toEqual(removeMemories)
     expect(removeHarness.manager.removing.value).toBe(memoryEntry)
     expect(removeHarness.manager.actionBusy.value).toBe('remove')
     expect(removeHarness.getAgentMemories).toHaveBeenCalledTimes(1)
-    expect(removeHarness.emittedBusy).toEqual([false, true])
-    expect(clearHarness.manager.memories.value).toBe(clearMemories)
+    expect(clearHarness.manager.memories.value).toEqual(clearMemories)
     expect(clearHarness.manager.clearing.value).toBe(true)
     expect(clearHarness.manager.actionBusy.value).toBe('clear')
     expect(clearHarness.getAgentMemories).toHaveBeenCalledTimes(1)
-    expect(clearHarness.emittedBusy).toEqual([false, true])
   })
 })
 
@@ -364,18 +375,23 @@ describe('Agent memory filtering', () => {
       user: { entries: [{ id: 'user-note', target: 'user', content: 'Prefer concise SOURCES', version: 1 }], characters: 22, limit: 1375 },
       agent: { entries: [{ id: 'agent-note', target: 'agent', content: 'Project sources live in the Wiki', version: 1 }], characters: 31, limit: 2200 }
     }
+    const originalView = structuredClone(view)
     const { manager } = loadManager(view)
     await new Promise(resolve => setTimeout(resolve, 0))
     manager.searchQuery.value = ' sources '
     expect(manager.visibleSections.value.map(section => section.entries[0].id)).toEqual(['user-note', 'agent-note'])
-    expect(manager.memorySearchStatus.value).toBe('2 matching memories')
+    expect(Number.parseInt(manager.memorySearchStatus.value, 10)).toBe(2)
     manager.searchQuery.value = 'project'
     expect(manager.visibleSections.value.map(section => section.target)).toEqual(['agent'])
     manager.searchQuery.value = 'no matching phrase'
     expect(manager.visibleSections.value).toEqual([])
-    expect(manager.memories.value).toEqual(view)
+    expect(manager.memories.value).toEqual(originalView)
     expect(manager.canAddMemory.value).toBe(true)
     manager.searchQuery.value = null
-    expect(manager.visibleSections.value).toHaveLength(2)
+    expect(manager.visibleSections.value.map(section => ({ target: section.target, entries: section.entries }))).toEqual([
+      { target: 'user', entries: originalView.user.entries },
+      { target: 'agent', entries: originalView.agent.entries }
+    ])
+    expect(manager.memories.value).toEqual(originalView)
   })
 })

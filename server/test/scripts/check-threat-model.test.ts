@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 import {
   CANONICAL_FINGERPRINT_ALGORITHM,
-  CANONICAL_IGNORED_BUILD_METADATA_PATH,
   CANONICAL_REPOSITORY,
   checkThreatModel,
   computeCoveredTreeDigest,
@@ -211,8 +210,6 @@ describe('canonical policy-v1 path classification and digest', () => {
 
   it('strictly covers server/.build-metadata.json as a security boundary path without exemption', () => {
     expect(isSecurityBoundaryPath('server/.build-metadata.json')).toBe(true)
-    expect(isSecurityBoundaryPath(CANONICAL_IGNORED_BUILD_METADATA_PATH)).toBe(true)
-    expect(CANONICAL_IGNORED_BUILD_METADATA_PATH).toBe('server/.build-metadata.json')
   })
 
   it('includes server/.build-metadata.json in covered-tree digest when tracked', () => {
@@ -234,6 +231,35 @@ describe('canonical policy-v1 path classification and digest', () => {
     const { rootPath, reviewedRevision, treeDigest } = createRepository()
     expect(treeDigest).toMatch(/^[0-9a-f]{64}$/)
     expect(computeCoveredTreeDigest(rootPath, reviewedRevision)).toBe(treeDigest)
+
+    const vectorRoot = mkdtempSync(path.join(tmpdir(), 'wiki-threat-model-vector-'))
+    temporaryDirectories.push(vectorRoot)
+    runGit(vectorRoot, ['init', '--quiet', '--object-format=sha1'])
+    const gitObject = (args: string[], input: string): string =>
+      execFileSync('git', args, { cwd: vectorRoot, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+    const blob = (contents: string): string => gitObject(['hash-object', '-w', '--stdin'], contents)
+    const tree = (entries: string): string => gitObject(['mktree'], entries)
+
+    const emptyTree = tree('')
+    const gitlink = gitObject(
+      ['hash-object', '-t', 'commit', '-w', '--stdin'],
+      `tree ${emptyTree}\nauthor Vector <vector@example.invalid> 0 +0000\ncommitter Vector <vector@example.invalid> 0 +0000\n\nfixed gitlink\n`
+    )
+    const serverTree = tree(
+      [
+        `100755 blob ${blob('#!/bin/sh\nexit 0\n')}\trun.sh`,
+        `120000 blob ${blob('a.ts')}\tlink`,
+        `100644 blob ${blob('regular\n')}\ta.ts`
+      ].join('\n') + '\n'
+    )
+    const devTree = tree(`160000 commit ${gitlink}\tsubmod\n`)
+    const docsTree = tree(`100644 blob ${blob('excluded documentation\n')}\tvector.md\n`)
+    const vectorTree = tree(
+      [`040000 tree ${serverTree}\tserver`, `040000 tree ${docsTree}\tdocs`, `040000 tree ${devTree}\tdev`].join('\n') + '\n'
+    )
+
+    // Independent SHA-256 vector for CONTRIBUTING.md's path/mode/type/objectId protocol, excluding docs/.
+    expect(computeCoveredTreeDigest(vectorRoot, vectorTree)).toBe('dfe184d31ead000abbbbbaea6691b2e168d8cf21da8bb4545689bbe50a46cc44')
   })
 
   it('includes every root Docker and source-archive input in the covered digest', () => {

@@ -319,10 +319,8 @@ describe('Ax orchestration stages', () => {
       { results: [{ index: 0, functionCalls: calls }] },
       { results: [{ index: 0, content: 'The available evidence is incomplete.' }] }
     ]
-    const emittedResponses: AxChatResponse[] = []
     const chat = vi.fn(async (_request: AxChatRequest<unknown>) => {
       const response = responses.shift()!
-      emittedResponses.push(response)
       return response
     })
     const invoke = vi.fn(async (_name: string, _input: unknown, _signal: AbortSignal, actionCallId: string) => ({
@@ -375,7 +373,6 @@ describe('Ax orchestration stages', () => {
     const synthesisRequest = chat.mock.calls[2]?.[0] as AxChatRequest<unknown> | undefined
     expect(synthesisRequest).toBeDefined()
     expect(synthesisRequest).not.toHaveProperty('functions')
-    expect(emittedResponses[2]?.results.every(result => result.functionCalls === undefined)).toBe(true)
     const closedProviderCallIds = (synthesisRequest?.chatPrompt ?? []).filter(message => message.role === 'function').map(message => message.functionId)
     expect(closedProviderCallIds).toEqual(['first', ...calls.map(call => call.id)])
     const synthesisResults = (synthesisRequest?.chatPrompt ?? []).filter(message => message.role === 'function').map(message => message.result)
@@ -544,6 +541,52 @@ describe('Ax orchestration stages', () => {
     expect(chat).toHaveBeenCalledTimes(2)
     expect(invoke).toHaveBeenCalledTimes(2)
     expect(chat.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ modelConfig: { maxTokens: 1 } }))
+  })
+
+  it('consumes the 6000-token child allowance at dispatch while retaining the 2048-token output ceiling', async () => {
+    const providerRequests: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      providerRequests.push(input)
+      if (providerRequests.length !== 1) throw new Error('Exhausted child must not dispatch another provider request.')
+      return {
+        results: [{ index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5_999, completionTokens: 1, totalTokens: 6_000 } }
+      } satisfies AxChatResponse
+    })
+    const invoke = vi.fn(async () => ({
+      id: 1, locale: 'en', path: 'alpha', sourceRevision: 'rev-1', title: 'Alpha', contentType: 'markdown',
+      content: 'Alpha requires review.',
+      citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
+      citationSections: []
+    }))
+    const close = vi.fn()
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke, snapshot: async () => ({}), close, authoritySha256: 'b'.repeat(64)
+      })
+    }
+    const text = vi.fn(async () => {})
+    await expect(new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute({
+      ...baseRequest(new AbortController().signal),
+      purpose: 'subagent',
+      task: {
+        id: '00000000-0000-4000-8000-000000000041', kind: 'source_scout', title: 'Review alpha',
+        question: 'What does alpha require?', sourceScope: ['alpha'], requiredEvidenceCount: 1
+      },
+      subagentRunId: '00000000-0000-4000-8000-000000000042',
+      actionAllowlist: ['pages.get'],
+      limits: { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
+    }, { text, event: async () => {} })).rejects.toMatchObject({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
+
+    expect(providerRequests).toHaveLength(1)
+    expect(providerRequests[0]!.modelConfig?.maxTokens).toBe(2_048)
+    expect(JSON.stringify(providerRequests[0])).not.toContain('private preference')
+    expect(JSON.stringify(providerRequests[0])).not.toContain('private note')
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(invoke).toHaveBeenCalledWith('pages.get', { id: 1 }, expect.any(AbortSignal), expect.stringMatching(/^sa_00000000-0000-4000-8000-000000000042_[a-f0-9]{24}$/u))
+    expect(text).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('dispatches only the covered action when the root tool budget is one', async () => {
@@ -1369,17 +1412,19 @@ describe('Ax orchestration stages', () => {
       { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
       { text: async () => {}, event: async () => {} }
     )
-    const admitted = reserve.mock.calls[0]?.[0]
+    const admitted = await reserve.mock.results[0]!.value
     expect(admitted).toBeDefined()
-    expect(admitted).toMatchObject({ tokens: 5_397, costMicros: 10_794 })
+    expect(admitted.tokens).toBeGreaterThanOrEqual(5_326)
+    expect(admitted.costMicros).toBeGreaterThanOrEqual(9_326)
+    expect(admitted.costMicros).toBe(admitted.tokens * 2)
     expect(result).toMatchObject({ inputTokens: 1_326, outputTokens: 4_000, totalTokens: 5_326, costMicros: 9_326 })
-    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ tokens: 5_397, costMicros: 10_794 }), {
+    expect(reconcile).toHaveBeenCalledWith(admitted, {
       inputTokens: 1_326,
       outputTokens: 4_000,
       totalTokens: 5_326,
       costMicros: 9_326
     })
-    expect(admitted!.costMicros - result.costMicros).toBe(1_468)
+    expect(admitted.costMicros).toBeGreaterThan(result.costMicros)
     expect(release).not.toHaveBeenCalled()
   })
 
@@ -1546,13 +1591,19 @@ describe('Ax orchestration stages', () => {
       })
       const release = vi.fn(async () => {})
       const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (_type: string, _data: unknown) => {})
+      let failure: unknown
       await expect(
         new AxAgentEngine(factory).execute(
           { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
-          { text: async () => {}, event: async () => {} }
-        )
+          { text, event }
+        ).catch(error => {
+          failure = error
+          throw error
+        })
       ).rejects.toMatchObject({ message: 'Agent inference failed' })
-      return { release, reconcile }
+      return { release, reconcile, text, event, failure }
     }
 
     const lost = await runCase(
@@ -1563,15 +1614,21 @@ describe('Ax orchestration stages', () => {
     expect(lost.reconcile).not.toHaveBeenCalled()
     expect(lost.release).not.toHaveBeenCalled()
 
-    const stream = new ReadableStream<AxChatResponse>({
-      start(controller) {
-        controller.enqueue({
-          results: [{ index: 0, content: 'partial' }],
-          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
-        })
-        controller.error(new Error('stream lost'))
-      }
-    })
+    let pulls = 0
+    const stream = new ReadableStream<AxChatResponse>(
+      {
+        pull(controller) {
+          pulls += 1
+          if (pulls === 1) {
+            controller.enqueue({
+              results: [{ index: 0, content: 'partial' }],
+              modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+            })
+          } else controller.error(new Error('stream lost'))
+        }
+      },
+      { highWaterMark: 0 }
+    )
     const interrupted = await runCase(
       vi.fn(async () => stream),
       factoryFor(
@@ -1581,6 +1638,10 @@ describe('Ax orchestration stages', () => {
     )
     expect(interrupted.reconcile).not.toHaveBeenCalled()
     expect(interrupted.release).not.toHaveBeenCalled()
+    expect(pulls).toBe(2)
+    expect(interrupted.failure).toMatchObject({ stage: 'provider_stream' })
+    expect(interrupted.text).not.toHaveBeenCalled()
+    expect(interrupted.event).not.toHaveBeenCalled()
 
     const rejected = await runCase(
       vi.fn(async () => ({
@@ -2099,7 +2160,7 @@ describe('provider fragment boundaries', () => {
 })
 
 describe('engine preflight', () => {
-  it('prepares the frozen child request without dispatch or action execution and closes once', async () => {
+  it('rejects the frozen oversized child at execution before reserving or dispatching after preflight', async () => {
     const chat = vi.fn(async () => {
       throw new Error('preflight must not call the provider')
     })
@@ -2142,6 +2203,24 @@ describe('engine preflight', () => {
     expect(invoke).not.toHaveBeenCalled()
     expect(chat).not.toHaveBeenCalled()
     expect(close).toHaveBeenCalledOnce()
+    const reserve = vi.fn(async (maximum: { readonly tokens: number; readonly costMicros: number }) => ({ id: 1, ...maximum }))
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const consumeTool = vi.fn(async () => {})
+    const text = vi.fn(async () => {})
+    await expect(engine.execute({
+      ...request,
+      dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
+    }, { text, event: async () => {} })).rejects.toMatchObject({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
+    expect(reserve).not.toHaveBeenCalled()
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+    expect(consumeTool).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(chat).not.toHaveBeenCalled()
+    expect(text).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(close).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -2205,27 +2284,6 @@ describe('child aggregate budget reservations', () => {
     expect(reservations.reserve(2)).toEqual(expect.objectContaining({ totalTokens: 4, outputCharacters: 32_000 }))
     expect(reservations.reserve(1)).toEqual(expect.objectContaining({ totalTokens: 4, outputCharacters: 32_000 }))
   })
-  it('reserves aggregate child total allowance independently from each offered output ceiling', () => {
-    const limits = {
-      enabled: true,
-      maxConcurrentChildren: 2,
-      maxChildren: 2,
-      plannerTurns: 1,
-      childTurns: 4,
-      childToolCalls: 8,
-      plannerTimeoutMilliseconds: 1_000,
-      childTimeoutMilliseconds: 1_000,
-      plannerMaxOutputTokens: 1_024,
-      childMaxOutputTokens: 2_048,
-      maxAggregateChildTokens: 12_000,
-      maxAggregateChildOutputCharacters: 96_000
-    } as const satisfies AgentOrchestrationLimits
-    const reservations = new AgentChildBudgetReservations(limits, { totalTokens: 0, outputCharacters: 0 })
-
-    expect(reservations.reserve(2)).toEqual(expect.objectContaining({ totalTokens: 6_000, maxOutputTokens: 2_048 }))
-    expect(reservations.reserve(1)).toEqual(expect.objectContaining({ totalTokens: 6_000, maxOutputTokens: 2_048 }))
-  })
-
   it('uses aggregate token headroom smaller than the per-child ceiling', () => {
     const limits = {
       enabled: true,

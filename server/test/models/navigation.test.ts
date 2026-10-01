@@ -84,8 +84,8 @@ describe('models/navigation legacy Home normalization', () => {
       { locale: 'fr', items: [{ ...ordinaryLink, id: 'guides', target: '/fr/guides' }] }
     ])
     expect(findOne).toHaveBeenCalledWith('key', 'site')
-    expect(cacheSet).toHaveBeenNthCalledWith(1, 'nav:sidebar:en', [ordinaryLink, header, divider], 300)
-    expect(cacheSet).toHaveBeenNthCalledWith(2, 'nav:sidebar:fr', [{ ...ordinaryLink, id: 'guides', target: '/fr/guides' }], 300)
+    expect(cacheSet).toHaveBeenCalledWith('nav:sidebar:en', [ordinaryLink, header, divider], 300)
+    expect(cacheSet).toHaveBeenCalledWith('nav:sidebar:fr', [{ ...ordinaryLink, id: 'guides', target: '/fr/guides' }], 300)
   })
 })
 

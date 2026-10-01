@@ -1,21 +1,21 @@
-import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import auth, { loadPageRuleAuthority, type PageRuleAuthority } from '../../core/auth.ts'
 import { createTaxonomyService, type TaxonomyActor } from '../../operations/taxonomy.ts'
+import { createApiPrincipal } from '../../helpers/api-principal.ts'
 import { up as migrateTaxonomy, down as rollbackTaxonomy } from '../../db/migrations/tsepistle-000015-taxonomy-lifecycle.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE ? fs.readFileSync(process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_taxonomy_test') && password ? { host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki', database, password } : null
+const connection = getPostgresTestConnection('_taxonomy_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const actor: TaxonomyActor = { requester: { id: 1, permissions: ['manage:system'] }, sessionId: 'taxonomy-test' }
 const now = '2026-09-01T00:00:00.000Z'
-const authorityRequester = { id: 1, ownershipUserId: null, groups: [1], api: 41, permissions: ['read:pages'] }
+const authorityRequester = createApiPrincipal(41, 1, ['read:pages'])
 const originalWiki = globalThis.WIKI
 const denyRuleSet = [
   { match: 'START', path: '', deny: false, roles: ['read:pages'] },
   { match: 'TAG', path: 'source', deny: true, roles: ['read:pages'] }
 ]
+const historyFailure = new Error('Injected history failure')
 suite('PostgreSQL taxonomy transactions', () => {
   let db: Knex
   let peerDb: Knex
@@ -29,13 +29,23 @@ suite('PostgreSQL taxonomy transactions', () => {
     globalThis.WIKI = runtime(knex) as never
     try { return await loadPageRuleAuthority(authorityRequester) } finally { globalThis.WIKI = previous }
   }
-  const pageContext = async (knex: Knex) => ({
-    path: 'p1',
+  const pageContext = async (knex: Knex, pageId: number) => ({
+    path: `p${pageId}`,
     locale: 'en',
-    tags: await knex('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', 1).select('tags.tag')
+    tags: await knex('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', pageId).select('tags.tag')
   })
-  const pageAllowed = async (knex: Knex, authority: PageRuleAuthority) =>
-    auth.checkPageAccess(authorityRequester, ['read:pages'], await pageContext(knex), authority)
+  const pageAllowed = async (knex: Knex, authority: PageRuleAuthority, pageId = 1) =>
+    auth.checkPageAccess(authorityRequester, ['read:pages'], await pageContext(knex, pageId), authority)
+  const storedState = async () => ({
+    tags: await db('tags').orderBy('id'),
+    pages: await db('pages').orderBy('id'),
+    pageTags: await db('pageTags').orderBy('pageId').orderBy('tagId'),
+    groups: await db('groups').orderBy('id'),
+    pageHistory: await db('pageHistory').orderBy('id'),
+    pageHistoryTags: await db('pageHistoryTags').orderBy('pageId').orderBy('tagId'),
+    outboxEvents: await db('outboxEvents').orderBy('id'),
+    pageMutationOutbox: await db('pageMutationOutbox').orderBy('id')
+  })
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 8 } })
     peerDb = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 8 } })
@@ -57,7 +67,14 @@ suite('PostgreSQL taxonomy transactions', () => {
     })
     service = createTaxonomyService({ db, authorize(input) { if (!input.requester?.permissions?.includes('manage:system')) throw Object.assign(new Error('Forbidden'), { status: 403 }); return 1 },
       async assertUnlocked() { if (locked) throw Object.assign(new Error('Page locked'), { status: 403 }) },
-      async snapshotPage(input) { if (failHistory) throw new Error('History write failed'); const tx = input.transaction!; const [h] = await tx('pageHistory').insert({ pageId: input.id, sourceRevision: input.sourceRevision, content: input.content, extra: JSON.stringify(input.extra) }).returning('id'); const assignments = await tx('pageTags').where('pageId', input.id); if (assignments.length) await tx('pageHistoryTags').insert(assignments.map(a => ({ pageId: h.id, tagId: a.tagId }))) },
+      async snapshotPage(input) {
+        const tx = input.transaction!
+        const [h] = await tx('pageHistory').insert({ pageId: input.id, sourceRevision: input.sourceRevision, content: input.content, extra: JSON.stringify(input.extra) }).returning('id')
+        const assignments = await tx('pageTags').where('pageId', input.id)
+        if (assignments.length) await tx('pageHistoryTags').insert(assignments.map(a => ({ pageId: h.id, tagId: a.tagId })))
+        // Fail on the later page after history and earlier page effects have been written.
+        if (failHistory && input.id === 3) throw historyFailure
+      },
       async refresh() { if (failRefresh) throw new Error('Cache unavailable'); return [] }
     })
   })
@@ -92,13 +109,17 @@ suite('PostgreSQL taxonomy transactions', () => {
     expect(await db('outboxEvents').where('type', 'page.updated')).toHaveLength(2)
     expect(await db('pages').where('id', 3).first()).toMatchObject({ sourceRevision: '10', visibility: 'private', ownerId: 7, content: '# Page 3', isPublished: false })
     expect(await db('groups').where('id', 1).first()).toMatchObject({ pageRules: [{ match: 'TAG', path: 'source', deny: false, roles: ['read:pages'] }] })
-    await expect(rollbackTaxonomy(db)).rejects.toThrow('lifecycle data')
+    const savedTags = await db('tags').orderBy('id')
+    await expect(rollbackTaxonomy(db)).rejects.toBeInstanceOf(Error)
+    expect(await db('tags').orderBy('id')).toEqual(savedTags)
+    expect(await db('tags').where('id', 1).select('redirectToId', 'isArchived').first()).toEqual({ redirectToId: result.tagId, isArchived: false })
   })
   it('uses fresh database authority after a rename when reloadGroups is not delivered', async () => {
     await db('groups').where('id', 1).update({ pageRules: JSON.stringify(denyRuleSet) })
     const stale = await loadAuthority(db)
     expect(stale.tagAliases).toMatchObject({ source: 'source' })
     expect(await pageAllowed(db, stale)).toBe(false)
+    expect(await pageAllowed(peerDb, stale, 2)).toBe(true)
     const preview = await service.preview(actor, { action: 'edit', tagId: 1, tag: 'renamed', title: '' })
     await service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint })
     expect(await db('groups').where('id', 1).first()).toMatchObject({ pageRules: denyRuleSet })
@@ -109,12 +130,14 @@ suite('PostgreSQL taxonomy transactions', () => {
     expect(freshB.tagAliases).toMatchObject({ source: 'renamed' })
     expect(await pageAllowed(db, freshA)).toBe(false)
     expect(await pageAllowed(peerDb, freshB)).toBe(false)
+    expect(await pageAllowed(peerDb, freshB, 2)).toBe(true)
   })
   it('uses fresh database authority after a merge to an existing canonical tag when reloadGroups is not delivered', async () => {
     await db('groups').where('id', 1).update({ pageRules: JSON.stringify(denyRuleSet) })
     const stale = await loadAuthority(db)
     expect(stale.tagAliases).toMatchObject({ source: 'source' })
     expect(await pageAllowed(db, stale)).toBe(false)
+    expect(await pageAllowed(peerDb, stale, 2)).toBe(true)
     const preview = await service.preview(actor, { action: 'merge', tagId: 1, targetId: 2 })
     await service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint, acknowledgeAccess: true })
     expect(await db('groups').where('id', 1).first()).toMatchObject({ pageRules: denyRuleSet })
@@ -126,11 +149,14 @@ suite('PostgreSQL taxonomy transactions', () => {
     expect(freshB.tagAliases).toMatchObject({ source: 'target' })
     expect(await pageAllowed(db, freshA)).toBe(false)
     expect(await pageAllowed(peerDb, freshB)).toBe(false)
+    expect(await pageAllowed(peerDb, freshB, 2)).toBe(false)
   })
   it('requires acknowledgement for merge access changes and deduplicates page assignments', async () => {
     const preview = await service.preview(actor, { action: 'merge', tagId: 1, targetId: 2 })
     expect(preview.rules[0]).toMatchObject({ before: 1, after: 2, added: 1 })
-    await expect(service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint })).rejects.toThrow('Acknowledge')
+    const before = await storedState()
+    await expect(service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint })).rejects.toMatchObject({ status: 400 })
+    expect(await storedState()).toEqual(before)
     expect(await db('pageHistory')).toHaveLength(0)
     await service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint, acknowledgeAccess: true })
     expect(await db('pageTags').where('pageId', 3).pluck('tagId')).toEqual([2])
@@ -171,10 +197,13 @@ suite('PostgreSQL taxonomy transactions', () => {
 
   it('rolls back on protection and history failures, but reports cache failure as a saved change', async () => {
     const preview = await service.preview(actor, { action: 'edit', tagId: 1, tag: 'renamed', title: '' })
+    const before = await storedState()
     locked = true
     await expect(service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint })).rejects.toMatchObject({ status: 403 })
+    expect(await storedState()).toEqual(before)
     locked = false; failHistory = true
-    await expect(service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint })).rejects.toThrow('History write failed')
+    await expect(service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint })).rejects.toBe(historyFailure)
+    expect(await storedState()).toEqual(before)
     expect(await db('tags')).toHaveLength(2)
     expect(await db('pageMutationOutbox')).toHaveLength(0)
     failHistory = false; failRefresh = true
@@ -199,6 +228,8 @@ suite('PostgreSQL taxonomy transactions', () => {
     const denied = { requester: undefined, sessionId: '' }
     await expect(service.list(denied)).rejects.toMatchObject({ status: 403 })
     await expect(service.create(denied, { tag: 'secret', title: '' })).rejects.toMatchObject({ status: 403 })
-    await expect(service.legacyChange(actor, { action: 'archive', tagId: 1 })).rejects.toThrow('Administration')
+    const before = await storedState()
+    await expect(service.legacyChange(actor, { action: 'archive', tagId: 1 })).rejects.toMatchObject({ status: 409 })
+    expect(await storedState()).toEqual(before)
   })
 })

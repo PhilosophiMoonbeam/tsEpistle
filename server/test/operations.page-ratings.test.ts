@@ -1,18 +1,9 @@
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import { createApiPrincipal } from '../helpers/api-principal.ts'
+import { getPostgresTestConnection } from './postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_page_ratings_test') && password
-  ? {
-      host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-      port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-      user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-      password,
-      database
-    }
-  : null
+const connection = getPostgresTestConnection('_page_ratings_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const originalWiki = Reflect.get(globalThis, 'WIKI')
 const reader = { id: 7, authVersion: 0, email: 'reader@example.test', permissions: ['read:pages'] } as Express.User

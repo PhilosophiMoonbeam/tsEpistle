@@ -153,12 +153,6 @@ interface UsersQuery {
   insert(value: UnknownRecord): Promise<StoredUser>
 }
 
-interface GroupQuery extends PromiseLike<GroupRecord[]> {
-  first(): Promise<GroupRecord | undefined>
-  where(column: string, value: unknown): GroupQuery
-  whereIn(column: string, values: readonly number[]): GroupQuery
-}
-
 interface ApiKeyRecord {
   id: number
 }
@@ -172,7 +166,7 @@ interface ApiKeyQuery extends PromiseLike<ApiKeyRecord[]> {
 interface WikiModels {
   apiKeys: { query(): ApiKeyQuery }
   authentication: { getStrategies(): Promise<StrategyRecord[]> }
-  groups: { query(): GroupQuery }
+  groups: { query(): PromiseLike<GroupRecord[]> }
   knex: Knex
   tags: { query(): PromiseLike<TagIdentity[]> }
   users: {
@@ -236,7 +230,6 @@ interface AuthService {
   checkAccess(user: AccessUser | undefined, permissions: readonly string[]): boolean
   checkPageAccess(user: AccessUser | undefined, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
   loadPageRuleAuthority(requester: AccessUser | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
-  checkAssignUserToGroupAccess(requester: AccessUser, groupIds?: number[]): Promise<boolean>
   checkExclusiveAccess(user: AccessUser, includePermissions?: string[], excludePermissions?: string[]): boolean
   getEffectivePermissions(req: Request, page: PageContext, authority: PageRuleAuthority): EffectivePermissions
   tagAliases: Record<string, string | null>
@@ -795,23 +788,6 @@ const auth: AuthService = {
   checkExclusiveAccess(user, includePermissions = [], excludePermissions = []) {
     const permissions = getPermissions(user)
     return includePermissions.some(permission => permissions.includes(permission)) && !excludePermissions.some(permission => permissions.includes(permission))
-  },
-
-  async checkAssignUserToGroupAccess(requester, groupIds = []) {
-    if (groupIds.length < 1) return true
-    const requesterPermissions = getPermissions(requester)
-    if (requesterPermissions.includes('manage:system')) return true
-    if (!requesterPermissions.some(permission => ['write:users', 'manage:users', 'write:groups', 'manage:groups'].includes(permission))) return false
-
-    const groups = await getWiki().models.groups.query().whereIn('id', groupIds)
-    return groups.every(group => {
-      if (group.permissions.some(permission => permission === 'write:scripts' || permission.split(':').at(-1) === 'system')) return false
-      const hasAdministrativePermission = group.permissions.some(permission => {
-        const permissionType = permission.split(':').at(-1)
-        return permissionType !== undefined && ['users', 'groups', 'navigation', 'theme', 'api'].includes(permissionType)
-      })
-      return !hasAdministrativePermission || requesterPermissions.includes('manage:groups')
-    })
   },
 
   _applyPageRuleSpecificity({ rule, checkState, higherPriority = [] }) {

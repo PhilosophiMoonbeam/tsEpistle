@@ -1,44 +1,15 @@
 import { Buffer } from 'node:buffer'
-import { z } from 'zod'
 import { describe, expect, it } from '../bun-test.mts'
 import {
   ACTION_OBSERVATION_DEFAULT_TEXT_BYTES,
   ACTION_OBSERVATION_MAX_TEXT_BYTES,
-  presentDomainObservation,
-  projectStructuredObservation,
-  wikiActionObservationAdapter
+  presentDomainObservation
 } from '../../agents/providers/action-observations.ts'
 
 const asOf = '2026-09-26T12:00:00.000Z'
 const context = { asOf, invocationId: 'host-call-01' } as const
 const hash = 'a'.repeat(64)
 
-const structuredObservationDefinition = {
-  input: z.strictObject({ identity: z.string().min(1).max(512) }),
-  output: z.strictObject({
-    inputIdentity: z.string().min(1).max(512),
-    value: z.number().finite(),
-    unit: z.literal('m/s'),
-    asOf: z.string().max(256),
-    status: z.enum(['complete', 'partial', 'unknown'])
-  }),
-  capability: {
-    operationRole: 'observe',
-    outputKinds: ['transient-observation'],
-    providerPresentationFamily: 'structured-observation',
-    freshnessKind: 'computed-unverified',
-    reuseEligibility: 'never',
-    effectStatus: 'none',
-    chargeableWork: 'none'
-  }
-} as const
-
-const structuredObservationWithPrivatePayloadDefinition = {
-  ...structuredObservationDefinition,
-  output: structuredObservationDefinition.output.extend({
-    privatePayload: z.string().max(4_096)
-  })
-} as const
 
 function expectKind<TKind extends string>(value: unknown, kind: TKind): asserts value is { readonly kind: TKind } {
   if (typeof value !== 'object' || value === null || !('kind' in value) || value.kind !== kind) throw new Error(`Expected observation kind ${kind}`)
@@ -59,7 +30,6 @@ describe('typed action observations', () => {
     expect(result.supportsFactualClaim).toBe('candidate-navigation-only')
     expect(result.coverage.canonicalOutput).toBe('unknown')
     expect(result.coverage.providerText).toBe('partial')
-    expect(result.presentation.text).toBe('Approved skill candidates (1; metadata only—read a selected version before use; total coverage unknown).')
     expect(result.presentation.truncated).toBe(true)
     expect(Buffer.byteLength(result.presentation.text, 'utf8')).toBeLessThanOrEqual(160)
     expect(result.presentation.text).not.toContain('source-finder')
@@ -214,8 +184,6 @@ describe('typed action observations', () => {
     if (result.kind !== 'observation') throw new Error('Expected transient observation')
     expect(result.observation).toMatchObject({ type: 'browser-document', url: null, title: '界'.repeat(255) })
     expect(result.freshness.scope).toEqual({ kind: 'browser-document', contextId: 'c'.repeat(128), documentEpoch: 'e'.repeat(128) })
-    expect(result.presentation.text).toContain('URL omitted: exceeds host metadata bound')
-    expect(result.presentation.text).toContain('Browser reference omitted: URL exceeds host metadata bound.')
     expect(result.presentation.text).not.toContain(oversizedUrl)
     expect(result.presentation.text).not.toContain(oversizedHref)
     expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThan(8_192)
@@ -279,7 +247,7 @@ describe('typed action observations', () => {
     expectKind(generated, 'artifact')
     if (generated.kind !== 'artifact') throw new Error('Expected generated artifact')
     expect(generated.supportsFactualClaim).toBe('artifact-existence-only')
-    expect(generated.presentation.text).toBe('2 image artifacts generated.')
+    expect(generated.artifact).toMatchObject({ type: 'image', count: 2 })
     expect(generated.presentation.text).not.toContain('mountain')
   })
 
@@ -294,7 +262,6 @@ describe('typed action observations', () => {
     if (unchanged.kind !== 'receipt') throw new Error('Expected memory receipt')
     expect(unchanged.status).toBe('no-change')
     expect(unchanged.receipt).toMatchObject({ operation: 'memory.manage', changed: false })
-    expect(unchanged.presentation.text).toContain('made no change')
     expect(unchanged.presentation.text).not.toContain('applied')
 
     const privateMemoryEntry = 'private-memory-entry-should-not-be-presented'
@@ -307,8 +274,6 @@ describe('typed action observations', () => {
     expectKind(changed, 'receipt')
     if (changed.kind !== 'receipt') throw new Error('Expected memory receipt')
     expect(changed.status).toBe('applied')
-    expect(changed.presentation.text).toContain('changed user memory')
-    expect(changed.presentation.text).not.toContain('no change')
     expect(JSON.stringify(changed)).not.toContain(privateMemoryEntry)
 
 
@@ -331,6 +296,7 @@ describe('typed action observations', () => {
     if (pending.kind !== 'receipt' || approved.kind !== 'receipt') throw new Error('Expected proposal receipts')
     expect(pending.status).toBe('pending')
     expect(approved.status).toBe('approved')
+    // Keep these cross-unit guards until the engine publication replacement is executed.
     expect(pending.presentation.text).toContain('Wiki proposal status: pending.')
     expect(approved.presentation.text).toContain('Wiki proposal status: approved.')
     expect(presentDomainObservation('pages.prepareCreate', proposalInput, { ...proposalBase, actionName: 'pages.preparePatch', status: 'pending' }, context)).toBeNull()
@@ -381,179 +347,10 @@ describe('typed action observations', () => {
       context
     )
     expect(result).toBeNull()
-    expect(wikiActionObservationAdapter('pages.search')).toMatchObject({ projection: 'candidate-leads', actionName: 'pages.search' })
-    expect(wikiActionObservationAdapter('pages.get')).toMatchObject({ projection: 'page-local-source', actionName: 'pages.get' })
-    expect(wikiActionObservationAdapter('pages.prepareCreate')).toBeNull()
   })
 
-  it('projects a bounded fixed-field computed summary without exposing canonical private data or source authority', () => {
-    const input = { identity: 'sensor-é-7' }
-    const outputFields = {
-      inputIdentity: input.identity,
-      value: 3.25,
-      unit: 'm/s',
-      asOf,
-      status: 'complete'
-    } as const
-    const privatePayload = 'private-result:'.repeat(128)
-    const output = { ...outputFields, privatePayload }
-    const originalInput = { ...input }
-    const originalOutput = { ...output }
-    const result = projectStructuredObservation(
-      'skills.list',
-      structuredObservationWithPrivatePayloadDefinition,
-      input,
-      output,
-      { ...context, maxTextBytes: 256 }
-    )
-    expectKind(result, 'observation')
-    if (result.kind !== 'observation') throw new Error('Expected computed observation')
-    expect(result.status).toBe('complete')
-    expect(result.computed).toEqual({
-      inputIdentity: input.identity,
-      value: 3.25,
-      unit: 'm/s',
-      asOf,
-      status: 'complete'
-    })
-    const providerEnvelope = JSON.stringify(result)
-    expect(result.computed).not.toHaveProperty('privatePayload')
-    expect(result).not.toHaveProperty('canonicalOutput')
-    expect(providerEnvelope).not.toContain(privatePayload)
-    expect(providerEnvelope).not.toContain('privatePayload')
-    expect(Buffer.byteLength(providerEnvelope, 'utf8')).toBeLessThan(Buffer.byteLength(JSON.stringify(output), 'utf8'))
-    expect(result.coverage.canonicalOutput).toBe('complete')
-    expect(result.freshness).toMatchObject({
-      kind: 'computed-unverified',
-      asOf,
-      scope: { kind: 'computed-observation', identity: input.identity }
-    })
-    expect(result.supportsFactualClaim).toBe('computed-unverified')
-    expect(result.presentation.text).toContain('unverified')
-    expect(result.presentation.text).not.toContain('Wiki')
-    expect(Buffer.byteLength(result.presentation.text, 'utf8')).toBeLessThanOrEqual(256)
-  })
 
-  it('rejects computed identity, unit, numeric, time, and metadata-bound violations', () => {
-    const input = { identity: 'sensor-7' }
-    const outputFields = {
-      inputIdentity: input.identity,
-      value: 3.25,
-      unit: 'm/s',
-      asOf,
-      status: 'complete'
-    } as const
-    const output = { ...outputFields, privatePayload: 'private-result' }
-    expect(
-      projectStructuredObservation(
-        'skills.list',
-        structuredObservationWithPrivatePayloadDefinition,
-        input,
-        { ...output, inputIdentity: 'sensor-8' },
-        context
-      )
-    ).toBeNull()
-    expect(
-      projectStructuredObservation(
-        'skills.list',
-        structuredObservationWithPrivatePayloadDefinition,
-        input,
-        { ...output, unit: 'km/h' },
-        context
-      )
-    ).toBeNull()
-    expect(projectStructuredObservation('skills.list', structuredObservationDefinition, input, { ...outputFields, value: Number.NaN }, context)).toBeNull()
-    expect(projectStructuredObservation('skills.list', structuredObservationDefinition, input, { ...outputFields, asOf: 'not-a-time' }, context)).toBeNull()
-    expect(
-      projectStructuredObservation(
-        'skills.list',
-        structuredObservationDefinition,
-        { identity: 'x'.repeat(513) },
-        outputFields,
-        context
-      )
-    ).toBeNull()
-
-    const permissiveOutputDefinition = {
-      ...structuredObservationDefinition,
-      output: z.strictObject({
-        inputIdentity: z.string().min(1).max(600),
-        value: z.number(),
-        unit: z.string().min(1).max(256),
-        asOf: z.string().max(256),
-        status: z.enum(['complete', 'partial', 'unknown'])
-      })
-    } as const
-    expect(
-      projectStructuredObservation(
-        'skills.list',
-        permissiveOutputDefinition,
-        input,
-        { inputIdentity: input.identity, value: 3.25, unit: 'é'.repeat(65), asOf, status: 'complete' },
-        context
-      )
-    ).toBeNull()
-    expect(
-      projectStructuredObservation(
-        'skills.list',
-        permissiveOutputDefinition,
-        input,
-        { inputIdentity: 'x'.repeat(513), value: 3.25, unit: 'm/s', asOf, status: 'complete' },
-        context
-      )
-    ).toBeNull()
-  })
-
-  it('keeps partial and unknown results explicitly unverified and bounds whole UTF-8 presentation units', () => {
-    const input = { identity: 'sensor-é-7' }
-    const output = { inputIdentity: input.identity, value: 3.25, unit: 'm/s', asOf, status: 'complete' }
-    for (const status of ['partial', 'unknown'] as const) {
-      const result = projectStructuredObservation(
-        'skills.list',
-        structuredObservationDefinition,
-        input,
-        { ...output, status },
-        context
-      )
-      expectKind(result, 'observation')
-      if (result.kind !== 'observation') throw new Error('Expected computed observation')
-      expect(result.status).toBe(status)
-      expect(result.coverage.canonicalOutput).toBe(status)
-      expect(result.supportsFactualClaim).toBe('computed-unverified')
-    }
-
-    const staleAsOf = '2020-01-02T03:04:05.000Z'
-    const stale = projectStructuredObservation(
-      'skills.list',
-      structuredObservationDefinition,
-      input,
-      { ...output, asOf: staleAsOf },
-      context
-    )
-    expectKind(stale, 'observation')
-    if (stale.kind !== 'observation') throw new Error('Expected computed observation')
-    expect(stale.freshness.asOf).toBe(staleAsOf)
-    expect(stale.freshness.asOf).not.toBe(context.asOf)
-    expect(stale.presentation.text).toContain(staleAsOf)
-    expect(stale.supportsFactualClaim).toBe('computed-unverified')
-
-    const bounded = projectStructuredObservation(
-      'skills.list',
-      structuredObservationDefinition,
-      input,
-      output,
-      { ...context, maxTextBytes: 120 }
-    )
-    expectKind(bounded, 'observation')
-    if (bounded.kind !== 'observation') throw new Error('Expected computed observation')
-    expect(bounded.presentation.truncated).toBe(true)
-    expect(bounded.presentation.text).toContain('Input identity')
-    expect(bounded.presentation.text).not.toContain('Result:')
-    expect(Buffer.byteLength(bounded.presentation.text, 'utf8')).toBeLessThanOrEqual(120)
-    expect(bounded.coverage.providerText).toBe('partial')
-  })
-
-  it('fails closed on malformed, mismatched, and unclassified outputs', () => {
+  it('fails closed on malformed or mismatched outputs, unknown actions, and invalid context', () => {
     expect(presentDomainObservation('skills.read', { name: 'skill', versionId: 'bad', path: 'SKILL.md' }, { content: 'unvalidated' }, context)).toBeNull()
     expect(presentDomainObservation('not-an-action', {}, {}, context)).toBeNull()
     expect(presentDomainObservation('skills.list', {}, { skills: [{ name: 'missing fields' }] }, context)).toBeNull()

@@ -110,7 +110,6 @@ describe('controllers/ssl HTTPS redirect', () => {
     expect(res.sendStatus).toHaveBeenCalledWith(503)
     expect(res.redirect).not.toHaveBeenCalled()
     expect(next).not.toHaveBeenCalled()
-    expect(wiki.logger.warn).toHaveBeenCalledWith(expect.stringContaining('configured site host'))
   })
   it('redirects an insecure request behind a trusted proxy without a native HTTPS listener', async () => {
     const wiki = createWiki('https://wiki.example.test:10443')

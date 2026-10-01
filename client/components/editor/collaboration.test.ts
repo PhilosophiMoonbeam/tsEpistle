@@ -131,7 +131,13 @@ describe('Markdown collaboration connection', () => {
   })
 
   it('fetches a fresh token and reconnects after an unexpected disconnect', async () => {
-    const fetchImpl = vi.fn(response) as unknown as typeof window.fetch
+    const tokens = ['initial.session.token', 'refreshed.session.token']
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ ...sessionPayload(), token: tokens.shift() })
+    })) as unknown as typeof window.fetch
     const statuses: CollaborationStatus[] = []
     const collaboration = await createMarkdownCollaboration({
       pageId: 42,
@@ -147,6 +153,7 @@ describe('Markdown collaboration connection', () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(FakeWebSocket.instances).toHaveLength(2)
+    expect(FakeWebSocket.instances[1].protocols).toEqual([COLLABORATION_WEBSOCKET_PROTOCOL, 'refreshed.session.token'])
     FakeWebSocket.instances[1].open()
     expect(statuses.at(-1)?.state).toBe('connected')
     collaboration.destroy()

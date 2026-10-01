@@ -44,11 +44,19 @@ describe('Yandex session replay migration', () => {
     await db('analytics').insert({ key: 'yandex', isEnabled: false, config: JSON.stringify({ tagNumber: '42' }) })
 
     await up(db)
-    expect(config((await db('analytics').where({ key: 'yandex' }).first()).config).webvisor).toBe('false')
+    const disabledYandex = await db('analytics').where({ key: 'yandex' }).first()
+    expect(disabledYandex.isEnabled).toBe(0)
+    expect(config(disabledYandex.config).webvisor).toBe('false')
+    expect(config(disabledYandex.config)).toEqual({ tagNumber: '42', webvisor: 'false' })
 
     await db('analytics').where({ key: 'yandex' }).update({ isEnabled: true, config: JSON.stringify({ tagNumber: '42', webvisor: 'false' }) })
     await up(db)
     expect(config((await db('analytics').where({ key: 'yandex' }).first()).config)).toEqual({ tagNumber: '42', webvisor: 'false' })
+
+    await expect(Promise.resolve(down(db))).rejects.toThrow('Cannot discard the explicit Yandex session replay setting')
+    const optedOutYandex = await db('analytics').where({ key: 'yandex' }).first()
+    expect(optedOutYandex.isEnabled).toBe(1)
+    expect(config(optedOutYandex.config)).toEqual({ tagNumber: '42', webvisor: 'false' })
   })
 
   it('does not replace malformed configuration', async () => {

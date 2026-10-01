@@ -483,23 +483,6 @@ describe('managed site logo HTTP contracts', () => {
     ])
   })
 
-  it('creates v7 work instead of reusing an intact active historical pipeline-v5 revision', async () => {
-    const active = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000011', 5)
-    await db('siteLogoState').where({ id: 1 }).update({ generation: 1, desiredRevisionId: active.revisionId, activeRevisionId: active.revisionId })
-
-    const response = await upload({ bytes: Buffer.from(PNG_BYTES) })
-    expect(response.status).toBe(202)
-    const body = await json<StatusBody>(response)
-    expect(body.active).toEqual(activeBody(active))
-    expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
-    expect(body.candidate?.revisionId).not.toBe(active.revisionId)
-    expect(body.statusUrl).toBe('/_api/site/logo')
-    expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion', 'retrySequence')).toEqual({
-      pipelineVersion: 7,
-      retrySequence: 1
-    })
-    expect(await db('durableJobs')).toHaveLength(1)
-  })
   it('activates an intact reusable ready pipeline-v7 revision with 200 and preserves every role URL', async () => {
     const active = await seedReadyRevision(db, ACTIVE_SOURCE, '00000000-0000-4000-8000-000000000021')
     const sourceHash = digest(PNG_BYTES)
@@ -548,7 +531,9 @@ describe('managed site logo HTTP contracts', () => {
         pipelineVersion: 7,
         retrySequence: 3
       })
-      expect((await db('siteLogoRevisions').where({ id: olderReady.revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
+      expect(await db('siteLogoRevisions').where({ id: olderReady.revisionId }).first('retiredAt')).toEqual(
+        expect.objectContaining({ retiredAt: expect.anything() })
+      )
       expect(await db('durableJobs')).toHaveLength(1)
     }
   )
@@ -569,7 +554,12 @@ describe('managed site logo HTTP contracts', () => {
       expect(body.active).toEqual(activeBody(olderActive))
       expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
       expect(body.candidate?.revisionId).not.toBe(olderActive.revisionId)
-      expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 7 })
+      expect(body.statusUrl).toBe('/_api/site/logo')
+      expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion', 'retrySequence')).toEqual({
+        pipelineVersion: 7,
+        retrySequence: 1
+      })
+      expect(await db('durableJobs')).toHaveLength(1)
     }
   )
 
@@ -587,7 +577,9 @@ describe('managed site logo HTTP contracts', () => {
     expect(body.active).toEqual(activeBody(active))
     expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
     expect(body.candidate?.revisionId).not.toBe(broken.revisionId)
-    expect((await db('siteLogoRevisions').where({ id: broken.revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
+    expect(await db('siteLogoRevisions').where({ id: broken.revisionId }).first('retiredAt')).toEqual(
+      expect.objectContaining({ retiredAt: expect.anything() })
+    )
     expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('retrySequence')).toEqual({ retrySequence: 5 })
     expect(await db('durableJobs')).toHaveLength(1)
   })
@@ -628,7 +620,9 @@ describe('managed site logo HTTP contracts', () => {
       type: 'process-site-logo',
       version: 5
     })
-    expect((await db('siteLogoRevisions').where({ id: pending.revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
+    expect(await db('siteLogoRevisions').where({ id: pending.revisionId }).first('retiredAt')).toEqual(
+      expect.objectContaining({ retiredAt: expect.anything() })
+    )
   })
 
   it('does not disclose an unrecognized processor error through status', async () => {

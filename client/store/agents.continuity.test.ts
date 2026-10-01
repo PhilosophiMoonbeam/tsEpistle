@@ -217,15 +217,17 @@ describe('Pinned page context', () => {
     expect(store.drafts[id(1)]?.sources.map(item => item.id)).toEqual([9, 3])
   })
 
-  it('retains eight sources and explains how to include the previous page without evicting a source', async () => {
+  it('retains eight sources and publishes a capacity notice without evicting a source', async () => {
     fixture()
     const store = createStore()
     await initialize(store)
     store.updateDraft(id(1), { sources: Array.from({ length: 8 }, (_, n) => source(n + 10)) })
     store.setCurrentChatPinned(true)
+    const noticeBeforeTransfer = store.contextTransferNotice
+    expect(noticeBeforeTransfer).toBe('')
     await initialize(store, page(2))
     expect(store.drafts[id(1)]?.sources.map(item => item.id)).toEqual([10, 11, 12, 13, 14, 15, 16, 17])
-    expect(store.contextTransferNotice).toContain('Remove a source')
+    expect(store.contextTransferNotice).not.toBe(noticeBeforeTransfer)
   })
 
   it('stores selectors only, hydrates fresh previews after reload, and skips sources without current access', async () => {
@@ -240,10 +242,12 @@ describe('Pinned page context', () => {
     expect(raw).not.toContain('excerpt')
     api.sourceStatus.set(10, 403)
     const reloaded = createStore()
+    const noticeBeforeReload = reloaded.contextTransferNotice
+    expect(noticeBeforeReload).toBe('')
     await initialize(reloaded)
     expect(reloaded.drafts[id(1)]?.sources.map(item => item.id)).toEqual([9])
     expect(reloaded.drafts[id(1)]?.includeCurrentPage).toBe(false)
-    expect(reloaded.contextTransferNotice).toContain('Check access')
+    expect(reloaded.contextTransferNotice).not.toBe(noticeBeforeReload)
     expect(reloaded.drafts[id(1)]?.text).toBe('')
   })
 

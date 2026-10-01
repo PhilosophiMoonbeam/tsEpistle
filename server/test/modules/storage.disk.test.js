@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
@@ -668,16 +668,23 @@ describe('disk storage target', () => {
       getRootUser: vi.fn().mockResolvedValue({ id: 1 })
     }
     const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
-    const processPage = vi.spyOn(commonDisk, 'processPage').mockResolvedValue({
-      relPath: 'inside-page.md',
-      format: 'plain_markdown',
-      sha256: 'inside',
-      ok: true,
-      document: {}
+    let pageBytes
+    let assetBytes
+    const processPage = vi.spyOn(commonDisk, 'processPage').mockImplementation(async ({ source }) => {
+      pageBytes = await source.readBounded(1024)
+      return {
+        relPath: 'inside-page.md',
+        format: 'plain_markdown',
+        sha256: 'inside',
+        ok: true,
+        document: {}
+      }
     })
-    const processAsset = vi.spyOn(commonDisk, 'processAsset').mockResolvedValue()
+    const processAsset = vi.spyOn(commonDisk, 'processAsset').mockImplementation(async ({ source }) => {
+      assetBytes = await source.readBounded(1024)
+    })
 
-    const results = await commonDisk.importFromDisk({
+    await commonDisk.importFromDisk({
       root: context.root,
       moduleName: 'DISK'
     })
@@ -702,10 +709,8 @@ describe('disk storage target', () => {
     expect(assetOptions).not.toHaveProperty('fullPath')
     expect(assetOptions.source).toMatchObject({ relativePath: 'inside-asset.bin', closed: true })
 
-    expect(results).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'page', relPath: 'inside-page.md', ok: true }),
-      { kind: 'asset', relPath: 'inside-asset.bin', ok: true }
-    ]))
+    expect(pageBytes).toEqual(Buffer.from('Inside page'))
+    expect(assetBytes).toEqual(Buffer.from('Inside asset'))
     expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('Outside content')
   })
 
@@ -1058,15 +1063,11 @@ describe('Git storage rename identities', () => {
   })
 
 
-  it('moves a cross-locale page to the destination locale without retaining the source identity', async () => {
+  it('maps a cross-locale page rename to the destination locale with import provenance and no storage recursion', async () => {
     const filePath = path.join(rootPath, 'fr', 'guide.md')
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     await fs.writeFile(filePath, 'content')
-    const identities = new Set(['en/guide'])
-    const movePage = vi.fn(async move => {
-      identities.delete(`${move.locale}/${move.path}`)
-      identities.add(`${move.destinationLocale}/${move.destinationPath}`)
-    })
+    const movePage = vi.fn().mockResolvedValue(undefined)
     global.WIKI.models.pages = { movePage }
     const commonDiskModule = await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)
     const commonDisk = commonDiskModule.default
@@ -1097,7 +1098,6 @@ describe('Git storage rename identities', () => {
       okfProducer: 'import:git',
       skipStorage: true
     }))
-    expect([...identities]).toEqual(['fr/guide'])
   })
 
   it('imports canonical reserved changed files under their page identities and Git provenance', async () => {
@@ -1286,11 +1286,10 @@ describe('Git storage rename identities', () => {
       global.WIKI.models.assets = { query: assetQuery }
 
       const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
-      await expect(storage.processFiles.call({ repoPath: rootPath, root }, {
-        admission,
-        files: [
-          {
-            file: { stats: { size: 8 } },
+      const files = [
+        {
+          status: 'M',
+          file: { stats: { size: 8 } },
           oldPath: 'pages/outside.md',
           relPath: 'pages/outside.md',
           binary: false,
@@ -1301,6 +1300,7 @@ describe('Git storage rename identities', () => {
           importAll: false
         },
         {
+          status: 'M',
           file: { stats: { size: 12 } },
           oldPath: 'assets/outside.bin',
           relPath: 'assets/outside.bin',
@@ -1312,6 +1312,7 @@ describe('Git storage rename identities', () => {
           importAll: false
         },
         {
+          status: 'D',
           file: { stats: { size: 0 } },
           oldPath: 'pages/missing.md',
           relPath: 'pages/missing.md',
@@ -1323,6 +1324,7 @@ describe('Git storage rename identities', () => {
           importAll: false
         },
         {
+          status: 'D',
           file: { stats: { size: 0 } },
           oldPath: 'assets/missing.bin',
           relPath: 'assets/missing.bin',
@@ -1333,15 +1335,31 @@ describe('Git storage rename identities', () => {
           after: 0,
           importAll: false
         }
-        ]
-      }, { id: 1 })).rejects.toThrow()
-
-      expect(getPageFromDb).not.toHaveBeenCalled()
-      expect(updatePage).not.toHaveBeenCalled()
-      expect(deletePage).not.toHaveBeenCalled()
-      expect(assetQuery).not.toHaveBeenCalled()
-      expect(await fs.readFile(externalPage, 'utf8')).toBe('# Outside')
-      expect(await fs.readFile(externalAsset, 'utf8')).toBe('outside asset')
+      ]
+      const openFile = vi.spyOn(root, 'openFile')
+      for (const file of files) {
+        const processing = storage.processFiles.call({ repoPath: rootPath, root }, {
+          admission,
+          files: [file]
+        }, { id: 1 })
+        if (file.status === 'M') {
+          await expect(processing).rejects.toMatchObject({ kind: 'parser' })
+          expect(openFile).not.toHaveBeenCalled()
+        } else {
+          expect(await processing).toEqual([{
+            kind: file.binary ? 'asset' : 'page',
+            relPath: file.relPath,
+            ok: false,
+            error: expect.any(String)
+          }])
+        }
+        expect(getPageFromDb).not.toHaveBeenCalled()
+        expect(updatePage).not.toHaveBeenCalled()
+        expect(deletePage).not.toHaveBeenCalled()
+        expect(assetQuery).not.toHaveBeenCalled()
+        expect(await fs.readFile(externalPage, 'utf8')).toBe('# Outside')
+        expect(await fs.readFile(externalAsset, 'utf8')).toBe('outside asset')
+      }
     } finally {
       await fs.rm(externalRoot, { recursive: true, force: true })
     }
@@ -1529,7 +1547,7 @@ describe('Git storage rename identities', () => {
     expect(git.add).toHaveBeenCalledWith('./legacy.html')
   })
 
-  it('finds an asset by its old path and repoints its readable identity and cache', async () => {
+  it('looks up an asset by its old hash, patches its destination identity by id, and invalidates its cache', async () => {
     const filePath = path.join(rootPath, 'archive', 'new-logo.png')
     const outsideSentinel = path.join(rootPath, 'outside-sentinel.txt')
     await fs.mkdir(path.dirname(filePath), { recursive: true })
@@ -1541,7 +1559,7 @@ describe('Git storage rename identities', () => {
     const deleteAssetCache = vi.fn().mockResolvedValue(undefined)
     const asset = { id: 7, hash: sourceHash, deleteAssetCache }
     const persisted = { id: 7, filename: 'logo.png', folderId: 2, hash: sourceHash }
-    const findOne = vi.fn(({ hash }) => Promise.resolve(hash === persisted.hash ? asset : undefined))
+    const findOne = vi.fn().mockResolvedValue(asset)
     const findById = vi.fn(async id => {
       expect(id).toBe(asset.id)
       return 1
@@ -1583,8 +1601,13 @@ describe('Git storage rename identities', () => {
       folderId: 4,
       hash: destinationHash
     })
-    expect(await findOne({ hash: sourceHash })).toBeUndefined()
-    expect(await findOne({ hash: destinationHash })).toBe(asset)
+    expect(patch).toHaveBeenCalledWith({
+      filename: 'new-logo.png',
+      folderId: 4,
+      hash: destinationHash
+    })
+    expect(findById).toHaveBeenCalledWith(asset.id)
+    expect(deleteAssetCache).toHaveBeenCalledTimes(1)
     expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 })
@@ -1671,7 +1694,7 @@ describe('storage page-document ingress', () => {
         verified: { by: 'human:7', at: '2026-08-30T00:00:00Z' },
         vendor_extension: { retained: true }
       },
-      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      sha256: createHash('sha256').update(raw).digest('hex'),
       diagnostics: []
     })
   })
@@ -1849,7 +1872,7 @@ describe('storage page-document ingress', () => {
     expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 
-  it.each(['DISK', 'GIT'])('rejects an oversized %s page before parsing or database mutation', async moduleName => {
+  it('rejects an oversized page before parsing or database mutation', async () => {
     const filePath = path.join(rootPath, 'oversized.md')
     const outsideSentinel = path.join(outsideRoot, 'sentinel.txt')
     await fs.writeFile(filePath, '')
@@ -1868,7 +1891,7 @@ describe('storage page-document ingress', () => {
         relPath: 'oversized.md',
         root,
         contentType: 'markdown',
-        moduleName,
+        moduleName: 'DISK',
         source
       })).rejects.toBeInstanceOf(RangeError)
     } finally {

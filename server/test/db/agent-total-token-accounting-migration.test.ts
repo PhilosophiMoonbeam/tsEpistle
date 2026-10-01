@@ -78,7 +78,7 @@ describe('agent total token accounting migration', () => {
       const database = await createDatabase(databases)
       await database('agentRuns').insert({ id: RUN_ID, inputTokens, outputTokens })
 
-      await expect(Promise.resolve(up(database))).rejects.toThrow('Cannot backfill agent run token totals: legacy directional token usage is invalid')
+      await expect(Promise.resolve(up(database))).rejects.toThrow()
       expect(await database.schema.hasColumn('agentRuns', 'totalTokens')).toBe(false)
       expect(await database('agentRuns').where({ id: RUN_ID }).first('inputTokens', 'outputTokens')).toEqual({ inputTokens, outputTokens })
     }

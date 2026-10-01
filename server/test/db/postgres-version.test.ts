@@ -1,12 +1,7 @@
 import { describe, expect, it, vi } from '../bun-test.mts'
 import type { Knex } from 'knex'
 
-import {
-  assertSupportedPostgresVersion,
-  MAX_POSTGRES_MAJOR,
-  MIN_POSTGRES_MAJOR,
-  parsePostgresVersion
-} from '../../db/postgres-version.ts'
+import { assertSupportedPostgresVersion, parsePostgresVersion } from '../../db/postgres-version.ts'
 
 const knexWithVersion = (serverVersion: string, serverVersionNum: string): Knex => ({
   raw: vi.fn().mockResolvedValue({ rows: [{ serverVersion, serverVersionNum }] })
@@ -26,17 +21,20 @@ describe('PostgreSQL server version policy', () => {
   })
 
   it.each([
-    [MIN_POSTGRES_MAJOR - 1, 'below the support floor'],
-    [MAX_POSTGRES_MAJOR + 1, 'newer than the validated ceiling']
+    [14, 'below the support floor'],
+    [19, 'newer than the validated ceiling']
   ])('rejects PostgreSQL %s servers %s', async major => {
     await expect(Promise.resolve(assertSupportedPostgresVersion(knexWithVersion(`${major}.1`, `${major}0001`)))).rejects.toMatchObject({
-      code: 'UNSUPPORTED_POSTGRES_VERSION',
-      message: expect.stringContaining(`PostgreSQL ${MIN_POSTGRES_MAJOR} through ${MAX_POSTGRES_MAJOR}`)
+      code: 'UNSUPPORTED_POSTGRES_VERSION'
     })
   })
 
-  it('rejects malformed server responses', async () => {
-    await expect(Promise.resolve(assertSupportedPostgresVersion(knexWithVersion('', 'unknown')))).rejects.toMatchObject({
+  it.each([
+    ['', 'unknown'],
+    ['17.1', 'unknown'],
+    ['', '170001']
+  ])('rejects malformed server responses (%s, %s)', async (serverVersion, serverVersionNum) => {
+    await expect(Promise.resolve(assertSupportedPostgresVersion(knexWithVersion(serverVersion, serverVersionNum)))).rejects.toMatchObject({
       code: 'UNSUPPORTED_POSTGRES_VERSION'
     })
   })

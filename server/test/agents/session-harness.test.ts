@@ -63,11 +63,14 @@ describe('Ax session harness', () => {
     const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
     const session = await harness.open([offered('pages.get')])
     try {
-      await expect(Promise.resolve(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-1'))).rejects.toMatchObject({
+      const invocation = Promise.resolve(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-1'))
+      await expect(invocation).rejects.toMatchObject({
         code: 'INVALID_SNAPSHOT_TOKEN',
-        status: 409,
-        message: 'Action failed'
+        status: 409
       })
+      const error = await invocation.catch((cause: unknown) => cause)
+      expect(error).toHaveProperty('message', expect.any(String))
+      expect((error as Error).message).not.toContain('sensitive detail')
     } finally {
       session.close()
     }

@@ -8,12 +8,8 @@ import {
 } from '../../operations/security-administration.ts'
 import { securityPolicyDefaults, type SecurityPolicy } from '../../../shared/security-policy.ts'
 import { up, down } from '../../db/migrations/tsepistle-000020-security-administration.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_security_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password }
-    : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_security_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 const definitions = () => [
@@ -190,6 +186,7 @@ suite('PostgreSQL reviewed workspace security', () => {
     const results = await Promise.allSettled([store.save(admin, input), store.save(admin, input)])
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
     expect(results.filter(r => r.status === 'rejected')).toHaveLength(1)
+    expect(results.find(r => r.status === 'rejected')).toMatchObject({ reason: { status: 409 } })
     w = await read()
     await db('users').where('id', 3).update({ isActive: false })
     await expect(store.save(admin, { ...input, fingerprint: w.fingerprint })).rejects.toMatchObject({ status: 409 })
@@ -263,7 +260,7 @@ suite('PostgreSQL reviewed workspace security', () => {
       await patchLegacySecurityConfiguration(admin, { uploadMaxFileSize: 2097152, uploadMaxFiles: 10, securitySRI: true })
       expect((await read()).policy.uploadMaxFileSize).toBe(2097152)
       expect(authRuntime.activateStrategies).not.toHaveBeenCalled()
-      expect((await read()).history[0]?.reason).toBe('Updated through the legacy workspace security configuration API')
+      expect((await read()).history[0]).toMatchObject({ actorId: 1, fields: ['uploadMaxFileSize'], sessionsEnded: 0 })
       expect((await db('settings').where('key', 'title').first()).value).toEqual({ v: 'Workspace title' })
       await write({ securityCSPMode: 'report-only', securityCSPDirectives: "default-src 'self'" })
       await patchLegacySecurityConfiguration(admin, { securityCSP: false, securityIframe: false })
@@ -281,13 +278,37 @@ suite('PostgreSQL reviewed workspace security', () => {
   })
   it('rechecks saved password requirements after a concurrent policy writer completes', async () => {
     const writer = await db.transaction()
-    await writer('settings').where('key', 'auth').forUpdate().first()
-    const pending = db.transaction(tx => assertSavedPassword(tx, 'eighteen-characters'))
-    await writer('settings')
-      .where('key', 'auth')
-      .update({ value: JSON.stringify({ passwordMinLength: 24 }) })
-    await writer.commit()
-    await expect(Promise.resolve(pending)).rejects.toThrow('24 characters')
+    let validator: Knex.Transaction | undefined
+    let pendingOutcome: Promise<void> | undefined
+    try {
+      await writer('settings').where('key', 'auth').forUpdate().first()
+      const writerPid = (await writer.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
+      validator = await db.transaction()
+      const validatorPid = (await validator.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
+      let validatorSettled = false
+      const pending = assertSavedPassword(validator, 'eighteen-characters')
+      pendingOutcome = pending.then(() => { validatorSettled = true }, () => { validatorSettled = true })
+      await vi.waitFor(async () => {
+        const blocked = await db.raw('SELECT ?::integer = ANY(pg_blocking_pids(?::integer)) AS blocked', [writerPid, validatorPid])
+        expect(blocked.rows).toEqual([{ blocked: true }])
+        expect(validatorSettled).toBe(false)
+      }, { timeout: 2000 })
+      await writer('settings')
+        .where('key', 'auth')
+        .update({ value: JSON.stringify({ passwordMinLength: 24 }) })
+      await writer.commit()
+      await expect(pending).rejects.toThrow('24 characters')
+    } finally {
+      try {
+        if (!writer.isCompleted()) await writer.rollback()
+      } finally {
+        try {
+          await pendingOutcome
+        } finally {
+          if (validator && !validator.isCompleted()) await validator.rollback()
+        }
+      }
+    }
     await expect(Promise.resolve(db.transaction(tx => assertSavedPassword(tx, 'a'.repeat(24))))).resolves.toBeUndefined()
     await expect(Promise.resolve(db.transaction(tx => assertSavedPassword(tx, '😀'.repeat(24))))).rejects.toThrow('72 UTF-8 bytes')
   })

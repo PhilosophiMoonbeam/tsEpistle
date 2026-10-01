@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type { ActionAuthority } from '../../agents/actions/kernel.ts'
 import { BrowserActionService } from '../../agents/browser/actions.ts'
+import type { BrowserWorkerIdentity } from '../../agents/browser/client.ts'
 import type { BrowserWorkerAction, BrowserWorkerResult } from '../../agents/browser/runtime.ts'
 
 const runId = '00000000-0000-4000-8000-000000000101'
@@ -72,17 +74,18 @@ describe('browser action service', () => {
     })
     await db('agentBrowserTargets').insert([
       { canonicalUrl: 'https://example.com/docs', enabled: true },
+      { canonicalUrl: 'http://example.com/', enabled: true },
       { canonicalUrl: 'https://disabled.example.com/', enabled: false }
     ])
   })
   afterEach(async () => db.destroy())
 
   it('passes only live approved HTTPS targets and monotonic run identity to the worker', async () => {
-    const calls: Array<{ sequence: number; action: BrowserWorkerAction }> = []
+    const calls: Array<{ identity: BrowserWorkerIdentity; action: BrowserWorkerAction }> = []
     const order: string[] = []
-    const execute = vi.fn(async (identity: { sequence: number }, _limits: unknown, action: BrowserWorkerAction): Promise<BrowserWorkerResult> => {
+    const execute = vi.fn(async (identity: BrowserWorkerIdentity, _limits: unknown, action: BrowserWorkerAction): Promise<BrowserWorkerResult> => {
       order.push('dispatch')
-      calls.push({ sequence: identity.sequence, action })
+      calls.push({ identity, action })
       return action.kind === 'navigate' ? { kind: 'navigated', observation } : { kind: 'observed', observation }
     })
     const service = new BrowserActionService(db, { execute } as never)
@@ -95,25 +98,56 @@ describe('browser action service', () => {
         order.push('fence')
       }
     })
-    expect(await service.navigate({ url: 'https://example.com/docs' }, context('call-1'))).toEqual(observation)
-    expect(await service.observe({}, context('call-2'))).toEqual(observation)
-    expect(calls.map(call => call.sequence)).toEqual([1, 2])
+    await service.navigate({ url: 'https://example.com/docs' }, context('browser-action-call-1'))
+    await service.observe({}, context('browser-action-call-2'))
+    expect(calls.map(call => call.identity.sequence)).toEqual([1, 2])
+    expect(calls.map(call => call.identity)).toMatchObject([
+      { runId, ownerId: 7, leaseToken: '00000000-0000-4000-8000-000000000104', actionCallId: 'browser-action-call-1' },
+      { runId, ownerId: 7, leaseToken: '00000000-0000-4000-8000-000000000104', actionCallId: 'browser-action-call-2' }
+    ])
+    expect(calls[0]?.identity.contextId).toMatch(/^[A-Za-z0-9_-]{16,128}$/)
+    expect(calls[1]?.identity.contextId).toBe(calls[0]?.identity.contextId)
     expect(calls[0]?.action).toMatchObject({ kind: 'navigate', attestedUrls: ['https://example.com/docs'] })
     expect(order).toEqual(['fence', 'dispatch', 'fence', 'dispatch'])
   })
 
-  it('persists a bounded screenshot as a private expiring artifact', async () => {
+  it('rejects lease replacement during the side-effect fence before worker dispatch', async () => {
+    const execute = vi.fn(async (): Promise<BrowserWorkerResult> => ({ kind: 'navigated', observation }))
+    const service = new BrowserActionService(db, { execute } as never)
+    await expect(service.navigate(
+      { url: 'https://example.com/docs' },
+      {
+        authority,
+        actionCallId: 'browser-action-call-1',
+        signal: new AbortController().signal,
+        reauthorize: async () => {},
+        fenceSideEffect: async () => {
+          await db('agentRuns').where({ id: runId }).update({ leaseToken: '00000000-0000-4000-8000-000000000105' })
+        }
+      }
+    )).rejects.toMatchObject({ code: 'RUN_LEASE_LOST', status: 409 })
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('persists an owner-scoped screenshot with integrity metadata and one-hour expiry', async () => {
     const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1])
     const service = new BrowserActionService(db, {
       execute: async (): Promise<BrowserWorkerResult> => ({ kind: 'screenshot', bytes: png, mimeType: 'image/png', width: 1280, height: 720 })
     } as never)
+    const before = Date.now()
     const result = await service.screenshot(
       {},
       { authority, actionCallId: 'screenshot-call', signal: new AbortController().signal, reauthorize: async () => {}, fenceSideEffect: async () => {} }
     )
-    expect(result).toMatchObject({ mimeType: 'image/png', width: 1280, height: 720 })
+    const after = Date.now()
+    expect(result.mimeType).toBe('image/png')
     const row = await db('agentArtifacts').where({ id: result.artifactId }).first()
-    expect(row).toMatchObject({ sessionId, runId, ownerId: 7, kind: 'browser-screenshot', byteLength: png.byteLength })
+    expect(row).toMatchObject({ sessionId, runId, ownerId: 7, kind: 'browser-screenshot', mimeType: 'image/png', byteLength: png.byteLength, width: 1280, height: 720 })
     expect(Buffer.from(row.payload)).toEqual(png)
+    expect(row.sha256).toBe(createHash('sha256').update(png).digest('hex'))
+    const expiresAt = new Date(row.expiresAt).getTime()
+    expect(Number.isFinite(expiresAt)).toBe(true)
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 60 * 60_000)
+    expect(expiresAt).toBeLessThanOrEqual(after + 60 * 60_000)
   })
 })

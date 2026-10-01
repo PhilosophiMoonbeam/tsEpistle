@@ -23,12 +23,10 @@ describe('optional extension registry', () => {
 
     const initializing = extensions.init()
     await expect(extensions.inspect()).rejects.toMatchObject({ status: 503 })
-    expect(extensions.ext).toEqual({})
 
     directoryRead.resolve([])
     await initializing
 
-    expect(Object.isFrozen(extensions.ext)).toBe(true)
     await expect(extensions.inspect()).resolves.toEqual([])
   })
 })

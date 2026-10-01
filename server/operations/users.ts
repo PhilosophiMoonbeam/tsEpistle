@@ -137,7 +137,6 @@ interface WikiUsers {
   }
   auth: {
     strategies: Record<string, unknown>
-    checkAssignUserToGroupAccess(requester: Express.User | undefined, groups: number[] | undefined): Promise<boolean>
     revokeUserTokens(input: { id: number; kind: 'u' }): void
   }
   data: { authentication: unknown }

@@ -38,13 +38,15 @@ describe('authentication workspace HTTP boundary', () => {
   })
   it('forwards the authenticated actor, exact review and secret actions without caching responses', async () => {
     const user = { id: 1, authVersion: 3 },
-      res = response(),
+      readResponse = response(),
+      saveResponse = response(),
       body = { providers: [{ key: 'org', secrets: { clientSecret: { action: 'keep' } } }], reason: 'Reviewed policy', fingerprint: 'review' }
-    await read({ user }, res)
+    await read({ user }, readResponse)
     expect(store.inspect).toHaveBeenCalledWith(user)
-    await save({ user, body }, res)
+    expect(readResponse.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    await save({ user, body: { ...body, ignored: 'not reviewed' } }, saveResponse)
     expect(store.save).toHaveBeenCalledWith(user, body)
-    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    expect(saveResponse.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
   })
   it('retries initialization only for the authenticated actor and reviewed fingerprint', async () => {
     const user = { id: 1, authVersion: 3 },

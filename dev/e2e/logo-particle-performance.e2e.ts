@@ -1481,6 +1481,8 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   const frameDrawCalls = frameField(frames, 'totalDrawCalls')
   const frameParticleInstances = frameField(frames, 'particleInstances')
   const frameTriangles = frameField(frames, 'triangles')
+  // These are application-declared scheduling diagnostics, not public GPU API counters.
+  // motionScheduledBytes is the logical motion attribute byteLength.
   const frameComputeDispatches = frameField(frames, 'computeDispatches')
   const frameMotionScheduledBytes = frameField(frames, 'motionScheduledBytes')
   const frameColorUploadBytes = frameField(frames, 'colorUploadBytes')
@@ -1681,13 +1683,13 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   )
   addExactViolation(
     violations,
-    'animation.frames.every(frame => frame.computeDispatches === 0)',
+    'animation.frames declare computeDispatches === 0 (scheduling diagnostic, not API-observed)',
     frames !== undefined && frameComputeDispatches.length === frames.length && frameComputeDispatches.every(sample => sample === 0) ? 1 : 0,
     1
   )
   addExactViolation(
     violations,
-    'animation.frames.every(frame => frame.motionScheduledBytes === 128000)',
+    'animation.frames declare motionScheduledBytes === 128000 (logical attribute byteLength)',
     frames !== undefined &&
       frameMotionScheduledBytes.length === frames.length &&
       frameMotionScheduledBytes.every(sample => sample === expectedActiveMotionBytes)
@@ -1697,7 +1699,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   )
   addExactViolation(
     violations,
-    'animation.frames.every(frame => frame.colorUploadBytes === 0)',
+    'animation.frames declare colorUploadBytes === 0 (scheduling diagnostic, not API-observed)',
     frames !== undefined && frameColorUploadBytes.length === frames.length && frameColorUploadBytes.every(sample => sample === 0) ? 1 : 0,
     1
   )
@@ -1772,12 +1774,6 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     'animation.lastMotion publishes only bounded aggregate keys',
     JSON.stringify(animation.lastMotionKeys) === JSON.stringify(motionDiagnosticKeys) ? 1 : 0,
     1
-  )
-  addExactViolation(
-    violations,
-    'animation.input.explosionCadenceMilliseconds === 700',
-    animationInput.explosionCadenceMilliseconds,
-    animationExplosionCadenceMilliseconds
   )
   addMinimumViolation(violations, 'animation.input.peakActiveExplosions >= 1', animation.maximumActiveExplosionCount, 1)
   addMaximumViolation(violations, 'animation.input.peakActiveExplosions <= 6', animation.maximumActiveExplosionCount, thresholds.activeExplosionMaximum)
@@ -1944,6 +1940,11 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
       frameInstrumentationFailures,
       draws: drawCalls,
       triangles,
+      schedulingDiagnosticProvenance: {
+        computeDispatches: 'application-declared scheduling diagnostic, not an observed API dispatch count',
+        motionScheduledBytes: 'logical motion attribute byteLength, not an observed API transfer',
+        colorUploadBytes: 'application-declared scheduling diagnostic, not observed color-buffer uploads'
+      },
       dynamicUploads: {
         logicalScheduledBytes: logicalDynamicUploadBytes,
         logicalDynamicUploadBytes,

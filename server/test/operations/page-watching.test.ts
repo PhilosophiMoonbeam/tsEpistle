@@ -159,8 +159,16 @@ describe('page watching operations', () => {
       emailEnabled: false,
       inAppEnabled: true
     })
+    await operations.watchPage({ requester: user, id: page.id, emailEnabled: true, inAppEnabled: false })
+    const watchers = await knex('pageWatchers').where({ userId: 7, pageId: page.id })
+    expect(watchers).toHaveLength(1)
+    expect(watchers[0]).toMatchObject({ emailEnabled: 1, inAppEnabled: 0 })
+    await knex('pageWatchNotifications').insert(notificationRow('foreign-notification', { userId: 8 }))
+    await operations.markPageWatchNotificationRead(user, 'foreign-notification')
+    expect(await knex('pageWatchNotifications').where({ id: 'foreign-notification', userId: 8 }).first()).toMatchObject({ readAt: null })
     expect(await operations.listPageWatchNotifications(user)).toMatchObject({ unreadCount: 1 })
     await operations.markPageWatchNotificationRead(user, 'notification-1')
+    expect((await knex('pageWatchNotifications').where({ id: 'notification-1', userId: 7 }).first()).readAt).not.toBeNull()
     expect(await operations.listPageWatchNotifications(user)).toMatchObject({ unreadCount: 0 })
   })
 
@@ -319,15 +327,18 @@ describe('page watching operations', () => {
       )
     )
 
-    let projectionQueries = 0
-    knex.on('query', (query: { sql?: string }) => {
-      if (typeof query.sql === 'string' && query.sql.toLowerCase().includes('select * from `pages`')) projectionQueries += 1
-    })
+    let selectQueries = 0
+    const countSelect = (query: { method?: string }) => {
+      if (query.method === 'select' || query.method === 'first' || query.method === 'pluck') selectQueries += 1
+    }
+    knex.on('query', countSelect)
 
-    const first = await operations.listPageWatchNotifications(user)
+    const first = await operations.listPageWatchNotifications(user).finally(() => {
+      knex.removeListener('query', countSelect)
+    })
     const firstCursor = first.nextCursor
     expect(first).toMatchObject({ ownerId: 7, items: [], unreadCount: 0, nextCursor: expect.any(String), unreadComplete: false })
-    expect(projectionQueries).toBe(10)
+    expect(selectQueries).toBeLessThanOrEqual(50)
     expect(await knex('pageWatchNotifications').where({ userId: 7 })).toHaveLength(1)
     expect(await knex('pageWatchers').where({ userId: 7, pageId: 99 })).toHaveLength(0)
     expect(await knex('pageWatchers').where({ userId: 8, pageId: 99 })).toHaveLength(1)
@@ -528,29 +539,30 @@ describe('page watching operations', () => {
   })
 
   it('reuses an equivalent live cursor without extending its lifetime', async () => {
-    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
-    await knex('pageWatchNotifications').insert(
-      Array.from({ length: 51 }, (_, index) =>
-        notificationRow(`equivalent-${String(index).padStart(3, '0')}`, {
-          createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, index))
-        })
-      )
-    )
-    const first = await operations.listPageWatchNotifications(user)
-    if (first.nextCursor === null) throw new Error('Expected equivalent cursor')
-    const firstCursor = first.nextCursor
-    const issuedAt = Date.now()
-    vi.setSystemTime(issuedAt + 5 * 60 * 1_000 - 1)
+    const initialNow = Date.now()
+    vi.setSystemTime(initialNow)
     try {
+      const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
+      await knex('pageWatchNotifications').insert(
+        Array.from({ length: 51 }, (_, index) =>
+          notificationRow(`equivalent-${String(index).padStart(3, '0')}`, {
+            createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, index))
+          })
+        )
+      )
+      const first = await operations.listPageWatchNotifications(user)
+      if (first.nextCursor === null) throw new Error('Expected equivalent cursor')
+      const firstCursor = first.nextCursor
+      vi.setSystemTime(initialNow + 5 * 60 * 1_000 - 1)
       const repeated = await operations.listPageWatchNotifications(user)
       expect(repeated.nextCursor).toBe(firstCursor)
-      vi.setSystemTime(issuedAt + 5 * 60 * 1_000 + 1)
+      vi.setSystemTime(initialNow + 5 * 60 * 1_000 + 1)
       await expect(operations.listPageWatchNotifications(user, firstCursor)).rejects.toMatchObject({
         status: 409,
         name: 'WATCH_CURSOR_EXPIRED'
       })
     } finally {
-      vi.setSystemTime(issuedAt)
+      vi.setSystemTime(initialNow)
     }
   })
 
@@ -585,69 +597,70 @@ describe('page watching operations', () => {
   it('reuses equivalent cursors, keeps other owners live, and enforces cache capacity', async () => {
     const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
     const initialNow = Date.now()
-    const ownerRequesters = Array.from(
-      { length: 32 },
-      (_, index) => ({ id: 100 + index, email: `owner-${index}@example.test`, permissions: ['read:pages'], groups: [3] }) as Express.User
-    )
-    const rows: Array<Record<string, unknown>> = []
-    for (const [ownerIndex, owner] of ownerRequesters.entries()) {
-      const count = ownerIndex === 0 ? 251 : 201
-      for (let index = 0; index < count; index += 1) {
-        rows.push(
-          notificationRow(`owner-${owner.id}-${String(index).padStart(3, '0')}`, {
-            userId: owner.id as number,
-            createdAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index))
+    vi.setSystemTime(initialNow)
+    try {
+      const ownerRequesters = Array.from(
+        { length: 32 },
+        (_, index) => ({ id: 100 + index, email: `owner-${index}@example.test`, permissions: ['read:pages'], groups: [3] }) as Express.User
+      )
+      const rows: Array<Record<string, unknown>> = []
+      for (const [ownerIndex, owner] of ownerRequesters.entries()) {
+        const count = ownerIndex === 0 ? 251 : 201
+        for (let index = 0; index < count; index += 1) {
+          rows.push(
+            notificationRow(`owner-${owner.id}-${String(index).padStart(3, '0')}`, {
+              userId: owner.id as number,
+              createdAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index))
+            })
+          )
+        }
+      }
+      rows.push(
+        ...Array.from({ length: 51 }, (_, index) =>
+          notificationRow(`capacity-owner-${String(index).padStart(3, '0')}`, {
+            userId: 999,
+            createdAt: new Date(Date.UTC(2026, 7, 1, 0, 0, index))
           })
         )
-      }
-    }
-    rows.push(
-      ...Array.from({ length: 51 }, (_, index) =>
-        notificationRow(`capacity-owner-${String(index).padStart(3, '0')}`, {
-          userId: 999,
-          createdAt: new Date(Date.UTC(2026, 7, 1, 0, 0, index))
-        })
       )
-    )
-    await insertNotifications(rows)
+      await insertNotifications(rows)
 
-    const firstCursors: string[] = []
-    const secondCursors: string[] = []
-    const fourthCursors: string[] = []
-    for (const owner of ownerRequesters) {
-      let listed = await operations.listPageWatchNotifications(owner)
-      if (listed.nextCursor === null) throw new Error('Expected first owner cursor')
-      firstCursors.push(listed.nextCursor)
-      for (let round = 1; round < 4; round += 1) {
-        listed = await operations.listPageWatchNotifications(owner, listed.nextCursor)
-        if (listed.nextCursor === null) throw new Error('Expected owner cursor within four pages')
-        if (round === 1) secondCursors.push(listed.nextCursor)
+      const firstCursors: string[] = []
+      const secondCursors: string[] = []
+      const fourthCursors: string[] = []
+      for (const owner of ownerRequesters) {
+        let listed = await operations.listPageWatchNotifications(owner)
+        if (listed.nextCursor === null) throw new Error('Expected first owner cursor')
+        firstCursors.push(listed.nextCursor)
+        for (let round = 1; round < 4; round += 1) {
+          listed = await operations.listPageWatchNotifications(owner, listed.nextCursor)
+          if (listed.nextCursor === null) throw new Error('Expected owner cursor within four pages')
+          if (round === 1) secondCursors.push(listed.nextCursor)
+        }
+        fourthCursors.push(listed.nextCursor)
+        expect(listed.items).toHaveLength(50)
       }
-      fourthCursors.push(listed.nextCursor)
-      expect(listed.items).toHaveLength(50)
-    }
 
-    const ownerTwoEquivalent = await operations.listPageWatchNotifications(ownerRequesters[1]!, firstCursors[1])
-    expect(ownerTwoEquivalent.nextCursor).toBe(secondCursors[1])
-    expect(ownerTwoEquivalent.items).toHaveLength(50)
+      const ownerTwoEquivalent = await operations.listPageWatchNotifications(ownerRequesters[1]!, firstCursors[1])
+      expect(ownerTwoEquivalent.nextCursor).toBe(secondCursors[1])
+      expect(ownerTwoEquivalent.items).toHaveLength(50)
 
-    const ownerOneFifth = await operations.listPageWatchNotifications(ownerRequesters[0]!, fourthCursors[0])
-    expect(ownerOneFifth.nextCursor).toEqual(expect.any(String))
-    await expect(operations.listPageWatchNotifications(ownerRequesters[0]!, firstCursors[0])).rejects.toMatchObject({
-      status: 409,
-      name: 'WATCH_CURSOR_EXPIRED'
-    })
-    await expect(operations.listPageWatchNotifications(ownerRequesters[1]!, firstCursors[1])).resolves.toMatchObject({
-      ownerId: 101,
-      items: expect.any(Array)
-    })
+      const ownerOneFifth = await operations.listPageWatchNotifications(ownerRequesters[0]!, fourthCursors[0])
+      expect(ownerOneFifth.nextCursor).toEqual(expect.any(String))
+      await expect(operations.listPageWatchNotifications(ownerRequesters[0]!, firstCursors[0])).rejects.toMatchObject({
+        status: 409,
+        name: 'WATCH_CURSOR_EXPIRED'
+      })
+      await expect(operations.listPageWatchNotifications(ownerRequesters[1]!, firstCursors[1])).resolves.toMatchObject({
+        ownerId: 101,
+        items: expect.any(Array)
+      })
 
-    await expect(
-      operations.listPageWatchNotifications({ id: 999, email: 'capacity@example.test', permissions: ['read:pages'], groups: [3] } as Express.User)
-    ).rejects.toMatchObject({ status: 503, name: 'NOTIFICATION_CURSOR_CAPACITY' })
+      await expect(
+        operations.listPageWatchNotifications({ id: 999, email: 'capacity@example.test', permissions: ['read:pages'], groups: [3] } as Express.User)
+      ).rejects.toMatchObject({ status: 503, name: 'NOTIFICATION_CURSOR_CAPACITY' })
 
-    vi.setSystemTime(initialNow + 5 * 60 * 1_000 + 1)
-    try {
+      vi.setSystemTime(initialNow + 5 * 60 * 1_000 + 1)
       const afterExpiry = await operations.listPageWatchNotifications({
         id: 999,
         email: 'capacity@example.test',

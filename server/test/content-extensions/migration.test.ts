@@ -35,14 +35,21 @@ describe('content extension registry migration', () => {
   })
 
   it('is idempotent for restored databases', async () => {
-    await createRegistry(db)
-    await createRegistry(db)
-    await installRichExtensions(db)
-    await installRichExtensions(db)
-    await installVisibleExtensions(db)
-    await installVisibleExtensions(db)
+    await db('users').insert({ id: 7 })
+    for (const migrate of [createRegistry, installRichExtensions, installVisibleExtensions]) {
+      await migrate(db)
+      await db(tableName).update({
+        isEnabled: true,
+        version: 2,
+        updatedAt: '2026-08-14T12:00:00.000Z',
+        updatedBy: 7
+      })
+      const beforeReplay = await db(tableName).orderBy('key')
 
-    expect(await db.schema.hasTable(tableName)).toBe(true)
+      await migrate(db)
+
+      expect(await db(tableName).orderBy('key')).toEqual(beforeReplay)
+    }
   })
 
   it('rolls back only the rich extension additions', async () => {

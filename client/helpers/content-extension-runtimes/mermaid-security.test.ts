@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
-import { MERMAID_MAX_DIAGRAMS_PER_ROOT, parseSafeMermaidSvg, selectMermaidRenderHosts } from './mermaid.ts'
+import { parseSafeMermaidSvg } from './mermaid.ts'
+// @ts-expect-error css-tree 3.2.1 does not publish TypeScript declarations.
+import { parse, walk } from 'css-tree'
+
+type CssFunction = {
+  name: string
+  children: { forEach: (callback: (node: { type: string; value: string }) => void) => void }
+}
 
 const svgWithStyle = (style: string, body = '<rect class="node" width="20" height="20" />'): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" id="safe-mermaid" viewBox="0 0 20 20"><style>${style}</style>${body}</svg>`
@@ -9,13 +16,6 @@ afterEach(() => {
 })
 
 describe('Mermaid SVG security boundary', () => {
-  it('selects only the first eight distinct caller-provided hosts', () => {
-    const hosts = Array.from({ length: 9 }, () => document.createElement('figure'))
-    const selected = selectMermaidRenderHosts([hosts[0]!, hosts[1]!, hosts[0]!, ...hosts.slice(2)])
-
-    expect([...selected]).toEqual(hosts.slice(0, MERMAID_MAX_DIAGRAMS_PER_ROOT))
-  })
-
   it.each([
     ['escaped url function', svgWithStyle('.node { fill: u\\72l(https://attacker.test/pixel) }')],
     ['escaped url property', svgWithStyle('.node { u\\72l: red }')],
@@ -47,7 +47,37 @@ describe('Mermaid SVG security boundary', () => {
 
     expect(style).toContain('#safe-mermaid .node')
     expect(style).not.toContain('ignored')
-    expect(style).toContain('fill:rgb(1 2 3/.5)')
+    const fills: number[][] = []
+    walk(parse(style), {
+      visit: 'Rule',
+      enter(rule: { prelude: unknown; block: unknown }) {
+        const selectors: string[] = []
+        walk(rule.prelude, {
+          enter(node: { type: string; name: string }) {
+            if (node.type === 'IdSelector' || node.type === 'ClassSelector') selectors.push(`${node.type}:${node.name}`)
+          }
+        })
+        if (!selectors.includes('IdSelector:safe-mermaid') || !selectors.includes('ClassSelector:node')) return
+        walk(rule.block, {
+          visit: 'Declaration',
+          enter(node: { property: string; value: unknown }) {
+            if (node.property !== 'fill') return
+            const numbers: number[] = []
+            walk(node.value, {
+              visit: 'Function',
+              enter(value: CssFunction) {
+                expect(value.name).toBe('rgb')
+                value.children.forEach(argument => {
+                  if (argument.type === 'Number') numbers.push(Number(argument.value))
+                })
+              }
+            })
+            fills.push(numbers)
+          }
+        })
+      }
+    })
+    expect(fills).toEqual([[1, 2, 3, 0.5]])
   })
 
   it('retains safe local marker references and distinctive static styling', async () => {
@@ -61,7 +91,18 @@ describe('Mermaid SVG security boundary', () => {
     const styledPath = svg.querySelector('path.node')
 
     expect(styledPath?.getAttribute('marker-end')).toBe('url(#arrow)')
-    expect(styledPath?.getAttribute('transform')).toBe('translate(1,2)')
+    const transforms: Array<{ name: string; numbers: number[] }> = []
+    walk(parse(styledPath?.getAttribute('transform') ?? '', { context: 'value' }), {
+      visit: 'Function',
+      enter(node: CssFunction) {
+        const numbers: number[] = []
+        node.children.forEach(argument => {
+          if (argument.type === 'Number') numbers.push(Number(argument.value))
+        })
+        transforms.push({ name: node.name, numbers })
+      }
+    })
+    expect(transforms).toEqual([{ name: 'translate', numbers: [1, 2] }])
     expect(svg.querySelector('style')?.textContent).toContain('#fef3c7')
     expect(svg.querySelector('style')?.textContent).toContain('#92400e')
   })

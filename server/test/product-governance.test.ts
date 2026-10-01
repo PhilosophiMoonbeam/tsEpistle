@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import * as yaml from 'js-yaml'
 
 import { describe, expect, it } from './bun-test.mts'
 
@@ -9,6 +10,16 @@ type ProductPackage = {
     upstreamVersion: string
   }
   dependencies: Record<string, string>
+  devDependencies: Record<string, string>
+}
+
+type BuildWorkflow = {
+  jobs: Record<string, {
+    steps?: Array<{
+      uses?: string
+      with?: { path?: string, platforms?: string, file?: string, artifacts?: string }
+    }>
+  }>
 }
 
 
@@ -17,7 +28,7 @@ const readText = (path: string): Promise<string> => readFile(path, 'utf8')
 const readJson = async <T>(path: string): Promise<T> => JSON.parse(await readText(path)) as T
 
 describe('active product governance contracts', () => {
-  it('keeps upgrade and artifact promises aligned with package and release facts', async () => {
+  it('checks supported upstream identity, public repository references and active Linux artifact configuration', async () => {
     const [packageJson, readme, security, buildWorkflow] = await Promise.all([
       readJson<ProductPackage>('package.json'),
       readText('README.md'),
@@ -26,43 +37,50 @@ describe('active product governance contracts', () => {
     ])
 
     const upstreamSource = `${packageJson.product.upstreamName} ${packageJson.product.upstreamVersion}`
-    const upgradePromise = `The only supported upstream database upgrade source is exactly ${upstreamSource}.`
-    const artifactPromise = 'Official binary artifacts are the Linux archive and Linux container images; Windows archives are not published or supported.'
+    const workflow = yaml.load(buildWorkflow) as BuildWorkflow
+    const steps = Object.values(workflow.jobs).flatMap(job => job.steps ?? [])
+    const artifactPaths = steps
+      .filter(step => step.uses?.startsWith('actions/upload-artifact@'))
+      .flatMap(step => (step.with?.path ?? '').split('\n').map(path => path.trim()))
+    const dockerBuilds = steps.filter(step => step.uses?.startsWith('docker/build-push-action@'))
+    const applicationPlatforms = dockerBuilds
+      .filter(step => ['dev/build/Dockerfile', 'dev/build-arm/Dockerfile'].includes(step.with?.file ?? ''))
+      .flatMap(step => (step.with?.platforms ?? '').split(',').map(platform => platform.trim()).filter(Boolean))
+    const releaseArtifacts = steps.flatMap(step => step.with?.artifacts ?? [])
 
     expect(upstreamSource).toBe('Wiki.js 2.5.314')
     expect(readme).toContain(packageJson.product.containerRepository)
     expect(security).toContain(packageJson.product.containerRepository)
-    expect(buildWorkflow).toContain('path: tsepistle-linux.tar.gz')
-    expect(buildWorkflow).toContain('platforms: linux/amd64')
-    expect(buildWorkflow).toContain('platforms: linux/arm64')
-    expect(buildWorkflow).not.toMatch(/tsepistle-windows|windows\.(?:zip|tar)/i)
+    expect(artifactPaths).toContain('tsepistle-linux.tar.gz')
+    expect(applicationPlatforms).toContain('linux/amd64')
+    expect(applicationPlatforms).toContain('linux/arm64')
+    expect([...artifactPaths, ...releaseArtifacts].join('\n')).not.toMatch(/tsepistle-windows|windows\.(?:zip|tar)/i)
+    for (const step of dockerBuilds) {
+      for (const platform of (step.with?.platforms ?? '').split(',').filter(Boolean)) {
+        expect(platform.trim()).toMatch(/^linux\//)
+      }
+    }
 
     for (const publicContract of [readme, security]) {
-      expect(publicContract).toContain(upgradePromise)
-      expect(publicContract).toContain(artifactPromise)
       expect(publicContract).not.toMatch(/Wiki\.js 2\.x\b|Wiki\.js 2(?!\.\d)/i)
     }
   })
 
-  it('identifies Tiptap as the current visual-editor engine and the CKEditor plan as superseded', async () => {
-    const [packageJson, plan, visualMarkdown, visualHtml, definition] = await Promise.all([
+  it('keeps Tiptap package versions aligned, excludes CKEditor dependencies and preserves Markdown editor metadata', async () => {
+    const [packageJson, definition] = await Promise.all([
       readJson<ProductPackage>('package.json'),
-      readText('docs/.planning/2026-08-14_visual-markdown-ckeditor-plan.md'),
-      readText('client/components/editor/editor-visual-markdown.vue'),
-      readText('client/components/editor/editor-ckeditor.vue'),
       readText('server/modules/editor/visual-markdown/definition.yml')
     ])
 
-    expect(packageJson.dependencies['@tiptap/core']).toBe(packageJson.dependencies['@tiptap/vue-3'])
-    expect(packageJson.dependencies['@tiptap/markdown']).toBe(packageJson.dependencies['@tiptap/core'])
-    expect(Object.keys(packageJson.dependencies).some(name => name.toLowerCase().includes('ckeditor'))).toBe(false)
-    expect(visualMarkdown).toContain("import TiptapEditor from './tiptap/editor.vue'")
-    expect(visualHtml).toContain("import TiptapEditor from './tiptap/editor.vue'")
-    expect(visualHtml).toContain("tiptap-editor(format='html'")
-    expect(definition).toContain('key: visual-markdown')
-    expect(definition).toContain('contentType: markdown')
-    expect(plan).toContain('Status: historical record — superseded by the current Tiptap implementation and contract; not ready for implementation')
-    expect(plan).toContain('Do not implement it or use it as an active product contract.')
-    expect(plan).not.toContain('Status: ready for implementation')
+    const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies }
+    const versions = ['@tiptap/core', '@tiptap/vue-3', '@tiptap/markdown'].map(name => dependencies[name])
+    for (const version of versions) {
+      expect(typeof version).toBe('string')
+      expect(version).toMatch(/\S/)
+    }
+    expect(versions[1]).toBe(versions[0])
+    expect(versions[2]).toBe(versions[0])
+    expect([...Object.keys(packageJson.dependencies), ...Object.keys(packageJson.devDependencies)].some(name => name.toLowerCase().includes('ckeditor'))).toBe(false)
+    expect(yaml.load(definition)).toMatchObject({ key: 'visual-markdown', contentType: 'markdown' })
   })
 })

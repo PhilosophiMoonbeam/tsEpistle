@@ -1,11 +1,9 @@
+import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 import { up as migrateFederatedLogin } from '../../db/migrations/tsepistle-000030-federated-login-state.ts'
-import {
-  FEDERATED_LOGIN_TTL_MS,
-  FederatedLoginStore
-} from '../../repositories/federated-login.ts'
+import { FederatedLoginStore } from '../../repositories/federated-login.ts'
 
 const createDatabase = async (): Promise<Knex> => {
   const database = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
@@ -55,6 +53,8 @@ describe('federated login durable authority', () => {
     await createLiveSession(database, 'session-a')
     const row = await database('federatedLoginAttempts').first()
     expect(row?.payload).not.toContain(issued.state)
+    expect(row?.stateHash).toEqual(createHash('sha256').update(issued.state).digest())
+    expect(JSON.stringify(row)).not.toContain(issued.state)
     expect(await store.consume({
       sessionId: 'session-a',
       providerKey: 'provider-a',
@@ -280,7 +280,7 @@ describe('federated login durable authority', () => {
       issuedAt
     })
     await createLiveSession(database, 'session-a')
-    now = new Date(issuedAt.getTime() + FEDERATED_LOGIN_TTL_MS - 1)
+    now = new Date('2026-01-01T00:09:59.999Z')
     expect(await store.consume({
       sessionId: 'session-a',
       providerKey: 'provider-a',
@@ -298,7 +298,7 @@ describe('federated login durable authority', () => {
       issuedAt
     })
     await createLiveSession(database, 'session-b')
-    now = new Date(issuedAt.getTime() + FEDERATED_LOGIN_TTL_MS)
+    now = new Date('2026-01-01T00:10:00.000Z')
     expect(await store.consume({
       sessionId: 'session-b',
       providerKey: 'provider-a',

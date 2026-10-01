@@ -19,13 +19,19 @@ describe('Agent private media boundary', () => {
     let seen = false
     const fetcher: typeof fetch = async (input, init) => {
       expect(input).toBe(`/_api/agents/sessions/${sessionId}/media`)
+      expect(init?.method).toBe('POST')
       expect(init?.credentials).toBe('same-origin')
       const headers = new Headers(init?.headers)
       expect(headers.get('x-wiki-csrf')).toBe('signed-csrf')
       expect(headers.has('content-type')).toBe(false)
       expect(init?.body).toBeInstanceOf(FormData)
       if (!(init?.body instanceof FormData)) throw new Error('Expected multipart upload')
-      expect(init.body.get('file')).toBeInstanceOf(File)
+      const file = init.body.get('file')
+      expect(file).toBeInstanceOf(File)
+      if (!(file instanceof File)) throw new Error('Expected uploaded File')
+      expect(file.name).toBe('diagram.png')
+      expect(file.type).toBe('image/png')
+      expect(await file.text()).toBe('abc')
       seen = true
       return response({ media }, 201)
     }
@@ -38,21 +44,37 @@ describe('Agent private media boundary', () => {
     expect(agentMediaContentUrl(mediaId)).toBe(`/_api/agents/media/${mediaId}/content`)
   })
   it('deletes unbound uploads through the authenticated write endpoint', async () => {
+    let requests = 0
     await deleteAgentMedia(async (input, init) => {
+      requests++
       expect(input).toBe(`/_api/agents/media/${mediaId}`)
       expect(init?.method).toBe('DELETE')
+      expect(init?.credentials).toBe('same-origin')
       expect(new Headers(init?.headers).get('x-wiki-csrf')).toBe('csrf')
       return new Response(null, { status: 204 })
     }, 'csrf', mediaId)
+    expect(requests).toBe(1)
   })
   it('admits dictation with the session fence and reads only validated run results', async () => {
     const request = { clientRequestId: crypto.randomUUID(), expectedSessionVersion: 4, profileResolutionToken: 'signed-resolution', attachmentId: mediaId }
     const runId = await startAgentTranscription(async (input, init) => {
       expect(input).toBe(`/_api/agents/sessions/${sessionId}/transcriptions`)
+      expect(init?.method).toBe('POST')
+      expect(new Headers(init?.headers).get('x-wiki-csrf')).toBe('csrf')
       expect(JSON.parse(String(init?.body))).toEqual(request)
       return response({ runId: mediaId }, 202)
     }, 'csrf', sessionId, request)
-    expect(await getAgentTranscription(async () => response({ status: 'succeeded', text: 'An editable draft' }), 'csrf', runId)).toEqual({ status: 'succeeded', text: 'An editable draft' })
-    await expect(getAgentTranscription(async () => response({ status: 'succeeded', text: { html: '<script>' } }), 'csrf', runId)).rejects.toThrow('invalid response')
+    expect(runId).toBe(mediaId)
+    const requests: { input: RequestInfo | URL; credentials: RequestCredentials | undefined }[] = []
+    const transcriptFetcher = (value: unknown): typeof fetch => async (input, init) => {
+      requests.push({ input, credentials: init?.credentials })
+      return response(value)
+    }
+    expect(await getAgentTranscription(transcriptFetcher({ status: 'succeeded', text: 'An editable draft' }), 'csrf', runId)).toEqual({ status: 'succeeded', text: 'An editable draft' })
+    await expect(getAgentTranscription(transcriptFetcher({ status: 'succeeded', text: { html: '<script>' } }), 'csrf', runId)).rejects.toThrow('invalid response')
+    expect(requests).toEqual([
+      { input: `/_api/agents/runs/${mediaId}/transcription`, credentials: 'same-origin' },
+      { input: `/_api/agents/runs/${mediaId}/transcription`, credentials: 'same-origin' }
+    ])
   })
 })

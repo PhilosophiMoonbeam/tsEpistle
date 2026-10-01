@@ -1,18 +1,57 @@
 import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import fs from 'node:fs'
 import { accountActionTitle, accountProfileIssues } from '../../../shared/account-policy.ts'
+import type { AccountWorkspace } from '../../../shared/account-policy.ts'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
+import { document, resetBody } from '../../test/browser-dom.mts'
+
+// Runtime imports must follow browser-dom: Vuetify snapshots browser capabilities during module evaluation.
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
 const source = fs.readFileSync('client/components/admin/admin-users-edit.vue', 'utf8'),
   script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)![1]!
 const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .+$/gm, '').replace('export default', 'const component ='))
-const snapshot = {
+const template = compileTemplate({
+  source: parse(source).descriptor.template!.content,
+  filename: 'client/components/admin/admin-users-edit.vue',
+  id: 'account-workspace-conflict',
+  compilerOptions: { mode: 'function' }
+})
+if (template.errors.length) throw template.errors[0]
+const renderAccount = new Function('Vue', template.code)(Vue)
+const settle = async () => {
+  for (let pass = 0; pass < 4; pass++) {
+    await Promise.resolve()
+    await Vue.nextTick()
+  }
+}
+const snapshot: AccountWorkspace = {
   id: 7,
   name: 'Alex',
   email: 'alex@example.invalid',
+  providerKey: 'local',
+  providerTitle: 'Local sign-in',
+  provider: { key: 'local', title: 'Local sign-in', strategy: 'local', enabled: true, available: true, localPassword: true, supportsTwoFactor: true },
+  isSystem: false,
+  isActive: true,
+  isVerified: true,
+  twoFactor: 'off',
+  createdAt: '2026-09-06T00:00:00.000Z',
+  updatedAt: '2026-09-06T00:00:00.000Z',
+  lastLoginAt: null,
+  groups: [{ id: 3, name: 'Authors' }],
+  permissions: ['read:pages'],
+  mustChangePassword: false,
+  sessionsRevokedAt: null,
+  privateOwnershipBlocksDeletion: false,
+  contributionCounts: { pagesCreated: 0, pagesAuthored: 0, comments: 0, assets: 0 },
   profile: { name: 'Alex', email: 'alex@example.invalid', location: 'Before', jobTitle: '', timezone: 'UTC', groups: [3] },
   fingerprint: 'version-one',
-  availableGroups: [{ id: 3, name: 'Authors', permissions: ['read:pages'], canAssign: true }],
-  capabilities: { edit: true, actions: ['deactivate', 'end-sessions'] },
+  availableGroups: [{ id: 3, name: 'Authors', permissions: ['read:pages'], canAssign: true, isSystem: false }],
+  capabilities: { edit: true, password: true, delete: true, actions: ['deactivate', 'end-sessions'], explanation: '' },
   history: []
 }
 function arrange(overrides: Record<string, unknown> = {}) {
@@ -26,11 +65,11 @@ function arrange(overrides: Record<string, unknown> = {}) {
     sendAccountWelcomeEmail: vi.fn(),
     ...overrides
   }
-  const window = { confirm: vi.fn().mockReturnValue(true), location: { assign: vi.fn() } }
+  const window = { confirm: vi.fn().mockReturnValue(true), location: { assign: vi.fn() }, addEventListener: vi.fn(), removeEventListener: vi.fn() }
   const dependencies = {
     passwordPolicyMixin: {},
     newPasswordIssue,
-    AsyncState: {},
+    AsyncState: { render: () => Vue.h('div') },
     accountActionTitle,
     accountProfileIssues,
     wikiStore: { user: { id: 1 } },
@@ -61,19 +100,65 @@ describe('account workspace review and recovery', () => {
     expect(state.dirty).toBe(false)
   })
   it('keeps the draft, reason and saved baseline after a conflict and disables repeat confirmation', async () => {
-    const { state, transport } = arrange()
-    await state.reload()
-    state.draft.location = ''
-    state.open('profile')
-    state.reason = 'Remove old location'
-    transport.saveAccountProfile.mockRejectedValue(Object.assign(new Error('Account changed'), { status: 409 }))
-    await state.confirm()
-    expect(state.dialog).toBe(true)
-    expect(state.draft.location).toBe('')
-    expect(state.saved.profile.location).toBe('Before')
-    expect(state.reason).toBe('Remove old location')
-    expect(state.conflict).toBe(true)
-    expect(state.busy).toBe(false)
+    const arranged = arrange()
+    const { transport } = arranged
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp({ ...arranged.component, render: renderAccount })
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.config.globalProperties.$route = arranged.state.$route
+    app.config.globalProperties.$router = arranged.state.$router
+    app.config.globalProperties.passwordMinimum = 12
+    app.component('AdminHero', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('header', [slots.default?.(), slots.actions?.()]) }))
+    app.component('RouterLink', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('a', slots.default?.()) }))
+    const state = app.mount(host) as unknown as typeof arranged.state
+    const confirmButton = () => {
+      const button = document.querySelector<HTMLButtonElement>('.account-review-dialog .v-card-actions button:last-child')
+      if (!button) throw new Error('The account review confirmation button did not render')
+      return button
+    }
+    try {
+      await settle()
+      state.draft.location = ''
+      state.open('profile')
+      state.reason = 'Remove old location'
+      transport.saveAccountProfile.mockRejectedValueOnce(Object.assign(new Error('Account changed'), { status: 409 }))
+      await settle()
+      expect(confirmButton().disabled).toBe(false)
+      confirmButton().click()
+      await settle()
+      expect(state.dialog).toBe(true)
+      expect(state.draft.location).toBe('')
+      expect(state.saved.profile.location).toBe('Before')
+      expect(state.reason).toBe('Remove old location')
+      expect(state.conflict).toBe(true)
+      expect(state.busy).toBe(false)
+      expect(confirmButton().disabled).toBe(true)
+      confirmButton().click()
+      await settle()
+      expect(transport.saveAccountProfile).toHaveBeenCalledOnce()
+      const reloadButton = document.querySelector<HTMLButtonElement>('.account-review-dialog .v-alert button')
+      if (!reloadButton) throw new Error('The conflict recovery reload button did not render')
+      reloadButton.click()
+      await settle()
+      expect(state.dialog).toBe(false)
+      expect(state.dirty).toBe(false)
+      state.draft.location = ''
+      state.open('profile')
+      state.reason = 'Review the refreshed account'
+      transport.saveAccountProfile.mockResolvedValue({ ...snapshot, profile: { ...snapshot.profile, location: '' }, fingerprint: 'version-two' })
+      await settle()
+      expect(confirmButton().disabled).toBe(false)
+      confirmButton().click()
+      await settle()
+      expect(transport.saveAccountProfile).toHaveBeenCalledTimes(2)
+      expect(state.dialog).toBe(false)
+      expect(state.saved.fingerprint).toBe('version-two')
+    } finally {
+      app.unmount()
+      host.remove()
+      resetBody()
+    }
   })
   it('sends a fixed draft snapshot and keeps navigation locked through a save', async () => {
     let resolve: (value: unknown) => void = () => {}
@@ -134,7 +219,7 @@ describe('account workspace review and recovery', () => {
     expect(state.actionError).toBe('')
     expect(state.dialog).toBe(false)
   })
-  it('retains uncertain outcomes without changing saved status or repeating a request', async () => {
+  it('retains uncertain outcomes without changing saved status or automatically retrying a request', async () => {
     const { state, transport } = arrange()
     await state.reload()
     state.open('deactivate')

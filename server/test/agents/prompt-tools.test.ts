@@ -31,10 +31,15 @@ describe('prompt tool protocol', () => {
     expect(message.match(/<wiki-tool-call>/gu)).toBeNull()
   })
 
-  it('publishes a compact schema catalog without native API syntax', () => {
+  it('preserves action identity and argument schema in the prompt catalog', () => {
     const instructions = promptToolInstructions([{ name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }])
-    expect(instructions).toContain('one action per turn')
-    expect(instructions).toContain('"name":"wiki_get_page"')
-    expect(instructions).toContain('"id":{"type":"number","description":"Page ID"}')
+    const catalog: unknown = JSON.parse(instructions.match(/\n(\[[\s\S]*\])\s*$/u)?.[1] ?? 'null')
+    expect(catalog).toEqual([
+      {
+        name: 'wiki_get_page',
+        description: 'Read a page',
+        parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } }
+      }
+    ])
   })
 })

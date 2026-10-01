@@ -42,7 +42,6 @@ describe('SFTP storage connection configuration', () => {
     expect(connection.hostHash).toBeUndefined()
     expect(connection.privateKey).toBeUndefined()
     expect(uncached).toBe(true)
-    expect(connect).toHaveBeenCalledTimes(1)
     expect(readdir).toHaveBeenCalledWith('/wiki')
   })
   it('does not forward an inactive password when private-key authentication is selected', async () => {

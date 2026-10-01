@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import * as ts from 'typescript'
+import { OFFLINE_CONTENT_TYPE, OFFLINE_HTML_SANITIZER_VERSION, OfflineSnapshotRecordSchema } from '../../../shared/offline.ts'
 
 const compileSearchMethods = (source, names, dependencies) => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
@@ -45,6 +46,24 @@ const compileSearchMethods = (source, names, dependencies) => {
     dependencies.searchPreparedOfflineDocumentsAsync,
     dependencies.OFFLINE_SEARCH_RESULT_LIMIT
   )
+}
+
+const compileSnapshotAdapters = source => {
+  const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
+  if (!script) throw new Error('Search component script was not found.')
+  const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const names = new Set(['OFFLINE_LOCALE_PATTERN', 'isOfflineLocale', 'isOfflineSnapshotRecord', 'isOfflineSnapshotExpired', 'toOfflineSearchDocument'])
+  const declarations = sourceFile.statements.filter(statement =>
+    ts.isVariableStatement(statement) && statement.declarationList.declarations.some(declaration =>
+      ts.isIdentifier(declaration.name) && names.has(declaration.name.text)
+    )
+  )
+  if (declarations.length !== names.size) throw new Error('Offline snapshot adapters were not found.')
+  const compiled = ts.transpileModule(
+    `${declarations.map(node => node.getText(sourceFile)).join('\n')}\nreturn { isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument }`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }
+  ).outputText
+  return new Function(compiled)()
 }
 
 const deferred = () => {
@@ -347,8 +366,34 @@ describe('inline Ask mode contract', () => {
     })
     try {
       const pendingByQuery = new Map()
+      const adapters = compileSnapshotAdapters(search)
+      const snapshots = [[1, 'stale', 'Stale'], [2, 'latest', 'Latest']].map(([pageId, path, title]) =>
+        OfflineSnapshotRecordSchema.parse({
+          siteId: window.location.origin,
+          pageId,
+          locale: 'en',
+          byteSize: 128,
+          lastOpenedAt: '2026-01-01T00:00:00.000Z',
+          snapshot: {
+            schemaVersion: 1,
+            pageId,
+            locale: 'en',
+            path,
+            canonicalPath: `/en/${path}`,
+            title,
+            description: '',
+            sourceRevision: 'revision-1',
+            capturedAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: null,
+            content: { representation: OFFLINE_CONTENT_TYPE, sanitizerVersion: OFFLINE_HTML_SANITIZER_VERSION, html: `<p>${title}</p>` },
+            searchText: title,
+            contentType: OFFLINE_CONTENT_TYPE,
+            integrity: `snapshot-${pageId}`
+          }
+        })
+      )
       const storage = {
-        readSnapshotCorpus: async () => ({ snapshots: [], corpusRevision: 1, sessionGeneration: 1 }),
+        readSnapshotCorpus: async () => ({ snapshots, corpusRevision: 1, sessionGeneration: 1 }),
         close: () => {}
       }
       const methods = compileSearchMethods(search, ['runOfflineSearch'], {
@@ -356,15 +401,14 @@ describe('inline Ask mode contract', () => {
         getErrorMessage: value => (value instanceof Error ? value.message : String(value)),
         wikiStore: { page: { locale: 'en', path: 'guide' } },
         openOfflineStorage: async () => storage,
-        isOfflineSnapshotRecord: () => false,
-        isOfflineSnapshotExpired: () => false,
-        toOfflineSearchDocument: () => {
-          throw new Error('No snapshot should be admitted.')
-        },
-        prepareOfflineSearchCorpus: () => ({}),
-        searchPreparedOfflineDocumentsAsync: (_corpus, query) => {
+        ...adapters,
+        prepareOfflineSearchCorpus: documents => documents,
+        // Deliberately complete ranking after abort to exercise the component's publication fence.
+        searchPreparedOfflineDocumentsAsync: (documents, query) => {
           const request = deferred()
-          pendingByQuery.set(query, request)
+          const document = documents.find(candidate => candidate.path === query)
+          if (!document) throw new Error(`No admitted snapshot matches ${query}.`)
+          pendingByQuery.set(query, { ...request, document })
           return request.promise
         },
         OFFLINE_SEARCH_RESULT_LIMIT: 50
@@ -406,21 +450,14 @@ describe('inline Ask mode contract', () => {
       for (let turn = 0; turn < 4; turn += 1) await Promise.resolve()
       expect(pendingByQuery.has('latest')).toBe(true)
 
-      const document = {
-        pageId: 2,
-        title: 'Latest',
-        description: '',
-        path: 'latest',
-        locale: 'en'
-      }
-      const latestResponse = { results: [{ document, score: 1 }], hasMore: false }
+      const latestResponse = { results: [{ document: pendingByQuery.get('latest').document, score: 1 }], hasMore: false }
       pendingByQuery.get('latest').resolve(latestResponse)
       await latest
       expect(state.response.results[0].id).toBe(2)
       expect(state.responseKey).toBe('new-key')
       expect(state.searchIsLoading).toBe(false)
 
-      pendingByQuery.get('stale').resolve({ results: [{ document: { ...document, pageId: 1, title: 'Stale' }, score: 1 }], hasMore: false })
+      pendingByQuery.get('stale').resolve({ results: [{ document: pendingByQuery.get('stale').document, score: 1 }], hasMore: false })
       await stale
       expect(state.response.results[0].id).toBe(2)
       expect(state.responseKey).toBe('new-key')

@@ -17,6 +17,7 @@ interface WakeLockManagerStub {
 }
 const makeFakeWakeLock = () => {
   const requests: string[] = []
+  let releases = 0
   let current: WakeLockSentinelStub & { listeners: Array<() => void> } | null = null
   const manager: WakeLockManagerStub = {
     request: async (type: 'screen') => {
@@ -24,6 +25,7 @@ const makeFakeWakeLock = () => {
       const sentinel: WakeLockSentinelStub & { listeners: Array<() => void> } = {
         listeners: [],
         release: async () => {
+          releases++
           if (current === sentinel) current = null
           const fired = sentinel.listeners
           sentinel.listeners = []
@@ -37,7 +39,7 @@ const makeFakeWakeLock = () => {
   }
   // Simulates the browser releasing the lock on its own when the page hides.
   const releaseActive = () => void current?.release()
-  return { manager, requests, releaseActive }
+  return { manager, requests, releaseActive, releases: () => releases, active: () => current !== null }
 }
 
 const sessionId = '00000000-0000-4000-8000-000000000081'
@@ -312,6 +314,7 @@ describe('Agent media composer lifecycle', () => {
     // The send path resolves silently; the review path emits the failure for
     // the composer notice. No dictationFailed event on the send path.
     expect(harness.events.some(([event]) => event === 'dictationFailed')).toBe(false)
+    expect(harness.events.some(([event]) => event === 'dictation')).toBe(false)
     harness.unmount()
   })
 
@@ -378,10 +381,11 @@ describe('Agent media composer lifecycle', () => {
   })
   it('edits an image alongside a PDF draft without replacing chat attachments', async () => {
     const harness = mount({ media: { attachments: true, imageGeneration: true, transcription: false }, fetch: async (input) => String(input).endsWith('/content') ? new Response('image', { headers: { 'content-type': 'image/png' } }) : response({ media }) })
-    harness.api.attachments.value = [{ ...media, id: 'pdf', filename: 'reference.pdf', mimeType: 'application/pdf' }]
+    const pdf = { ...media, id: 'pdf', filename: 'reference.pdf', mimeType: 'application/pdf' }
+    harness.api.attachments.value = [pdf]
     harness.api.toggleGenerationTool('image')
     expect(await harness.api.editImage({ ...media, kind: 'generated-image' })).toBe(true)
-    expect(harness.api.attachments.value).toHaveLength(2)
+    expect(harness.api.attachments.value).toEqual([pdf, media])
     expect(harness.api.selectedGenerationTools.value).toEqual(['image'])
     harness.api.clear()
     harness.unmount()
@@ -418,20 +422,22 @@ describe('Agent Wiki asset attachments', () => {
     harness.api.clear(); harness.unmount()
   })
   it('closes the asset picker without uploading when dismissed', async () => {
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false } })
+    const requests: string[] = []
+    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async input => { requests.push(String(input)); return response({ media }) } })
     harness.api.browseAssets()
     expect(harness.api.assetPickerOpen.value).toBe(true)
     harness.api.closeAssetPicker()
     await nextTick()
     expect(harness.api.assetPickerOpen.value).toBe(false)
+    expect(requests).toEqual([])
     harness.unmount()
   })
   for (const reason of ['close', 'session', 'disabled', 'offline'] as const) it(`cancels an asset copy on ${reason} and deletes a late private copy`, async () => {
     let finish!: (value: Response) => void
     let signal: AbortSignal | null | undefined
-    let deleted = false
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async (_input, init) => {
-      if (init?.method === 'DELETE') { deleted = true; return new Response(null, { status: 204 }) }
+    const deleted: string[] = []
+    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async (input, init) => {
+      if (init?.method === 'DELETE') { deleted.push(String(input)); return new Response(null, { status: 204 }) }
       signal = init?.signal
       return new Promise(resolve => { finish = resolve })
     } })
@@ -445,7 +451,7 @@ describe('Agent Wiki asset attachments', () => {
     expect(signal?.aborted).toBe(true)
     finish(response({ media }))
     await pending; await settle()
-    expect(deleted).toBe(true)
+    expect(deleted).toEqual([`/_api/agents/media/${mediaId}`])
     expect(harness.api.attachments.value).toHaveLength(0)
     expect(harness.api.assetPickerOpen.value).toBe(false)
     harness.unmount()
@@ -459,17 +465,37 @@ describe('Agent Wiki asset attachments', () => {
     expect(harness.api.assetPickerOpen.value).toBe(true)
     harness.unmount()
   })
-  it('requires attachments capability and respects four-file guards for Wiki assets', async () => {
+  it('requires attachments capability for Wiki assets', async () => {
     let requests = 0
     const harness = mount({ media: { attachments: false, imageGeneration: true, transcription: false }, fetch: async () => { requests++; return response({ media }) } })
     harness.api.browseAssets()
+    expect(harness.api.assetPickerOpen.value).toBe(false)
+    // Isolate copy admission from the closed-picker guard.
+    harness.api.assetPickerOpen.value = true
     await harness.api.attachAsset({ ...asset, ext: '.pdf', filename: 'document.pdf' })
     expect(requests).toBe(0)
     await harness.api.attachAsset(asset)
     expect(requests).toBe(0)
-    harness.api.attachments.value = [media, media, media, media]
+    harness.api.closeAssetPicker()
+    harness.unmount()
+  })
+  it('admits a fourth Wiki asset but blocks browsing and copying a fifth', async () => {
+    const requests: string[] = []
+    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async input => { requests.push(String(input)); return response({ media }) } })
+    const existing = [1, 2, 3].map(index => ({ ...media, id: `00000000-0000-4000-8000-00000000009${index}`, filename: `reference-${index}.png` }))
+    harness.api.attachments.value = existing
+    harness.api.browseAssets()
+    expect(harness.api.assetPickerOpen.value).toBe(true)
+    await harness.api.attachAsset(asset)
+    expect(requests).toEqual([`/_api/agents/sessions/${sessionId}/media/assets`])
+    expect(harness.api.attachments.value).toEqual([...existing, media])
     harness.api.browseAssets()
     expect(harness.api.assetPickerOpen.value).toBe(false)
+    // A stale/open picker must not bypass its independent copy count guard.
+    harness.api.assetPickerOpen.value = true
+    await harness.api.attachAsset(asset)
+    expect(requests).toEqual([`/_api/agents/sessions/${sessionId}/media/assets`])
+    expect(harness.api.attachments.value).toEqual([...existing, media])
     harness.api.clear(); harness.unmount()
   })
 })
@@ -488,13 +514,16 @@ describe('re-attaching a detached attachment', () => {
 
   it('downloads the stored copy and re-uploads it as a new pending attachment', async () => {
     const paths: string[] = []
-    let uploadedName = ''
-    const uploaded = { ...detachedMedia, id: '00000000-0000-4000-8000-000000000085', detached: false }
+    const storedBytes = '%PDF-1.4\nstored report\n%%EOF\n'
+    let uploadedFile: { name: string; type: string; bytes: string } | null = null
+    const uploaded = { ...detachedMedia, id: '00000000-0000-4000-8000-000000000085', byteLength: storedBytes.length, detached: false }
     const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async (input, init) => {
       const path = String(input); paths.push(path)
-      if (path.endsWith('/content')) return new Response('stored pdf bytes', { headers: { 'content-type': 'application/pdf' } })
+      if (path.endsWith('/content')) return new Response(storedBytes, { headers: { 'content-type': 'application/pdf' } })
       if (path.endsWith('/media') && init?.method === 'POST') {
-        uploadedName = (init.body as FormData).get('file') instanceof File ? 'file' : 'missing'
+        const file = (init.body as FormData).get('file')
+        if (!(file instanceof File)) throw new Error('Missing re-attached File')
+        uploadedFile = { name: file.name, type: file.type, bytes: await file.text() }
         return response({ media: uploaded })
       }
       throw new Error(`Unexpected request ${path}`)
@@ -502,7 +531,7 @@ describe('re-attaching a detached attachment', () => {
     const added = await harness.api.reattachMedia(detachedMedia)
     expect(added).toBe(true)
     expect(paths).toEqual(['/_api/agents/media/00000000-0000-4000-8000-000000000084/content', '/_api/agents/sessions/00000000-0000-4000-8000-000000000081/media'])
-    expect(uploadedName).toBe('file')
+    expect(uploadedFile).toEqual({ name: 'report.pdf', type: 'application/pdf', bytes: storedBytes })
     expect(harness.api.attachments.value.map(item => item.id)).toEqual(['00000000-0000-4000-8000-000000000085'])
     expect(harness.api.error.value).toBe('')
     harness.unmount()
@@ -569,6 +598,8 @@ describe('Agent media composer wake lock', () => {
     expect(wakeLock.requests).toEqual(['screen'])
     harness.api.stopRecording()
     expect(harness.api.recording.value).toBe(false)
+    expect(wakeLock.active()).toBe(false)
+    expect(wakeLock.releases()).toBe(1)
     // Stopping recording removes the visibilitychange listener, so a later
     // visibility flip cannot re-acquire the released lock.
     harness.visibility('hidden')
@@ -604,6 +635,8 @@ describe('Agent media composer wake lock', () => {
     harness.api.cancelDictation()
     await settle()
     expect(wakeLock.requests).toEqual(['screen'])
+    expect(wakeLock.active()).toBe(false)
+    expect(wakeLock.releases()).toBe(1)
     // An environment without wakeLock support must not break dictation.
     const plain = mount({ media: { attachments: false, imageGeneration: false, transcription: true } })
     await plain.api.startRecording()

@@ -28,7 +28,7 @@ const roundTripCases = [
 
 describe('cached particle colors', () => {
   it('round-trips source sRGB channels through the cached linear values and OETF', () => {
-    for (const seed of [0, 30000, 65535]) {
+    for (const seed of [1, 30000, 65535]) {
       for (const [name, rgb] of roundTripCases) {
         const result = color([...rgb, 255], seed)
 
@@ -56,12 +56,12 @@ describe('cached particle colors', () => {
 
   it('reuses a caller-provided target without mutating source bytes or seeds', () => {
     const rgba = new Uint8Array([230, 245, 255, 128, 255, 128, 10, 0])
-    const seed = new Uint16Array([0, 65535])
+    const seed = new Uint16Array([1, 65535])
     const source = { count: 2, rgba, seed }
     const originalRgba = rgba.slice()
     const originalSeed = seed.slice()
     const target = new Float32Array(8)
-    const expected = new Float32Array([...color([230, 245, 255, 128], 0), ...color([255, 128, 10, 0], 65535)])
+    const expected = new Float32Array([...color([230, 245, 255, 128], 1), ...color([255, 128, 10, 0], 65535)])
 
     target.fill(Number.NaN)
     updateParticleColors(source, target)

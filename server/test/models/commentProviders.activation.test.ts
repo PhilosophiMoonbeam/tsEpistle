@@ -8,14 +8,23 @@ describe('discussion provider runtime activation', () => {
     const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
     initialize = async config => { expect(config).toEqual({ akismet: '', minDelay: 30 }); entered(); await gate }
     let active = [{ key: 'default', config: { akismet: '', minDelay: 30 } }] as Array<{ key: string; config: Record<string, unknown> }>
-    const runtime = { data: { commentProviders: [{ key: 'default', isAvailable: true }, { key: 'commento', isAvailable: true, codeTemplate: true }], commentProvider: {} as Record<string, unknown> }, models: { commentProviders: { getProviders: async () => active } } }
+    const getProviders = vi.fn(async () => active)
+    const runtime = { data: { commentProviders: [{ key: 'default', isAvailable: true }, { key: 'commento', isAvailable: true, codeTemplate: true }], commentProvider: {} as Record<string, unknown> }, models: { commentProviders: { getProviders } } }
     const original = globalThis.WIKI; globalThis.WIKI = runtime as never
     try {
       const { default: Model } = await vi.importFresh('../../models/commentProviders.ts', import.meta.url)
       const native = Model.initProvider(); await ready
       active = [{ key: 'commento', config: { instanceUrl: 'https://comments.example.invalid' } }]
-      const external = Model.initProvider(); release(); await Promise.all([native, external])
+      const external = Model.initProvider()
+      try {
+        await new Promise<void>(resolve => setImmediate(resolve))
+        expect(getProviders).toHaveBeenCalledTimes(1)
+      } finally {
+        release()
+        await Promise.all([native, external])
+      }
+      expect(getProviders).toHaveBeenCalledTimes(2)
       expect(runtime.data.commentProvider.key).toBe('commento'); expect(runtime.data.commentProvider.config).toEqual({ instanceUrl: 'https://comments.example.invalid' }); expect(typeof runtime.data.commentProvider.renderForPage).toBe('function')
-    } finally { globalThis.WIKI = original }
+    } finally { release(); globalThis.WIKI = original }
   })
 })

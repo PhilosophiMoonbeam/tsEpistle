@@ -1,7 +1,7 @@
 import type { LookupAddress } from 'node:dns'
 import type { AxChatRequest } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
-import { AgentProviderFactory, agentProviderCostMicros, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
+import { AgentProviderFactory, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import { createGeminiInteractionsService, geminiInteractionCompactionPrefix } from '../../agents/providers/gemini-interactions.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } from '../../agents/providers/prompt-tools.ts'
@@ -226,8 +226,14 @@ describe('additional provider transports', () => {
       tools: [{ name: 'wiki_get_page', input_schema: { type: 'object' } }]
     })
     expect(requests[1]?.body).not.toHaveProperty('tools')
-    expect(JSON.stringify(requests[1]?.body)).toContain('tool_result')
-    expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
+    expect(requests[1]?.body.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: expect.arrayContaining([{ type: 'tool_result', tool_use_id: 'toolu_1', content: '{"id":42}' }])
+        })
+      ])
+    )
   })
   it('enables cache-aware prefix retention and write pricing only for recognized official transports', async () => {
     const profiles = [
@@ -788,6 +794,33 @@ describe('OpenResponses protocol validation', () => {
     await expect(
       Promise.resolve((await invalidTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text())
     ).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+
+    const eventFrame = (type: string, sequence: number, response?: Record<string, unknown>): string =>
+      `event: ${type}\ndata: ${JSON.stringify({ type, sequence_number: sequence, ...(response === undefined ? {} : { response }) })}`
+    const completedFrame = eventFrame('response.completed', 1, terminal)
+    const doneFrame = 'data: [DONE]'
+    for (const frames of [
+      // A matching but unsupported event isolates the event-membership guard.
+      [eventFrame('response.provider_private', 0), completedFrame, doneFrame],
+      // Equal and decreasing sequences otherwise have a valid terminal and marker.
+      [eventFrame('response.in_progress', 1), completedFrame, doneFrame],
+      [eventFrame('response.in_progress', 2), completedFrame, doneFrame],
+      [
+        eventFrame('response.in_progress', 0),
+        eventFrame('response.completed', 1, { ...terminal, output: [{ id: 'unknown_1', type: 'provider_private_item', status: 'completed' }] }),
+        doneFrame
+      ],
+      // A marker without a terminal response must fail before EOF.
+      [doneFrame],
+      // A valid terminal response cannot substitute for the required marker.
+      [eventFrame('response.in_progress', 0), completedFrame]
+    ]) {
+      const body = `${frames.join('\n\n')}\n\n`
+      const transport = createOpenResponsesFetch(async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } }))
+      await expect(
+        Promise.resolve((await transport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text())
+      ).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    }
   })
 })
 
@@ -1104,15 +1137,6 @@ describe('Gemini Interactions protocol validation', () => {
         }
       ]
     }
-    expect(
-      agentProviderCostMicros(
-        { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 },
-        expectedTokens.promptTokens,
-        expectedTokens.completionTokens,
-        expectedTokens.totalTokens
-      )
-    ).toBe(169)
-
     const bufferedGemini = service(
       (async () =>
         Response.json({

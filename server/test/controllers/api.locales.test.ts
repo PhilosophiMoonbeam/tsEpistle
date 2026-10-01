@@ -107,9 +107,18 @@ describe('locale local-file transport', () => {
     expect(store.reviewLocalFile).not.toHaveBeenCalled()
   })
 
-  it('rejects unrecognized multipart fields and preserves reviewed-operation conflicts', async () => {
+  it('rejects excess or unrecognized multipart fields and preserves reviewed-operation conflicts', async () => {
     const malformed = await upload(new TextEncoder().encode('{}'), 'fr.json', ['unexpected', 'value'])
     expect(malformed.status).toBe(400)
+    expect(store.reviewLocalFile).not.toHaveBeenCalled()
+
+    const form = new FormData()
+    form.append('code', 'fr')
+    form.append('fingerprint', 'f'.repeat(64))
+    form.append('unexpected', 'Reviewed update')
+    form.append('file', new Blob(['{}'], { type: 'application/json' }), 'fr.json')
+    const unknownField = await fetch(`${baseUrl}/_api/locales/workspace/local-files/review`, { method: 'POST', body: form })
+    expect(unknownField.status).toBe(400)
     expect(store.reviewLocalFile).not.toHaveBeenCalled()
 
     store.reviewLocalFile.mockRejectedValueOnce(Object.assign(new Error('Locale workspace changed'), { status: 409 }))

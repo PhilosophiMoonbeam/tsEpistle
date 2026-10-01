@@ -1,22 +1,21 @@
 import bcrypt from 'bcryptjs-then'
+import createKnex, { type Knex } from 'knex'
 import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 import type * as SetupModule from '../../setup.ts'
+import type * as EditorModule from '../../models/editors.ts'
+import type * as SearchEngineModule from '../../models/searchEngines.ts'
+import { BUILTIN_CONTENT_EXTENSIONS } from '../../../shared/content-extensions.ts'
 
 interface SetupTestWiki extends Record<string, unknown> {
   server?: Server
 }
 
-const mutationQuery = () => ({
-  where: vi.fn().mockReturnThis(),
-  orWhere: vi.fn().mockReturnThis(),
-  del: vi.fn().mockResolvedValue(1),
-  truncate: vi.fn().mockResolvedValue(1)
-})
+const selectionDatabases = new Set<Knex>()
 
-const startSetupHarness = async (configSaved: boolean) => {
+const startSetupHarness = async (configSaved: boolean, searchFailure = false) => {
   vi.resetModules()
   const fs = {
     ensureDir: vi.fn().mockResolvedValue(undefined),
@@ -73,14 +72,29 @@ const startSetupHarness = async (configSaved: boolean) => {
     .mockResolvedValueOnce({ id: 1, $relatedQuery: vi.fn(() => ({ relate: userRelate })) })
     .mockResolvedValueOnce({ id: 2, $relatedQuery: vi.fn(() => ({ relate: userRelate })) })
   const authenticationInsert = vi.fn().mockResolvedValue({})
-  const editorMutation = mutationQuery()
-  const searchMutation = mutationQuery()
-  searchMutation.where.mockResolvedValue(1)
-  const editorPatch = vi.fn(() => editorMutation)
-  const searchPatch = vi.fn(() => searchMutation)
+  const selectionDb = createKnex({
+    client: 'better-sqlite3',
+    connection: { filename: ':memory:' },
+    useNullAsDefault: true,
+    pool: { min: 1, max: 1 }
+  })
+  selectionDatabases.add(selectionDb)
+  for (const tableName of ['editors', 'searchEngines']) {
+    await selectionDb.schema.createTable(tableName, table => {
+      table.string('key').primary()
+      table.boolean('isEnabled').notNullable()
+    })
+  }
+  await selectionDb('editors').insert(['markdown', 'visual-markdown', 'code'].map(key => ({ key, isEnabled: false })))
+  await selectionDb('searchEngines').insert(['postgres', 'legacy'].map(key => ({ key, isEnabled: false })))
+  const editors = (await vi.importFresh<typeof EditorModule>('../../models/editors.ts', import.meta.url)).default.bindKnex(selectionDb)
+  const searchProviders = (await vi.importFresh<typeof SearchEngineModule>('../../models/searchEngines.ts', import.meta.url)).default.bindKnex(selectionDb)
+  vi.spyOn(editors, 'refreshEditorsFromDisk').mockResolvedValue(undefined)
   const controller = new AbortController()
-  const searchRefresh = vi.fn().mockResolvedValue(undefined)
-  const searchInit = vi.fn().mockResolvedValue(undefined)
+  const searchRefresh = vi.spyOn(searchProviders, 'refreshSearchEnginesFromDisk').mockImplementation(async () => {
+    if (searchFailure) throw new Error('injected reconciliation failure')
+  })
+  const searchInit = vi.spyOn(searchProviders, 'initEngine').mockResolvedValue(undefined)
   const saveToDb = vi.fn().mockResolvedValue(configSaved)
   const wiki: SetupTestWiki = {
     IS_DEBUG: false,
@@ -102,21 +116,14 @@ const startSetupHarness = async (configSaved: boolean) => {
     product: { name: 'tsEpistle' },
     models: {
       authentication: { query: vi.fn(() => ({ insert: authenticationInsert })) },
-      editors: {
-        refreshEditorsFromDisk: vi.fn().mockResolvedValue(undefined),
-        query: vi.fn(() => ({ patch: editorPatch }))
-      },
+      editors,
       groups: { query: vi.fn(() => ({ insert: groupInsert })) },
       knex,
       locales: { query: vi.fn(() => localesQuery) },
       loggers: { refreshLoggersFromDisk: vi.fn().mockResolvedValue(undefined) },
       navigation: { query: vi.fn(() => navigationQuery) },
       renderers: { refreshRenderersFromDisk: vi.fn().mockResolvedValue(undefined) },
-      searchEngines: {
-        initEngine: searchInit,
-        refreshSearchEnginesFromDisk: searchRefresh,
-        query: vi.fn(() => ({ patch: searchPatch }))
-      },
+      searchEngines: searchProviders,
       storage: { refreshTargetsFromDisk: vi.fn().mockResolvedValue(undefined) },
       users: { query: vi.fn(() => ({ insert: userInsert })) }
     },
@@ -135,18 +142,15 @@ const startSetupHarness = async (configSaved: boolean) => {
     completion,
     controller,
     domainMutations: [localesDelete, localesInsert, navigationTruncate, navigationInsert, knex.raw, groupInsert, authenticationInsert, userInsert],
-    editorMutation,
-    editorPatch,
+    editors,
     extensionInsert,
     navigationInsert,
     saveToDb,
-    searchMutation,
+    searchProviders,
     searchInit,
-    searchPatch,
     searchRefresh,
     server,
     settingsTruncate,
-    transaction,
     userInsert
   }
 }
@@ -169,9 +173,14 @@ const finalize = async (server: Server, adminPassword = 'correct horse battery s
 describe('setup finalization', () => {
   const previousWiki = globalThis.WIKI
 
-  afterEach(() => {
-    globalThis.WIKI = previousWiki
-    vi.restoreAllMocks()
+  afterEach(async () => {
+    try {
+      await Promise.all([...selectionDatabases].map(database => database.destroy()))
+    } finally {
+      selectionDatabases.clear()
+      globalThis.WIKI = previousWiki
+      vi.restoreAllMocks()
+    }
   })
 
   it('rejects short and oversized passwords before changing setup state', async () => {
@@ -191,7 +200,6 @@ describe('setup finalization', () => {
     const password = await bcrypt.hash('unrelated credential', 4)
     expect(await finalize(harness.server, password)).toMatchObject({ ok: true })
     await harness.completion
-    expect(harness.transaction).toHaveBeenCalledWith(expect.any(Function))
     const stored = harness.userInsert.mock.calls[0]?.[0].password
     expect(stored).not.toBe(password)
     expect(await bcrypt.compare(password, stored)).toBe(true)
@@ -212,7 +220,7 @@ describe('setup finalization', () => {
 
     const result = await finalize(harness.server)
 
-    expect(result).toEqual({ ok: false, error: 'Failed to persist setup configuration' })
+    expect(result).toMatchObject({ ok: false })
     expect(harness.saveToDb).toHaveBeenCalledTimes(1)
     for (const mutation of harness.domainMutations) expect(mutation).not.toHaveBeenCalled()
     expect(harness.extensionInsert).not.toHaveBeenCalled()
@@ -249,26 +257,39 @@ describe('setup finalization', () => {
         expect.objectContaining({ key: 'map', isEnabled: false, version: 1 })
       ])
     )
-    expect(harness.extensionInsert.mock.calls[0]?.[0]).toHaveLength(13)
+    const inserted = harness.extensionInsert.mock.calls.flatMap(([rows]) => rows as Array<Record<string, unknown>>)
+    expect(inserted.map(row => row.key).sort()).toEqual(BUILTIN_CONTENT_EXTENSIONS.map(extension => extension.key).sort())
+    for (const extension of BUILTIN_CONTENT_EXTENSIONS) {
+      expect(inserted.find(row => row.key === extension.key)).toMatchObject({
+        version: extension.version,
+        isEnabled: false
+      })
+    }
     expect(harness.navigationInsert).toHaveBeenCalledWith({
       key: 'site',
       config: [{ locale: 'en', items: [] }]
     })
-    expect(harness.searchRefresh).toHaveBeenCalledTimes(1)
     expect(harness.searchRefresh).toHaveBeenCalledWith({ strict: true })
-    expect(harness.searchPatch).toHaveBeenCalledTimes(1)
-    expect(harness.searchPatch).toHaveBeenCalledWith({ isEnabled: true })
-    expect(harness.searchMutation.where).toHaveBeenCalledTimes(1)
-    expect(harness.searchMutation.where).toHaveBeenCalledWith('key', 'postgres')
-    expect(harness.searchInit).toHaveBeenCalledTimes(1)
-    expect(harness.editorPatch).toHaveBeenCalledTimes(1)
-    expect(harness.editorPatch).toHaveBeenCalledWith({ isEnabled: true })
-    expect(harness.editorMutation.where).toHaveBeenCalledTimes(1)
-    expect(harness.editorMutation.where).toHaveBeenCalledWith('key', 'markdown')
-    expect(harness.editorMutation.orWhere).toHaveBeenCalledTimes(1)
-    expect(harness.editorMutation.orWhere).toHaveBeenCalledWith('key', 'visual-markdown')
+    expect((await harness.searchProviders.query().where('isEnabled', true).orderBy('key')).map(provider => provider.key)).toEqual(['postgres'])
+    expect(harness.searchInit).toHaveBeenCalled()
+    expect((await harness.editors.query().where('isEnabled', true).orderBy('key')).map(editor => editor.key)).toEqual(['markdown', 'visual-markdown'])
     expect(harness.settingsTruncate).not.toHaveBeenCalled()
     expect(globalThis.WIKI.config).toMatchObject({ setup: false })
     expect(harness.server.listening).toBe(false)
+
+    const failed = await startSetupHarness(true, true)
+    let settled = false
+    void failed.completion.then(() => { settled = true }, () => { settled = true })
+    expect(await finalize(failed.server)).toMatchObject({ ok: false })
+    expect(failed.searchRefresh).toHaveBeenCalledWith({ strict: true })
+    expect(await failed.searchProviders.query().where('isEnabled', true)).toEqual([])
+    expect(failed.searchInit).not.toHaveBeenCalled()
+    expect(failed.navigationInsert).not.toHaveBeenCalled()
+    expect(globalThis.WIKI.config).toMatchObject({ setup: true })
+    expect(failed.server.listening).toBe(true)
+    expect(settled).toBe(false)
+    failed.controller.abort(new DOMException('test shutdown', 'AbortError'))
+    await expect(failed.completion).rejects.toMatchObject({ name: 'AbortError' })
+    expect(failed.server.listening).toBe(false)
   })
 })

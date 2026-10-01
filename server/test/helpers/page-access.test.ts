@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import createKnex from 'knex'
+import { beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import {
   canDeletePage,
@@ -7,7 +8,6 @@ import {
   isValidPageRuleRegex,
   managesSystem,
   pageRoute,
-  pageRuleRegexMatches,
   principalId,
   scopePageQuery,
   scopePageQueryForOwner
@@ -31,6 +31,7 @@ const otherUser = { id: 8, permissions: ['read:pages', 'write:pages', 'delete:pa
 const administrator = { id: 9, permissions: ['manage:system'] }
 const publicPage = { visibility: 'public' as const, ownerId: null, localeCode: 'en', path: 'same/path', tags: [] }
 const privatePage = { visibility: 'private' as const, ownerId: 7, localeCode: 'en', path: 'same/path' }
+const queryClient = createKnex({ client: 'pg' })
 
 const authorityFor = (requester: PagePrincipal): PageRuleAuthority =>
   Object.freeze({
@@ -89,10 +90,16 @@ describe('owner-scoped page access', () => {
 
   it('preserves normal permission checks for public pages', () => {
     const reader = { id: 2, permissions: ['read:pages'] }
+    const writer = { id: 3, permissions: ['write:pages'] }
+    const deleter = { id: 4, permissions: ['delete:pages'] }
     expect(canReadPage(reader, publicPage, authorityFor(reader))).toBe(true)
     expect(canWritePage(owner, publicPage, authorityFor(owner))).toBe(false)
-    expect(canWritePage(otherUser, publicPage, authorityFor(otherUser))).toBe(true)
-    expect(canDeletePage(otherUser, publicPage, authorityFor(otherUser))).toBe(true)
+    expect(canWritePage(reader, publicPage, authorityFor(reader))).toBe(false)
+    expect(canDeletePage(reader, publicPage, authorityFor(reader))).toBe(false)
+    expect(canWritePage(writer, publicPage, authorityFor(writer))).toBe(true)
+    expect(canDeletePage(writer, publicPage, authorityFor(writer))).toBe(false)
+    expect(canDeletePage(deleter, publicPage, authorityFor(deleter))).toBe(true)
+    expect(canWritePage(deleter, publicPage, authorityFor(deleter))).toBe(false)
   })
 
   it('recognizes only valid principals and explicit system managers', () => {
@@ -105,48 +112,32 @@ describe('owner-scoped page access', () => {
     expect(managesSystem(otherUser)).toBe(false)
   })
 
-  it('validates and safely evaluates administrator-supplied regular expressions', () => {
+  it('validates administrator-supplied regular expressions', () => {
     expect(isValidPageRuleRegex('^docs/(public|shared)/')).toBe(true)
-    expect(pageRuleRegexMatches('^docs/(public|shared)/', 'docs/public/guide')).toBe(true)
-    expect(pageRuleRegexMatches('^docs/(public|shared)/', 'private/guide')).toBe(false)
     expect(isValidPageRuleRegex('[invalid')).toBe(false)
-    expect(pageRuleRegexMatches('[invalid', 'docs/public/guide')).toBe(false)
   })
 
-  it('scopes database queries to public rows plus the current owner, or all rows for administrators', () => {
-    const where = vi.fn()
-    const orWhere = vi.fn()
-    const wherePublic = vi.fn((criteria, callback) => {
-      const applyScope = typeof criteria === 'function' ? criteria : callback
-      if (typeof applyScope === 'function') applyScope({ where, orWhere })
-    })
-    const query = { where: wherePublic, orWhere }
-    expect(scopePageQuery(query, owner)).toBe(query)
-    expect(wherePublic).toHaveBeenCalledOnce()
-    expect(where).toHaveBeenCalledWith('visibility', 'public')
-    expect(orWhere).toHaveBeenCalledWith({ visibility: 'private', ownerId: 7 })
+  it('scopes database queries to public rows plus the current owner, with an explicit system-manager bypass', () => {
+    for (const options of [{}, { includeAllForSystemManager: true }]) {
+      const query = queryClient('pages').select('id').where('path', 'same/path')
+      scopePageQuery(query, owner, options)
+      const scoped = query.toSQL()
+      expect(scoped.sql.split(' where ')[1]).toBe('"path" = ? and ("visibility" = ? or ("visibility" = ? and "ownerId" = ?))')
+      expect(scoped.bindings).toEqual(['same/path', 'public', 'private', 7])
+    }
 
-    wherePublic.mockClear()
-    expect(scopePageQuery(query, administrator, { includeAllForSystemManager: true })).toBe(query)
-    expect(wherePublic).not.toHaveBeenCalled()
+    const managerQuery = queryClient('pages').select('id').where('path', 'same/path')
+    scopePageQuery(managerQuery, administrator, { includeAllForSystemManager: true })
+    const unrestricted = managerQuery.toSQL()
+    expect(unrestricted.sql.split(' where ')[1]).toBe('"path" = ?')
+    expect(unrestricted.bindings).toEqual(['same/path'])
   })
 
   it('scopes non-request rendering and history queries to an explicit owner', () => {
-    const where = vi.fn()
-    const orWhere = vi.fn()
-    const query = {
-      where: vi.fn(callback => {
-        callback({ where, orWhere })
-        return query
-      }),
-      orWhere
-    }
-
-    expect(scopePageQueryForOwner(query, 7, { table: 'pageHistory' })).toBe(query)
-    expect(where).toHaveBeenCalledWith('pageHistory.visibility', 'public')
-    expect(orWhere).toHaveBeenCalledWith({
-      'pageHistory.visibility': 'private',
-      'pageHistory.ownerId': 7
-    })
+    const query = queryClient('pageHistory').select('id').where('pageHistory.pageId', 12)
+    scopePageQueryForOwner(query, 7, { table: 'pageHistory' })
+    const scoped = query.toSQL()
+    expect(scoped.sql.split(' where ')[1]).toBe('"pageHistory"."pageId" = ? and ("pageHistory"."visibility" = ? or ("pageHistory"."visibility" = ? and "pageHistory"."ownerId" = ?))')
+    expect(scoped.bindings).toEqual([12, 'public', 'private', 7])
   })
 })

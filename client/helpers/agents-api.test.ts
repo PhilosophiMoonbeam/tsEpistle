@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
+import { z } from 'zod'
 import {
   AGENT_ACTION_NAMES,
   AGENT_TOOL_CALL_NAMES,
@@ -32,7 +33,6 @@ import {
   updateAgentSkillPreferences,
   updatePersonalAgentSkill
 } from './agents-api.ts'
-import { renderSafeMarkdown } from './safe-markdown.ts'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -596,7 +596,7 @@ describe('agents client boundary', () => {
     )
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { skillIds: string[]; transportRequestId: string }
     expect(request.skillIds).toEqual([skillId])
-    expect(request.transportRequestId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(z.uuid().safeParse(request.transportRequestId).success).toBe(true)
   })
 
   it('sends explicitly invoked skill versions with one message', async () => {
@@ -690,7 +690,7 @@ describe('agents client boundary', () => {
     expect(fetcher).toHaveBeenCalledWith(`/_api/agents/sessions/${sessionId}/goals`, expect.objectContaining({ method: 'POST', body: JSON.stringify(input) }))
   })
 
-  it('accepts partial runs with typed task progress and recovery-required proposals', async () => {
+  it('accepts partial task history with typed progress and recovery-required proposals', async () => {
     const now = '2026-08-17T00:00:00.000Z'
     const sessionId = '00000000-0000-4000-8000-000000000041'
     const runId = '00000000-0000-4000-8000-000000000042'
@@ -744,19 +744,7 @@ describe('agents client boundary', () => {
         providerProfileId: null,
         profileResolutionToken: 'token',
         skills: [],
-        currentRun: {
-          id: runId,
-          sessionId,
-          status: 'partial',
-          attempt: 1,
-          eventSequence: 8,
-          canCancel: false,
-          createdAt: now,
-          startedAt: now,
-          completedAt: now,
-          errorCode: null,
-          errorMessage: null
-        },
+        currentRun: null,
         createdAt: now,
         updatedAt: now,
         lastActivityAt: now,
@@ -868,12 +856,6 @@ describe('agents client boundary', () => {
     )
   })
 
-  it('renders Markdown with raw HTML and active URL schemes disabled', () => {
-    const rendered = renderSafeMarkdown('[safe](https://wiki.example.test/page) <img src=x onerror=alert(1)> [bad](javascript:alert(1))')
-    expect(rendered).toContain('https://wiki.example.test/page')
-    expect(rendered).toContain('noopener noreferrer')
-    expect(rendered).not.toMatch(/<img|href="javascript:|onerror="/i)
-  })
 })
 
 describe('Wiki asset attachment client boundary', () => {

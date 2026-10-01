@@ -1,5 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
+import i18next from 'i18next'
+import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
+import { document } from '../../test/browser-dom.mts'
 import { deletePage as deletePageById } from '../../helpers/pages-api.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/common/page-delete.vue')
@@ -11,6 +15,41 @@ if (!script) {
 }
 
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
+
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
+const translations = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8')).common
+const translator = i18next.createInstance()
+await translator.init({ lng: 'en', fallbackLng: 'en', resources: { en: { common: translations } }, defaultNS: 'common' })
+const compileRender = filename => {
+  const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
+  if (errors.length || !descriptor.template) throw new Error(`Cannot parse ${filename}: ${errors}`)
+  const compiled = compileTemplate({
+    filename,
+    id: 'page-delete-presentation-test',
+    source: descriptor.template.content,
+    preprocessLang: descriptor.template.lang,
+    preprocessOptions: { doctype: 'html' },
+    compilerOptions: { mode: 'function' }
+  })
+  if (compiled.errors.length) throw new Error(`Cannot compile ${filename}: ${compiled.errors}`)
+  return new Function('Vue', compiled.code)(Vue)
+}
+const renderDialog = compileRender(componentPath)
+const CardChin = { render: compileRender(path.join(process.cwd(), 'client/components/common/v-card-chin.vue')) }
+const mountedDialogs = []
+const settleDialog = async () => {
+  for (let turn = 0; turn < 8; turn += 1) {
+    await Promise.resolve()
+    await Vue.nextTick()
+  }
+}
+
+afterEach(() => {
+  for (const cleanup of mountedDialogs.splice(0)) cleanup()
+})
 
 const createComponentOptions = (wikiStore, window, document) =>
   new Function('defineComponent', 'wikiStore', 'deletePageById', 'window', 'document', executableScript)(
@@ -120,7 +159,48 @@ const createHarness = ({
     }
   }
 
-  return { component, document, emitted, errors, loadingEvents, redirects, requests, runTimers, timers, vm, wikiStore }
+  return { component, document, emitted, errors, loadingEvents, redirects, requests, runTimers, timers, vm, wikiStore, window }
+}
+
+const mountDeleteDialog = async (options = {}) => {
+  const harness = createHarness(options)
+  const shown = Vue.ref(true)
+  const component = createComponentOptions(harness.wikiStore, harness.window, document)
+  component.render = renderDialog
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = Vue.createApp({
+    setup: () => () => Vue.h(component, {
+      modelValue: shown.value,
+      'onUpdate:modelValue': value => {
+        harness.emitted.push(['update:modelValue', value])
+        shown.value = value
+      }
+    })
+  })
+  app.use(createVuetify({
+    components: vuetifyComponents,
+    directives: vuetifyDirectives,
+    defaults: { VDialog: { transition: false } }
+  }))
+  app.component('v-card-chin', CardChin)
+  app.config.globalProperties.$t = (key, options) => translator.t(key, options)
+  app.config.globalProperties.$i18n = translator
+  const cleanup = () => {
+    app.unmount()
+    host.remove()
+  }
+  mountedDialogs.push(cleanup)
+  app.mount(host)
+  await settleDialog()
+  const dialog = document.querySelector('[role="dialog"]')
+  if (!dialog) throw new Error('Delete dialog did not render.')
+  const button = label => {
+    const control = Array.from(dialog.querySelectorAll('button')).find(candidate => candidate.textContent.trim() === label)
+    if (!control) throw new Error(`Dialog control "${label}" did not render.`)
+    return control
+  }
+  return { ...harness, dialog, button, shown, cleanup }
 }
 
 describe('page-delete component behavior', () => {
@@ -257,22 +337,65 @@ describe('page-delete component behavior', () => {
     expect(harness.document.body.classList.contains('page-deleted-pending')).toBe(false)
   })
 
-  test('keeps the delete dialog name and description connected for assistive technology', () => {
-    expect(source).toContain("aria-labelledby='page-delete-dialog-title'")
-    expect(source).toContain("aria-describedby='page-delete-dialog-description'")
-    expect(source).toContain('span#page-delete-dialog-title')
-    expect(source).toContain('v-card-text#page-delete-dialog-description')
-  })
-
-  test('disables cancel and delete controls while deletion is pending', () => {
-    const template = source.match(/<template lang='pug'>([\s\S]*?)<\/template>/)?.[1] ?? ''
-    const expectDisabledWhileLoading = handler => {
-      const button = template.match(new RegExp(`^\\s*v-btn\\b[^\\n]*@click='${handler}'[^\\n]*$`, 'm'))?.[0]
-      expect(button).toBeDefined()
-      expect(button).toContain(":disabled='loading'")
+  test('keeps the delete dialog name and description connected for assistive technology', async () => {
+    const mounted = await mountDeleteDialog()
+    const referencedText = attribute => {
+      const ids = mounted.dialog.getAttribute(attribute)?.trim().split(/\s+/) ?? []
+      expect(ids.length).toBeGreaterThan(0)
+      return ids.map(id => {
+        const target = document.getElementById(id)
+        expect(target).not.toBeNull()
+        expect(mounted.dialog.contains(target)).toBe(true)
+        const text = target?.textContent?.trim()
+        expect(text).toBeTruthy()
+        return text
+      }).join(' ')
     }
 
-    expectDisabledWhileLoading('discard')
-    expectDisabledWhileLoading('deletePage')
+    expect(referencedText('aria-labelledby')).toContain(translator.t('page.delete'))
+    expect(referencedText('aria-describedby')).toContain(mounted.wikiStore.page.title)
+    expect(referencedText('aria-describedby')).toContain(translator.t('page.deleteSubtitle'))
+  })
+
+  test('disables cancel and delete controls while deletion is pending', async () => {
+    for (const outcome of ['success', 'failure']) {
+      const response = deferred()
+      const mounted = await mountDeleteDialog({ fetch: () => response.promise })
+      const cancel = mounted.button(translator.t('actions.cancel'))
+      const remove = mounted.button(translator.t('actions.delete'))
+      expect(cancel.disabled).toBe(false)
+      expect(remove.disabled).toBe(false)
+
+      remove.click()
+      await settleDialog()
+      expect(mounted.requests).toHaveLength(1)
+      expect(cancel.disabled).toBe(true)
+      expect(remove.disabled).toBe(true)
+      cancel.click()
+      remove.click()
+      await settleDialog()
+      expect(mounted.shown.value).toBe(true)
+      expect(mounted.emitted).toEqual([])
+      expect(mounted.requests).toHaveLength(1)
+
+      if (outcome === 'success') response.resolve(jsonResponse({ message: 'Page has been deleted.' }))
+      else response.reject(new Error('Delete failed'))
+      await settleDialog()
+      if (outcome === 'success') {
+        expect(mounted.shown.value).toBe(false)
+        expect(mounted.emitted).toEqual([['update:modelValue', false]])
+        expect(mounted.errors).toEqual([])
+      } else {
+        expect(mounted.shown.value).toBe(true)
+        expect(mounted.errors.map(error => error.message)).toEqual(['Delete failed'])
+        expect(cancel.disabled).toBe(false)
+        expect(remove.disabled).toBe(false)
+        cancel.click()
+        await settleDialog()
+        expect(mounted.shown.value).toBe(false)
+      }
+      mounted.cleanup()
+      mountedDialogs.pop()
+    }
   })
 })

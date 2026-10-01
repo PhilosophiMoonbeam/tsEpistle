@@ -1,6 +1,7 @@
 import type { Knex } from 'knex'
 import type { Request } from 'express'
 import { accountSessionIsCurrent } from './account-session.ts'
+import { isApiPrincipal } from './api-principal.ts'
 import { principalId, type PagePrincipal } from './page-access.ts'
 import errors from '../operations/errors.ts'
 
@@ -50,7 +51,9 @@ export const requireSystemAuthority = async (
       key.id < 1 ||
       !Number.isSafeInteger(key.groupId) ||
       key.groupId < 1 ||
-      requester.user.id !== 1 ||
+      !isApiPrincipal(requester.user) ||
+      requester.user.api !== key.id ||
+      requester.user.grp !== key.groupId ||
       requester.user.ownershipUserId !== null ||
       !Array.isArray(requester.user.groups) ||
       requester.user.groups.length !== 1 ||

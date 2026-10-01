@@ -189,7 +189,7 @@ describe('wiki-line-patch-v1', () => {
     const value = snapshot('')
     const result = apply('', value, [{ kind: 'insert', gap: { after: null, before: null }, lines: ['first'] }], true)
     expect(result.source.text).toBe('first\n')
-    expect(() => apply('', value, [{ kind: 'insert', gap: { after: { line: 1, tag: '000000000000' }, before: null }, lines: ['first'] }])).toThrow('Empty documents')
+    expect(() => apply('', value, [{ kind: 'insert', gap: { after: { line: 1, tag: '000000000000' }, before: null }, lines: ['first'] }])).toThrow(expect.objectContaining({ code: 'INVALID_PATCH_GAP' }))
   })
 
   it('rejects stale page revision, source bytes, requester, document tag, and line anchors', () => {
@@ -206,9 +206,11 @@ describe('wiki-line-patch-v1', () => {
   it('enforces disclosed ranges and insertion gaps', () => {
     const source = 'one\ntwo\nthree\n'
     const value = snapshot(source, [{ startLine: 1, endLine: 1 }])
-    const unseenAnchor = { line: 2, tag: validateWikiMarkdownSource(source).documentTag.slice(0, 12) }
+    const full = snapshot(source)
+    const unseenAnchor = anchor(full, 2)
     expect(() => apply(source, value, [{ kind: 'replace', range: { start: unseenAnchor, end: unseenAnchor }, lines: ['TWO'] }])).toThrow(expect.objectContaining({ code: 'UNDISCLOSED_PATCH_RANGE' }))
-    expect(() => apply(source, value, [{ kind: 'insert', gap: { after: anchor(value, 1), before: unseenAnchor }, lines: ['between'] }])).toThrow()
+    expect(() => apply(source, value, [{ kind: 'insert', gap: { after: anchor(value, 1), before: unseenAnchor }, lines: ['between'] }])).toThrow(expect.objectContaining({ code: 'UNDISCLOSED_PATCH_GAP' }))
+    expect(apply(source, full, [{ kind: 'insert', gap: { after: anchor(full, 1), before: unseenAnchor }, lines: ['between'] }]).source.text).toBe('one\nbetween\ntwo\nthree\n')
   })
 
   it.each([

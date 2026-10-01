@@ -1,15 +1,8 @@
 import { describe, expect, test } from '../../server/test/bun-test.mts'
 import type { ThemeInstance } from 'vuetify'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../shared/theme-colors.ts'
-import {
-  applyWikiThemeColors,
-  contrastForeground,
-  contrastRatio,
-  createWikiThemes,
-  resolveThemeName,
-  WIKI_PURPOSE_KEYS,
-  WIKI_THEME_VARIATIONS
-} from './theme.ts'
+import { createAppVuetify } from './app-vuetify.ts'
+import { applyWikiThemeColors, createWikiThemes, resolveThemeName } from './theme.ts'
 
 const mixHexForTest = (base: string, mix: string, amount: number): string => {
   const channels = [1, 3, 5].map(index => {
@@ -20,6 +13,22 @@ const mixHexForTest = (base: string, mix: string, amount: number): string => {
       .padStart(2, '0')
   })
   return `#${channels.join('')}`.toUpperCase()
+}
+
+// WCAG 2 sRGB luminance, independent of the production contrast helpers.
+const luminanceForTest = (color: unknown): number => {
+  expect(color).toMatch(/^#[0-9A-F]{6}$/i)
+  const rgb = Number.parseInt(String(color).slice(1), 16)
+  const linear = (channel: number): number => {
+    const srgb = channel / 255
+    return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * linear(rgb >> 16) + 0.7152 * linear((rgb >> 8) & 255) + 0.0722 * linear(rgb & 255)
+}
+
+const contrastForTest = (foreground: unknown, background: unknown): number => {
+  const luminances = [luminanceForTest(foreground), luminanceForTest(background)].sort((a, b) => a - b)
+  return (luminances[1] + 0.05) / (luminances[0] + 0.05)
 }
 
 describe('frontend theme helpers', () => {
@@ -44,16 +53,18 @@ describe('frontend theme helpers', () => {
     colors.dark.primary = '#ABCDEF'
     colors.dark.secondary = '#A6A8AA'
     colors.dark.info = '#73ADD3'
+    colors.light.background = '#F5F0E8'
+    colors.light.surface = '#EEECE4'
+    colors.dark.background = '#111922'
+    colors.dark.surface = '#202C3A'
 
-    expect(createWikiThemes(colors)).toMatchObject({
+    const themes = createWikiThemes(colors)
+    expect(themes).toMatchObject({
       light: {
         dark: false,
         colors: {
           primary: '#F9A134',
           'on-primary': '#000000',
-          'surface-bright': '#F8F9FA',
-          'surface-light': '#F1F2F3',
-          'surface-variant': '#F8F8F8',
           'on-surface-variant': '#000000',
           focus: '#000000'
         }
@@ -67,22 +78,72 @@ describe('frontend theme helpers', () => {
           'on-primary': '#000000',
           'on-secondary': '#000000',
           'on-info': '#000000',
-          'surface-bright': '#3E4144',
-          'surface-light': '#313437',
-          'surface-variant': '#1E2123',
           'on-surface-variant': '#FFFFFF',
           focus: '#FFFFFF'
         }
       }
     })
+
+    for (const mode of ['light', 'dark'] as const) {
+      const runtime = themes[mode].colors!
+      for (const surface of ['surface-bright', 'surface-light', 'surface-variant']) {
+        expect(runtime[surface]).toMatch(/^#[0-9A-F]{6}$/)
+        expect(contrastForTest(runtime['on-surface-variant'], runtime[surface])).toBeGreaterThanOrEqual(4.5)
+      }
+      expect(contrastForTest(runtime.focus, runtime.background)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastForTest(runtime.focus, runtime.surface)).toBeGreaterThanOrEqual(4.5)
+      for (const role of ['primary', 'secondary', 'info']) {
+        expect(contrastForTest(runtime[`on-${role}`], runtime[role])).toBeGreaterThanOrEqual(4.5)
+      }
+    }
   })
 
   test('derives palette variations for every configurable semantic color', () => {
-    expect(WIKI_THEME_VARIATIONS).toEqual({
-      colors: ['primary', 'secondary', 'accent', 'info', 'success', 'warning', 'error'],
-      lighten: 1,
-      darken: 1
+    const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
+    Object.assign(colors.light, {
+      primary: '#416B91', secondary: '#775A8A', accent: '#846647', info: '#357B75',
+      success: '#587B45', warning: '#8A702B', error: '#8B4C5F'
     })
+    Object.assign(colors.dark, {
+      primary: '#83A7C9', secondary: '#B29BC5', accent: '#C3A486', info: '#86BFB8',
+      success: '#A0C48B', warning: '#C8B36A', error: '#C78F9F'
+    })
+    const changed = { light: { ...colors.dark }, dark: { ...colors.light } }
+    const previousSiteConfig = Object.getOwnPropertyDescriptor(globalThis, 'siteConfig')
+    let initialCleanup: (() => void) | undefined
+    let updatedCleanup: (() => void) | undefined
+    try {
+      Object.defineProperty(globalThis, 'siteConfig', {
+        configurable: true, value: { lang: 'en', rtl: false, darkMode: false, themeColors: colors }
+      })
+      const initialInstance = createAppVuetify()
+      initialCleanup = initialInstance.unmount
+      const initial = initialInstance.theme.computedThemes.value
+      Object.defineProperty(globalThis, 'siteConfig', {
+        configurable: true, value: { lang: 'en', rtl: false, darkMode: false, themeColors: changed }
+      })
+      const updatedInstance = createAppVuetify()
+      updatedCleanup = updatedInstance.unmount
+      const updated = updatedInstance.theme.computedThemes.value
+
+      for (const mode of ['light', 'dark'] as const) {
+        for (const role of ['primary', 'secondary', 'accent', 'info', 'success', 'warning', 'error'] as const) {
+          expect(initial[mode].colors[role]).toBe(colors[mode][role])
+          expect(updated[mode].colors[role]).toBe(changed[mode][role])
+          for (const [runtime, palette] of [[initial[mode].colors, colors[mode]], [updated[mode].colors, changed[mode]]] as const) {
+            expect(luminanceForTest(runtime[`${role}-lighten-1`])).toBeGreaterThan(luminanceForTest(palette[role]))
+            expect(luminanceForTest(runtime[`${role}-darken-1`])).toBeLessThan(luminanceForTest(palette[role]))
+          }
+          expect(updated[mode].colors[`${role}-lighten-1`]).not.toBe(initial[mode].colors[`${role}-lighten-1`])
+          expect(updated[mode].colors[`${role}-darken-1`]).not.toBe(initial[mode].colors[`${role}-darken-1`])
+        }
+      }
+    } finally {
+      initialCleanup?.()
+      updatedCleanup?.()
+      if (previousSiteConfig) Object.defineProperty(globalThis, 'siteConfig', previousSiteConfig)
+      else Reflect.deleteProperty(globalThis, 'siteConfig')
+    }
   })
 
   test('derives WCAG-readable disabled primary ink for raised and sunken composites in both modes', () => {
@@ -92,19 +153,16 @@ describe('frontend theme helpers', () => {
 
     const themes = createWikiThemes(colors)
     for (const mode of ['light', 'dark'] as const) {
-      const themeColors = themes[mode].colors
-      const surfaceBright = mixHexForTest(themeColors.surface, '#FFFFFF', mode === 'dark' ? 0.12 : 0.04)
-      const surfaceRaised = mixHexForTest(themeColors.surface, surfaceBright, 0.06)
+      const themeColors = themes[mode].colors! as Record<string, string>
+      const surfaceRaised = mixHexForTest(themeColors.surface, themeColors['surface-bright'], 0.06)
       const raisedComposite = mixHexForTest(surfaceRaised, themeColors.primary, 0.8)
       const sunkenSurface = mixHexForTest(themeColors.background, themeColors.surface, 0.28)
       const sunkenComposite = mixHexForTest(sunkenSurface, themeColors.primary, 0.8)
       const raisedInk = themeColors['on-primary-disabled-raised']
       const sunkenInk = themeColors['on-primary-disabled-sunken']
 
-      expect(raisedInk).toBe(contrastForeground(raisedComposite))
-      expect(sunkenInk).toBe(contrastForeground(sunkenComposite))
-      expect(contrastRatio(raisedInk, raisedComposite)).toBeGreaterThanOrEqual(4.5)
-      expect(contrastRatio(sunkenInk, sunkenComposite)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastForTest(raisedInk, raisedComposite)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastForTest(sunkenInk, sunkenComposite)).toBeGreaterThanOrEqual(4.5)
     }
   })
 
@@ -117,45 +175,63 @@ describe('frontend theme helpers', () => {
 
     const themes = createWikiThemes(colors)
     for (const mode of ['light', 'dark'] as const) {
-      const themeColors = themes[mode].colors
-      for (const purpose of WIKI_PURPOSE_KEYS) {
+      const themeColors = themes[mode].colors! as Record<string, string>
+      const surfaceRaised = mixHexForTest(themeColors.surface, themeColors['surface-bright'], 0.06)
+      // These seven purpose tokens are consumed independently in base.scss.
+      for (const purpose of ['primary', 'secondary', 'success', 'info', 'warning', 'error', 'neutral']) {
         const ink = themeColors[`purpose-${purpose}-ink`]
         const fill = themeColors[`purpose-${purpose}-fill`]
 
         expect(ink).toMatch(/^#[0-9A-F]{6}$/)
         expect(fill).toMatch(/^#[0-9A-F]{6}$/)
-        expect(contrastRatio(ink, themeColors.surface)).toBeGreaterThanOrEqual(4.5)
-        expect(contrastRatio(ink, fill)).toBeGreaterThanOrEqual(4.5)
+        expect(contrastForTest(ink, themeColors.surface)).toBeGreaterThanOrEqual(4.5)
+        expect(contrastForTest(ink, surfaceRaised)).toBeGreaterThanOrEqual(4.5)
+        expect(contrastForTest(ink, fill)).toBeGreaterThanOrEqual(4.5)
       }
 
-      expect(themeColors['purpose-neutral-ink']).toBe(contrastForeground(themeColors.surface))
+      expect(themeColors['purpose-neutral-ink']).toBe(mode === 'light' ? '#000000' : '#FFFFFF')
     }
   })
 
   test('updates configured and derived colors without discarding unrelated Vuetify-only colors', () => {
+    const oldColors = cloneThemeColors(DEFAULT_THEME_COLORS)
+    Object.assign(oldColors.light, { primary: '#27405A', background: '#FFF9EE', surface: '#F4EEE3' })
+    Object.assign(oldColors.dark, { primary: '#EDCC84', background: '#181F2A', surface: '#303B4C' })
     const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
-    colors.light.primary = '#F9A134'
+    Object.assign(colors.light, { primary: '#E7B34A', background: '#F3F0E8', surface: '#EEECE4' })
+    Object.assign(colors.dark, { primary: '#244264', background: '#101722', surface: '#202C3A' })
     const theme = {
       themes: {
         value: {
           light: {
             dark: false,
-            colors: { ...DEFAULT_THEME_COLORS.light, 'on-primary': '#FFFFFF', 'surface-bright': '#EEEEEE', outline: '#DDDDDD' },
+            colors: { ...oldColors.light, 'on-primary': '#FFFFFF', 'surface-bright': '#000000', outline: '#DDDDDD' },
             variables: {}
           },
-          dark: { dark: true, colors: { ...DEFAULT_THEME_COLORS.dark, 'on-primary': '#000000', outline: '#333333' }, variables: {} }
+          dark: {
+            dark: true,
+            colors: { ...oldColors.dark, 'on-primary': '#000000', 'surface-bright': '#FFFFFF', outline: '#333333' },
+            variables: {}
+          }
         }
       }
     } as unknown as ThemeInstance
 
     applyWikiThemeColors(theme, colors)
 
-    expect(theme.themes.value.light.colors.primary).toBe('#F9A134')
-    expect(theme.themes.value.light.colors['on-primary']).toBe('#000000')
-    expect(theme.themes.value.dark.colors.background).toBe(DEFAULT_THEME_COLORS.dark.background)
-    expect(theme.themes.value.light.colors['surface-bright']).toBe('#F8F9FA')
-    expect(theme.themes.value.light.colors.outline).toBe('#DDDDDD')
-    expect(theme.themes.value.dark.colors['on-primary']).toBe('#000000')
-    expect(theme.themes.value.dark.colors.outline).toBe('#333333')
+    for (const mode of ['light', 'dark'] as const) {
+      const runtime = theme.themes.value[mode].colors
+      expect(runtime.primary).toBe(colors[mode].primary)
+      expect(runtime.background).toBe(colors[mode].background)
+      expect(runtime.surface).toBe(colors[mode].surface)
+      expect(runtime['on-primary']).toBe(mode === 'light' ? '#000000' : '#FFFFFF')
+      expect(contrastForTest(runtime['on-primary'], runtime.primary)).toBeGreaterThanOrEqual(4.5)
+      expect(runtime['surface-bright']).not.toBe(mode === 'light' ? '#000000' : '#FFFFFF')
+      expect(luminanceForTest(runtime['surface-bright'])).toBeGreaterThan(luminanceForTest(runtime.surface))
+      expect(contrastForTest(runtime['on-surface'], runtime['surface-bright'])).toBeGreaterThanOrEqual(4.5)
+      expect(contrastForTest(runtime.focus, runtime.background)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastForTest(runtime.focus, runtime.surface)).toBeGreaterThanOrEqual(4.5)
+      expect(runtime.outline).toBe(mode === 'light' ? '#DDDDDD' : '#333333')
+    }
   })
 })

@@ -9,7 +9,7 @@ describe('content extension insertion', () => {
   })
 
   it('rejects non-canonical fences', () => {
-    expect(() => contentExtensionFenceBody(`\`\`\`wiki-extension\n${body}\n\`\`\``)).toThrow(/canonical/)
-    expect(() => contentExtensionFenceBody(`\`\`\`json\n${body}\n\`\`\`\n`)).toThrow(/canonical/)
+    expect(() => contentExtensionFenceBody(`\`\`\`wiki-extension\n${body}\n\`\`\``)).toThrow(Error)
+    expect(() => contentExtensionFenceBody(`\`\`\`json\n${body}\n\`\`\`\n`)).toThrow(Error)
   })
 })

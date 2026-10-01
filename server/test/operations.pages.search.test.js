@@ -207,9 +207,11 @@ describe('page search visibility', () => {
       title: `Draft ${index + 1}`
     }))
     const ranks = ownerPages.map(candidate => ({ id: candidate.id, sourceRevision: candidate.sourceRevision, score: 1 }))
-    installSearchWiki({ pageResults: [[], ownerPages], privateRanks: ranks })
+    const { knex } = installSearchWiki({ pageResults: [[], ownerPages], rawRows: [ranks] })
     let operations = await loadOperations()
     const ownerResult = await operations.search({ requester: { id: 7 }, query: 'draft', limit: 1001 })
+    expect(knex.raw.mock.calls[0][0]).toMatch(/LIMIT\s+\?\s*$/u)
+    expect(knex.raw.mock.calls[0][1].at(-1)).toBe(50)
     expect(ownerResult.results).toHaveLength(50)
     expect(ownerResult.results.every(result => result.visibility === 'private' && result.ownerId === 7)).toBe(true)
 
@@ -334,9 +336,8 @@ describe('page search visibility', () => {
     const operations = await loadOperations()
 
     const result = await operations.search({ requester: { id: 7 }, query: 'needle' })
-    const resultIds = result.results.map(candidate => candidate.id)
-    expect(resultIds).toEqual(expect.arrayContaining([publicDefault.id, privateDefault.id, knowledgeDefault.id]))
-    expect(resultIds).not.toEqual(expect.arrayContaining([publicOptedOut.id, privateOptedOut.id, knowledgeOptedOut.id]))
+    const resultIds = result.results.map(candidate => candidate.id).sort((left, right) => left - right)
+    expect(resultIds).toEqual([publicDefault.id, privateDefault.id, knowledgeDefault.id])
     expect(result.totalHits).toBe(3)
   })
 
@@ -388,7 +389,7 @@ describe('page search visibility', () => {
     ]]))
     const { query } = installSearchWiki({ pageResults: [candidates, [allowed]] })
     query.mockImplementation(async (_query, options) => ({
-      results: options.pageIds.map(id => ({
+      results: options.pageIds.slice(0, options.limit ?? global.WIKI.config.search.maxHits).map(id => ({
         id,
         sourceRevision: '1',
         locale: 'en',
@@ -397,7 +398,7 @@ describe('page search visibility', () => {
         matchedFields: ['title']
       })),
       suggestions: [],
-      totalHits: options.pageIds.length
+      totalHits: Math.min(options.pageIds.length, options.limit ?? global.WIKI.config.search.maxHits)
     }))
     const operations = await loadOperations()
 

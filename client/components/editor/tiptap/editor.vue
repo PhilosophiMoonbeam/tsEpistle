@@ -243,7 +243,6 @@ import {
 } from './visual-markdown-authoring.ts'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../../helpers/editor-insert-events'
-import { onEditorLinkToPage, offEditorLinkToPage } from '../../../helpers/editor-link-events'
 import { contentExtensionFenceBody } from '../../../helpers/content-extension-insertion'
 import { EditorAdapterController } from '../common/editor-adapter'
 import { WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
@@ -500,9 +499,6 @@ export default defineComponent({
       })
       if (this.editor) this.syncFromEditor(this.editor)
     },
-    handleEditorLinkToPage () {
-      this.insertLink()
-    },
     insertCodeDocument (language: string, text: string) {
       const content: JSONContent = {
         type: 'codeBlock',
@@ -635,7 +631,6 @@ export default defineComponent({
     }
 
     onEditorInsert(this.handleEditorInsert)
-    onEditorLinkToPage(this.handleEditorLinkToPage)
     onEditorSaveConflict(this.handleEditorSaveConflict)
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
@@ -647,7 +642,6 @@ export default defineComponent({
       this.editorAdapter = null
     }
     offEditorInsert(this.handleEditorInsert)
-    offEditorLinkToPage(this.handleEditorLinkToPage)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
     const root = this.$refs.root

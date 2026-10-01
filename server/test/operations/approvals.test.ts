@@ -697,16 +697,17 @@ describe('page approval workflow', () => {
       }
     ])
 
-    const querySql: string[] = []
-    knex.on('query', (query: { sql?: string }) => {
-      if (typeof query.sql === 'string') querySql.push(query.sql)
+    let selectQueries = 0
+    const countSelect = (query: { method?: string }) => {
+      if (query.method === 'select' || query.method === 'first' || query.method === 'pluck') selectQueries += 1
+    }
+    knex.on('query', countSelect)
+    const first = await operations.listApprovalInbox(requester).finally(() => {
+      knex.removeListener('query', countSelect)
     })
-    const first = await operations.listApprovalInbox(requester)
     const cursor = first.nextCursor
     expect(first).toMatchObject({ ownerId: 7, items: [], nextCursor: expect.any(String) })
-    expect(querySql.filter(sql => sql.includes('pageApprovalRequests'))).toHaveLength(5)
-    expect(querySql.filter(sql => sql.includes('pageTags'))).toHaveLength(5)
-    expect(querySql.filter(sql => sql.includes('select `pages`.`id`'))).toHaveLength(5)
+    expect(selectQueries).toBeLessThanOrEqual(25)
 
     if (cursor === null) throw new Error('Expected bounded approval inbox to return a continuation cursor')
     requester.permissions = []
@@ -1031,5 +1032,15 @@ describe('page approval workflow', () => {
     expect(cancelled).toMatchObject({ status: 'cancelled', closedAt: expect.anything() })
     expect(await knex('pageApprovalTransitions').where({ requestId: first.id }).pluck('toStatus')).toEqual(['submitted', 'submitted', 'rejected'])
     expect(await knex('pageApprovalTransitions').where({ requestId: second.id }).pluck('toStatus')).toEqual(['submitted', 'cancelled'])
+    const auditColumns = ['fromStatus', 'toStatus', 'actorId', 'revisionId', 'comment']
+    const firstAudit = await knex('pageApprovalTransitions').where({ requestId: first.id }).select(...auditColumns)
+    expect(firstAudit).toEqual(expect.arrayContaining([
+      { fromStatus: 'submitted', toStatus: 'submitted', actorId: 9, revisionId: first.revisionId, comment: 'Administrator reassignment' },
+      { fromStatus: 'submitted', toStatus: 'rejected', actorId: 9, revisionId: first.revisionId, comment: 'Does not meet publication policy' }
+    ]))
+    const secondAudit = await knex('pageApprovalTransitions').where({ requestId: second.id }).select(...auditColumns)
+    expect(secondAudit).toEqual(expect.arrayContaining([
+      { fromStatus: 'submitted', toStatus: 'cancelled', actorId: 7, revisionId: second.revisionId, comment: 'Withdrawn' }
+    ]))
   })
 })

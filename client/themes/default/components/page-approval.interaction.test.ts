@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { describe, expect, it, vi } from '../../../../server/test/bun-test.mts'
+import { afterEach, describe, expect, it, vi } from '../../../../server/test/bun-test.mts'
+import { computed, effectScope, nextTick, reactive, watch } from 'vue'
+import type { EffectScope } from 'vue'
 
 type FetchCall = [input: RequestInfo | URL, init?: RequestInit]
 type ApprovalAction = 'approve' | 'request-changes' | 'reject' | 'cancel' | 'resubmit' | 'publish' | 'reassign'
@@ -10,7 +12,7 @@ type PageApprovalVm = {
   sourceRevision: string
   approvalLoading: boolean
   approvalInitialLoading: boolean
-  pageApproval: { id: string } | null
+  pageApproval: { id: string; assigneeId?: number } | null
   hasWritePagesPermission: boolean
   approvalAssigneeId: number | null
   approvalComment: string
@@ -96,6 +98,14 @@ const componentOptions = new Function(
   pushGraphError,
   showNotification
 ) as {
+  computed: {
+    approvalResourceKey: (this: PageApprovalVm) => string
+    approvalAuthorityContextKey: (this: PageApprovalVm) => string
+    approvalActionReady: (this: PageApprovalVm) => boolean
+  }
+  watch: {
+    approvalResourceKey: (this: PageApprovalVm, value: string, previous: string) => void
+  }
   methods: {
     submitPageApproval: (this: PageApprovalVm) => Promise<void>
     transitionPageApproval: (this: PageApprovalVm, action: ApprovalAction) => Promise<void>
@@ -116,10 +126,15 @@ const deferred = <Value>() => {
   return { promise, resolve, reject }
 }
 
+const scopes: EffectScope[] = []
+afterEach(() => {
+  for (const scope of scopes.splice(0)) scope.stop()
+})
+
 const makeVm = (overrides: Partial<PageApprovalVm> = {}): PageApprovalVm => {
-  const vm = {
+  const vm = reactive({
     pageId: 42,
-    sourceRevision: 'rendered-revision-17',
+    sourceRevision: '17',
     approvalLoading: false,
     approvalInitialLoading: false,
     pageApproval: { id: 'approval-42' },
@@ -128,12 +143,9 @@ const makeVm = (overrides: Partial<PageApprovalVm> = {}): PageApprovalVm => {
     approvalComment: '  Keep the rendered note  ',
     approvalError: '',
     pageOnlineActionReady: true,
-    approvalActionReady: true,
     approvalAuthorityReady: true,
-    approvalResourceKey: '42\u0000approval-42\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17',
+    approvalAuthorityReadyKey: null,
     pageAuthorityKey: 'actor:online',
-    approvalAuthorityContextKey: 'actor:online\u000042\u000042\u0000approval-42\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17',
-    approvalAuthorityReadyKey: 'actor:online\u000042\u000042\u0000approval-42\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17',
     pageActionGeneration: 1,
     approvalRequestId: 1,
     approvalMutationId: 0,
@@ -143,7 +155,22 @@ const makeVm = (overrides: Partial<PageApprovalVm> = {}): PageApprovalVm => {
     isCurrentApprovalAuthority: () => true,
     $t: (key: string) => key,
     ...overrides
-  } as PageApprovalVm
+  }) as unknown as PageApprovalVm
+  const scope = effectScope()
+  scopes.push(scope)
+  scope.run(() => {
+    for (const key of ['approvalResourceKey', 'approvalAuthorityContextKey', 'approvalActionReady'] as const) {
+      const value = computed(() => componentOptions.computed[key].call(vm))
+      Object.defineProperty(vm, key, { get: () => value.value })
+    }
+    if (vm.approvalAuthorityReady && !Object.hasOwn(overrides, 'approvalAuthorityReadyKey')) {
+      vm.approvalAuthorityReadyKey = vm.approvalAuthorityContextKey
+    }
+    watch(
+      () => vm.approvalResourceKey,
+      (value, previous) => componentOptions.watch.approvalResourceKey.call(vm, value, previous)
+    )
+  })
   vm.approvalResponseError = componentOptions.methods.approvalResponseError.bind(vm)
   vm.isCurrentPageAction = componentOptions.methods.isCurrentPageAction.bind(vm)
   vm.isCurrentApprovalAuthority = componentOptions.methods.isCurrentApprovalAuthority.bind(vm)
@@ -168,17 +195,23 @@ describe('reader page approval submission', () => {
     try {
       const vm = makeVm()
       const submission = vm.submitPageApproval()
-      vm.sourceRevision = 'newer-rendered-revision-18'
+      vm.sourceRevision = '18'
+      await nextTick()
       request.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))
       await submission
 
       expect(calls).toHaveLength(1)
       expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
-        expectedSourceRevision: 'rendered-revision-17',
+        expectedSourceRevision: '17',
         assigneeId: 9,
         comment: 'Keep the rendered note'
       })
-      expect(vm.loadPageApproval).toHaveBeenCalledOnce()
+      expect(calls[0]?.[1]?.method).toBe('POST')
+      expect(vm.loadPageApproval).not.toHaveBeenCalled()
+      expect(vm.approvalComment).toBe('  Keep the rendered note  ')
+      expect(graphErrors).toHaveLength(0)
+      expect(successNotifications).toHaveLength(0)
+      expect(notificationsRefresh).not.toHaveBeenCalled()
     } finally {
       globalThis.fetch = previousFetch
     }
@@ -213,7 +246,7 @@ describe('reader page approval submission', () => {
       globalThis.fetch = previousFetch
     }
   })
-  it('sends the displayed revision only for resubmit and preserves context on a stale conflict', async () => {
+  it.each([false, true])('preserves a resubmit draft when a conflict arrives (resource changed: %s)', async resourceChanged => {
     graphErrors.length = 0
     successNotifications.length = 0
     notificationsRefresh.mockClear()
@@ -229,7 +262,10 @@ describe('reader page approval submission', () => {
       const vm = makeVm()
       vm.approvalError = 'Existing approval error'
       const transition = vm.transitionPageApproval('resubmit')
-      vm.sourceRevision = 'newer-rendered-revision-18'
+      if (resourceChanged) {
+        vm.sourceRevision = '18'
+        await nextTick()
+      }
       request.resolve(
         new Response(JSON.stringify({ error: 'Page changed after it was rendered' }), {
           status: 409,
@@ -238,18 +274,24 @@ describe('reader page approval submission', () => {
       )
       await transition
 
+      expect(calls).toHaveLength(1)
+      expect(calls[0]?.[1]?.method).toBe('POST')
       expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
         action: 'resubmit',
-        expectedSourceRevision: 'rendered-revision-17',
+        expectedSourceRevision: '17',
         comment: 'Keep the rendered note'
       })
       expect(vm.approvalComment).toBe('  Keep the rendered note  ')
       expect(vm.approvalError).toBe('Existing approval error')
       expect(vm.approvalLoading).toBe(false)
       expect(vm.loadPageApproval).not.toHaveBeenCalled()
-      expect(graphErrors).toHaveLength(1)
-      expect(graphErrors[0]).toBeInstanceOf(Error)
-      expect((graphErrors[0] as Error).message).toBe('Page changed after it was rendered')
+      if (resourceChanged) {
+        expect(graphErrors).toHaveLength(0)
+      } else {
+        expect(graphErrors).toHaveLength(1)
+        expect(graphErrors[0]).toBeInstanceOf(Error)
+        expect((graphErrors[0] as Error).message).toBe('Page changed after it was rendered')
+      }
       expect(successNotifications).toHaveLength(0)
       expect(notificationsRefresh).not.toHaveBeenCalled()
     } finally {
@@ -272,7 +314,6 @@ describe('reader page approval submission', () => {
     }) as typeof fetch
     try {
       const vm = makeVm({
-        approvalActionReady: false,
         approvalAuthorityReady: false,
         approvalAuthorityReadyKey: null
       })
@@ -280,14 +321,18 @@ describe('reader page approval submission', () => {
       await vm.submitPageApproval()
       expect(calls).toHaveLength(0)
 
-      await vm.loadPageApproval()
+      expect(await vm.loadPageApproval()).toBe(true)
       expect(vm.approvalAuthorityReady).toBe(true)
       expect(vm.approvalAuthorityReadyKey).toBe(vm.approvalAuthorityContextKey)
 
-      vm.approvalActionReady = true
+      expect(vm.approvalActionReady).toBe(true)
       await vm.submitPageApproval()
 
-      expect(calls.map(([, init]) => init?.method)).toEqual([undefined, 'POST', undefined])
+      expect(calls.map(([input, init]) => [String(input), init?.method ?? 'GET'])).toEqual([
+        ['/_api/pages/42/approval', 'GET'],
+        ['/_api/pages/42/approval', 'POST'],
+        ['/_api/pages/42/approval', 'GET']
+      ])
       expect(successNotifications).toHaveLength(1)
     } finally {
       globalThis.fetch = previousFetch
@@ -302,14 +347,12 @@ describe('reader page approval submission', () => {
       return Promise.resolve(new Response('{}', { status: 200 }))
     }) as typeof fetch
     try {
-      const offlineVm = makeVm({ pageOnlineActionReady: false, approvalActionReady: false })
+      const offlineVm = makeVm({ pageOnlineActionReady: false })
       await offlineVm.submitPageApproval()
       await offlineVm.transitionPageApproval('approve')
 
       const staleVm = makeVm({
-        approvalActionReady: false,
-        approvalAuthorityReadyKey: 'actor:online\u000042\u000042\u0000old-resource\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17',
-        approvalAuthorityContextKey: 'actor:online\u000042\u000042\u0000approval-42\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17'
+        approvalAuthorityReadyKey: 'previous-context'
       })
       await staleVm.submitPageApproval()
       await staleVm.transitionPageApproval('approve')
@@ -338,8 +381,9 @@ describe('reader page approval submission', () => {
       vm.pageId = 43
       vm.pageActionGeneration = 2
       vm.pageAuthorityKey = 'actor-b:online'
-      vm.approvalResourceKey = '43\u0000approval-43\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17'
-      vm.approvalAuthorityContextKey = 'actor-b:online\u000043\u000043\u0000approval-43\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17'
+      vm.pageApproval = { id: 'approval-43', assigneeId: 19 }
+      vm.approvalAssigneeId = 19
+      await nextTick()
       vm.approvalRequestId += 1
       request.resolve(
         new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
@@ -350,6 +394,47 @@ describe('reader page approval submission', () => {
       expect(await read).toBe(false)
       expect(vm.approvalAuthorityReady).toBe(false)
       expect(vm.approvalAuthorityReadyKey).toBeNull()
+      expect(vm.pageApproval).toEqual({ id: 'approval-43', assigneeId: 19 })
+      expect(vm.approvalAssigneeId).toBe(19)
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  })
+
+  it.each(['actor', 'page'] as const)('rejects a pending read after only the %s changes', async change => {
+    const request = deferred<Response>()
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(() => request.promise) as typeof fetch
+    try {
+      const vm = makeVm({
+        pageApproval: { id: 'current-approval', assigneeId: 19 },
+        approvalAssigneeId: 19,
+        approvalAuthorityReady: false,
+        approvalAuthorityReadyKey: null
+      })
+      vm.loadPageApproval = componentOptions.methods.loadPageApproval.bind(vm)
+      const read = vm.loadPageApproval()
+      const requestId = vm.approvalRequestId
+      if (change === 'actor') {
+        // Method-boundary race before the actor watcher runs: no page,
+        // generation, resource or request change can mask the actor guard.
+        vm.pageAuthorityKey = 'actor-b:online'
+        expect(vm.pageId).toBe(42)
+        expect(vm.pageActionGeneration).toBe(1)
+        expect(vm.approvalRequestId).toBe(requestId)
+      } else {
+        vm.pageId = 43
+        await nextTick()
+      }
+      request.resolve(new Response(JSON.stringify({ approval: { id: 'late-approval', assigneeId: 9 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
+      expect(await read).toBe(false)
+      expect(vm.approvalAuthorityReady).toBe(false)
+      expect(vm.approvalAuthorityReadyKey).toBeNull()
+      expect(vm.pageApproval).toEqual({ id: 'current-approval', assigneeId: 19 })
+      expect(vm.approvalAssigneeId).toBe(19)
     } finally {
       globalThis.fetch = previousFetch
     }
@@ -385,7 +470,9 @@ describe('reader page approval submission', () => {
 
       expect(calls).toHaveLength(2)
       expect(calls[0]?.[1]?.method).toBe('POST')
-      expect(calls[1]?.[1]?.method).toBeUndefined()
+      expect(calls[1]?.[1]?.method ?? 'GET').toBe('GET')
+      expect(String(calls[1]?.[0])).toBe('/_api/pages/42/approval')
+      expect(JSON.parse(String(calls[0]?.[1]?.body))).not.toHaveProperty('expectedSourceRevision')
       expect(vm.approvalAuthorityReady).toBe(true)
       expect(graphErrors).toHaveLength(1)
     } finally {
@@ -422,7 +509,8 @@ describe('reader page approval submission', () => {
 
       expect(calls).toHaveLength(2)
       expect(calls[0]?.[1]?.method).toBe('POST')
-      expect(calls[1]?.[1]?.method).toBeUndefined()
+      expect(calls[1]?.[1]?.method ?? 'GET').toBe('GET')
+      expect(String(calls[1]?.[0])).toBe('/_api/pages/42/approval')
       expect(vm.approvalAuthorityReady).toBe(true)
       expect(graphErrors).toHaveLength(1)
     } finally {

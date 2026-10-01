@@ -1,5 +1,5 @@
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
-import { NavigationPolicySchema, navigationDestination, navigationMenuItems, navigationChangedFields, normalizeNavigationTree, navigationCacheKey, type NavigationItem } from '../../../shared/navigation-policy.ts'
+import { NavigationPolicySchema, navigationDestination, navigationMenuItems, navigationChangedFields, normalizeNavigationTree, type NavigationItem } from '../../../shared/navigation-policy.ts'
 const link = (id = 'guide'): NavigationItem => ({ id, kind: 'link', label: 'Guide', icon: 'mdi-link', targetType: 'page', target: '/en/guide', visibilityMode: 'all', visibilityGroups: [] })
 describe('Navigation policy and shared audience preview', () => {
   test('allows useful destinations and rejects executable or cross-origin workspace paths', () => {
@@ -22,16 +22,12 @@ describe('Navigation policy and shared audience preview', () => {
     expect(NavigationPolicySchema.safeParse({ ...policy, tree: [{ locale: 'en', items: [{ ...link(), label: '' }] }] }).success).toBe(false)
     expect(NavigationPolicySchema.safeParse({ ...policy, tree: [{ locale: 'en', items: Array.from({ length: 201 }, (_, i) => link(String(i))) }] }).success).toBe(false)
   })
-  test('uses the same audience filtering and structural cleanup as the reader', () => {
-    const heading = { ...link('heading'), kind: 'header' as const, label: 'Members' }, divider = { ...link('divider'), kind: 'divider' as const }, privateLink = { ...link('restricted'), visibilityMode: 'restricted' as const, visibilityGroups: [7] }
-    const menu = [divider, heading, privateLink, { ...heading, id: 'public', label: 'Explore' }, link(), divider]
-    expect(navigationMenuItems(menu, []).map(item => item.id)).toEqual(['public', 'guide'])
-    expect(navigationMenuItems(menu, [7]).map(item => item.id)).toEqual(['heading', 'restricted', 'public', 'guide'])
+  test('fails closed for a restricted link with an empty audience', () => {
+    const privateLink = { ...link('restricted'), visibilityMode: 'restricted' as const, visibilityGroups: [7] }
     expect(navigationMenuItems([{ ...privateLink, visibilityGroups: [] }], [7])).toEqual([])
   })
   test('retains legacy menus while removing the duplicated built-in home link', () => {
     const rows = normalizeNavigationTree([{ ...link('home'), targetType: 'home' }, link()])
     expect(rows[0].locale).toBe('en'); expect(rows[0].items.map(item => item.id)).toEqual(['guide'])
-    expect(navigationCacheKey('fr', 'publication-b')).not.toBe(navigationCacheKey('fr', 'publication-a'))
   })
 })

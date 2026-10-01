@@ -1,35 +1,16 @@
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
-import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { AgentProductRuntime, type AgentEngineRequest } from '../../agents/runtime.ts'
 import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
 import { admitAgentRun } from '../../agents/coordinator.ts'
 import { createAgentConversationFolder } from '../../agents/repository.ts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  databaseName.endsWith('_agents_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        password,
-        database: databaseName
-      }
-    : null
-const directlyInvoked =
-  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('repository.postgres.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error('Explicit agent repository PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _agents_test and a PostgreSQL password.')
-}
+const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 
 const suite = connection ? describe : describe.skip
 const schema = `agent_repository_${randomUUID().replaceAll('-', '')}`
@@ -652,7 +633,7 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
     })
     mutationRelease.resolve()
     await mutation
-    await expect(rejected).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
+    await expect(rejected).rejects.toMatchObject({ code: 'PROFILE_UNAVAILABLE', status: 409 })
     expect(await durableCounts()).toEqual({ agentMessages: 0, agentRuns: 0, agentRunSkills: 0, agentQuotaReservations: 0, agentEvents: 0 })
     await runtime.shutdown()
   }
@@ -785,7 +766,7 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
       })
       await transaction('agentProviderProfiles')
         .where({ id: provider.profileId })
-        .update({ currentVersionId: replacementVersionId, status: 'disabled', conformed: false, policyVersion: 3 })
+        .update({ currentVersionId: replacementVersionId })
       ready.resolve()
       await release.promise
     })
@@ -810,7 +791,6 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
     const provider = await createProvider('Grant race', 'groups', [1])
     await expectSubmitRejectedAfterProviderMutation(provider.profileId, [provider.profileId], async transaction => {
       await transaction('agentProviderGrants').where({ profileId: provider.profileId }).delete()
-      await transaction('agentProviderProfiles').where({ id: provider.profileId }).update({ exposureMode: 'groups', policyVersion: 4 })
     })
   })
 
@@ -874,28 +854,6 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
     expect(admitted.replayed).toBe(false)
     expect(observedSkillIds).toEqual([])
     expect(await db('agentRunSkills').where({ runId: admitted.run.id })).toEqual([])
-    await runtime.shutdown()
-  })
-
-  it('validates explicit skills before preferred-skill deduplication inside the transaction', async () => {
-    const provider = await createProvider('Skill validation order provider')
-    const inaccessible = await createSkill({ name: 'inaccessible-explicit', ownerUserId: 8 })
-    await db('agentUserSkillPreferences').insert({ ownerId: 7, skillId: inaccessible.skillId, ordinal: 0, selectedAt: new Date() })
-    const sessionId = await createSession(provider.profileId)
-    const token = await registry.issueResolutionToken(7, sessionId)
-    const runtime = createRuntime(registry)
-    await expect(
-      runtime.submit({
-        ownerId: 7,
-        sessionId,
-        profileResolutionToken: token,
-        clientRequestId: randomUUID(),
-        expectedSessionVersion: 1,
-        content: 'explicit inaccessible skill',
-        invokedSkillVersionIds: [inaccessible.selectedVersionId]
-      })
-    ).rejects.toMatchObject({ code: 'INVALID_SKILL' })
-    expect(await durableCounts()).toEqual({ agentMessages: 0, agentRuns: 0, agentRunSkills: 0, agentQuotaReservations: 0, agentEvents: 0 })
     await runtime.shutdown()
   })
 })

@@ -18,8 +18,9 @@ const page = (id, title, path, tags = []) => ({
 })
 
 const pageQuery = pages => {
+  let columns
   const query = {
-    column: vi.fn(() => query),
+    column: vi.fn(selected => { columns = selected; return query }),
     withGraphJoined: vi.fn(() => query),
     modifyGraph: vi.fn((_relation, callback) => { callback({ select: vi.fn() }); return query }),
     modify: vi.fn(callback => {
@@ -33,7 +34,13 @@ const pageQuery = pages => {
       callback(builder)
       return query
     }),
-    then: resolve => Promise.resolve(pages).then(resolve)
+    then: resolve => Promise.resolve(columns === undefined ? pages : pages.map(candidate => ({
+      ...Object.fromEntries(columns.map(column => {
+        const key = column.split('.').at(-1)
+        return [key, candidate[key]]
+      })),
+      tags: candidate.tags
+    }))).then(resolve)
   }
   return query
 }
@@ -80,6 +87,7 @@ describe('related page graph traversal', () => {
     }
     const checkAccess = vi.fn((_user, _permissions, context = {}) => context.path !== 'hidden')
     const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
+    let protectedIds = []
     global.WIKI = {
       auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
       config: { db: { type: 'postgres' }, lang: { code: 'en' } },
@@ -89,7 +97,7 @@ describe('related page graph traversal', () => {
         knex: vi.fn(table => {
           if (table === 'pageLinks as links') return edgeQuery
           if (table === 'pageMutationOutbox') return receiptQuery
-          if (table === 'pageAccessPasswords') return [{ pageId: 5 }]
+          if (table === 'pageAccessPasswords') return protectedIds.map(pageId => ({ pageId }))
           throw new Error(`Unexpected table ${table}`)
         }),
         pages: {
@@ -104,30 +112,35 @@ describe('related page graph traversal', () => {
 
     const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const requester = { id: 7 }
-    expect(await operations.listRelated({ pageId: 1, limit: 2, offset: 0, requester })).toMatchObject({
-      pages: [
-        { id: 2, distance: 1, direction: 'outgoing', viaPageId: 1 },
-        { id: 3, distance: 2, direction: 'incoming', viaPageId: 2 }
-      ],
-      truncated: true,
-      nextOffset: 2
-    })
-    expect(visiblePageQuery.column).toHaveBeenCalledWith(expect.arrayContaining(['pages.updatedAt']))
-    expect(await operations.listRelated({ pageId: 1, limit: 2, offset: 2, requester })).toMatchObject({
-      pages: [{ id: 4, distance: 2, direction: 'bidirectional', viaPageId: 2 }],
-      truncated: false,
-      nextOffset: null
-    })
-    expect(await operations.listRelated({ pageId: 1, limit: 20, offset: 0, maxDepth: 1, requester })).toMatchObject({
-      pages: [{ id: 2, distance: 1 }],
-      truncated: false,
-      nextOffset: null
-    })
-    expect(await operations.listRelated({ pageId: 1, limit: 100, offset: 5_001, requester })).toMatchObject({
-      pages: [],
-      truncated: false,
-      nextOffset: null
-    })
+    const verifyTraversal = async () => {
+      expect(await operations.listRelated({ pageId: 1, limit: 2, offset: 0, requester })).toMatchObject({
+        pages: [
+          { id: 2, distance: 1, direction: 'outgoing', viaPageId: 1, updatedAt: pages[1].updatedAt, sourceRevision: '2', contentType: 'markdown' },
+          { id: 3, distance: 2, direction: 'incoming', viaPageId: 2, updatedAt: pages[2].updatedAt, sourceRevision: '3', contentType: 'markdown' }
+        ],
+        truncated: true,
+        nextOffset: 2
+      })
+      expect(await operations.listRelated({ pageId: 1, limit: 2, offset: 2, requester })).toMatchObject({
+        pages: [{ id: 4, distance: 2, direction: 'bidirectional', viaPageId: 2 }],
+        truncated: false,
+        nextOffset: null
+      })
+      expect(await operations.listRelated({ pageId: 1, limit: 20, offset: 0, maxDepth: 1, requester })).toMatchObject({
+        pages: [{ id: 2, distance: 1 }],
+        truncated: false,
+        nextOffset: null
+      })
+      expect(await operations.listRelated({ pageId: 1, limit: 100, offset: 5_001, requester })).toMatchObject({
+        pages: [],
+        truncated: false,
+        nextOffset: null
+      })
+    }
+    await verifyTraversal()
+    checkAccess.mockReturnValue(true)
+    protectedIds = [5]
+    await verifyTraversal()
   })
   it('supports locale and section roots while excluding out-of-scope graph bridges', async () => {
     const pages = [

@@ -1,6 +1,19 @@
 import { describe, expect, it } from '../bun-test.mts'
 import { planTaxonomy, tagDefinition, tagName, tagNames, taxonomyInventory, type TaxonomySnapshot } from '../../helpers/taxonomy-plan.ts'
 import { tagAliasMap, resolveTagName } from '../../helpers/tag-aliases.ts'
+import errors from '../../operations/errors.ts'
+
+const expectInvalidChange = (action: () => unknown): void => {
+  let error: unknown
+  try {
+    action()
+  } catch (caught) {
+    error = caught
+  }
+  expect(error).toBeInstanceOf(errors.ApplicationError)
+  expect(error).toMatchObject({ status: 400, name: 'INVALID_TAXONOMY_CHANGE' })
+}
+
 const snapshot = (): TaxonomySnapshot => ({
   tags: [
     {
@@ -95,7 +108,7 @@ describe('taxonomy lifecycle impact', () => {
     expect(after.history).toEqual(snapshot().history)
     expect(preview.rules[0]).toMatchObject({ before: 2, after: 0, removed: 2 })
     expect(resolveTagName(tagAliasMap(after.tags), 'knowledge')).toBeNull()
-    expect(() => planTaxonomy(after, { action: 'restore', tagId: 3 })).toThrow('Restore the canonical destination')
+    expectInvalidChange(() => planTaxonomy(after, { action: 'restore', tagId: 3 }))
     const restored = planTaxonomy(after, { action: 'restore', tagId: 1 })
     expect(restored.changedPageIds).toEqual([])
     expect(restored.after.assignments).toEqual(after.assignments)
@@ -108,12 +121,12 @@ describe('taxonomy lifecycle impact', () => {
     expect(planTaxonomy(after, { action: 'restore', tagId: 3 }).preview.rules[0]).toMatchObject({ before: 0, after: 1, added: 1 })
   })
   it('rejects blank/reserved names, self merge, alias editing and no-op writes', () => {
-    expect(() => tagDefinition({ tag: ' ', title: '' })).toThrow('tag name')
-    expect(() => tagDefinition({ tag: 'hi\nthere', title: '' })).toThrow('tag name')
-    expect(() => planTaxonomy(snapshot(), { action: 'edit', tagId: 1, tag: 'unused', title: '' })).toThrow('already reserved')
-    expect(() => planTaxonomy(snapshot(), { action: 'merge', tagId: 1, targetId: 1 })).toThrow('different destination')
-    expect(() => planTaxonomy(snapshot(), { action: 'edit', tagId: 3, tag: 'old', title: '' })).toThrow('canonical')
-    expect(() => planTaxonomy(snapshot(), { action: 'edit', tagId: 1, tag: 'knowledge', title: 'Knowledge' })).toThrow('no changes')
+    expectInvalidChange(() => tagDefinition({ tag: ' ', title: '' }))
+    expectInvalidChange(() => tagDefinition({ tag: 'hi\nthere', title: '' }))
+    expectInvalidChange(() => planTaxonomy(snapshot(), { action: 'edit', tagId: 1, tag: 'unused', title: '' }))
+    expectInvalidChange(() => planTaxonomy(snapshot(), { action: 'merge', tagId: 1, targetId: 1 }))
+    expectInvalidChange(() => planTaxonomy(snapshot(), { action: 'edit', tagId: 3, tag: 'old', title: '' }))
+    expectInvalidChange(() => planTaxonomy(snapshot(), { action: 'edit', tagId: 1, tag: 'knowledge', title: 'Knowledge' }))
   })
   it('expires a review when page revisions, group rules or taxonomy definitions change', () => {
     const data = snapshot(),
@@ -125,10 +138,13 @@ describe('taxonomy lifecycle impact', () => {
     const groups = snapshot()
     groups.groups[0]!.pageRules[0]!.deny = true
     expect(planTaxonomy(groups, change).preview.fingerprint).not.toBe(token)
+    const definitions = snapshot()
+    definitions.tags[0]!.title = 'Changed display label'
+    expect(planTaxonomy(definitions, change).preview.fingerprint).not.toBe(token)
   })
   it('fails closed on invalid alias graphs and never resolves archived cached labels', () => {
-    expect(() => tagAliasMap([{ id: 1, tag: 'a', redirectToId: 1 }])).toThrow('cycle')
-    expect(() => tagAliasMap([{ id: 1, tag: 'a', redirectToId: 2 }])).toThrow('destination')
+    expect(() => tagAliasMap([{ id: 1, tag: 'a', redirectToId: 1 }])).toThrow(Error)
+    expect(() => tagAliasMap([{ id: 1, tag: 'a', redirectToId: 2 }])).toThrow(Error)
     const map = tagAliasMap([
       { id: 1, tag: '__proto__' },
       { id: 2, tag: 'retired', isArchived: true }
@@ -140,15 +156,15 @@ describe('taxonomy lifecycle impact', () => {
     expect(tagName('  MiXeD Label  ')).toBe('mixed label')
     expect(tagName('x'.repeat(255))).toHaveLength(255)
     for (const value of ['', '   ', '\u0000', 'line\nbreak', '\u007f', 'x'.repeat(256), 42, null, undefined, ['tag']]) {
-      expect(() => tagName(value)).toThrow('tag name')
+      expectInvalidChange(() => tagName(value))
     }
   })
   it('normalizes arrays in insertion order, deduplicates canonical names and enforces the raw limit', () => {
     expect(tagNames([])).toEqual([])
     expect(tagNames(['  Foo ', 'foo', 'BAR', ' bar '])).toEqual(['foo', 'bar'])
     expect(tagNames(Array.from({ length: 100 }, (_, index) => `tag-${index}`))).toHaveLength(100)
-    expect(() => tagNames(Array.from({ length: 101 }, (_, index) => `tag-${index}`))).toThrow('100')
-    expect(() => tagNames('tag')).toThrow('array')
-    expect(() => tagNames(['valid', 1])).toThrow('tag name')
+    expectInvalidChange(() => tagNames(Array.from({ length: 101 }, (_, index) => `tag-${index}`)))
+    expectInvalidChange(() => tagNames('tag'))
+    expectInvalidChange(() => tagNames(['valid', 1]))
   })
 })

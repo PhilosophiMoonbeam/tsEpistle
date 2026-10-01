@@ -38,7 +38,7 @@ describe('descriptor-confined local filesystem', () => {
     await fs.rm(temporaryRoot, { recursive: true, force: true })
   })
 
-  it('reads tiny files with large bounds and copies through descriptors without speculative allocation', async () => {
+  it('reads and copies tiny files through bounded descriptors and rejects reads after close', async () => {
     await storage.ensureDirectory('nested/deep')
     await storage.writeAtomic('nested/deep/value.txt', 'descriptor bytes')
 

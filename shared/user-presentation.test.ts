@@ -1,10 +1,8 @@
 import { describe, expect, it } from '../server/test/bun-test.mts'
 import {
   DEFAULT_USER_FONT_FAMILY,
-  PROFILE_APPEARANCE_VALUES,
   ProfileAppearanceSchema,
   ProfilePreferencesInputSchema,
-  USER_FONT_FAMILY_VALUES,
   isUserFontFamily,
   normalizeUserFontFamily
 } from './user-presentation.ts'
@@ -16,10 +14,10 @@ describe('user presentation preferences', () => {
   })
 
   it('accepts every supported appearance and font family', () => {
-    for (const appearance of PROFILE_APPEARANCE_VALUES) {
+    for (const appearance of ['system', 'light', 'dark']) {
       expect(ProfileAppearanceSchema.safeParse(appearance).success).toBe(true)
     }
-    for (const fontFamily of USER_FONT_FAMILY_VALUES) {
+    for (const fontFamily of ['blend', 'newsreader', 'roboto-flex']) {
       expect(isUserFontFamily(fontFamily)).toBe(true)
       expect(normalizeUserFontFamily(fontFamily)).toBe(fontFamily)
     }

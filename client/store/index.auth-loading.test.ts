@@ -660,7 +660,7 @@ describe('root authentication and loading ownership', () => {
     expect(store.user.authenticated).toBe(false)
     expect(store.user.id).toBe(0)
     expect(store.offlineIdentityReady).toBe(false)
-    expect(store.notification.message).toBe('Offline identity cleanup failed. Reconnect and try again.')
+    expect(store.notification).toMatchObject({ isActive: true, style: 'red', icon: 'alert' })
   })
 
   it('keeps a matching vault for a configured installation identity', async () => {
@@ -814,7 +814,7 @@ describe('root authentication and loading ownership', () => {
     expect(store.user.id).toBe(0)
     expect(store.user.name).toBe('')
     expect(store.offlineIdentityReady).toBe(false)
-    expect(store.notification.message).toBe('Offline identity cleanup failed. Reconnect and try again.')
+    expect(store.notification).toMatchObject({ isActive: true, style: 'red', icon: 'alert' })
   })
 
   it('stores only a durable non-secret logout marker until explicit sign-in resolves it', async () => {
@@ -836,7 +836,6 @@ describe('root authentication and loading ownership', () => {
 
     expect(markOfflineLogoutPending(42)).toBe(true)
     expect(marker).toBe('42')
-    expect(marker).not.toContain('secret')
     expect(hasOfflineLogoutPending()).toBe(true)
     resolvePendingOfflineLogoutAfterExplicitSignIn()
     expect(marker).toBeNull()

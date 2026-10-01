@@ -1,10 +1,8 @@
-import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { createRenderingStore } from '../../operations/rendering-workspace.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE ? fs.readFileSync(process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_rendering_policy_test') && password ? { host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki', database, password } : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_rendering_policy_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 suite('PostgreSQL rendering configuration', () => {
   let db: Knex, store: ReturnType<typeof createRenderingStore>

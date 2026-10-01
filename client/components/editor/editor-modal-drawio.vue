@@ -23,6 +23,12 @@
       src='https://embed.diagrams.net/?embed=1&proto=json&spin=1&saveAndExit=1&noSaveBtn=1&noExitBtn=0'
       title='Diagram editor'
     )
+    div.editor-modal-drawio__focus-boundary(
+      v-if='!loadError && focusScope && !disposed'
+      tabindex='0'
+      aria-hidden='true'
+      @focus='handleFrameExit'
+    )
     async-state.editor-modal-drawio__state(
       v-if='loading && !loadError'
       state='loading'
@@ -107,6 +113,10 @@ export default defineComponent({
       this.$nextTick(() => {
         if (!this.disposed) this.focusScope?.focusFirst()
       })
+    },
+    handleFrameExit () {
+      if (this.disposed) return
+      this.focusScope?.focusFirst()
     },
     close () {
       if (this.disposed) return
@@ -194,8 +204,9 @@ export default defineComponent({
     this.startLoadTimer()
     this.$nextTick(() => {
       if (this.disposed) return
-      const root = this.$refs.modalRoot as HTMLElement | undefined
-      if (!root) return
+      const modalRoot = this.$refs.modalRoot as HTMLElement | { $el?: unknown } | undefined
+      const root = modalRoot instanceof HTMLElement ? modalRoot : modalRoot?.$el
+      if (!(root instanceof HTMLElement)) return
       this.focusScope = createModalFocusScope({
         root,
         restoreTarget: () => this.returnFocus,
@@ -220,7 +231,8 @@ export default defineComponent({
   position: fixed !important;
   top: 0;
   left: 0;
-  z-index: 10;
+  // Match Vuetify's overlay layer; inert app bars still paint above ordinary content.
+  z-index: 2000;
   width: 100%;
   height: 100vh;
   height: 100dvh;
@@ -235,6 +247,15 @@ export default defineComponent({
     flex: 0 0 auto;
     background-color: rgb(var(--v-theme-surface)) !important;
     color: rgb(var(--v-theme-on-surface));
+  }
+
+  &__focus-boundary {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    pointer-events: none;
   }
 
   &__state {

@@ -1,45 +1,18 @@
-vi.mockModule('prom-client', import.meta.url, () => {
-  const gauges = []
-  const register = {
-    contentType: 'text/plain',
-    setDefaultLabels: vi.fn(),
-    clear: vi.fn(() => {
-      gauges.length = 0
-    }),
-    metrics: vi.fn(async () => {
-      const values = []
-      for (const gauge of gauges) {
-        await gauge.collect.call({
-          reset: vi.fn(),
-          set: (...args) => {
-            const labels = args.length === 2 ? args[0] : undefined
-            const value = args.length === 2 ? args[1] : args[0]
-            const suffix = labels
-              ? `{${gauge.labelNames.map(name => `${name}="${labels[name]}"`).join(',')}}`
-              : ''
-            values.push(`${gauge.name}${suffix} ${value}`)
-          }
-        })
-      }
-      return values.join('\n')
-    })
-  }
+import { register } from 'prom-client'
 
-  class Gauge {
-    constructor (opts) {
-      this.name = opts.name
-      this.labelNames = opts.labelNames ?? []
-      this.collect = opts.collect
-      gauges.push(this)
-    }
-  }
+const scrapeSamples = output => output.split('\n')
+  .filter(line => line && !line.startsWith('#'))
+  .map(line => {
+    const sample = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)$/.exec(line)
+    if (!sample) throw new Error(`Invalid Prometheus sample: ${line}`)
+    const labels = Object.fromEntries(Array.from((sample[2] ?? '').matchAll(/([a-zA-Z_][a-zA-Z0-9_]*)=("(?:\\.|[^"\\])*")/g), match => [match[1], JSON.parse(match[2])]))
+    return { name: sample[1], labels, value: Number(sample[3]) }
+  })
 
-  return {
-    collectDefaultMetrics: vi.fn(),
-    register,
-    Gauge
-  }
-})
+const samplesFor = (samples, name) => samples.filter(sample => sample.name === name)
+const expectSample = (samples, name, value, labels = {}) => {
+  expect(samplesFor(samples, name)).toContainEqual({ name, value, labels: { ...labels, WIKI_INSTANCE: 'test-instance' } })
+}
 
 const makeCountModel = (total) => ({
   query: () => ({
@@ -112,6 +85,7 @@ describe('core/metrics', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
+    register.clear()
     previousWiki = global.WIKI
     global.WIKI = {
       INSTANCE_ID: 'test-instance',
@@ -137,28 +111,33 @@ describe('core/metrics', () => {
   })
 
   afterEach(() => {
+    register.clear()
     global.WIKI = previousWiki
   })
 
   it('collects and renders wiki metrics when enabled', async () => {
     const { default: metrics } = await vi.importFresh('../../core/metrics.ts', import.meta.url)
-    const promClient = await import('prom-client')
     const res = makeResponse()
 
     await metrics.init()
     await metrics.render(res)
 
-    expect(promClient.collectDefaultMetrics).toHaveBeenCalled()
-    expect(promClient.register.setDefaultLabels).toHaveBeenCalledWith({
-      WIKI_INSTANCE: 'test-instance'
-    })
-    expect(res.contentType).toHaveBeenCalledWith('text/plain')
+    expect(res.contentType).toHaveBeenCalledWith('text/plain; version=0.0.4; charset=utf-8')
+    const samples = scrapeSamples(res.send.mock.calls[0][0])
+    const processStart = samplesFor(samples, 'process_start_time_seconds')
+    expect(processStart).toEqual([{
+      name: 'process_start_time_seconds',
+      labels: { WIKI_INSTANCE: 'test-instance' },
+      value: expect.any(Number)
+    }])
+    expect(processStart[0].value).toBeGreaterThan(0)
+    expect(processStart[0].value).toBeLessThanOrEqual(Math.ceil(Date.now() / 1000))
     expect(global.WIKI.readiness.fail).not.toHaveBeenCalled()
     expect(global.WIKI.readiness.set).not.toHaveBeenCalled()
-    expect(res.send).toHaveBeenCalledWith(expect.stringContaining('wiki_groups_total 2'))
-    expect(res.send).toHaveBeenCalledWith(expect.stringContaining('wiki_pages_total 5'))
-    expect(res.send).toHaveBeenCalledWith(expect.stringContaining('wiki_tags_total 3'))
-    expect(res.send).toHaveBeenCalledWith(expect.stringContaining('wiki_users_total 7'))
+    expectSample(samples, 'wiki_groups_total', 2)
+    expectSample(samples, 'wiki_pages_total', 5)
+    expectSample(samples, 'wiki_tags_total', 3)
+    expectSample(samples, 'wiki_users_total', 7)
   })
 
   it('exports fixed label domains and healthy, stale, failed, and maintenance values', async () => {
@@ -190,27 +169,31 @@ describe('core/metrics', () => {
     await metrics.init()
     await metrics.render(res)
 
-    const output = res.send.mock.calls[0][0]
-    const effectLines = output.split('\n').filter(line => line.startsWith('wiki_page_mutation_effects{'))
-    expect(effectLines).toHaveLength(20)
-    expect(output.split('\n').filter(line => line.startsWith('wiki_page_mutation_oldest_eligible_age_seconds{'))).toHaveLength(2)
-    expect(output.split('\n').filter(line => line.startsWith('wiki_page_search_documents{'))).toHaveLength(2)
-    expect(output.split('\n').filter(line => line.startsWith('wiki_page_search_vector_anomalies{'))).toHaveLength(2)
-    expect(effectLines).toContain('wiki_page_mutation_effects{effect="search",status="pending"} 4')
-    expect(effectLines).toContain('wiki_page_mutation_effects{effect="knowledge",status="retry"} 3')
-    expect(output).toContain('wiki_page_knowledge_projection_states{state="valid",enrichment="pending"} 2')
-    expect(output).toContain('wiki_page_knowledge_maintenance{status="running"} 1')
-    expect(output).toContain('wiki_page_knowledge_maintenance_progress{kind="cursor"} 5')
-    expect(output).toContain('wiki_page_knowledge_maintenance_readiness{state="running"} 1')
-    expect(output).not.toContain('unsupported')
-    expect(output).toContain('wiki_page_mutation_oldest_eligible_age_seconds{status="pending"} 125.5')
-    expect(output).toContain('wiki_page_mutation_oldest_eligible_age_seconds{status="retry"} 45')
-    expect(output).toContain('wiki_page_mutation_expired_running_leases 2')
-    expect(output).toContain('wiki_page_search_documents{kind="eligible_pages"} 10')
-    expect(output).toContain('wiki_page_search_documents{kind="indexed_vectors"} 11')
-    expect(output).toContain('wiki_page_search_vector_anomalies{kind="revision_mismatch"} 3')
-    expect(output).toContain('wiki_page_search_vector_anomalies{kind="orphan"} 1')
-    expect(output).toContain('wiki_page_knowledge_projection_gaps 4')
+    const samples = scrapeSamples(res.send.mock.calls[0][0])
+    const effectSamples = samplesFor(samples, 'wiki_page_mutation_effects')
+    expect(effectSamples).toHaveLength(20)
+    expect(samplesFor(samples, 'wiki_page_mutation_oldest_eligible_age_seconds')).toHaveLength(2)
+    expect(samplesFor(samples, 'wiki_page_search_documents')).toHaveLength(2)
+    expect(samplesFor(samples, 'wiki_page_search_vector_anomalies')).toHaveLength(2)
+    expectSample(samples, 'wiki_page_mutation_effects', 8, { effect: 'render', status: 'succeeded' })
+    expectSample(samples, 'wiki_page_mutation_effects', 2, { effect: 'links', status: 'failed' })
+    expectSample(samples, 'wiki_page_mutation_effects', 4, { effect: 'search', status: 'pending' })
+    expectSample(samples, 'wiki_page_mutation_effects', 3, { effect: 'knowledge', status: 'retry' })
+    expectSample(samples, 'wiki_page_mutation_effects', 0, { effect: 'render', status: 'pending' })
+    expectSample(samples, 'wiki_page_mutation_effects', 0, { effect: 'links', status: 'retry' })
+    expectSample(samples, 'wiki_page_knowledge_projection_states', 2, { state: 'valid', enrichment: 'pending' })
+    expectSample(samples, 'wiki_page_knowledge_maintenance', 1, { status: 'running' })
+    expectSample(samples, 'wiki_page_knowledge_maintenance_progress', 5, { kind: 'cursor' })
+    expectSample(samples, 'wiki_page_knowledge_maintenance_readiness', 1, { state: 'running' })
+    expect(samples.some(sample => Object.values(sample.labels).includes('unsupported'))).toBe(false)
+    expectSample(samples, 'wiki_page_mutation_oldest_eligible_age_seconds', 125.5, { status: 'pending' })
+    expectSample(samples, 'wiki_page_mutation_oldest_eligible_age_seconds', 45, { status: 'retry' })
+    expectSample(samples, 'wiki_page_mutation_expired_running_leases', 2)
+    expectSample(samples, 'wiki_page_search_documents', 10, { kind: 'eligible_pages' })
+    expectSample(samples, 'wiki_page_search_documents', 11, { kind: 'indexed_vectors' })
+    expectSample(samples, 'wiki_page_search_vector_anomalies', 3, { kind: 'revision_mismatch' })
+    expectSample(samples, 'wiki_page_search_vector_anomalies', 1, { kind: 'orphan' })
+    expectSample(samples, 'wiki_page_knowledge_projection_gaps', 4)
     expect(global.WIKI.readiness.fail).not.toHaveBeenCalled()
     expect(global.WIKI.readiness.set).not.toHaveBeenCalled()
   })
@@ -223,31 +206,46 @@ describe('core/metrics', () => {
     await metrics.init()
     await metrics.render(res)
 
-    const output = res.send.mock.calls[0][0]
+    const samples = scrapeSamples(res.send.mock.calls[0][0])
     expect(res.status).not.toHaveBeenCalled()
-    expect(output.split('\n').filter(line => line.startsWith('wiki_page_mutation_effects{'))).toHaveLength(20)
-    expect(output).toContain('wiki_page_mutation_effects{effect="render",status="pending"} 0')
-    expect(output).toContain('wiki_page_mutation_oldest_eligible_age_seconds{status="retry"} 0')
-    expect(output).toContain('wiki_page_mutation_expired_running_leases 0')
-    expect(output).toContain('wiki_page_search_documents{kind="eligible_pages"} 6')
-    expect(output).toContain('wiki_page_search_documents{kind="indexed_vectors"} 0')
-    expect(output).toContain('wiki_page_search_vector_anomalies{kind="revision_mismatch"} 0')
-    expect(output).toContain('wiki_page_search_vector_anomalies{kind="orphan"} 0')
-    expect(output).toContain('wiki_page_knowledge_projection_gaps 0')
-    expect(output).toContain('wiki_page_knowledge_projection_states{state="missing",enrichment="unavailable"} 0')
-    expect(output).toContain('wiki_page_knowledge_maintenance{status="pending"} 0')
-    expect(output).toContain('wiki_page_knowledge_maintenance_progress{kind="cursor"} 0')
+    expect(samplesFor(samples, 'wiki_page_mutation_effects')).toHaveLength(20)
+    expectSample(samples, 'wiki_page_mutation_effects', 0, { effect: 'render', status: 'pending' })
+    expectSample(samples, 'wiki_page_mutation_oldest_eligible_age_seconds', 0, { status: 'retry' })
+    expectSample(samples, 'wiki_page_mutation_expired_running_leases', 0)
+    expectSample(samples, 'wiki_page_search_documents', 6, { kind: 'eligible_pages' })
+    expectSample(samples, 'wiki_page_search_documents', 0, { kind: 'indexed_vectors' })
+    expectSample(samples, 'wiki_page_search_vector_anomalies', 0, { kind: 'revision_mismatch' })
+    expectSample(samples, 'wiki_page_search_vector_anomalies', 0, { kind: 'orphan' })
+    expectSample(samples, 'wiki_page_knowledge_projection_gaps', 0)
+    expectSample(samples, 'wiki_page_knowledge_projection_states', 0, { state: 'missing', enrichment: 'unavailable' })
+    expectSample(samples, 'wiki_page_knowledge_maintenance', 0, { status: 'pending' })
+    expectSample(samples, 'wiki_page_knowledge_maintenance_progress', 0, { kind: 'cursor' })
     expect(global.WIKI.readiness.fail).not.toHaveBeenCalled()
     expect(global.WIKI.readiness.set).not.toHaveBeenCalled()
   })
 
   it('clears collectors when disabled', async () => {
-    global.WIKI.config.metrics.isEnabled = false
     const { default: metrics } = await vi.importFresh('../../core/metrics.ts', import.meta.url)
-    const promClient = await import('prom-client')
 
     await metrics.init()
 
-    expect(promClient.register.clear).toHaveBeenCalled()
+    const enabledResponse = makeResponse()
+    await metrics.render(enabledResponse)
+    const enabledSamples = scrapeSamples(enabledResponse.send.mock.calls[0][0])
+    expectSample(enabledSamples, 'wiki_pages_total', 5)
+    expect(samplesFor(enabledSamples, 'process_start_time_seconds')).toEqual([{
+      name: 'process_start_time_seconds',
+      labels: { WIKI_INSTANCE: 'test-instance' },
+      value: expect.any(Number)
+    }])
+
+    global.WIKI.config.metrics.isEnabled = false
+    await metrics.init()
+    const disabledResponse = makeResponse()
+    await metrics.render(disabledResponse)
+    expect(disabledResponse.status).not.toHaveBeenCalled()
+    const disabledSamples = scrapeSamples(disabledResponse.send.mock.calls[0][0])
+    expect(samplesFor(disabledSamples, 'wiki_pages_total')).toEqual([])
+    expect(samplesFor(disabledSamples, 'process_start_time_seconds')).toEqual([])
   })
 })

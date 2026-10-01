@@ -1,14 +1,9 @@
 import knexModule, { type Knex } from 'knex'
 import type { SystemRequester } from '../../helpers/system-authority.ts'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const port = Number(process.env.WIKI_TEST_POSTGRES_PORT)
-const connection =
-  database.endsWith('_api_state_test') && password
-    ? { host: '127.0.0.1', ...(Number.isInteger(port) && port > 0 ? { port } : {}), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_api_state_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const originalWiki = globalThis.WIKI
 const administrator = { user: { id: 1, authVersion: 0 } } as never
@@ -113,7 +108,51 @@ suite('API availability state persistence on PostgreSQL', () => {
   })
 
   it('serializes concurrent state writes in request order', async () => {
-    await Promise.all([api.setState(administrator, false), api.setState(administrator, true)])
+    let release!: () => void, entered!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const waiting = new Promise<void>(resolve => {
+      entered = resolve
+    })
+    let transactionEntries = 0
+    const delayedDb = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property !== 'transaction') return Reflect.get(target, property, receiver)
+        return async (callback: (tx: Knex.Transaction) => Promise<void>) => {
+          transactionEntries += 1
+          if (transactionEntries === 1) {
+            entered()
+            await gate
+          }
+          return db.transaction(callback)
+        }
+      }
+    })
+    const published: boolean[] = []
+    emit = vi.fn(() => {
+      published.push(globalThis.WIKI.config.api.isEnabled)
+    })
+    Reflect.set(globalThis.WIKI.events.outbound, 'emit', emit)
+    Reflect.set(globalThis.WIKI.models, 'knex', delayedDb)
+    const first = api.setState(administrator, false)
+    let second: Promise<void> | undefined
+    try {
+      await waiting
+      second = api.setState(administrator, true)
+      // The second request's promise reaction has a turn while the first cannot acquire a transaction.
+      await new Promise<void>(resolve => queueMicrotask(resolve))
+      expect(transactionEntries).toBe(1)
+      expect(published).toEqual([])
+      release()
+      await Promise.all([first, second])
+    } finally {
+      release()
+      await Promise.allSettled(second ? [first, second] : [first])
+      Reflect.set(globalThis.WIKI.models, 'knex', db)
+    }
+
+    expect(published).toEqual([false, true])
 
     expect(globalThis.WIKI.config.api.isEnabled).toBe(true)
     expect(await setting()).toEqual({ isEnabled: true, durableOnly: 'retain this setting' })
@@ -149,7 +188,7 @@ suite('API availability state persistence on PostgreSQL', () => {
 
   it('allows a current delegated manage:api API principal', async () => {
     await api.setState({
-      user: { id: 1, ownershipUserId: null, groups: [3] },
+      user: { api: 7, grp: 3, ownershipUserId: null, groups: [3] },
       apiKey: { id: 7, groupId: 3, expiresAt: Math.floor(Date.now() / 1000) + 3600 }
     } as never, false)
 

@@ -6,7 +6,9 @@ import { serializeContentExtensionFence } from '../../../shared/content-extensio
 const failingRenderer = vi.hoisted(() => vi.fn().mockRejectedValue(new Error('renderer unavailable')))
 vi.mockModule('../../content-extensions/qr.ts', import.meta.url, () => ({ renderQrContentExtension: failingRenderer }))
 
+// Import after registering the QR failure mock so the real Markdown pipeline uses it.
 const { prepareContentExtensionFences } = await import('../../content-extensions/renderer.ts')
+const { default: markdownRenderer } = await import('../../modules/rendering/markdown-core/renderer.ts')
 const source = serializeContentExtensionFence({
   key: 'qr',
   version: 1,
@@ -30,12 +32,28 @@ describe('content extension renderer failure', () => {
 
   it('leaves the canonical source unprepared when its renderer fails', async () => {
     failingRenderer.mockRejectedValueOnce(new Error('renderer unavailable'))
-    const original = source
     const body = `${source.split('\n')[1] ?? ''}\n`
     const prepared = await prepareContentExtensionFences([{ type: 'fence', info: 'wiki-extension', content: body }])
 
     expect(failingRenderer).toHaveBeenCalledTimes(1)
     expect(prepared.size).toBe(0)
-    expect(source).toBe(original)
+
+    const rendered = await markdownRenderer.render.call({
+      input: source,
+      config: {
+        allowHTML: false,
+        linebreaks: false,
+        linkify: false,
+        typographer: false,
+        quotes: 'English',
+        underline: false
+      },
+      children: []
+    })
+    const document = new DOMParser().parseFromString(rendered, 'text/html')
+    expect(document.querySelector('pre code')?.textContent).toBe(body)
+    expect(document.querySelector('preserved')).toBeNull()
+    expect(document.querySelector('figure.content-extension--qr, svg')).toBeNull()
+    expect(failingRenderer).toHaveBeenCalledTimes(2)
   })
 })

@@ -158,7 +158,6 @@ const requester = { user: { id: 7, authVersion: 2 }, apiKey: undefined } as neve
 
 describe('page integrity diagnostics', () => {
   it('validates bounded cursors and native editor/source compatibility', () => {
-    expect(PageIntegrityScanRequestSchema.parse({})).toEqual({ cursor: null, upperWatermark: null, limit: 15 })
     expect(PageIntegrityScanRequestSchema.safeParse({ cursor: 4, upperWatermark: 3, limit: 1 }).success).toBe(false)
     expect(PageIntegrityScanRequestSchema.safeParse({ cursor: 0, upperWatermark: 10, limit: PAGE_INTEGRITY_BATCH_MAX + 1 }).success).toBe(false)
     expect(pageEditorIsCompatible('visual-markdown', 'markdown')).toBe(true)
@@ -207,7 +206,12 @@ describe('page integrity diagnostics', () => {
     const operations = createPageIntegrityOperations({ db: db as never })
     const result = await operations.scan(requester, { limit: 1 })
     expect(result.state).toBe('complete')
-    expect(result.checks.length).toBeGreaterThan(0)
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      pageId: 1,
+      checkCode: 'SOURCE_REVISION_INVALID',
+      sourceRevision: '4',
+      outcome: 'changed'
+    }))
     expect(result.checks.every(item => item.outcome === 'changed' && item.sourceRevision === '4')).toBe(true)
   })
 

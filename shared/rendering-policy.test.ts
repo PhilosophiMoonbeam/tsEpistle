@@ -23,14 +23,28 @@ describe('effective rendering pipeline', () => {
     expect(renderingIssues(modules, ['a']).some(issue => issue.severity === 'error')).toBe(true)
   })
   it('validates actual configuration types, enums, numeric limits and diagram endpoints', () => {
-    const modules = [module('markdownExpandtabs', { props: { tabWidth: { type: 'number' } }, config: { tabWidth: '4' } }), module('asciidocCore', { props: { safeMode: { type: 'string', enum: ['secure'] } }, config: { safeMode: 'invalid' } }), module('markdownKroki', { config: { server: 'javascript:run()', openMarker: 'same', closeMarker: 'same' } })]
-    expect(renderingIssues(modules).filter(issue => issue.severity === 'error')).toHaveLength(5)
+    const invalidModules = [
+      module('numericOption', { props: { tabWidth: { type: 'number' } }, config: { tabWidth: '4' } }),
+      module('markdownExpandtabs', { props: { tabWidth: { type: 'number' } }, config: { tabWidth: '4' } }),
+      module('markdownExpandtabs', { props: { tabWidth: { type: 'number' } }, config: { tabWidth: 0 } }),
+      module('markdownExpandtabs', { props: { tabWidth: { type: 'number' } }, config: { tabWidth: 33 } }),
+      module('asciidocCore', { props: { safeMode: { type: 'string', enum: ['secure'] } }, config: { safeMode: 'invalid' } }),
+      module('markdownKroki', { config: { server: 'javascript:run()', openMarker: 'open', closeMarker: 'close' } }),
+      module('markdownKroki', { config: { server: 'https://diagrams.example.invalid', openMarker: 'same', closeMarker: 'same' } })
+    ]
+    for (const invalidModule of invalidModules) {
+      expect(renderingIssues([invalidModule])).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: invalidModule.key, severity: 'error' })
+      ]))
+    }
   })
   it('reports sanitization and competing math engines as configuration effects', () => {
     const modules = pipeline(); modules.find(module => module.key === 'htmlSecurity')!.isEnabled = false; modules.push(module('markdownKatex'), module('markdownMathjax'))
     const issues = renderingIssues(modules, ['markdown'])
-    expect(issues.some(issue => issue.message.includes('sanitization is disabled'))).toBe(true)
-    expect(issues.some(issue => issue.message.includes('compete'))).toBe(true)
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'htmlSecurity', severity: 'warning' }),
+      expect.objectContaining({ key: 'markdownMathjax', severity: 'warning' })
+    ]))
   })
   it('only sends declared configuration options without mutating drafts', () => {
     const modules = [module('one', { props: { option: { type: 'boolean' } }, config: { option: false, internal: 42 } })]

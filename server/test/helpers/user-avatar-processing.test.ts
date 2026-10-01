@@ -27,7 +27,6 @@ describe('self-service avatar image processing', () => {
       expect(metadata.orientation).toBeUndefined()
       expect(metadata.exif).toBeUndefined()
       expect(metadata.icc).toBeUndefined()
-      expect(output.length).toBeGreaterThan(0)
       expect(output.length).toBeLessThanOrEqual(USER_AVATAR_MAX_OUTPUT_BYTES)
       expect(output.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]))
       expect(output.subarray(-2)).toEqual(Buffer.from([0xff, 0xd9]))
@@ -35,13 +34,19 @@ describe('self-service avatar image processing', () => {
   })
 
   it('applies orientation before resizing and strips source metadata', async () => {
-    const output = await normalizeUserAvatar(await orientedProfiledJpegFixture())
+    const source = await orientedProfiledJpegFixture()
+    const sourceMetadata = await sharp(source).metadata()
+    expect(sourceMetadata.orientation).toBe(6)
+    expect(sourceMetadata.exif).toBeDefined()
+    expect(sourceMetadata.icc).toBeDefined()
+    const output = await normalizeUserAvatar(source)
     const metadata = await sharp(output).metadata()
 
     expect(metadata.format).toBe('jpeg')
     expect(metadata.width).toBe(307)
     expect(metadata.height).toBe(USER_AVATAR_OUTPUT_DIMENSION)
     expect(metadata.orientation).toBeUndefined()
+    expect(metadata.exif).toBeUndefined()
     expect(metadata.icc).toBeUndefined()
   })
 

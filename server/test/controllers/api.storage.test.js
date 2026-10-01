@@ -59,6 +59,7 @@ describe('Reviewed Storage HTTP endpoints', () => {
       expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
     }
     expect(store.inspect).not.toHaveBeenCalled()
+    expect(store.configuration.inspect).not.toHaveBeenCalled()
     expect(store.save).not.toHaveBeenCalled()
     expect(store.actions.enqueue).not.toHaveBeenCalled()
     expect(store.actions.decide).not.toHaveBeenCalled()

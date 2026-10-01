@@ -1,4 +1,5 @@
-import { describe, expect, it } from '../../../test/bun-test.mts'
+import { describe, expect, it, vi } from '../../../test/bun-test.mts'
+import * as childProcess from 'node:child_process'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -62,24 +63,38 @@ describe('bounded Git process execution', () => {
   })
 
   it('awaits a delayed monitor failure before treating child close as success', async () => {
-    let monitorStarted = false
-    const run = runNode('process.exit(0)', {
+    const enteredMonitor = Promise.withResolvers<void>()
+    const releaseMonitor = Promise.withResolvers<void>()
+    const childClosed = Promise.withResolvers<{ code: number | null; signal: NodeJS.Signals | null }>()
+    const realSpawn = childProcess.spawn
+    const spawnSpy = vi.spyOn(childProcess, 'spawn').mockImplementation(((...args: Parameters<typeof realSpawn>) => {
+      const child = realSpawn(...args)
+      child.once('close', (code: number | null, signal: NodeJS.Signals | null) => childClosed.resolve({ code, signal }))
+      return child
+    }) as typeof realSpawn)
+    let settled = false
+    let failure: unknown
+    const completed = runNode('process.exit(0)', {
       monitor: async () => {
-        monitorStarted = true
-        const delayed = Promise.withResolvers<void>()
-        // A real delay is required so the spawned child's close event wins; fake timers do not control that child.
-        setTimeout(delayed.resolve, 100)
-        await delayed.promise
+        enteredMonitor.resolve()
+        await releaseMonitor.promise
         throw new Error('monitor detected a changed tree')
       }
-    })
-    let failure: unknown
+    }).then(
+      () => { settled = true },
+      error => { settled = true; failure = error }
+    )
     try {
-      await run
-    } catch (error: unknown) {
-      failure = error
+      await enteredMonitor.promise
+      expect(await childClosed.promise).toEqual({ code: 0, signal: null })
+      // Let close/stdio continuations drain without releasing the in-flight monitor.
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect(settled).toBe(false)
+    } finally {
+      releaseMonitor.resolve()
+      await completed
+      spawnSpy.mockRestore()
     }
-    expect(monitorStarted).toBe(true)
     expect(failure).toBeInstanceOf(BoundedProcessError)
     if (!(failure instanceof BoundedProcessError)) return
     expect(failure.kind).toBe('monitor')

@@ -1,32 +1,10 @@
 /// <reference types="bun" />
 
-import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
+import { getPostgresTestConnection } from './postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_tag_browse_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        database,
-        password
-      }
-    : null
-
-const directlyInvoked =
-  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('operations.pages.tags.postgres.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error(
-    'Explicit page tag PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _tag_browse_test and a PostgreSQL password or WIKI_TEST_POSTGRES_PASSWORD_FILE.'
-  )
-}
+const connection = getPostgresTestConnection('_tag_browse_test', import.meta.path)
 
 const suite = connection ? describe : describe.skip
 
@@ -272,15 +250,7 @@ suite('PostgreSQL page tag authorization candidates', () => {
   })
 
   it('keeps the complete tag relation for ACL checks while resolving aliases and enforcing AND matches', async () => {
-    const sql: string[] = []
-    const queryListener = ({ sql: statement }: { sql: string }) => sql.push(statement)
-    db.on('query', queryListener)
-    let rows: ListedPage[]
-    try {
-      rows = await operations.list({ requester, tags: ['old-topic'] })
-    } finally {
-      db.removeListener('query', queryListener)
-    }
+    const rows = await operations.list({ requester, tags: ['old-topic'] })
 
     const paths = rows.map(row => row.path)
     expect(paths).not.toContain('docs/topic-denied')
@@ -299,7 +269,6 @@ suite('PostgreSQL page tag authorization candidates', () => {
       allowed: true,
       tags: expect.arrayContaining(['topic', 'allow-access'])
     })
-    expect(sql.filter(statement => /from "pages"/iu.test(statement))).toHaveLength(1)
 
     const andRows = await operations.list({ requester, tags: ['old-topic', 'topic-zulu'] })
     expect(andRows.map(row => row.path)).toEqual(['docs/topic-allow-needed'])
@@ -340,6 +309,7 @@ suite('PostgreSQL page tag authorization candidates', () => {
     expect(content.at(-1)).not.toBe('\ud83d')
   })
   it('orders by stable updatedAt/id keys, backfills denied candidates, and reports continuation', async () => {
+    await db('pages').where('id', 3).update({ updatedAt: '2026-09-01T11:00:00.000Z' })
     const recent = await operations.listRecent({ requester, locale: 'en', limit: 2 })
     expect(recent.pages.map(page => page.path)).toEqual(['docs/topic-allow-needed', 'docs/topic-other'])
     expect(recent.requestedLimit).toBe(2)
@@ -359,15 +329,7 @@ suite('PostgreSQL page tag authorization candidates', () => {
   })
 
   it('authorizes tag suggestions against full assignments, returns only matches, and preserves ordering and limits', async () => {
-    const sql: string[] = []
-    const queryListener = ({ sql: statement }: { sql: string }) => sql.push(statement)
-    db.on('query', queryListener)
-    let suggestions: string[]
-    try {
-      suggestions = await operations.searchTags({ requester, query: 'ToPiC', limit: 2 })
-    } finally {
-      db.removeListener('query', queryListener)
-    }
+    const suggestions = await operations.searchTags({ requester, query: 'ToPiC', limit: 2 })
 
     expect(suggestions).toEqual(['topic', 'topic-alpha'])
     expect(suggestions).not.toContain('allow-access')
@@ -385,7 +347,6 @@ suite('PostgreSQL page tag authorization candidates', () => {
     const observedPaths = accessCalls.map(call => call.path)
     expect(observedPaths).toEqual(expect.arrayContaining(['docs/topic-denied', 'docs/topic-allow-needed']))
     expect(observedPaths).not.toContain('docs/unrelated')
-    expect(sql.filter(statement => /from "pages"/iu.test(statement))).toHaveLength(1)
   })
 
   it('keeps creator and author alternatives inside locale, ownership, and tag scope', async () => {

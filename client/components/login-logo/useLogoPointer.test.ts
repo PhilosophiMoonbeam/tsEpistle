@@ -4,7 +4,7 @@ import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { LogoPointerState } from './useLogoPointer.ts'
 
 resetBody()
-import { LOGO_POINTER_IMPULSE_CAPACITY, LOGO_POINTER_MAX_SEGMENT_CSS, LogoPointerController, logoPointerInfluenceRadius } from './useLogoPointer.ts'
+import { LOGO_POINTER_IMPULSE_CAPACITY, LOGO_POINTER_MAX_RADIUS_CSS, LOGO_POINTER_MAX_SEGMENT_CSS, LogoPointerController, logoPointerInfluenceRadius } from './useLogoPointer.ts'
 import { LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS } from './particle-explosion.ts'
 
 const dom = new JSDOM('<!doctype html><html><body><div id="logo"></div></body></html>', {
@@ -145,6 +145,7 @@ describe('logo pointer impulse motion', () => {
     controller.setTarget(target)
     controller.setCoordinateTarget(target)
     controller.setActive(true)
+    controller.update(640, time)
 
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 120, clientY: 100 }))
     time = 10
@@ -153,9 +154,12 @@ describe('logo pointer impulse motion', () => {
     expect(controller.state.activeImpulseCount).toBe(LOGO_POINTER_IMPULSE_CAPACITY)
     controller.state.impulses.forEach((impulse, index) => {
       expect(impulse.x).toBeCloseTo(-0.6 + 0.2 * index, 12)
+      expect(Number.isFinite(impulse.strength)).toBe(true)
+      expect(impulse.strength).toBeGreaterThan(0)
+      expect(impulse.radiusCss).toBeGreaterThanOrEqual(controller.state.influenceRadiusCss)
+      expect(impulse.radiusCss).toBeLessThanOrEqual(LOGO_POINTER_MAX_RADIUS_CSS)
     })
     expect(controller.state.impulses.every(impulse => impulse.travelCss === LOGO_POINTER_MAX_SEGMENT_CSS)).toBe(true)
-    expect(controller.state.impulses.every(impulse => impulse.strength === 3.2 && impulse.radiusCss > 60)).toBe(true)
     controller.dispose()
   })
 
@@ -523,11 +527,13 @@ describe('LogoPointerController input and lifecycle', () => {
     expect(controller.state.impulses[1].directionX).toBeCloseTo(19 / Math.hypot(19, 5), 12)
     expect(controller.state.impulses[1].directionY).toBeCloseTo(5 / Math.hypot(19, 5), 12)
 
+    const impulsesBeforeSuppressedMoves = controller.state.impulses.map(impulse => ({ ...impulse }))
     finePointer = false
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 100, pointerType: 'mouse', pointerId: 1 }))
     time += 10
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 160, clientY: 100, pointerType: 'mouse', pointerId: 1 }))
     expect(controller.state.activeImpulseCount).toBe(6)
+    expect(controller.state.impulses).toEqual(impulsesBeforeSuppressedMoves)
     controller.dispose()
   })
 
@@ -557,16 +563,22 @@ describe('LogoPointerController input and lifecycle', () => {
     firstTarget.dispatchEvent(pointerEvent('pointermove', { clientX: 170, clientY: 80 }))
     expect(controller.state.activeImpulseCount).toBe(0)
 
+    replacementTarget.dispatchEvent(pointerEvent('pointerdown', { clientX: 150, clientY: 100, pointerType: 'touch' }))
     replacementTarget.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 100 }))
     time += 10
     replacementTarget.dispatchEvent(pointerEvent('pointermove', { clientX: 160, clientY: 100 }))
+    expect(controller.state.activeImpulseCount).toBe(1)
+    expect(state.activeExplosionCount).toBe(1)
     controller.setCoordinateTarget(targetWithBounds())
     expect(controller.state.activeImpulseCount).toBe(0)
     expect(state.activeExplosionCount).toBe(0)
 
+    replacementTarget.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 100 }))
+    time += 10
+    replacementTarget.dispatchEvent(pointerEvent('pointermove', { clientX: 160, clientY: 100 }))
+    expect(controller.state.activeImpulseCount).toBe(1)
     controller.setActive(false)
     expect(controller.state.activeImpulseCount).toBe(0)
-    expect(state.activeExplosionCount).toBe(0)
     controller.setActive(true)
     controller.dispose()
     replacementTarget.dispatchEvent(pointerEvent('pointerdown', { clientX: 160, clientY: 100, pointerType: 'touch' }))

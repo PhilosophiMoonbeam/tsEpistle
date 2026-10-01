@@ -139,7 +139,6 @@ export interface WikiModels {
     deletePage(value: UnknownRecord): Promise<void>
     getPageFromDb(value: number | PublicPageLookup): Promise<WikiPage | null>
     movePage(value: UnknownRecord): Promise<void>
-    parseMetadata(content: string, filename: string): UnknownRecord
     query(): QueryBuilder<WikiPage>
     updatePage(value: PageUpdateInput): Promise<WikiPage>
   }

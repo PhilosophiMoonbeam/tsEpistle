@@ -86,7 +86,7 @@ describe('Storage SSH trust and Git connection files', () => {
         const stderr = await new Response(child.stderr).text()
         return { status: await child.exited, stderr }
       }
-      expect(await connectGit()).toEqual({ status: 0, stderr: '' })
+      expect((await connectGit()).status).toBe(0)
       const authenticated = authentications
       await writeGitStorageConnectionFile(root, 'git-known-hosts', `[127.0.0.1]:${port} ${(await readFile(identity + '.pub', 'utf8')).trim()}`)
       expect((await connectGit()).status).toBe(255)

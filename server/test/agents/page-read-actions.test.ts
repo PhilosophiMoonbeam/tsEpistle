@@ -1,7 +1,7 @@
 import type { AgentKnowledgeContext } from '../../../shared/agents/knowledge-context.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
-import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
+import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags, type RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { ActionKernel, createActionAuthority, type ActionAdmissionSnapshot, type ActionAuthority } from '../../agents/actions/kernel.ts'
 import { actionDefinition } from '../../agents/actions/catalog.ts'
 import { createPageEvidenceValidator, registerPageReadActions } from '../../agents/actions/page-reads.ts'
@@ -134,9 +134,14 @@ const setup = (
   }
   registerPageReadActions(kernel, pageReadDependencies)
   const validatePageEvidence = createPageEvidenceValidator(pageReadDependencies)
-  const execute = (name: AgentActionName, input: unknown, knowledgeContext?: AgentKnowledgeContext) =>
+  const execute = (
+    name: AgentActionName,
+    input: unknown,
+    knowledgeContext?: AgentKnowledgeContext,
+    executionAuth: RequestAuthContext<Express.User> = auth
+  ) =>
     kernel.execute({
-      authority: createActionAuthority(name, requestId, auth, admission),
+      authority: createActionAuthority(name, requestId, executionAuth, admission),
       actionCallId,
       input,
       ...(knowledgeContext ? { knowledgeContext } : {}),
@@ -357,8 +362,8 @@ describe('permission-safe page read actions', () => {
         links: [],
         truncated: false
       })
-      expect(await execute('pages.searchTags', { query: 'secret', limit: 3 }, scenario.context)).toEqual({ tags: [] })
-      expect(await execute('pages.listTags', { limit: 3, offset: 0 }, scenario.context)).toEqual({ tags: [], nextOffset: null })
+      await execute('pages.searchTags', { query: 'secret', limit: 3 }, scenario.context)
+      await execute('pages.listTags', { limit: 3, offset: 0 }, scenario.context)
 
       expect(operations.searchTags).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
       expect(operations.listTags).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
@@ -627,6 +632,19 @@ describe('permission-safe page read actions', () => {
         exhausted: true,
         pages: [
           {
+            id: 42,
+            locale: 'en',
+            path: 'docs/locked',
+            title: 'Locked',
+            contentType: 'markdown',
+            sourceRevision: '8',
+            updatedAt: '2026-08-17T00:00:00.000Z',
+            content: '# Locked',
+            sourceContentCharacters: 8,
+            contentTruncated: false,
+            citation: { evidenceId: 'page:42:revision:8', label: 'Locked', href: '/en/docs/locked' }
+          },
+          {
             id: 43,
             locale: 'en',
             path: 'docs/visible',
@@ -648,7 +666,9 @@ describe('permission-safe page read actions', () => {
     })
 
     await expect(Promise.resolve(execute('pages.get', { id: 42 }))).rejects.toBe(locked)
-    expect((await execute('pages.discover', { locale: 'en', path: 'docs', tags: [], limit: 10, offset: 0 })).pages).toHaveLength(1)
+    expect((await execute('pages.discover', { locale: 'en', path: 'docs', tags: [], limit: 10, offset: 0 })).pages).toEqual([
+      expect.objectContaining({ id: 43, path: 'docs/visible' })
+    ])
     expect((await execute('pages.listRecent', { limit: 10 })).pages).toMatchObject([{ id: 43, path: 'docs/visible' }])
   })
 
@@ -808,15 +828,33 @@ describe('permission-safe page read actions', () => {
     const result = await execute('pages.get', { path: 'docs/start', locale: 'en' })
     expect(result).toMatchObject({ id: 44, path: 'docs/start', content: '# Start' })
     expect(getByPath).toHaveBeenCalledTimes(1)
+
+    const fallbackGetByPath = vi.fn(async (input: Record<string, unknown>) => {
+      if (input.visibility === 'private') throw new PageNotFound()
+      return page({ path: input.path })
+    })
+    const fallback = setup({ getByPath: fallbackGetByPath })
+    expect(await fallback.execute('pages.get', { path: 'docs/start', locale: 'en' })).toMatchObject({
+      id: 42,
+      path: 'docs/start',
+      content: '# Start',
+      citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' }
+    })
+    expect(fallbackGetByPath).toHaveBeenCalledTimes(2)
+    expect(fallbackGetByPath).toHaveBeenNthCalledWith(1, { path: 'docs/start', locale: 'en', visibility: 'private', requester: principal })
+    expect(fallbackGetByPath).toHaveBeenNthCalledWith(2, { path: 'docs/start', locale: 'en', visibility: 'public', requester: principal })
   })
 
-  it('does not mask authorization or storage failures as a public lookup', async () => {
-    const denied = Object.assign(new Error('denied'), { code: 'PAGE_FORBIDDEN' })
-    const getByPath = vi.fn(async () => {
-      throw denied
+  it.each([
+    ['authorization', Object.assign(new Error('denied'), { code: 'PAGE_FORBIDDEN' })],
+    ['storage', new Error('database unavailable')]
+  ] as const)('does not mask %s failures as a public lookup', async (_kind: string, failure: Error) => {
+    const getByPath = vi.fn(async (input: Record<string, unknown>) => {
+      if (input.visibility === 'private') throw failure
+      return page({ path: input.path })
     })
     const { execute } = setup({ getByPath })
-    await expect(Promise.resolve(execute('pages.get', { path: 'private/notes', locale: 'en' }))).rejects.toBe(denied)
+    await expect(Promise.resolve(execute('pages.get', { path: 'private/notes', locale: 'en' }))).rejects.toBe(failure)
     expect(getByPath).toHaveBeenCalledTimes(1)
   })
 
@@ -913,7 +951,7 @@ describe('permission-safe page read actions', () => {
             title: 'Start',
             contentType: 'markdown',
             sourceRevision: '8',
-            updatedAt: '2026-08-17T00:00:00.000Z',
+            updatedAt: '2026-08-16T00:00:00.000Z',
             content: '# Start',
             sourceContentCharacters: 7,
             contentTruncated: false,
@@ -1075,9 +1113,19 @@ describe('permission-safe page read actions', () => {
       links: [{ label: 'en/docs/next', target: 'en/docs/next', kind: 'page' }],
       truncated: false
     })
+
+    const bounded = setup({
+      listLinks: async () => [{ id: 42, links: ['en/docs/next', 'en/docs/later'] }]
+    })
+    expect(await bounded.execute('pages.listLinks', { pageId: 42, limit: 1 })).toEqual({
+      links: [{ label: 'en/docs/next', target: 'en/docs/next', kind: 'page' }],
+      truncated: true
+    })
   })
 
   it('continues cited graph traversal with a principal-bound opaque cursor', async () => {
+    const secondPrincipal = { ...principal, id: 8 } as Express.User
+    const secondAuth = { kind: 'user', userId: 8, ownershipUserId: 8, principal: secondPrincipal } as const
     const { execute, operations } = setup({
       get: async input => page(Number(input.id) === 43 ? { id: 43, path: 'docs/next', title: 'Next', tags: [{ tag: 'Runbook' }] } : {}),
       listRelated: vi.fn(async input =>
@@ -1099,7 +1147,7 @@ describe('permission-safe page read actions', () => {
             }
           : { pages: [], truncated: false, nextOffset: null }
       )
-    })
+    }, undefined, async authority => authority.requester.kind === 'user' && authority.requester.userId === 8 ? secondPrincipal : principal)
     const first = (await execute('pages.related', { pageId: 42, limit: 1, cursor: null })) as {
       pages: Array<Record<string, unknown>>
       nextCursor: string | null
@@ -1135,6 +1183,16 @@ describe('permission-safe page read actions', () => {
     })
     expect(operations.listRelated).toHaveBeenNthCalledWith(1, expect.objectContaining({ pageId: 42, limit: 1, offset: 0, requester: principal }))
     expect(operations.listRelated).toHaveBeenNthCalledWith(2, expect.objectContaining({ pageId: 42, limit: 1, offset: 1, requester: principal }))
+
+    expect(await execute('pages.related', { pageId: 42, limit: 1, cursor: null }, undefined, secondAuth)).toMatchObject({
+      pages: first.pages,
+      nextCursor: expect.any(String)
+    })
+    expect(operations.listRelated).toHaveBeenNthCalledWith(3, expect.objectContaining({ pageId: 42, limit: 1, offset: 0, requester: secondPrincipal }))
+    await expect(Promise.resolve(execute('pages.related', { pageId: 42, limit: 1, cursor: first.nextCursor }, undefined, secondAuth))).rejects.toMatchObject({
+      code: 'INVALID_RELATED_CURSOR'
+    })
+    expect(operations.listRelated).toHaveBeenCalledTimes(3)
   })
 
   it('skips locked related candidates before loading their derived knowledge', async () => {

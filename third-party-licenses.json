@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "d8fe8386d4654dd494a8ba0a1e05cff8d789194117fffa53f10d433a4ac591d4",
+    "sha256": "b3f8e11a49cb4c1fe3e305ba25629608c77df86b2eecdcac341ea4fa9a8ee053",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -3376,7 +3376,7 @@
     {
       "name": "dompurify",
       "versions": [
-        "3.4.13"
+        "3.4.16"
       ],
       "license": "(MPL-2.0 OR Apache-2.0)",
       "author": "Dr.-Ing. Mario Heiderich, Cure53 <mario@cure53.de> (https://cure53.de/)",
@@ -3632,7 +3632,7 @@
     {
       "name": "fast-uri",
       "versions": [
-        "3.1.7"
+        "3.1.8"
       ],
       "license": "BSD-3-Clause",
       "author": "Vincent Le Goff <vince.legoff@gmail.com> (https://github.com/zekth)",
@@ -4091,7 +4091,7 @@
     {
       "name": "ip-address",
       "versions": [
-        "10.5.1"
+        "10.7.1"
       ],
       "license": "MIT",
       "author": "Beau Gunderson <beau@beaugunderson.com> (https://beaugunderson.com/)"
@@ -4740,10 +4740,9 @@
     {
       "name": "moment",
       "versions": [
-        "2.30.1"
+        "2.31.0"
       ],
       "license": "MIT",
-      "author": "Iskren Ivov Chernev <iskren.chernev@gmail.com> (https://github.com/ichernev)",
       "homepage": "https://momentjs.com"
     },
     {
@@ -4866,7 +4865,7 @@
     {
       "name": "nodemailer",
       "versions": [
-        "10.0.2"
+        "10.0.9"
       ],
       "license": "MIT-0",
       "author": "Andris Reinman",

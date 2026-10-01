@@ -1,29 +1,13 @@
 /// <reference types="bun" />
 
-import fs from 'node:fs'
 import { EventEmitter } from 'node:events'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import { evaluateGroupAccess, type PageRuleAuthority } from '../helpers/group-access.ts'
 import { verifyPageMoveReviewToken } from '../helpers/page-move-review-token.ts'
+import { getPostgresTestConnection } from './postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_move_review_test') && password
-  ? {
-      host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-      port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-      user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-      database,
-      password
-    }
-  : null
-const directlyInvoked = !String(process.env.npm_lifecycle_event ?? '').startsWith('test') &&
-  process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('operations.pages.move-review.test.ts'))
-if ((directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1') && !connection) {
-  throw new Error('Explicit move review PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _move_review_test and a PostgreSQL password or WIKI_TEST_POSTGRES_PASSWORD_FILE.')
-}
+const connection = getPostgresTestConnection('_move_review_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 
 interface ReviewItem {

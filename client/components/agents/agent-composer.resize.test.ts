@@ -235,7 +235,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
 }
 
 describe('Agent composer sizing and caret behavior', () => {
-  it('starts at a compact two-line default, grows with measured content, and only overflows at the maximum', () => {
+  it('clamps measured content to the supplied CSS minimum and cap, overflowing only above the cap', () => {
     expect(calculateComposerSizing(20, 40, 100)).toEqual({ height: 40, overflowing: false })
     expect(calculateComposerSizing(72, 40, 100)).toEqual({ height: 72, overflowing: false })
     expect(calculateComposerSizing(100, 40, 100)).toEqual({ height: 100, overflowing: false })
@@ -270,7 +270,7 @@ describe('Agent composer sizing and caret behavior', () => {
     expect(composer.textarea.style.overflowY).toBe('auto')
   })
 
-  it('shrinks back to the compact default height and clears stale scroll when content falls below the cap', () => {
+  it('shrinks back to the supplied CSS minimum and clears stale scroll when content falls below the cap', () => {
     const composer = loadComposer()
     composer.textarea.scrollHeight = 180
     composer.textarea.scrollTop = 60
@@ -343,8 +343,11 @@ describe('Agent composer sizing and caret behavior', () => {
   it('mounts one reusable caret mirror and removes it on unmount', () => {
     const composer = loadComposer()
     composer.mounted()
-    composer.mounted()
-    expect(composer.body.children).toHaveLength(1)
+    for (const contentHeight of [180, 112, 32]) {
+      composer.textarea.scrollHeight = contentHeight
+      composer.resizeInput()
+      expect(composer.body.children).toHaveLength(1)
+    }
     composer.unmount()
     expect(composer.body.children).toHaveLength(0)
   })

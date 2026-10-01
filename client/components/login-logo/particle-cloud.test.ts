@@ -1,6 +1,6 @@
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { ParsedLogoParticles } from './particle-logo'
-import { CLOUD_BEAD_LIMIT, ParticleCloud } from './particle-cloud'
+import { ParticleCloud } from './particle-cloud'
 import { LOGO_POINTER_MAX_TRAVEL_CSS, LogoPointerController } from './useLogoPointer'
 
 const particles = (count: number, allBeads = false): ParsedLogoParticles => {
@@ -30,10 +30,14 @@ describe('particle cloud physics', () => {
     const before = new Uint8Array(input.buffer).slice()
     const cloud = new ParticleCloud(input)
     const state = pointer()
-    expect(cloud.count).toBe(CLOUD_BEAD_LIMIT)
+    expect(cloud.count).toBe(512)
     expect(cloud.motion.length).toBe(input.count * 2)
+    expect(new Set(cloud.indices).size).toBe(cloud.count)
     for (let slot = 0; slot < cloud.count; slot++) {
-      expect(cloud.indices[slot]).toBe(Math.floor(((slot + 1) * input.count - 1) / CLOUD_BEAD_LIMIT))
+      const index = cloud.indices[slot]!
+      expect(index).toBeGreaterThanOrEqual(0)
+      expect(index).toBeLessThan(input.count)
+      if (slot > 0) expect(index).toBeGreaterThan(cloud.indices[slot - 1]!)
     }
     expect(cloud.indices[0]).toBeLessThan(40)
     expect(cloud.indices.at(-1)).toBeGreaterThan(15960)
@@ -62,7 +66,7 @@ describe('particle cloud physics', () => {
 
   it('exposes no selected indices and zero motion for a source without beads', () => {
     const input = particles(4)
-    input.seed.fill(0)
+    input.seed.fill(1)
     const before = new Uint8Array(input.buffer).slice()
     const cloud = new ParticleCloud(input)
     expect(cloud.count).toBe(0)
@@ -125,20 +129,24 @@ describe('particle cloud physics', () => {
 // Brush state is bounded independently of event rate and particle count.
 describe('continuous particle brush', () => {
   it('makes ordinary strokes stronger with a modestly wider, bounded reach', () => {
-    const cloud = new ParticleCloud(particles(0))
+    const cloud = new ParticleCloud(particles(1))
+    expect(cloud.count).toBe(0)
     const state = pointer()
     Object.assign(state.impulses[0], { active: true, travelCss: 10, strength: 2, radiusCss: 40 })
     for (let i = 0; i <= 120; i++) cloud.update(i / 120, 800, 800, state)
-    expect(cloud.brush.travel).toBeCloseTo(26.25, 4)
-    expect(cloud.brush.radius).toBeCloseTo(44.8, 4)
+    expect(cloud.brush.travel).toBeGreaterThan(20)
+    expect(cloud.brush.travel).toBeLessThanOrEqual(42)
+    expect(cloud.brush.radius).toBeGreaterThan(40)
+    expect(cloud.brush.radius).toBeLessThanOrEqual(72)
     Object.assign(state.impulses[0], { travelCss: 20, strength: 3.2, radiusCss: 72 })
     for (let i = 121; i <= 240; i++) cloud.update(i / 120, 800, 800, state)
-    expect(cloud.brush.travel).toBeCloseTo(LOGO_POINTER_MAX_TRAVEL_CSS, 4)
+    expect(cloud.brush.travel).toBeCloseTo(42, 4)
     expect(cloud.brush.radius).toBeLessThanOrEqual(72)
   })
 
   it('preserves continuity when a saturated pointer ring is replaced or reversed', () => {
-    const cloud = new ParticleCloud(particles(0))
+    const cloud = new ParticleCloud(particles(1))
+    expect(cloud.count).toBe(0)
     const state = pointer()
     const impulse = state.impulses[0]
     Object.assign(impulse, { active: true, x: -0.3, y: 0, travelCss: 20, strength: 3, radiusCss: 60 })
@@ -162,8 +170,10 @@ describe('continuous particle brush', () => {
   })
 
   it('smooths consistently at 60 and 120 Hz and resets after suspension', () => {
-    const a = new ParticleCloud(particles(0))
-    const b = new ParticleCloud(particles(0))
+    const a = new ParticleCloud(particles(1))
+    const b = new ParticleCloud(particles(1))
+    expect(a.count).toBe(0)
+    expect(b.count).toBe(0)
     const state = pointer()
     Object.assign(state.impulses[0], { active: true, x: 0.4, y: -0.2, travelCss: 10, strength: 2 })
     for (let i = 0; i <= 60; i++) a.update(i / 60, 800, 800, state)

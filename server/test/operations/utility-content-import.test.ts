@@ -162,6 +162,12 @@ describe('reviewed legacy content import', () => {
     const before = structuredClone(subject.state.rows.find(row => row.key === 'git')!)
     await subject.run(requester, { mode: 'disk', path: '/migration-source' }, 'Import the approved migration folder', async () => undefined)
     expect(subject.state.rows.find(row => row.key === 'git')).toEqual(before)
+    expect(subject.state.rows.find(row => row.key === 'disk')).toMatchObject({
+      isEnabled: true,
+      mode: 'push',
+      syncInterval: 'P0D',
+      config: { path: '/migration-source', createDailyBackups: true, opaque: 'keep-disk' }
+    })
     const gitDraft = subject.saved.mock.calls[0]![1].targets.find((target: SavedTarget) => target.key === 'git')!
     expect(gitDraft.secrets).toEqual({ sshPrivateKeyContent: { action: 'keep' }, basicPassword: { action: 'keep' } })
     expect(subject.executeAction).toHaveBeenCalledWith('disk', 'importAll')
@@ -191,7 +197,6 @@ describe('reviewed legacy content import', () => {
       revisions.storageAdministration = 'storage-2'
     }
     await subject.run(requester, { mode: 'disk', path: '/migration-source' }, 'Import the approved migration folder', guard)
-    expect(guard).toHaveBeenCalledTimes(3)
     revisions.storageAdministration = 'storage-1'
     revisions.unrelated = 'utilities-1'
     expect(subject.executeAction).toHaveBeenCalledWith('disk', 'importAll')

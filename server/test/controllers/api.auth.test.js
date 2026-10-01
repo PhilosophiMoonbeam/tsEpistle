@@ -309,26 +309,6 @@ describe('controllers/api auth endpoints', () => {
     }
   }
 
-  it('registers the auth routes', async () => { const handlers = await loadHandlers()
-
-  expect(typeof handlers.adminStrategies).toBe('function')
-  expect(typeof handlers.adminActiveStrategies).toBe('function')
-  expect(typeof handlers.strategies).toBe('function')
-  expect(typeof handlers.providers).toBe('function')
-  expect(typeof handlers.updateStrategies).toBe('function')
-  expect(typeof handlers.api).toBe('function')
-  expect(typeof handlers.setApiState).toBe('function')
-  expect(typeof handlers.createApiKey).toBe('function')
-  expect(typeof handlers.revokeApiKey).toBe('function')
-  expect(typeof handlers.regenerateCertificates).toBe('function')
-  expect(typeof handlers.resetGuestUser).toBe('function')
-  expect(typeof handlers.register).toBe('function')
-  expect(typeof handlers.forgotPassword).toBe('function')
-  expect(typeof handlers.login).toBe('function')
-  expect(typeof handlers.verifyEmail).toBe('function')
-  expect(typeof handlers.resetPassword).toBe('function')
-  expect(typeof handlers.loginTFA).toBe('function')
-  expect(typeof handlers.loginChangePassword).toBe('function') })
 
 
   it('returns admin authentication strategy definitions with GraphQL-compatible props', async () => {
@@ -460,6 +440,13 @@ describe('controllers/api auth endpoints', () => {
         }
       }
     ])
+    const payload = res.json.mock.calls[0][0][0]
+    expect(payload.strategyKey).toBeUndefined()
+    expect(payload.isEnabled).toBeUndefined()
+    expect(payload.config).toBeUndefined()
+    expect(payload.domainWhitelist).toBeUndefined()
+    expect(payload.autoEnrollGroups).toBeUndefined()
+    expect(payload.strategy.props).toBeUndefined()
   })
 
   it('returns all configured providers for admin user bootstrap when authorized', async () => {
@@ -582,7 +569,8 @@ describe('controllers/api auth endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
-    expect(global.WIKI.models.authentication.getStrategies).not.toHaveBeenCalled()
+    expect(administrationStore.inspect).not.toHaveBeenCalled()
+    expect(administrationStore.save).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -600,7 +588,8 @@ describe('controllers/api auth endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'strategies must be an array of valid authentication strategies' })
-    expect(global.WIKI.models.authentication.getStrategies).not.toHaveBeenCalled()
+    expect(administrationStore.inspect).not.toHaveBeenCalled()
+    expect(administrationStore.save).not.toHaveBeenCalled()
   })
 
   it('returns JSON errors when a removed authentication strategy still has users', async () => {
@@ -816,7 +805,8 @@ describe('controllers/api auth endpoints', () => {
 
     await setApiState(req, res)
 
-    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(global.WIKI.models.knex.transaction).not.toHaveBeenCalled()
+    expect(global.WIKI.config.api.isEnabled).toBe(true)
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'enabled must be a boolean' })
   })
@@ -1101,20 +1091,6 @@ describe('controllers/api auth endpoints', () => {
   })
 
 
-  it('does not expose internal configuration or admin-only auth metadata', async () => {
-    const { strategies } = await loadHandlers()
-    const res = { json: vi.fn() }
-
-    await strategies({}, res, vi.fn())
-
-    const payload = res.json.mock.calls[0][0][0]
-    expect(payload.strategyKey).toBeUndefined()
-    expect(payload.isEnabled).toBeUndefined()
-    expect(payload.config).toBeUndefined()
-    expect(payload.domainWhitelist).toBeUndefined()
-    expect(payload.autoEnrollGroups).toBeUndefined()
-    expect(payload.strategy.props).toBeUndefined()
-  })
 
   it('forwards unexpected failures from strategy loading to next', async () => {
     global.WIKI.models.authentication.getStrategies.mockRejectedValueOnce(new Error('db failed'))
@@ -1293,6 +1269,7 @@ describe('controllers/api auth endpoints', () => {
       tfaSecret: null
     })
     expect(res.cookie).not.toHaveBeenCalled()
+    expect(authRateLimiter.reset).not.toHaveBeenCalled()
   })
   it.each([
     ['setup TFA', { mustSetupTFA: true, continuationToken: 'setup-token', tfaQRImage: 'data:image/png;base64,setup', tfaSecret: 'JBSWY3DPEHPK3PXP' }],
@@ -1613,21 +1590,4 @@ describe('controllers/api auth endpoints', () => {
     expect(resetRes.status).toHaveBeenCalledWith(400)
   })
 
-  it('forwards unexpected failures to next', async () => {
-    global.WIKI.models.users.login.mockRejectedValueOnce(new Error('unexpected login failure'))
-    const { login } = await loadHandlers()
-    const req = {
-      body: { strategy: 'local', username: 'alice@example.com', password: 'secret' },
-      login: vi.fn(),
-      logIn: vi.fn()
-    }
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-    const next = vi.fn()
-
-    await login(req, res, next)
-
-    expect(res.json).not.toHaveBeenCalled()
-    expect(next).toHaveBeenCalledWith(expect.any(Error))
-    expect(next.mock.calls[0][0].message).toBe('unexpected login failure')
-  })
 })

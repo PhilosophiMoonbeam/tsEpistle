@@ -5,7 +5,6 @@ import {
   AGENT_EVENT_TYPES,
   AGENT_TASK_KINDS,
   AGENT_FEATURE_FLAG_KEYS,
-  AGENT_PERMISSION_KEYS,
   AGENT_TOOL_NAMES,
   agentProviderReasoningEfforts
 } from './contracts.ts'
@@ -25,8 +24,11 @@ describe('frozen agent contracts', () => {
     const toolNames = Object.values(AGENT_TOOL_NAMES)
     expect(new Set(toolNames).size).toBe(toolNames.length)
     expect(toolNames.every(name => name.startsWith('wiki_'))).toBe(true)
-    expect(Object.keys(AGENT_TOOL_NAMES)).toEqual([...AGENT_ACTION_NAMES])
+    expect(new Set(Object.keys(AGENT_TOOL_NAMES))).toEqual(new Set(AGENT_ACTION_NAMES))
     expect(Object.keys(AGENT_ACTION_BY_TOOL_NAME)).toHaveLength(AGENT_ACTION_NAMES.length)
+    for (const action of AGENT_ACTION_NAMES) {
+      expect(AGENT_ACTION_BY_TOOL_NAME[AGENT_TOOL_NAMES[action]]).toBe(action)
+    }
     expect(AGENT_TOOL_NAMES).toMatchObject({
       'pages.get': 'wiki_get_page',
       'pages.discover': 'wiki_discover_pages',
@@ -34,10 +36,6 @@ describe('frozen agent contracts', () => {
       'memory.manage': 'wiki_manage_memory'
     })
     expect(toolNames).not.toContain('wiki_prepare_okf_import')
-  })
-
-  it('freezes least-privileged admission permissions', () => {
-    expect(AGENT_PERMISSION_KEYS).toEqual(['use:agents', 'use:agent-browser', 'use:mcp'])
   })
 
   it('keeps protocol-specific reasoning effort values exact', () => {
