@@ -164,14 +164,7 @@ const prompt = (request: AgentEngineRequest, skillCatalog: unknown, toolInstruct
   const sections =
     request.purpose === 'subagent'
       ? [WIKI_AGENT_SOUL, SUBAGENT_INSTRUCTIONS, WIKI_KNOWLEDGE_INSTRUCTIONS, EVIDENCE_INSTRUCTIONS, DISCOVERY_OBSERVATION_INSTRUCTIONS]
-      : [
-          WIKI_AGENT_SOUL,
-          CORE_INSTRUCTIONS,
-          WIKI_KNOWLEDGE_INSTRUCTIONS,
-          EVIDENCE_INSTRUCTIONS,
-          DISCOVERY_OBSERVATION_INSTRUCTIONS,
-          SUMMARY_INSTRUCTIONS
-        ]
+      : [WIKI_AGENT_SOUL, CORE_INSTRUCTIONS, WIKI_KNOWLEDGE_INSTRUCTIONS, EVIDENCE_INSTRUCTIONS, DISCOVERY_OBSERVATION_INSTRUCTIONS, SUMMARY_INSTRUCTIONS]
   if (toolInstructions) sections.push(toolInstructions)
   if (request.purpose !== 'subagent' && (request.memory.user.length > 0 || request.memory.agent.length > 0))
     sections.push(
@@ -5959,7 +5952,7 @@ export class AxAgentEngine implements AgentEngine {
           if (
             request.purpose !== 'planner' &&
             request.purpose !== 'subagent' &&
-            (result.content.split('\n').some(line => line.trim().startsWith(DISCOVERY_NOTICE_PREFIX) && !deliveredAttributedLines.has(line.trim())) ||
+            (result.content.split('\n').some(line => line.includes(DISCOVERY_NOTICE_PREFIX) && !deliveredAttributedLines.has(line.trim())) ||
               ([...deliveredAttributedLines].some(line => line.startsWith(DISCOVERY_NOTICE_PREFIX)) &&
                 assessmentEvidence.size === 0 &&
                 substantiveUnboundText(assessableContent) &&
