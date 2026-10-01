@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "b3f8e11a49cb4c1fe3e305ba25629608c77df86b2eecdcac341ea4fa9a8ee053",
+    "sha256": "1a361ee9ba58e69f3ffae34d2088798eec328f29940330e514328c6a6ce97b67",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -3969,7 +3969,7 @@
     {
       "name": "hono",
       "versions": [
-        "4.13.5"
+        "4.13.7"
       ],
       "license": "MIT",
       "author": "Yusuke Wada <yusuke@kamawada.com> (https://github.com/yusukebe)",

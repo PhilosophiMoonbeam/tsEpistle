@@ -31,7 +31,7 @@ The license inventory includes the lockfile's optional dependencies for every pl
 
 The Bun 1.4.2 lock keeps the direct Undici 8.x transport and Cheerio's scoped Undici 7.x copy on separately reviewed security versions. Preserve the `undici@7` scoped override and the exact Undici 8.x Bun compatibility patch when updating either line; regenerate the lockfile and license inventory, then run `bun audit --production` and provider-transport checks.
 
-For security patch upgrades, preserve unrelated lock resolutions and verify every affected nested copy. A valid lockfile or clean audit alone does not prove the installed consumer's resolution: Bun can leave an obsolete nested package in an existing installation. Verify the actual consumer resolver and exercised application bundle, regenerate the license inventory, and retain exact direct pins and required transitive overrides.
+For security patch upgrades, preserve unrelated lock resolutions and verify every affected nested copy. A valid lockfile or clean audit alone does not prove the installed consumer's resolution: Bun can leave an obsolete nested package in an existing installation. An overridden optional peer can also retain its old locked version after `bun install`; use targeted `bun update <name>` and verify that unrelated resolutions stay unchanged. Verify the actual consumer resolver and exercised application bundle, regenerate the license inventory, and retain exact direct pins and required transitive overrides.
 
 ## Code review process
 
