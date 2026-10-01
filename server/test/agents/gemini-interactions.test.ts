@@ -95,7 +95,7 @@ const metadataTextEvents = (): Record<string, unknown>[] => [
 ]
 const statelessTextEvents = (): Record<string, unknown>[] => {
   const events = metadataTextEvents()
-  events[0]!.interaction = { status: 'in_progress', model }
+  events[0]!.interaction = {}
   events.splice(1, 1)
   events[4]!.interaction = { model, status: 'completed', usage }
   return events
@@ -425,8 +425,12 @@ describe('Gemini Interactions Google Search grounding', () => {
     expect(readGeminiInteractionStatus(chunks.at(-1)!.results[0]!)).toBe('completed')
   })
 
-  it('accepts a stateless creation without identity through completed text, terminal usage, and reader EOF', async () => {
+  it.each([
+    ['empty partial interaction', {}],
+    ['partial interaction with the pinned model', { model }]
+  ])('accepts stateless creation with %s through completed text, terminal usage, and reader EOF', async (_name, interaction) => {
     const events = statelessTextEvents()
+    events[0]!.interaction = interaction
     const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Give a short greeting' }] }, { stream: true })
     if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
     const chunks = await Array.fromAsync(response)
@@ -444,7 +448,7 @@ describe('Gemini Interactions Google Search grounding', () => {
     ['empty status identity stays bound without fabricated IDs', undefined, '', undefined, undefined, undefined]
   ] as const)('accepts %s through the completed text stream', async (_name, createdId, statusId, completedId, textRemoteId, finalId) => {
     const events = statelessTextEvents()
-    events[0]!.interaction = { ...(createdId === undefined ? {} : { id: createdId }), status: 'in_progress', model }
+    events[0]!.interaction = { ...(createdId === undefined ? {} : { id: createdId }), model }
     events[4]!.interaction = { ...(completedId === undefined ? {} : { id: completedId }), model, status: 'completed', usage }
     if (statusId !== undefined) events.splice(1, 0, { event_type: 'interaction.status_update', interaction_id: statusId, status: 'in_progress' })
     const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Give a short greeting' }] }, { stream: true })
@@ -512,15 +516,39 @@ describe('Gemini Interactions Google Search grounding', () => {
     })
   })
 
-  it('does not let metadata substitute for the complete final usage receipt', async () => {
+  it.each([
+    ['absent', undefined],
+    ['incomplete', { total_tokens: 5 }]
+  ])('does not let metadata substitute for an %s final usage receipt', async (_name, finalUsage) => {
     const events = statelessTextEvents()
-    events[4]!.interaction = { model, status: 'completed', usage: { total_tokens: 5 } }
+    events[4]!.interaction = { model, status: 'completed', ...(finalUsage === undefined ? {} : { usage: finalUsage }) }
     events[4]!.metadata = { total_usage: usage }
     const response = await textStreamService(streamWire(events)).chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: true })
     if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
     await expect(Array.fromAsync(response)).rejects.toMatchObject({
       code: 'INVALID_PROVIDER_RESPONSE',
       agentDiagnostics: { providerErrorCode: 'protocol_stream_completed_invalid' }
+    })
+  })
+
+  it.each([
+    [
+      'completion receipt despite a completed status update',
+      (events: Record<string, unknown>[]) =>
+        [...events.slice(0, -1), { event_type: 'interaction.status_update', interaction_id: '', status: 'completed' }],
+      true,
+      'protocol_stream_terminal_invalid'
+    ],
+    ['done marker', (events: Record<string, unknown>[]) => events, false, 'protocol_stream_missing_terminal']
+  ] as const)('requires the %s after sparse creation even when the reader reaches EOF', async (_name, selectEvents, done, providerErrorCode) => {
+    const response = await textStreamService(streamWire(selectEvents(statelessTextEvents()), done)).chat(
+      { chatPrompt: [{ role: 'user', content: 'Question' }] },
+      { stream: true }
+    )
+    if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+    await expect(Array.fromAsync(response)).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      agentDiagnostics: { providerErrorCode }
     })
   })
 
@@ -535,7 +563,7 @@ describe('Gemini Interactions Google Search grounding', () => {
     })
   })
 
-  it('does not retry a transient provider error after identity-less creation', async () => {
+  it('does not retry a transient provider error after sparse creation without identity or status', async () => {
     let requests = 0
     const events = [
       statelessTextEvents()[0]!,
@@ -596,9 +624,14 @@ describe('Gemini Interactions Google Search grounding', () => {
       [{ event_type: 'interaction.created', interaction: { id: 'private-provider-detail\n', status: 'in_progress', model } }],
       'protocol_stream_created_id_control'
     ],
-    ['missing status without identity', [{ event_type: 'interaction.created', interaction: { model } }], 'protocol_stream_created_status_missing'],
     ['null status', [{ event_type: 'interaction.created', interaction: { id: '', model, status: null } }], 'protocol_stream_created_status_null'],
     ['non-string status', [{ event_type: 'interaction.created', interaction: { id: '', model, status: 7 } }], 'protocol_stream_created_status_type'],
+    ['false status without identity', [{ event_type: 'interaction.created', interaction: { status: false } }], 'protocol_stream_created_status_type'],
+    [
+      'terminal status on creation without identity',
+      [{ event_type: 'interaction.created', interaction: { status: 'completed' } }],
+      'protocol_stream_created_status_unsupported'
+    ],
     [
       'unsupported status',
       [{ event_type: 'interaction.created', interaction: { id: '', model, status: 'private-provider-detail' } }],
@@ -617,8 +650,8 @@ describe('Gemini Interactions Google Search grounding', () => {
       'protocol_stream_created_model_length'
     ],
     [
-      'mismatched model without identity',
-      [{ event_type: 'interaction.created', interaction: { model: 'private-provider-detail', status: 'in_progress' } }],
+      'mismatched model without identity or status',
+      [{ event_type: 'interaction.created', interaction: { model: 'private-provider-detail' } }],
       'protocol_stream_created_model_mismatch'
     ],
     [
@@ -653,27 +686,49 @@ describe('Gemini Interactions Google Search grounding', () => {
     ],
     ['duplicate creation', [metadataTextEvents()[0]!, metadataTextEvents()[0]!], 'protocol_stream_created_duplicate'],
     [
-      'duplicate creation without identity',
-      [
-        { event_type: 'interaction.created', interaction: { status: 'in_progress', model } },
-        { event_type: 'interaction.created', interaction: { status: 'in_progress', model } }
-      ],
+      'duplicate sparse creation without identity or status',
+      [statelessTextEvents()[0]!, statelessTextEvents()[0]!],
       'protocol_stream_created_duplicate'
     ],
     [
       'missing required status identity after identity-less creation',
       [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', status: 'in_progress' }],
-      'protocol_stream_status_invalid'
+      'protocol_stream_status_id_missing'
     ],
     [
       'null status identity after identity-less creation',
       [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: null, status: 'in_progress' }],
-      'protocol_stream_status_invalid'
+      'protocol_stream_status_id_null'
     ],
     [
       'non-string status identity after identity-less creation',
       [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: 7, status: 'in_progress' }],
-      'protocol_stream_status_invalid'
+      'protocol_stream_status_id_type'
+    ],
+    [
+      'missing required update status after sparse creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: '' }],
+      'protocol_stream_status_status_missing'
+    ],
+    [
+      'null update status after sparse creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: '', status: null }],
+      'protocol_stream_status_status_type'
+    ],
+    [
+      'non-string update status after sparse creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: '', status: false }],
+      'protocol_stream_status_status_type'
+    ],
+    [
+      'unsupported update status after sparse creation',
+      [statelessTextEvents()[0]!, { event_type: 'interaction.status_update', interaction_id: '', status: 'private-provider-detail' }],
+      'protocol_stream_status_status_invalid'
+    ],
+    [
+      'missing final status after sparse creation',
+      [...statelessTextEvents().slice(0, 4), { event_type: 'interaction.completed', interaction: { model, usage } }],
+      'protocol_stream_completed_invalid'
     ],
     [
       'null final identity after identity-less creation',

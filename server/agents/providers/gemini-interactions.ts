@@ -247,7 +247,6 @@ const STREAM_PROTOCOL_ISSUES: Readonly<Record<string, string>> = {
   'stream created identity has an invalid type': 'protocol_stream_created_id_type',
   'stream created identity exceeds the length limit': 'protocol_stream_created_id_length',
   'stream created identity contains a control character': 'protocol_stream_created_id_control',
-  'stream created status is missing': 'protocol_stream_created_status_missing',
   'stream created status is null': 'protocol_stream_created_status_null',
   'stream created status has an invalid type': 'protocol_stream_created_status_type',
   'stream created status is unsupported': 'protocol_stream_created_status_unsupported',
@@ -265,6 +264,12 @@ const STREAM_PROTOCOL_ISSUES: Readonly<Record<string, string>> = {
   'stream contains an invalid error event': 'protocol_stream_error_invalid',
   'stream event is out of order': 'protocol_stream_event_out_of_order',
   'stream contains an invalid status event': 'protocol_stream_status_invalid',
+  'stream status update identity is missing': 'protocol_stream_status_id_missing',
+  'stream status update identity is null': 'protocol_stream_status_id_null',
+  'stream status update identity has an invalid type': 'protocol_stream_status_id_type',
+  'stream status update status is missing': 'protocol_stream_status_status_missing',
+  'stream status update status has an invalid type': 'protocol_stream_status_status_type',
+  'stream status update status is unsupported': 'protocol_stream_status_status_invalid',
   'stream contains an invalid step start': 'protocol_stream_step_start_invalid',
   'stream contains an invalid step delta': 'protocol_stream_step_delta_invalid',
   'stream delta does not match its step': 'protocol_stream_delta_step_mismatch',
@@ -844,7 +849,9 @@ const CreatedEventSchema = z.strictObject({
   event_type: z.literal('interaction.created'),
   event_id: z.string().optional(),
   metadata: StreamMetadataSchema.optional(),
-  interaction: z.object({ id: InteractionIdentifierSchema.optional(), model: z.string().min(1).max(255).optional(), status: z.literal('in_progress') }).passthrough()
+  interaction: z
+    .object({ id: InteractionIdentifierSchema.optional(), model: z.string().min(1).max(255).optional(), status: z.literal('in_progress').optional() })
+    .passthrough()
 })
 const StatusEventSchema = z.strictObject({
   event_type: z.literal('interaction.status_update'),
@@ -1063,10 +1070,11 @@ const invalidCreatedEvent = (value: object): AgentRepositoryError => {
     if (containsControlCharacter(id)) return invalidResponse('stream created identity contains a control character')
   }
   const status = Reflect.get(interaction, 'status')
-  if (status === undefined) return invalidResponse('stream created status is missing')
-  if (status === null) return invalidResponse('stream created status is null')
-  if (typeof status !== 'string') return invalidResponse('stream created status has an invalid type')
-  if (status !== 'in_progress') return invalidResponse('stream created status is unsupported')
+  if (status !== undefined) {
+    if (status === null) return invalidResponse('stream created status is null')
+    if (typeof status !== 'string') return invalidResponse('stream created status has an invalid type')
+    if (status !== 'in_progress') return invalidResponse('stream created status is unsupported')
+  }
   const model = Reflect.get(interaction, 'model')
   if (model === null) return invalidResponse('stream created model is null')
   if (model !== undefined && typeof model !== 'string') return invalidResponse('stream created model has an invalid type')
@@ -1080,6 +1088,18 @@ const invalidCreatedEvent = (value: object): AgentRepositoryError => {
   if (metadata !== undefined && !StreamMetadataSchema.safeParse(metadata).success) return invalidResponse('stream created metadata usage is invalid')
   if (Object.keys(value).some(key => !Object.hasOwn(CreatedEventSchema.shape, key))) return invalidResponse('stream created envelope contains an unknown field')
   return invalidResponse('stream contains an invalid created event')
+}
+
+const invalidStatusEvent = (value: object): AgentRepositoryError => {
+  const id = Reflect.get(value, 'interaction_id')
+  if (id === undefined) return invalidResponse('stream status update identity is missing')
+  if (id === null) return invalidResponse('stream status update identity is null')
+  if (typeof id !== 'string') return invalidResponse('stream status update identity has an invalid type')
+  const status = Reflect.get(value, 'status')
+  if (status === undefined) return invalidResponse('stream status update status is missing')
+  if (typeof status !== 'string') return invalidResponse('stream status update status has an invalid type')
+  if (!StatusEventSchema.shape.status.safeParse(status).success) return invalidResponse('stream status update status is unsupported')
+  return invalidResponse('stream contains an invalid status event')
 }
 
 const processStreamEvent = (value: unknown, state: StreamState): readonly AxChatResponse[] => {
@@ -1107,12 +1127,8 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
   if (!state.createdSeen || state.completed) throw invalidResponse('stream event is out of order')
   if (eventType === 'interaction.status_update') {
     const parsed = StatusEventSchema.safeParse(value)
-    if (
-      !parsed.success ||
-      parsed.data.status === 'failed' ||
-      parsed.data.status === 'cancelled' ||
-      !bindStreamIdentity(state, parsed.data.interaction_id)
-    )
+    if (!parsed.success) throw invalidStatusEvent(value)
+    if (parsed.data.status === 'failed' || parsed.data.status === 'cancelled' || !bindStreamIdentity(state, parsed.data.interaction_id))
       throw invalidResponse('stream contains an invalid status event')
     return []
   }
