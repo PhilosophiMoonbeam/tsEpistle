@@ -274,6 +274,15 @@ const STREAM_PROTOCOL_ISSUES: Readonly<Record<string, string>> = {
   'stream delta does not match its step': 'protocol_stream_delta_step_mismatch',
   'stream contains an invalid step stop': 'protocol_stream_step_stop_invalid',
   'stream contains an invalid completed event': 'protocol_stream_completed_invalid',
+  'stream completed status is invalid': 'protocol_stream_completed_status_invalid',
+  'stream completed usage is invalid': 'protocol_stream_completed_usage_invalid',
+  'stream completed steps are invalid': 'protocol_stream_completed_steps_invalid',
+  'stream completed metadata is invalid': 'protocol_stream_completed_metadata_invalid',
+  'stream completed identity is invalid': 'protocol_stream_completed_id_invalid',
+  'stream completed model does not match the requested model': 'protocol_stream_completed_model_mismatch',
+  'stream completed identity does not match the interaction': 'protocol_stream_completed_id_mismatch',
+  'stream completed with failed status': 'protocol_stream_completed_failed',
+  'stream completed with cancelled status': 'protocol_stream_completed_cancelled',
   'stream completed with an unfinished step': 'protocol_stream_step_unfinished',
   'stream step indexes are not contiguous': 'protocol_stream_indexes_invalid',
   'completed stream steps do not match streamed steps': 'protocol_stream_completed_steps_mismatch',
@@ -1100,6 +1109,25 @@ const invalidStatusEvent = (value: object): AgentRepositoryError => {
   return invalidResponse('stream contains an invalid status event')
 }
 
+const invalidCompletedEvent = (value: object): AgentRepositoryError => {
+  // Classify only fixed protocol fields. Never expose provider values, unknown
+  // field names, validation paths, source text, or hidden reasoning.
+  const interaction = Reflect.get(value, 'interaction')
+  if (typeof interaction !== 'object' || interaction === null || Array.isArray(interaction))
+    return invalidResponse('stream contains an invalid completed event')
+  if (!CompletedEventSchema.shape.interaction.shape.id.safeParse(Reflect.get(interaction, 'id')).success)
+    return invalidResponse('stream completed identity is invalid')
+  if (!CompletedEventSchema.shape.interaction.shape.status.safeParse(Reflect.get(interaction, 'status')).success)
+    return invalidResponse('stream completed status is invalid')
+  if (!UsageSchema.safeParse(Reflect.get(interaction, 'usage')).success)
+    return invalidResponse('stream completed usage is invalid')
+  if (!CompletedEventSchema.shape.interaction.shape.steps.safeParse(Reflect.get(interaction, 'steps')).success)
+    return invalidResponse('stream completed steps are invalid')
+  if (!CompletedEventSchema.shape.metadata.safeParse(Reflect.get(value, 'metadata')).success)
+    return invalidResponse('stream completed metadata is invalid')
+  return invalidResponse('stream contains an invalid completed event')
+}
+
 const processStreamEvent = (value: unknown, state: StreamState): readonly AxChatResponse[] => {
   if (typeof value !== 'object' || value === null) throw invalidResponse('stream event is not an object')
   const eventType = Reflect.get(value, 'event_type')
@@ -1266,14 +1294,13 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
   }
   if (eventType === 'interaction.completed') {
     const parsed = CompletedEventSchema.safeParse(value)
-    if (
-      !parsed.success ||
-      (parsed.data.interaction.model !== undefined && parsed.data.interaction.model !== state.expectedModel) ||
-      parsed.data.interaction.status === 'failed' ||
-      parsed.data.interaction.status === 'cancelled' ||
-      !bindStreamIdentity(state, parsed.data.interaction.id)
-    )
-      throw invalidResponse('stream contains an invalid completed event')
+    if (!parsed.success) throw invalidCompletedEvent(value)
+    if (parsed.data.interaction.model !== undefined && parsed.data.interaction.model !== state.expectedModel)
+      throw invalidResponse('stream completed model does not match the requested model')
+    if (parsed.data.interaction.status === 'failed') throw invalidResponse('stream completed with failed status')
+    if (parsed.data.interaction.status === 'cancelled') throw invalidResponse('stream completed with cancelled status')
+    if (!bindStreamIdentity(state, parsed.data.interaction.id))
+      throw invalidResponse('stream completed identity does not match the interaction')
     if ([...state.active.values()].some(step => !step.stopped)) throw invalidResponse('stream completed with an unfinished step')
     const ordered = [...state.steps.entries()].sort(([left], [right]) => left - right)
     if (ordered.some(([index], position) => index !== position)) throw invalidResponse('stream step indexes are not contiguous')

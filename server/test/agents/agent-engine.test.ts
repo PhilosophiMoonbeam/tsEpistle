@@ -1395,6 +1395,50 @@ describe('Ax agent engine', () => {
     return { chat, correctionIssues, correctionRequest, event, rejectedIssues, result, settledUsage, text }
   }
 
+  it('repairs a contact lookup from nested source facts without publishing an expanded unsupported directory', async () => {
+    const citation = 'page:42:revision:1:section:1'
+    const corrected = [
+      `- **Customer Service Rep:** Maya Quinn [[cite:${citation}]]`,
+      `  - **Email:** [maya@example.test](mailto:maya@example.test) [[cite:${citation}]]`,
+      `  - **Direct Phone:** 555-0100 x42 [[cite:${citation}]]`
+    ].join('\n')
+    const run = await runEvidenceCorrection({
+      title: 'Supplier Contacts', path: 'supplier-contacts', question: 'Who is our supplier contact?',
+      content: '# Supplier Contacts\n\n## Contacts\n\n- **Customer Service Rep:** Maya Quinn\n  - **Email:** [maya@example.test](mailto:maya@example.test)\n  - **Direct Phone:** 555-0100 x42\n\n- **Order Processing Contact:**\n  - **Name:** Noah Bell\n  - **Email:** noah@example.test',
+      citationSections: [{ evidenceId: citation, label: 'Supplier Contacts › Contacts', href: '/en/supplier-contacts#contacts' }],
+      rejectedDraft: `The only supplier contact is Maya Quinn for every department. [[cite:${citation}]]`,
+      correctedDraft: corrected
+    })
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    expect(run.result.executionLimit).toBeUndefined()
+    expect(run.result.citations?.map(item => item.evidenceId)).toEqual([citation])
+    expect(run.rejectedIssues.length).toBeGreaterThan(0)
+    expect(run.settledUsage.map(item => item.totalTokens)).toEqual([12, 14, 17])
+  })
+
+  it('allows a specifically missing source read during acquisition repair without contradictory tool instructions', async () => {
+    const citation = 'page:42:revision:1:section:1'
+    const candidate = questionCandidate(42, '1', 'Supplier Contacts', { path: 'supplier-contacts' })
+    const page = questionReadPage(42, '1', 'Supplier Contacts', 'supplier-contacts', 'Contacts', 'contacts', 'Customer Service Rep: Maya Quinn')
+    const answer = `Customer Service Rep: Maya Quinn [[cite:${citation}]]`
+    const fixture = questionFixture('native', [
+      { calls: [{ id: 'search-contact', name: 'pages.search', arguments: { query: 'supplier contact' } }] },
+      { answer },
+      { calls: [{ id: 'read-contact', name: 'pages.get', arguments: { id: 42 } }] },
+      { answer }
+    ], name => name === 'pages.search' ? { results: [candidate] } : page)
+    const result = await fixture.execute('Who is our supplier contact?')
+    const repair = fixture.providerCalls[2]!
+    expect(repair.functions?.some(fn => fn.name === AGENT_TOOL_NAMES['pages.get'])).toBe(true)
+    const instruction = repair.chatPrompt.at(-1)
+    expect(instruction?.role).toBe('user')
+    expect(instruction?.content).toContain('Read a specific missing Wiki source')
+    expect(instruction?.content).not.toContain('Do not invoke tools')
+    expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.search', 'pages.get'])
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+  })
+
   it('repairs the whole requested observatory summary from intact separately cited clauses beyond the hint sample', async () => {
     const facets = [
       { heading: 'Optics', fact: 'The Meridian lens retains a silver coating and a narrow field of view.' },
