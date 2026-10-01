@@ -1237,7 +1237,12 @@ export default defineComponent({
     padding: var(--wiki-space-2);
     border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-control-radius);
-    background: rgb(var(--v-theme-on-primary));
+    // QR contrast is independent of the site's primary foreground color.
+    background: #fff;
+
+    :deep(svg) {
+      fill: #000;
+    }
   }
 }
 
