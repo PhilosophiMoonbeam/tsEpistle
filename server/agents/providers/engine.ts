@@ -134,7 +134,9 @@ const SOURCE_FAITHFUL_COMPOSITION = `Answer every requested facet at the request
 
 For a short factual lookup, select the directly relevant facts and return a short answer. Include useful identifying or contact details when supported. A retrieved directory does not require listing every department, person, or unrelated fact. If the requested identity is ambiguous, give the supported likely match with its source-stated role and ask which role the user needs.
 
-Each factual clause must match one intact source sentence, list item, table row, or presentation unit in cited scope. Cite each clause immediately with exact [[cite:EVIDENCE_ID]]. Separate units' facts even with the same ID; page citations do not permit pooling. Prefer verbatim or minimally edited complete clauses, especially after rejected paraphrase. Preserve subject, action, local scope, identity, names, identifiers, code literals, membership, quantities, units, links, negation, operators, full assignments, and modal, conditional, causal, and temporal restrictions. Never create relationships across units.
+Each factual clause must match one intact source assertion or one explicitly owned record in cited scope. Cite each clause immediately with exact [[cite:EVIDENCE_ID]]. Separate independent units' facts even with the same ID; page citations do not permit pooling. Prefer verbatim or minimally edited complete clauses, especially after rejected paraphrase. Preserve subject, action, local scope, identity, names, identifiers, code literals, membership, quantities, units, links, negation, operators, full assignments, and modal, conditional, causal, and temporal restrictions. Never create relationships across unrelated units.
+
+For an explicit record, keep its source-stated identifying value, requested field labels and values, and governing heading or disclosure restrictions in the same cited factual clause. A separately cited condition does not qualify a later bare value claim. Reformulate a table row or nested record with its own labels and applicable context when visual copying would omit those restrictions. Combine only that record's fields and governing context, never neighboring records or independent prose.
 
 Exception: exact structural membership may enumerate delivered headings, summary containers, link labels, or member names in their supported container, not attached attributes or unread destination contents. Comparisons retain every requested side and source-stated dimension with local citations. If no source states a relationship, cite sides independently; infer no shared or exclusive properties or absence from silence.
 
@@ -711,24 +713,30 @@ const presentationLanguage: Readonly<Record<string, true>> = {
 }
 const hasIdentifierSubstitution = (clause: string, unit: CitationSourceUnit): boolean => {
   const presentationSource = unit.kind === 'heading' || unit.kind === 'summary' || unit.kind === 'list-item' || unit.kind === 'table-row'
-  const claimed = significantTokens(clause)
-  const substitutes = (source: string, identifiers: readonly string[]): boolean => {
-    const available = significantTokens(source, true)
+  const claimedWords = lexicalTokens(clause).map(normalizedToken)
+  const claimed = claimedWords.filter(token => !insignificantTerms.has(token))
+  const substitutes = (source: string, identifiers: readonly string[], contextual = false): boolean => {
+    const available = contextual ? lexicalTokens(source, true).map(normalizedToken) : significantTokens(source, true)
+    const target = contextual ? claimedWords : claimed
     for (const identifier of identifiers) {
       for (let index = 0; index < available.length; index++) {
-        if (available[index] !== identifier || claimed.includes(identifier)) continue
+        if (available[index] !== identifier || target.includes(identifier)) continue
         const before = available[index - 1]
         const beforeSecond = available[index - 2]
         const after = available[index + 1]
         const afterSecond = available[index + 2]
-        for (let claimIndex = 0; claimIndex < claimed.length; claimIndex++) {
-          if (presentationSource && presentationLanguage[claimed[claimIndex]!] === true) continue
-          const replacesBetween = before !== undefined && after !== undefined && claimed[claimIndex - 1] === before && claimed[claimIndex + 1] === after
-          const replacesForward =
-            after !== undefined && afterSecond !== undefined && claimed[claimIndex + 1] === after && claimed[claimIndex + 2] === afterSecond
-          const replacesBackward =
-            before !== undefined && beforeSecond !== undefined && claimed[claimIndex - 1] === before && claimed[claimIndex - 2] === beforeSecond
-          if ((replacesBetween || replacesForward || replacesBackward) && claimed[claimIndex] !== identifier) return true
+        const beforeAllowed = before !== undefined && (!contextual || (attachmentQualifiers[before] !== true && negativeTerms[before] !== true))
+        const beforeSecondAllowed =
+          beforeSecond !== undefined && (!contextual || (attachmentQualifiers[beforeSecond] !== true && negativeTerms[beforeSecond] !== true))
+        const afterAllowed = after !== undefined && (!contextual || (attachmentQualifiers[after] !== true && negativeTerms[after] !== true))
+        const afterSecondAllowed =
+          afterSecond !== undefined && (!contextual || (attachmentQualifiers[afterSecond] !== true && negativeTerms[afterSecond] !== true))
+        for (let claimIndex = 0; claimIndex < target.length; claimIndex++) {
+          if (presentationSource && presentationLanguage[target[claimIndex]!] === true) continue
+          const replacesBetween = beforeAllowed && afterAllowed && target[claimIndex - 1] === before && target[claimIndex + 1] === after
+          const replacesForward = afterAllowed && afterSecondAllowed && target[claimIndex + 1] === after && target[claimIndex + 2] === afterSecond
+          const replacesBackward = beforeAllowed && beforeSecondAllowed && target[claimIndex - 1] === before && target[claimIndex - 2] === beforeSecond
+          if ((replacesBetween || replacesForward || replacesBackward) && target[claimIndex] !== identifier) return true
         }
       }
     }
@@ -740,7 +748,7 @@ const hasIdentifierSubstitution = (clause: string, unit: CitationSourceUnit): bo
     substitutes(unit.text, unit.identifiers) ||
     unit.closure.contexts
       .filter(context => unit.containerIds.includes(context.id))
-      .some(context => substitutes(context.normalizedLabel, identifierTerms(context.normalizedLabel, true)))
+      .some(context => substitutes(context.normalizedLabel, identifierTerms(context.normalizedLabel, true), true))
   )
 }
 
