@@ -1731,6 +1731,28 @@ describe('Ax agent engine', () => {
     })
   })
 
+  it('adaptable grounding binds a requested row field to its inherited numerical restriction without requiring its generic heading label', async () => {
+    const source = 'Product | Discount\n--- | ---\nCedar | 12%\nBirch | 8%'
+    const section = 'Rates — only for orders exceeding 20 chairs'
+    const corrected = `Cedar: Discount: 12%, only for orders exceeding 20 chairs. [[cite:${adaptableCitation}]]`
+    const fixture = questionFixture(
+      'native',
+      [
+        { calls: [{ id: 'read-qualified-row', name: 'pages.get', arguments: { id: 42 } }] },
+        { answer: `Cedar: Discount: 12%. [[cite:${adaptableCitation}]]` },
+        { answer: corrected }
+      ],
+      () => questionReadPage(42, '1', 'Product programs', 'product-programs', section, 'rates', source)
+    )
+    const result = await fixture.execute('What discount applies to Cedar, including its order condition?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([
+      { accepted: false },
+      { accepted: true }
+    ])
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual([adaptableCitation])
+  })
+
   it.each([
     ['changed identity', adaptableContact.replace('Maya Quinn', 'Noah Bell')],
     ['changed numeric value', adaptableContact.replace('555-0100 x42', '555-0100 x43')],
