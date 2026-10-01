@@ -897,6 +897,8 @@ describe('Agent composer three-section layout', () => {
   it('disables attaching once four real uploads settle and rejects a fifth', async () => {
     const mounted = mountRealComposers([{ media: true }])
     const root = mounted.roots[0]
+    const input = root.querySelector<HTMLInputElement>('input[type="file"]')
+    expect(input?.disabled).toBe(false)
     const files = ['one.pdf', 'two.pdf', 'three.pdf', 'four.pdf'].map(filename => new File([`%PDF-1.4\n${filename}\n%%EOF\n`], filename, { type: 'application/pdf' }))
     await selectRealFiles(root, files)
     await waitForRealSurface(() => realAttachmentNames(root).length === 4 && root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.disabled === false, 'four settled uploads')
@@ -904,6 +906,7 @@ describe('Agent composer three-section layout', () => {
     expect(mounted.uploads.map(upload => upload.filename)).toEqual(files.map(file => file.name))
     const attach = root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
     expect(attach?.disabled).toBe(true)
+    expect(input?.disabled).toBe(true)
     attach?.click()
     await Vue.nextTick()
     expect(document.querySelector('.v-overlay--active [aria-label="Attachment source"]')).toBeNull()
@@ -912,6 +915,14 @@ describe('Agent composer three-section layout', () => {
     expect(realAttachmentNames(root)).toEqual(files.map(file => file.name))
     expect(mounted.uploads.map(upload => upload.filename)).toEqual(files.map(file => file.name))
     expect(root.querySelector('[role="alert"]')).not.toBeNull()
+    const remove = root.querySelector<HTMLButtonElement>('[aria-label="Remove two.pdf"]')
+    if (!remove) throw new Error('The second ready attachment cannot be removed')
+    remove.click()
+    await waitForRealSurface(() => realAttachmentNames(root).length === 3, 'selected attachment removal')
+    expect(realAttachmentNames(root)).toEqual(['one.pdf', 'three.pdf', 'four.pdf'])
+    expect(mounted.requests.filter(request => request.method === 'DELETE').map(request => request.path)).toEqual(['/_api/agents/media/00000000-0000-4000-8000-000000000101'])
+    expect(attach?.disabled).toBe(false)
+    expect(input?.disabled).toBe(false)
   })
 
   it('re-attaches stored bytes through the real parent public action as fresh pending media', async () => {

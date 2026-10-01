@@ -2,7 +2,7 @@
   <div v-if="capabilities?.attachments || generationOptions.length || capabilities?.transcription" class="agent-media-composer">
     <!-- Recording, upload, and transcription controls live in the composer action bar (agent-composer.vue).
          This component owns the capture/transcription pipeline and renders pending attachments only. -->
-    <input ref="fileInput" class="agent-media-composer__file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple aria-label="Choose images or PDFs" @change="chooseFiles" />
+    <input ref="fileInput" class="agent-media-composer__file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple aria-label="Choose images or PDFs" :disabled="locked || attachments.length >= 4" @change="chooseFiles" />
     <p v-if="generationOptions.length && generationToolsEnabled === false" class="agent-media-composer__hint">Creation tools are available in conversations that support tool use.</p>
     <p v-else-if="generationOptions.length && !capabilities?.attachments" class="agent-media-composer__hint">Image references need PDF and image attachments enabled for this provider.</p>
     <slot

@@ -3,7 +3,7 @@ import type { AgentMediaView, AgentThreadState } from '../../shared/agents/contr
 import { installEnabledAgentFixture } from './agent-fixture.ts'
 import { expectLocatorWithinViewport, openSearch, responsiveTest as test } from './helpers.ts'
 
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=', 'base64')
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==', 'base64')
 const generatedId = '00000000-0000-4000-8000-000000000701'
 const generated: AgentMediaView = {
   id: generatedId,
