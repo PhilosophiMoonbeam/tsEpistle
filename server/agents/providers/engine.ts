@@ -2604,6 +2604,7 @@ const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConfli
 
 interface TurnResult extends AgentTokenUsage {
   readonly content: string
+  readonly nativeContent?: string
   readonly calls: readonly ToolCall[]
   readonly thoughtBlocks: NonNullable<AxChatResponseResult['thoughtBlocks']>
   readonly costMicros: number
@@ -5026,6 +5027,7 @@ export class AxAgentEngine implements AgentEngine {
       const settledAt = performance.now()
       return {
         content: deniedToolCall ? '' : content,
+        ...(metadata.metadataPresent && provider.continuationDialect === 'gemini-interactions-v1' ? { nativeContent: rawContent } : {}),
         calls,
         ...(deniedToolCall ? { deniedToolCall: true as const } : {}),
         ...(metadata.metadataPresent ? { rootMetadataPresent: true as const } : {}),
@@ -5832,6 +5834,7 @@ export class AxAgentEngine implements AgentEngine {
       let finalizationMaxOutputTokens = generationOutputCeiling(request, provider)
       let reservedFinalizationTokens = 0
       let finalizationDraftDispatched = false
+      let rootMetadataStripped = false
       let publicationCorrectionReserved = maxTurns > 1
       if ((request.purpose ?? 'root') === 'root') {
         const reservePrompt = activePrompt
@@ -6081,6 +6084,7 @@ export class AxAgentEngine implements AgentEngine {
           if (sequence !== finalizationSequence) await sequence?.close()
         }
         if (turn === 0) contextPlan.requestFacets = result.rootRequestPlan
+        if (result.rootMetadataPresent) rootMetadataStripped = true
         recordProviderDelivery(dispatchEvidence)
         inputTokens = safeUsageAddition(inputTokens, result.inputTokens, 'Aggregate input token usage')
         outputTokens = safeUsageAddition(outputTokens, result.outputTokens, 'Aggregate output token usage')
@@ -6404,7 +6408,7 @@ export class AxAgentEngine implements AgentEngine {
           const continuationEligible =
             request.purpose !== 'planner' &&
             request.purpose !== 'subagent' &&
-            result.rootMetadataPresent !== true &&
+            !rootMetadataStripped &&
             acceptedContent === result.content
           const acceptedThoughtBlocks = !continuationEligible
             ? []
@@ -6478,7 +6482,7 @@ export class AxAgentEngine implements AgentEngine {
         if (mode === 'native') {
           activePrompt.push({
             role: 'assistant',
-            ...(result.content.length === 0 ? {} : { content: result.content }),
+            ...((result.nativeContent ?? result.content).length === 0 ? {} : { content: result.nativeContent ?? result.content }),
             ...(result.thoughtBlocks.length === 0 ? {} : { thoughtBlocks: result.thoughtBlocks }),
             functionCalls: result.calls.map(call => ({ id: call.id, type: 'function', function: { name: call.providerName, params: call.params } }))
           })

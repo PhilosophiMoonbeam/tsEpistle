@@ -90,6 +90,8 @@ Optional leading root metadata describes request obligations, never authorizatio
 
 A no-call `<wiki-answer-coverage>` may identify unresolved frozen request facets. The host removes these frames and appends exact-request limitations only after the supported body passes ordinary grounding and live-source checks. Such a qualified answer uses the existing evidence/partial outcome; no valid body yields inability. Missing evidence does not prove that a page or the Wiki lacks an assumed person, date, or other detail. Ambiguous framing cannot dispatch actions, and stripped control metadata disables durable provider continuation for that answer.
 
+Gemini run-local native replay retains the original response text alongside its unchanged native steps, even when root control frames are removed from the host-visible draft. Stripped host content must never replace that text inside the native replay pair. If any response in the run stripped control metadata, the final answer omits durable provider continuation; a later explicit request uses canonical visible history instead.
+
 ### Catch Up and result capacity
 
 The **Catch Up** starter requests the ten most recently updated accessible pages and one brief sourced summary per page. `pages.listRecent` performs that collection as one bounded current-source action: it applies recent-page eligibility and locale before satisfying the limit, reauthorizes each selected page by numeric identity, backfills unavailable candidates, and returns stable update ordering until the requested count or actual exhaustion.
