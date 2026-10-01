@@ -6,6 +6,8 @@ describe('reviewed logging GraphQL adapters', () => {
     vi.resetModules()
     workspace = {
       authorizeLive: vi.fn().mockResolvedValue(undefined),
+      save: vi.fn(),
+      apply: vi.fn(),
       inspect: vi.fn().mockResolvedValue({
         destinations: [{
           key: 'sentry',
@@ -15,14 +17,18 @@ describe('reviewed logging GraphQL adapters', () => {
           website: null,
           isEnabled: true,
           level: 'warn',
-          config: {},
-          secrets: { key: true },
-          fields: [{ key: 'key', title: 'DSN', hint: null, type: 'string', sensitive: true, required: false, enum: null }]
+          config: { endpoint: 'diagnostics.example.test' },
+          secrets: { key: true, password: false },
+          fields: [
+            { key: 'key', title: 'DSN', hint: null, type: 'string', sensitive: true, required: false, enum: null },
+            { key: 'endpoint', title: 'Endpoint', hint: 'Diagnostic host', type: 'string', sensitive: false, required: false, enum: null },
+            { key: 'password', title: 'Password', hint: null, type: 'string', sensitive: true, required: false, enum: null }
+          ]
         }]
       })
     }
     broker = {
-      subscribe: vi.fn().mockReturnValue((async function * () {
+      subscribe: vi.fn().mockImplementation(() => (async function * () {
         yield {
           type: 'line',
           line: {
@@ -52,9 +58,20 @@ describe('reviewed logging GraphQL adapters', () => {
     expect(workspace.authorizeLive).toHaveBeenCalledWith({ user: context.req.user })
     expect(broker.subscribe).toHaveBeenCalledTimes(1)
     expect(event.value.loggingLiveTrail.output).toBe('token=[redacted]')
+    await stream.return()
+
+    const revokedStream = await resolver.Subscription.loggingLiveTrail.subscribe(undefined, undefined, context)
+    const revokedSource = broker.subscribe.mock.results.at(-1).value
+    const closeSource = vi.spyOn(revokedSource, 'return')
+    const denied = new Error('Access revoked')
+    workspace.authorizeLive.mockRejectedValueOnce(denied)
+
+    await expect(revokedStream.next()).rejects.toBe(denied)
+    expect(closeSource).toHaveBeenCalledOnce()
+    expect(await revokedStream.next()).toEqual({ value: undefined, done: true })
   })
 
-  it('projects the legacy read adapter without exposing stored credentials', async () => {
+  it('projects public diagnostics, masks configured secrets, and leaves unset secrets empty', async () => {
     const { default: createResolver } = await vi.importFresh('../../graph/resolvers/logging.ts', import.meta.url)
     const resolver = createResolver({ loggingLiveTrail: broker })
     const context = { req: { user: { id: 1 } } }
@@ -62,8 +79,15 @@ describe('reviewed logging GraphQL adapters', () => {
     const loggers = await resolver.LoggingQuery.loggers(undefined, { orderBy: 'key' }, context)
 
     expect(workspace.inspect).toHaveBeenCalledWith({ user: context.req.user })
-    expect(JSON.stringify(loggers)).not.toContain('private-token')
     expect(JSON.parse(loggers[0].config[0].value)).toMatchObject({ sensitive: true, value: '********' })
+    expect(JSON.parse(loggers[0].config[1].value)).toEqual({
+      type: 'string',
+      title: 'Endpoint',
+      hint: 'Diagnostic host',
+      sensitive: false,
+      value: 'diagnostics.example.test'
+    })
+    expect(JSON.parse(loggers[0].config[2].value)).toMatchObject({ sensitive: true, value: '' })
   })
 
   it('returns a schema-shaped error for the retired direct mutation', async () => {
@@ -72,8 +96,9 @@ describe('reviewed logging GraphQL adapters', () => {
 
     const result = await resolver.LoggingMutation.updateLoggers(undefined, { loggers: [] }, { req: { user: { id: 1 } } })
 
-    expect(result.responseResult.succeeded).toBe(false)
-    expect(result.responseResult.message).toContain('reviewed workspace')
+    expect(result.responseResult).toMatchObject({ succeeded: false, errorCode: 1, slug: 'APPLICATION_ERROR' })
     expect(workspace.inspect).not.toHaveBeenCalled()
+    expect(workspace.save).not.toHaveBeenCalled()
+    expect(workspace.apply).not.toHaveBeenCalled()
   })
 })

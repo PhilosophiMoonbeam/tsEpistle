@@ -2,10 +2,9 @@ import knexModule, { type Knex } from 'knex'
 import auth, { loadPageRuleAuthority } from '../../core/auth.ts'
 import type pagesOperations from '../../operations/pages.ts'
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '', password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_page_tree_test') && password
-  ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password } : null
+const connection = getPostgresTestConnection('_page_tree_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 suite('PostgreSQL Browse page access', () => {
   let db: Knex, operations: typeof pagesOperations
@@ -141,13 +140,22 @@ suite('PostgreSQL Browse page access', () => {
     await db('pages').where('id', 3).update('publishEndDate', '2000-01-01T00:00:00Z')
     expect((await tree()).map(row => row.path)).toEqual(['published'])
     writePaths.add('draft'); writePaths.add('future'); writePaths.add('expired')
-    expect(await tree()).toHaveLength(4)
-    expect((await tree()).filter(row => row.canEdit)).toHaveLength(3)
+    const writerRows = await tree()
+    expect(writerRows).toHaveLength(4)
+    expect(writerRows.filter(row => row.canEdit)).toHaveLength(3)
+    expect(writerRows.map(({ path, canEdit }) => ({ path, canEdit })).sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+      { path: 'draft', canEdit: true },
+      { path: 'expired', canEdit: true },
+      { path: 'future', canEdit: true },
+      { path: 'published', canEdit: false }
+    ])
   })
   it('keeps ancestor OR conditions inside locale, mode and ownership boundaries', async () => {
     await seed(1, 'foreign', { localeCode: 'fr', visibility: 'private', ownerId: 4, folder: true })
     await seed(2, 'folder', { page: false, folder: true })
-    await seed(3, 'folder/allowed', { parent: 2, ancestors: [1, 2] })
+    await seed(4, 'foreign-locale', { localeCode: 'fr', page: false, folder: true })
+    await seed(5, 'foreign-owner', { visibility: 'private', ownerId: 4, page: false, folder: true })
+    await seed(3, 'folder/allowed', { parent: 2, ancestors: [1, 2, 4, 5] })
     readPaths.add('folder/allowed')
     const rows = await tree({ path: 'folder/allowed', parent: undefined, includeAncestors: true })
     expect(rows.map(row => row.id).sort()).toEqual([2, 3])

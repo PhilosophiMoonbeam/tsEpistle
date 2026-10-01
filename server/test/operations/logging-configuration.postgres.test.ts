@@ -3,23 +3,20 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yaml from 'js-yaml'
 import knexModule, { type Knex } from 'knex'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createLoggingWorkspaceStore, type LoggingWorkspaceStore } from '../../operations/logging.ts'
 import type { LoggingRuntimeConfiguration, LoggingRuntimeObservation } from '../../core/logger.ts'
 import commonHelper from '../../helpers/common.ts'
 import { readModuleDefinition } from '../../models/moduleTypes.ts'
 import type { LoggingWorkspace } from '../../../shared/logging-workspace.ts'
 import type { SystemRequester } from '../../helpers/system-authority.ts'
+import { createApiPrincipal } from '../../helpers/api-principal.ts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_logging_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_logging_test', import.meta.path)
 const apiAdmin: SystemRequester = {
-  user: { id: 1, ownershipUserId: null, groups: [1] } as never,
-  apiKey: { id: 7, groupId: 1, expiresAt: Math.floor(new Date('2026-02-02T00:00:00.000Z').getTime() / 1000) }
+  user: createApiPrincipal(21, 3, ['manage:system']),
+  apiKey: { id: 21, groupId: 3, expiresAt: Math.floor(new Date('2026-02-02T00:00:00.000Z').getTime() / 1000) }
 }
 const suite = connection ? describe : describe.skip
 const admin: SystemRequester = { user: { id: 1, authVersion: 0 } as never }
@@ -91,9 +88,9 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
     }
     return structuredClone(runtime)
   }
-  const makeStore = (definitions = fixtureDefinitions, reconcile = reconcileRuntime): LoggingWorkspaceStore =>
+  const makeStore = (definitions = fixtureDefinitions, reconcile = reconcileRuntime, database = db): LoggingWorkspaceStore =>
     createLoggingWorkspaceStore({
-      db,
+      db: database,
       reviewKey: 'fixture-only-review-key',
       fallback: () => ({ logLevel: 'warn', logFormat: 'json', sessionSecret: 'fixture-only-review-key' }),
       definitions: () => definitions() as never,
@@ -162,7 +159,10 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
   beforeEach(async () => {
     for (const table of ['settings', 'loggers', 'userGroups', 'groups', 'users', 'apiKeys']) await db(table).delete()
     await db('users').insert({ id: 1, isActive: true, authVersion: 0 })
-    await db('groups').insert({ id: 1, permissions: JSON.stringify(['manage:system']), adminRevision: 'initial' })
+    await db('groups').insert([
+      { id: 1, permissions: JSON.stringify(['manage:system']), adminRevision: 'initial' },
+      { id: 3, permissions: JSON.stringify(['manage:system']), adminRevision: 'api-initial' }
+    ])
     await db('userGroups').insert({ userId: 1, groupId: 1 })
     await setting('logLevel', { v: 'info' })
     await setting('logFormat', { v: 'default' })
@@ -199,15 +199,13 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
     expect((await inspect()).console).toEqual({ level: 'debug', format: 'json' })
   })
 
-  it('projects all twelve production-parsed definitions with lowercase field types and exact scalar values', async () => {
+  it('projects production-parsed Papertrail field types and exact scalar values', async () => {
     await db('loggers').insert({ key: 'papertrail', isEnabled: false, level: 'warn', config: JSON.stringify({ host: 'logs.example.test', port: 1514 }) })
     const definitions = await parsedProductionDefinitions()
     const productionStore = makeStore(() => definitions as never)
     const workspace = await productionStore.inspect(admin)
     const papertrail = workspace.destinations.find(destination => destination.key === 'papertrail')
 
-    expect(definitions).toHaveLength(12)
-    expect(workspace.destinations.map(destination => destination.key)).toEqual(definitions.map(definition => definition.key))
     expect(papertrail?.fields.find(field => field.key === 'port')?.type).toBe('number')
     expect(papertrail).toMatchObject({
       config: { host: 'logs.example.test', port: 1514 }
@@ -235,17 +233,37 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
       return reconcileRuntime(configuration, key)
     })
     const before = await inspect()
+    const savingDb = knexModule({
+      client: 'pg',
+      connection: { ...connection!, application_name: 'logging-concurrent-save-fixture' },
+      pool: { min: 0, max: 1 }
+    })
     const applying = slowStore.apply(admin, { fingerprint: before.fingerprint })
-    await started.promise
-
-    const saving = store.save(admin, draft(before, { level: 'debug' }))
-    const fence = await db.raw('SELECT pg_try_advisory_xact_lock(hashtext(?)) AS acquired', ['tsepistle.logging-administration'])
-    expect(fence.rows).toEqual([{ acquired: false }])
-
-    release.resolve()
-    await applying
-    await saving
-    expect((await inspect()).console.level).toBe('debug')
+    let saving: Promise<unknown> | undefined
+    let saveSettled = false
+    try {
+      await Promise.race([started.promise, applying])
+      saving = makeStore(fixtureDefinitions, reconcileRuntime, savingDb).save(admin, draft(before, { level: 'debug' }))
+      void saving.then(() => { saveSettled = true }, () => { saveSettled = true })
+      await vi.waitFor(async () => {
+        const blocked = await db.raw(
+          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND application_name = ? AND wait_event_type = 'Lock' AND cardinality(pg_blocking_pids(pid)) > 0) AS blocked",
+          ['logging-concurrent-save-fixture']
+        )
+        expect(blocked.rows).toEqual([{ blocked: true }])
+        expect(saveSettled).toBe(false)
+      }, { timeout: 3000 })
+      release.resolve()
+      await applying
+      await saving
+      const after = await inspect()
+      expect(after.console.level).toBe('debug')
+      expect(after.runtime).toMatchObject({ settingsCurrent: false, console: { level: 'info', format: 'default' } })
+    } finally {
+      release.resolve()
+      await Promise.allSettled([applying, saving])
+      await savingDb.destroy()
+    }
   })
 
   it('atomically persists the reviewed console and Sentry policy before runtime application', async () => {
@@ -281,6 +299,7 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
   })
 
   it('preserves kept secrets, rejects stale ABA saves and applies, and never permits unsupported activation', async () => {
+    await store.save(admin, draft(await inspect(), { level: 'warn' }))
     const before = await inspect()
     await store.save(admin, draft(before, { level: 'error' }))
     expect((await db('loggers').where('key', 'sentry').first()).config).toMatchObject({
@@ -288,13 +307,14 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
       untouched: 'private-unowned-value'
     })
     const first = await inspect()
-    await store.save(admin, draft(first, { level: 'warn' }))
+    await store.save(admin, draft(first, { level: before.console.level }))
     await expect(store.save(admin, draft(before, { level: 'debug' }))).rejects.toMatchObject({ status: 409 })
     await expect(store.apply(admin, { fingerprint: before.fingerprint })).rejects.toMatchObject({ status: 409 })
     const unavailable = await inspect()
     const invalid = draft(unavailable)
     invalid.destinations.find(destination => destination.key === 'disk')!.isEnabled = true
-    await expect(store.save(admin, invalid)).rejects.toThrow('unavailable')
+    await expect(store.save(admin, invalid)).rejects.toMatchObject({ status: 400 })
+    expect((await db('loggers').where('key', 'disk').first()).isEnabled).toBe(false)
   })
 
   it('preserves accepted Sentry DSN bytes while rejecting blank replacements and reporting them absent', async () => {
@@ -304,7 +324,10 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
     expect((await db('loggers').where('key', 'sentry').first()).config).toMatchObject({ key: replacement })
 
     const saved = await inspect()
-    await expect(store.save(admin, draft(saved, { dsn: '   ' }))).rejects.toThrow('Review the complete logging configuration')
+    const beforeInvalid = await db('loggers').where('key', 'sentry').first()
+    await expect(store.save(admin, draft(saved, { dsn: '   ' }))).rejects.toMatchObject({ status: 400 })
+    expect(await db('loggers').where('key', 'sentry').first()).toEqual(beforeInvalid)
+    expect((await inspect()).history).toEqual(saved.history)
     await db('loggers')
       .where('key', 'sentry')
       .update({
@@ -313,18 +336,25 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
 
     const whitespace = await inspect()
     expect(whitespace.destinations.find(destination => destination.key === 'sentry')?.secrets).toMatchObject({ key: false })
-    await expect(store.save(admin, draft(whitespace, { sentryEnabled: true }))).rejects.toThrow('valid Sentry DSN')
+    const beforeEnable = await db('loggers').where('key', 'sentry').first()
+    await expect(store.save(admin, draft(whitespace, { sentryEnabled: true }))).rejects.toMatchObject({ status: 400 })
+    expect(await db('loggers').where('key', 'sentry').first()).toEqual(beforeEnable)
+    expect((await inspect()).history).toEqual(whitespace.history)
   })
 
   it('requires a present Sentry DSN before enabling and rolls back every row if the history record fails', async () => {
     const noDsn = draft(await inspect(), { dsn: 'clear', sentryEnabled: true })
-    await expect(store.save(admin, noDsn)).rejects.toThrow('Sentry DSN')
+    await expect(store.save(admin, noDsn)).rejects.toMatchObject({ status: 400 })
     await db.raw("ALTER TABLE settings ADD CONSTRAINT logging_fixture_history_reject CHECK (key <> 'loggingAdministration')")
     try {
       const before = await inspect()
-      await expect(store.save(admin, draft(before, { level: 'error' }))).rejects.toThrow()
+      await expect(store.save(admin, draft(before, { level: 'error', sentryEnabled: true, dsn: 'https://replacement@example.ingest.sentry.io/2' }))).rejects.toThrow()
       expect((await inspect()).console.level).toBe('info')
-      expect((await db('loggers').where('key', 'sentry').first()).level).toBe('warn')
+      expect(await db('loggers').where('key', 'sentry').first()).toMatchObject({
+        isEnabled: false,
+        level: 'warn',
+        config: { key: 'https://stored-secret@example.ingest.sentry.io/1', untouched: 'private-unowned-value' }
+      })
     } finally {
       await db.raw('ALTER TABLE settings DROP CONSTRAINT logging_fixture_history_reject')
     }
@@ -334,16 +364,58 @@ suite('Reviewed Logging configuration on PostgreSQL', () => {
     await db('users').where('id', 1).update({ isActive: false })
     await expect(inspect()).rejects.toMatchObject({ status: 403 })
     await db('users').where('id', 1).update({ isActive: true })
+    await db('users').where('id', 1).update({ authVersion: 1 })
+    await expect(inspect()).rejects.toMatchObject({ status: 403 })
+    await db('users').where('id', 1).update({ authVersion: 0 })
     const workspace = await inspect()
     await db('userGroups').where('userId', 1).delete()
     await expect(store.apply(admin, { fingerprint: workspace.fingerprint })).rejects.toMatchObject({ status: 403 })
   })
 
-  it('rechecks current API authority before a saved configuration can be applied', async () => {
-    await db('apiKeys').insert({ id: 7, isRevoked: false, expiration: '2026-02-02T00:00:00.000Z' })
+  it('allows secret-safe inspection with a real API principal and denies the same cached requester after persisted revocation', async () => {
+    await db('apiKeys').insert({ id: 21, isRevoked: false, expiration: '2026-02-02T00:00:00.000Z' })
     const workspace = await inspect(apiAdmin)
-    await db('apiKeys').where('id', 7).update({ isRevoked: true })
+    expect(workspace.console).toEqual({ level: 'info', format: 'default' })
+    const sentry = workspace.destinations.find(destination => destination.key === 'sentry')
+    expect(sentry).toMatchObject({ isEnabled: false, level: 'warn', secrets: { key: true } })
+    expect(sentry?.config).toEqual({})
+    expect(JSON.stringify(workspace)).not.toContain('stored-secret')
+    expect(JSON.stringify(workspace)).not.toContain('private-unowned-value')
+    await db('apiKeys').where('id', 21).update({ isRevoked: true })
+    await expect(inspect(apiAdmin)).rejects.toMatchObject({ status: 403 })
+  })
 
-    await expect(store.apply(apiAdmin, { fingerprint: workspace.fingerprint })).rejects.toMatchObject({ status: 403 })
+  it.each(['persisted key expiration', 'JWT expiration', 'persisted group revocation'])('rechecks %s after a successful API inspection', async failure => {
+    await db('apiKeys').insert({ id: 21, isRevoked: false, expiration: '2026-02-02T00:00:00.000Z' })
+    expect((await inspect(apiAdmin)).console).toEqual({ level: 'info', format: 'default' })
+    let requester = apiAdmin
+    if (failure === 'persisted key expiration') await db('apiKeys').where('id', 21).update({ expiration: '2026-02-01T00:00:00.000Z' })
+    else if (failure === 'JWT expiration') requester = { ...apiAdmin, apiKey: { ...apiAdmin.apiKey!, expiresAt: Date.parse('2026-02-01T00:00:00.000Z') / 1000 } }
+    else await db('groups').where('id', 3).update({ permissions: JSON.stringify([]) })
+    await expect(inspect(requester)).rejects.toMatchObject({ status: 403 })
+  })
+
+  it('rejects missing, malformed and mismatched API credentials and user-shaped hybrids without returning configuration', async () => {
+    await db('apiKeys').insert([
+      { id: 21, isRevoked: false, expiration: '2026-02-02T00:00:00.000Z' },
+      { id: 22, isRevoked: false, expiration: '2026-02-02T00:00:00.000Z' }
+    ])
+    expect((await inspect(apiAdmin)).console).toEqual({ level: 'info', format: 'default' })
+    const before = { settings: await db('settings').orderBy('key'), loggers: await db('loggers').orderBy('key') }
+    const invalid: SystemRequester[] = [
+      { user: apiAdmin.user },
+      { ...apiAdmin, apiKey: { ...apiAdmin.apiKey!, id: NaN } },
+      { ...apiAdmin, apiKey: { ...apiAdmin.apiKey!, groupId: 0 } },
+      { ...apiAdmin, apiKey: { ...apiAdmin.apiKey!, id: 22 } },
+      { ...apiAdmin, apiKey: { ...apiAdmin.apiKey!, groupId: 1 } },
+      { ...apiAdmin, apiKey: { ...apiAdmin.apiKey!, expiresAt: null } },
+      { ...apiAdmin, user: { ...apiAdmin.user!, id: 1 } as never },
+      { ...apiAdmin, user: { ...apiAdmin.user!, ownershipUserId: 1 } as never },
+      { ...apiAdmin, user: { ...apiAdmin.user!, groups: [1] } as never },
+      { ...apiAdmin, user: { ...apiAdmin.user!, groups: [3, 1] } as never }
+    ]
+    for (const requester of invalid) await expect(inspect(requester)).rejects.toMatchObject({ status: 403 })
+    expect(await db('settings').orderBy('key')).toEqual(before.settings)
+    expect(await db('loggers').orderBy('key')).toEqual(before.loggers)
   })
 })

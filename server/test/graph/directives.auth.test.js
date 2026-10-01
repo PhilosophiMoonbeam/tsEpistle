@@ -28,7 +28,7 @@ describe('graph/directives/auth directive contract', () => {
         directive @auth(requires: [String]) on OBJECT | FIELD_DEFINITION | ARGUMENT_DEFINITION
 
         type Query {
-          securedField: String @auth(requires: ["manage:system"])
+          securedField: String @auth(requires: ["manage:users", "manage:groups"])
           scopedObject: ScopedObject
         }
 
@@ -79,7 +79,7 @@ describe('graph/directives/auth directive contract', () => {
     const result = await graphql({
       schema,
       source: '{ securedField }',
-      contextValue: { req: { user: { permissions: ['write:pages', 'manage:system'] } } }
+      contextValue: { req: { user: { permissions: ['manage:groups'] } } }
     })
 
     expect(result.errors).toBeUndefined()
@@ -146,7 +146,7 @@ describe('graph/directives/auth directive contract', () => {
       }
     }))
 
-    global.WIKI.auth.checkPageAccess.mockReturnValue(false)
+    global.WIKI.auth.checkPageAccess.mockReturnValue(true)
     const denied = await graphql({
       schema: resourceSchema,
       source: '{ page { isPublished } }',
@@ -158,6 +158,14 @@ describe('graph/directives/auth directive contract', () => {
     expect(fieldResolver).not.toHaveBeenCalled()
 
     page.tags = []
+    const publicWriter = await graphql({
+      schema: resourceSchema,
+      source: '{ page { isPublished } }',
+      contextValue: { req: { user: { id: 7, permissions: ['write:pages'] } } }
+    })
+    expect(publicWriter.errors).toBeUndefined()
+    expect(publicWriter.data).toEqual({ page: { isPublished: true } })
+
     page.visibility = 'private'
     page.ownerId = 7
     const owner = await graphql({

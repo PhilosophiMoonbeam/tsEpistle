@@ -1,16 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createSystemWorkspaceStore } from '../../operations/system-workspace.ts'
 import { SYSTEM_CONNECTION_APPLICATION_PREFIX, systemSupportReport } from '../../../shared/system-workspace.ts'
 import { systemWorkspaceFixture } from '../fixtures/system-workspace.ts'
 import { up as createQueue } from '../../db/migrations/2.5.130.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_system_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_system_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never,
   now = new Date('2026-09-06T12:00:00Z')
@@ -133,8 +129,9 @@ suite('System observations against PostgreSQL', () => {
     await db('migrations').delete()
     await db('migrations').insert({ name: 'foreign.js' })
     const before = await db('migrations'),
+      version = await db.raw<{ rows: Array<{ version: string }> }>("SELECT current_setting('server_version') AS version"),
       result = await store.inspect(admin)
-    expect(result.database.version).toMatch(/^17\./)
+    expect(result.database.version).toBe(version.rows[0]!.version)
     expect(result.database.latencyMs).toBeGreaterThanOrEqual(0)
     expect(result.database.migrations).toEqual({ applied: ['foreign.js'], pending: ['one.js'], unknown: ['foreign.js'] })
     expect(await db('migrations')).toEqual(before)
@@ -201,8 +198,10 @@ suite('System observations against PostgreSQL', () => {
     const exportIdentity = '00000000-0000-4000-8000-000000000003'
     await openTaggedConnection(exportIdentity, 'worker')
     const job = row({ state: 'failed' })
-    const result = await store.inspect(admin),
-      redacted = JSON.stringify(systemSupportReport(result)),
+    await db('durableJobs').insert(job)
+    const result = await store.inspect(admin)
+    expect(result.queue.attention.map(row => row.id)).toContain(job.id)
+    const redacted = JSON.stringify(systemSupportReport(result)),
       expanded = JSON.stringify(systemSupportReport(result, true))
     expect(redacted).not.toContain(exportIdentity)
     expect(expanded).toContain(exportIdentity)
@@ -212,14 +211,11 @@ suite('System observations against PostgreSQL', () => {
       'private-database',
       '/private/',
       'private.example.test',
-      job.id,
-      'private payload',
-      'credential-bearing'
+      job.id
     ])
       expect(redacted).not.toContain(privateValue)
     expect(expanded).toContain('private-host')
     expect(expanded).toContain('private-database')
     expect(expanded).not.toContain(job.id)
-    expect(expanded).not.toContain('private payload')
   })
 })

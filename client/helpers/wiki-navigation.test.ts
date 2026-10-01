@@ -109,9 +109,16 @@ describe('wiki page navigation payloads', () => {
     })
   })
 
-  test('rejects malformed payloads at the document boundary', () => {
-    const malformed = window.btoa(JSON.stringify({ version: 1, spaNavigation: true, props: { pageId: '42' } }))
-    expect(() => decodeWikiPagePayload(malformed)).toThrow()
+  test('rejects missing page props and string page identity at the decoder schema boundary', () => {
+    const missingProps = window.btoa(JSON.stringify({ version: 1, spaNavigation: true, props: { pageId: 42 } }))
+    expect(() => decodeWikiPagePayload(missingProps)).toThrow()
+
+    const current = payload()
+    const stringIdentity = window.btoa(JSON.stringify({
+      ...current,
+      props: { ...current.props, pageId: '42' }
+    }))
+    expect(() => decodeWikiPagePayload(stringIdentity)).toThrow()
   })
 
   test('rejects malformed page tags before client navigation', () => {
@@ -180,32 +187,35 @@ describe('wiki navigation routing', () => {
     expect(isWikiNavigationClick(event, anchor)).toBe(false)
   })
 
-  test('routes programmatic navigation through the mounted shell and removes it cleanly', async () => {
+  test('routes programmatic navigation through the installed handler and restores native navigation after disposal', () => {
     const handler = vi.fn()
-    const remove = installWikiNavigationHandler(handler)
-
-    navigateToWikiPage('/en/next-page')
-    await Promise.resolve()
-
-    expect(handler).toHaveBeenCalledOnce()
-    expect(handler.mock.calls[0]?.[0]).toBeInstanceOf(URL)
-    expect(handler.mock.calls[0]?.[0].pathname).toBe('/en/next-page')
-    remove()
-  })
-
-  test('preserves a locale-aware Home route through the mounted shell', async () => {
-    const handler = vi.fn()
+    const assign = vi.fn()
     const remove = installWikiNavigationHandler(handler)
 
     try {
-      navigateToWikiPage('/fr/home')
-      await Promise.resolve()
+      vi.stubGlobal('window', {
+        location: { href: 'https://wiki.example.test/', assign }
+      })
 
+      navigateToWikiPage('/en/next-page')
       expect(handler).toHaveBeenCalledOnce()
       expect(handler.mock.calls[0]?.[0]).toBeInstanceOf(URL)
-      expect(handler.mock.calls[0]?.[0].pathname).toBe('/fr/home')
+      expect(handler.mock.calls[0]?.[0].pathname).toBe('/en/next-page')
+
+      navigateToWikiPage('/fr/home')
+      expect(handler).toHaveBeenCalledTimes(2)
+      expect(handler.mock.calls[1]?.[0]).toBeInstanceOf(URL)
+      expect(handler.mock.calls[1]?.[0].pathname).toBe('/fr/home')
+      expect(assign).not.toHaveBeenCalled()
+
+      remove()
+      navigateToWikiPage('/en/after-disposal')
+      expect(handler).toHaveBeenCalledTimes(2)
+      expect(assign).toHaveBeenCalledOnce()
+      expect(assign).toHaveBeenCalledWith('https://wiki.example.test/en/after-disposal')
     } finally {
       remove()
+      vi.unstubAllGlobals()
     }
   })
 })

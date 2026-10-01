@@ -271,7 +271,9 @@ describe('directory mapping protocol adapters', () => {
         const callback = vi.fn()
         await run(kind, ['Readers'], callback)
 
-        expect(callback.mock.calls[0]?.[0]).toBeInstanceOf(Error)
+        const failure = callback.mock.calls[0]?.[0]
+        expect(failure).toBeInstanceOf(Error)
+        expect((failure as Error).message).toContain('membership mapping failure')
         expect(await membershipNames()).toEqual(['Writers'])
         expect(await database('users').where({ id: 3 }).first()).toMatchObject({ authVersion: 1, adminRevision: 'initial' })
       } finally {

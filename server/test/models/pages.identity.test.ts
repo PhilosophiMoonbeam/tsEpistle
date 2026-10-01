@@ -513,7 +513,10 @@ describe('models/pages identity aggregate', () => {
       return {}
     })
 
-    await expect(Page.migrateToLocale({ sourceLocale: 'en', targetLocale: 'fr', user: actor })).rejects.toThrow('The page changed after history was opened.')
+    await expect(Page.migrateToLocale({ sourceLocale: 'en', targetLocale: 'fr', user: actor })).rejects.toMatchObject({
+      name: 'PageUpdateConflict',
+      status: 409
+    })
 
     expect(await db('pages').where({ id: 42 }).first('localeCode', 'hash', 'renderedSourceRevision')).toMatchObject({
       localeCode: 'en',

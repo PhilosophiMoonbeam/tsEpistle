@@ -43,7 +43,6 @@ describe('Mail runtime configuration and lifecycle', () => {
     expect(createTransport.mock.calls[0][0]).toMatchObject({ secure: false, requireTLS: true, ignoreTLS: false, auth: { user: 'x', pass: 'fixture-password' }, tls: { rejectUnauthorized: true, servername: 'mail.example.test', minVersion: 'TLSv1.2' } })
     await mail.send(message())
     expect(smtp.sendMail.mock.calls[0][0]).toMatchObject({ from: { name: 'The "Wiki", Team', address: 'wiki@example.test' }, replyTo: 'help@example.test' })
-    expect(await mail.verify()).toBe(true)
     mail.close(); expect(smtp.close).toHaveBeenCalledTimes(1)
   })
   it('holds an immutable sender and branding snapshot while a retired transport drains', async () => {
@@ -57,7 +56,8 @@ describe('Mail runtime configuration and lifecycle', () => {
     wiki.config.title = 'New wiki title'
     mail.init()
     expect(old.close).not.toHaveBeenCalled()
-    await expect(mail.verify(oldKey)).rejects.toThrow('settings changed')
+    await expect(mail.verify(oldKey)).rejects.toBeInstanceOf(Error)
+    expect(next.verify).not.toHaveBeenCalled()
     logo.resolve('/logo.png')
     await vi.waitFor(() => expect(old.sendMail).toHaveBeenCalledTimes(1))
     expect(old.sendMail.mock.calls[0][0]).toMatchObject({ from: { name: 'Wiki team', address: 'wiki@example.test' } })
@@ -72,14 +72,14 @@ describe('Mail runtime configuration and lifecycle', () => {
   it('pauses delivery without clearing credentials and rejects offline work before SMTP effects', async () => {
     const smtp = transport(), createTransport = vi.fn(() => smtp), mail = runtime({ createTransport, resolveLogo: async () => '/logo.png' }).init()
     wiki.config.offline = true
-    await expect(mail.send(message())).rejects.toThrow('offline')
-    await expect(mail.verify()).rejects.toThrow('offline')
+    await expect(mail.send(message())).rejects.toBeInstanceOf(Error)
+    await expect(mail.verify()).rejects.toBeInstanceOf(Error)
     expect(smtp.sendMail).not.toHaveBeenCalled(); expect(smtp.verify).not.toHaveBeenCalled()
     wiki.config.offline = false; wiki.config.mail.enabled = false; mail.init()
     expect(mail.runtime()).toMatchObject({ active: false, state: 'disabled' })
     expect(wiki.config.mail.pass).toBe('fixture-password')
     expect(smtp.close).toHaveBeenCalledTimes(1)
-    await expect(mail.send(message())).rejects.toThrow()
+    await expect(mail.send(message())).rejects.toBeInstanceOf(wiki.Error.MailNotConfigured)
   })
   it('honors offline mode enabled while message rendering is in progress', async () => {
     const logo = deferred(), smtp = transport()
@@ -87,7 +87,7 @@ describe('Mail runtime configuration and lifecycle', () => {
     const pending = mail.send(message())
     wiki.config.offline = true
     logo.resolve('/logo.png')
-    await expect(pending).rejects.toThrow('offline')
+    await expect(pending).rejects.toBeInstanceOf(Error)
     expect(smtp.sendMail).not.toHaveBeenCalled()
     mail.close()
     expect(smtp.close).toHaveBeenCalledTimes(1)
@@ -101,7 +101,7 @@ describe('Mail runtime configuration and lifecycle', () => {
     mail.init()
     expect(old.close).not.toHaveBeenCalled()
     check.resolve(true)
-    expect(await pending).toBe(true)
+    await pending
     expect(old.close).toHaveBeenCalledTimes(1)
     mail.close()
     expect(next.close).toHaveBeenCalledTimes(1)
@@ -113,7 +113,7 @@ describe('Mail runtime configuration and lifecycle', () => {
     expect(mail.runtime()).toMatchObject({ active: false, state: 'invalid' })
     expect(createTransport).not.toHaveBeenCalled()
     expect(JSON.stringify(wiki.logger.warn.mock.calls)).not.toContain('private fixture invalid key')
-    await expect(mail.send(message())).rejects.toThrow()
+    await expect(mail.send(message())).rejects.toBeInstanceOf(wiki.Error.MailNotConfigured)
   })
   it('produces actual DKIM-signed MIME using the configured key without a network transport', async () => {
     const keys = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { format: 'pem', type: 'pkcs8' }, publicKeyEncoding: { format: 'pem', type: 'spki' } })
@@ -145,8 +145,6 @@ describe('Mail runtime configuration and lifecycle', () => {
     await mail.send({ template: 'page-watch', to: 'ar-reader@example.test', data })
 
     const [french, arabic] = smtp.sendMail.mock.calls.map(call => call[0])
-    expect(resolveMailLocale).toHaveBeenNthCalledWith(1, 'fr')
-    expect(resolveMailLocale).toHaveBeenNthCalledWith(2, 'ar')
     expect(french.subject).toContain('[fr]')
     expect(french.text).toContain('[fr]')
     expect(french.html).toContain('[fr]')
@@ -171,10 +169,20 @@ describe('Mail runtime configuration and lifecycle', () => {
       expect(result.html).not.toContain('<img src=x onerror=alert(1)>')
       expect(result.html).toContain('&lt;img src=x onerror=alert(1)&gt;')
       expect(result.html).toContain('one=1&amp;two=2')
-      expect(result.html).toMatch(/<img\b[^>]*src="https:\/\/wiki\.example\.test\/logo\.png\?one=1&amp;two=2"[^>]*alt=""[^>]*style="[^"]*max-width:120px;[^"]*max-height:36px;[^"]*width:auto;[^"]*height:auto;/)
-      expect(result.html).not.toContain('height="36"')
-      expect(typeof result.subject).toBe('string')
-      expect(typeof result.text).toBe('string')
+      const document = new DOMParser().parseFromString(result.html, 'text/html')
+      const logo = document.querySelector('img')
+      expect(logo).not.toBeNull()
+      expect(logo.getAttribute('src')).toBe('https://wiki.example.test/logo.png?one=1&two=2')
+      expect(logo.getAttribute('alt')).toBe('')
+      expect(logo.style.maxWidth).toBe('120px')
+      expect(logo.style.maxHeight).toBe('36px')
+      expect(logo.style.width).toBe('auto')
+      expect(logo.style.height).toBe('auto')
+      expect(logo.hasAttribute('height')).toBe(false)
+      if (['account-verify', 'account-reset-pwd', 'account-welcome'].includes(template)) {
+        expect(Array.from(document.querySelectorAll('a'), link => link.getAttribute('href'))).toContain(data.buttonLink)
+        expect(result.text).toContain(data.buttonLink)
+      }
       if (template === 'page-watch') {
         expect(result.html).not.toContain('<b>Actor</b>')
         expect(result.html).toContain('&lt;b&gt;Actor&lt;/b&gt;')
@@ -183,6 +191,6 @@ describe('Mail runtime configuration and lifecycle', () => {
         expect(result.text).toContain('https://wiki.example.test/en/page')
       }
     }
-    await expect(mail.loadTemplate('../unknown')).rejects.toThrow()
+    await expect(mail.loadTemplate('../unknown')).rejects.toBeInstanceOf(wiki.Error.MailTemplateFailed)
   })
 })

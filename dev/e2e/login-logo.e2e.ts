@@ -338,6 +338,7 @@ declare global {
     __setLogoParticleVisibility?: (visibility: DocumentVisibilityState) => void
     __readLoginLogoOpacityTrace?: () => LogoOpacityTrace
     __loginLogoFrameFreeze?: { restore: () => void }
+    __loginLogoControlledDeviceLoss?: BackendCapability & { trigger?: () => void }
   }
 }
 
@@ -545,6 +546,55 @@ function skipUnsupportedStrictBackend(testInfo: TestInfo, backend: StrictParticl
   const description = `Strict ${backend} coverage skipped with runtime evidence: ${capability.evidence}`
   testInfo.annotations.push({ type: 'capability-skip', description })
   test.skip(true, description)
+}
+
+async function installControlledWebGpuLoss(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const control: { available: boolean; evidence: string; trigger?: () => void } = {
+      available: false,
+      evidence: 'GPUAdapter.requestDevice has not returned a controllable renderer device.'
+    }
+    window.__loginLogoControlledDeviceLoss = control
+    const adapterConstructor = Reflect.get(globalThis, 'GPUAdapter') as { prototype?: object } | undefined
+    const prototype = adapterConstructor?.prototype
+    const requestDevice = prototype ? Reflect.get(prototype, 'requestDevice') : undefined
+    if (!prototype || typeof requestDevice !== 'function') {
+      control.evidence = 'GPUAdapter.prototype.requestDevice is unavailable.'
+      return
+    }
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'requestDevice')
+      Object.defineProperty(prototype, 'requestDevice', {
+        ...descriptor,
+        value: async function (this: object, ...args: unknown[]): Promise<object> {
+          // Return the real device unchanged except for its public loss input.
+          // This is controlled dependency integration, not induced driver failure.
+          const device: object = await Reflect.apply(requestDevice, this, args)
+          const nativeLost = Reflect.get(device, 'lost')
+          if (!(nativeLost instanceof Promise)) {
+            control.available = false
+            control.evidence = 'The real GPUDevice.lost surface is not a Promise.'
+            return device
+          }
+          const controlledLost = Promise.withResolvers<{ reason: string; message: string }>()
+          try {
+            const lost = Promise.race([nativeLost, controlledLost.promise])
+            Object.defineProperty(device, 'lost', { configurable: true, value: lost })
+            if (Reflect.get(device, 'lost') !== lost) throw new Error('The GPUDevice.lost override was not retained.')
+            control.available = true
+            control.evidence = 'Real GPUAdapter.requestDevice returned a device with a controllable public GPUDevice.lost Promise.'
+            control.trigger = () => controlledLost.resolve({ reason: 'unknown', message: 'Controlled public WebGPU loss input for browser coverage.' })
+          } catch (error: unknown) {
+            control.available = false
+            control.evidence = `GPUDevice.lost could not be controlled: ${error instanceof Error ? error.message : String(error)}`
+          }
+          return device
+        }
+      })
+    } catch (error: unknown) {
+      control.evidence = `GPUAdapter.prototype.requestDevice could not be wrapped: ${error instanceof Error ? error.message : String(error)}`
+    }
+  })
 }
 
 async function waitForBackendOutcome(page: Page): Promise<LogoPerformanceHook> {
@@ -1894,7 +1944,7 @@ test.describe('strict particle backend consumer coverage', () => {
       await expectLoginValidation(page)
     })
 
-    test(`${backend} enters terminal static fallback after runtime loss without disturbing authentication`, async ({ page }, testInfo) => {
+    test(`${backend} enters terminal static fallback after generic canvas runtime loss without disturbing authentication`, async ({ page }, testInfo) => {
       requireProjectRow(testInfo, STRICT_BACKEND_PROJECTS)
       const capability = await detectBackendCapability(page, backend)
       skipUnsupportedStrictBackend(testInfo, backend, capability)
@@ -1928,6 +1978,52 @@ test.describe('strict particle backend consumer coverage', () => {
       await expectLoginValidation(page)
     })
   }
+
+  test('webgpu enters terminal static fallback after controlled public device runtime loss without disturbing authentication', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, STRICT_BACKEND_PROJECTS)
+    const capability = await detectBackendCapability(page, 'webgpu')
+    skipUnsupportedStrictBackend(testInfo, 'webgpu', capability)
+    await installControlledWebGpuLoss(page)
+    await prepareStrictBackendPage(page, 'webgpu', squareEffect)
+    const lossCapability = await page.evaluate(() => {
+      const control = window.__loginLogoControlledDeviceLoss
+      return control
+        ? { available: control.available, evidence: control.evidence }
+        : { available: false, evidence: 'The controlled public WebGPU loss initializer did not run.' }
+    })
+    if (!lossCapability.available) {
+      const description = `Controlled WebGPU loss coverage skipped with runtime evidence: ${lossCapability.evidence}`
+      testInfo.annotations.push({ type: 'capability-skip', description })
+      test.skip(true, description)
+      return
+    }
+    testInfo.annotations.push({
+      type: 'controlled-loss',
+      description: `${lossCapability.evidence} This does not induce or prove genuine driver failure.`
+    })
+    const field = page.locator('.login-particle-logo')
+    const canvas = field.locator('canvas')
+    const staticImage = field.locator('.login-particle-logo__image')
+    const email = page.getByLabel('Email Address', { exact: true })
+    await email.focus()
+    await expect(email).toBeFocused()
+    await page.evaluate(() => {
+      const control = window.__loginLogoControlledDeviceLoss
+      if (!control?.available || !control.trigger) throw new Error('The controlled public WebGPU loss input is unavailable.')
+      control.trigger()
+    })
+    await expect(staticImage).toHaveCSS('opacity', '1')
+    await expect(canvas).toHaveCount(0)
+    await expect(email).toBeFocused()
+    await expect
+      .poll(async () => (await readLogoPerformance(page)).backendDiagnostics?.some(
+        (diagnostic: LogoBackendDiagnostic) => diagnostic.phase === 'lost' && diagnostic.reason === 'device-lost'
+      ) ?? false)
+      .toBe(true)
+    const terminal = await readLogoPerformance(page)
+    expect(terminal.resumes?.at(-1)?.outcome).not.toBe('committed')
+    await expectLoginValidation(page)
+  })
 
   test('keeps native WebGPU and forced WebGL2 production screenshots within bounded perceptual tolerance in both themes', async ({
     context,
@@ -2172,6 +2268,9 @@ test.describe('managed login logo auth independence', () => {
           await installManagedLogo(samplePage, fixture.effect)
           await samplePage.goto(`/login?logo-sample=${fixture.name}-${colorScheme}`)
           await expectStaticFallback(samplePage, fixture.effect)
+          if (fixture.name === 'wide') {
+            await expect(samplePage.locator('.login-particle-logo__silhouette')).toHaveCount(0)
+          }
           const ordinaryLogo = samplePage.locator('.login-brand .login-logo img')
           const staticImage = samplePage.locator('.login-particle-logo__image')
           await expect(ordinaryLogo).toHaveAttribute('src', fixture.effect.logoUrl)
@@ -2205,6 +2304,7 @@ test.describe('managed login logo auth independence', () => {
             body: await samplePage.screenshot({ animations: 'disabled', fullPage: false }),
             contentType: 'image/png'
           })
+          if (fixture.name === 'wide') await expectLoginValidation(samplePage)
         } finally {
           await samplePage.close()
         }
@@ -2213,30 +2313,14 @@ test.describe('managed login logo auth independence', () => {
       expect(themeBackgrounds[0]).not.toBe(themeBackgrounds[1])
     })
   }
-  test('omits the alpha silhouette in light and dark static presentation', async ({ context }, testInfo) => {
-    requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
-    for (const colorScheme of ['light', 'dark'] as const) {
-      const samplePage = await context.newPage()
-      try {
-        await samplePage.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-        await installManagedLogo(samplePage, wideEffect)
-        await samplePage.goto(`/login?logo-without-silhouette=${colorScheme}`)
-        await expectStaticFallback(samplePage, wideEffect)
-        const field = samplePage.locator('.login-particle-logo')
-        await expect(field.locator('.login-particle-logo__silhouette')).toHaveCount(0)
-        expect(await field.evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-silhouette-mask').trim())).toBe('')
-        await expectLoginValidation(samplePage)
-      } finally {
-        await samplePage.close()
-      }
-    }
-  })
-  test('shows the TS Epistle book during the redirect window only after terminal ordinary authentication', async ({ page }, testInfo) => {
+  test('shows one decorative TS Epistle book on the first pending loading render and retains it through the redirect window', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     let ordinaryAttempts = 0
+    const loginResponse = Promise.withResolvers<void>()
     await page.route(/\/_api\/auth\/login$/, async route => {
       ordinaryAttempts += 1
+      await loginResponse.promise
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -2251,22 +2335,39 @@ test.describe('managed login logo auth independence', () => {
     await page.getByRole('button', { name: 'Log In', exact: true }).click()
 
     const loader = page.locator('.loader-dialog')
-    await expect(loader).toBeVisible()
     const illustration = loader.locator('.login-success-animation')
-    await expect(illustration).toBeVisible()
-    await expect(illustration).toHaveAttribute('width', '72')
-    await expect(illustration).toHaveAttribute('height', '72')
-    await expect(illustration).toHaveAttribute('aria-hidden', 'true')
-    await expect(illustration.locator('[data-page-turn]')).toHaveCount(3)
-    await expect(loader.locator('.atom-spinner')).toHaveCount(0)
-    const animatedPage = illustration.locator('.login-success-animation__page--turn-1')
-    const animationStyle = await animatedPage.evaluate(element => {
-      const style = getComputedStyle(element)
-      return { animationName: style.animationName, animationDuration: style.animationDuration }
-    })
-    expect(animationStyle.animationName).not.toBe('none')
-    expect(animationStyle.animationDuration).toBe('0.9s')
-    expect(ordinaryAttempts).toBe(1)
+    try {
+      await expect.poll(() => ordinaryAttempts).toBe(1)
+      await expect(loader).toBeVisible()
+      await expect(illustration).toHaveCount(1)
+      await expect(illustration).toBeVisible()
+      await expect(illustration).toHaveAttribute('width', '72')
+      await expect(illustration).toHaveAttribute('height', '72')
+      await expect(illustration).toHaveAttribute('aria-hidden', 'true')
+      await expect(loader.locator('.atom-spinner')).toHaveCount(0)
+      const animatedPage = illustration.locator('.login-success-animation__page--turn-1')
+      const animationStyle = await animatedPage.evaluate(element => {
+        const style = getComputedStyle(element)
+        return { animationName: style.animationName, animationDuration: style.animationDuration }
+      })
+      expect(animationStyle.animationName).not.toBe('none')
+      expect(animationStyle.animationDuration).toBe('0.9s')
+      const firstBook = await illustration.elementHandle()
+      if (!firstBook) throw new Error('The pending login book is unavailable.')
+      const title = loader.locator('.loader-dialog-title')
+      const pendingTitle = await title.innerText()
+      const response = page.waitForResponse(/\/_api\/auth\/login$/)
+      loginResponse.resolve()
+      await response
+      await expect(title).not.toHaveText(pendingTitle)
+      await expect(loader).toBeVisible()
+      await expect(illustration).toHaveCount(1)
+      await expect(illustration).toBeVisible()
+      expect(await firstBook.evaluate(element => element.isConnected && element === document.querySelector('.loader-dialog .login-success-animation'))).toBe(true)
+      expect(ordinaryAttempts).toBe(1)
+    } finally {
+      loginResponse.resolve()
+    }
   })
 
   test('keeps the book hidden for a TFA challenge and shows it after authenticated TFA completion', async ({ page }, testInfo) => {

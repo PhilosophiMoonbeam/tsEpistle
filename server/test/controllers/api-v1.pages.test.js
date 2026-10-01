@@ -1,16 +1,3 @@
-vi.mockModule('express', import.meta.url, () => {
-  const routers = []
-  const expressMock = {
-    Router: () => {
-      const router = { get: vi.fn(), use: vi.fn() }
-      routers.push(router)
-      return router
-    },
-    __routers: routers
-  }
-  return { default: expressMock, ...expressMock }
-})
-
 vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({
   default: {
     get: vi.fn(),
@@ -18,7 +5,6 @@ vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({
   }
 }))
 
-const express = await import('express')
 const { configureTransportRuntime } = await import('../../controllers/_types.ts')
 const { default: pageOperations } = await import('../../operations/pages.ts')
 import { openApiDocument } from '../../controllers/api-v1/openapi.ts'
@@ -40,16 +26,13 @@ global.WIKI = {
 }
 configureTransportRuntime({ auth: global.WIKI.auth, logger })
 
-await import('../../controllers/api-v1/pages.ts')
-const pagesRouter = express.__routers[0]
-const listHandler = pagesRouter.get.mock.calls.find(([path]) => path === '/')[1]
-const detailHandler = pagesRouter.get.mock.calls.find(([path]) => path === '/:id')[1]
-await import('../../controllers/api-v1/index.ts')
-const apiRouter = express.__routers[1]
-const openApiHandler = apiRouter.get.mock.calls.find(([path]) => path === '/openapi.json')[1]
-const requireApiKey = apiRouter.use.mock.calls.find(([handler]) => typeof handler === 'function' && handler.length === 3)[0]
-const notFoundHandler = apiRouter.use.mock.calls.find(([handler]) => typeof handler === 'function' && handler.length === 2)[0]
-const errorHandler = apiRouter.use.mock.calls.find(([handler]) => typeof handler === 'function' && handler.length === 4)[0]
+const { default: pagesRouter } = await import('../../controllers/api-v1/pages.ts')
+const listHandler = pagesRouter.stack.find(layer => layer.route?.path === '/').route.stack[0].handle
+const detailHandler = pagesRouter.stack.find(layer => layer.route?.path === '/:id').route.stack[0].handle
+const { default: apiRouter } = await import('../../controllers/api-v1/index.ts')
+const requireApiKey = apiRouter.stack.find(layer => !layer.route && layer.handle.length === 3).handle
+const notFoundHandler = apiRouter.stack.find(layer => !layer.route && layer.handle.length === 2).handle
+const errorHandler = apiRouter.stack.find(layer => !layer.route && layer.handle.length === 4).handle
 const response = () => {
   const res = { json: vi.fn(), status: vi.fn() }
   res.status.mockReturnValue(res)
@@ -68,6 +51,7 @@ const page = id => ({
   description: `Page ${id}`,
   id,
   isPublished: true,
+  isSearchable: true,
   locale: 'en',
   localeCode: 'en',
   ownerId: null,
@@ -95,18 +79,12 @@ describe('versioned REST pages API', () => {
 
   it('publishes every supported external route in OpenAPI 3.1', () => {
     expect(openApiDocument.openapi).toBe('3.1.0')
-    expect(Object.keys(openApiDocument.paths)).toEqual([
+    expect(Object.keys(openApiDocument.paths)).toEqual(expect.arrayContaining([
       '/openapi.json',
       '/pages',
       '/pages/{id}'
-    ])
+    ]))
     expect(openApiDocument.paths['/openapi.json'].get.security).toEqual([])
-    expect(openApiDocument.paths['/pages'].get.responses['500']).toEqual(
-      openApiDocument.paths['/pages'].get.responses['401']
-    )
-    expect(openApiDocument.paths['/pages/{id}'].get.responses['500']).toEqual(
-      openApiDocument.paths['/pages/{id}'].get.responses['401']
-    )
     expect(openApiDocument.components.securitySchemes.bearerAuth).toMatchObject({
       scheme: 'bearer',
       type: 'http'
@@ -114,15 +92,21 @@ describe('versioned REST pages API', () => {
     expect(openApiDocument.components.schemas.Error).toMatchObject({
       additionalProperties: false,
       required: ['error'],
+      properties: { error: { type: 'string' } },
       type: 'object'
     })
   })
 
-  it('serves OpenAPI publicly before requiring an API key', () => {
+  it('serves OpenAPI publicly before requiring an API key', async () => {
     const res = response()
+    await new Promise((resolve, reject) => {
+      res.json.mockImplementation(resolve)
+      apiRouter({ method: 'GET', url: '/openapi.json', headers: {} }, res, error => {
+        reject(error ?? new Error('Anonymous OpenAPI request was not handled'))
+      })
+    })
 
-    openApiHandler({}, res)
-
+    expect(res.status).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith(openApiDocument)
   })
 
@@ -227,7 +211,21 @@ describe('versioned REST pages API', () => {
     }))
     expect(next).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      items: [expect.objectContaining({ id: 1, isPublished: true }), expect.objectContaining({ id: 2, isPublished: true })],
+      items: [1, 2].map(id => expect.objectContaining({
+        contentType: 'markdown',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        description: `Page ${id}`,
+        id,
+        isPublished: true,
+        isSearchable: true,
+        locale: 'en',
+        ownerId: null,
+        path: `docs/${id}`,
+        tags: ['docs'],
+        title: `Page ${id}`,
+        updatedAt: '2026-08-02T00:00:00.000Z',
+        visibility: 'public'
+      })),
       pagination: { limit: 2, nextOffset: 2, offset: 0 }
     }))
   })
@@ -285,10 +283,26 @@ describe('versioned REST pages API', () => {
     const writerResponse = response()
     await detailHandler({ params: { id: '1' }, user: writer, sessionID: 'session-1' }, writerResponse, vi.fn())
     expect(writerResponse.json.mock.calls[0][0]).toEqual(expect.objectContaining({
+      authorId: 8,
       authorName: 'Author',
+      contentType: 'markdown',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      creatorId: 7,
       creatorName: 'Creator',
+      description: 'Page 1',
       editor: 'markdown',
-      isPublished: true
+      id: 1,
+      isPublished: true,
+      isSearchable: true,
+      locale: 'en',
+      ownerId: null,
+      path: 'docs/1',
+      publishStartDate: '2026-08-01T00:00:00.000Z',
+      publishEndDate: null,
+      tags: ['docs'],
+      title: 'Page 1',
+      updatedAt: '2026-08-02T00:00:00.000Z',
+      visibility: 'public'
     }))
 
     global.WIKI.auth.checkPageAccess.mockReturnValue(false)

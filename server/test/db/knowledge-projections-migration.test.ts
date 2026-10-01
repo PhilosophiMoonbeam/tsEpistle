@@ -11,7 +11,7 @@ describe('page knowledge projection migration', () => {
 
   afterEach(async () => db.destroy())
 
-  it('stores one immutable projection per page source revision', async () => {
+  it('stores one projection per page source revision', async () => {
     await up(db)
     await up(db)
     const row = {
@@ -32,8 +32,13 @@ describe('page knowledge projection migration', () => {
       projection: '{}'
     }
     await db('pageKnowledgeProjections').insert(row)
-    await expect(Promise.resolve(db('pageKnowledgeProjections').insert(row))).rejects.toThrow()
-    expect(await db('pageKnowledgeProjections').insert({ ...row, sourceRevision: '8' })).toBeDefined()
+    await expect(Promise.resolve(db('pageKnowledgeProjections').insert(row))).rejects.toMatchObject({ code: 'SQLITE_CONSTRAINT_UNIQUE' })
+    await db('pageKnowledgeProjections').insert({ ...row, sourceRevision: '8' })
+    const stored = await db('pageKnowledgeProjections').orderBy('sourceRevision').select('pageId', 'sourceRevision', 'sourceSha256', 'summary', 'projection')
+    expect(stored.map(value => ({ ...value, sourceRevision: String(value.sourceRevision) }))).toEqual([
+      { pageId: 42, sourceRevision: '7', sourceSha256: 'a'.repeat(64), summary: 'Summary', projection: '{}' },
+      { pageId: 42, sourceRevision: '8', sourceSha256: 'a'.repeat(64), summary: 'Summary', projection: '{}' }
+    ])
   })
 
   it('removes only the projection store on rollback', async () => {

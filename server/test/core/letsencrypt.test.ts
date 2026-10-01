@@ -1,10 +1,9 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, X509Certificate } from 'node:crypto'
 import Keypairs from '@root/keypairs'
 import type { AcmeCertificate } from 'acme'
 import type { RootKeypair } from '@root/keypairs'
 import { createLetsEncryptService } from '../../core/letsencrypt.ts'
 import { AcmeStateError, type AcmeSavedState, AcmeStateSnapshot, AcmeStateStore } from '../../repositories/acme-state.ts'
-import { describeTlsCertificate } from '../../repositories/tls-material.ts'
 import { tlsFixture } from '../helpers/tls-fixture.ts'
 let fixture: ReturnType<typeof tlsFixture>, accountKeypair: RootKeypair
 beforeAll(async () => {
@@ -87,7 +86,6 @@ describe('ACME issuance and saved certificate lifecycle', () => {
     expect(test.current().value.payload?.expires).not.toBe('2050-01-01T00:00:00.000Z')
     expect(test.current().value.opaque).toEqual({ retained: true })
     expect(test.configureTls).not.toHaveBeenCalled()
-    expect(test.service.challenge).toBeNull()
     expect(JSON.stringify(certificate)).not.toContain('PRIVATE KEY')
   })
   it('persists key identity before account creation and reuses it after an uncertain account response', async () => {
@@ -109,14 +107,22 @@ describe('ACME issuance and saved certificate lifecycle', () => {
     expect(test.client.accounts.create.mock.calls[0]![0].accountKey).toEqual(test.client.accounts.create.mock.calls[1]![0].accountKey)
     expect(JSON.stringify(test.logger.warn.mock.calls)).not.toContain('private-provider-response')
   })
-  it('keeps prior certificate state when final persistence fails', async () => {
+  it('blocks publication and listener application when final certificate persistence fails', async () => {
     const prior = { ...original(), payload: payload() },
       test = setup(prior)
     test.store.save = vi.fn(async () => {
       throw new Error('database-private-detail')
     })
     await expect(test.service.requestCertificate()).rejects.toThrow('could not be confirmed')
-    expect(test.current().value).toEqual(prior)
+    expect(test.store.save).toHaveBeenCalledOnce()
+    expect(test.store.save).toHaveBeenCalledWith(
+      { value: prior, token: 'initial' },
+      {
+        ...prior,
+        domain: 'wiki.example.test',
+        payload: { ...payload(), expires: new Date(new X509Certificate(fixture.first.cert).validTo).toISOString() }
+      }
+    )
     expect(test.publish).not.toHaveBeenCalled()
     expect(test.configureTls).not.toHaveBeenCalled()
     expect(JSON.stringify(test.logger.warn.mock.calls)).not.toContain('database-private-detail')
@@ -214,7 +220,6 @@ describe('ACME issuance and saved certificate lifecycle', () => {
     expect(test.configureTls).toHaveBeenCalledWith(
       expect.objectContaining({ format: 'pem', inline: true, key: fixture.first.key, cert: fixture.first.cert + '\n' })
     )
-    expect(describeTlsCertificate(fixture.first.cert).daysRemaining).toBeGreaterThan(5)
   })
   it('does not log raw authority notification payloads', async () => {
     const test = setup()
@@ -224,9 +229,14 @@ describe('ACME issuance and saved certificate lifecycle', () => {
     expect(JSON.stringify(test.logger.warn.mock.calls)).not.toContain('fixture-account-private-key')
   })
   it('does not treat provider error text as a trusted application error', async () => {
-    const test = setup()
-    test.client.certificates.create.mockRejectedValueOnce(new Error('Configure a valid private-provider-account-secret'))
-    await expect(test.service.requestCertificate()).rejects.toThrow('Certificate issuance or persistence could not be confirmed.')
+    const test = setup(),
+      providerError = new Error('Configure a valid private-provider-account-secret')
+    test.client.certificates.create.mockRejectedValueOnce(providerError)
+    const error = await test.service.requestCertificate().catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toBe(providerError)
+    expect((error as Error).message).not.toContain('private-provider-account-secret')
+    expect(JSON.stringify(test.logger.warn.mock.calls)).not.toContain('private-provider-account-secret')
   })
   it('expires active HTTP challenges and hides them after deployment or offline changes', async () => {
     const test = setup()

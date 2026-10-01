@@ -229,17 +229,17 @@ describe('durable agent task ledger', () => {
   })
 
   it('persists full planner totals in the v2 plan event', async () => {
-    await createAgentRunTasks(knex, claim, tasks, plannerUsage)
+    await createAgentRunTasks(knex, claim, tasks, { inputTokens: 12, outputTokens: 4, totalTokens: 31, costMicros: 5 })
     const event = await knex('agentEvents').where({ runId, type: 'task.planCreated' }).first('data')
     const data = JSON.parse(String(event?.data)) as AgentEventData
     expect(data).toMatchObject({
       usageVersion: 2,
       inputTokens: 12,
       outputTokens: 4,
-      totalTokens: 16,
-      costMicros: 0
+      totalTokens: 31,
+      costMicros: 5
     })
-    expect(readAgentUsageEvent(data)).toEqual({ inputTokens: 12, outputTokens: 4, totalTokens: 16, costMicros: 0 })
+    expect(readAgentUsageEvent(data)).toEqual({ inputTokens: 12, outputTokens: 4, totalTokens: 31, costMicros: 5 })
   })
 
   it('rejects an invalid planner total before creating rows or events', async () => {
@@ -250,7 +250,10 @@ describe('durable agent task ledger', () => {
 
   it('refuses a destructive rollback while durable research tasks exist', async () => {
     await createAgentRunTasks(knex, claim, tasks, plannerUsage)
-    await expect(Promise.resolve(removeAgentTaskLedger(knex))).rejects.toThrow('agentRunTasks contains durable research state')
+    const retainedTasks = await knex('agentRunTasks').orderBy('ordinal')
+    await expect(Promise.resolve(removeAgentTaskLedger(knex))).rejects.toThrow()
+    expect(await knex.schema.hasTable('agentRunTasks')).toBe(true)
+    expect(await knex('agentRunTasks').orderBy('ordinal')).toEqual(retainedTasks)
     await knex('agentRunTasks').delete()
     await removeAgentTaskLedger(knex)
     expect(await knex.schema.hasTable('agentRunTasks')).toBe(false)

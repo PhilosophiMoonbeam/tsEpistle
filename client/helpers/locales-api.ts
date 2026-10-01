@@ -23,17 +23,6 @@ export type LocaleRow = {
   updatedAt?: string
 }
 
-export type LocaleConfig = {
-  locale: string
-  autoUpdate: boolean
-  namespacing: boolean
-  namespaces: string[]
-}
-
-type LocaleMessageResponse = {
-  message: string
-}
-
 async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
@@ -90,25 +79,6 @@ function normalizeLocaleRow(row: unknown, fallbackMessage: string): LocaleRow {
   return row as LocaleRow
 }
 
-function normalizeLocaleConfig(payload: unknown, fallbackMessage: string): LocaleConfig {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  const config = payload as Partial<LocaleConfig>
-  if (typeof config.locale !== 'string' || config.locale.length < 1) {
-    throw new Error(fallbackMessage)
-  }
-  if (typeof config.autoUpdate !== 'boolean' || typeof config.namespacing !== 'boolean') {
-    throw new Error(fallbackMessage)
-  }
-  if (!Array.isArray(config.namespaces) || config.namespaces.some(ns => typeof ns !== 'string' || ns.length < 1)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload as LocaleConfig
-}
-
 export async function fetchLocales(fetchImpl: FetchImpl, fallbackMessage = 'Locales response is invalid'): Promise<LocaleRow[]> {
   const response = await sameOriginJsonFetch(fetchImpl, '/_api/locales', {
     credentials: 'same-origin',
@@ -123,61 +93,4 @@ export async function fetchLocales(fetchImpl: FetchImpl, fallbackMessage = 'Loca
   }
 
   return payload.map(row => normalizeLocaleRow(row, fallbackMessage))
-}
-
-export async function fetchLocaleConfig(fetchImpl: FetchImpl, fallbackMessage = 'Locale config response is invalid'): Promise<LocaleConfig> {
-  const response = await sameOriginJsonFetch(fetchImpl, '/_api/locales/config', {
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json'
-    }
-  })
-
-  return normalizeLocaleConfig(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
-}
-
-function normalizeLocaleSavePayload(payload: unknown, fallbackMessage: string): LocaleMessageResponse {
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    Array.isArray(payload) ||
-    typeof (payload as { message?: unknown }).message !== 'string' ||
-    (payload as { message: string }).message.length < 1
-  ) {
-    throw new Error(fallbackMessage)
-  }
-
-  return {
-    message: (payload as { message: string }).message
-  }
-}
-
-export async function saveLocaleConfig(
-  fetchImpl: FetchImpl,
-  config: unknown,
-  fallbackMessage = 'Locale settings update failed'
-): Promise<LocaleMessageResponse> {
-  const response = await sameOriginJsonFetch(fetchImpl, '/_api/locales/config', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(config)
-  })
-
-  return normalizeLocaleSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
-}
-
-export async function downloadLocale(fetchImpl: FetchImpl, code: string, fallbackMessage = 'Locale download failed'): Promise<LocaleMessageResponse> {
-  const response = await sameOriginJsonFetch(fetchImpl, `/_api/locales/${encodeURIComponent(code)}/download`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json'
-    }
-  })
-
-  return normalizeLocaleSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }

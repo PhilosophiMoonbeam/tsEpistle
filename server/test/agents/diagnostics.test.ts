@@ -27,7 +27,6 @@ interface DiagnosticExportView {
       readonly dataSha256: string
     }[]
   }[]
-  readonly limitations: { readonly modelRationale: string }
 }
 
 const now = '2026-08-24T12:00:00.000Z'
@@ -65,6 +64,7 @@ const createTables = async (db: Knex): Promise<void> => {
     table.boolean('isVisible').notNullable().defaultTo(true)
     table.text('citations').nullable()
     table.string('providerStateSha256').nullable()
+    table.binary('providerStateCiphertext').nullable()
     table.dateTime('createdAt')
     table.dateTime('updatedAt')
   })
@@ -257,6 +257,8 @@ describe('agent conversation diagnostics', () => {
     await createTables(db)
     const userMessageId = '00000000-0000-4000-8000-000000000103'
     const assistantMessageId = '00000000-0000-4000-8000-000000000104'
+    const continuationSecret = 'SENSITIVE_PROVIDER_CONTINUATION_DO_NOT_EXPORT'
+    const continuationCiphertext = Buffer.from(continuationSecret)
     await db('agentSessions').insert({
       id: sessionId,
       ownerId: 7,
@@ -299,6 +301,7 @@ describe('agent conversation diagnostics', () => {
         content: 'Amber Falcon.',
         citations: null,
         providerStateSha256: 'a'.repeat(64),
+        providerStateCiphertext: continuationCiphertext,
         createdAt: now,
         updatedAt: now
       }
@@ -344,13 +347,16 @@ describe('agent conversation diagnostics', () => {
       sourceRevision: '1',
       content: 'Amber Falcon is a synthetic incident.'
     })
-    await appendEvent(db, 1, 'tool.started', { actionCallId: 'get-1', actionName: 'pages.get', title: 'Get page' })
-    await appendEvent(db, 2, 'tool.completed', { actionCallId: 'get-1', actionName: 'pages.get', result: pageResult })
-    await appendEvent(db, 3, 'evidence.provenance', { accepted: false, issues: ['Citation did not support its claim.'], finalCitationIds: [] })
-    await appendEvent(db, 4, 'evidence.provenance', { accepted: false, issues: ['Citation did not support its claim.'], finalCitationIds: [] })
-    await appendEvent(db, 5, 'tool.started', { actionCallId: 'get-2', actionName: 'pages.get', title: 'Get page' })
-    await appendEvent(db, 6, 'tool.completed', { actionCallId: 'get-2', actionName: 'pages.get', result: pageResult })
-    await appendEvent(db, 7, 'evidence.provenance', { accepted: true, issues: [], finalCitationIds: [] })
+    const timelineFixtures: readonly { readonly type: string; readonly data: Record<string, unknown> }[] = [
+      { type: 'tool.started', data: { actionCallId: 'get-1', actionName: 'pages.get', title: 'Get page' } },
+      { type: 'tool.completed', data: { actionCallId: 'get-1', actionName: 'pages.get', result: pageResult } },
+      { type: 'evidence.provenance', data: { accepted: false, issues: ['Citation did not support its claim.'], finalCitationIds: [] } },
+      { type: 'evidence.provenance', data: { accepted: false, issues: ['Citation did not support its claim.'], finalCitationIds: [] } },
+      { type: 'tool.started', data: { actionCallId: 'get-2', actionName: 'pages.get', title: 'Get page' } },
+      { type: 'tool.completed', data: { actionCallId: 'get-2', actionName: 'pages.get', result: pageResult } },
+      { type: 'evidence.provenance', data: { accepted: true, issues: [], finalCitationIds: [] } }
+    ]
+    for (const [index, event] of timelineFixtures.entries()) await appendEvent(db, index + 1, event.type, event.data)
 
     const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
 
@@ -380,9 +386,17 @@ describe('agent conversation diagnostics', () => {
       expect.objectContaining({ kind: 'evidence_retries', count: 2 }),
       { kind: 'page_answer_accepted_without_citations' }
     ])
-    expect(JSON.stringify(exported)).not.toContain('providerStateCiphertext')
-    expect(exported.limitations.modelRationale).toContain('neither retained nor exported')
-    expect(exported.runs[0]?.timeline.every(event => typeof event.dataSha256 === 'string')).toBe(true)
+    const serialized = JSON.stringify(exported)
+    expect(serialized).not.toContain('providerStateCiphertext')
+    expect(serialized).not.toContain(continuationSecret)
+    expect(serialized).not.toContain(JSON.stringify([...continuationCiphertext]))
+    expect(exported.runs[0]!.timeline.map(({ type, dataSha256, createdAt }) => ({ type, dataSha256, createdAt }))).toEqual(
+      timelineFixtures.map(({ type, data }) => ({
+        type,
+        dataSha256: createHash('sha256').update(JSON.stringify(data)).digest('hex'),
+        createdAt: now
+      }))
+    )
   })
   it('distinguishes delivered, omitted, not-executed, and failed tool dispositions', async () => {
     db = await createUsageDatabase()
@@ -473,11 +487,17 @@ describe('agent conversation diagnostics', () => {
       })
     ])
     expect(exported.runs[0]!.diagnostics.findings).toEqual([])
-    expect(
-      exported.runs[0]!.timeline.filter(
-        event => event.type === 'tool.started' || event.type === 'tool.completed' || event.type === 'tool.notExecuted' || event.type === 'tool.failed'
-      ).every(event => event.createdAt === now)
-    ).toBe(true)
+    expect(exported.runs[0]!.timeline.map(({ type, createdAt }) => ({ type, createdAt }))).toEqual([
+      { type: 'tool.started', createdAt: now },
+      { type: 'tool.completed', createdAt: now },
+      { type: 'tool.started', createdAt: now },
+      { type: 'tool.notExecuted', createdAt: now },
+      { type: 'tool.started', createdAt: now },
+      { type: 'tool.failed', createdAt: now },
+      { type: 'tool.started', createdAt: now },
+      { type: 'tool.completed', createdAt: now },
+      { type: 'evidence.provenance', createdAt: now }
+    ])
   })
 
   it('counts only new-format recent evidence rows as completed page evidence', async () => {
@@ -490,6 +510,8 @@ describe('agent conversation diagnostics', () => {
       result: JSON.stringify({ pages: [{ id: 1, title: 'Old metadata', citation: { evidenceId: 'page:1' } }] })
     })
     await appendEvent(db, 3, 'evidence.provenance', { accepted: true, issues: [], finalCitationIds: [] })
+    const legacyExport = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
+    expect(legacyExport.runs[0]!.diagnostics.findings).toEqual([])
     const recentResult = {
       kind: 'recent-page-evidence',
       requestedLimit: 2,

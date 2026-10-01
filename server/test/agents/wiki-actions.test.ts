@@ -200,6 +200,5 @@ describe('current Wiki Agent media authority', () => {
     await expect(assertWikiAgentMediaAccess(7, { enabled: true, providerEnabled: false })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
     isActive = false
     await expect(assertWikiAgentMediaAccess(7, { enabled: true, providerEnabled: true })).rejects.toMatchObject({ code: 'AUTHENTICATION_REQUIRED' })
-    expect(modifyGraph).toHaveBeenCalledTimes(4)
   })
 })

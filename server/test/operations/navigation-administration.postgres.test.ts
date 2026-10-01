@@ -1,16 +1,12 @@
 import navigationOperations from '../../operations/navigation.ts'
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createNavigationAdministrationStore } from '../../operations/navigation-administration.ts'
 import { type NavigationPolicy } from '../../../shared/navigation-policy.ts'
 const link = { id: 'guide', kind: 'link', label: 'Guide', icon: 'mdi-book-open-outline', targetType: 'page', target: '/en/guide', visibilityMode: 'all', visibilityGroups: [] } as const
 const item = () => ({ ...link, visibilityGroups: [] as number[] })
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_navigation_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_navigation_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 suite('PostgreSQL reviewed Navigation settings', () => {

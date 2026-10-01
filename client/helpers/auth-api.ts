@@ -171,27 +171,6 @@ function normalizeAdminAuthSetup(value: unknown, fallbackMessage: string): Admin
   }
 }
 
-export type AdminActiveAuthConfig = {
-  key: string
-  value: Record<string, unknown> & {
-    value?: unknown
-    order?: number
-    sensitive?: boolean
-  }
-}
-
-export type AdminActiveAuthStrategy = {
-  key: string
-  strategy: AdminAuthStrategy
-  config: AdminActiveAuthConfig[]
-  order: number
-  isEnabled: boolean
-  displayName: string
-  selfRegistration: boolean
-  domainWhitelist: string[]
-  autoEnrollGroups: number[]
-}
-
 function normalizeAdminAuthStrategy(value: unknown, fallbackMessage: string): AdminAuthStrategy {
   if (!isRecord(value) || typeof value.key !== 'string' || value.key.length < 1 || typeof value.isAvailable !== 'boolean' || !Array.isArray(value.props)) {
     throw new Error(fallbackMessage)
@@ -223,51 +202,6 @@ function normalizeAdminAuthStrategy(value: unknown, fallbackMessage: string): Ad
   } as AdminAuthStrategy
 }
 
-function normalizeAdminActiveAuthStrategy(value: unknown, fallbackMessage: string): AdminActiveAuthStrategy {
-  if (
-    !isRecord(value) ||
-    typeof value.key !== 'string' ||
-    value.key.length < 1 ||
-    !isRecord(value.strategy) ||
-    typeof value.strategy.key !== 'string' ||
-    !Array.isArray(value.config) ||
-    !isFiniteNumber(value.order) ||
-    typeof value.isEnabled !== 'boolean' ||
-    typeof value.displayName !== 'string' ||
-    typeof value.selfRegistration !== 'boolean' ||
-    !Array.isArray(value.domainWhitelist) ||
-    !Array.isArray(value.autoEnrollGroups)
-  ) {
-    throw new Error(fallbackMessage)
-  }
-  const strategy = {
-    ...value.strategy,
-    ...(value.strategy.setup === undefined ? {} : { setup: normalizeAdminAuthSetup(value.strategy.setup, fallbackMessage) })
-  }
-
-  const config = value.config
-    .map((configValue: unknown): AdminActiveAuthConfig => {
-      if (!isRecord(configValue) || typeof configValue.key !== 'string' || configValue.key.length < 1 || typeof configValue.value !== 'string') {
-        throw new Error(fallbackMessage)
-      }
-      return {
-        ...configValue,
-        value: parseConfigJson(configValue.value, fallbackMessage)
-      } as AdminActiveAuthConfig
-    })
-    .sort((left, right) => {
-      const leftOrder = isFiniteNumber(left.value.order) ? left.value.order : 0
-      const rightOrder = isFiniteNumber(right.value.order) ? right.value.order : 0
-      return leftOrder - rightOrder
-    })
-
-  return {
-    ...value,
-    strategy,
-    config
-  } as AdminActiveAuthStrategy
-}
-
 export async function fetchAdminAuthStrategies(
   fetchImpl: FetchImpl,
   fallbackMessage = 'Authentication strategies response is invalid'
@@ -285,31 +219,6 @@ export async function fetchAdminAuthStrategies(
   }
 
   return payload.map(strategy => normalizeAdminAuthStrategy(strategy, fallbackMessage))
-}
-
-export async function fetchAdminAuthActiveStrategies(
-  fetchImpl: FetchImpl,
-  fallbackMessage = 'Active authentication strategies response is invalid'
-): Promise<AdminActiveAuthStrategy[]> {
-  const response = await sameOriginJsonFetch(fetchImpl, '/_api/auth/admin/active-strategies', {
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json'
-    }
-  })
-
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload
-    .map(strategy => normalizeAdminActiveAuthStrategy(strategy, fallbackMessage))
-    .sort((left, right) => {
-      const leftOrder = Number.isFinite(left.order) ? left.order : 0
-      const rightOrder = Number.isFinite(right.order) ? right.order : 0
-      return leftOrder - rightOrder
-    })
 }
 
 export async function fetchAuthStrategies(fetchImpl: FetchImpl, fallbackMessage = 'Authentication strategies response is invalid'): Promise<AuthStrategy[]> {
@@ -343,48 +252,6 @@ export async function fetchAuthStrategies(fetchImpl: FetchImpl, fallbackMessage 
         throw new Error(fallbackMessage)
       }
       return value as AuthStrategy
-    })
-    .sort((left, right) => left.order - right.order)
-}
-
-export type AdminAuthProviderSummary = {
-  key: string
-  displayName: string
-  order: number
-  isEnabled: boolean
-}
-
-export async function fetchAdminAuthProviders(
-  fetchImpl: FetchImpl,
-  fallbackMessage = 'Admin authentication providers response is invalid'
-): Promise<AdminAuthProviderSummary[]> {
-  const response = await sameOriginJsonFetch(fetchImpl, '/_api/auth/providers', {
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json'
-    }
-  })
-
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload
-    .map((value: unknown) => {
-      if (
-        !isRecord(value) ||
-        typeof value.key !== 'string' ||
-        value.key.length < 1 ||
-        typeof value.displayName !== 'string' ||
-        value.displayName.length < 1 ||
-        !isFiniteNumber(value.order) ||
-        typeof value.isEnabled !== 'boolean'
-      ) {
-        throw new Error(fallbackMessage)
-      }
-
-      return value as AdminAuthProviderSummary
     })
     .sort((left, right) => left.order - right.order)
 }
@@ -536,14 +403,6 @@ export async function submitStatusRequest(
   }
 
   return payload as StatusResponse
-}
-
-export async function updateAdminAuthStrategies(
-  fetchImpl: FetchImpl,
-  strategies: readonly unknown[],
-  fallbackMessage = 'Authentication strategies update failed'
-): Promise<StatusResponse> {
-  return submitStatusRequest(fetchImpl, '/_api/auth/strategies', { strategies }, fallbackMessage)
 }
 
 export async function setAdminApiState(fetchImpl: FetchImpl, enabled: boolean, fallbackMessage = 'API state update failed'): Promise<StatusResponse> {

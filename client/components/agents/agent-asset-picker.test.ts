@@ -90,6 +90,8 @@ describe('Agent Wiki asset picker', () => {
   it('discards stale folder results and aborts pending loads on close', async () => {
     let finish!: (value: Response) => void
     let staleSignal: AbortSignal | null | undefined
+    const pendingLoad = Promise.withResolvers<Response>()
+    let pendingSignal: AbortSignal | null | undefined
     const harness = mount(async (input, init) => {
       if (String(input).includes('/folders?')) return response([])
       if (String(input).includes('folderId=0')) {
@@ -97,6 +99,10 @@ describe('Agent Wiki asset picker', () => {
         return new Promise(resolve => {
           finish = resolve
         })
+      }
+      if (String(input).includes('folderId=8')) {
+        pendingSignal = init?.signal
+        return pendingLoad.promise
       }
       return response([asset(7)])
     })
@@ -106,8 +112,16 @@ describe('Agent Wiki asset picker', () => {
     finish(response([asset(1)]))
     await settle()
     expect(harness.api.assets.value.map((item: { id: number }) => item.id)).toEqual([7])
+    harness.api.openFolder({ id: 8, name: 'Drafts', slug: 'drafts' })
+    await settle()
+    expect(harness.api.loading.value).toBe(true)
+    expect(pendingSignal?.aborted).toBe(false)
     harness.api.close()
     expect(harness.events).toContainEqual(['close', undefined])
+    expect(pendingSignal?.aborted).toBe(true)
+    pendingLoad.resolve(response([asset(8)]))
+    await settle()
+    expect(harness.api.assets.value).toEqual([])
     harness.unmount()
   })
   it('shows a fixed no-access message without disclosing API error details and supports retry', async () => {

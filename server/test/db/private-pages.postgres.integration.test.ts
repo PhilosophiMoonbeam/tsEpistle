@@ -1,35 +1,12 @@
 import knexModule, { type Knex } from 'knex'
-import fs from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
 import { scopePageQuery } from '../../helpers/page-access.ts'
 
 import { up as migratePrivatePages } from '../../db/migrations/2.5.129.ts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile
-  ? fs.readFileSync(passwordFile, 'utf8').trim()
-  : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = databaseName.endsWith('_private_pages_test') && password
-  ? {
-      host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
-      port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-      user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-      password,
-      database: databaseName
-    }
-  : null
-const directlyInvoked = !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument =>
-  argument.replaceAll('\\', '/').endsWith('private-pages.postgres.integration.test.ts')
-)
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error(
-    'Explicit private-pages PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _private_pages_test and a PostgreSQL password.'
-  )
-}
+const connection = getPostgresTestConnection('_private_pages_test', import.meta.path)
 
 const suite = connection ? describe : describe.skip
 
@@ -75,6 +52,7 @@ suite('PostgreSQL private-page schema migration', () => {
 
     await db('users').insert([{ id: 7 }, { id: 8 }])
     await db('pages').insert({ id: 1, localeCode: 'en', path: 'same/path', isPrivate: false })
+    await db.raw(`SELECT setval(pg_get_serial_sequence('pages', 'id'), 100, true)`)
     await migratePrivatePages(db)
     await db('pages').insert([
       { id: 2, localeCode: 'en', path: 'same/path', title: 'Owner Seven Secret', content: 'private seven', visibility: 'private', ownerId: 7 },
@@ -251,19 +229,22 @@ suite('PostgreSQL private-page schema migration', () => {
   })
 
   it('persists owner-scoped rows across independent PostgreSQL connections and preserves foreign keys and sequences', async () => {
-    await db.raw(`SELECT setval(pg_get_serial_sequence('pages', 'id'), (SELECT max(id) FROM pages), true)`)
     const inserted = await db('pages')
       .insert({ localeCode: 'en', path: 'sequence-check', title: 'Sequence Check', content: '', visibility: 'private', ownerId: 7 })
       .returning<{ id: number }[]>('id')
-    expect(inserted[0]?.id).toBe(4)
+    const insertedId = inserted[0]?.id
 
     const secondConnection = knexModule({ client: 'pg', connection })
     try {
-      expect(await secondConnection('pages').where({ id: 4, visibility: 'private', ownerId: 7 }).first()).toBeTruthy()
+      expect(insertedId).toBe(101)
+      expect(await secondConnection('pages').where({ id: insertedId, visibility: 'private', ownerId: 7 }).first()).toBeTruthy()
       await expect(Promise.resolve(secondConnection('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23001' })
     } finally {
-      await secondConnection.destroy()
+      try {
+        await secondConnection.destroy()
+      } finally {
+        if (insertedId !== undefined) await db('pages').where({ id: insertedId }).delete()
+      }
     }
-    await db('pages').where({ id: 4 }).delete()
   })
 })

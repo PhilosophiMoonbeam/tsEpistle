@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
+import { NodeTypes, type ElementNode, type TemplateChildNode } from '@vue/compiler-core'
 import * as ts from 'typescript'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { authenticationDraft, authenticationSignature } from '../../helpers/authentication-workspace-api.ts'
@@ -102,12 +103,34 @@ describe('reviewed authentication workspace', () => {
     const source = fs.readFileSync('client/components/admin/admin-auth-fields.vue', 'utf8')
     const parsed = parse(source, { filename: 'client/components/admin/admin-auth-fields.vue' })
     expect(parsed.errors).toEqual([])
-    const template = parsed.descriptor.template?.content ?? ''
-    expect(template).toMatch(/v-textarea[\s\S]*?v-else-if="field\.multiline"[\s\S]*?autocomplete="off"/)
-    expect(template).toMatch(/v-text-field[\s\S]*?field\.type === 'number'[\s\S]*?autocomplete="off"/)
-    expect(template).toMatch(/v-text-field[\s\S]*?v-else[\s\S]*?autocomplete="off"/)
-    expect(template).toMatch(/type="password"[\s\S]*?autocomplete="new-password"/)
-    expect(template.match(/v-credential-autofill/g)).toHaveLength(5)
+    const ast = parsed.descriptor.template?.ast
+    if (!ast) throw new Error('The provider fields template must have a parsed AST.')
+    const controls: ElementNode[] = []
+    const visit = (nodes: TemplateChildNode[]) => {
+      for (const node of nodes) {
+        if (node.type !== NodeTypes.ELEMENT) continue
+        if (node.tag === 'v-text-field' || node.tag === 'v-textarea') controls.push(node)
+        visit(node.children)
+      }
+    }
+    visit(ast.children)
+    const branches = [
+      { tag: 'v-textarea', directive: 'if', condition: "modelValue.secrets[field.key]?.action === 'replace' && field.multiline", autocomplete: 'off' },
+      { tag: 'v-text-field', directive: 'else-if', condition: "modelValue.secrets[field.key]?.action === 'replace'", autocomplete: 'new-password' },
+      { tag: 'v-textarea', directive: 'else-if', condition: 'field.multiline', autocomplete: 'off' },
+      { tag: 'v-text-field', directive: 'else-if', condition: "field.type === 'number'", autocomplete: 'off' },
+      { tag: 'v-text-field', directive: 'else', condition: '', autocomplete: 'off' }
+    ]
+    for (const branch of branches) {
+      const matches = controls.filter(node => node.tag === branch.tag && node.props.some(prop =>
+        prop.type === NodeTypes.DIRECTIVE && prop.name === branch.directive &&
+        (prop.exp?.loc.source.replace(/\s+/g, ' ').trim() ?? '') === branch.condition
+      ))
+      expect(matches).toHaveLength(1)
+      const control = matches[0]!
+      expect(control.props.some(prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'autocomplete' && prop.value?.content === branch.autocomplete)).toBe(true)
+      expect(control.props.some(prop => prop.type === NodeTypes.DIRECTIVE && prop.name === 'credential-autofill')).toBe(true)
+    }
   })
   it('isolates drafts, normalizes insignificant whitespace and protects navigation', async () => {
     const { state, window } = arrange()
@@ -174,14 +197,16 @@ describe('reviewed authentication workspace', () => {
     state.reason = 'Reviewed change'
     transport.saveAuthenticationWorkspace.mockRejectedValue(new Error('Connection lost'))
     await state.confirm()
+    expect(state.stale).toBe(true)
+    expect(state.locked).toBe(true)
     await state.confirm()
-    expect(state.saveError).toContain('outcome is unconfirmed')
     expect(transport.saveAuthenticationWorkspace).toHaveBeenCalledOnce()
   })
   it('keeps committed creation and cleared credential inputs coherent if the follow-up read fails', async () => {
     const { state, transport } = arrange()
     await state.load()
     state.addProvider(snapshot.definitions[0])
+    const createdKey = state.selected.key
     expect(state.selected.isEnabled).toBe(false)
     state.selected.description = 'New purpose'
     state.selected.secrets.clientSecret = { action: 'replace', value: 'new-private-value' }
@@ -189,8 +214,20 @@ describe('reviewed authentication workspace', () => {
     state.reason = 'Create a provider'
     transport.fetchAuthenticationWorkspace.mockRejectedValue(new Error('Read unavailable'))
     await state.confirm()
-    expect(state.notice).toContain('Sign-in policy saved.')
-    expect(state.saved.providers).toHaveLength(2)
+    expect(state.saved.providers.find(row => row.key === provider.key)).toMatchObject({
+      key: provider.key,
+      description: 'Saved purpose',
+      isEnabled: true
+    })
+    const created = state.saved.providers.find(row => row.key === createdKey)
+    expect(created).toMatchObject({
+      key: createdKey,
+      strategyKey: 'oidc',
+      description: 'New purpose',
+      isEnabled: false,
+      secrets: { clientSecret: { action: 'keep' } }
+    })
+    expect(created.configuredSecrets).toContain('clientSecret')
     expect(state.dirty).toBe(false)
     expect(state.stale).toBe(true)
     expect(state.locked).toBe(true)
@@ -225,7 +262,7 @@ describe('reviewed authentication workspace', () => {
     transport.retryAuthenticationInitialization.mockResolvedValue({ activation: 'needs-attention' })
     await state.initialize()
     expect(state.attention).toBe(true)
-    expect(state.notice).toContain('needs attention')
+    expect(transport.retryAuthenticationInitialization).toHaveBeenCalledWith('review-one')
   })
   it('honors session invalidation, protects provider removal and restores route sections', async () => {
     const { state, component, transport, window } = arrange()

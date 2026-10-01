@@ -106,7 +106,8 @@ const cancelJob = async (transaction: Knex.Transaction, jobId: string | null, no
 
 const retireLegacyWork = async (transaction: Knex.Transaction, revision: RevisionRow, now: Date): Promise<void> => {
   await cancelJob(transaction, revision.jobId, now)
-  await transaction(REVISIONS).where({ id: revision.id }).whereIn('status', ['pending', 'running']).update({
+  // Preserve never-started history; only genuinely started work can be terminalized.
+  await transaction(REVISIONS).where({ id: revision.id }).whereIn('status', ['pending', 'running']).whereNotNull('startedAt').update({
     status: 'failed',
     errorCode: 'PROCESSING_FAILED',
     completedAt: now,

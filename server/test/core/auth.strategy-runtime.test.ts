@@ -5,10 +5,12 @@ const originalWiki = globalThis.WIKI,
   initialize = vi.fn(),
   getStrategies = vi.fn()
 const passport = { _strategies: { session: {}, jwt: {}, old: {} }, use, unuse }
+let sharedPluginConfig = { sentinel: 'shared-plugin-configuration' }
+const localPlugin = { init: initialize, config: sharedPluginConfig }
 vi.mockModule('passport', import.meta.url, () => ({ default: passport }))
 vi.mockModule('../../helpers/security.ts', import.meta.url, () => ({ default: { extractJWT: () => null } }))
 vi.mockModule('passport-jwt', import.meta.url, () => ({ default: { Strategy: class {} } }))
-vi.mockModule('../../modules/authentication/local/authentication.ts', import.meta.url, () => ({ default: { init: initialize } }))
+vi.mockModule('../../modules/authentication/local/authentication.ts', import.meta.url, () => ({ default: localPlugin }))
 const { default: auth } = await vi.importFresh('../../core/auth.ts', import.meta.url)
 const row = (key = 'local', overrides = {}) => ({
   key,
@@ -24,6 +26,8 @@ beforeEach(() => {
   getStrategies.mockReset()
   use.mockReset()
   unuse.mockClear()
+  sharedPluginConfig = { sentinel: 'shared-plugin-configuration' }
+  localPlugin.config = sharedPluginConfig
   globalThis.WIKI = {
     config: { host: 'https://wiki.example.invalid', auth: { audience: 'workspace' }, certs: { public: 'fixture-public-key' } },
     configSvc: {},
@@ -88,6 +92,8 @@ describe('authentication runtime observations', () => {
     expect(initialize.mock.calls[1]?.[1].audience).toBe('workspace')
     expect(auth.strategies.first?.config.key).toBe('first')
     expect(auth.strategies.second?.config.key).toBe('second')
+    expect(localPlugin.config).toBe(sharedPluginConfig)
+    expect(localPlugin.config).toEqual({ sentinel: 'shared-plugin-configuration' })
   })
   it('serializes concurrent reloads so an older initializer cannot overwrite the latest policy', async () => {
     let release: () => void = () => {},

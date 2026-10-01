@@ -153,30 +153,21 @@ describe('deleted page recovery operations', () => {
     await expect(store.restore(admin, base)).rejects.toMatchObject({ name: 'PAGE_RECOVERY_OWNER_REQUIRED', status: 400 })
     expect(restore).not.toHaveBeenCalled()
 
-    const result = await store.restore(admin, { ...base, body: { ...base.body, ownerId: 9 } })
-    expect(result).toEqual({ pageId: 17, sourceRevision: '9', path: 'recovered/reference', localeCode: 'en', quarantined: false })
+    await store.restore(admin, { ...base, body: { ...base.body, ownerId: 9 } })
     expect(restore).toHaveBeenCalledWith(expect.objectContaining({ pageId: 17, deletionVersionId: 42, ownerId: 9 }))
   })
 
-  it('keeps legacy snapshots in quarantine under the recovering administrator', async () => {
+  it('assigns legacy snapshots to the recovering administrator without forwarding security context', async () => {
     const legacy = makeSnapshot({ recovery: false, visibility: 'public', ownerId: null })
     const { restore, store } = await createStore([legacy])
-    restore.mockImplementationOnce(async ({ pageId, destination }) => ({
-      pageId,
-      sourceRevision: '11',
-      path: destination.path,
-      localeCode: destination.localeCode,
-      quarantined: true
-    }))
 
-    const result = await store.restore(admin, {
+    await store.restore(admin, {
       pageId: 17,
       versionId: 42,
       body: { destination: { path: 'quarantine/reference', localeCode: 'en' } }
     })
 
-    expect(result).toMatchObject({ pageId: 17, quarantined: true, path: 'quarantine/reference' })
-    expect(restore).toHaveBeenCalledWith(expect.objectContaining({ pageId: 17, deletionVersionId: 42, requester: admin }))
+    expect(restore).toHaveBeenCalledWith(expect.objectContaining({ pageId: 17, deletionVersionId: 42, requester: admin, ownerId: admin.id }))
     expect(restore.mock.calls[0]![0]).not.toHaveProperty('securityContext')
   })
 

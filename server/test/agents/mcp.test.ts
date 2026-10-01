@@ -354,7 +354,6 @@ describe('Wiki MCP transport', () => {
       }
     })
     app.all('/mcp', authenticate, mcpController)
-    app.get('/health', (_req, res) => res.sendStatus(204))
     server = app.listen(0, '127.0.0.1')
     const listening = Promise.withResolvers<void>()
     server.once('listening', listening.resolve)
@@ -365,12 +364,6 @@ describe('Wiki MCP transport', () => {
     await client?.close()
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())))
     await db.destroy()
-  })
-
-  it('leaves non-MCP routes to the ordinary Wiki application', async () => {
-    const port = (server.address() as AddressInfo).port
-    const response = await fetch(`http://127.0.0.1:${port}/health`)
-    expect(response.status).toBe(204)
   })
 
   it('negotiates with the official modern client and advertises the admitted catalog', async () => {

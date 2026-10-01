@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type Locator, type Page, type Request } from '@playwright/test'
 import type { AgentMediaView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { installEnabledAgentFixture } from './agent-fixture.ts'
 import { expectLocatorWithinViewport, openSearch, responsiveTest as test } from './helpers.ts'
@@ -24,7 +24,7 @@ async function installBrowserIdentity(page: Page) {
     })
   )
 }
-async function openAgent(page: Page): Promise<Locator> {
+async function openAgent(page: Page, waitForComposer = true): Promise<Locator> {
   await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: [], suggestions: [], totalHits: 0, nextCursor: null } }))
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.locator('.nav-header')).toBeVisible({ timeout: 30_000 })
@@ -35,7 +35,7 @@ async function openAgent(page: Page): Promise<Locator> {
   await dialog.getByRole('button', { name: 'Ask about this', exact: true }).click()
   const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
   await expect(agent).toBeVisible()
-  await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
+  if (waitForComposer) await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
   return agent
 }
 async function installRecorder(page: Page) {
@@ -79,7 +79,44 @@ async function installRecorder(page: Page) {
 test('Agent media stays hidden without administrator configuration', async ({ page }) => {
   await installBrowserIdentity(page)
   const fixture = await installEnabledAgentFixture(page)
-  const agent = await openAgent(page)
+  let releaseThread!: () => void
+  const threadResponse = new Promise<void>(resolve => { releaseThread = resolve })
+  const isInitialThreadRequest = (request: Request) => {
+    const path = new URL(request.url()).pathname
+    return (
+      (path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') ||
+      (path === '/_api/agents/sessions' && request.method() === 'POST')
+    )
+  }
+  await page.route(/\/_api\/agents(?:\/|$)/, async route => {
+    if (isInitialThreadRequest(route.request())) await threadResponse
+    await route.fallback()
+  })
+  const initialThread = page.waitForRequest(isInitialThreadRequest)
+  const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
+  const contextRow = agent.locator('.agent-composer__context-row')
+  try {
+    // Delay only the HTTP response: the real parent renders its opening composer.
+    await openAgent(page, false)
+    await initialThread
+    await expect(agent.locator('.inline-agent__loading')).toBeVisible()
+    await expect(agent.locator('.agent-composer__editor')).toBeVisible()
+    await expect(contextRow).toHaveCount(1)
+    await expect(contextRow.locator('.agent-context, .agent-composer__goal-chip')).toHaveCount(0)
+    await expect.poll(() => contextRow.evaluate(element => {
+      const bounds = element.getBoundingClientRect()
+      return { width: bounds.width, height: bounds.height, layoutBoxes: element.getClientRects().length }
+    }), 'An empty context row must reserve no layout space while opening a conversation').toEqual({ width: 0, height: 0, layoutBoxes: 0 })
+  } finally {
+    releaseThread()
+  }
+  await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
+  await expect(contextRow).toBeVisible()
+  await expect.poll(() => contextRow.evaluate(element => element.getBoundingClientRect().height),
+    'Populated context must retain visible layout space after the conversation opens').toBeGreaterThan(0)
+  const scopeControl = contextRow.getByRole('button', { name: 'Choose Agent search scope', exact: true })
+  await expect(scopeControl).toBeVisible()
+  await expectLocatorWithinViewport(scopeControl, 'Agent context search scope')
   await expect(agent.getByRole('button', { name: 'Attach files', exact: true })).toHaveCount(0)
   await expect(agent.getByRole('button', { name: 'Choose creation tools', exact: true })).toHaveCount(0)
   await expect(agent.getByRole('button', { name: 'Start dictation', exact: true })).toHaveCount(0)
@@ -212,14 +249,18 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
   await input.fill('Turn this into a watercolor illustration.')
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
-  await expect(agent.locator('.agent-message__media img[alt="Image created by Wiki Agent"]')).toBeVisible()
+  const generatedImage = agent.locator('.agent-message__media img[alt="Image created by Wiki Agent"]')
+  await expect(generatedImage).toBeVisible()
+  await expect.poll(() => generatedImage.evaluate(element => {
+    const image = element as HTMLImageElement
+    return image.complete && image.naturalWidth > 0
+  }), 'The generated image must decode in the browser').toBe(true)
   await expect(agent.getByRole('link', { name: 'generated-image.png · Download', exact: true })).toBeVisible()
   expect(sent).toHaveLength(1)
   expect(sent[0]?.generationTools).toEqual(['image'])
   expect(sent[0]?.responseMode).toBeUndefined()
   expect(sent[0]?.attachmentIds).toEqual([uploaded[1]?.id])
   await agent.getByRole('button', { name: 'Edit image', exact: true }).click()
-  await expect(agent.getByRole('button', { name: 'Choose creation tools', exact: true })).toContainText('Create')
   await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
   await expect(input).toHaveValue('Edit this image: ')
   expect(uploaded).toHaveLength(3)
@@ -419,7 +460,6 @@ test('Agent combines selected creation tools in a normal conversation', async ({
   const menu = page.locator('[aria-label="Creation tools"]')
   await expect(menu.getByText('Images', { exact: true })).toHaveCount(0)
   await expect(menu.getByText('Text', { exact: true })).toHaveCount(0)
-  await expect(menu.getByText('Available for the assistant to use', { exact: true })).toBeVisible()
   const videoTool = menu.getByRole('menuitemcheckbox', { name: 'Video', exact: true })
   const musicTool = menu.getByRole('menuitemcheckbox', { name: 'Music', exact: true })
   await expect(videoTool).toHaveAttribute('aria-checked', 'true')

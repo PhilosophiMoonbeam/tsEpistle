@@ -739,12 +739,17 @@ describe('site notifications store', () => {
 
   it('ignores a late watch continuation after owner reinitialization', async () => {
     const oldContinuation = deferred<Response>()
+    const continuationRequests: Array<{ cursor: string | null; owner: string | null; signal: AbortSignal | null | undefined }> = []
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const ownerId = Number(ownerHeader(init))
       if (requestPath(url) === WATCH_PATH) {
-        if (ownerId === 7 && requestCursor(url) === FIRST_CURSOR) return oldContinuation.promise
-        return watchEnvelope(ownerId, [watchItem(`watch-${ownerId}`, `Owner ${ownerId}`)], 1, null, true)
+        const cursor = requestCursor(url)
+        if (cursor !== null) {
+          continuationRequests.push({ cursor, owner: ownerHeader(init), signal: init?.signal })
+          return oldContinuation.promise
+        }
+        return watchEnvelope(ownerId, [watchItem(`watch-${ownerId}`, `Owner ${ownerId}`)], 1, ownerId === 7 ? FIRST_CURSOR : null, ownerId !== 7)
       }
       return approvalEnvelope(ownerId)
     }) as unknown as typeof window.fetch
@@ -755,7 +760,10 @@ describe('site notifications store', () => {
     await store.initialize(7)
     const oldLoad = store.loadMoreWatches()
     await settle()
+    expect(continuationRequests.map(({ cursor, owner }) => ({ cursor, owner }))).toEqual([{ cursor: FIRST_CURSOR, owner: '7' }])
     await store.initialize(8)
+    expect(continuationRequests[0]?.signal?.aborted).toBe(true)
+    expect(store.watches.map(item => item.id)).toEqual(['watch-8'])
     oldContinuation.resolve(watchEnvelope(7, [watchItem('old-late', 'Old owner')], 1, null, true))
     await oldLoad
 

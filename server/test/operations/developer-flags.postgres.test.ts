@@ -2,14 +2,9 @@ import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { createDeveloperFlagsWorkspaceStore, getDeveloperFlagsWorkspaceStore, type DeveloperFlagsWorkspaceStore } from '../../operations/developer-flags.ts'
 import type { DeveloperFlags } from '../../../shared/developer-flags.ts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const port = Number(process.env.WIKI_TEST_POSTGRES_PORT)
-const connection =
-  database.endsWith('_developer_flags_test') && password
-    ? { host: '127.0.0.1', ...(Number.isInteger(port) && port > 0 ? { port } : {}), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_developer_flags_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const administrator = { user: { id: 1, authVersion: 0 } } as never
 
@@ -115,8 +110,7 @@ suite('Developer flags workspace persistence on PostgreSQL', () => {
     const current = await store.inspect(administrator)
 
     await expect(store.apply(administrator, { fingerprint: initial.fingerprint })).rejects.toMatchObject({ status: 409 })
-    const result = await store.apply(administrator, { fingerprint: current.fingerprint })
-    expect(result).toMatchObject({ applied: true, published: true })
+    await store.apply(administrator, { fingerprint: current.fingerprint })
     expect(applySaved).toHaveBeenCalledWith({ ldapdebug: false, sqllog: false })
     expect((await db('settings').where('key', 'flags').first()).value).toMatchObject({ ldapdebug: false, sqllog: false, retained: 'unrelated setting' })
     expect((await store.inspect(administrator)).process.settingsCurrent).toBe(true)

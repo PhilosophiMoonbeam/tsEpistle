@@ -271,12 +271,15 @@ afterEach(() => {
 
 describe('Agent context source transaction', () => {
   it('keeps selections across queries and commits both hydrated pages in one change', async () => {
-    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) => (query === 'alpha' ? result([row('11')]) : result([row(12)])))
+    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string, _options: Record<string, unknown>) =>
+      query === 'alpha' ? result([row('11')]) : result([row(12)])
+    )
     const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
     const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl)
     await openPicker(mounted)
+    expect(addButton().disabled).toBe(true)
     await search(mounted, 'alpha')
-    expect(searchPagesImpl).toHaveBeenCalledWith(expect.anything(), 'alpha', { paginated: true })
+    expect(searchPagesImpl.mock.calls[0]?.[2].paginated).toBe(true)
     await selectResult()
     await settle()
     await search(mounted, 'beta')
@@ -284,7 +287,7 @@ describe('Agent context source transaction', () => {
     await settle()
 
     expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(2)
-    expect(addButton().getAttribute('aria-label')).toBe('Add 2 selected sources')
+    expect(addButton().getAttribute('aria-label')).toMatch(/\badd\b.*\b2\b.*\bsources?\b/i)
     expect(addButton().disabled).toBe(false)
     addButton().click()
     await settle()
@@ -292,7 +295,7 @@ describe('Agent context source transaction', () => {
     expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').toBe('')
 
     expect(mounted.changes).toHaveLength(1)
-    expect((mounted.changes[0].sources as WikiSource[]).map(item => item.id)).toEqual([11, 12])
+    expect(mounted.changes[0]).toEqual({ sources: [source(11), source(12)] })
     expect(fetchWikiSourceImpl).toHaveBeenCalledTimes(2)
     expect(mounted.sourcesAdded.value).toBe(1)
     expect(window.location.pathname).toBe('/wiki/en/home')
@@ -315,6 +318,7 @@ describe('Agent context source transaction', () => {
 
     expect(mounted.changes).toHaveLength(0)
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Topic 22')
+    expect(resultCheckboxes()).toHaveLength(2)
     expect(Array.from(resultCheckboxes()).every(checkbox => checkbox.checked)).toBe(true)
   })
 
@@ -362,7 +366,7 @@ describe('Agent context source transaction', () => {
     const ninth = resultCheckboxes()[0]
     expect(ninth?.disabled).toBe(true)
     expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(1)
-    expect(addButton().getAttribute('aria-label')).toBe('Add 1 selected source')
+    expect(addButton().getAttribute('aria-label')).toMatch(/\badd\b.*\b1\b.*\bsources?\b/i)
     addButton().click()
     await settle()
 
@@ -386,10 +390,10 @@ describe('Agent context current-page inclusion', () => {
     if (!includeControl) throw new Error('Current-page source chip did not render')
 
     expect(includeControl.getAttribute('aria-pressed')).toBe('true')
-    expect(includeControl.textContent).not.toContain('Included')
     includeControl.click()
     await settle()
     expect(included.changes).toEqual([{ includeCurrentPage: false }])
+    expect(window.location.pathname).toBe('/wiki/en/home')
 
     const excluded = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft([], false), page)
     const excludeControl = excluded.host.querySelector<HTMLButtonElement>('.agent-context__page-chip')
@@ -398,6 +402,7 @@ describe('Agent context current-page inclusion', () => {
     excludeControl.click()
     await settle()
     expect(excluded.changes).toEqual([{ includeCurrentPage: true }])
+    expect(window.location.pathname).toBe('/wiki/en/home')
   })
 })
 
@@ -419,10 +424,9 @@ describe('Agent context source debounce', () => {
       await settle()
 
       expect(searchPagesImpl).not.toHaveBeenCalled()
-      expect(document.body.querySelector('.agent-context__results-state')?.textContent).toContain('Searching pages…')
-      expect(document.body.querySelector('.agent-context__status')?.textContent).toContain('Searching pages…')
-      expect(document.body.querySelector('.agent-context__results-state')?.textContent).not.toContain('No accessible pages')
-      expect(document.body.querySelector('.agent-context__status')?.textContent).not.toContain('0 results')
+      expect(document.body.querySelector('.agent-context__results-state[role="status"] .v-progress-circular')).not.toBeNull()
+      expect(document.body.querySelector('.agent-context__status[role="status"]')?.textContent).toMatch(/\b(searching|loading)\b/i)
+      expect(document.body.querySelector('.agent-context__status')?.textContent).not.toMatch(/\b0\s+results?\b/i)
 
       await vi.advanceTimersByTimeAsync(299)
       await settle()
@@ -430,7 +434,7 @@ describe('Agent context source debounce', () => {
 
       await vi.advanceTimersByTimeAsync(1)
       await settle()
-      expect(searchPagesImpl).toHaveBeenCalledWith(expect.anything(), 'pending', { paginated: true })
+      expect(searchPagesImpl).toHaveBeenCalledTimes(1)
 
       pending.resolve(result([row(51)]))
       await settle()
@@ -442,35 +446,11 @@ describe('Agent context source debounce', () => {
   })
 })
 
-describe('Agent context picker chrome', () => {
-  it('renders the streamlined chrome: terse guidance, single-line search, header actions, no footer', async () => {
-    const mounted = mountPicker(vi.fn(async () => result([row(61)])), vi.fn(async (selector: { id: number }) => source(selector.id)))
-    await openPicker(mounted)
-    await search(mounted, 'chrome')
-
-    const guidance = document.body.querySelector('.agent-context__dialog-guidance')
-    expect(guidance?.textContent).toContain('Select up to eight pages')
-    expect(guidance?.textContent).toContain('Ticked picks stay while you keep searching')
-
-    const searchInput = document.body.querySelector<HTMLInputElement>('.agent-context__search input')
-    expect(searchInput?.placeholder).toBe('Search pages (select up to 8)')
-    expect(document.body.querySelector('.agent-context__search .v-label')).toBeNull()
-
-    expect(document.body.querySelector('.agent-context__dialog-actions')).toBeNull()
-    expect(document.body.querySelector('.agent-context__dialog-close')).not.toBeNull()
-    expect(document.body.querySelector('.agent-context__dialog-confirm')).not.toBeNull()
-    expect(addButton().disabled).toBe(true)
-
-    await selectResult()
-    expect(addButton().disabled).toBe(false)
-    expect(addButton().getAttribute('aria-label')).toBe('Add 1 selected source')
-  })
-})
-
 describe('Agent context source cancellation', () => {
-  it('ignores a stale search completion after the dialog is cancelled', async () => {
-    const pending = deferred<PageSearchResult>()
-    const searchPagesImpl = vi.fn(() => pending.promise)
+  it('keeps fresh results after reopening when a cancelled search completes late', async () => {
+    const stale = deferred<PageSearchResult>()
+    const fresh = deferred<PageSearchResult>()
+    const searchPagesImpl = vi.fn((_fetchImpl: unknown, query: string) => (query === 'stale' ? stale.promise : fresh.promise))
     const mounted = mountPicker(
       searchPagesImpl,
       vi.fn(async (selector: { id: number }) => source(selector.id))
@@ -480,10 +460,21 @@ describe('Agent context source cancellation', () => {
     const cancel = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')
     if (!cancel) throw new Error('Cancel action did not render')
     cancel.click()
-    pending.resolve(result([row(41)]))
+    await settle()
+    expect(document.body.querySelector('.agent-context__result')).toBeNull()
+    await openPicker(mounted)
+    await search(mounted, 'fresh')
+    expect(document.body.querySelector('.agent-context__results-state[role="status"] .v-progress-circular')).not.toBeNull()
+
+    fresh.resolve(result([row(42)]))
+    await settle()
+    expect(Array.from(document.body.querySelectorAll('.agent-context__result strong'), element => element.textContent)).toEqual(['Topic 42'])
+
+    stale.resolve(result([row(41)]))
     await settle()
 
-    expect(document.body.querySelector('.agent-context__result')).toBeNull()
+    expect(Array.from(document.body.querySelectorAll('.agent-context__result strong'), element => element.textContent)).toEqual(['Topic 42'])
+    expect(document.body.querySelector('.agent-context__results-state')).toBeNull()
     expect(mounted.sourcesAdded.value).toBe(0)
     expect(mounted.changes).toHaveLength(0)
   })

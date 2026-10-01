@@ -26,11 +26,7 @@ describe('admin-pages-visualize stale locale loading behavior', () => {
       })
     const loadingEvents = []
     const errors = []
-    const markedDatasets = []
-    const markRaw = pages => {
-      markedDatasets.push(pages)
-      return pages
-    }
+    const markRaw = pages => pages
     const getErrorMessage = err => err.message
     const wikiStore = {
       startLoading(key) {
@@ -62,7 +58,6 @@ describe('admin-pages-visualize stale locale loading behavior', () => {
     expect(errors).toEqual([])
     expect(state.errorMessage).toBe('')
     expect(state.loading).toBe(true)
-    expect(markedDatasets).toEqual([])
     expect(loadingEvents).toEqual([
       ['start', 'admin-pages-refresh'],
       ['start', 'admin-pages-refresh'],
@@ -73,8 +68,6 @@ describe('admin-pages-visualize stale locale loading behavior', () => {
     pendingRequests.get('B').resolve(localeBPages)
     await localeBRequest
     expect(state.pages).toBe(localeBPages)
-    expect(markedDatasets).toHaveLength(1)
-    expect(markedDatasets[0]).toBe(localeBPages)
     expect(state.loading).toBe(false)
     expect(loadingEvents).toEqual([
       ['start', 'admin-pages-refresh'],

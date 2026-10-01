@@ -3,10 +3,10 @@ import { buildTocFromHtml } from '../../jobs/render-page-toc.ts'
 describe('jobs/render-page-toc/buildTocFromHtml', () => {
   it('builds a nested TOC and strips toc anchors from heading titles', () => {
     const html = [
-      '<h1>Intro<a class="toc-anchor" href="#intro"></a></h1>',
-      '<h2>Child<a class="toc-anchor" href="#child"></a></h2>',
-      '<h2>Sibling<a class="toc-anchor" href="#sibling"></a></h2>',
-      '<h3>Nested<a class="toc-anchor" href="#nested"></a></h3>'
+      '<h1>Intro<a class="toc-anchor" href="#intro">¶</a></h1>',
+      '<h2>Child<a class="toc-anchor" href="#child">¶</a></h2>',
+      '<h2>Sibling<a class="toc-anchor" href="#sibling">¶</a></h2>',
+      '<h3>Nested<a class="toc-anchor" href="#nested">¶</a></h3>'
     ].join('')
 
     expect(buildTocFromHtml(html)).toEqual([

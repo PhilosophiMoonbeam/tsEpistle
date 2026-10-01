@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 import { parseContentExtensionEnvelope, parseContentExtensionFence, serializeContentExtensionFence } from '../../../shared/content-extensions.ts'
 import { up as createRegistry } from '../../db/migrations/2.5.135.ts'
@@ -7,6 +7,7 @@ import { up as installRichExtensions } from '../../db/migrations/2.5.137.ts'
 import { up as installVisibleExtensions } from '../../db/migrations/2.5.138.ts'
 import markdownRenderer from '../../modules/rendering/markdown-core/renderer.ts'
 import { rerenderPagesForContentExtension, type ContentExtensionRerenderContext } from '../../content-extensions/rerender.ts'
+import type Page from '../../models/pages.ts'
 
 const baseConfig = {
   allowHTML: false,
@@ -43,7 +44,7 @@ const fixtures: unknown[] = [
 
 const renderMarkdown = (input: string) => markdownRenderer.render.call({ input, config: baseConfig, children: [] })
 
-describe('content extension byte lifecycle', () => {
+describe('content extension rendering and rerender lifecycle', () => {
   let db: Knex
 
   beforeEach(async () => {
@@ -60,6 +61,10 @@ describe('content extension byte lifecycle', () => {
       table.string('extensionKey').notNullable()
       table.string('hash')
       table.text('content').notNullable()
+      table.text('render').notNullable().defaultTo('')
+      table.string('visibility').notNullable().defaultTo('public')
+      table.boolean('isPublished').notNullable().defaultTo(true)
+      table.boolean('isSearchable').notNullable().defaultTo(true)
     })
     global.WIKI = { models: { knex: db } }
   })
@@ -68,42 +73,35 @@ describe('content extension byte lifecycle', () => {
     await db.destroy()
   })
 
-  it.each(fixtures)('preserves $key bytes across migration, parse, render, edit, save, and reload', async input => {
+  it.each(fixtures)('roundtrips canonical $key bytes and renders enabled or escaped disabled output', async input => {
     const envelope = parseContentExtensionEnvelope(input)
     const authored = serializeContentExtensionFence(envelope)
     const parsed = parseContentExtensionFence(authored.split('\n')[1] ?? '')
     const edited = serializeContentExtensionFence(parsed)
     expect(edited).toBe(authored)
 
-    await db('pages').insert({ id: fixtures.indexOf(input) + 1, extensionKey: envelope.key, content: edited })
-    const saved = await db('pages').where({ extensionKey: envelope.key }).first('content')
-    expect(saved?.content).toBe(authored)
-
-    const rendered = await renderMarkdown(saved?.content ?? '')
+    const rendered = await renderMarkdown(authored)
     expect(rendered).toContain(`content-extension--${envelope.key}`)
-    expect(await db('pages').where({ extensionKey: envelope.key }).first('content')).toEqual({ content: authored })
 
     await db('contentExtensions').where({ key: envelope.key }).update({ isEnabled: false })
     const fallback = await renderMarkdown(authored)
     expect(fallback).toContain('&quot;key&quot;')
     expect(fallback).not.toContain(`content-extension--${envelope.key}`)
-    expect(await db('pages').where({ extensionKey: envelope.key }).first('content')).toEqual({ content: authored })
   })
 
   it('refreshes extension-visible search terms on disable and enable without a page edit or rebuild', async () => {
-    const authored = serializeContentExtensionFence({ key: 'spoiler', version: 1, props: { content: 'Visible term' } })
-    await db('pages').insert({ id: 100, extensionKey: 'spoiler', hash: 'extension-page', content: authored })
-
-    let renderedWithExtension = false
+    const authored = serializeContentExtensionFence({ key: 'index', version: 1, props: { path: 'guide', locale: 'en' } })
+    await db('pages').insert({ id: 100, extensionKey: 'index', hash: 'extension-page', content: authored })
+    await db.schema.createTable('pageAccessPasswords', table => {
+      table.integer('pageId').primary()
+    })
+    const runtime = { models: { knex: db, pages: undefined as unknown as typeof Page } }
+    Reflect.set(globalThis, 'WIKI', runtime)
+    // Page and protection operations capture WIKI at evaluation; load them after installing this database runtime.
+    const PageModel = (await vi.importFresh<{ default: typeof Page }>('../../models/pages.ts', import.meta.url)).default
+    PageModel.knex(db)
+    runtime.models.pages = PageModel
     const indexedTerms = new Set<string>()
-    const page = {
-      id: 100,
-      hash: 'extension-page',
-      content: authored,
-      visibility: 'public',
-      isPublished: true,
-      safeContent: ''
-    }
     const wiki: ContentExtensionRerenderContext = {
       data: {
         searchEngine: {
@@ -119,41 +117,42 @@ describe('content extension byte lifecycle', () => {
       models: {
         pages: {
           async deletePageFromCache() {},
-          async getPageFromDb() {
-            return { ...page }
+          async getPageFromDb(pageId) {
+            const page = await PageModel.query().findById(pageId)
+            if (page) page.safeContent = ''
+            return page
           },
           async prepareSearchDocument(searchPage) {
-            return {
-              ...searchPage,
-              safeContent: renderedWithExtension ? 'extension-visible-term' : 'escaped-source'
-            }
+            const page = await PageModel.query().findById(searchPage.id)
+            if (!page) throw new Error('Search page disappeared')
+            return PageModel.prepareSearchDocument(page)
           },
-          async renderPage() {
-            const extension = await db('contentExtensions').where({ key: 'spoiler' }).first('isEnabled')
-            renderedWithExtension = extension?.isEnabled === 1
+          async renderPage(page) {
+            const stored = await db('pages').where({ id: page.id }).first('content')
+            await db('pages').where({ id: page.id }).update({ render: await renderMarkdown(stored.content) })
           }
         }
       }
     }
     const signal = new AbortController().signal
 
-    expect(await rerenderPagesForContentExtension(db, wiki, 'spoiler', signal)).toBe(1)
-    expect(indexedTerms.has('extension-visible-term')).toBe(true)
+    expect(await rerenderPagesForContentExtension(db, wiki, 'index', signal)).toBe(1)
+    expect(indexedTerms.has('loading')).toBe(true)
 
-    await db('contentExtensions').where({ key: 'spoiler' }).update({ isEnabled: false })
-    expect(await rerenderPagesForContentExtension(db, wiki, 'spoiler', signal)).toBe(1)
-    expect(indexedTerms.has('extension-visible-term')).toBe(false)
+    await db('contentExtensions').where({ key: 'index' }).update({ isEnabled: false })
+    expect(await rerenderPagesForContentExtension(db, wiki, 'index', signal)).toBe(1)
+    expect(indexedTerms.has('loading')).toBe(false)
 
-    await db('contentExtensions').where({ key: 'spoiler' }).update({ isEnabled: true })
-    expect(await rerenderPagesForContentExtension(db, wiki, 'spoiler', signal)).toBe(1)
-    expect(indexedTerms.has('extension-visible-term')).toBe(true)
-    expect(await db('pages').where({ id: page.id }).first('content')).toEqual({ content: authored })
+    await db('contentExtensions').where({ key: 'index' }).update({ isEnabled: true })
+    expect(await rerenderPagesForContentExtension(db, wiki, 'index', signal)).toBe(1)
+    expect(indexedTerms.has('loading')).toBe(true)
+    expect(await db('pages').where({ id: 100 }).first('content')).toEqual({ content: authored })
 
     wiki.models.pages.renderPage = async () => {
       throw new Error('render failed')
     }
-    await expect(rerenderPagesForContentExtension(db, wiki, 'spoiler', signal)).rejects.toThrow('render failed')
-    expect(indexedTerms.has('extension-visible-term')).toBe(false)
+    await expect(rerenderPagesForContentExtension(db, wiki, 'index', signal)).rejects.toThrow('render failed')
+    expect(indexedTerms.has('loading')).toBe(false)
   })
 
   it('rerenders every renderer-compatible extension fence and rejects lookalikes', async () => {
@@ -218,7 +217,7 @@ describe('content extension byte lifecycle', () => {
           async deletePageFromCache() {},
           async getPageFromDb(pageId) {
             const page = pages.find(candidate => candidate.id === pageId)
-            return page ? { ...page, visibility: 'private', isPublished: false, safeContent: '' } : undefined
+            return page ? { ...page, visibility: 'private', isPublished: false, isSearchable: true, safeContent: '' } : undefined
           },
           async prepareSearchDocument(page) {
             return page
@@ -275,6 +274,7 @@ describe('content extension byte lifecycle', () => {
               content: authored,
               visibility: 'public',
               isPublished: true,
+              isSearchable: true,
               safeContent: ''
             }
           },

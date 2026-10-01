@@ -59,7 +59,7 @@ const makeMalformedMultipartBody = parts => {
   }
 }
 
-const request = ({ port, body, boundary }) => new Promise((resolve, reject) => {
+const request = ({ port, body, boundary, pauseAt, beforeFinish }) => new Promise((resolve, reject) => {
   const req = http.request({
     hostname: '127.0.0.1',
     port,
@@ -88,7 +88,17 @@ const request = ({ port, body, boundary }) => new Promise((resolve, reject) => {
     })
   })
   req.on('error', reject)
-  req.end(body)
+  if (beforeFinish) {
+    req.write(body.subarray(0, pauseAt))
+    Promise.resolve().then(beforeFinish).then(() => {
+      req.end(body.subarray(pauseAt))
+    }, err => {
+      req.destroy()
+      reject(err)
+    })
+  } else {
+    req.end(body)
+  }
 })
 
 const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1, authorized = true } = {}) => {
@@ -120,12 +130,13 @@ const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1, authorized
   }
 
   const app = express()
+  const user = {
+    id: 7,
+    permissions: ['write:assets']
+  }
 
   app.use((req, res, next) => {
-    req.user = {
-      id: 7,
-      permissions: ['write:assets']
-    }
+    req.user = user
     next()
   })
 
@@ -147,7 +158,8 @@ const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1, authorized
   return {
     port: server.address().port,
     tempRoot,
-    wiki: global.WIKI
+    wiki: global.WIKI,
+    user
   }
 }
 
@@ -212,7 +224,7 @@ describe('controllers/upload real multipart integration', () => {
       { value: JSON.stringify({ folderId: 0 }) }
     ]]
   ])('successfully uploads a single multipart file with %s', async (_order, parts) => {
-    const { wiki, tempRoot } = await setupServer()
+    const { wiki, tempRoot, user } = await setupServer()
     wiki.models.assets.upload.mockImplementationOnce(async payload => {
       expect(fs.existsSync(payload.path)).toBe(true)
     })
@@ -224,7 +236,7 @@ describe('controllers/upload real multipart integration', () => {
     expect(wiki.models.assets.upload).toHaveBeenCalledTimes(1)
     expect(wiki.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
     expect(wiki.auth.loadPageRuleAuthority).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }))
-    expect(wiki.auth.checkPageAccess).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), ['write:assets', 'manage:system'], {
+    expect(wiki.auth.checkPageAccess).toHaveBeenCalledWith(user, ['write:assets', 'manage:system'], {
       path: 'my_file_name_v1.png'
     }, uploadAuthority)
     expect(wiki.models.assets.upload).toHaveBeenCalledWith(expect.objectContaining({
@@ -232,7 +244,7 @@ describe('controllers/upload real multipart integration', () => {
       folderId: null,
       assetPath: 'my_file_name_v1.png',
       originalname: 'my_file_name_v1.png',
-      user: expect.objectContaining({ id: 7 }),
+      user,
       destination: path.join(tempRoot, 'data', 'uploads'),
       size: Buffer.byteLength('hello upload'),
       mimetype: 'image/png'
@@ -271,6 +283,7 @@ describe('controllers/upload real multipart integration', () => {
       succeeded: false,
       message: 'Missing upload folder metadata.'
     })
+    expect(wiki.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
     expect(wiki.models.assets.upload).not.toHaveBeenCalled()
   })
 
@@ -292,6 +305,7 @@ describe('controllers/upload real multipart integration', () => {
       succeeded: false,
       message: 'Missing upload folder metadata.'
     })
+    expect(wiki.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
     expect(wiki.models.assets.upload).not.toHaveBeenCalled()
     expect(uploadDirectoryFiles()).toEqual([])
   })
@@ -341,14 +355,32 @@ describe('controllers/upload real multipart integration', () => {
   })
 
   it('rejects a second text field with a bounded response and cleans staging', async () => {
-    const { wiki } = await setupServer()
+    const { port, wiki } = await setupServer()
     const fieldName = 'extra'
-
-    const res = await postMultipart([
+    const file = { filename: 'second-field.txt', value: Buffer.from('staged file'), type: 'text/plain' }
+    const multipart = makeMultipartBody([
+      file,
       { value: JSON.stringify({ folderId: 0 }) },
-      { name: fieldName, value: 'unexpected' },
-      { filename: 'second-field.txt', value: Buffer.from('staged file'), type: 'text/plain' }
+      { name: fieldName, value: 'unexpected' }
     ])
+    // Include the next boundary to finish the file stream, but hold both text fields.
+    const pauseAt = Buffer.byteLength(`--${multipart.boundary}${CRLF}`) * 2 + makePart(file).length
+    let stagedPath
+
+    const res = await request({
+      port,
+      ...multipart,
+      pauseAt,
+      beforeFinish: async () => {
+        await vi.waitFor(() => {
+          const stagedFiles = uploadDirectoryFiles()
+          expect(stagedFiles).toHaveLength(1)
+          stagedPath = path.join(tempRoot, 'data', 'uploads', stagedFiles[0])
+          expect(fs.existsSync(stagedPath)).toBe(true)
+          expect(fs.readFileSync(stagedPath)).toEqual(file.value)
+        }, { timeout: 1000 })
+      }
+    })
 
     expect(res.status).toBe(400)
     expect(res.json).toEqual({
@@ -357,6 +389,7 @@ describe('controllers/upload real multipart integration', () => {
     })
     expect(res.text).not.toContain(fieldName)
     expect(wiki.models.assets.upload).not.toHaveBeenCalled()
+    expect(fs.existsSync(stagedPath)).toBe(false)
     expect(uploadDirectoryFiles()).toEqual([])
   })
 
@@ -449,6 +482,10 @@ describe('controllers/upload real multipart integration', () => {
     ])
 
     expect(res.status).toBe(400)
+    expect(res.json).toEqual({
+      succeeded: false,
+      message: 'Failed to fetch folder hierarchy.'
+    })
     expect(wiki.models.assets.upload).not.toHaveBeenCalled()
     expect(uploadDirectoryFiles()).toEqual([])
   })

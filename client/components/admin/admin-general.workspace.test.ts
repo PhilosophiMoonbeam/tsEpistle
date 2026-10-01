@@ -4,7 +4,7 @@ import { generalPolicyDefaults, generalFieldLabels, validateGeneralPolicy, gener
 import { siteBannerState } from '../../../shared/site-banner.ts'
 const script = fs.readFileSync('client/components/admin/admin-general.vue', 'utf8').match(/<script lang="ts">([\s\S]*?)<\/script>/)![1]!
 const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import[\s\S]*?from ['"][^'"]+['"];?\s*$/gm, '').replace('export default', 'const component ='))
-const snapshot = { policy: { ...structuredClone(generalPolicyDefaults), host: 'https://wiki.example.com' }, fingerprint: 'review-one', history: [], runtime: { state: 'applied', observedAt: '2026-09-06T00:00:00Z' } }
+const snapshot = { policy: { ...structuredClone(generalPolicyDefaults), title: 'Saved workspace', host: 'https://wiki.example.com' }, fingerprint: 'review-one', history: [], runtime: { state: 'applied', observedAt: '2026-09-06T00:00:00Z' } }
 function arrange(overrides = {}) {
   const transport = { fetchGeneralWorkspace: vi.fn().mockResolvedValue(structuredClone(snapshot)), saveGeneralWorkspace: vi.fn().mockResolvedValue({ activation: 'applied' }), retryGeneralRuntime: vi.fn().mockResolvedValue({ activation: 'applied' }), ...overrides }
   const window = { confirm: vi.fn().mockReturnValue(true), scrollTo: vi.fn() }, wikiStore = { site: {} }
@@ -17,7 +17,7 @@ function arrange(overrides = {}) {
 }
 describe('General reviewed workspace', () => {
   it('separates saved settings from drafts, supports reset and keeps schedule values explicitly UTC', async () => {
-    const { state } = arrange(); await state.load(); state.draft.title = 'Draft'; expect(state.saved.policy.title).toBe('tsEpistle'); state.setSchedule('startsAt', '2026-09-08T10:30'); expect(state.draft.banner.startsAt).toBe('2026-09-08T10:30:00Z'); state.setSchedule('endsAt', null); expect(state.draft.banner.endsAt).toBeNull(); state.reset(); expect(state.dirty).toBe(false)
+    const { state } = arrange(); await state.load(); state.draft.title = 'Draft'; expect(state.saved.policy.title).toBe('Saved workspace'); state.setSchedule('startsAt', '2026-09-08T10:30'); expect(state.draft.banner.startsAt).toBe('2026-09-08T10:30:00Z'); state.setSchedule('endsAt', null); expect(state.draft.banner.endsAt).toBeNull(); state.reset(); expect(state.dirty).toBe(false)
     state.setRobots('index', 'noindex'); expect(state.draft.robots).toContain('noindex'); expect(state.draft.robots).not.toContain('index')
   })
   it('uses an immutable review and locks navigation until the write settles', async () => {
@@ -31,7 +31,7 @@ describe('General reviewed workspace', () => {
   })
   it('requires reload after uncertain writes but preserves a confirmed save when its following read fails', async () => {
     for (const error of [new Error('Disconnected'), Object.assign(new Error('Gateway failed'),{status:502})]) { const {state,transport}=arrange(); await state.load(); state.draft.title='Draft'; state.review(); state.reason='Describe the change'; transport.saveGeneralWorkspace.mockRejectedValue(error); await state.confirm(); expect(state.locked).toBe(true) }
-    const {state,transport,wikiStore}=arrange(); await state.load(); state.draft.title='Committed'; state.review(); state.reason='Describe the change'; transport.fetchGeneralWorkspace.mockRejectedValue(new Error('Read unavailable')); await state.confirm(); expect(state.saved.policy.title).toBe('Committed'); expect(state.dirty).toBe(false); expect(state.stale).toBe(true); expect(wikiStore.site).toMatchObject({title:'Committed'}); expect(state.notice).toContain('Workspace settings saved')
+    const {state,transport,wikiStore}=arrange(); await state.load(); state.draft.title='Committed'; state.review(); state.reason='Describe the change'; transport.fetchGeneralWorkspace.mockRejectedValue(new Error('Read unavailable')); await state.confirm(); expect(state.saved.policy.title).toBe('Committed'); expect(state.dirty).toBe(false); expect(state.stale).toBe(true); expect(wikiStore.site).toMatchObject({title:'Committed'}); expect(state.saveError).toBe(''); expect(state.loadError).toBe('Read unavailable')
   })
   it('validates before review and permits runtime retry only for a clean saved state', async () => {
     const {state,transport}=arrange(); await state.load(); state.draft.host='javascript:alert(1)'; state.review(); expect(state.reviewing).toBe(false); expect(state.attention).toBe(true); await state.initialize(); expect(transport.retryGeneralRuntime).not.toHaveBeenCalled(); state.reset(); await state.initialize(); expect(transport.retryGeneralRuntime).toHaveBeenCalledWith('review-one')

@@ -38,12 +38,14 @@ interface SceneControls {
   error: () => void
   contextLost: () => void
   tick: () => void
+  retired: Omit<SceneControls, 'retired' | 'tick'>
 }
 
 interface PendingFetch {
   readonly url: string
   readonly signal: AbortSignal | null
   readonly credentials: RequestCredentials | undefined
+  rejectOnAbort: boolean
   resolve: (response: Response) => void
   reject: (reason: unknown) => void
 }
@@ -122,11 +124,14 @@ const fetchStub = ((input: RequestInfo | URL, init?: RequestInit): Promise<Respo
     url: String(input),
     credentials: init?.credentials,
     signal: init?.signal ?? null,
+    rejectOnAbort: true,
     resolve,
     reject
   }
   pendingFetches.push(request)
-  init?.signal?.addEventListener('abort', () => reject(new browserWindow.DOMException('Aborted', 'AbortError')), { once: true })
+  init?.signal?.addEventListener('abort', () => {
+    if (request.rejectOnAbort) reject(new browserWindow.DOMException('Aborted', 'AbortError'))
+  }, { once: true })
   return promise
 }) as typeof fetch
 
@@ -398,7 +403,7 @@ __sfc__.render = render
 export default __sfc__
 `
 const sceneStubSource = `
-import { defineComponent, h, onBeforeUnmount, onMounted } from 'vue'
+import { defineComponent, getCurrentInstance, h, onBeforeUnmount, onMounted } from 'vue'
 
 const bridge = globalThis.__loginLogoSceneTestBridge
 
@@ -413,6 +418,16 @@ export default defineComponent({
   },
   emits: ['first-frame', 'frame-pending', 'error', 'context-lost'],
   setup (props, { emit, expose }) {
+    const listeners = getCurrentInstance().vnode.props
+    const retired = {
+      firstFrame: listeners.onFirstFrame,
+      framePending: listeners.onFramePending,
+      error: listeners.onError,
+      contextLost: listeners.onContextLost
+    }
+    if (Object.values(retired).some(handler => typeof handler !== 'function')) {
+      throw new Error('Wrapper scene event handlers were not installed')
+    }
     let tornDown = false
     const teardown = () => {
       if (tornDown) return
@@ -426,6 +441,7 @@ export default defineComponent({
       framePending: () => emit('frame-pending'),
       error: () => emit('error'),
       contextLost: () => emit('context-lost'),
+      retired,
       tick: () => {
         if (props.active && !tornDown) bridge.frame()
       }
@@ -699,8 +715,14 @@ describe('LoginParticleLogo static behavior', () => {
     expect(logoField(mounted.host)).toBeNull()
     await updateEnvironment({ width: 1440, height: 650 })
     expect(logoField(mounted.host)).toBeNull()
-    await updateEnvironment({ height: 900, hover: false, finePointer: false })
+    await updateEnvironment({ height: 900, hover: false, finePointer: true })
     expect(logoField(mounted.host)).toBeNull()
+    await updateEnvironment({ hover: true, finePointer: true })
+    expect(logoField(mounted.host)).not.toBeNull()
+    await updateEnvironment({ hover: true, finePointer: false })
+    expect(logoField(mounted.host)).toBeNull()
+    await updateEnvironment({ finePointer: true })
+    expect(logoField(mounted.host)).not.toBeNull()
     await updateEnvironment({ hover: true, finePointer: true, card: { left: 86, top: 40, width: 1330, height: 820 } })
     expect(logoField(mounted.host)).toBeNull()
 
@@ -883,23 +905,35 @@ describe('LoginParticleLogo static behavior', () => {
 })
 
 describe('LoginParticleLogo lazy particle enhancement', () => {
-  it('keeps a narrow desktop field static while allocating zero renderer resources below the animation-size threshold', async () => {
+  it.each([
+    { gate: 'both axes', cardWidth: 800, effect: particleEffect, longAxisPasses: false, shortAxisPasses: false },
+    { gate: 'long axis only', cardWidth: 700, effect: particleEffect, longAxisPasses: false, shortAxisPasses: true },
+    {
+      gate: 'short axis only',
+      cardWidth: 800,
+      effect: { ...particleEffect, width: 8, height: 160, aspect: 0.05 },
+      longAxisPasses: true,
+      shortAxisPasses: false
+    }
+  ])('keeps a narrow desktop field static with zero enhancement resources when $gate fails', async ({ cardWidth, effect, longAxisPasses, shortAxisPasses }) => {
     environment.width = 960
-    environment.card = { left: 86, top: 120, width: 800, height: 660 }
-    const mounted = await mountLogo(particleEffect)
+    environment.card = { left: 86, top: 120, width: cardWidth, height: 660 }
+    const mounted = await mountLogo(effect)
     const field = logoField(mounted.host)
     if (!field) throw new Error('Positive non-overlapping logo field was not laid out')
 
-    const image = await loadStaticRendition(mounted, particleEffect)
+    const image = await loadStaticRendition(mounted, effect)
     const fieldBounds = renderedRect(field)
     const imageBounds = renderedRect(image)
     expect(fieldBounds.height).toBeGreaterThan(fieldBounds.width)
     expect(intersects(fieldBounds, rect(environment.card))).toBe(false)
-    expect(Math.max(imageBounds.width, imageBounds.height)).toBeLessThan(256)
-    expect(Math.min(imageBounds.width, imageBounds.height)).toBeLessThan(48)
+    if (longAxisPasses) expect(Math.max(imageBounds.width, imageBounds.height)).toBeGreaterThanOrEqual(256)
+    else expect(Math.max(imageBounds.width, imageBounds.height)).toBeLessThan(256)
+    if (shortAxisPasses) expect(Math.min(imageBounds.width, imageBounds.height)).toBeGreaterThanOrEqual(48)
+    else expect(Math.min(imageBounds.width, imageBounds.height)).toBeLessThan(48)
 
     await runIdleWork()
-    expect(image.getAttribute('src')).toBe(particleEffect.staticUrl)
+    expect(image.getAttribute('src')).toBe(effect.staticUrl)
     expect(image.style.opacity).toBe('1')
     expect(mounted.host.querySelector('canvas')).toBeNull()
     expect(idleCallbacks.size).toBe(0)
@@ -994,19 +1028,6 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     }
   })
 
-  it('keeps enhancement behavior unchanged and leaves no startup trace when the benchmark hook is absent', async () => {
-    const mounted = await mountLogo(particleEffect)
-    await loadStaticRendition(mounted, particleEffect)
-    await runIdleWork()
-    const request = pendingFetches[0]
-    if (!request) throw new Error('Particle request did not start')
-    request.resolve(new Response(particleFixture))
-    await settle()
-
-    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).not.toBeNull()
-    expect((browserWindow as unknown as PerformanceWindow).__logoParticlePerformance).toBeUndefined()
-  })
-
   it('waits for a valid static rendition and idle time before loading, then crossfades only after the first frame', async () => {
     const mounted = await mountLogo(particleEffect)
     expect(idleCallbacks.size).toBe(0)
@@ -1036,6 +1057,7 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     await settle()
     expect(deadlineCallbacks.size).toBe(0)
     expect(staticImage(mounted.host)?.style.opacity).toBe('0')
+    expect((browserWindow as unknown as PerformanceWindow).__logoParticlePerformance).toBeUndefined()
   })
 
   it('keeps static coverage through initial and resumed frame gaps without reloading particles', async () => {
@@ -1112,11 +1134,13 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     expect(scene.isConnected).toBe(false)
     expect(resourceEvents.filter(event => event === 'scene-teardown')).toHaveLength(teardownCount + 1)
 
-    controls.firstFrame()
-    controls.error()
-    controls.contextLost()
+    controls.retired.firstFrame()
+    controls.retired.error()
+    controls.retired.contextLost()
     await settle()
     expect(resourceEvents.filter(event => event === 'scene-teardown')).toHaveLength(teardownCount + 1)
+    expect(staticImage(mounted.host)?.style.opacity).toBe('1')
+    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
   })
 
   it('latches a committed scene failure to static fallback until the effect descriptor changes', async () => {
@@ -1170,46 +1194,34 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     const controls = sceneControls[0]
     const resourceTrace = [...resourceEvents]
     if (!scene || !controls) throw new Error('Ready particle scene did not mount')
-    controls.tick()
-    expect(sceneFrameCallbacks).toBe(1)
 
     await setPageVisibility('hidden')
-    controls.tick()
     expect(mounted.host.querySelector('canvas.login-particle-logo__scene-stub')).toBe(scene)
     expect(scene.dataset.active).toBe('false')
-    expect(sceneFrameCallbacks).toBe(1)
     expect(sceneControls).toEqual([controls])
     expect(resourceEvents).toEqual(resourceTrace)
 
     await setPageVisibility('visible')
-    controls.tick()
     expect(mounted.host.querySelector('canvas.login-particle-logo__scene-stub')).toBe(scene)
     expect(scene.dataset.active).toBe('true')
-    expect(sceneFrameCallbacks).toBe(2)
     expect(sceneControls).toEqual([controls])
     expect(resourceEvents).toEqual(resourceTrace)
 
     await setSurfaceVisibility(false)
-    controls.tick()
     expect(mounted.host.querySelector('canvas.login-particle-logo__scene-stub')).toBe(scene)
     expect(scene.dataset.active).toBe('false')
-    expect(sceneFrameCallbacks).toBe(2)
     expect(sceneControls).toEqual([controls])
     expect(resourceEvents).toEqual(resourceTrace)
 
     await setSurfaceVisibility(true)
-    controls.tick()
     expect(mounted.host.querySelector('canvas.login-particle-logo__scene-stub')).toBe(scene)
     expect(scene.dataset.active).toBe('true')
-    expect(sceneFrameCallbacks).toBe(3)
     expect(sceneControls).toEqual([controls])
     expect(resourceEvents).toEqual(resourceTrace)
 
     await updateEnvironment({ width: 959 })
-    controls.tick()
     expect(logoField(mounted.host)).toBeNull()
     expect(scene.isConnected).toBe(false)
-    expect(sceneFrameCallbacks).toBe(3)
     expect(resourceEvents).toEqual([...resourceTrace, 'scene-teardown'])
   })
 
@@ -1228,6 +1240,7 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     const request = pendingFetches[0]
     const staleDeadline = [...deadlineCallbacks.values()][0]
     if (!request || !staleDeadline) throw new Error('Visible particle epoch did not start')
+    request.rejectOnAbort = false
 
     await setSurfaceVisibility(false)
     expect(request.signal?.aborted).toBe(true)
@@ -1254,6 +1267,7 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     const request = pendingFetches[0]
     const staleDeadline = [...deadlineCallbacks.values()][0]
     if (!request || !staleDeadline) throw new Error('Particle request did not start')
+    request.rejectOnAbort = false
     const resourceTrace = [...resourceEvents]
 
     const reduction = updateEnvironment({ reducedMotion: true })
@@ -1300,9 +1314,9 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
 
     for (const query of mediaQueries.values()) query.dispatch()
     expect(resourceEvents).toEqual([...resourceTrace, 'scene-teardown'])
-    controls.firstFrame()
-    controls.error()
-    controls.contextLost()
+    controls.retired.firstFrame()
+    controls.retired.error()
+    controls.retired.contextLost()
     await settle()
     await updateEnvironment({ reducedMotion: false })
     await runIdleWork()
@@ -1342,7 +1356,7 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
       staticUrl: '/_site-logo/1111111111111111111111111111111111111111111111111111111111111111/effect.png'
     }
     await mounted.setEffect(secondEffect)
-    retiredScene.firstFrame()
+    retiredScene.retired.firstFrame()
     await settle()
     expect(staticImage(mounted.host)?.style.opacity).toBe('1')
     expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
@@ -1351,6 +1365,7 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     await runIdleWork()
     const staleFetch = pendingFetches[1]
     if (!staleFetch) throw new Error('Second particle request did not start')
+    staleFetch.rejectOnAbort = false
 
     const thirdEffect: LogoEffectDescriptor = {
       ...particleEffect,
@@ -1363,6 +1378,27 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     await settle()
     expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
     expect(staticImage(mounted.host)?.style.opacity).toBe('1')
+
+    await loadStaticRendition(mounted, thirdEffect)
+    await runIdleWork()
+    pendingFetches[2]?.resolve(new Response(particleFixture))
+    await settle()
+    const currentScene = sceneControls[1]
+    const currentCanvas = mounted.host.querySelector('.login-particle-logo__scene-stub')
+    if (!currentScene || !currentCanvas) throw new Error('Replacement scene did not mount')
+    currentScene.firstFrame()
+    await settle()
+    expect(staticImage(mounted.host)?.style.opacity).toBe('0')
+    const currentTrace = [...resourceEvents]
+    retiredScene.retired.error()
+    retiredScene.retired.contextLost()
+    retiredScene.retired.framePending()
+    retiredScene.retired.firstFrame()
+    await settle()
+    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBe(currentCanvas)
+    expect(staticImage(mounted.host)?.style.opacity).toBe('0')
+    expect(deadlineCallbacks.size).toBe(0)
+    expect(resourceEvents).toEqual(currentTrace)
   })
 
   it('restores static output after network/parser failures and tears down each context/error scene exactly once', async () => {
@@ -1419,9 +1455,9 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     expect(staticImage(runtimeFailure.host)?.style.opacity).toBe('1')
     expect(runtimeFailure.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
     expect(resourceEvents.filter(event => event === 'scene-teardown')).toHaveLength(contextTeardowns + 1)
-    contextControls.contextLost()
-    contextControls.error()
-    contextControls.firstFrame()
+    contextControls.retired.contextLost()
+    contextControls.retired.error()
+    contextControls.retired.firstFrame()
     await settle()
     runtimeFailure.unmount()
     mountedApps.pop()
@@ -1442,8 +1478,8 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     expect(staticImage(sceneFailure.host)?.style.opacity).toBe('1')
     expect(sceneFailure.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
     expect(resourceEvents.filter(event => event === 'scene-teardown')).toHaveLength(errorTeardowns + 1)
-    errorControls.error()
-    errorControls.contextLost()
+    errorControls.retired.error()
+    errorControls.retired.contextLost()
     await settle()
     expect(resourceEvents.filter(event => event === 'scene-teardown')).toHaveLength(errorTeardowns + 1)
   })

@@ -33,10 +33,12 @@ describe('administration settings discovery', () => {
 
   test('finds settings by synonyms and combined terms without changing the catalog', () => {
     const groups = catalog()
+    const originalGroups = structuredClone(groups)
     expect(filterAdminNavigation(groups, '  mCp  ').flatMap(group => group.items.map(item => item.key))).toEqual(['agents', 'api'])
     expect(filterAdminNavigation(groups, 'members')[0].items[0].key).toBe('users')
     expect(filterAdminNavigation(groups, 'backup sync')[0].items[0].key).toBe('storage')
     expect(filterAdminNavigation(groups, 'not-a-setting')).toEqual([])
-    expect(filterAdminNavigation(groups, '')).toBe(groups)
+    expect(filterAdminNavigation(groups, '')).toEqual(originalGroups)
+    expect(groups).toEqual(originalGroups)
   })
 })

@@ -81,12 +81,11 @@ describe('database notifications', () => {
     database.notifyViaDB('page.updated', { id: 42 })
 
     await vi.waitFor(() => expect(wiki.logger.error).toHaveBeenCalledOnce())
-    expect(wiki.logger.error).toHaveBeenCalledWith({
-      message: 'Failed to publish High-Availability notification',
+    expect(wiki.logger.error).toHaveBeenCalledWith(expect.objectContaining({
       channel: 'wiki',
       event: 'page.updated',
       error: 'connection lost'
-    })
+    }))
   })
   it('tags the listener without discarding URL-style connection settings', async () => {
     database.knex = {

@@ -30,13 +30,20 @@ beforeEach(async () => {
 afterAll(() => configureTransportRuntime({}))
 describe('Theme configuration and reviewed workspace API', () => {
   it('enforces permission before inspecting or mutating', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(false)
-    for (const [key, handler] of Object.entries(routes)) {
+    const user = { id: 3 }
+    global.WIKI.auth.checkAccess.mockImplementation((principal, permissions) => {
+      expect(principal).toBe(user)
+      expect(new Set(permissions)).toEqual(new Set(['manage:theme', 'manage:system']))
+      return false
+    })
+    for (const key of ['get/config', 'post/config', 'get/workspace', 'put/workspace', 'post/workspace/activate']) {
+      global.WIKI.auth.checkAccess.mockClear()
       const res = response()
-      await handler({ user: { id: 3 } }, res)
+      await routes[key]({ user }, res)
+      expect(global.WIKI.auth.checkAccess).toHaveBeenCalled()
       expect(key === 'get/config' ? res.sendStatus : res.status).toHaveBeenCalledWith(403)
     }
-    expect(store.inspect).not.toHaveBeenCalled(); expect(store.save).not.toHaveBeenCalled(); expect(operations.updateConfig).not.toHaveBeenCalled()
+    for (const operation of [...Object.values(operations), ...Object.values(store)]) expect(operation).not.toHaveBeenCalled()
   })
   it('passes the authenticated principal and reviewed fields to the durable store', async () => {
     const req = {
@@ -61,6 +68,8 @@ describe('Theme configuration and reviewed workspace API', () => {
     store.save.mockRejectedValue(new Error('postgres://private-database-detail'))
     const failure = response(); await routes['put/workspace'](req, failure)
     expect(failure.status).toHaveBeenCalledWith(500); expect(JSON.stringify(failure.json.mock.calls)).not.toContain('private-database-detail')
+    expect(failure.json).toHaveBeenCalledTimes(1)
+    expect(failure.json).toHaveBeenCalledWith({ error: expect.any(String) })
   })
   it('returns forbidden for custom source changes through reviewed and compatibility REST paths', async () => {
     const forbidden = Object.assign(new Error('Full system administration is required to change custom theme code.'), { status: 403 })
@@ -81,12 +90,16 @@ describe('Theme configuration and reviewed workspace API', () => {
     await routes['post/config'](req, res)
     expect(operations.updateConfig).toHaveBeenCalledWith(req.body, req.user)
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
-    expect(res.json).toHaveBeenCalledWith({ message: 'Theme config updated' })
+    expect(res.json).toHaveBeenCalledWith({ message: expect.stringMatching(/./s) })
   })
   it('supports current workspace inspection and runtime recovery', async () => {
     const req = { user: { id: 7 }, body: { fingerprint: 'review' } }
     store.inspect.mockResolvedValue({ fingerprint: 'review' }); store.initialize.mockResolvedValue({ activation: 'needs-attention' })
     const get = response(); await routes['get/workspace'](req, get); expect(get.json).toHaveBeenCalledWith({ fingerprint: 'review' })
+    expect(store.inspect).toHaveBeenCalledWith(req.user)
+    expect(get.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
     const activate = response(); await routes['post/workspace/activate'](req, activate); expect(store.initialize).toHaveBeenCalledWith(req.user, 'review')
+    expect(activate.json).toHaveBeenCalledWith({ activation: 'needs-attention' })
+    expect(activate.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
   })
 })

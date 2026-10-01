@@ -5,7 +5,7 @@ const {default:express}=await import('express')
 const originalWiki=global.WIKI, user={id:1,authVersion:0}
 const workspace=()=>({policy:{localEnabled:false,externalEnabled:false,audience:'everyone',excludeAdministrators:true,respectPrivacySignals:true,excludedPaths:[],retentionDays:90},fingerprint:'f'.repeat(64),providers:[{key:'plausible',title:'Plausible',description:'Traffic',isAvailable:true,isEnabled:false,website:'https://plausible.io',fields:[{key:'domain',title:'Domain',hint:'Site domain'}],config:{domain:'wiki.example.test'}}]})
 const response=()=>({set:vi.fn().mockReturnThis(),status:vi.fn().mockReturnThis(),json:vi.fn()})
-beforeEach(()=>{global.WIKI={auth:{checkAccess:vi.fn(()=>true)}};store.inspect.mockResolvedValue(workspace());store.save.mockResolvedValue({revision:'saved'});store.erase.mockResolvedValue({revision:'erased',erasedRows:2})})
+beforeEach(()=>{global.WIKI={auth:{checkAccess:vi.fn(()=>true)}};for(const fn of Object.values(store))fn.mockReset();store.inspect.mockResolvedValue(workspace());store.save.mockResolvedValue({revision:'saved'});store.erase.mockResolvedValue({revision:'erased',erasedRows:2})})
 afterEach(()=>{global.WIKI=originalWiki})
 const handlers=async()=>{await vi.importFresh('../../controllers/api/analytics.ts',import.meta.url);return Object.fromEntries(['get','post','put'].flatMap(method=>express.__router[method].mock.calls.map(([path,handler])=>[method+' '+path,handler])))}
 describe('Reviewed Analytics HTTP and compatibility endpoints',()=>{
@@ -23,11 +23,20 @@ describe('Reviewed Analytics HTTP and compatibility endpoints',()=>{
   store.inspect.mockRejectedValue(new Error('database password secret'));res=response();await routes['get /workspace']({user},res);expect(res.status).toHaveBeenCalledWith(500);expect(JSON.stringify(res.json.mock.calls)).not.toContain('secret')
  })
  it('lists compatible field envelopes without bypassing current administrative access',async()=>{
-  const routes=await handlers(),res=response();await routes['get /providers']({user,query:{}},res);expect(store.inspect).toHaveBeenCalledWith(user);expect(res.json.mock.calls[0][0][0].config[0]).toEqual({key:'domain',value:JSON.stringify({type:'string',title:'Domain',hint:'Site domain',order:0,value:'wiki.example.test'})})
+  const routes=await handlers(),res=response();await routes['get /providers']({user,query:{}},res);expect(store.inspect).toHaveBeenCalledWith(user)
+  const field=res.json.mock.calls[0][0][0].config[0]
+  expect(field).toEqual({key:'domain',value:expect.any(String)})
+  expect(JSON.parse(field.value)).toEqual({type:'string',title:'Domain',hint:'Site domain',order:0,value:'wiki.example.test'})
  })
  it('routes legacy provider patches through one attributed atomic publication without resuming paused collection',async()=>{
   const routes=await handlers(),res=response();await routes['post /providers']({user,body:{providers:[{key:'plausible',isEnabled:true,config:[{key:'domain',value:'{"v":"new.example.test"}'}]}]}},res)
-  expect(store.save).toHaveBeenCalledWith(user,{policy:workspace().policy,providers:[{key:'plausible',isEnabled:true,config:{domain:'new.example.test'}}],fingerprint:'f'.repeat(64),reason:'Provider configuration updated through the compatibility API.'})
+  expect(store.save).toHaveBeenCalledTimes(1)
+  expect(store.save).toHaveBeenCalledWith(user,expect.objectContaining({policy:workspace().policy,providers:[{key:'plausible',isEnabled:true,config:{domain:'new.example.test'}}],fingerprint:'f'.repeat(64),reason:expect.any(String)}))
+  const reason=store.save.mock.calls[0][1].reason.trim()
+  expect(reason.length).toBeGreaterThanOrEqual(3)
+  expect(reason.length).toBeLessThanOrEqual(1000)
+  expect(res.status).not.toHaveBeenCalled()
+  expect(res.json).toHaveBeenCalledWith({message:expect.any(String)})
  })
  it('rejects duplicate, unknown, prototype and malformed legacy fields before publication',async()=>{
   const routes=await handlers();for(const config of [[{key:'__proto__',value:'{"v":"bad"}'}],[{key:'domain',value:'broken'}],[{key:'domain',value:'{"v":{}}'}],[{key:'domain',value:'{"v":"one"}'},{key:'domain',value:'{"v":"two"}'}]]){const res=response();await routes['post /providers']({user,body:{providers:[{key:'plausible',isEnabled:true,config}]}},res);expect(res.status).toHaveBeenCalledWith(400)}expect(store.save).not.toHaveBeenCalled()

@@ -277,6 +277,7 @@ jobs:
       run: bun install --frozen-lockfile
     - name: Measure Bounded Page Index
       env:
+        WIKI_TEST_NAMESPACE: tsepistle-ci-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}-page-index
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
         PAGE_INDEX_BENCHMARK_FILE: page-index-benchmark-postgres-${{ matrix.pgversion }}.json
       run: bun run benchmark:page-index

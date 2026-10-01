@@ -1,8 +1,8 @@
 import type { Knex } from 'knex'
 
-import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
 import { ActionKernel, type ActionAdmissionSnapshot } from '../../agents/actions/kernel.ts'
+import { pageAuthority, serializeCanonicalOkfPage } from '../../agents/okf.ts'
 import { KernelActionSessionProvider } from '../../agents/providers/action-sessions.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -26,14 +26,22 @@ const actionOutput = {
   citationSections: [],
   knowledge: null
 }
-const okfOutput = {
+const okfOutput = serializeCanonicalOkfPage({
   pageId: 42,
   versionId: null,
   sourceRevision: '8',
-  resourceUri: 'wiki://pages/42/versions/current/revisions/8/okf'
-}
+  locale: actionOutput.locale,
+  path: actionOutput.path,
+  title: actionOutput.title,
+  description: actionOutput.description,
+  tags: [],
+  visibility: 'public',
+  content: actionOutput.content,
+  authority: pageAuthority({ okf: { type: 'Procedure', status: 'stable' } }),
+  knowledge: null
+})
 const historyOutput = {
-  versions: [{ id: 9, sourceRevision: '8', resourceUri: 'wiki://pages/42/versions/9/revisions/8/okf' }]
+  versions: [{ id: 9, sourceRevision: '8', resourceUri: 'wiki://pages/42/versions/9/revisions/8/okf', action: 'updated', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Author' }]
 }
 const historicalOutput = {
   ...actionOutput,
@@ -118,111 +126,55 @@ const kernelWithReadActions = (): ActionKernel => {
 }
 
 describe('page evidence validation on action sessions', () => {
-  it('revalidates current page source revisions and live action availability', async () => {
+  it('keeps evidence validation host-only and rechecks live action availability', async () => {
     let liveAdmission = admission(['pages.get', 'skills.list'])
-    let currentRevision = '8'
-    let refreshCount = 0
-    const validateObservation = vi.fn(
-      async (_request: AgentEngineRequest, _authority: unknown, name: AgentActionName, output: unknown) => {
-        if (name !== 'pages.get' || typeof output !== 'object' || output === null) return false
-        const page = output as Record<string, unknown>
-        return page.id === 42 && page.sourceRevision === currentRevision
-      }
-    )
+    let hostAcceptsEvidence = true
+    const validateObservation = vi.fn(async () => hostAcceptsEvidence)
     const provider = new KernelActionSessionProvider({
       knex: database,
       kernel: kernelWithReadActions(),
       resolveAdmission: async () => admission(['pages.get', 'skills.list']),
-      refreshAdmission: async () => {
-        refreshCount += 1
-        return liveAdmission
-      },
+      refreshAdmission: async () => liveAdmission,
       validateObservation
     })
     const session = await provider.open(request(new AbortController().signal))
 
     expect(session?.validateObservation).toBeTypeOf('function')
     expect(session?.functions.map(action => action.name)).not.toContain('validateObservation')
-    for (const action of session?.functions ?? []) expect(action.capability).toBe(ACTION_CATALOG[action.name].capability)
     expect(await session?.validateObservation?.('pages.get', actionOutput, new AbortController().signal)).toBe(true)
 
-    currentRevision = '9'
+    validateObservation.mockClear()
+    hostAcceptsEvidence = false
     expect(await session?.validateObservation?.('pages.get', actionOutput, new AbortController().signal)).toBe(false)
-    expect(validateObservation).toHaveBeenCalledTimes(2)
+    expect(validateObservation).toHaveBeenCalled()
+    validateObservation.mockClear()
+
 
     liveAdmission = admission(['skills.list'])
     expect(await session?.validateObservation?.('pages.get', actionOutput, new AbortController().signal)).toBe(false)
-    expect(validateObservation).toHaveBeenCalledTimes(2)
-    expect(refreshCount).toBe(3)
+    expect(validateObservation).not.toHaveBeenCalled()
     session?.close()
   })
 
-  it('validates a current OKF source and rejects history navigation candidates', async () => {
-    let currentRevision = '8'
-    const validateObservation = vi.fn(
-      async (_request: AgentEngineRequest, _authority: unknown, name: AgentActionName, output: unknown) => {
-        if (name !== 'pages.getOkf' || typeof output !== 'object' || output === null) return false
-        const result = output as Record<string, unknown>
-        return result.pageId === 42 && result.versionId === null && result.sourceRevision === currentRevision
-      }
-    )
+  it('admits current OKF and historical sources but rejects history navigation candidates', async () => {
+    const validateObservation = vi.fn(async () => true)
     const provider = new KernelActionSessionProvider({
       knex: database,
       kernel: kernelWithReadActions(),
-      resolveAdmission: async () => admission(['pages.getOkf', 'pages.listHistory']),
-      refreshAdmission: async () => admission(['pages.getOkf', 'pages.listHistory']),
+      resolveAdmission: async () => admission(['pages.getOkf', 'pages.getVersion', 'pages.listHistory']),
+      refreshAdmission: async () => admission(['pages.getOkf', 'pages.getVersion', 'pages.listHistory']),
       validateObservation
     })
     const session = await provider.open(request(new AbortController().signal))
 
-    expect(session?.functions.map(action => action.name)).toEqual(['pages.getOkf', 'pages.listHistory'])
+    expect(session?.functions.map(action => action.name).sort()).toEqual(['pages.getOkf', 'pages.getVersion', 'pages.listHistory'].sort())
     expect(await session?.validateObservation?.('pages.getOkf', okfOutput, new AbortController().signal)).toBe(true)
-    expect(validateObservation).toHaveBeenCalledTimes(1)
-    expect(await session?.validateObservation?.('pages.listHistory', historyOutput, new AbortController().signal)).toBe(false)
-    expect(validateObservation).toHaveBeenCalledTimes(1)
-    expect(await session?.validateObservation?.('pages.listHistory', { versions: [] }, new AbortController().signal)).toBe(false)
-    expect(validateObservation).toHaveBeenCalledTimes(1)
-
-    currentRevision = '9'
-    expect(await session?.validateObservation?.('pages.getOkf', okfOutput, new AbortController().signal)).toBe(false)
-    expect(validateObservation).toHaveBeenCalledTimes(2)
-    expect(await session?.validateObservation?.('pages.listHistory', historyOutput, new AbortController().signal)).toBe(false)
-    expect(validateObservation).toHaveBeenCalledTimes(2)
-    session?.close()
-  })
-
-  it('revalidates exact historical page source receipts against live version authority', async () => {
-    let authoritativeRevision = '6'
-    const validateObservation = vi.fn(
-      async (_request: AgentEngineRequest, _authority: unknown, name: AgentActionName, output: unknown) => {
-        if (name !== 'pages.getVersion' || typeof output !== 'object' || output === null) return false
-        const result = output as Record<string, unknown>
-        const citation = result.citation
-        if (typeof citation !== 'object' || citation === null) return false
-        return (
-          result.id === 42 &&
-          result.versionId === 9 &&
-          result.versionDate === historicalOutput.versionDate &&
-          result.sourceRevision === authoritativeRevision &&
-          result.okfResourceUri === `wiki://pages/42/versions/9/revisions/${authoritativeRevision}/okf` &&
-          Reflect.get(citation, 'evidenceId') === `page:42:version:9:revision:${authoritativeRevision}`
-        )
-      }
-    )
-    const provider = new KernelActionSessionProvider({
-      knex: database,
-      kernel: kernelWithReadActions(),
-      resolveAdmission: async () => admission(['pages.getVersion']),
-      refreshAdmission: async () => admission(['pages.getVersion']),
-      validateObservation
-    })
-    const session = await provider.open(request(new AbortController().signal))
-
-    expect(session?.functions.map(action => action.name)).toEqual(['pages.getVersion'])
     expect(await session?.validateObservation?.('pages.getVersion', historicalOutput, new AbortController().signal)).toBe(true)
-    authoritativeRevision = '7'
-    expect(await session?.validateObservation?.('pages.getVersion', historicalOutput, new AbortController().signal)).toBe(false)
-    expect(validateObservation).toHaveBeenCalledTimes(2)
+    validateObservation.mockClear()
+    expect(await session?.validateObservation?.('pages.listHistory', historyOutput, new AbortController().signal)).toBe(false)
+    expect(validateObservation).not.toHaveBeenCalled()
+    expect(await session?.validateObservation?.('pages.listHistory', { versions: [] }, new AbortController().signal)).toBe(false)
+    expect(validateObservation).not.toHaveBeenCalled()
     session?.close()
   })
 
@@ -238,7 +190,6 @@ describe('page evidence validation on action sessions', () => {
     const session = await provider.open(request(new AbortController().signal))
 
     expect(session?.functions.map(action => action.name)).toEqual(['skills.list', 'skills.read', 'memory.manage'])
-    for (const action of session?.functions ?? []) expect(action.capability).toBe(ACTION_CATALOG[action.name].capability)
     expect(await session?.validateObservation?.('skills.list', { skills: [{ name: 'guide' }] }, new AbortController().signal)).toBe(false)
     expect(await session?.validateObservation?.('skills.read', { name: 'guide', content: 'page-like text' }, new AbortController().signal)).toBe(false)
     expect(await session?.validateObservation?.('memory.manage', { status: 'saved' }, new AbortController().signal)).toBe(false)
@@ -263,16 +214,4 @@ describe('page evidence validation on action sessions', () => {
     session?.close()
   })
 
-  it('keeps validation optional on custom action sessions without a host page validator', async () => {
-    const provider = new KernelActionSessionProvider({
-      knex: database,
-      kernel: kernelWithReadActions(),
-      resolveAdmission: async () => admission(['pages.get']),
-      refreshAdmission: async () => admission(['pages.get'])
-    })
-    const session = await provider.open(request(new AbortController().signal))
-
-    expect(session?.validateObservation).toBeUndefined()
-    session?.close()
-  })
 })

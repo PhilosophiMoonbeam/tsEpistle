@@ -767,6 +767,13 @@ describe('offline draft crypto', () => {
     await expect(requestKey(failedFetch)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
 
     const foreignContext = { ...context, accountId: ACCOUNT_ID + 1 }
+    const blockedFetch = installFetch(octetStreamResponse(tsodk1Frame(foreignContext)))
+    await expect(requestDraftKey(fetchType(blockedFetch), {
+      expectedAccountId: foreignContext.accountId,
+      expectedSessionGeneration: SESSION_GENERATION
+    })).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    expect(blockedFetch).not.toHaveBeenCalled()
+
     invalidateOfflineSession()
     const recoveredFetch = installFetch(octetStreamResponse(tsodk1Frame(foreignContext)))
     const recovered = await requestDraftKey(fetchType(recoveredFetch), {
@@ -1138,7 +1145,7 @@ describe('offline draft crypto', () => {
       OfflineDraftOpaqueError
     )
     await expect(readPrivateCorpus(enrolled.handle, storageFor(coherentRecords), 3)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
-    await expect(readPrivateCorpus(enrolled.handle, storageFor([body]))).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
 
     const mismatchedSearch = await encryptOfflinePrivateRecord(enrolled.handle, 'search', { ...readingSearchDocument, sourceRevision: '8' }, selectors)
     await expect(readPrivateCorpus(enrolled.handle, storageFor([body, mismatchedSearch, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(

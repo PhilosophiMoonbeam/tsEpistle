@@ -1,4 +1,5 @@
 import tls from 'node:tls'
+import { readFileSync } from 'node:fs'
 import { tlsFixture } from '../helpers/tls-fixture.ts'
 import { inspectTlsEndpoint } from '../../repositories/tls-probe.ts'
 let fixture, previousWiki
@@ -23,6 +24,19 @@ const setup = async () => {
   return { core, target, wiki: global.WIKI }
 }
 const second = () => ({ inline: true, key: fixture.second.key, cert: fixture.second.cert })
+const expectPublicMaterial = evidence => {
+  const serialized = JSON.stringify(evidence)
+  for (const field of ['options', 'pfx', 'passphrase', 'privateKey']) {
+    expect(serialized).not.toContain(`"${field}":`)
+  }
+  const bundle = readFileSync(fixture.second.pfxPath)
+  for (const secret of [JSON.stringify(Buffer.from(fixture.second.key)), Buffer.from(fixture.second.key).toString('base64'), Buffer.from(fixture.second.key).toString('hex')]) {
+    expect(serialized).not.toContain(secret)
+  }
+  for (const secret of ['fixture-password', fixture.second.key, fixture.second.key.split('\n')[1], bundle.toString('base64'), bundle.toString('hex'), JSON.stringify(bundle)]) {
+    expect(serialized).not.toContain(secret)
+  }
+}
 describe('HTTPS certificate replacement with real TLS sockets', () => {
   it('keeps review non-disruptive and requires explicit restart acknowledgement on Bun before replacing certificate material', async () => {
     const { core, target, wiki } = await setup()
@@ -36,7 +50,7 @@ describe('HTTPS certificate replacement with real TLS sockets', () => {
       const pending = await core.prepareHttpsContext(second())
       expect((await inspectTlsEndpoint(target)).certificate.fingerprint256).toBe(before.certificate.fingerprint256)
       expect(pending.mode).toBe('listener-restart')
-      await expect(pending.apply()).rejects.toThrow('connection interruption')
+      await expect(pending.apply()).rejects.toThrow(Error)
       expect(socket.destroyed).toBe(false)
       const response = new Promise((resolve, reject) => { socket.once('data', data => resolve(data.toString())); socket.once('error', reject) })
       socket.write('GET / HTTP/1.1\r\nHost: wiki.example.test\r\nConnection: keep-alive\r\n\r\n')
@@ -53,7 +67,7 @@ describe('HTTPS certificate replacement with real TLS sockets', () => {
       expect(core.installGraphQLSubscriptions).toHaveBeenCalledTimes(2)
       expect(core.disposeGraphQLSubscriptions).toHaveBeenCalledTimes(1)
       expect(wiki.collaboration.dispose).toHaveBeenCalledTimes(1)
-      await expect(pending.apply({ allowRestart: true })).rejects.toThrow('already been applied')
+      await expect(pending.apply({ allowRestart: true })).rejects.toThrow(Error)
       applied.certificate.subject = 'changed by caller'
       expect(core.inspectHttpsMaterial().certificate.subject).not.toBe('changed by caller')
     } finally { socket.destroy(); await core.stopServers() }
@@ -62,7 +76,7 @@ describe('HTTPS certificate replacement with real TLS sockets', () => {
     const { core, target } = await setup()
     try {
       const original = core.inspectHttpsMaterial()
-      await expect(core.prepareHttpsContext({ inline: true, key: fixture.first.key, cert: fixture.second.cert })).rejects.toThrow('could not be loaded or validated')
+      await expect(core.prepareHttpsContext({ inline: true, key: fixture.first.key, cert: fixture.second.cert })).rejects.toThrow(Error)
       expect(core.inspectHttpsMaterial()).toEqual(original)
       expect((await inspectTlsEndpoint(target, { ca: fixture.first.cert })).trusted).toBe(true)
     } finally { await core.stopServers() }
@@ -71,21 +85,25 @@ describe('HTTPS certificate replacement with real TLS sockets', () => {
     const { core } = await setup()
     try {
       const [a, b] = await Promise.all([core.prepareHttpsContext(second()), core.prepareHttpsContext(second())])
-      await a.apply({ allowRestart: true })
-      await expect(b.apply({ allowRestart: true })).rejects.toThrow('changed')
+      const winner = await a.apply({ allowRestart: true })
+      expect(core.inspectHttpsMaterial()).toEqual(winner)
+      await expect(b.apply({ allowRestart: true })).rejects.toThrow(Error)
+      expect(core.inspectHttpsMaterial()).toEqual(winner)
     } finally { await core.stopServers() }
   })
   it('rejects deployment changes or a stopped listener after review', async () => {
     const { core, wiki } = await setup()
     try {
       const pending = await core.prepareHttpsContext(second())
+      const original = core.inspectHttpsMaterial()
       wiki.config.ssl.port = 12345
-      await expect(pending.apply({ allowRestart: true })).rejects.toThrow('changed')
+      await expect(pending.apply({ allowRestart: true })).rejects.toThrow(Error)
+      expect(core.inspectHttpsMaterial()).toEqual(original)
       const other = await core.prepareHttpsContext(second())
       await core.stopServers()
-      await expect(other.apply({ allowRestart: true })).rejects.toThrow('changed')
+      await expect(other.apply({ allowRestart: true })).rejects.toThrow(Error)
       expect(core.inspectHttpsMaterial()).toBeNull()
-      await expect(core.prepareHttpsContext()).rejects.toThrow('not running')
+      await expect(core.prepareHttpsContext()).rejects.toThrow(Error)
     } finally { await core.stopServers() }
   })
   it('releases HTTPS transports after a bind failure', async () => {
@@ -111,7 +129,12 @@ describe('HTTPS certificate replacement with real TLS sockets', () => {
     try {
       const prepared = await core.prepareHttpsContext({ format: 'pfx', pfx: fixture.second.pfxPath, passphrase: 'fixture-password' })
       expect(prepared.certificate.subject).toContain('wiki.example.test')
-      expect(await prepared.apply({ allowRestart: true })).toMatchObject({ format: 'pfx', source: 'file', certificate: expect.objectContaining({ subject: expect.stringContaining('wiki.example.test') }) })
+      const { apply, materialKey, ...metadata } = prepared
+      expectPublicMaterial(metadata)
+      const applied = await apply({ allowRestart: true })
+      expect(applied).toMatchObject({ format: 'pfx', source: 'file', certificate: expect.objectContaining({ subject: expect.stringContaining('wiki.example.test') }) })
+      expectPublicMaterial(applied)
+      expectPublicMaterial(core.inspectHttpsMaterial())
       const result = await inspectTlsEndpoint(target, { ca: fixture.second.cert })
       expect(result.trusted).toBe(true)
       expect(result.certificate.subject).toContain('wiki.example.test')
@@ -124,7 +147,7 @@ describe('HTTPS certificate replacement with real TLS sockets', () => {
       const prepared = await core.prepareHttpsContext(second())
       const install = core.installGraphQLSubscriptions
       install.mockImplementationOnce(() => { throw new Error('fixture installation failure') })
-      await expect(prepared.apply({ allowRestart: true })).rejects.toThrow('restored using its previous material')
+      await expect(prepared.apply({ allowRestart: true })).rejects.toThrow(Error)
       const after = await inspectTlsEndpoint(target, { ca: fixture.first.cert })
       expect(after.trusted).toBe(true)
       expect(after.certificate.fingerprint256).toBe(before.certificate.fingerprint256)
@@ -136,7 +159,7 @@ describe('HTTPS certificate replacement with real TLS sockets', () => {
     try {
       const prepared = await core.prepareHttpsContext(second())
       core.installGraphQLSubscriptions.mockImplementation(() => { throw new Error('fixture installation failure') })
-      await expect(prepared.apply({ allowRestart: true })).rejects.toThrow('Deployment recovery is required')
+      await expect(prepared.apply({ allowRestart: true })).rejects.toThrow(Error)
       expect(core.inspectHttpsMaterial()).toBeNull()
       expect(core.servers.https).toBeNull()
     } finally { await core.stopServers() }

@@ -55,6 +55,7 @@ const bundledSfc = await Bun.build({
               setup(props, { slots, emit }) {
                 return () => h('header', { class: 'agent-panel-header' }, [
                   h('h2', { id: props.headingId }, props.title),
+                  slots.actions?.(),
                   slots.default?.(),
                   h('button', { type: 'button', 'aria-label': props.closeLabel, disabled: props.busy, onClick: () => emit('close') })
                 ])
@@ -162,9 +163,7 @@ const mountManager = async () => {
 
   const addMemory = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes('Add detail'))
   if (!addMemory) throw new Error('The mounted memory manager did not expose its add action')
-  addMemory.click()
-  await settle()
-  return { host }
+  return { host, addMemory }
 }
 
 afterEach(() => {
@@ -173,8 +172,19 @@ afterEach(() => {
 })
 
 describe('Agent memory manager rendered contract', () => {
-  it('keeps both target choices selectable while exposing the target-specific editor label', async () => {
-    const { host } = await mountManager()
+  it('blocks empty-store clearing while keeping both targets selectable with target-specific editor labels', async () => {
+    const { host, addMemory } = await mountManager()
+    const clearMemory = host.querySelector<HTMLButtonElement>('.agent-memory__clear')
+    if (!clearMemory) throw new Error('The mounted memory manager did not expose its clear action')
+    // Add is enabled after loading; Clear must be blocked by the empty-store branch, not a shared busy guard.
+    expect(addMemory.disabled).toBe(false)
+    expect(clearMemory.disabled).toBe(true)
+    clearMemory.click()
+    await settle()
+    expect(browserWindow.document.querySelector('.agent-memory__dialog')).toBeNull()
+
+    addMemory.click()
+    await settle()
     const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>('.agent-memory__target .v-btn'))
     expect(buttons.map(button => button.textContent?.trim())).toEqual(['You', 'Agent'])
     expect(buttons[0]?.classList.contains('v-btn--active')).toBe(true)

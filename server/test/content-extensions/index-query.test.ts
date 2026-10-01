@@ -155,10 +155,10 @@ describe('page index operation', () => {
   })
 
   it.each([
-    [{ path: 'guide', locale: 'en', depth: 6, order: 'path', limit: 20 }, /depth must not exceed 5/],
-    [{ path: 'guide', locale: 'en', depth: 0, order: 'random', limit: 20 }, /order must be/],
-    [{ path: 'guide', locale: 'en', depth: 0, order: 'path', limit: 201 }, /limit must not exceed 200/]
-  ])('rejects unbounded query controls', async (input, diagnostic) => {
+    [{ path: 'guide', locale: 'en', depth: 6, order: 'path', limit: 20 }],
+    [{ path: 'guide', locale: 'en', depth: 0, order: 'random', limit: 20 }],
+    [{ path: 'guide', locale: 'en', depth: 0, order: 'path', limit: 201 }]
+  ])('rejects unbounded query controls before retrieving candidates', async input => {
     listPageIndexCandidates.mockResolvedValue(rows)
     Reflect.set(globalThis, 'WIKI', {
       auth: pageAuth(vi.fn(() => true)),
@@ -166,6 +166,10 @@ describe('page index operation', () => {
     })
     const operations = (await import('../../operations/pages.ts')).default
 
-    await expect(Promise.resolve(operations.listIndex({ requester: { id: 7 }, ...input }))).rejects.toThrow(diagnostic)
+    await expect(Promise.resolve(operations.listIndex({ requester: { id: 7 }, ...input }))).rejects.toMatchObject({
+      name: 'INVALID_INPUT',
+      status: 400
+    })
+    expect(listPageIndexCandidates).not.toHaveBeenCalled()
   })
 })

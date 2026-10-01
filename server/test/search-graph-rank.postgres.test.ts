@@ -1,9 +1,8 @@
 /// <reference types="bun" />
 
-import fs from 'node:fs'
-
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from './bun-test.mts'
+import { getPostgresTestConnection } from './postgres-test-connection.mts'
 
 interface SearchResultEntry {
   id: number
@@ -15,29 +14,11 @@ interface PostgreSqlSearchEngine {
   config: { dictLanguage: string }
   init(): Promise<void>
   rebuild(): Promise<void>
+  reconcilePage(pageId: number): Promise<void>
   query(query: string, options: { pageIds?: number[]; pageRevisions?: Record<string, string>; limit?: number }): Promise<{ results: SearchResultEntry[] }>
 }
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  databaseName.endsWith('_search_graph_rank_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        password,
-        database: databaseName
-      }
-    : null
-const directlyInvoked =
-  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('search-graph-rank.postgres.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error('Explicit graph-rank PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _search_graph_rank_test and a PostgreSQL password.')
-}
+const connection = getPostgresTestConnection('_search_graph_rank_test', import.meta.path)
 
 const suite = connection ? describe : describe.skip
 
@@ -96,7 +77,8 @@ suite('PostgreSQL graph rank privacy boundary', () => {
         description text,
         render text NOT NULL DEFAULT '',
         visibility text NOT NULL,
-        "isPublished" boolean NOT NULL
+        "isPublished" boolean NOT NULL,
+        "isSearchable" boolean NOT NULL DEFAULT true
       );
       CREATE TABLE tags (
         id integer PRIMARY KEY,
@@ -154,12 +136,12 @@ suite('PostgreSQL graph rank privacy boundary', () => {
       'TRUNCATE TABLE "pagesSearchMetadata", "pagesWords", "pagesVector", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages RESTART IDENTITY CASCADE'
     )
     await db('tags').insert({ id: 1, tag: 'graphprobe', title: 'Graph Probe' })
-    await insertPage({ id: 69, path: 'graph/tail-69', title: 'Tail69' })
+    await insertPage({ id: 69, path: 'graph/tail-69', title: 'Tail69', render: '<article>Tail69 classifiedbridgecipher</article>' })
     await insertPage({
       id: 70,
       path: 'graph/protected-70',
       title: 'ProtectedTitle',
-      render: '<article>ProtectedTitle <a class="is-internal-link" href="/en/graph/tail-69">Tail69</a></article>'
+      render: '<article>ProtectedTitle classifiedbridgecipher <a class="is-internal-link" href="/en/graph/tail-69">Tail69</a></article>'
     })
     await insertPage({ id: 71, path: 'graph/seed-71', title: 'Seed71' })
     await insertPage({ id: 72, path: 'graph/public-relay-72', title: 'Public Relay72' })
@@ -190,12 +172,18 @@ suite('PostgreSQL graph rank privacy boundary', () => {
     wikiRuntime.WIKI = originalWiki
   })
 
-  it('keeps protected metadata searchable while excluding protected, stale, private, and unpublished graph bridges', async () => {
+  it('keeps protected metadata searchable while excluding protected body content and graph bridges', async () => {
     const protectedTitle = await engine.query('protectedtitle', { pageIds: [70], limit: 10 })
     const protectedCandidate = protectedTitle.results.find(candidate => candidate.id === 70)
     expect(protectedCandidate?.matchedFields).toContain('title')
     expect(protectedCandidate?.matchedFields).not.toContain('content')
     expect(protectedCandidate?.matchedFields).not.toContain('graph')
+
+    const bodyQuery = '"classifiedbridgecipher"'
+    expect((await engine.query(bodyQuery, { pageIds: [69], limit: 10 })).results).toContainEqual(
+      expect.objectContaining({ id: 69, matchedFields: expect.arrayContaining(['content']) })
+    )
+    expect((await engine.query(bodyQuery, { pageIds: [70], limit: 10 })).results).toEqual([])
 
     const publicBaseline = await graphResults()
     expect(publicBaseline).toEqual(
@@ -208,20 +196,39 @@ suite('PostgreSQL graph rank privacy boundary', () => {
 
     await db('pageLinks').insert([{ pageId: 71, localeCode: 'en', path: 'graph/protected-70' }])
     expect(await graphResults()).toEqual(publicBaseline)
-
-    await db('pages').where({ id: 73 }).update({ sourceRevision: 173 })
-    await db('pages').where({ id: 74 }).update({ visibility: 'private' })
-    await db('pages').where({ id: 75 }).update({ isPublished: false })
-    await db('pageLinks').insert([
-      { pageId: 71, localeCode: 'en', path: 'graph/stale-73' },
-      { pageId: 73, localeCode: 'en', path: 'graph/tail-69' },
-      { pageId: 71, localeCode: 'en', path: 'graph/private-74' },
-      { pageId: 74, localeCode: 'en', path: 'graph/tail-69' },
-      { pageId: 71, localeCode: 'en', path: 'graph/unpublished-75' },
-      { pageId: 75, localeCode: 'en', path: 'graph/tail-69' }
-    ])
-    expect(await graphResults()).toEqual(publicBaseline)
   })
+
+  for (const boundary of [
+    { label: 'stale', id: 73, path: 'graph/stale-73', update: { sourceRevision: 173 }, receiptRevision: 173 },
+    { label: 'private', id: 74, path: 'graph/private-74', update: { visibility: 'private' }, receiptRevision: 74 },
+    { label: 'unpublished', id: 75, path: 'graph/unpublished-75', update: { isPublished: false }, receiptRevision: 75 }
+  ]) {
+    it(`excludes a ${boundary.label} graph bridge even with a current succeeded links receipt`, async () => {
+      const publicBaseline = await graphResults()
+      await db('pageMutationOutbox').insert({
+        pageId: boundary.id,
+        sourceRevision: boundary.id,
+        effectKind: 'links',
+        desiredState: 'present',
+        status: 'succeeded'
+      })
+      await db('pageLinks').insert([
+        { pageId: 71, localeCode: 'en', path: boundary.path },
+        { pageId: boundary.id, localeCode: 'en', path: 'graph/tail-69' }
+      ])
+      const admittedTail = (await graphResults()).find(candidate => candidate.id === 69)
+      const baselineTail = publicBaseline.find(candidate => candidate.id === 69)
+      expect(admittedTail).toBeDefined()
+      expect(baselineTail).toBeDefined()
+      expect(admittedTail!.score).toBeGreaterThan(baselineTail!.score)
+
+      await db('pages').where({ id: boundary.id }).update(boundary.update)
+      await db('pageMutationOutbox')
+        .where({ pageId: boundary.id, effectKind: 'links' })
+        .update({ sourceRevision: boundary.receiptRevision })
+      expect(await graphResults()).toEqual(publicBaseline)
+    })
+  }
 
   it('excludes stale links until the current links receipt succeeds after a redaction update', async () => {
     const publicBaseline = await graphResults()
@@ -253,7 +260,11 @@ suite('PostgreSQL graph rank privacy boundary', () => {
     const completedGraph = await graphResults()
     const pendingTail = pendingGraph.find(candidate => candidate.id === 69)
     const completedTail = completedGraph.find(candidate => candidate.id === 69)
-    expect(completedTail?.score).toBeGreaterThan(pendingTail?.score ?? Number.NEGATIVE_INFINITY)
+    expect(pendingTail).toBeDefined()
+    expect(completedTail).toBeDefined()
+    expect(Number.isFinite(pendingTail?.score)).toBe(true)
+    expect(Number.isFinite(completedTail?.score)).toBe(true)
+    expect(completedTail!.score).toBeGreaterThan(pendingTail!.score)
     expect(completedTail?.matchedFields).toContain('graph')
   })
 })

@@ -79,10 +79,13 @@ describe('Git storage repository recovery', () => {
 
     await expect(Promise.resolve(git.raw(['rebase', 'HEAD~1', '--exec', 'false']))).rejects.toThrow()
     expect(await git.raw(['rev-parse', '--verify', '--quiet', 'REBASE_HEAD'])).toBe('')
+    const gitDirectory = (await git.raw(['rev-parse', '--absolute-git-dir'])).trim()
+    const rebaseDirectories = ['rebase-merge', 'rebase-apply'].map(name => path.join(gitDirectory, name))
+    expect(await Promise.all(rebaseDirectories.map(directory => fs.pathExists(directory)))).toContain(true)
 
     const logger = { warn: vi.fn() }
     expect(await recoverInterruptedGitOperation(git, logger)).toBe('rebase')
-    expect(logger.warn).toHaveBeenCalledWith('(STORAGE/GIT) Rolling back an unfinished rebase...')
+    expect(await Promise.all(rebaseDirectories.map(directory => fs.pathExists(directory)))).toEqual([false, false])
 
     await commitFile(git, directory, 'after.md', 'still writable\n', 'prove paused recovery')
     expect((await git.log({ maxCount: 1 })).latest?.message).toBe('prove paused recovery')

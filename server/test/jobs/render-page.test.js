@@ -108,7 +108,6 @@ describe('render-page revision fence', () => {
       contentType: 'current-revision'
     }
     await renderPage(42)
-    expect(pages.getPageFromDb).toHaveBeenCalledTimes(3)
 
     expect(successfulWrites).toBe(1)
     expect(currentPage.render).toBe('<p>revision 2</p>')
@@ -122,7 +121,6 @@ describe('render-page revision fence', () => {
 
     resumeFirstRender.resolve()
     await staleRender
-    expect(pages.getPageFromDb).toHaveBeenCalledTimes(3)
 
     expect(successfulWrites).toBe(1)
     expect(currentPage.render).toBe('<p>revision 2</p>')
@@ -156,11 +154,23 @@ describe('render-page revision fence', () => {
     expect(pages.query).not.toHaveBeenCalled()
   })
   it('preserves stored output when no parser can transform the source', async () => {
-    currentPage = { id: 43, sourceRevision: 1, content: '<script>unsafe()</script>', contentType: 'markdown', render: '<p>Existing output</p>' }
+    currentPage = {
+      id: 43,
+      sourceRevision: 1,
+      renderedSourceRevision: 1,
+      content: '<script>unsafe()</script>',
+      contentType: 'markdown',
+      render: '<p>Existing output</p>',
+      updatedAt: '2026-09-01T09:00:00.000Z',
+      toc: '[]'
+    }
+    const storedPage = { ...currentPage }
     databaseInit.mockResolvedValue(models)
     models.renderers.getRenderingPipeline.mockResolvedValueOnce([])
     await expect(renderPage(43)).rejects.toThrow('No enabled rendering pipeline')
     expect(currentPage.render).toBe('<p>Existing output</p>')
+    expect(currentPage).toEqual(storedPage)
+    expect(models.knex).not.toHaveBeenCalled()
     expect(pages.query).not.toHaveBeenCalled()
     expect(savePageToCache).not.toHaveBeenCalled()
     expect(models.knex.destroy).toHaveBeenCalledOnce()

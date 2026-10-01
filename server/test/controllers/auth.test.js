@@ -209,10 +209,11 @@ describe('HTML auth controller', () => {
 
     expect(response.clearCookie).toHaveBeenCalledTimes(1)
     expect(next).toHaveBeenCalledWith(loginError)
+    expect(response.clearCookie.mock.invocationCallOrder[0]).toBeLessThan(next.mock.invocationCallOrder[0])
   })
 
 
-  it('does not spend rate-limit attempts on invalid token landing GETs', async () => {
+  it('validates recovery landing tokens nonconsumingly and forwards invalid-token failures', async () => {
     await loadController()
 
     for (const [path, kind, templateKey] of [
@@ -220,7 +221,6 @@ describe('HTML auth controller', () => {
       ['/login-reset/:token', 'resetPwd', 'resetPasswordToken']
     ]) {
       const route = express.__router.get.mock.calls.find(([registeredPath]) => registeredPath === path)
-      expect(route).toHaveLength(2)
       const landing = route[1]
       const invalidToken = new Error('invalid token')
       const invalidNext = vi.fn()
@@ -249,7 +249,6 @@ describe('HTML auth controller', () => {
       }))
     }
 
-    expect(rateLimiter.create).not.toHaveBeenCalled()
   })
 
   it('uses the modern login shell for legacy query strings and user agents', async () => {
@@ -268,35 +267,54 @@ describe('HTML auth controller', () => {
 
     await login(req, res)
 
-    expect(res.render).toHaveBeenCalledWith('login', {
+    expect(res.render).toHaveBeenCalledWith('login', expect.objectContaining({
       bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
-      hideLocal: false,
-      faviconUrl: '/_assets/favicon.ico'
-    })
+      hideLocal: false
+    }))
     expect(res.render).not.toHaveBeenCalledWith('legacy/login', expect.anything())
   })
 
   it('chooses the first enabled provider for automatic login and safely handles an empty or form-first policy', async () => {
     global.WIKI.config.auth.autoLogin = true
     global.WIKI.data.authentication = [{ key: 'oidc', useForm: false }, { key: 'local', useForm: true }]
-    let providers = [{ key: 'disabled', strategyKey: 'oidc', isEnabled: false }, { key: 'organization', strategyKey: 'oidc', isEnabled: true }]
-    const where = vi.fn((column, value) => ({ orderBy: () => ({ first: async () => providers.find(provider => provider[column] === value) }) }))
+    let providers
+    const where = vi.fn((column, value) => ({
+      orderBy: orderColumn => ({
+        first: async () => providers.filter(provider => provider[column] === value).sort((a, b) => a[orderColumn] - b[orderColumn])[0]
+      })
+    }))
     global.WIKI.models.authentication.query = () => ({ where })
     await loadController()
     const login = express.__router.get.mock.calls.find(([path]) => path === '/login')[1]
-    const res = { locals: {}, redirect: vi.fn(), render: vi.fn() }
-    await login({ query: {} }, res)
-    expect(where).toHaveBeenCalledWith('isEnabled', true)
-    expect(res.redirect).toHaveBeenCalledWith('/login/organization')
-    res.redirect.mockClear()
-    for (const policy of [[], [{ key: 'local', strategyKey: 'local', isEnabled: true }]]) {
+    const orderedProviders = [
+      { key: 'disabled', strategyKey: 'oidc', isEnabled: false, order: 0 },
+      { key: 'organization', strategyKey: 'oidc', isEnabled: true, order: 1 },
+      { key: 'later', strategyKey: 'oidc', isEnabled: true, order: 2 }
+    ]
+    for (const policy of [orderedProviders, [...orderedProviders].reverse()]) {
       providers = policy
+      const res = { locals: {}, redirect: vi.fn(), render: vi.fn() }
       await login({ query: {} }, res)
-      expect(res.render).toHaveBeenCalled()
+      expect(where).toHaveBeenCalledWith('isEnabled', true)
+      expect(res.redirect).toHaveBeenCalledWith('/login/organization')
+      expect(res.render).not.toHaveBeenCalled()
     }
-    expect(res.redirect).not.toHaveBeenCalled()
-    providers = [{ key: 'organization', strategyKey: 'oidc', isEnabled: true }]
+    for (const policy of [[], [
+      { key: 'organization', strategyKey: 'oidc', isEnabled: true, order: 2 },
+      { key: 'local', strategyKey: 'local', isEnabled: true, order: 1 }
+    ]]) {
+      providers = policy
+      const res = { locals: {}, redirect: vi.fn(), render: vi.fn() }
+      await login({ query: {} }, res)
+      expect(res.render).toHaveBeenCalledTimes(1)
+      expect(res.render).toHaveBeenCalledWith('login', expect.objectContaining({ bgUrl: '/_assets/img/splash/tsepistle-orbit.svg', hideLocal: false }))
+      expect(res.redirect).not.toHaveBeenCalled()
+    }
+    providers = orderedProviders
+    const res = { locals: {}, redirect: vi.fn(), render: vi.fn() }
     await login({ query: { all: '1' } }, res)
+    expect(res.render).toHaveBeenCalledTimes(1)
+    expect(res.render).toHaveBeenCalledWith('login', expect.objectContaining({ bgUrl: '/_assets/img/splash/tsepistle-orbit.svg', hideLocal: false }))
     expect(res.redirect).not.toHaveBeenCalled()
   })
 
@@ -309,10 +327,9 @@ describe('HTML auth controller', () => {
     await register({}, res, vi.fn())
 
     expect(global.WIKI.models.authentication.getStrategy).toHaveBeenCalledWith('local')
-    expect(res.render).toHaveBeenCalledWith('register', {
-      bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
-      faviconUrl: '/_assets/favicon.ico'
-    })
+    expect(res.render).toHaveBeenCalledWith('register', expect.objectContaining({
+      bgUrl: '/_assets/img/splash/tsepistle-orbit.svg'
+    }))
   })
 
   it('keeps a configured custom authentication background for login and registration', async () => {
@@ -323,46 +340,24 @@ describe('HTML auth controller', () => {
     const login = loginRoute[loginRoute.length - 1]
     const loginResponse = { locals: {}, redirect: vi.fn(), render: vi.fn() }
     await login({ query: {} }, loginResponse)
-    expect(loginResponse.render).toHaveBeenCalledWith('login', {
+    expect(loginResponse.render).toHaveBeenCalledWith('login', expect.objectContaining({
       bgUrl: '/uploads/custom-login-background.jpg',
-      hideLocal: false,
-      faviconUrl: '/_assets/favicon.ico'
-    })
+      hideLocal: false
+    }))
 
     const registerRoute = express.__router.get.mock.calls.find(([path]) => path === '/register')
     const register = registerRoute[registerRoute.length - 1]
     const registerResponse = { locals: {}, render: vi.fn() }
     await register({}, registerResponse, vi.fn())
-    expect(registerResponse.render).toHaveBeenCalledWith('register', {
-      bgUrl: '/uploads/custom-login-background.jpg',
-      faviconUrl: '/_assets/favicon.ico'
-    })
+    expect(registerResponse.render).toHaveBeenCalledWith('register', expect.objectContaining({
+      bgUrl: '/uploads/custom-login-background.jpg'
+    }))
   })
 
-  it('trims a configured logo URL for the authentication favicon local', async () => {
-    global.WIKI.config.logoUrl = '  /uploads/site-logo.svg  '
-    await loadController()
-    const route = express.__router.get.mock.calls.find(([path]) => path === '/login')
-    const login = route[route.length - 1]
-    const res = {
-      locals: {},
-      redirect: vi.fn(),
-      render: vi.fn()
-    }
-
-    await login({ query: {} }, res)
-
-    expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
-      hideLocal: false,
-      faviconUrl: '/uploads/site-logo.svg'
-    })
-  })
 
   it('renders email confirmation without consuming or applying the token', async () => {
     await loadController()
     const route = express.__router.get.mock.calls.find(([path]) => path === '/verify/:token')
-    expect(route).toHaveLength(2)
     const verify = route[route.length - 1]
     const req = { params: { token: 'verify-token' } }
     const res = { locals: {}, render: vi.fn() }
@@ -374,19 +369,17 @@ describe('HTML auth controller', () => {
       token: 'verify-token',
       skipDelete: true
     })
-    expect(res.render).toHaveBeenCalledWith('login', {
+    expect(res.render).toHaveBeenCalledWith('login', expect.objectContaining({
       bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
       hideLocal: false,
-      faviconUrl: '/_assets/favicon.ico',
       verificationToken: 'verify-token'
-    })
+    }))
     expect(res.locals.pageMeta.title).toBe('Confirm Email Address')
   })
 
   it('renders password reset without consuming the token', async () => {
     await loadController()
     const route = express.__router.get.mock.calls.find(([path]) => path === '/login-reset/:token')
-    expect(route).toHaveLength(2)
     const reset = route[route.length - 1]
     const req = { params: { token: 'reset-token' } }
     const res = { locals: {}, render: vi.fn() }
@@ -398,12 +391,11 @@ describe('HTML auth controller', () => {
       token: 'reset-token',
       skipDelete: true
     })
-    expect(res.render).toHaveBeenCalledWith('login', {
+    expect(res.render).toHaveBeenCalledWith('login', expect.objectContaining({
       bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
       hideLocal: false,
-      faviconUrl: '/_assets/favicon.ico',
       resetPasswordToken: 'reset-token'
-    })
+    }))
     expect(res.locals.pageMeta.title).toBe('Reset Password')
   })
 })

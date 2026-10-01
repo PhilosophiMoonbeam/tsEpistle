@@ -47,7 +47,7 @@ describe('Google Search suggestion isolation', () => {
     if (!frame) throw new Error('Search suggestion frame was not rendered')
 
     const sandbox = frame.getAttribute('sandbox') ?? ''
-    expect(sandbox.split(/\s+/)).toEqual(['allow-popups', 'allow-popups-to-escape-sandbox'])
+    expect(new Set(sandbox.trim().split(/\s+/))).toEqual(new Set(['allow-popups', 'allow-popups-to-escape-sandbox']))
     expect(sandbox).not.toContain('allow-scripts')
     expect(sandbox).not.toContain('allow-same-origin')
     expect(sandbox).not.toContain('allow-top-navigation')
@@ -55,12 +55,26 @@ describe('Google Search suggestion isolation', () => {
     expect(document.querySelector('script')).toBeNull()
 
     const isolatedDocument = frame.getAttribute('srcdoc') ?? ''
-    expect(isolatedDocument.indexOf('Content-Security-Policy')).toBeLessThan(isolatedDocument.indexOf(providerHtml))
-    expect(isolatedDocument).toContain("default-src 'none'")
-    expect(isolatedDocument).toContain("script-src 'none'")
-    expect(isolatedDocument).toContain("connect-src 'none'")
-    expect(isolatedDocument).toContain("form-action 'none'")
-    expect(isolatedDocument).toContain("base-uri 'none'")
+    const isolatedDom = new JSDOM(isolatedDocument)
+    const isolated = isolatedDom.window.document
+    const policy = isolated.head.querySelector('meta[http-equiv="Content-Security-Policy" i]')
+    if (!policy) throw new Error('The suggestion document is missing an effective head CSP meta')
+    const directives = new Map<string, string[]>()
+    for (const directive of (policy.getAttribute('content') ?? '').split(';')) {
+      const [name, ...sources] = directive.trim().split(/\s+/)
+      // Browsers honor the first occurrence of each directive, not a later replacement.
+      if (name && !directives.has(name.toLowerCase())) directives.set(name.toLowerCase(), sources)
+    }
+    for (const directive of ['default-src', 'script-src', 'connect-src', 'form-action', 'base-uri']) {
+      expect(directives.get(directive)).toEqual(["'none'"])
+    }
+    for (const selector of ['a[href="https://google.example/search?q=safe"]', 'script']) {
+      const providerContent = isolated.querySelector(selector)
+      if (!providerContent) throw new Error(`Provider content is missing from the isolated document: ${selector}`)
+      expect(policy.compareDocumentPosition(providerContent) & isolatedDom.window.Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    }
+    expect(document.querySelector('a[href="https://google.example/search?q=safe"]')).toBeNull()
+    isolatedDom.window.close()
     expect(isolatedDocument).toContain(providerHtml)
   })
 })

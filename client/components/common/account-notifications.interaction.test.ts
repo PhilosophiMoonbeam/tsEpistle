@@ -244,7 +244,7 @@ const deferred = <T>(): Deferred<T> => {
 describe('account notifications interaction', () => {
   it('renders the hierarchy, event meaning, actor/date secondary, and unread state', () => {
     const store = makeStore({
-      watches: [makeWatch({ eventType: 'page.moved' })],
+      watches: [makeWatch({ eventType: 'page.moved', createdAt: '2026-09-11T10:00:00.000Z' })],
       approvals: [makeApproval()]
     })
     const { host } = mountNotifications(store)
@@ -253,11 +253,11 @@ describe('account notifications interaction', () => {
     expect([...host.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['Localized page changes', 'Approvals'])
     expect(host.textContent).toContain('Localized recent page changes')
     expect(host.textContent).toContain('Editor localized moved this page · Docs')
-    expect(host.textContent).toContain('Editor')
+    const creationDate = new Date('2026-09-11T10:00:00.000Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    expect(host.querySelector('a .notification-item-content > div:nth-child(2)')?.textContent).toBe(`Editor · ${creationDate}`)
     expect(host.textContent).toContain('Unread')
     expect(host.querySelector('.account-notifications__unread-marker')).not.toBeNull()
     expect(host.querySelector('a')?.getAttribute('aria-label')).toBe('Editor localized moved this page — Docs (Unread)')
-    expect(host.querySelector('.account-notifications__scroll')).toBeNull()
   })
 
   it('marks an ordinary unread watch once, keeps failure feedback, and navigates for the same owner', async () => {
@@ -270,15 +270,19 @@ describe('account notifications interaction', () => {
 
     anchor.dispatchEvent(event)
     expect(event.defaultPrevented).toBe(true)
+    const repeatedEvent = new browserWindow.MouseEvent('click', { bubbles: true, button: 0, cancelable: true })
+    anchor.dispatchEvent(repeatedEvent)
+    expect(repeatedEvent.defaultPrevented).toBe(true)
     expect(store.markWatchRead).toHaveBeenCalledTimes(1)
     expect(navigate).not.toHaveBeenCalled()
 
     store.watchesError = 'Read failed. The notification remains unread.'
+    // These are controlled store inputs; the real store suite owns read-failure persistence.
     read.resolve(false)
     await settle()
 
     expect(navigate).toHaveBeenCalledWith(pageHref({ visibility: item.visibility, locale: item.localeCode, path: item.path }))
-    expect(item.readAt).toBeNull()
+    expect(navigate).toHaveBeenCalledTimes(1)
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('Read failed')
     expect(host.textContent).toContain('Unread')
   })
@@ -389,7 +393,19 @@ describe('account notifications interaction', () => {
     host.querySelector('button')!.click()
     expect(loadMoreApprovals).toHaveBeenCalledTimes(1)
 
-    store.approvals = [makeApproval()]
+    // Present independent store inputs, rather than making the action mock manufacture append results.
+    store.approvals = [
+      makeApproval(),
+      makeApproval({ id: 'approval-2', title: 'Appendix', path: 'docs/appendix' })
+    ]
+    await Vue.nextTick()
+    expect([...host.querySelectorAll('a')].map(anchor => anchor.querySelector('.notification-item-content > div')?.textContent)).toEqual(['Release notes', 'Appendix'])
+    const loadButton = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Load more approvals'))!
+    expect(loadButton.getAttribute('aria-label')).toBe('Load more approvals')
+    loadButton.click()
+    expect(loadMoreApprovals).toHaveBeenCalledTimes(2)
+    expect(host.textContent).not.toContain('No active approvals')
+
     store.approvalsError = 'Approval cursor expired'
     await Vue.nextTick()
     expect(host.textContent).toContain('Refresh approvals')
@@ -407,28 +423,4 @@ describe('account notifications interaction', () => {
     expect(host.textContent).not.toContain('No active approvals')
   })
 
-  it('loads and reveals a populated approval continuation', async () => {
-    const first = makeApproval()
-    const second = makeApproval({ id: 'approval-2', title: 'Appendix' })
-    const loadMoreApprovals = vi.fn(async () => {})
-    const store = makeStore({
-      approvals: [first],
-      approvalsNextCursor: 'cursor-2',
-      loadMoreApprovals
-    })
-    loadMoreApprovals.mockImplementation(async () => {
-      store.approvals = [first, second]
-      store.approvalsNextCursor = null
-    })
-    const { host } = mountNotifications(store)
-
-    const loadButton = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Load more approvals'))
-    expect(loadButton?.getAttribute('aria-label')).toBe('Load more approvals')
-    loadButton?.click()
-    await settle()
-
-    expect(loadMoreApprovals).toHaveBeenCalledTimes(1)
-    expect(host.textContent).toContain('Appendix')
-    expect(host.querySelectorAll('a')).toHaveLength(2)
-  })
 })

@@ -28,7 +28,15 @@ describe('Mail signing configuration', () => {
     const weak = generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ format: 'pem', type: 'pkcs8' }).toString()
     for (const dkimPrivateKey of ['private-invalid-value', weak]) {
       const config = mailRuntimeConfiguration({ useDKIM: true, dkimDomainName: 'example.test', dkimKeySelector: 'wiki', dkimPrivateKey })
-      expect(() => mailDkimPublicRecord(config)).toThrow('at least 2048 bits')
+      let error: unknown
+      try {
+        mailDkimPublicRecord(config)
+      } catch (caught) {
+        error = caught
+      }
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).not.toContain(dkimPrivateKey)
+      expect(JSON.stringify(error)).not.toContain(JSON.stringify(dkimPrivateKey).slice(1, -1))
     }
     expect(mailDkimPublicRecord(mailRuntimeConfiguration({ useDKIM: false, dkimPrivateKey: 'retained inactive key' }))).toBeNull()
   })

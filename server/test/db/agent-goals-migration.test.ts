@@ -248,7 +248,9 @@ describe('agent durable goals migration', () => {
       maxTokens: 24_000
     })
 
+    const goalsBeforeRerun = await db('agentGoals').orderBy('id').select('*')
     await upgradeAgentGoalBudgetPolicy(db)
+    expect(await db('agentGoals').orderBy('id').select('*')).toEqual(goalsBeforeRerun)
     await expect(Promise.resolve(downgradeAgentGoalBudgetPolicy(db))).rejects.toThrow('policy v2 token budget state')
   })
 })

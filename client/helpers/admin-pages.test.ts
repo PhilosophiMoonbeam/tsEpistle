@@ -40,24 +40,59 @@ describe('page administration workflows', () => {
   })
   it('skips unchanged publication without writing and clears old snapshots when review fails', async () => {
     const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7', capabilities: { viewStewardContacts: true }, isPublished: true, publishStartDate: null, publishEndDate: null }, error: '' } as PublicationReview
-    await applyPublication(row, true)
-    expect(row.status).toBe('unchanged')
+    const requests: unknown[] = []
+    let rejectReview = false
     globalThis.window = {
-      fetch: async () => {
-        throw new Error('Access changed')
+      fetch: async (input: string, init?: RequestInit) => {
+        requests.push({ input, init })
+        if (rejectReview) throw new Error('Access changed')
+        return new Response(JSON.stringify({}), { headers: { 'content-type': 'application/json' } })
       }
     } as unknown as Window & typeof globalThis
+    await applyPublication(row, true)
+    expect(row.status).toBe('unchanged')
+    expect(requests).toEqual([])
+    rejectReview = true
     await inspectPublication(row)
     expect(row.page).toBeNull()
     expect(row.status).toBe('error')
     expect(row.error).toBe('Access changed')
   })
   it('refuses publication writes when the detail omits restricted schedule fields', async () => {
+    const requests: unknown[] = []
+    globalThis.window = {
+      fetch: async (input: string, init?: RequestInit) => {
+        requests.push({ input, init })
+        return new Response(JSON.stringify({}), { headers: { 'content-type': 'application/json' } })
+      }
+    } as unknown as Window & typeof globalThis
     const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7' }, error: '' } as PublicationReview
 
     await applyPublication(row, false)
 
     expect(row.status).toBe('error')
     expect(row.error).toContain('unavailable')
+    expect(requests).toEqual([])
+  })
+  it('requires each publication disclosure and the steward capability independently before writing', async () => {
+    const page = { sourceRevision: '7', capabilities: { viewStewardContacts: true }, isPublished: true, publishStartDate: null, publishEndDate: null }
+    const { capabilities: _capabilities, ...withoutCapability } = page
+    const { isPublished: _isPublished, ...withoutPublished } = page
+    const { publishStartDate: _publishStartDate, ...withoutStart } = page
+    const { publishEndDate: _publishEndDate, ...withoutEnd } = page
+    const requests: unknown[] = []
+    globalThis.window = {
+      fetch: async (input: string, init?: RequestInit) => {
+        requests.push({ input, init })
+        return new Response(JSON.stringify({}), { headers: { 'content-type': 'application/json' } })
+      }
+    } as unknown as Window & typeof globalThis
+    for (const detail of [withoutCapability, { ...page, capabilities: { viewStewardContacts: false } }, withoutPublished, withoutStart, withoutEnd]) {
+      const row = { id: 5, title: 'Page', status: 'ready', page: detail, error: '' } as PublicationReview
+      await applyPublication(row, false)
+      expect(row.status).toBe('error')
+      expect(row.error).toContain('unavailable')
+      expect(requests).toEqual([])
+    }
   })
 })

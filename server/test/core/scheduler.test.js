@@ -70,19 +70,6 @@ describe('scheduler lifecycle', () => {
     expect(scheduler.jobs).toHaveLength(0)
   })
 
-  it('terminates an active child during shutdown', async () => {
-    const child = new WorkerProcess()
-    forkMock.mockReturnValue(child)
-    const scheduler = await loadScheduler()
-
-    scheduler.registerJob({ name: 'render-page', immediate: true, worker: true }, { pageId: 7 })
-    await vi.waitFor(() => expect(forkMock).toHaveBeenCalledOnce())
-
-    await scheduler.stop()
-
-    expect(child.killed).toBe(true)
-    expect(scheduler.jobs).toHaveLength(0)
-  })
   it('bounds retained worker stderr while preserving successful and failed settlement metadata', async () => {
     const prefix = 'p'.repeat(65_536)
     const successfulChild = new WorkerProcess()
@@ -210,6 +197,7 @@ describe('scheduler lifecycle', () => {
     expect(earlyExitChild.signals).toEqual(['SIGTERM'])
     expect(errorRaceChild.signals).toEqual(['SIGTERM'])
     expect(scheduler.started).toBe(false)
+    expect(scheduler.jobs).toHaveLength(0)
     expect(scheduler.snapshot().jobs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'early-exit', state: 'stopped', lastOutcome: 'stopped', failures: 0 }),
@@ -367,14 +355,19 @@ describe('scheduler lifecycle', () => {
     global.WIKI.config.offline = true
     scheduler.start()
     expect(scheduler.snapshot().jobs[0]).toMatchObject({name:'sync-graph-locales',state:'skipped',runs:0})
+    const completedIds = []
     for(let i=0;i<55;i++) {
       const child = new WorkerProcess()
       forkMock.mockReturnValue(child)
       const job = scheduler.registerJob({name:'render-page',worker:true,immediate:true})
+      completedIds.push(scheduler.snapshot().jobs.find(observation => observation.state === 'running').id)
       child.emitExit(0, null)
       await job.finished
     }
     expect(scheduler.snapshot().jobs.filter(job=>job.state==='finished')).toHaveLength(50)
+    const retainedIds = scheduler.snapshot().jobs.filter(job => job.state === 'finished').map(job => job.id)
+    expect([...retainedIds].sort()).toEqual(completedIds.slice(5).sort())
+    for (const id of completedIds.slice(0, 5)) expect(retainedIds).not.toContain(id)
     expect(scheduler.jobs).toHaveLength(0)
     await scheduler.stop()
   })

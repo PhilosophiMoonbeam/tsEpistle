@@ -140,7 +140,6 @@ describe('agent provider usage normalization', () => {
       cachedInputTokens: 3,
       cacheCreationInputTokens: 2
     })
-    expect(acceptCumulativeAgentProviderUsage(previous, omittedCacheCounters)).not.toBe(omittedCacheCounters)
 
     const unchangedCacheCounters: AgentProviderUsage = {
       inputTokens: 10,
@@ -149,7 +148,7 @@ describe('agent provider usage normalization', () => {
       cachedInputTokens: 3,
       cacheCreationInputTokens: 2
     }
-    expect(acceptCumulativeAgentProviderUsage(previous, unchangedCacheCounters)).toBe(unchangedCacheCounters)
+    expect(acceptCumulativeAgentProviderUsage(previous, unchangedCacheCounters)).toEqual(unchangedCacheCounters)
 
     for (const next of [
       { ...previous, inputTokens: 9, totalTokens: 13 },

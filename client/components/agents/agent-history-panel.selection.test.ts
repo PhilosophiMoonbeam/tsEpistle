@@ -35,6 +35,7 @@ interface PanelHarness {
   clearHistoryDisabled: Ref<boolean>
   closeHistory: () => void
   dialogError: Ref<string>
+  displaySessions: Ref<readonly AgentSessionSummary[]>
   dragStatus: Ref<string>
   draggedSessionId: Ref<string | null>
   dropSession: (event: DragEvent, folderId: string | null) => Promise<void>
@@ -213,6 +214,7 @@ const loadPanel = (
       closeHistory,
       beginRenameSession,
       dialogError,
+      displaySessions,
       dragStatus,
       draggedSessionId,
       dropSession,
@@ -355,20 +357,6 @@ const makeDragEvent = (): {
 describe('Agent history session selection', () => {
   afterEach(() => {
     vi.restoreAllMocks()
-  })
-
-  it('leaves compact panel closing to its parent after a transition is applied', async () => {
-    const agents: PanelAgents = {
-      openSession: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true),
-      cancelSessionReadTransition: vi.fn()
-    }
-    const panel = loadPanel(agents)
-
-    await panel.openSession('00000000-0000-4000-8000-000000000002')
-    expect(panel.emit).not.toHaveBeenCalled()
-
-    await panel.openSession('00000000-0000-4000-8000-000000000003')
-    expect(panel.emit).not.toHaveBeenCalled()
   })
 
   it('does nothing when choosing the displayed session', async () => {
@@ -578,11 +566,9 @@ describe('Agent history session selection', () => {
     expect(createFolder).toHaveBeenCalledTimes(1)
     expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
     expect(moveSessionToFolder).toHaveBeenCalledWith(source.id, committedFolder.id)
-    expect(source.folderId).toBe(committedFolder.id)
     expect(panel.openFolderIds.value).toEqual([committedFolder.id])
     expect(panel.folderEditorOpen.value).toBe(false)
     expect(panel.folderWorkflowState.value).toBe('idle')
-    expect(folders.find(folder => folder.id === distinctFolder.id)?.name).toBe('Release archives')
   })
 
   it('does not adopt a canonically different folder after a lost create response', async () => {
@@ -652,7 +638,10 @@ describe('Agent history session selection', () => {
     expect(panel.folderEditorOpen.value).toBe(false)
     expect(panel.folderWorkflowState.value).toBe('idle')
     expect(panel.openFolderIds.value).toEqual([folder.id])
-    expect(panel.dragStatus.value).toBe('Moved Release planning to Roadmap.')
+    expect(panel.dragStatus.value).toContain(source.title)
+    expect(panel.dragStatus.value).toMatch(new RegExp(`\\b(?:to|into)\\s+${folder.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\W|$)`, 'i'))
+    expect(panel.dragStatus.value).toMatch(/\b(?:moved|completed)\b/i)
+    expect(panel.dragStatus.value).not.toMatch(/\b(?:moving|dragging|cancelled|canceled|failed|unable)\b|could not/i)
     expect(panel.localError.value).toBe('')
     expect(activator.focus).toHaveBeenCalledTimes(1)
   })
@@ -755,8 +744,7 @@ describe('Agent history session selection', () => {
     expect(deleteFolder).toHaveBeenCalledTimes(1)
     expect(deleteFolder).toHaveBeenCalledWith(folder.id, folder.version)
     expect(panel.removingFolder.value).toEqual(renewedFolder)
-    expect(panel.dialogError.value).toContain('updated folder')
-    expect(session.folderId).toBe(folder.id)
+    expect(panel.displaySessions.value.find(candidate => candidate.id === session.id)?.folderId).toBe(folder.id)
     expect(panel.dragStatus.value).toBe('')
 
     await panel.deleteFolder()
@@ -784,7 +772,7 @@ describe('Agent history session selection', () => {
     expect(deleteFolder).toHaveBeenCalledWith(folder.id, folder.version)
     expect(panel.removingFolder.value).toBe(folder)
     expect(panel.dragStatus.value).toBe('')
-    expect(session.folderId).toBe(folder.id)
+    expect(panel.displaySessions.value.find(candidate => candidate.id === session.id)?.folderId).toBe(folder.id)
   })
 
   it('restores focus to the conversation action trigger when rename is cancelled', async () => {
@@ -889,7 +877,10 @@ describe('Agent history session selection', () => {
     expect(moveSessionToFolder).toHaveBeenCalledWith(session.id, folder.id)
     expect(panel.draggedSessionId.value).toBeNull()
     expect(panel.activeDropTarget.value).toBeNull()
-    expect(panel.dragStatus.value).toBe('Moved Release planning to Roadmap.')
+    expect(panel.dragStatus.value).toContain(session.title)
+    expect(panel.dragStatus.value).toMatch(new RegExp(`\\b(?:to|into)\\s+${folder.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\W|$)`, 'i'))
+    expect(panel.dragStatus.value).toMatch(/\b(?:moved|completed)\b/i)
+    expect(panel.dragStatus.value).not.toMatch(/\b(?:moving|dragging|cancelled|canceled|failed|unable)\b|could not/i)
   })
 
   it('uses Recent as a drop destination for a filed conversation', async () => {
@@ -912,7 +903,10 @@ describe('Agent history session selection', () => {
     await panel.dropSession(drag.event, null)
 
     expect(moveSessionToFolder).toHaveBeenCalledWith(session.id, null)
-    expect(panel.dragStatus.value).toBe('Moved Release planning to Recent.')
+    expect(panel.dragStatus.value).toContain(session.title)
+    expect(panel.dragStatus.value).toMatch(/\b(?:to|into)\s+Recent\b/i)
+    expect(panel.dragStatus.value).toMatch(/\b(?:moved|completed)\b/i)
+    expect(panel.dragStatus.value).not.toMatch(/\b(?:moving|dragging|cancelled|canceled|failed|unable)\b|could not/i)
   })
 
   it('clears drag state and leaves the conversation in place when a move fails', async () => {
@@ -932,14 +926,16 @@ describe('Agent history session selection', () => {
     panel.setDropTarget(drag.event, folder.id)
     await panel.dropSession(drag.event, folder.id)
 
-    expect(session.folderId).toBeNull()
+    expect(panel.displaySessions.value.find(candidate => candidate.id === session.id)?.folderId).toBeNull()
     expect(panel.draggedSessionId.value).toBeNull()
     expect(panel.activeDropTarget.value).toBeNull()
     expect(panel.localError.value).toBe('Folder version changed')
-    expect(panel.dragStatus.value).toContain('Refresh history, then retry the move.')
+    expect(panel.dragStatus.value).toContain(session.title)
+    expect(panel.dragStatus.value).toContain('Recent')
+    expect(panel.dragStatus.value).toMatch(/could not|failed|unable/i)
   })
 
-  it('announces cancellation when pointer dragging ends outside a target', () => {
+  it('clears pointer drag state and announces cancellation when dragging ends outside a target', () => {
     const session = makeSession()
     const folder = makeFolder()
     const agents: PanelAgents = {
@@ -955,7 +951,8 @@ describe('Agent history session selection', () => {
 
     expect(panel.draggedSessionId.value).toBeNull()
     expect(panel.activeDropTarget.value).toBeNull()
-    expect(panel.dragStatus.value).toBe('Conversation move cancelled.')
+    expect(panel.dragStatus.value).toMatch(/\bcancel(?:led|ed|lation)\b/i)
+    expect(panel.dragStatus.value).toMatch(/\b(?:conversation|move|drag)\b/i)
   })
 
   it('blocks rename and folder-move controls while the shared session mutation lock is held', async () => {

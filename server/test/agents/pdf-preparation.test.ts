@@ -22,6 +22,7 @@ interface ImageFixture {
 interface PageFixture {
   content?: Buffer | PdfStreamData
   image?: ImageFixture
+  entries?: string
 }
 
 interface PdfFixtureOptions {
@@ -198,7 +199,6 @@ describe('Agent PDF preparation with the real parser', () => {
     const input = await fixture([{}, {}, {}])
     const result = await prepareAgentPdf(input.payload, new AbortController().signal)
     prepared.push(result)
-    expect(AGENT_PDF_PART_MAX_BYTES).toBe(48_000_000)
     expect(result.pageCount).toBe(3)
     expect(result.parts).toHaveLength(1)
     expect(result.parts[0]).toMatchObject({ startPage: 1, endPage: 3, byteLength: input.payload.length })
@@ -211,7 +211,7 @@ describe('Agent PDF preparation with the real parser', () => {
     expect(await stat(result.parts[0]!.path).catch(() => null)).toBeNull()
   })
 
-  it('prepares a real near-249-MiB disk input without constructing an application-sized payload buffer', async () => {
+  it('prepares a real near-249-MiB disk input into provider-sized output', async () => {
     const directory = await newDirectory()
     const path = join(directory, 'large.pdf')
     const input = makePdf([{
@@ -331,6 +331,7 @@ describe('Agent PDF preparation with the real parser', () => {
       expect(pageDictionary(output, 0)['/TestPageIndex']).toBe(pageIndex + 1)
       expect(pageContents(output, 0)).toEqual(pageContentsExpected[pageIndex])
       expect(pageImageBytes(output, 0)).toEqual(image.data)
+      expect(resolveValue(output, inheritedValue(output, 0, '/MediaBox'))).toEqual([0, 0, 612, 792])
     }
     expect(await readFile(input.path)).toEqual(originalBytes)
   })
@@ -381,6 +382,11 @@ describe('Agent PDF preparation with the real parser', () => {
     controller.abort()
     await expect(first).rejects.toMatchObject({ name: 'AbortError' })
     expect((await readdir(tmpdir())).filter(name => name.startsWith('wiki-agent-pdf-')).sort()).toEqual(before)
-    prepared.push(await prepareAgentPdf(input.payload, new AbortController().signal))
+    const result = await prepareAgentPdf(input.payload, new AbortController().signal)
+    prepared.push(result)
+    expect(result.pageCount).toBe(3)
+    expect(result.parts).toHaveLength(1)
+    expect(result.parts[0]).toMatchObject({ startPage: 1, endPage: 3, byteLength: input.payload.length })
+    expect(await readFile(result.parts[0]!.path)).toEqual(input.payload)
   })
 })

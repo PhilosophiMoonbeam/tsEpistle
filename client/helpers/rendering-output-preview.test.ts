@@ -7,8 +7,4 @@ describe('isolated stored-output document', () => {
     for (const forbidden of ['receiver.test', '<script', '<iframe', '<form', '<input', 'onerror=', 'style="']) expect(html).not.toContain(forbidden)
     expect(html).toContain("default-src 'none'"); expect(html).toContain("form-action 'none'")
   })
-  it('provides readable empty and dark previews', () => {
-    expect(buildStoredOutputPreview('')).toContain('No rendered HTML is stored')
-    expect(buildStoredOutputPreview('<p>Text</p>', true)).toContain('background:#202426')
-  })
 })

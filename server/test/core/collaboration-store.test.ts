@@ -203,6 +203,13 @@ describe('collaboration room store', () => {
       sourceRevision: '2'
     }, 7)
     expect(saved.kind).toBe('saved')
+    if (saved.kind !== 'saved') throw new Error('Expected saved room')
+    expect(saved.room.generation).toBe(opened.generation)
+    expect(saved.room.baseSourceRevision).toBe('2')
+    expect(await knex('pageCollaborationContributors').where({
+      pageId: basePage.id,
+      generation: opened.generation
+    })).toEqual([])
     await store.leave('author')
     await knex('pages').where({ id: basePage.id }).update({
       content: '# External\n',

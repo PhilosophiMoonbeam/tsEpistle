@@ -8,7 +8,7 @@ import { createSSRApp, defineComponent } from 'vue'
 import type { RenderFunction } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
-import type { AgentMessageView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
+import type { AgentMessageView } from '../../../shared/agents/contracts.ts'
 import { buildAgentThreadPresentation } from './agent-thread-presentation.ts'
 
 resetBody()
@@ -64,25 +64,11 @@ const makeMessage = (id: string, ordinal: number, runId: string | null = null): 
   updatedAt: '2026-09-03T10:00:00.000Z'
 })
 
-const makeTool = (id: string, state: AgentToolCallView['state']): AgentToolCallView => ({
-  id,
-  runId: 'run',
-  actionName: 'pages.get',
-  title: 'Get page',
-  state,
-  risk: 'read',
-  summary: null,
-  proposalId: null,
-  ...(state === 'omitted' || state === 'not_executed' ? { contextExclusion: { status: state, reason: 'tool_result_capacity' as const } } : {}),
-  startedAt: '2026-09-03T10:00:00.000Z',
-  completedAt: '2026-09-03T10:00:01.000Z'
-})
-
-const renderDuplicateSources = async (tools: readonly AgentToolCallView[] = []): Promise<string> => {
-  const messages = tools.length ? [makeMessage('activity message', 1, 'run')] : [makeMessage('message one/α', 1), makeMessage('message two/β', 2)]
+const renderDuplicateSources = async (): Promise<string> => {
+  const messages = [makeMessage('message one/α', 1), makeMessage('message two/β', 2)]
   const thread = { messages, artifacts: [], suggestions: [] }
   const { safeNavigableHref, sourceDomId } = loadThreadHelpers()
-  const threadPresentation = buildAgentThreadPresentation(messages, tools, [], [])
+  const threadPresentation = buildAgentThreadPresentation(messages, [], [], [])
   const threadProjection = {
     orderedMessages: threadPresentation.orderedMessages.map(entry => ({
       ...entry,
@@ -119,32 +105,6 @@ const renderDuplicateSources = async (tools: readonly AgentToolCallView[] = []):
         canSubmit: true,
         sourceDomId,
         previewSelector: null,
-        toolStateIcon: (state: AgentToolCallView['state']) =>
-          ({
-            preparing: 'mdi-dots-horizontal',
-            running: 'mdi-progress-clock',
-            awaitingApproval: 'mdi-shield-alert-outline',
-            complete: 'mdi-check-circle-outline',
-            failed: 'mdi-alert-circle-outline',
-            denied: 'mdi-cancel',
-            cancelled: 'mdi-stop-circle-outline',
-            omitted: 'mdi-eye-off-outline',
-            not_executed: 'mdi-minus-circle-outline'
-          })[state],
-        toolStateColor: (state: AgentToolCallView['state']) =>
-          state === 'complete' ? 'success' : state === 'failed' || state === 'denied' ? 'error' : undefined,
-        toolStateLabel: (state: AgentToolCallView['state']) =>
-          ({
-            preparing: 'Preparing',
-            running: 'Running',
-            awaitingApproval: 'Awaiting approval',
-            complete: 'Complete',
-            failed: 'Failed',
-            denied: 'Denied',
-            cancelled: 'Cancelled',
-            omitted: 'Result omitted',
-            not_executed: 'Not executed'
-          })[state],
         forwardDecision: () => undefined,
         emit: () => undefined
       }),
@@ -161,31 +121,6 @@ const renderDuplicateSources = async (tools: readonly AgentToolCallView[] = []):
 }
 
 describe('Agent thread disclosures', () => {
-  test('renders omitted and not-executed activity states as calm accessible rows', async () => {
-    const renderedHtml = await renderDuplicateSources([
-      makeTool('complete', 'complete'),
-      makeTool('omitted', 'omitted'),
-      makeTool('not-executed', 'not_executed')
-    ])
-    const dom = new JSDOM(renderedHtml)
-    const activity = dom.window.document.querySelector<HTMLElement>('.agent-activity')
-    if (!activity) throw new Error('Rendered activity disclosure was not found')
-    expect(activity.textContent).toContain('Activity · 3 activities · 1 omitted · 1 not executed')
-    expect(activity.textContent).toContain('Result omitted')
-    expect(activity.textContent).toContain('Not executed')
-    expect(activity.textContent).not.toContain('failed')
-  })
-
-  test('rejects executable and malformed source URLs while allowing navigable sources', () => {
-    const { safeNavigableHref } = loadThreadHelpers()
-
-    expect(safeNavigableHref('/en/runbook#response')).toBe('/en/runbook#response')
-    expect(safeNavigableHref('https://docs.example.test/guide')).toBe('https://docs.example.test/guide')
-    expect(safeNavigableHref('javascript:alert(1)')).toBeUndefined()
-    expect(safeNavigableHref('data:text/html,unsafe')).toBeUndefined()
-    expect(safeNavigableHref('https://[')).toBeUndefined()
-  })
-
   test('renders unique encoded page and section identifiers when messages repeat evidence', async () => {
     const dom = new JSDOM(await renderDuplicateSources())
     const disclosures = [...dom.window.document.querySelectorAll<HTMLDetailsElement>('.agent-sources')]

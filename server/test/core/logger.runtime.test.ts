@@ -90,6 +90,9 @@ describe('managed logging runtime', () => {
     const result = await logger.reconcile(configuration('invalid private dsn'), 'invalid')
 
     expect(sentry.init).not.toHaveBeenCalled()
-    expect(result.destinations.sentry).toEqual({ state: 'failed', message: 'The configured Sentry DSN is invalid.' })
+    expect(result.destinations.sentry).toMatchObject({ state: 'failed' })
+    expect(result).toMatchObject({ state: 'partially-applied', configurationKey: null })
+    expect(logger.loggingRuntime()).toMatchObject({ state: 'partially-applied', configurationKey: null })
+    expect(JSON.stringify(result)).not.toContain('invalid private dsn')
   })
 })

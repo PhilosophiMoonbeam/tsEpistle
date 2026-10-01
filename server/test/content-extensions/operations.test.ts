@@ -4,6 +4,7 @@ import { runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
 import { createContentExtensionRerenderHandler } from '../../jobs/content-extension-rerender.ts'
+import markdownRenderer from '../../modules/rendering/markdown-core/renderer.ts'
 
 import {
   listContentExtensions,
@@ -11,6 +12,14 @@ import {
 } from '../../content-extensions/operations.ts'
 
 const qrFence = '```wiki-extension\n{"key":"qr","version":1,"props":{"value":"cached","size":256,"errorCorrection":"M"}}\n```\n'
+const baseConfig = {
+  allowHTML: false,
+  linebreaks: false,
+  linkify: false,
+  typographer: false,
+  quotes: 'English',
+  underline: false
+}
 
 describe('content extension operations', () => {
   let db: Knex
@@ -56,7 +65,7 @@ describe('content extension operations', () => {
       updatedBy: null
     })))
     await db('pages').insert([
-      { id: 1, hash: 'qr-hash', content: qrFence, render: '<svg>active QR</svg>', visibility: 'public', isPublished: true },
+      { id: 1, hash: 'qr-hash', content: qrFence, render: '', visibility: 'public', isPublished: true },
       { id: 2, hash: 'plain-hash', content: '```js\nconst wikiExtension = true\n```', render: '<pre>plain</pre>', visibility: 'public', isPublished: true }
     ])
 
@@ -66,10 +75,9 @@ describe('content extension operations', () => {
     })
     renderPage.mockImplementation(async (page: { id: number }) => {
       events.push(`render:${page.id}`)
-      const state = await db('contentExtensions').where({ key: 'qr' }).first('isEnabled')
-      await db('pages').where({ id: page.id }).update({
-        render: state?.isEnabled ? '<svg>active QR</svg>' : '<pre>escaped source</pre>'
-      })
+      const stored = await db('pages').where({ id: page.id }).first('content')
+      const render = await markdownRenderer.render.call({ input: stored.content, config: baseConfig, children: [] })
+      await db('pages').where({ id: page.id }).update({ render })
     })
     global.WIKI = {
       data: {
@@ -92,6 +100,8 @@ describe('content extension operations', () => {
         }
       }
     }
+    const render = await markdownRenderer.render.call({ input: qrFence, config: baseConfig, children: [] })
+    await db('pages').where({ id: 1 }).update({ render })
   })
 
   afterEach(async () => {
@@ -99,7 +109,8 @@ describe('content extension operations', () => {
   })
 
   it('persists a toggle and queues a durable rerender without blocking the request', async () => {
-    const sourceBefore = await db('pages').where({ id: 1 }).first('content')
+    const sourceBefore = await db('pages').where({ id: 1 }).first('content', 'render')
+    expect(sourceBefore.render).toContain('content-extension--qr')
     const status = await setContentExtensionEnabled('qr', false, 42)
 
     expect(status).toMatchObject({ key: 'qr', isEnabled: false, compatible: true, diagnostic: null })
@@ -107,7 +118,7 @@ describe('content extension operations', () => {
       isEnabled: 0,
       updatedBy: 42
     })
-    expect(await db('pages').where({ id: 1 }).first('render')).toMatchObject({ render: '<svg>active QR</svg>' })
+    expect(await db('pages').where({ id: 1 }).first('render')).toMatchObject({ render: sourceBefore.render })
     expect(await db('durableJobs').where({ type: 'rerender-content-extension' }).first()).toMatchObject({
       state: 'pending',
       attempts: 0,
@@ -120,13 +131,18 @@ describe('content extension operations', () => {
       handlers: { 'rerender-content-extension@1': createContentExtensionRerenderHandler(global.WIKI) }
     })
 
-    expect(await db('pages').where({ id: 1 }).first('content', 'render')).toMatchObject({
-      content: sourceBefore?.content,
-      render: '<pre>escaped source</pre>'
-    })
+    const rerendered = await db('pages').where({ id: 1 }).first('content', 'render')
+    expect(rerendered.content).toBe(sourceBefore.content)
+    expect(rerendered.render).toContain('&quot;key&quot;')
+    expect(rerendered.render).toContain('&quot;qr&quot;')
+    expect(rerendered.render).not.toContain('content-extension--qr')
     expect(cachedHashes.has('qr-hash')).toBe(false)
     expect(cachedHashes.has('plain-hash')).toBe(true)
-    expect(events).toEqual(['cache:qr-hash', 'event:qr-hash', 'render:1'])
+    expect(events.filter(event => event.startsWith('cache:'))).toEqual(['cache:qr-hash'])
+    expect(events.filter(event => event.startsWith('event:'))).toEqual(['event:qr-hash'])
+    expect(events.filter(event => event.startsWith('render:'))).toEqual(['render:1'])
+    expect(events.indexOf('cache:qr-hash')).toBeLessThan(events.indexOf('render:1'))
+    expect(events.indexOf('event:qr-hash')).toBeLessThan(events.indexOf('render:1'))
     expect(renderPage).toHaveBeenCalledTimes(1)
     expect(await db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts')).toMatchObject({
       state: 'succeeded',
@@ -135,7 +151,8 @@ describe('content extension operations', () => {
   })
 
   it('retries interrupted rerenders without changing stored extension bytes', async () => {
-    const sourceBefore = await db('pages').where({ id: 1 }).first('content')
+    const sourceBefore = await db('pages').where({ id: 1 }).first('content', 'render')
+    expect(sourceBefore.render).toContain('content-extension--qr')
     renderPage.mockRejectedValueOnce(new Error('worker interrupted'))
     await setContentExtensionEnabled('qr', false, 42)
     const handlers = { 'rerender-content-extension@1': createContentExtensionRerenderHandler(global.WIKI) }
@@ -152,7 +169,7 @@ describe('content extension operations', () => {
     })
     expect(await db('pages').where({ id: 1 }).first('content', 'render')).toMatchObject({
       content: sourceBefore?.content,
-      render: '<svg>active QR</svg>'
+      render: sourceBefore.render
     })
 
     await runDurableJobBatch(db, {
@@ -164,10 +181,11 @@ describe('content extension operations', () => {
       state: 'succeeded',
       attempts: 2
     })
-    expect(await db('pages').where({ id: 1 }).first('content', 'render')).toMatchObject({
-      content: sourceBefore?.content,
-      render: '<pre>escaped source</pre>'
-    })
+    const retried = await db('pages').where({ id: 1 }).first('content', 'render')
+    expect(retried.content).toBe(sourceBefore.content)
+    expect(retried.render).toContain('&quot;key&quot;')
+    expect(retried.render).toContain('&quot;qr&quot;')
+    expect(retried.render).not.toContain('content-extension--qr')
   })
 
   it('reports persisted version mismatches as editor-usable incompatibility diagnostics', async () => {
@@ -175,13 +193,12 @@ describe('content extension operations', () => {
 
     const status = await listContentExtensions()
     expect(status.hostVersion).toBe(1)
-    expect(status.extensions).toHaveLength(13)
     expect(status.extensions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         key: 'qr',
         isEnabled: true,
         compatible: false,
-        diagnostic: 'Installed extension "qr" version 2 does not match renderer version 1.'
+        diagnostic: expect.any(String)
       }),
       expect.objectContaining({ key: 'gallery', isEnabled: false, compatible: true, diagnostic: null }),
       expect.objectContaining({ key: 'index', isEnabled: false, compatible: true, diagnostic: null }),

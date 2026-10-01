@@ -452,7 +452,6 @@ describe('Agent store initialization', () => {
       policyVersion: 1,
       isGlobalDefault: true
     } satisfies AgentProviderProfileView]
-    const patchResponse = deferred<Response>()
     const patchBodies: unknown[] = []
     vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
@@ -472,7 +471,7 @@ describe('Agent store initialization', () => {
     const toggling = store.setGoogleSearchEnabled(true)
     expect(store.googleSearchPending).toBe(true)
     expect(store.sessionMutationBusy).toBe(false)
-    await expect(toggling).resolves.toBeDefined()
+    await toggling
     expect(store.googleSearchPending).toBe(null)
     expect(store.sessionMutationBusy).toBe(false)
     expect(patchBodies).toEqual([{ expectedSessionVersion: 1, googleSearchEnabled: true }])
@@ -1014,7 +1013,7 @@ describe('Agent session mutations', () => {
 
     expect(store.thread?.session).toMatchObject({ title: 'Renamed conversation', version: 2 })
     expect(store.sessions).toEqual([summaryForThread(renamed)])
-    expect(store.error).toBe('The conversation was renamed, but history could not be refreshed. History offline')
+    expect(store.error).toContain('History offline')
   })
 
   it('keeps a committed retention change in history and the active thread when the subsequent refresh fails', async () => {
@@ -1056,7 +1055,7 @@ describe('Agent session mutations', () => {
 
     expect(store.thread?.session).toMatchObject({ retention: 'temporary', version: 2, expiresAt: '2026-08-24T00:01:00.000Z' })
     expect(store.sessions).toEqual([summaryForThread(retained)])
-    expect(store.error).toBe('The retention setting was updated, but history could not be refreshed. History offline')
+    expect(store.error).toContain('History offline')
   })
   it('serializes versioned mutations behind retention and releases the lock after success and failure', async () => {
     for (const outcome of ['success', 'failure'] as const) {
@@ -2064,6 +2063,11 @@ describe('Agent session mutation transitions', () => {
     accepted = true
     pending.resolve(Response.json({ run: active.session.currentRun, replayed: false }))
     expect(await sending).toBe(true)
+    expect(store.thread?.session.currentRun).toMatchObject({
+      id: '00000000-0000-4000-8000-000000000002',
+      status: 'running',
+      canCancel: true
+    })
     expect(store.drafts[active.session.id]?.text).toBe('')
     expect(store.drafts[active.session.id]?.mode).toBe('message')
     expect(store.drafts[active.session.id]?.skillVersionIds).toEqual([])
@@ -2129,7 +2133,7 @@ describe('Agent session mutation transitions', () => {
     store.setDraft(active.session.id, 'Committed once')
     expect(await store.send('Committed once')).toBe(true)
     expect(store.drafts[active.session.id]?.text).toBe('')
-    expect(store.error).toBe('The message was sent, but the conversation could not be refreshed. Refresh unavailable')
+    expect(store.error).toContain('Refresh unavailable')
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 

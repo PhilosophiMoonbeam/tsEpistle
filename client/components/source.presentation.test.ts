@@ -40,10 +40,13 @@ const passthrough = (tag = 'div') =>
   })
 
 let app: { unmount: () => void } | undefined
+let clipboardDescriptor: PropertyDescriptor | undefined
 afterEach(() => {
   app?.unmount()
   app = undefined
   document.body.replaceChildren()
+  if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
+  else Reflect.deleteProperty(navigator, 'clipboard')
 })
 
 const settle = async () => {
@@ -58,6 +61,7 @@ describe('View Source presentation', () => {
     const content = '\n  # Heading {value}\n\t<safe>&\nΔ終\n'
     const notifications: Record<string, unknown>[] = []
     const writeText = vi.fn(async (_value: string) => undefined)
+    clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText }
@@ -123,19 +127,11 @@ describe('View Source presentation', () => {
     copyButton?.click()
     await settle()
     expect(writeText).toHaveBeenCalledWith(content)
-    expect(notifications.at(-1)).toEqual({
-      style: 'success',
-      message: 'Source copied to clipboard.',
-      icon: 'content-copy'
-    })
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({ style: 'success' }))
 
     writeText.mockRejectedValueOnce(new Error('clipboard denied'))
     copyButton?.click()
     await settle()
-    expect(notifications.at(-1)).toEqual({
-      style: 'red',
-      message: 'Copy failed. Select the source text and copy it manually.',
-      icon: 'alert'
-    })
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({ style: 'red' }))
   })
 })

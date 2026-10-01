@@ -26,8 +26,8 @@ beforeEach(async () => {
 describe('Developer flag workspace HTTP boundary', () => {
   it('requires system access and prevents caching for every workspace route', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    expect(Object.keys(routes)).toHaveLength(3)
-    for (const handler of Object.values(routes)) {
+    for (const route of ['get /workspace', 'put /workspace', 'post /workspace/apply']) {
+      const handler = routes[route]
       const res = response()
       await handler({ user: {} }, res)
       expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
@@ -45,25 +45,25 @@ describe('Developer flag workspace HTTP boundary', () => {
       body: { fingerprint: 'review', policy: { ldapdebug: false, sqllog: false }, reason: 'Restore diagnostics' }
     }
     const requester = { user: req.user, apiKey: { id: 7, groupId: 1, expiresAt: 1234567890 } }
-    for (const [route, method, body] of [['get /workspace', 'inspect', undefined], ['put /workspace', 'save', req.body], ['post /workspace/apply', 'apply', req.body]]) {
+    for (const [route, method, body] of [['get /workspace', 'inspect', undefined], ['put /workspace', 'save', req.body], ['post /workspace/apply', 'apply', { fingerprint: 'review' }]]) {
       const res = response()
-      await routes[route](req, res)
+      await routes[route]({ ...req, body }, res)
       expect(store[method]).toHaveBeenCalledWith(...(body === undefined ? [requester] : [requester, body]))
-      expect(res.json).toHaveBeenCalled()
     }
-    expect(JSON.stringify(store.inspect.mock.calls)).not.toContain('private-api-token')
+    for (const method of ['inspect', 'save', 'apply']) expect(JSON.stringify(store[method].mock.calls)).not.toContain('private-api-token')
   })
 
   it('keeps conflicts actionable and suppresses raw runtime failures', async () => {
     for (const [failure, status, visible] of [
       [Object.assign(new Error('Developer flags changed'), { status: 409 }), 409, 'Developer flags changed'],
-      [new Error('private database connection and query bindings'), 503, 'Developer flag administration is unavailable']
+      [new Error('private database connection and query bindings'), 503, undefined]
     ]) {
       store.inspect.mockRejectedValueOnce(failure)
       const res = response()
       await routes['get /workspace']({ user: { id: 1 } }, res)
       expect(res.status).toHaveBeenCalledWith(status)
-      expect(res.json.mock.calls[0][0].error).toContain(visible)
+      expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
+      if (visible !== undefined) expect(res.json).toHaveBeenCalledWith({ error: visible })
       expect(JSON.stringify(res.json.mock.calls)).not.toContain('private database connection')
     }
   })

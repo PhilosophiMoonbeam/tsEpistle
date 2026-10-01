@@ -95,30 +95,38 @@ const legacyGoalRow = ({
 
 describe('agent durable goal completion assessment', () => {
   it('completes only after tasks, evidence, proposals, and usage reconcile', () => {
-    expect(
-      assessAgentRunCompletion({
-        tasks: [task()],
-        pendingProposalCount: 0,
-        evidenceGatePassed: true,
-        usageReconciled: true
-      })
-    ).toEqual({ outcome: 'complete', issues: [] })
+    const completeInput = {
+      tasks: [task()],
+      pendingProposalCount: 0,
+      evidenceGatePassed: true,
+      usageReconciled: true
+    }
+    expect(assessAgentRunCompletion(completeInput)).toEqual({ outcome: 'complete', issues: [] })
 
-    expect(
-      assessAgentRunCompletion({
-        tasks: [task({ evidenceCount: 0 })],
-        pendingProposalCount: 0,
-        evidenceGatePassed: false,
-        usageReconciled: false
-      })
-    ).toEqual({
-      outcome: 'retry',
-      issues: [
-        { code: 'REQUIRED_EVIDENCE_MISSING', message: 'Research task “Inspect the runbook” did not satisfy its evidence requirement.', retryable: true },
-        { code: 'EVIDENCE_GATE_FAILED', message: 'The answer did not pass citation and evidence validation.', retryable: true },
-        { code: 'USAGE_NOT_RECONCILED', message: 'Aggregate usage has not been reconciled.', retryable: true }
-      ]
+    for (const { overrides, code } of [
+      { overrides: { tasks: [task({ evidenceCount: 0 })] }, code: 'REQUIRED_EVIDENCE_MISSING' },
+      { overrides: { evidenceGatePassed: false }, code: 'EVIDENCE_GATE_FAILED' },
+      { overrides: { usageReconciled: false }, code: 'USAGE_NOT_RECONCILED' }
+    ]) {
+      const assessment = assessAgentRunCompletion({ ...completeInput, ...overrides })
+      expect(assessment.outcome).toBe('retry')
+      expect(assessment.issues.map(({ code, message, retryable }) => ({ code, message, retryable }))).toEqual([
+        { code, message: expect.any(String), retryable: true }
+      ])
+    }
+
+    const assessment = assessAgentRunCompletion({
+      ...completeInput,
+      tasks: [task({ evidenceCount: 0 })],
+      evidenceGatePassed: false,
+      usageReconciled: false
     })
+    expect(assessment.outcome).toBe('retry')
+    expect(assessment.issues.map(({ code, message, retryable }) => ({ code, message, retryable })).sort((left, right) => left.code.localeCompare(right.code))).toEqual([
+      { code: 'EVIDENCE_GATE_FAILED', message: expect.any(String), retryable: true },
+      { code: 'REQUIRED_EVIDENCE_MISSING', message: expect.any(String), retryable: true },
+      { code: 'USAGE_NOT_RECONCILED', message: expect.any(String), retryable: true }
+    ])
   })
 
   it('blocks while a required human proposal remains pending', () => {
@@ -128,10 +136,10 @@ describe('agent durable goal completion assessment', () => {
       evidenceGatePassed: true,
       usageReconciled: true
     })
-    expect(assessment).toEqual({
-      outcome: 'blocked',
-      issues: [{ code: 'APPROVAL_PENDING', message: 'A required proposal is still awaiting resolution.', retryable: false }]
-    })
+    expect(assessment.outcome).toBe('blocked')
+    expect(assessment.issues.map(({ code, message, retryable }) => ({ code, message, retryable }))).toEqual([
+      { code: 'APPROVAL_PENDING', message: expect.any(String), retryable: false }
+    ])
   })
 
   it('blocks durable continuation when a required research task is suspended', () => {
@@ -149,24 +157,22 @@ describe('agent durable goal completion assessment', () => {
       evidenceGatePassed: true,
       usageReconciled: true
     })
-    expect(assessment).toEqual({
-      outcome: 'blocked',
-      issues: [
-        {
-          code: 'REQUIRED_TASK_BLOCKED',
-          message: 'Research task “Inspect the runbook” is blocked and needs new external input or conditions.',
-          retryable: false
-        }
-      ]
-    })
+    expect(assessment.outcome).toBe('blocked')
+    expect(assessment.issues.map(({ code, message, retryable }) => ({ code, message, retryable }))).toEqual([
+      { code: 'REQUIRED_TASK_BLOCKED', message: expect.any(String), retryable: false }
+    ])
   })
 
   it('hash-binds the host assessment and rejects tampering', () => {
     const assessment = assessAgentRunCompletion({ tasks: [], pendingProposalCount: 0, evidenceGatePassed: true, usageReconciled: true })
     const encoded = encodedCompletionAssessment(assessment)
     expect(decodeCompletionAssessment(encoded.encoded, assessment.outcome, encoded.sha256)).toEqual(assessment)
-    expect(() => decodeCompletionAssessment(`${encoded.encoded} `, assessment.outcome, encoded.sha256)).toThrow('integrity check failed')
-    expect(() => decodeCompletionAssessment(encoded.encoded, 'retry', encoded.sha256)).toThrow('does not match')
+    expect(() => decodeCompletionAssessment(`${encoded.encoded} `, assessment.outcome, encoded.sha256)).toThrow(
+      expect.objectContaining({ code: 'AGENT_COMPLETION_CORRUPT', status: 500 })
+    )
+    expect(() => decodeCompletionAssessment(encoded.encoded, 'retry', encoded.sha256)).toThrow(
+      expect.objectContaining({ code: 'AGENT_COMPLETION_CORRUPT', status: 500 })
+    )
   })
   it('derives all three policy v2 token allowances from the configured ceiling', () => {
     expect(agentGoalTokenAllowance(384_000, 'small')).toBe(64_000)
@@ -204,9 +210,17 @@ describe('agent durable goal completion assessment', () => {
         canRenewTokenBudget: false
       })
     }
-    expect(() => agentGoalRecord(legacyGoalRow({ budgetLimitReason: 'unknown' }))).toThrow('Stored agent goal counters are invalid')
-    expect(() => agentGoalRecord({ ...renewableGoalRow(), budgetPolicyVersion: 1, tokenTier: 'small' })).toThrow('Stored agent goal budget policy is invalid')
-    expect(() => agentGoalRecord(legacyGoalRow({ tokenTier: 'standard' }))).toThrow('Stored agent goal budget policy is invalid')
-    expect(() => agentGoalRecord(legacyGoalRow({ budgetCycle: 1 }))).toThrow('Stored agent goal budget policy is invalid')
+    expect(() => agentGoalRecord(legacyGoalRow({ budgetLimitReason: 'unknown' }))).toThrow(
+      expect.objectContaining({ code: 'AGENT_GOAL_CORRUPT', status: 500 })
+    )
+    expect(() => agentGoalRecord({ ...renewableGoalRow(), budgetPolicyVersion: 1, tokenTier: 'small' })).toThrow(
+      expect.objectContaining({ code: 'AGENT_GOAL_CORRUPT', status: 500 })
+    )
+    expect(() => agentGoalRecord(legacyGoalRow({ tokenTier: 'standard' }))).toThrow(
+      expect.objectContaining({ code: 'AGENT_GOAL_CORRUPT', status: 500 })
+    )
+    expect(() => agentGoalRecord(legacyGoalRow({ budgetCycle: 1 }))).toThrow(
+      expect.objectContaining({ code: 'AGENT_GOAL_CORRUPT', status: 500 })
+    )
   })
 })

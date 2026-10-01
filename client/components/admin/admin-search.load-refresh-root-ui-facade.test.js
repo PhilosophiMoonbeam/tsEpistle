@@ -3,6 +3,24 @@ import path from 'node:path'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { fetchSearchEngines, inspectSearchIndex, rebuildSearchIndex, saveSearchEngines } from '../../helpers/search-api.ts'
 import { getErrorMessage, loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store.ts'
+import { browserWindow, document } from '../../test/browser-dom.mts'
+import { afterEach } from '../../../server/test/bun-test.mts'
+import { compileTemplate } from '@vue/compiler-sfc'
+
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
+const mounted = []
+afterEach(() => {
+  for (const { app, host } of mounted.splice(0)) { app.unmount(); host.remove() }
+})
+const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); await Vue.nextTick() }
+const deferred = () => {
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  return { promise, resolve }
+}
 
 const source = fs.readFileSync(path.join(process.cwd(), 'client/components/admin/admin-search.vue'), 'utf8')
 const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)?.[1]
@@ -73,7 +91,7 @@ function createHarness(fetchImpl) {
     loadingStop,
     showNotification,
     pushGraphError,
-    { fetch: fetchImpl, addEventListener() {}, removeEventListener() {} }
+    { fetch: fetchImpl, location: browserWindow.location, history: browserWindow.history, addEventListener() {}, removeEventListener() {} }
   )
   instance = { ...component.data(), $t: key => key }
   for (const [key, method] of Object.entries(component.methods)) {
@@ -85,23 +103,92 @@ function createHarness(fetchImpl) {
   return { component, instance, loadingEvents, notifications, notificationState, errors }
 }
 
+const template = compileTemplate({
+  source: source.match(/<template>([\s\S]*?)<\/template>\s*<script/)[1],
+  filename: 'admin-search.vue',
+  id: 'search-administration-contract',
+  compilerOptions: { mode: 'function' }
+})
+if (template.errors.length) throw template.errors[0]
+const render = new Function('Vue', template.code)(Vue)
+const mountSearch = harness => {
+  const { component, instance } = harness
+  const data = Object.fromEntries(Object.keys(component.data()).map(key => [key, instance[key]]))
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = Vue.createApp({
+    ...component, data: () => data, render,
+    // The method harness already loaded this snapshot; these cases own controls and dialogs, not startup.
+    created: undefined, mounted: undefined
+  })
+  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives, defaults: { VDialog: { transition: false }, VWindow: { transition: false } } }))
+  app.component('AdminHero', { render: () => null })
+  app.config.globalProperties.$t = key => key
+  const vm = app.mount(host)
+  mounted.push({ app, host })
+  return { vm, host }
+}
+
 describe('admin-search REST and root UI facade contracts', () => {
-  it('retains REST, typed root-store, lifecycle, and accessibility boundaries', () => {
-    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bgetErrorMessage\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
-    )
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bfetchSearchEngines\b)(?=[^}]*\brebuildSearchIndex\b)(?=[^}]*\bsaveSearchEngines\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/search-api['"]/
-    )
+  it('renders named engine choices and review dialogs without unsupported runtime dependencies', async () => {
     expect(script).not.toMatch(directRootUiCommit)
-    expect(script).not.toMatch(/this\.\$apollo|search-mutation-(?:save-engines|rebuild-index)\.gql|engines(?:Save|Rebuild)Mutation/)
-    expect(source).toContain('aria-labelledby="rebuild-confirm-title"')
-    expect(source).toContain('aria-labelledby="search-discard-title"')
-    expect(source).toMatch(
-      /<v-radio-group\b(?=[^>]*\bv-model="selectedEngine")(?=[^>]*\blabel="Choose an engine")(?=[^>]*:disabled="saving \|\| rebuilding")[^>]*>/
-    )
-    expect(source).toMatch(/<v-radio\b(?=[^>]*:value="eng\.key")(?=[^>]*:disabled="!eng\.isAvailable")[^>]*>/)
+    expect(script).not.toMatch(/this\.\$apollo/)
+    const harness = createHarness(vi.fn(async () => jsonResponse([
+      engineRow('postgres', { isEnabled: true }), engineRow('external'), engineRow('offline', { isAvailable: false })
+    ])))
+    await harness.instance.loadEngines()
+    const { vm, host } = mountSearch(harness)
+    await settle()
+    const group = host.querySelector('[role="radiogroup"]')
+    expect(group).not.toBeNull()
+    const labelId = group.getAttribute('aria-labelledby')
+    expect(document.getElementById(labelId)?.textContent.trim()).toBeTruthy()
+    const radio = value => host.querySelector(`input[type="radio"][value="${value}"]`)
+    radio('external').click()
+    await settle()
+    expect(vm.selectedEngine).toBe('external')
+    expect(radio('offline').disabled).toBe(true)
+    radio('offline').click()
+    await settle()
+    expect(vm.selectedEngine).toBe('external')
+    for (const busy of ['saving', 'rebuilding']) {
+      vm[busy] = true
+      await settle()
+      expect(radio('postgres').disabled).toBe(true)
+      expect(radio('external').disabled).toBe(true)
+      radio('postgres').click()
+      expect(vm.selectedEngine).toBe('external')
+      vm[busy] = false
+      await settle()
+    }
+    vm.resetDraft()
+    vm.tab = 'index'
+    await settle()
+    const rebuildButton = [...host.querySelectorAll('button')].find(button => button.textContent.includes('Rebuild index'))
+    rebuildButton.click()
+    await settle()
+    const assertNamedDialog = category => {
+      const dialog = [...document.querySelectorAll('[role="dialog"]')].find(element =>
+        document.getElementById(element.getAttribute('aria-labelledby'))?.textContent.match(category))
+      expect(dialog).not.toBeNull()
+      const title = document.getElementById(dialog.getAttribute('aria-labelledby'))
+      expect(title).not.toBeNull()
+      expect(title.textContent.trim()).toBeTruthy()
+      return dialog
+    }
+    const rebuildDialog = assertNamedDialog(/rebuild/i)
+    expect(rebuildDialog.contains(document.getElementById(rebuildDialog.getAttribute('aria-labelledby')))).toBe(true)
+    vm.rebuildConfirm = false
+    await settle()
+    vm.engine.config[0].value.value = 'unsaved'
+    const leave = harness.component.beforeRouteLeave.call(vm)
+    await settle()
+    const leaveDialog = assertNamedDialog(/discard/i)
+    expect(leaveDialog.contains(document.getElementById(leaveDialog.getAttribute('aria-labelledby')))).toBe(true)
+    const keepEditing = [...leaveDialog.querySelectorAll('button')].find(button => button.textContent.includes('Keep editing'))
+    keepEditing.click()
+    expect(await leave).toBe(false)
+    expect(vm.dirty).toBe(true)
   })
 
   it('selects an available engine and announces refresh only after the refreshed data is committed', async () => {
@@ -329,14 +416,18 @@ describe('admin-search REST and root UI facade contracts', () => {
 
   it('saves every engine with the current selection and announces only after the silent reload', async () => {
     const initial = [engineRow('postgres', { isEnabled: true, value: 'old-postgres' }), engineRow('external', { value: 'old-external' })]
-    const saved = [engineRow('postgres', { value: 'old-postgres' }), engineRow('external', { isEnabled: true, value: 'edited' })]
+    const saved = [engineRow('postgres', { value: 'old-postgres' }), engineRow('external', { isEnabled: true, value: 'server-normalized' })]
     const requests = []
     let engineLoads = 0
+    const readback = deferred()
+    const readbackStarted = deferred()
     const fetchImpl = vi.fn(async (url, options) => {
       requests.push({ url, options })
       if (options.method === 'POST') return jsonResponse({ message: 'Search engines saved' })
       engineLoads++
-      return jsonResponse(engineLoads === 1 ? initial : saved)
+      if (engineLoads === 1) return jsonResponse(initial)
+      readbackStarted.resolve()
+      return readback.promise
     })
     const harness = createHarness(fetchImpl)
     const { instance } = harness
@@ -345,7 +436,14 @@ describe('admin-search REST and root UI facade contracts', () => {
     instance.engine.config[0].value.value = 'edited'
 
     expect(instance.canSave).toBe(true)
-    await instance.save()
+    const saving = instance.save()
+    await readbackStarted.promise
+    expect(instance.saving).toBe(true)
+    expect(instance.engine.config[0].value.value).toBe('edited')
+    expect(harness.notifications).toEqual([])
+    expect(harness.notificationState).toEqual([])
+    readback.resolve(jsonResponse(saved))
+    await saving
 
     expect(JSON.parse(requests[1].options.body)).toEqual({
       engines: [
@@ -364,7 +462,8 @@ describe('admin-search REST and root UI facade contracts', () => {
         icon: 'check'
       }
     ])
-    expect(harness.notificationState).toEqual(['edited'])
+    expect(instance.engine.config[0].value.value).toBe('server-normalized')
+    expect(harness.notificationState).toEqual(['server-normalized'])
     expect(harness.loadingEvents).toEqual([
       ['start', 'admin-search-refresh'],
       ['stop', 'admin-search-refresh'],
@@ -377,12 +476,13 @@ describe('admin-search REST and root UI facade contracts', () => {
 
   it('announces rebuild completion only after the same-origin operation succeeds', async () => {
     const requests = []
+    const response = deferred()
     const fetchImpl = vi.fn(async (url, options) => {
       requests.push({ url, options })
-      return options.method === 'POST' ? jsonResponse({ message: 'Index rebuilt successfully' }) : jsonResponse([engineRow('postgres', { isEnabled: true })])
+      return options.method === 'POST' ? response.promise : jsonResponse([engineRow('postgres', { isEnabled: true })])
     })
     const harness = createHarness(fetchImpl)
-    const { component, instance } = harness
+    const { instance } = harness
     instance.rebuildConfirm = true
     await instance.rebuild()
     expect(fetchImpl).toHaveBeenCalledTimes(0)
@@ -394,15 +494,31 @@ describe('admin-search REST and root UI facade contracts', () => {
     instance.engine.config[0].value.value = 'initial'
     instance.rebuildConfirm = true
 
-    await instance.rebuild()
+    const { vm, host } = mountSearch(harness)
+    vm.tab = 'index'
+    const rebuilding = vm.rebuild()
+    await settle()
+    expect(vm.rebuilding).toBe(true)
+    expect(harness.notifications).toEqual([])
+    const pendingStatus = host.querySelector('.search-index [role="status"]')
+    expect(pendingStatus).not.toBeNull()
+    expect(pendingStatus.textContent).toMatch(/waiting|rebuilding/i)
+    expect(pendingStatus.textContent).not.toMatch(/completed/i)
+    response.resolve(jsonResponse({ message: 'Index rebuilt successfully' }))
+    await rebuilding
+    await settle()
 
     expect(requests.map(({ url }) => url)).toEqual(['/_api/search/engines', '/_api/search/rebuild-index'])
     expect(requests[1].options).toMatchObject({
       method: 'POST',
       credentials: 'same-origin'
     })
-    expect(harness.instance.rebuildMessage).toBe('The server confirmed that the index rebuild completed.')
-    expect(harness.instance.rebuilding).toBe(false)
+    const completedStatus = host.querySelector('.search-index [role="status"]')
+    expect(completedStatus).not.toBeNull()
+    expect(completedStatus.textContent).toMatch(/\bserver\b.*\bconfirm(?:ed|ation)\b/i)
+    expect(completedStatus.textContent).toMatch(/\bcomplet(?:e|ed|ion)\b/i)
+    expect(completedStatus.textContent).not.toMatch(/\bwithout\b.*\bconfirmation\b/i)
+    expect(vm.rebuilding).toBe(false)
     expect(harness.notifications).toEqual([
       {
         message: 'admin:search.indexRebuildSuccess',

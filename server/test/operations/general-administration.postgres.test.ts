@@ -1,13 +1,9 @@
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createGeneralAdministrationStore, generalPolicyFromConfiguration, patchLegacyGeneralConfiguration } from '../../operations/general-administration.ts'
 import { generalPolicyDefaults, type GeneralPolicy } from '../../../shared/general-policy.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_general_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_general_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 suite('PostgreSQL reviewed General settings', () => {
@@ -77,9 +73,10 @@ suite('PostgreSQL reviewed General settings', () => {
     expect(w.history).toEqual([])
   })
   it('persists one atomic revision, preserves unowned values and distinguishes clearing from defaults', async () => {
+    await db('settings').insert({ key: 'company', value: JSON.stringify({ v: 'Original company' }), updatedAt: new Date().toISOString() })
     await write({ title: 'Revised', company: '', robots: [], pageExtensions: [] })
     const w = await read()
-    expect(w.policy).toMatchObject({ title: 'Revised', robots: [], pageExtensions: [] })
+    expect(w.policy).toMatchObject({ title: 'Revised', company: '', robots: [], pageExtensions: [] })
     expect(w.history).toHaveLength(1)
     expect(w.history[0]).toMatchObject({ actorId: 1, reason: 'Review workspace settings' })
     expect((await db('settings').where('key', 'seo').first()).value.analyticsId).toBe('private-analytics-value')
@@ -104,11 +101,6 @@ suite('PostgreSQL reviewed General settings', () => {
     await db('users').where('id', 1).update({ authVersion: 0 })
     await db('groups').where('id', 1).update({ permissions: '[]' })
     await expect(read()).rejects.toMatchObject({ status: 403 })
-  })
-  it('checks API principals against their current single group grant', async () => {
-    expect((await store.inspect({ id: 1, ownershipUserId: null, groups: [1] } as never)).policy.title).toBe('Original')
-    await expect(store.inspect({ id: 1, ownershipUserId: null, groups: [2] } as never)).rejects.toMatchObject({ status: 403 })
-    await expect(store.inspect({ id: 1, ownershipUserId: null, groups: [1, 2] } as never)).rejects.toMatchObject({ status: 403 })
   })
   it('rejects invalid settings and live HTTPS downgrades before writing', async () => {
     const before = await db('settings').orderBy('key')
@@ -150,10 +142,11 @@ suite('PostgreSQL reviewed General settings', () => {
     await expect(store.initialize(admin, 'stale')).rejects.toMatchObject({ status: 409 })
   })
   it('retains only the latest 50 administrative revisions', async () => {
-    for (let index = 0; index < 52; index++) await write({ title: `Revision ${index}` })
+    for (let index = 0; index < 52; index++) await write({ title: `Revision ${index}` }, { reason: `Reviewed revision ${index}` })
     const w = await read()
     expect(w.history).toHaveLength(50)
     expect(w.policy.title).toBe('Revision 51')
+    expect(w.history.map(event => event.reason)).toEqual(Array.from({ length: 50 }, (_, index) => `Reviewed revision ${51 - index}`))
   })
   it('routes legacy General payloads through the same transaction without changing retained controls', async () => {
     const previous = globalThis.WIKI
@@ -168,7 +161,7 @@ suite('PostgreSQL reviewed General settings', () => {
     try {
       await patchLegacyGeneralConfiguration(admin, { title: 'Legacy updated', pageExtensions: 'TXT, md, txt', analyticsId: 'private-analytics-value' })
       expect((await read()).policy).toMatchObject({ title: 'Legacy updated', pageExtensions: ['md', 'txt'] })
-      expect((await read()).history[0]?.reason).toContain('legacy General')
+      expect((await read()).history[0]).toMatchObject({ actorId: 1, fields: expect.arrayContaining(['title', 'pageExtensions']) })
       expect(config.title).toBe('Legacy updated')
       await patchLegacyGeneralConfiguration(admin, { host: 'https://next.example.com' })
       expect(auth.strategyHost).toBe('https://next.example.com')
@@ -180,6 +173,8 @@ suite('PostgreSQL reviewed General settings', () => {
       expect(await db('settings').orderBy('key')).toEqual(before)
     } finally { globalThis.WIKI = previous }
   })
+})
+describe('General settings reload projection', () => {
   it('reload projection honors persisted empty lists', () => {
     expect(generalPolicyFromConfiguration({ pageExtensions: [], seo: { robots: [] } })).toMatchObject({ pageExtensions: [], robots: [] })
   })

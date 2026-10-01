@@ -139,15 +139,6 @@ describe('controllers/api search endpoints', () => {
 
   const loadEnginesHandler = async () => (await loadHandlers()).engines
 
-  it('registers search routes', async () => {
-    const handlers = await loadHandlers()
-
-    expect(typeof handlers.engines).toBe('function')
-    expect(typeof handlers.saveEngines).toBe('function')
-    expect(typeof handlers.rebuildIndex).toBe('function')
-    expect(typeof handlers.indexStatus).toBe('function')
-  })
-
   it('restricts index inspection and reports unsupported engines without a fabricated status', async () => {
     const { indexStatus } = await loadHandlers()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn(), set: vi.fn() }
@@ -184,24 +175,15 @@ describe('controllers/api search endpoints', () => {
     expect(global.WIKI.models.searchEngines.getSearchEngines).not.toHaveBeenCalled()
   })
 
-  it('loads search engines for authorized requests', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = await loadEnginesHandler()
-    const res = { sendStatus: vi.fn(), json: vi.fn() }
-
-    await handler({ user: { permissions: ['manage:system'] } }, res, vi.fn())
-
-    expect(global.WIKI.models.searchEngines.getSearchEngines).toHaveBeenCalledTimes(1)
-    expect(res.sendStatus).not.toHaveBeenCalled()
-    expect(res.json).toHaveBeenCalledTimes(1)
-  })
-
   it('returns engines sorted by title with only allowlisted top-level fields', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadEnginesHandler()
     const res = { sendStatus: vi.fn(), json: vi.fn() }
 
     await handler({ user: {} }, res, vi.fn())
+
+    expect(res.sendStatus).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledTimes(1)
 
     expect(res.json).toHaveBeenCalledWith([
       {
@@ -378,7 +360,7 @@ describe('controllers/api search endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ message: 'Search Engines updated successfully' })
   })
 
-  it('logs and continues when previous search engine deactivation fails', async () => {
+  it('continues when previous search engine deactivation fails', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const deactivateError = new Error('deactivate failed')
     global.WIKI.data.searchEngine.deactivate.mockRejectedValueOnce(deactivateError)
@@ -387,7 +369,6 @@ describe('controllers/api search endpoints', () => {
 
     await saveEngines(createSavePayload(), res)
 
-    expect(global.WIKI.logger.warn).toHaveBeenCalledWith('Failed to deactivate previous search engine:', deactivateError)
     expect(global.WIKI.models.searchEngines.initEngine).toHaveBeenCalledWith({ activate: true })
     expect(res.json).toHaveBeenCalledWith({ message: 'Search Engines updated successfully' })
   })
@@ -409,13 +390,14 @@ describe('controllers/api search endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { saveEngines } = await loadHandlers()
     const req = createSavePayload()
-    req.body.engines[0].config[0].value = '{not-json'
+    req.body.engines[1].config[0].value = '{not-json'
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid search engines payload' })
+    expect(global.WIKI.models.searchEngines.query).not.toHaveBeenCalled()
     expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
   })
 

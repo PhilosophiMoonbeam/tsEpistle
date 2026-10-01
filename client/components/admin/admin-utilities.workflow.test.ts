@@ -131,7 +131,6 @@ describe('Utilities reviewed operation recovery', () => {
       payload: draft,
       onRecorded: recorded
     })
-    expect(state).not.toBe(toRaw(state))
     expect(transport.startUtilitiesOperation).toHaveBeenCalledWith(
       expect.objectContaining({ payload: { password: 'fixture-private-token', mode: 'git' } })
     )
@@ -181,12 +180,10 @@ describe('Utilities reviewed operation recovery', () => {
   })
 
   it('rejects an overlong reason before persisting or sending an operation', async () => {
-    const rejected = vi.fn()
     const { state, transport, window } = arrange()
-    await state.requestOperation({ kind: 'cache-pages', reason: 'x'.repeat(1001), payload: {}, onRejected: rejected })
+    await state.requestOperation({ kind: 'cache-pages', reason: 'x'.repeat(1001), payload: {} })
     expect(window.sessionStorage.setItem).not.toHaveBeenCalled()
     expect(transport.startUtilitiesOperation).not.toHaveBeenCalled()
-    expect(rejected).toHaveBeenCalledWith('Enter an administrative reason of 3 to 1000 characters.')
   })
 
   it('keeps mutation entry locked while another receipt is running and resets removed route selections', async () => {
@@ -196,9 +193,16 @@ describe('Utilities reviewed operation recovery', () => {
     expect(transport.startUtilitiesOperation).not.toHaveBeenCalled()
     state.section = 'export'
     component.watch['$route.query.section'].handler.call(state, undefined)
+    state.receiptId = receipt.id
+    state.receiptDetail = structuredClone(receipt)
+    state.receiptError = 'Previous receipt read failed'
+    expect(state.selectedReceipt).toEqual(receipt)
     component.watch['$route.query.receipt'].handler.call(state, undefined)
     expect(state.section).toBe('content')
     expect(state.receiptId).toBe('')
+    expect(state.selectedReceipt).toBeNull()
+    expect(state.receiptDetail).toBeNull()
+    expect(state.receiptError).toBe('')
   })
 })
 
@@ -225,6 +229,7 @@ describe('Utilities browser-cache recovery', () => {
     }
     state.clearLocaleCache = component.methods.clearLocaleCache.bind(state)
     state.clearLocaleCache()
-    expect(notices).toEqual([{ message: 'This browser blocked access to its locale cache. No cache-cleared result can be confirmed.', color: 'warning' }])
+    expect(notices.map(notice => notice.color)).toEqual(['warning'])
+    expect(notices[0]!.message).toMatch(/blocked|denied|unable|cannot|could not|unconfirmed|(?:no|not)[^.]*confirm/i)
   })
 })

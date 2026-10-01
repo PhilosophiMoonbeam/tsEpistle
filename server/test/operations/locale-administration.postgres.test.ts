@@ -1,5 +1,6 @@
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createLocaleAdministrationStore } from '../../operations/locale-administration.ts'
 import { DurableJobStore, runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { publishLocaleSynchronization } from '../../operations/locale-synchronization.ts'
@@ -7,12 +8,7 @@ import { createLocalePackageHandler } from '../../jobs/locale-package.ts'
 import { up as createJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
 import type { LocalePolicy } from '../../../shared/locale-policy.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_locale_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_locale_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 const en = { code: 'en', name: 'English', nativeName: 'English', isRTL: false, availability: 100 },
@@ -149,16 +145,22 @@ suite('PostgreSQL reviewed Locale administration', () => {
     expect((await read()).policy.namespaces).toEqual(['en', 'fr'])
   })
   it('rejects unknown languages, stale/ABA reviews, current session revocation and delegated non-system access', async () => {
-    await expect(save({ locale: 'fr' })).rejects.toThrow('Install fr')
+    const initialSettings = await db('settings').orderBy('key')
+    await expect(save({ locale: 'fr' })).rejects.toMatchObject({ status: 400 })
+    expect(await db('settings').orderBy('key')).toEqual(initialSettings)
     const original = await read()
     await save({ autoUpdate: false })
     await save({ autoUpdate: true })
     await expect(
       store.save(admin, { policy: { ...original.policy, autoUpdate: false }, fingerprint: original.fingerprint, reason: 'Old review' })
-    ).rejects.toThrow('changed')
-    await expect(store.inspect({ id: 3, authVersion: 0 } as never)).rejects.toThrow('System administration')
+    ).rejects.toMatchObject({ status: 409 })
+    const currentSettings = await db('settings').orderBy('key')
+    expect((await db('settings').where('key', 'lang').first()).value).toMatchObject({ code: 'en', autoUpdate: true })
+    expect((await read()).history).toHaveLength(2)
+    await expect(store.inspect({ id: 3, authVersion: 0 } as never)).rejects.toMatchObject({ status: 403 })
     await db('users').where('id', 1).update('authVersion', 1)
-    await expect(read()).rejects.toThrow('session changed')
+    await expect(read()).rejects.toMatchObject({ status: 403 })
+    expect(await db('settings').orderBy('key')).toEqual(currentSettings)
   })
   it('rolls policy back when audit persistence fails', async () => {
     const before = (await db('settings').where('key', 'lang').first()).value
@@ -175,14 +177,17 @@ suite('PostgreSQL reviewed Locale administration', () => {
     const current = await read()
     expect(current.operations[0]).toMatchObject({ id: jobId, kind: 'install', code: 'fr', state: 'pending' })
     expect(current.history[0].jobId).toBe(jobId)
-    await expect(enqueue('catalog')).rejects.toThrow('already queued')
+    const queuedJobs = await db('durableJobs').orderBy('id')
+    await expect(enqueue('catalog')).rejects.toMatchObject({ status: 409 })
+    expect(await db('durableJobs').orderBy('id')).toEqual(queuedJobs)
+    expect((await read()).history).toEqual(current.history)
     activated = false
     expect(await save({ autoUpdate: false })).toEqual({ activation: 'needs-attention' })
     expect((await read()).policy.autoUpdate).toBe(false)
     activated = true
     expect(await store.initialize(admin, (await read()).fingerprint)).toEqual({ activation: 'applied' })
   })
-  it('runs catalog and strings through the durable worker, atomically publishes and is idempotent after acknowledgement loss', async () => {
+  it('runs catalog and strings through the durable worker, atomically publishes and replays a completed operation without duplicate effects', async () => {
     const { jobId } = await enqueue(),
       fetchImpl = (async (_url: unknown, options: RequestInit) => {
         const body = JSON.parse(String(options.body))
@@ -201,6 +206,15 @@ suite('PostgreSQL reviewed Locale administration', () => {
     expect((await store.jobContext(job!)).alreadyApplied).toBe(true)
     expect((await db('settings').where('key', 'lang').first()).value.revision).toBe(current.history[0].id)
     expect(current.catalog.observedAt).toBeTruthy()
+    const beforeReplay = { locale: await db('locales').where('code', 'fr').first(), settings: await db('settings').orderBy('key') }
+    const replay = createLocalePackageHandler({
+      store: () => store,
+      fetch: (async () => { throw new Error('Completed locale operation must not refetch') }) as typeof fetch
+    })
+    await replay(job!, { knex: db, signal: new AbortController().signal })
+    expect(await db('locales').where('code', 'fr').first()).toEqual(beforeReplay.locale)
+    expect(await db('settings').orderBy('key')).toEqual(beforeReplay.settings)
+    expect((await read()).history).toEqual(current.history)
   })
   it('installs a script-code package through the durable worker and enables its reader policy', async () => {
     const sr = { ...fr, code: 'sr-latn', name: 'Serbian (Latin)' }
@@ -227,27 +241,34 @@ suite('PostgreSQL reviewed Locale administration', () => {
     await enqueue()
     const jobs = await new DurableJobStore(db).claim({ workerId: 'test-worker', supportedIdentities: ['locale-package@1'] }),
       job = jobs[0]!
-    await expect(store.publishJob({ ...job, leaseToken: '00000000-0000-0000-0000-000000000000' }, [fr], { common: { greeting: 'Bonjour' } })).rejects.toThrow(
-      'lease'
-    )
+    const beforePublication = { locales: await db('locales').orderBy('code'), administration: await db('settings').where('key', 'localeAdministration').first() }
+    await expect(store.publishJob({ ...job, leaseToken: '00000000-0000-0000-0000-000000000000' }, [fr], { common: { greeting: 'Bonjour' } })).rejects.toMatchObject({ status: 409 })
     await db('settings').insert({ key: 'offline', value: '{"v":true}', updatedAt: new Date().toISOString() })
-    await expect(store.publishJob(job, [fr], {})).rejects.toThrow('offline')
+    await expect(store.publishJob(job, [fr], {})).rejects.toMatchObject({ status: 409 })
     await db('settings').where('key', 'offline').delete()
     await db('durableJobs')
       .where('id', job.id)
       .update('leaseExpiresAt', new Date(Date.now() - 1000))
-    await expect(store.publishJob(job, [fr], {})).rejects.toThrow('lease')
+    await expect(store.publishJob(job, [fr], {})).rejects.toMatchObject({ status: 409 })
     await db('durableJobs')
       .where('id', job.id)
       .update('leaseExpiresAt', new Date(Date.now() + 60000))
     await db('settings').insert({ key: 'graphEndpoint', value: '{"v":"https://changed.example.test"}', updatedAt: new Date().toISOString() })
-    await expect(store.jobContext(job)).rejects.toThrow('source changed')
+    await expect(store.jobContext(job)).rejects.toMatchObject({ status: 400 })
     await db('settings').where('key', 'graphEndpoint').delete()
     await db('userGroups').where('userId', 1).delete()
-    await expect(store.publishJob(job, [fr], {})).rejects.toThrow('System administration')
+    await expect(store.publishJob(job, [fr], {})).rejects.toMatchObject({ status: 403 })
     expect(await db('locales').where('code', 'fr').first()).toBeUndefined()
+    expect(await db('locales').orderBy('code')).toEqual(beforePublication.locales)
+    expect(await db('settings').where('key', 'localeAdministration').first()).toEqual(beforePublication.administration)
   })
-  it('does not replace an installed package when the source is malformed, and redacts persisted worker errors', async () => {
+  it.each([false, true])('preserves the targeted package on malformed source and redacts worker errors (installed: %s)', async installed => {
+    if (installed) {
+      const now = new Date().toISOString()
+      await db('locales').insert({ ...fr, strings: '{"common":{"greeting":"Original French"}}', createdAt: now, updatedAt: now })
+    }
+    const before = await db('locales').where('code', 'fr').first()
+    const beforeEnglish = await db('locales').where('code', 'en').first()
     await enqueue()
     const fetchImpl = (async () => Response.json({ errors: [{ message: 'secret upstream details' }] })) as typeof fetch
     await runDurableJobBatch(db, {
@@ -257,8 +278,9 @@ suite('PostgreSQL reviewed Locale administration', () => {
     const job = await db('durableJobs').first()
     expect(job.state).toBe('pending')
     expect(job.lastError).not.toContain('secret')
-    expect((await db('locales').where('code', 'en').first()).strings).toEqual({ common: { title: 'Saved English' } })
-    expect(await db('locales').where('code', 'fr').first()).toBeUndefined()
+    if (installed) expect(await db('locales').where('code', 'fr').first()).toEqual(before)
+    else expect(await db('locales').where('code', 'fr').first()).toBeUndefined()
+    expect(await db('locales').where('code', 'en').first()).toEqual(beforeEnglish)
   })
   it('publishes changed automatic packages atomically with a revision and skips a concurrently refreshed package', async () => {
     const before = await db('locales').where('code', 'en').first(),
@@ -273,7 +295,7 @@ suite('PostgreSQL reviewed Locale administration', () => {
     const updated = await db('locales').where('code', 'en').first(),
       current = await read()
     expect(updated.strings).toEqual({ common: { title: 'Automatic English' } })
-    expect(current.history[0].reason).toBe('Automatic interface package synchronization')
+    expect(current.history[0]).toMatchObject({ actorId: null, kind: 'install', fields: ['package:en'], appliedAt: updated.updatedAt })
     expect((await db('settings').where('key', 'lang').first()).value.revision).toBe(current.history[0].id)
     expect(await publishLocaleSynchronization(db, { ...input, updates: [{ ...input.updates[0]!, strings: { common: { title: 'Stale source' } } }] })).toEqual({
       changed: []
@@ -296,18 +318,12 @@ suite('PostgreSQL reviewed Locale administration', () => {
     expect(await publishLocaleSynchronization(db, input)).toEqual({ changed: [] })
     expect((await db('locales').where('code', 'en').first()).strings).toEqual(current.strings)
     await db('settings').insert({ key: 'offline', value: '{"v":true}', updatedAt: new Date().toISOString() })
-    await expect(publishLocaleSynchronization(db, input)).rejects.toThrow('offline')
+    const beforeOffline = { locale: await db('locales').where('code', 'en').first(), settings: await db('settings').orderBy('key') }
+    await expect(publishLocaleSynchronization(db, input)).rejects.toThrow()
+    expect(await db('locales').where('code', 'en').first()).toEqual(beforeOffline.locale)
+    expect(await db('settings').orderBy('key')).toEqual(beforeOffline.settings)
   })
 
-  it('supports a current API system grant without borrowing account ownership and invalidates changed grants', async () => {
-    const api = { id: 1, ownershipUserId: null, groups: [1] } as never
-    const current = await store.inspect(api)
-    await store.save(api, { policy: { ...current.policy, autoUpdate: false }, fingerprint: current.fingerprint, reason: 'API-managed update policy' })
-    expect((await read()).history[0].actorId).toBeNull()
-    await expect(store.inspect({ id: 1, ownershipUserId: null, groups: [1, 3] } as never)).rejects.toThrow('principal')
-    await db('groups').where('id', 1).update('permissions', '["manage:navigation"]')
-    await expect(store.inspect(api)).rejects.toThrow('System administration')
-  })
   it('rejects an uncommitted local review after its fifteen-minute deadline', async () => {
     const reviewed = await store.reviewLocalFile(admin, {
       code: 'fr',
@@ -317,7 +333,7 @@ suite('PostgreSQL reviewed Locale administration', () => {
     })
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(reviewed.expiresAt) + 1)
     try {
-      await expect(store.enqueueLocalFile(admin, { reviewId: reviewed.id })).rejects.toThrow('Review the file again')
+      await expect(store.enqueueLocalFile(admin, { reviewId: reviewed.id })).rejects.toMatchObject({ status: 409 })
       expect((await db('settings').where({ key: 'localeAdministration' }).first()).value.localFileReview).toBeUndefined()
     } finally {
       clock.mockRestore()
@@ -359,7 +375,7 @@ suite('PostgreSQL reviewed Locale administration', () => {
     await db('durableJobs').where({ id: jobId }).update({ state: 'failed' })
     await read()
     expect((await db('settings').where({ key: 'localeAdministration' }).first()).value.localFileReview).toBeUndefined()
-    await expect(store.enqueueLocalFile(admin, { reviewId: reviewed.id })).rejects.toThrow('Review the file again')
+    await expect(store.enqueueLocalFile(admin, { reviewId: reviewed.id })).rejects.toMatchObject({ status: 409 })
     const fresh = await store.reviewLocalFile(admin, { ...request, fingerprint: (await read()).fingerprint })
     expect(fresh.id).not.toBe(reviewed.id)
   })
@@ -369,7 +385,12 @@ suite('PostgreSQL reviewed Locale administration', () => {
       payload = { policy: { ...current.policy, autoUpdate: false }, fingerprint: current.fingerprint, reason: 'Concurrent policy review' }
     const results = await Promise.allSettled([store.save(admin, payload), store.save(admin, payload)])
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
-    for (let i = 0; i < 51; i++) await save({ autoUpdate: i % 2 === 0 })
+    expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { status: 409 } })
+    for (let i = 0; i < 51; i++) {
+      const before = await read()
+      await store.save(admin, { policy: { ...before.policy, autoUpdate: i % 2 === 0 }, fingerprint: before.fingerprint, reason: `Reviewed policy ${i}` })
+    }
     expect((await read()).history).toHaveLength(50)
+    expect((await read()).history.map(event => event.reason)).toEqual(Array.from({ length: 50 }, (_, index) => `Reviewed policy ${50 - index}`))
   })
 })

@@ -1,34 +1,30 @@
+const realExpress = (await import('express')).default
+
 const writeLegacy = vi.fn().mockResolvedValue({})
+const routers = []
 vi.mockModule('../../operations/rendering-workspace.ts', import.meta.url, () => ({ writeLegacyRenderingSettings: writeLegacy, readRenderingWorkspace: vi.fn(), writeRenderingWorkspace: vi.fn(), inspectRenderingOutput: vi.fn() }))
-vi.mockModule('express', import.meta.url, () => {
-  const routers = []
-
-  const expressMock = {
-    Router: () => {
-      const router = {
-        get: vi.fn(),
-        post: vi.fn(),
-        patch: vi.fn(),
-        put: vi.fn(),
-        delete: vi.fn(),
-        use: vi.fn()
-      }
-      routers.push(router)
-      return router
-    },
-    __routers: routers
+const recordedExpress = {
+  Router: () => {
+    const router = {
+      get: vi.fn(),
+      post: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      delete: vi.fn(),
+      use: vi.fn()
+    }
+    routers.push(router)
+    return router
   }
+}
+vi.mockModule('express', import.meta.url, () => ({ default: recordedExpress, ...recordedExpress }))
 
-  return { default: expressMock, ...expressMock }
-})
-
-const express = await import('express')
 
 describe('controllers/api rendering endpoints', () => {
   beforeEach(() => {
     vi.resetModules()
     writeLegacy.mockReset().mockResolvedValue({})
-    express.__routers.length = 0
+    routers.length = 0
 
     global.WIKI = {
       logger: { warn: vi.fn() },
@@ -71,7 +67,6 @@ describe('controllers/api rendering endpoints', () => {
       },
       models: {
         renderers: {
-          query: vi.fn(),
           getRenderers: vi.fn().mockResolvedValue([
             {
               key: 'markdownCore',
@@ -100,35 +95,15 @@ describe('controllers/api rendering endpoints', () => {
 
   const loadRenderersHandler = async () => {
     await vi.importFresh('../../controllers/api/rendering.ts', import.meta.url)
-    const router = express.__routers[0]
+    const router = routers[0]
     return router.get.mock.calls.find(([path]) => path === '/renderers')[1]
   }
 
   const loadSaveRenderersHandler = async () => {
     await vi.importFresh('../../controllers/api/rendering.ts', import.meta.url)
-    const router = express.__routers[0]
+    const router = routers[0]
     return router.post.mock.calls.find(([path]) => path === '/renderers')[1]
   }
-
-  const mockRendererPatch = () => {
-    const where = vi.fn().mockResolvedValue(1)
-    const patch = vi.fn(() => ({ where }))
-    global.WIKI.models.renderers.query.mockReturnValue({ patch })
-    return { patch, where }
-  }
-
-  it('registers rendering renderers route', async () => {
-    const handler = await loadRenderersHandler()
-
-    expect(typeof handler).toBe('function')
-  })
-
-  it('registers rendering renderers save route', async () => {
-    const handler = await loadSaveRenderersHandler()
-
-    expect(typeof handler).toBe('function')
-  })
-
 
   it('returns 403 for unauthorized renderer requests without querying renderers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
@@ -197,7 +172,7 @@ describe('controllers/api rendering endpoints', () => {
     expect(res.json.mock.calls[0][0][0].title).toBe('Runtime markdownCore')
   })
 
-  it('merges config with renderer metadata as JSON strings sorted by config key and omits unknown config keys', async () => {
+  it('merges config with renderer metadata as JSON strings and omits unknown config keys', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadRenderersHandler()
     const res = { sendStatus: vi.fn(), json: vi.fn() }
@@ -205,31 +180,26 @@ describe('controllers/api rendering endpoints', () => {
     await handler({ user: {} }, res, vi.fn())
 
     const config = res.json.mock.calls[0][0][0].config
-    expect(config.map(row => row.key)).toEqual(['flavor', 'safeMode'])
-    expect(config).toEqual([
-      {
-        key: 'flavor',
-        value: JSON.stringify({
-          type: 'string',
-          title: 'Flavor',
-          order: 2,
-          value: 'commonmark'
-        })
+    expect(config.map(row => row.key).sort()).toEqual(['flavor', 'safeMode'])
+    for (const row of config) expect(typeof row.value).toBe('string')
+    expect(Object.fromEntries(config.map(row => [row.key, JSON.parse(row.value)]))).toEqual({
+      flavor: {
+        type: 'string',
+        title: 'Flavor',
+        order: 2,
+        value: 'commonmark'
       },
-      {
-        key: 'safeMode',
-        value: JSON.stringify({
-          type: 'boolean',
-          title: 'Safe Mode',
-          order: 1,
-          hint: 'Enable benign safety behavior',
-          value: true
-        })
+      safeMode: {
+        type: 'boolean',
+        title: 'Safe Mode',
+        order: 1,
+        hint: 'Enable benign safety behavior',
+        value: true
       }
-    ])
+    })
   })
 
-  it('returns JSON 403 for unauthorized renderer save requests without patching renderers', async () => {
+  it('returns JSON 403 for unauthorized renderer save requests without writing settings', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
     const handler = await loadSaveRenderersHandler()
     const req = { user: { permissions: [] }, body: { renderers: [] } }
@@ -240,12 +210,11 @@ describe('controllers/api rendering endpoints', () => {
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
-    expect(global.WIKI.models.renderers.query).not.toHaveBeenCalled()
+    expect(writeLegacy).not.toHaveBeenCalled()
   })
 
-  it('saves renderer configuration with GraphQL mutation parity', async () => {
+  it('decodes renderer configuration before writing enabled and disabled settings', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    mockRendererPatch()
     const handler = await loadSaveRenderersHandler()
     const req = {
       user: { permissions: ['manage:system'] },
@@ -276,10 +245,11 @@ describe('controllers/api rendering endpoints', () => {
       { key: 'markdownCore', isEnabled: true, config: { safeMode: false, flavor: 'commonmark', missingValue: null } },
       { key: 'emojiRenderer', isEnabled: false, config: {} }
     ])
-    expect(res.json).toHaveBeenCalledWith({ message: 'Renderers updated successfully' })
+    expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) })
+    expect(res.json.mock.calls[0][0].message.length).toBeGreaterThan(0)
   })
 
-  it('rejects invalid renderer save payloads before patching', async () => {
+  it('rejects invalid renderer save payloads before writing settings', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadSaveRenderersHandler()
     const req = { user: {}, body: { renderers: [{ key: 'markdownCore', isEnabled: 'yes', config: [] }] } }
@@ -289,12 +259,11 @@ describe('controllers/api rendering endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid renderers payload' })
-    expect(global.WIKI.models.renderers.query).not.toHaveBeenCalled()
+    expect(writeLegacy).not.toHaveBeenCalled()
   })
 
   it('rejects malformed renderer config JSON during save', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    mockRendererPatch()
     const handler = await loadSaveRenderersHandler()
     const req = { user: {}, body: { renderers: [{ key: 'markdownCore', isEnabled: true, config: [{ key: 'safeMode', value: '{bad' }] }] } }
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn(), sendStatus: vi.fn() }
@@ -303,6 +272,7 @@ describe('controllers/api rendering endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid renderers payload' })
+    expect(writeLegacy).not.toHaveBeenCalled()
   })
 
   it('returns JSON errors when renderer save fails unexpectedly', async () => {
@@ -330,6 +300,37 @@ describe('controllers/api rendering endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(err)
     expect(res.json).not.toHaveBeenCalled()
+  })
+  it('denies unauthorized renderer requests through the API index over HTTP', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const indexUrl = new URL('../../controllers/api/index.ts', import.meta.url)
+    const imports = new Bun.Transpiler({ loader: 'ts' }).scan(await Bun.file(indexUrl).text()).imports
+    for (const { path } of imports) {
+      if (path.startsWith('./') && path !== './rendering.ts') {
+        vi.mockModule(new URL(path, indexUrl).href, import.meta.url, () => ({ default: realExpress.Router() }))
+      }
+    }
+    vi.mockModule('express', import.meta.url, () => ({ default: realExpress, ...realExpress }))
+    let server
+    try {
+      const { default: apiRouter } = await vi.importFresh('../../controllers/api/index.ts', import.meta.url)
+      const user = { permissions: [] }
+      const app = realExpress()
+      app.use((req, _res, next) => { req.user = user; next() })
+      app.use('/_api', apiRouter)
+      server = app.listen(0, '127.0.0.1')
+      await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject) })
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Rendering test server did not bind a TCP port')
+      const denied = await fetch(`http://127.0.0.1:${address.port}/_api/rendering/renderers`)
+      expect(denied.status).toBe(403)
+      expect(denied.headers.get('cache-control')).toBe('private, no-store')
+      expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(user, ['manage:system'])
+      expect(global.WIKI.models.renderers.getRenderers).not.toHaveBeenCalled()
+    } finally {
+      if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      vi.mockModule('express', import.meta.url, () => ({ default: recordedExpress, ...recordedExpress }))
+    }
   })
   it('is mounted by the API index router', async () => {
     const modulePaths = [
@@ -359,7 +360,7 @@ describe('controllers/api rendering endpoints', () => {
 
     try {
       expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
-      const apiRouter = express.__routers.find(router =>
+      const apiRouter = routers.find(router =>
         router.use.mock.calls.some(([path]) => path === '/rendering')
       )
 

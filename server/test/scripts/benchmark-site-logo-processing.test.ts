@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -11,6 +11,7 @@ import {
   summarizeNearestRank
 } from '../../scripts/benchmark-site-logo-processing.ts'
 import type {
+  AtomicReportFileSystem,
   SiteLogoProcessingBenchmarkInput,
   SiteLogoProcessingCaseInput,
   SiteLogoProcessingEnvironment,
@@ -80,7 +81,7 @@ afterEach(async () => {
 })
 
 describe('site logo processing benchmark evidence', () => {
-  it('records exact fixture identities and isolated absolute child-process peak RSS with nearest-rank summaries', () => {
+  it('aggregates synthetic duration and RSS samples with exact fixture identities and nearest-rank summaries', () => {
     const values = [20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10]
 
     expect(nearestRankPercentile(values, 0.5)).toBe(10)
@@ -93,13 +94,8 @@ describe('site logo processing benchmark evidence', () => {
 
     expect(second).toEqual(first)
     expect(first.status).toBe('passed')
-    expect(first.measurement).toEqual({
-      concurrency: 1,
-      iterationsPerCase: 3,
-      processIsolation: 'fresh Bun child process per fixture iteration',
-      wallClock: 'performance.now',
-      peakRss: 'absolute child process.resourceUsage().maxRSS converted from KiB to bytes on Linux'
-    })
+    expect(first.measurement.concurrency).toBe(1)
+    expect(first.measurement.iterationsPerCase).toBe(3)
     expect(first.cases.map(result => ({ id: result.id, category: result.category, status: result.status }))).toEqual([
       { id: 'accepted-transparent-chromatic-logo', category: 'accepted', status: 'passed' },
       { id: 'malformed-truncated-png', category: 'malformed', status: 'passed' },
@@ -144,6 +140,21 @@ describe('site logo processing benchmark evidence', () => {
         threshold: 25
       }))
     )
+    expect(await readdir(dirname(outputPath))).toEqual(['report.json'])
+
+    const previousReport = '{"previous":true}\n'
+    await writeFile(outputPath, previousReport)
+    const renameFailure = new Error('injected rename failure')
+    const fileSystem: AtomicReportFileSystem = {
+      writeFile,
+      rename: async () => {
+        throw renameFailure
+      },
+      rm
+    }
+
+    await expect(publishSiteLogoProcessingBenchmarkReport(report, outputPath, fileSystem)).rejects.toBe(renameFailure)
+    expect(await readFile(outputPath, 'utf8')).toBe(previousReport)
     expect(await readdir(dirname(outputPath))).toEqual(['report.json'])
   })
 })

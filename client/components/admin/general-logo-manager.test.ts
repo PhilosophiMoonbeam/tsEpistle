@@ -8,14 +8,24 @@ const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(
 
 const hash = 'a'.repeat(64)
 const iconUrls = {
-  favicon16Url: `/_site-logo/${hash}/favicon-16.png`,
-  favicon32Url: `/_site-logo/${hash}/favicon-32.png`,
-  tile150Url: `/_site-logo/${hash}/mstile-150.png`,
-  apple180Url: `/_site-logo/${hash}/apple-180.png`,
-  app192Url: `/_site-logo/${hash}/app-192.png`,
-  app512Url: `/_site-logo/${hash}/app-512.png`,
-  maskable512Url: `/_site-logo/${hash}/maskable-512.png`,
-  faviconIcoUrl: `/_site-logo/${hash}/favicon.ico`
+  favicon16Url: `/_site-logo/${'a'.repeat(64)}/icon.png`,
+  favicon32Url: `/_site-logo/${'b'.repeat(64)}/icon.png`,
+  tile150Url: `/_site-logo/${'c'.repeat(64)}/icon.png`,
+  apple180Url: `/_site-logo/${'d'.repeat(64)}/icon.png`,
+  app192Url: `/_site-logo/${'e'.repeat(64)}/icon.png`,
+  app512Url: `/_site-logo/${'f'.repeat(64)}/icon.png`,
+  maskable512Url: `/_site-logo/${'0'.repeat(64)}/icon.png`,
+  faviconIcoUrl: `/_site-logo/${'1'.repeat(64)}/favicon.ico`
+} as const
+const nextIconUrls = {
+  favicon16Url: `/_site-logo/${'2'.repeat(64)}/icon.png`,
+  favicon32Url: `/_site-logo/${'3'.repeat(64)}/icon.png`,
+  tile150Url: `/_site-logo/${'4'.repeat(64)}/icon.png`,
+  apple180Url: `/_site-logo/${'5'.repeat(64)}/icon.png`,
+  app192Url: `/_site-logo/${'6'.repeat(64)}/icon.png`,
+  app512Url: `/_site-logo/${'7'.repeat(64)}/icon.png`,
+  maskable512Url: `/_site-logo/${'8'.repeat(64)}/icon.png`,
+  faviconIcoUrl: `/_site-logo/${'9'.repeat(64)}/favicon.ico`
 } as const
 const logoUrl = `/_site-logo/${hash}/logo.png`
 const active = {
@@ -34,7 +44,7 @@ function translate(key: string, values?: Record<string, unknown>): string {
   return `${key}:${JSON.stringify(values)}`
 }
 
-function arrange() {
+function arrange({ Image }: { Image?: new () => unknown } = {}) {
   const api = {
     fetchSiteLogoStatus: vi.fn().mockResolvedValue(pending),
     uploadSiteLogo: vi.fn().mockResolvedValue(pending),
@@ -72,6 +82,7 @@ function arrange() {
     document,
     window,
     URL,
+    Image,
     wikiStore,
     SiteLogoApiError: class extends Error {},
     SITE_LOGO_SOURCE_BYTE_LIMIT: 5_242_880
@@ -120,20 +131,47 @@ describe('General logo publication', () => {
     expect(state.selectedFile).toBe(file)
     expect(api.uploadSiteLogo).not.toHaveBeenCalled()
 
+    for (const emptyChoice of [null, files()]) {
+      state.acceptLogoFiles(emptyChoice)
+      expect(state.logoErrorKey).toBeNull()
+      expect(state.selectedFile).toBe(file)
+      expect(state.candidatePreviewUrl).toBe('blob:selected')
+      expect(state.confirming).toBe(true)
+      expect(api.uploadSiteLogo).not.toHaveBeenCalled()
+    }
+
     state.cancelSelection()
     expect(state.selectedFile).toBeNull()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:selected')
+    expect(api.uploadSiteLogo).not.toHaveBeenCalled()
+    expect(api.fetchSiteLogoStatus).not.toHaveBeenCalled()
+    expect(api.retrySiteLogo).not.toHaveBeenCalled()
     state.acceptLogoFiles(files(file, file))
     expect(state.logoErrorKey).toBe('admin:general.logoErrorOneFile')
     state.acceptLogoFiles(files({ ...file, size: 5_242_881 }))
     expect(state.logoErrorKey).toBe('admin:general.logoErrorTooLarge')
   })
 
-  it('submits tiny and custom-ratio images without client-side dimension rejection', async () => {
-    const { state, api } = arrange()
-    const file = { name: 'wide-mark.webp', size: 24, type: 'image/webp' }
+  it.each([
+    ['unavailable', null],
+    ['tiny', { width: 1, height: 1 }],
+    ['wide', { width: 4096, height: 1 }]
+  ] as const)('submits images with %s dimensions without client-side dimension rejection', async (label, dimensions) => {
+    const Image = dimensions
+      ? class {
+          naturalWidth = dimensions.width
+          naturalHeight = dimensions.height
+          onload: (() => void) | null = null
+          set src(_value: string) {
+            this.onload?.()
+          }
+        }
+      : undefined
+    const { state, api } = arrange({ Image })
+    const file = new File([new Uint8Array(24)], `${label}-mark.webp`, { type: 'image/webp' })
 
     state.acceptLogoFiles(files(file))
+    expect(state.selectedDimensions).toEqual(dimensions)
     await state.publishSelected()
 
     expect(api.uploadSiteLogo).toHaveBeenCalledWith(expect.anything(), file, expect.any(AbortSignal))
@@ -157,12 +195,13 @@ describe('General logo publication', () => {
         ...active,
         revisionId: 'next',
         logoUrl: `/_site-logo/${'b'.repeat(64)}/logo.png`,
+        logoIcons: nextIconUrls,
         enhancement: { status: 'unavailable', reason: 'UNSUITABLE_LOGO' }
       },
       candidate: null
     })
     expect(wikiStore.site.logoUrl).toBe(`/_site-logo/${'b'.repeat(64)}/logo.png`)
-    expect(wikiStore.site.logoIcons).toEqual(active.logoIcons)
+    expect(wikiStore.site.logoIcons).toEqual(nextIconUrls)
     expect(state.selectedFile).toBeNull()
     expect(state.publishedNoticeKey).toBe('admin:general.logoStatusPublishedWithoutAnimation')
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:selected')
@@ -215,7 +254,8 @@ describe('General logo publication', () => {
   })
 
   it('preserves a newer local selection when older work finishes', async () => {
-    const { state, api } = arrange()
+    const { state, api, URL, wikiStore } = arrange()
+    URL.createObjectURL.mockReturnValueOnce('blob:first').mockReturnValueOnce('blob:second')
     let resolveUpload: (value: unknown) => void = () => {}
     api.uploadSiteLogo.mockImplementationOnce(
       () =>
@@ -234,7 +274,24 @@ describe('General logo publication', () => {
 
     expect(state.selectedFile).toBe(second)
     expect(state.confirming).toBe(true)
-    expect(state.candidatePreviewUrl).toBe('blob:selected')
+    expect(state.candidatePreviewUrl).toBe('blob:second')
+
+    const published = {
+      ...active,
+      revisionId: 'next',
+      logoUrl: `/_site-logo/${'b'.repeat(64)}/logo.png`,
+      logoIcons: nextIconUrls
+    }
+    api.fetchSiteLogoStatus.mockResolvedValueOnce({ active: published, candidate: null })
+    await state.refreshLogoStatus()
+
+    expect(wikiStore.site.logoUrl).toBe(published.logoUrl)
+    expect(wikiStore.site.logoIcons).toEqual(nextIconUrls)
+    expect(state.publishedNoticeKey).toBe('admin:general.logoStatusPublished')
+    expect(state.selectedFile).toBe(second)
+    expect(state.confirming).toBe(true)
+    expect(state.candidatePreviewUrl).toBe('blob:second')
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:second')
   })
 
   it('ignores a late response after unmount and releases local preview resources', async () => {

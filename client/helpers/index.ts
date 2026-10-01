@@ -5,34 +5,36 @@ import kebabCase from 'lodash/kebabCase.js'
 import moment, { type MomentInput } from 'moment-timezone'
 import { isUserTimeFormat, type UserPresentationDefaults } from '../../shared/user-presentation.ts'
 
+const localeDateFormats = new Map<string, Readonly<Pick<moment.LongDateFormatSpec, 'L' | 'LT' | 'LTS'>>>()
+
 export const applyUserPresentation = (presentation: Partial<UserPresentationDefaults>): void => {
-  moment.updateLocale(moment.locale(), null)
-  const localeData = moment.localeData()
-  const longDateFormat: moment.LongDateFormatSpec = {
-    LTS: localeData.longDateFormat('LTS'),
-    LT: localeData.longDateFormat('LT'),
-    L: localeData.longDateFormat('L'),
-    LL: localeData.longDateFormat('LL'),
-    LLL: localeData.longDateFormat('LLL'),
-    LLLL: localeData.longDateFormat('LLLL')
+  const locale = moment.locale()
+  let defaults = localeDateFormats.get(locale)
+  if (!defaults) {
+    const localeData = moment.localeData(locale)
+    defaults = Object.freeze({
+      L: localeData.longDateFormat('L'),
+      LT: localeData.longDateFormat('LT'),
+      LTS: localeData.longDateFormat('LTS')
+    })
+    localeDateFormats.set(locale, defaults)
   }
-  let hasLongDateFormatOverride = false
-  if (presentation.dateFormat) {
-    longDateFormat.L = presentation.dateFormat
-    hasLongDateFormatOverride = true
+  const longDateFormat: Pick<moment.LongDateFormatSpec, 'L' | 'LT' | 'LTS'> = {
+    L: presentation.dateFormat || defaults.L,
+    LT: defaults.LT,
+    LTS: defaults.LTS
   }
   if (isUserTimeFormat(presentation.timeFormat)) {
     if (presentation.timeFormat === '12h') {
       longDateFormat.LT = 'h:mm A'
       longDateFormat.LTS = 'h:mm:ss A'
-      hasLongDateFormatOverride = true
     } else if (presentation.timeFormat === '24h') {
       longDateFormat.LT = 'HH:mm'
       longDateFormat.LTS = 'HH:mm:ss'
-      hasLongDateFormatOverride = true
     }
   }
-  if (hasLongDateFormatOverride) moment.updateLocale(moment.locale(), { longDateFormat })
+  // Moment merges partial format updates; its declaration requires the full table.
+  moment.updateLocale(locale, { longDateFormat: longDateFormat as moment.LongDateFormatSpec })
   if (typeof presentation.timezone === 'string') moment.tz.setDefault(presentation.timezone || undefined)
 }
 export const helpers = {

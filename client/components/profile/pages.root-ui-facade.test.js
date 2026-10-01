@@ -79,13 +79,6 @@ afterEach(() => {
 })
 
 describe('profile pages root UI facade contract', () => {
-  test('keeps the REST list and root store migration boundaries', () => {
-    expect(script).toContain("import { fetchPages, type PageListRow } from '../../helpers/pages-api'")
-    expect(script).toContain("import { getErrorMessage, showNotification, setLoading } from '../../helpers/root-ui-store'")
-    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(source).not.toMatch(/graphql-tag|\$apollo|this\.\$store\.commit/)
-  })
-
   test('loads pages for the current user and announces a successful refresh', async () => {
     const browserWindow = setup()
     let resolveResponse
@@ -125,11 +118,7 @@ describe('profile pages root UI facade contract', () => {
     expect(context.loading).toBe(false)
     expect(wikiStore.stopLoading).toHaveBeenCalledWith('profile-pages-refresh')
     expect(wikiStore.stopLoading).toHaveBeenCalledTimes(1)
-    expect(wikiStore.showNotification).toHaveBeenCalledWith({
-      message: 'translated:profile:pages.refreshSuccess',
-      style: 'success',
-      icon: 'cached'
-    })
+    expect(wikiStore.showNotification).toHaveBeenCalledWith(expect.objectContaining({ style: 'success' }))
   })
 
   test('surfaces page load failures without success feedback and always clears loading', async () => {

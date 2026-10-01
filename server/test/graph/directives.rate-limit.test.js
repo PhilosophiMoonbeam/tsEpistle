@@ -21,10 +21,11 @@ describe('graph/directives/rate-limit directive contract', () => {
         ${rateLimitDirectiveTypeDefs}
         type Query {
           restricted: String @rateLimit(limit: 2, duration: 60)
+          otherRestricted: String @rateLimit(limit: 2, duration: 60)
         }
       `,
       resolvers: {
-        Query: { restricted: resolver }
+        Query: { restricted: resolver, otherRestricted: () => 'other-ok' }
       }
     }))
   })
@@ -37,6 +38,9 @@ describe('graph/directives/rate-limit directive contract', () => {
     expect(blocked.data).toEqual({ restricted: null })
     expect(blocked.errors?.[0].message).toMatch(/^Too many requests, please try again in \d+ seconds\.$/)
     expect(resolver).toHaveBeenCalledTimes(2)
+    const independentField = await execute(schema, '192.0.2.1', '{ otherRestricted }')
+    expect(independentField.errors).toBeUndefined()
+    expect(independentField.data).toEqual({ otherRestricted: 'other-ok' })
   })
 
   it('maintains independent limits for different clients', async () => {

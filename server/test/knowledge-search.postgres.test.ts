@@ -1,9 +1,8 @@
 /// <reference types="bun" />
 
-import fs from 'node:fs'
-
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from './bun-test.mts'
+import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { up as createKnowledgeProjectionStore } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
@@ -36,28 +35,7 @@ const pageRuleAuthority = (requester: unknown): PageRuleAuthority => ({
   tagAliases: {}
 })
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  databaseName.endsWith('_knowledge_search_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        password,
-        database: databaseName
-      }
-    : null
-const directlyInvoked =
-  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('knowledge-search.postgres.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error(
-    'Explicit knowledge-search PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _knowledge_search_test and a PostgreSQL password.'
-  )
-}
+const connection = getPostgresTestConnection('_knowledge_search_test', import.meta.path)
 
 const suite = connection ? describe : describe.skip
 
@@ -174,6 +152,7 @@ suite('PostgreSQL knowledge projection search', () => {
         "authorId" integer NOT NULL,
         "ownerId" integer,
         extra jsonb NOT NULL,
+        "updatedAt" timestamptz NOT NULL,
         visibility text NOT NULL,
         "isPublished" boolean NOT NULL,
         "isSearchable" boolean NOT NULL DEFAULT true,

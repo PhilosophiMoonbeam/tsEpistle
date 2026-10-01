@@ -175,6 +175,10 @@ describe('models/pages.updatePage cache invalidation', () => {
 
     await Page.savePageToCache(oldPage as never)
     expect(await Page.getPageFromCache(oldLookup)).toMatchObject({ render: '<p>stale old-path render</p>' })
+    await Page.savePageToCache({ ...movedPage, render: '<p>stale destination render</p>' } as never)
+    const oldCachePath = path.join(tempRoot, 'data', 'cache', `${oldHash}.bin`)
+    const newCachePath = path.join(tempRoot, 'data', 'cache', `${newHash}.bin`)
+    expect(await fs.pathExists(newCachePath)).toBe(true)
 
     const patch = vi.fn()
     const where = vi.fn()
@@ -217,6 +221,8 @@ describe('models/pages.updatePage cache invalidation', () => {
         permissions: []
       } as Express.User & { id: number; name: string; email: string }
     })
+    expect(await fs.pathExists(oldCachePath)).toBe(false)
+    expect(await fs.pathExists(newCachePath)).toBe(false)
 
     await Page.renderPage(movedPage as never)
     expect(await Page.getPageFromCache(newLookup)).toMatchObject({

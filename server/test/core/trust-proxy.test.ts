@@ -1,15 +1,19 @@
 import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 
-import express from 'express'
+import express, { type RequestHandler } from 'express'
 import session from 'express-session'
-import { sessionCookieOptions } from '../../helpers/session-cookie.ts'
-import { describe, expect, it } from '../bun-test.mts'
+import type { default as StartMaster, HttpTransportRuntime } from '../../master.ts'
+import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 
 interface IdentityResponse {
   ip: string
   ips: string[]
 }
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 const resolveIdentity = async (trustProxy: boolean, forwardedFor: string): Promise<IdentityResponse> => {
   const app = express()
@@ -42,39 +46,68 @@ const withAuthorizationSession = async <Result>(
   trustProxy: boolean,
   exercise: (baseUrl: string) => Promise<Result>
 ): Promise<Result> => {
-  const app = express()
-  app.set('trust proxy', trustProxy ? 1 : false)
-  const currentSessionCookieOptions = sessionCookieOptions(currentPublicHost)
-  app.use(
-    session({
-      secret: 'test-session-secret-at-least-32-characters',
-      resave: false,
-      saveUninitialized: false,
-      cookie: currentSessionCookieOptions
-    })
-  )
-  app.use((req, _res, next) => {
-    if (!req.session) return next()
-
-    const cookieOptions = currentSessionCookieOptions()
-    if (Boolean(req.session.cookie.secure) === Boolean(cookieOptions.secure)) {
-      Object.assign(req.session.cookie, cookieOptions)
-      return next()
+  const pass: RequestHandler = (_req, _res, next) => next()
+  const emptyController = () => ({ default: () => express.Router() })
+  for (const controller of ['agents-host', 'common', 'site-logo', 'ssl', 'upload']) {
+    vi.mockModule(`../../controllers/${controller}.ts`, import.meta.url, emptyController)
+  }
+  vi.mockModule('../../controllers/auth.ts', import.meta.url, () => ({
+    ...emptyController(),
+    normalizeFaviconUrl: () => '/_assets/favicon.ico'
+  }))
+  vi.mockModule('../../controllers/pwa.ts', import.meta.url, () => ({
+    ...emptyController(),
+    currentPwaMode: () => 'disabled'
+  }))
+  for (const controller of ['api/index', 'api-v1/index']) {
+    vi.mockModule(`../../controllers/${controller}.ts`, import.meta.url, () => ({ default: express.Router() }))
+  }
+  vi.mockModule('../../controllers/api/site-logo.ts', import.meta.url, () => ({ siteLogoPreBodyRouter: express.Router() }))
+  vi.mockModule('../../controllers/api/user-avatar.ts', import.meta.url, () => ({ userAvatarPreBodyRouter: express.Router() }))
+  vi.mockModule('serve-favicon', import.meta.url, () => ({ default: () => pass }))
+  // Substitute only persistence; express-session and master's cookie/rotation middleware are real.
+  vi.mockModule('connect-session-knex', import.meta.url, () => ({ ConnectSessionKnexStore: session.MemoryStore }))
+  vi.mockModule('../../core/auth.ts', import.meta.url, () => ({
+    default: { init: () => ({ authenticate: pass, passport: { initialize: () => pass }, groups: {} }) }
+  }))
+  vi.mockModule('../../core/localization.ts', import.meta.url, () => ({ default: { init: () => ({ attachMiddleware: () => undefined }) } }))
+  for (const service of ['mail', 'system']) {
+    vi.mockModule(`../../core/${service}.ts`, import.meta.url, () => ({ default: { init: () => ({}) } }))
+  }
+  vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({ default: {} }))
+  const wiki = {
+    ROOTPATH: process.cwd(),
+    SERVERPATH: process.cwd(),
+    IS_DEBUG: true,
+    config: {
+      get host() { return currentPublicHost() },
+      sessionSecret: 'test-session-secret-at-least-32-characters',
+      security: { securityTrustProxy: trustProxy },
+      ssl: { enabled: false },
+      theming: {},
+      agents: { enabled: false, provider: { enabled: false }, mcp: { enabled: false }, retention: {} }
+    },
+    models: { knex: {} },
+    product: { revision: 'session-test' },
+    servers: {
+      async startGraphQL() {
+        const app = wiki.app
+        app.get('/authorize', (req, res) => {
+          req.session.pageUnlockEstablishedAt = (req.session.pageUnlockEstablishedAt ?? 0) + 1
+          res.sendStatus(204)
+        })
+        app.get('/authorization', (req, res) => {
+          res.json({ authorized: (req.session.pageUnlockEstablishedAt ?? 0) > 0 })
+        })
+      },
+      async startHTTP() {},
+      async startHTTPS() {}
     }
-
-    req.session.regenerate(error => {
-      if (error) return next(error)
-      Object.assign(req.session.cookie, currentSessionCookieOptions())
-      next()
-    })
-  })
-  app.get('/authorize', (req, res) => {
-    req.session.pageUnlockEstablishedAt = (req.session.pageUnlockEstablishedAt ?? 0) + 1
-    res.sendStatus(204)
-  })
-  app.get('/authorization', (req, res) => {
-    res.json({ authorized: (req.session.pageUnlockEstablishedAt ?? 0) > 0 })
-  })
+  } as unknown as HttpTransportRuntime
+  vi.stubGlobal('WIKI', wiki)
+  const { default: startMaster } = await vi.importFresh<{ default: typeof StartMaster }>('../../master.ts', import.meta.url)
+  await startMaster(wiki)
+  const app = wiki.app
   const server = app.listen(0, '127.0.0.1')
   await once(server, 'listening')
 
@@ -82,12 +115,16 @@ const withAuthorizationSession = async <Result>(
     const address = server.address() as AddressInfo
     return await exercise(`http://127.0.0.1:${address.port}`)
   } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close(error => {
-        if (error) reject(error)
-        else resolve()
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.close(error => {
+          if (error) reject(error)
+          else resolve()
+        })
       })
-    })
+    } finally {
+      await wiki.backgroundWorkers?.shutdown()
+    }
   }
 }
 

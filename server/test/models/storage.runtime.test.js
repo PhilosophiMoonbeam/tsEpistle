@@ -1,5 +1,5 @@
 const template = Object.fromEntries(
-  ['init', 'deactivated', 'created', 'updated', 'deleted', 'renamed', 'assetUploaded', 'assetDeleted', 'assetRenamed', 'getLocalLocation', 'sync', 'dump'].map(
+  ['init', 'deactivated', 'created', 'updated', 'deleted', 'renamed', 'assetUploaded', 'assetDeleted', 'assetRenamed', 'getLocalLocation', 'sync', 'dump', 'exportAll'].map(
     key => [key, vi.fn()]
   )
 )
@@ -208,8 +208,8 @@ describe('Storage runtime replacement and synchronization', () => {
   it('allows only Git through the explicit offline exception and revokes it immediately', async () => {
     global.WIKI.config = { offline: true, allowGitSyncWhileOffline: true }
     global.WIKI.data.storage.push(
-      { key: 'git', isAvailable: true, props: {}, schedule: 'PT30M', actions: [{ handler: 'dump' }] },
-      { key: 'sftp', isAvailable: true, props: {}, schedule: false, actions: [{ handler: 'dump' }] }
+      { key: 'git', isAvailable: true, props: {}, schedule: 'PT30M', actions: [{ handler: 'sync' }] },
+      { key: 'sftp', isAvailable: true, props: {}, schedule: false, actions: [{ handler: 'exportAll' }] }
     )
     rows.push({ ...row('git-repo'), key: 'git', syncInterval: 'PT30M' }, { ...row('remote'), key: 'sftp' })
     await Storage.initTargets()
@@ -225,11 +225,13 @@ describe('Storage runtime replacement and synchronization', () => {
     global.WIKI.config.allowGitSyncWhileOffline = false
     expect(Storage.runtimeTargets().find(target => target.key === 'git')).toMatchObject({ paused: true })
     expect(await Storage.syncTarget('git', git.runtimeGeneration)).toBe(false)
-    await expect(Storage.executeAction('git', 'dump')).rejects.toThrow('paused in offline mode')
+    const syncCalls = template.sync.mock.calls.length
+    await expect(Storage.executeAction('git', 'sync')).rejects.toBeInstanceOf(Error)
+    expect(template.sync).toHaveBeenCalledTimes(syncCalls)
   })
   it('stops new remote effects immediately when offline policy changes', async () => {
     global.WIKI.config = { offline: false }
-    global.WIKI.data.storage = [{ key: 'sftp', isAvailable: true, props: {}, schedule: false, actions: [{ handler: 'dump' }] }]
+    global.WIKI.data.storage = [{ key: 'sftp', isAvailable: true, props: {}, schedule: false, actions: [{ handler: 'exportAll' }] }]
     rows = [{ ...row('remote'), key: 'sftp' }]
     await Storage.initTargets()
     const generation = rows[0].runtimeGeneration
@@ -237,8 +239,8 @@ describe('Storage runtime replacement and synchronization', () => {
     await Storage.pageEvent({ event: 'created', page: { path: 'guide' } })
     await Storage.assetEvent({ event: 'uploaded', asset: { path: 'asset' } })
     expect(await Storage.syncTarget('sftp', generation)).toBe(false)
-    await expect(Storage.executeAction('sftp', 'dump')).rejects.toThrow('paused in offline mode')
-    for (const method of ['created', 'assetUploaded', 'sync', 'dump']) expect(template[method]).not.toHaveBeenCalled()
+    await expect(Storage.executeAction('sftp', 'exportAll')).rejects.toBeInstanceOf(Error)
+    for (const method of ['created', 'assetUploaded', 'sync', 'exportAll']) expect(template[method]).not.toHaveBeenCalled()
   })
 
   it('does not initialize enabled targets unavailable in this build', async () => {

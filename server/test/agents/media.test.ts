@@ -1,10 +1,11 @@
 import sharp from 'sharp'
-import { AGENT_GENERATED_VIDEO_MAX_BYTES, AGENT_GENERATED_AUDIO_MAX_BYTES } from '../../../shared/agents/media-limits.ts'
+import { AGENT_ATTACHMENT_MAX_BYTES, AGENT_GENERATED_VIDEO_MAX_BYTES, AGENT_GENERATED_AUDIO_MAX_BYTES } from '../../../shared/agents/media-limits.ts'
 import { readFile, stat } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { createAgentMediaTestDatabase } from './media-database.ts'
 import { beforeEach, afterEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { up, down } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { up as upMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
 import {
@@ -23,6 +24,8 @@ import {
   validateAgentMedia
 } from '../../agents/media.ts'
 
+const postgresConnection = process.env.WIKI_AGENT_MEDIA_POSTGRES === '1' ? getPostgresTestConnection('_agents_test', import.meta.path) : null
+
 const png = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'red' } })
   .png()
   .toBuffer()
@@ -34,7 +37,7 @@ describe('private Agent media', () => {
   let db: Knex
   let destroyDatabase: () => Promise<void>
   beforeEach(async () => {
-    ;({ db, destroy: destroyDatabase } = await createAgentMediaTestDatabase())
+    ;({ db, destroy: destroyDatabase } = await createAgentMediaTestDatabase(postgresConnection))
     if (db.client.config.client !== 'pg') await db.raw('PRAGMA foreign_keys = ON')
     await db.schema.createTable('users', table => table.integer('id').primary())
     await db('users').insert([{ id: 7 }, { id: 8 }])
@@ -101,11 +104,15 @@ describe('private Agent media', () => {
     expect(validateAgentMedia(png, 'image/png')).toBe('image/png')
     expect(() => validateAgentMedia(Buffer.from('<svg/>'), 'image/svg+xml')).toThrow()
     expect(() => validateAgentMedia(Buffer.from('<html>'), 'image/png')).toThrow()
-    expect(() => validateAgentMedia(Buffer.alloc(AGENT_MEDIA_MAX_BYTES + 1), 'application/pdf')).toThrow()
+    const oversizedPdf = Buffer.alloc(AGENT_MEDIA_MAX_BYTES + 1)
+    oversizedPdf.write('%PDF-1.7')
+    expect(() => validateAgentMedia(oversizedPdf, 'application/pdf')).toThrow()
     const large = Buffer.alloc(11 * 1024 * 1024)
     large.write('%PDF-1.7')
     expect(validateAgentMedia(large, 'application/pdf')).toBe('application/pdf')
-    expect(() => validateAgentMedia(large, 'image/png')).toThrow()
+    const oversizedPng = Buffer.alloc(11 * 1024 * 1024)
+    png.copy(oversizedPng)
+    expect(() => validateAgentMedia(oversizedPng, 'image/png')).toThrow()
     expect(mediaFilename('a/\nb.png')).toBe('a__b.png')
   })
   ;(process.env.WIKI_AGENT_LARGE_PDF_PROOF === '1' ? it : it.skip)(
@@ -114,9 +121,12 @@ describe('private Agent media', () => {
       expect(db.client.config.client).toBe('pg')
       const payload = Buffer.alloc(AGENT_MEDIA_MAX_BYTES, 32)
       payload.write('%PDF-1.7')
+      const expectedSha256 = createHash('sha256').update(payload).digest('hex')
       const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload, mimeType: 'application/pdf', filename: '250mb.pdf' })
       expect(Number((await getOwnedAgentMediaMetadata(db, 7, media.id)).byteLength)).toBe(250 * 1024 * 1024)
-      expect(media.sha256).toHaveLength(64)
+      expect(media.sha256).toBe(expectedSha256)
+      const stored = await db('agentMedia').where({ id: media.id }).first(db.raw('octet_length(??) as ??', ['payload', 'storedBytes']))
+      expect(Number(stored.storedBytes)).toBe(payload.length)
     },
     120_000
   )
@@ -134,10 +144,13 @@ describe('private Agent media', () => {
       db.transaction(tx => bindAgentMedia(tx, { ownerId, sessionId: target, attachmentIds: [media.id], messageId, runId }))
     await expect(bind(8)).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
     await expect(bind(7, secondSessionId)).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
+    await db('agentMedia').where({ id: media.id }).update({ expiresAt: new Date(Date.now() - 60_000) })
+    await expect(bind()).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
+    await db('agentMedia').where({ id: media.id }).update({ expiresAt: new Date(Date.now() + 3600_000) })
     await bind()
     expect(await db('agentMedia').where({ id: media.id }).first('messageId', 'expiresAt')).toEqual({ messageId, expiresAt: null })
     await expect(bind()).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
-    await expect(down(db)).rejects.toThrow('Cannot discard')
+    await expect(down(db)).rejects.toThrow()
     await db('agentSessions').where({ id: sessionId }).delete()
     expect(await db('agentMedia').first()).toBeUndefined()
     await down(db)
@@ -211,15 +224,25 @@ describe('private Agent media', () => {
     const lazy = ownedAgentMediaSource(db, 7, sessionId, metadata)
     expect(lazy.payload).toBeUndefined()
     expect(lazy.preparePdf).toBeTypeOf('function')
-    const queries: string[] = []
-    const record = (query: { sql: string }) => queries.push(query.sql)
+    const queries: { sql: string; bindings: readonly unknown[] }[] = []
+    const record = (query: { sql: string; bindings: readonly unknown[] }) => queries.push(query)
     db.on('query', record)
     const staged = await stageOwnedAgentMedia(db, 7, row.id, new AbortController().signal)
     db.off('query', record)
     try {
       expect(await readFile(staged.path)).toEqual(payload)
-      expect(queries.filter(sql => /substr(?:ing)?\(/.test(sql))).toHaveLength(41)
-      expect(queries.some(sql => /select \*/.test(sql) && sql.includes('agentMedia'))).toBe(false)
+      let nextByte = 1
+      for (const query of queries.filter(query => /substr(?:ing)?\(/.test(query.sql))) {
+        const offset = Number(query.bindings[0])
+        const length = Number(query.bindings[1])
+        expect(offset).toBe(nextByte)
+        expect(Number.isSafeInteger(length)).toBe(true)
+        expect(length).toBeGreaterThan(0)
+        expect(length).toBeLessThanOrEqual(AGENT_ATTACHMENT_MAX_BYTES)
+        nextByte += length
+      }
+      expect(nextByte - 1).toBe(payload.length)
+      expect(queries.some(query => /select \*/.test(query.sql) && query.sql.includes('agentMedia'))).toBe(false)
       expect((await stat(staged.path)).mode & 0o777).toBe(0o600)
     } finally {
       await staged.cleanup()
@@ -234,6 +257,14 @@ describe('private Agent media', () => {
     const row = await upload()
     const source = ownedAgentMediaSource(db, 7, sessionId, await getOwnedAgentMediaMetadata(db, 7, row.id))
     expect(await source.loadPayload!(new AbortController().signal)).toEqual(png)
+    const replacement = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'blue' } }).png().toBuffer()
+    await db('agentMedia').where({ id: row.id }).update({
+      payload: replacement,
+      byteLength: replacement.length,
+      sha256: createHash('sha256').update(replacement).digest('hex')
+    })
+    await expect(source.loadPayload!(new AbortController().signal)).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
+    await db('agentMedia').where({ id: row.id }).update({ payload: row.payload, byteLength: row.byteLength, sha256: row.sha256 })
     await db('agentSessions').where({ id: sessionId }).update({ deletedAt: new Date() })
     await expect(source.loadPayload!(new AbortController().signal)).rejects.toMatchObject({ status: 404 })
   })

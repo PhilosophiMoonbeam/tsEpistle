@@ -1,9 +1,8 @@
 /// <reference types="bun" />
 
-import fs from 'node:fs'
-
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, describe, expect, it } from './bun-test.mts'
+import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { knowledgeSearchText, mergeKnowledgeUtilityResult, projectPageKnowledge } from '../knowledge/projection.ts'
 import { up as createKnowledgeProjectionSchema } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchIndex } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
@@ -33,36 +32,17 @@ interface PostgreSqlSearchEngine {
   config: { dictLanguage: string }
   init(): Promise<void>
   rebuild(): Promise<void>
+  query(query: string, options: { pageIds?: number[]; pageRevisions?: Record<string, string>; limit?: number }): Promise<SearchResponse>
 }
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  databaseName.endsWith('_search_foundation_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        password,
-        database: databaseName
-      }
-    : null
-const directlyInvoked =
-  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('search-foundation.postgres.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error(
-    'Explicit search-foundation PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _search_foundation_test and a PostgreSQL password.'
-  )
-}
+const connection = getPostgresTestConnection('_search_foundation_test', import.meta.path)
 
 const suite = connection ? describe : describe.skip
 
 suite('PostgreSQL shared search foundation', () => {
   let db: Knex
   let Page: typeof PageModel
+  let engine: PostgreSqlSearchEngine
   let operations: SearchOperations
   const wikiRuntime = globalThis as typeof globalThis & { WIKI: unknown }
   let originalWiki: unknown
@@ -79,6 +59,7 @@ suite('PostgreSQL shared search foundation', () => {
       CREATE TABLE pages (
         id integer PRIMARY KEY,
         "sourceRevision" bigint NOT NULL,
+        "renderedSourceRevision" bigint NOT NULL DEFAULT 1,
         path text NOT NULL,
         hash text NOT NULL DEFAULT '',
         "localeCode" varchar(35) NOT NULL,
@@ -97,6 +78,7 @@ suite('PostgreSQL shared search foundation', () => {
         extra jsonb NOT NULL DEFAULT '{}'::jsonb,
         visibility text NOT NULL,
         "isPublished" boolean NOT NULL,
+        "isSearchable" boolean NOT NULL DEFAULT true,
         "publishStartDate" timestamptz,
         "publishEndDate" timestamptz
       );
@@ -179,7 +161,7 @@ suite('PostgreSQL shared search foundation', () => {
     wiki.models.tags = TagModel
 
     const engineModule = await import('../modules/search/postgres/engine.ts')
-    const engine = Object.assign(engineModule.default, { config: { dictLanguage: 'english' } }) as unknown as PostgreSqlSearchEngine
+    engine = Object.assign(engineModule.default, { config: { dictLanguage: 'english' } }) as unknown as PostgreSqlSearchEngine
     wiki.data.searchEngine = engine
     await engine.init()
     operations = (await import('../operations/pages.ts')).default as SearchOperations
@@ -742,9 +724,18 @@ suite('PostgreSQL shared search foundation', () => {
   })
 
   it('pins PostgreSQL lexical candidates to the authorized metadata revision', async () => {
+    const query = '"ultraviolet marmot checksum"'
+    expect((await operations.search({ query, pageIds: [42], limit: 5 })).results).toContainEqual(
+      expect.objectContaining({ id: 42, sourceRevision: '42' })
+    )
+    expect((await engine.query(query, { pageIds: [42], pageRevisions: { 42: '42' }, limit: 5 })).results).toContainEqual(
+      expect.objectContaining({ id: 42, sourceRevision: '42' })
+    )
     await db('pages').where({ id: 42 }).update({ sourceRevision: 43 })
     try {
-      const result = await operations.search({ query: 'AFR', pageIds: [42], limit: 5 })
+      const pinned = await engine.query(query, { pageIds: [42], pageRevisions: { 42: '43' }, limit: 5 })
+      expect(pinned.results.map(candidate => candidate.id)).not.toContain(42)
+      const result = await operations.search({ query, pageIds: [42], limit: 5 })
       expect(result.results.map(candidate => candidate.id)).not.toContain(42)
     } finally {
       await db('pages').where({ id: 42 }).update({ sourceRevision: 42 })
@@ -754,12 +745,12 @@ suite('PostgreSQL shared search foundation', () => {
   it('keeps protected, unpublished, and tag-denied pages out of shared graph traversal and link listings', async () => {
     const related = await operations.listRelated({ pageId: 71, limit: 20 })
     expect(related.pages).toEqual([expect.objectContaining({ id: 68, distance: 1 })])
-    expect(related.pages.map(page => page.id)).not.toEqual(expect.arrayContaining([69, 70]))
+    for (const excludedId of [69, 70]) expect(related.pages.map(page => page.id)).not.toContain(excludedId)
 
     const links = await operations.listLinks({ locale: 'en' })
     expect(links).toContainEqual(expect.objectContaining({ id: 71, links: ['en/graph/direct'] }))
     expect(links).toContainEqual(expect.objectContaining({ id: 68, links: [] }))
-    expect(links.map(page => page.id)).not.toEqual(expect.arrayContaining([66, 67, 70]))
+    for (const excludedId of [66, 67, 70]) expect(links.map(page => page.id)).not.toContain(excludedId)
   })
   it('withholds a stale graph edge while the current links receipt is pending or running', async () => {
     const staleLink = { pageId: 70, localeCode: 'en', path: 'graph/tail' }

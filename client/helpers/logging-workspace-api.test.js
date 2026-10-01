@@ -38,7 +38,7 @@ beforeEach(() => {
 
 describe('Logging workspace requests and recovery', () => {
   it('validates the workspace shape before allowing an administrative draft', async () => {
-    fetch.mockResolvedValueOnce(json({ ...workspace(), runtime: { settingsCurrent: 'yes' } }))
+    fetch.mockResolvedValueOnce(json({ ...workspace(), runtime: { ...workspace().runtime, settingsCurrent: 'yes' } }))
     await expect(fetchLoggingWorkspace()).rejects.toThrow('workspace response is invalid')
   })
 
@@ -66,11 +66,28 @@ describe('Logging workspace requests and recovery', () => {
     await expect(applyLoggingWorkspace('f'.repeat(64))).rejects.toMatchObject({ status: 503 })
   })
 
-  it('keeps a conflict observable and applies only a saved fingerprint', async () => {
+  it('keeps conflicts observable and sends the refreshed fingerprint when applying', async () => {
     fetch.mockResolvedValueOnce(json({ error: 'Logging settings changed' }, 409))
     await expect(applyLoggingWorkspace('f'.repeat(64))).rejects.toMatchObject({ status: 409, message: 'Logging settings changed' })
-    fetch.mockResolvedValueOnce(json(workspace()))
-    await expect(fetchLoggingWorkspace()).resolves.toMatchObject({ fingerprint: 'f'.repeat(64), runtime: { settingsCurrent: false } })
+    const refreshedFingerprint = 'r'.repeat(64)
+    fetch.mockResolvedValueOnce(json({ ...workspace(), fingerprint: refreshedFingerprint }))
+    const loaded = await fetchLoggingWorkspace()
+    expect(loaded).toMatchObject({ fingerprint: refreshedFingerprint, runtime: { settingsCurrent: false } })
     expect(fetch.mock.calls[1][1]).toMatchObject({ method: 'GET', credentials: 'same-origin' })
+
+    fetch.mockResolvedValueOnce(json({ revision: 'revision-2', applied: true, runtime: { settingsCurrent: true, state: 'ready' } }))
+    await expect(applyLoggingWorkspace(loaded.fingerprint)).resolves.toEqual({
+      revision: 'revision-2',
+      applied: true,
+      runtime: { settingsCurrent: true, state: 'ready' }
+    })
+    const [url, options] = fetch.mock.calls[2]
+    expect(url).toBe('/_api/logging/workspace/apply')
+    expect(options).toMatchObject({
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' }
+    })
+    expect(JSON.parse(options.body)).toEqual({ fingerprint: refreshedFingerprint })
   })
 })

@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import ts from 'typescript'
 
 import { SEARCH_ENTER_EVENT,
 SEARCH_MOVE_EVENT,
@@ -120,11 +121,39 @@ describe('search navigation event usage', () => {
   test('search navigation helper owns its bus instead of requiring caller root instances', () => {
     const source = fs.readFileSync(helperPath, 'utf8')
 
-    expect(source).toContain("import { createEventBus } from '" + "./simple-event-bus'")
-    expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
+    const sourceFile = ts.createSourceFile(helperPath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const vueDependencies = []
+    const visit = node => {
+      let moduleSpecifier
+      if (ts.isImportDeclaration(node)) {
+        const clause = node.importClause
+        const bindings = clause?.namedBindings
+        const onlyNamedTypes = !clause?.name && bindings && ts.isNamedImports(bindings) &&
+          bindings.elements.length > 0 && bindings.elements.every(binding => binding.isTypeOnly)
+        if (!clause?.isTypeOnly && !onlyNamedTypes) moduleSpecifier = node.moduleSpecifier
+      } else if (ts.isExportDeclaration(node)) {
+        const clause = node.exportClause
+        const onlyNamedTypes = clause && ts.isNamedExports(clause) &&
+          clause.elements.length > 0 && clause.elements.every(binding => binding.isTypeOnly)
+        if (!node.isTypeOnly && !onlyNamedTypes) moduleSpecifier = node.moduleSpecifier
+      } else if (ts.isImportEqualsDeclaration(node)) {
+        if (!node.isTypeOnly && ts.isExternalModuleReference(node.moduleReference)) {
+          moduleSpecifier = node.moduleReference.expression
+        }
+      } else if (ts.isCallExpression(node) &&
+        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+        moduleSpecifier = node.arguments[0]
+      }
+      if (moduleSpecifier && ts.isStringLiteralLike(moduleSpecifier) && moduleSpecifier.text === 'vue') {
+        vueDependencies.push(getLineNumber(source, node.getStart(sourceFile)))
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(sourceFile)
+
+    expect(vueDependencies).toEqual([])
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
-    expect(source).not.toMatch(/function\s+\w+\s*\(\s*root\b/)
-    expect(source).not.toMatch(/\broot\s*\.\s*\$(?:emit|on|off)\b/)
   })
 })

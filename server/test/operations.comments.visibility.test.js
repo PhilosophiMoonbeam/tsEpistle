@@ -80,17 +80,19 @@ describe('comment page identity and private existence isolation', () => {
     const page = { id: 17, localeCode: 'en', path: 'same/path', visibility: 'private', ownerId: 7, tags: [] }
     const query = pageQuery(page)
     global.WIKI.models.pages.query.mockReturnValue(query)
-    global.WIKI.models.comments.query.mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        orderBy: vi.fn().mockResolvedValue([{
-          id: 31,
-          pageId: 17,
-          name: 'Owner',
-          email: 'owner@example.invalid',
-          ip: '127.0.0.1'
-        }])
-      })
-    })
+    const comments = [
+      { id: 31, pageId: 17, name: 'Owner', email: 'owner@example.invalid', ip: '127.0.0.1' },
+      { id: 32, pageId: 18, name: 'Other owner', email: 'other@example.invalid', ip: '127.0.0.2' }
+    ]
+    const filters = []
+    const commentQuery = {
+      where: vi.fn((column, value) => {
+        filters.push(row => row[column] === value)
+        return commentQuery
+      }),
+      orderBy: vi.fn(async () => comments.filter(row => filters.every(filter => filter(row))))
+    }
+    global.WIKI.models.comments.query.mockReturnValue(commentQuery)
     const operations = (await vi.importFresh('../operations/comments.ts', import.meta.url)).default
 
     expect(await operations.list({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17, sessionId: 'reader-session' })).toEqual([expect.objectContaining({ id: 31, authorName: 'Owner' })])
@@ -126,7 +128,10 @@ describe('comment page identity and private existence isolation', () => {
     const requester = { id: 8, permissions: ['read:comments'] }
 
     global.WIKI.models.pages.query.mockReturnValueOnce(pageQuery(undefined))
-    await expect(Promise.resolve(operations.list({ requester, pageId: 17 }))).rejects.toBeInstanceOf(CommentNotFound)
+    const missingError = await operations.list({ requester, pageId: 17 }).catch(error => error)
+    expect(missingError).toBeInstanceOf(CommentNotFound)
+    expect(missingError).toMatchObject({ status: 404 })
+    expect(global.WIKI.models.comments.query).not.toHaveBeenCalled()
 
     global.WIKI.models.pages.query.mockReturnValueOnce(pageQuery({
       id: 17,
@@ -136,7 +141,12 @@ describe('comment page identity and private existence isolation', () => {
       ownerId: 7,
       tags: []
     }))
-    await expect(Promise.resolve(operations.list({ requester, pageId: 17 }))).rejects.toBeInstanceOf(CommentNotFound)
+    const privateError = await operations.list({ requester, pageId: 17 }).catch(error => error)
+    expect(privateError).toBeInstanceOf(CommentNotFound)
+    expect(privateError).toMatchObject({ status: 404 })
+    expect(global.WIKI.models.comments.query).not.toHaveBeenCalled()
+    const envelope = error => ({ status: error.status, name: error.name, message: error.message })
+    expect(envelope(privateError)).toEqual(envelope(missingError))
   })
 
   it('returns an HTTP-compatible not-found status for a hidden comment', async () => {
@@ -146,7 +156,7 @@ describe('comment page identity and private existence isolation', () => {
     expect(global.WIKI.models.pages.query).not.toHaveBeenCalled()
   })
 
-  it('shares the durable create throttle across transports, keys, and windows', async () => {
+  it('enforces create throttle decisions for repeated keys, different users, and expired windows', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_000)
     global.WIKI.models.comments.postNewComment
       .mockResolvedValueOnce(41)
@@ -156,11 +166,10 @@ describe('comment page identity and private existence isolation', () => {
     const requester = { id: 7, permissions: ['write:comments'] }
     const input = { pageId: 17, content: 'first' }
 
-    const graphCreate = () => operations.create({ requester, ip: '192.0.2.10', input })
-    const restCreate = () => operations.create({ requester, ip: '192.0.2.10', input })
+    const createComment = () => operations.create({ requester, ip: '192.0.2.10', input })
 
-    await expect(graphCreate()).resolves.toBe(41)
-    const limited = await restCreate().catch(error => error)
+    await expect(createComment()).resolves.toBe(41)
+    const limited = await createComment().catch(error => error)
     expect(limited).toBeInstanceOf(BruteTooManyAttempts)
     expect(limited).toMatchObject({
       status: 429,
@@ -173,7 +182,7 @@ describe('comment page identity and private existence isolation', () => {
     })).resolves.toBe(42)
 
     Date.now.mockReturnValue(16_000)
-    await expect(restCreate()).resolves.toBe(43)
+    await expect(createComment()).resolves.toBe(43)
     expect(global.WIKI.models.comments.postNewComment).toHaveBeenCalledTimes(3)
   })
 })

@@ -110,7 +110,6 @@ describe('page action event usage', () => {
   test('page action helper owns its bus instead of requiring caller root instances', () => {
     const source = fs.readFileSync(helperPath, 'utf8')
 
-    expect(source).toContain("import { createEventBus } from '" + "./simple-event-bus'")
     expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)

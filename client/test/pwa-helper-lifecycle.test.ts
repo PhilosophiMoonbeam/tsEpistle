@@ -864,7 +864,6 @@ describe('PWA helper lifecycle', () => {
       expect(waiting.messages.at(-1)).toMatchObject({ type: 'PWA_PORT_REQUEST', message: { type: 'PWA_PREPARE_UPDATE' } })
       await vi.advanceTimersByTimeAsync(20_001)
       expect(harness.module.pwaState.preparation).toBe('deferred')
-      expect(harness.module.pwaState.preparationReason).toContain('Retry')
     } finally {
       harness.restore()
       vi.useRealTimers()

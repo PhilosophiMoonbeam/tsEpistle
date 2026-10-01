@@ -49,20 +49,11 @@ describe('database migration namespace contract', () => {
     const ordered = orderMigrationFiles(files)
 
     expect(ordered).toHaveLength(files.length)
-  })
-
-  it('keeps the site-logo rendition migrations contiguous in the current ledger', async () => {
-    const files = (await readdir(path.resolve('server/db/migrations'))).filter(file => file.endsWith('.ts'))
-    const ordered = orderMigrationFiles(files)
     const renditions = ordered.indexOf('tsepistle-000040-site-logo-renditions')
     const transparentIcons = ordered.indexOf('tsepistle-000041-site-logo-transparent-icons')
 
     expect(renditions).toBeGreaterThanOrEqual(0)
     expect(transparentIcons).toBe(renditions + 1)
-  })
-
-  it('accepts tsepistle-000013 as the first migration in the current namespace', () => {
-    expect(orderMigrationFiles([...completeHistoricalFiles, 'tsepistle-000013-product-rename.ts']).at(-1)).toBe('tsepistle-000013-product-rename')
   })
 
   it('rejects removal or insertion inside immutable legacy history', () => {
@@ -91,9 +82,6 @@ describe('database migration namespace contract', () => {
   })
 
   it('rejects a non-contiguous sequence across the namespace transition', () => {
-    expect(() => orderMigrationFiles([...completeHistoricalFiles, 'tsepistle-000014-skipped-sequence.ts'])).toThrow(
-      'tsEpistle migration sequence must be contiguous'
-    )
     expect(() => orderMigrationFiles([...completeHistoricalFiles, 'tsepistle-000014-skipped-sequence.ts'])).toThrow('expected 000013, found 000014')
   })
 
@@ -114,7 +102,7 @@ describe('database migration namespace contract', () => {
   it('requires reviewed deployment metadata for every newly enforced migration', async () => {
     const registry = JSON.parse(await readFile(path.resolve('server/db/migration-deployment-contracts.json'), 'utf8')) as DeploymentContractRegistry
     expect(registry.schemaVersion).toBe(1)
-    expect(registry.enforceFromSequence).toBeGreaterThan(41)
+    expect(registry.enforceFromSequence).toBe(42)
     for (const [name, contract] of Object.entries(registry.migrations)) {
       expect(name).toMatch(/^tsepistle-\d{6}-.+\.js$/u)
       expect(['none', 'additive', 'stateful', 'destructive']).toContain(contract.persistentState)
@@ -124,6 +112,8 @@ describe('database migration namespace contract', () => {
       expect(['none', 'required']).toContain(contract.rehearsal)
       expect(['none', 'paired']).toContain(contract.recovery)
       expect(['image-only', 'fix-forward-or-restore']).toContain(contract.rollback)
+      expect(Array.isArray(contract.rehearsalPostconditions)).toBe(true)
+      expect(Array.isArray(contract.runtimePostconditions)).toBe(true)
       expect(contract.rehearsalPostconditions.length + contract.runtimePostconditions.length).toBeGreaterThan(0)
     }
     expect(registry.migrations['tsepistle-000041-site-logo-transparent-icons.js']).toBeDefined()

@@ -113,6 +113,12 @@ describe('content extension Markdown rendering', () => {
     expect(rendered).toContain('<figcaption class="content-extension-gallery__caption">First flight</figcaption>')
     expect(rendered).not.toMatch(/<(?:script|dialog|iframe|style)\b/i)
     expect(rendered).not.toMatch(/\son\w+=|\sstyle=/i)
+
+    const document = new DOMParser().parseFromString(rendered, 'text/html')
+    const secondImage = document.querySelector('img[src="/_assets/svg/icon-image.svg"]')
+    expect(secondImage?.getAttribute('alt')).toBe('Image placeholder')
+    expect(secondImage?.closest('a')?.getAttribute('href')).toBe('/_assets/svg/icon-image.svg')
+    expect(secondImage?.closest('figure')?.querySelector('figcaption')).toBeNull()
   })
 
   it('renders an inert page-index placeholder without leaking page titles into stored HTML', async () => {
@@ -140,7 +146,11 @@ describe('content extension Markdown rendering', () => {
     expect(rendered).toContain('data-index-show-icons="true"')
     expect(rendered).toContain('data-index-order="title"')
     expect(rendered).toContain('data-index-empty-label="Nothing readable here."')
-    expect(rendered).toContain('Loading page index…')
+    const document = new DOMParser().parseFromString(rendered, 'text/html')
+    const index = document.querySelector('.content-extension--index')
+    expect(index?.getAttribute('aria-busy')).toBe('true')
+    expect(index?.getAttribute('aria-live')).toBe('polite')
+    expect(index?.querySelector('p.content-extension-index__status')).not.toBeNull()
     expect(rendered).not.toContain('<a')
   })
 
@@ -165,15 +175,28 @@ describe('content extension Markdown rendering', () => {
     expect(tabs).toContain('&lt;b&gt;Alpha&lt;/b&gt;')
     expect(tabs).toContain('role="tab"')
     expect(tabs).toMatch(/<h2[^>]*class="content-extension-tabs__fallback-label"[^>]*>A<\/h2>/)
+    const tabsDocument = new DOMParser().parseFromString(tabs, 'text/html')
+    const secondPanel = tabsDocument.querySelector('[role="tabpanel"][data-tab-index="1"]')
+    expect(secondPanel?.querySelector('p.content-extension-tabs__fallback-label')?.textContent).toBe('B')
+    expect(secondPanel?.querySelector('.content-extension-tabs__content')?.textContent).toBe('Beta')
     expect(spoiler).toContain('data-spoiler=""')
     expect(spoiler).toContain('&lt;img src=x onerror=alert(1)&gt;')
     expect(infobox).toContain('<aside class="content-extension content-extension--infobox"')
-    expect(infobox).toContain('<dt>Metro</dt><dd><span')
+    const infoboxDocument = new DOMParser().parseFromString(infobox, 'text/html')
+    const factLabel = infoboxDocument.querySelector('dl dt')
+    expect(factLabel?.textContent).toBe('Metro')
+    const factValue = factLabel?.nextElementSibling
+    expect(factValue?.tagName).toBe('DD')
+    expect(factValue?.textContent).toBe('Yes')
+    expect(factValue?.querySelector('span')?.getAttribute('aria-label')).toBe('Yes')
     expect(pdf).toContain('data-pdf-src="/uploads/guide.pdf"')
     expect(pdf).toContain('href="/uploads/guide.pdf"')
     expect(media).toContain('src="/uploads/demo.mp4"')
     expect(media).toContain('poster="/uploads/poster.jpg"')
-    expect(youtube).toContain('No request is made until you continue.')
+    const youtubeDocument = new DOMParser().parseFromString(youtube, 'text/html')
+    const youtubeFigure = youtubeDocument.querySelector('figure.content-extension--youtube')
+    expect(youtubeFigure?.getAttribute('data-youtube-id')).toBe('abc123_DEF')
+    expect(youtubeFigure?.querySelector('.content-extension-remote__consent button.content-extension-remote__load')?.getAttribute('type')).toBe('button')
     expect(youtube).not.toContain('youtube-nocookie.com')
     expect(diagram).toContain('<code>flowchart LR\nA--&gt;B</code>')
     expect(kroki).toContain('data-kroki-type="graphviz"')
@@ -193,16 +216,30 @@ describe('content extension Markdown rendering', () => {
       props: { value: '<unsafe>', size: 256, errorCorrection: 'M' }
     })
     await db('contentExtensions').where({ key: 'qr' }).update({ isEnabled: false })
-    expect(await renderMarkdown(valid)).toContain('&lt;unsafe&gt;')
+    const disabled = await renderMarkdown(valid)
+    expect(disabled).toContain('&lt;unsafe&gt;')
 
     await db('contentExtensions').where({ key: 'qr' }).update({ isEnabled: true, version: 2 })
-    expect(await renderMarkdown(valid)).toContain('&lt;unsafe&gt;')
+    const incompatible = await renderMarkdown(valid)
+    expect(incompatible).toContain('&lt;unsafe&gt;')
 
-    const invalid = '```wiki-extension\n{"key":"qr","version":1,"props":{"value":"ok","unknown":true}}\n```\n'
-    expect(await renderMarkdown(invalid)).toContain('&quot;unknown&quot;')
+    await db('contentExtensions').where({ key: 'qr' }).update({ isEnabled: true, version: 1 })
+    const invalid = '```wiki-extension\n{"key":"qr","version":1,"props":{"value":"ok","size":256,"errorCorrection":"M","unknown":true}}\n```\n'
+    const invalidRendered = await renderMarkdown(invalid)
+    expect(invalidRendered).toContain('&quot;unknown&quot;')
+
+    for (const [source, rendered] of [[valid, disabled], [valid, incompatible], [invalid, invalidRendered]] as const) {
+      const document = new DOMParser().parseFromString(rendered, 'text/html')
+      expect(document.querySelector('pre code')?.textContent).toBe(`${source.split('\n')[1]}\n`)
+      expect(document.querySelector('figure.content-extension--qr, svg')).toBeNull()
+    }
   })
 
   it('leaves ordinary fenced code rendering unchanged', async () => {
-    expect(await renderMarkdown('```js\nif (a < b) return "x"\n```')).toBe('<pre class="prismjs language-js"><code class="language-js">if (a &lt; b) return &quot;x&quot;\n</code></pre>\n')
+    const rendered = await renderMarkdown('```js\nif (a < b) return "x"\n```')
+    const document = new DOMParser().parseFromString(rendered, 'text/html')
+    const pre = document.querySelector('pre.prismjs.language-js')
+    expect(pre?.querySelector('code.language-js')?.textContent).toBe('if (a < b) return "x"\n')
+    expect(pre?.querySelector('code')?.children.length).toBe(0)
   })
 })

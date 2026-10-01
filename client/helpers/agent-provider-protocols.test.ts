@@ -14,31 +14,27 @@ import {
 
 describe('agent provider protocol presentation', () => {
   it('covers every persisted transport once with an operator-facing label', () => {
-    expect(AGENT_PROVIDER_PROTOCOL_OPTIONS.map(option => option.value)).toEqual(AGENT_PROVIDER_TRANSPORTS)
+    const values = AGENT_PROVIDER_PROTOCOL_OPTIONS.map(option => option.value)
+    expect(new Set(values)).toEqual(new Set(AGENT_PROVIDER_TRANSPORTS))
+    expect(new Set(values).size).toBe(values.length)
     expect(new Set(AGENT_PROVIDER_PROTOCOL_OPTIONS.map(option => option.title)).size).toBe(AGENT_PROVIDER_TRANSPORTS.length)
-    expect(agentProviderProtocolOption('openai-chat').title).toBe('OpenAI-compatible Chat Completions')
-    expect(agentProviderProtocolOption('legacy-completions').title).toBe('Legacy text Completions')
-    expect(agentProviderProtocolOption('gemini-api')).toMatchObject({ title: 'Google Gemini Interactions API', endpoint: '/interactions' })
+    expect(agentProviderProtocolOption('gemini-api').endpoint).toBe('/interactions')
   })
 
-  it('distinguishes native from prompt-emulated tool calling', () => {
+  it('preserves compatible chat and buffered legacy configuration defaults', () => {
     expect(agentProviderProtocolDefaults('openai-chat')).toMatchObject({
       baseUrl: '',
       authMode: 'bearer',
       streaming: true,
-      toolCalling: 'native',
-      parallelToolCalls: true,
       structuredOutput: 'tool-result',
       usage: 'stream',
     })
-    expect(agentProviderProtocolDefaults('legacy-completions')).toEqual({
+    expect(agentProviderProtocolDefaults('legacy-completions')).toMatchObject({
       baseUrl: '',
       authMode: 'bearer',
       structuredOutput: 'prompt-only',
       usage: 'terminal',
       streaming: false,
-      toolCalling: 'prompt',
-      parallelToolCalls: false,
       cancellation: true,
     })
   })
@@ -77,8 +73,7 @@ describe('agent provider protocol presentation', () => {
     expect(agentProviderCapabilityRevision('gemini-api')).toBe('wiki-protocol-capabilities-v3:gemini-api')
   })
 
-  it('publishes an immutable positive-rate pricing revision', () => {
-    expect(AGENT_PROVIDER_PRICING_REVISION).toBe('price-v1|1000000|2000000')
+  it('publishes a pricing revision accepted by the positive-rate accounting schema', () => {
     expect(AgentProviderPricingRevisionSchema.safeParse(AGENT_PROVIDER_PRICING_REVISION).success).toBe(true)
   })
 

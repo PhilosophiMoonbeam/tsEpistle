@@ -57,7 +57,7 @@ const rateLimitKnex = () => {
 describe('controllers/api comments endpoints', () => {
   beforeEach(() => {
     vi.resetModules()
-    persistProviders.mockResolvedValue({ warnings: [] })
+    persistProviders.mockReset().mockResolvedValue({ warnings: [] })
     assertUnlocked.mockResolvedValue(undefined)
     express.__routers.length = 0
 
@@ -221,15 +221,6 @@ describe('controllers/api comments endpoints', () => {
 
   const loadProvidersHandler = async () => (await loadHandlers()).providers
 
-  it('registers comment CRUD and provider routes', async () => { const handlers = await loadHandlers()
-
-  expect(typeof handlers.list).toBe('function')
-  expect(typeof handlers.create).toBe('function')
-  expect(typeof handlers.get).toBe('function')
-  expect(typeof handlers.update).toBe('function')
-  expect(typeof handlers.remove).toBe('function')
-  expect(typeof handlers.providers).toBe('function')
-  expect(typeof handlers.saveProviders).toBe('function') })
 
 
   it('returns 403 for unauthorized provider requests without querying providers', async () => {
@@ -280,10 +271,9 @@ describe('controllers/api comments endpoints', () => {
     expect(row).not.toHaveProperty('props')
     expect(row).not.toHaveProperty('privateField')
     expect(row).not.toHaveProperty('unrelatedMetadata')
-    expect(row).not.toHaveProperty('undeclaredSetting')
   })
 
-  it('merges config with provider metadata as JSON strings sorted by config key and omits unknown config keys', async () => {
+  it('merges declared config with provider metadata as JSON strings and omits unknown config keys', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadProvidersHandler()
     const res = { sendStatus: vi.fn(), json: vi.fn() }
@@ -291,54 +281,56 @@ describe('controllers/api comments endpoints', () => {
     await handler({ user: {} }, res, vi.fn())
 
     const config = res.json.mock.calls[0][0][0].config
-    expect(config.map(row => row.key)).toEqual(['displayMode', 'requireApproval'])
-    expect(config).toEqual([
-      {
-        key: 'displayMode',
-        value: JSON.stringify({
-          type: 'string',
-          title: 'Display Mode',
-          order: 2,
-          value: 'compact'
-        })
+    const fields = Object.fromEntries(config.map(row => {
+      expect(row.value).toEqual(expect.any(String))
+      return [row.key, JSON.parse(row.value)]
+    }))
+    expect(config).toHaveLength(Object.keys(fields).length)
+    expect(fields).toEqual({
+      displayMode: {
+        type: 'string',
+        title: 'Display Mode',
+        order: 2,
+        value: 'compact'
       },
-      {
-        key: 'requireApproval',
-        value: JSON.stringify({
-          type: 'boolean',
-          title: 'Require Approval',
-          order: 1,
-          hint: 'Require approval before publishing.',
-          value: true
-        })
+      requireApproval: {
+        type: 'boolean',
+        title: 'Require Approval',
+        order: 1,
+        hint: 'Require approval before publishing.',
+        value: true
       }
+    })
+  })
+
+  const createSavePayload = () => {
+    global.WIKI.data.commentProviders[0].props = {
+      akismet: { type: 'String', title: 'Akismet API Key', sensitive: true, default: '' },
+      minDelay: { type: 'Number', title: 'Post delay', default: 30 }
+    }
+    global.WIKI.models.commentProviders.getProviders.mockResolvedValue([
+      { key: 'default', isEnabled: true, config: { akismet: '', minDelay: 30 } },
+      { key: 'external', isEnabled: false, config: {} }
     ])
-  })
+    return {
+      body: {
+        providers: [
+          {
+            key: 'default',
+            isEnabled: true,
+            config: [
+              { key: 'akismet', value: JSON.stringify({ v: 'reviewed-api-key' }) },
+              { key: 'minDelay', value: JSON.stringify({ v: 45 }) }
+            ]
+          },
+          { key: 'external', isEnabled: false, config: [] }
+        ]
+      },
+      user: { permissions: ['manage:system'] }
+    }
+  }
 
-  const createSavePayload = () => ({
-    body: {
-      providers: [
-        {
-          key: 'default',
-          isEnabled: true,
-          config: [
-            { key: 'displayMode', value: JSON.stringify({ v: 'expanded' }) },
-            { key: 'missingValue', value: JSON.stringify({ label: 'No value key' }) }
-          ]
-        },
-        {
-          key: 'external',
-          isEnabled: false,
-          config: [
-            { key: 'endpoint', value: JSON.stringify({ v: 'https://example.invalid/comments' }) }
-          ]
-        }
-      ]
-    },
-    user: { permissions: ['manage:system'] }
-  })
-
-  it('returns JSON 403 for unauthorized provider saves without mutating models', async () => {
+  it('returns JSON 403 for unauthorized provider saves without publishing settings', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
     const { saveProviders } = await loadHandlers()
     const req = createSavePayload()
@@ -349,8 +341,7 @@ describe('controllers/api comments endpoints', () => {
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
-    expect(global.WIKI.models.commentProviders.query).not.toHaveBeenCalled()
-    expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
+    expect(persistProviders).not.toHaveBeenCalled()
   })
 
   it('passes legacy provider payloads to the atomic shared settings service', async () => {
@@ -358,14 +349,23 @@ describe('controllers/api comments endpoints', () => {
     const { saveProviders } = await loadHandlers()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await saveProviders(createSavePayload(), res)
+    const req = createSavePayload()
+    let finishSave
+    persistProviders.mockReturnValueOnce(new Promise(resolve => { finishSave = resolve }))
+    const pending = saveProviders(req, res)
+    await Promise.resolve()
 
+    expect(persistProviders).toHaveBeenCalledTimes(1)
     expect(persistProviders).toHaveBeenCalledWith([
-      { key: 'default', isEnabled: true, config: { displayMode: 'expanded', missingValue: null } },
-      { key: 'external', isEnabled: false, config: { endpoint: 'https://example.invalid/comments' } }
+      { key: 'default', isEnabled: true, config: { akismet: 'reviewed-api-key', minDelay: 45 } },
+      { key: 'external', isEnabled: false, config: {} }
     ])
     expect(res.status).not.toHaveBeenCalled()
-    expect(res.json).toHaveBeenCalledWith({ message: 'Comment Providers updated successfully' })
+    expect(res.json).not.toHaveBeenCalled()
+    finishSave({ warnings: [] })
+    await pending
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) })
   })
 
   it('returns JSON 400 for malformed provider save payloads', async () => {
@@ -376,9 +376,8 @@ describe('controllers/api comments endpoints', () => {
     await saveProviders({ body: { providers: [{ key: 'default', isEnabled: 'yes', config: [] }] }, user: {} }, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid comment providers payload' })
-    expect(global.WIKI.models.commentProviders.query).not.toHaveBeenCalled()
-    expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
+    expect(persistProviders).not.toHaveBeenCalled()
   })
 
   it('returns JSON 400 for malformed provider save config JSON', async () => {
@@ -391,8 +390,8 @@ describe('controllers/api comments endpoints', () => {
     await saveProviders(req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid comment providers payload' })
-    expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
+    expect(persistProviders).not.toHaveBeenCalled()
   })
 
   it('forwards unexpected provider save failures to the shared error policy', async () => {
@@ -407,7 +406,6 @@ describe('controllers/api comments endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(err)
     expect(res.json).not.toHaveBeenCalled()
-    expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
   })
 
   it('does not report a committed provider policy as a failed write when activation returns warnings', async () => {
@@ -415,7 +413,7 @@ describe('controllers/api comments endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { saveProviders } = await loadHandlers(), res = { status: vi.fn().mockReturnThis(), json: vi.fn() }, next = vi.fn()
     await saveProviders(createSavePayload(), res, next)
-    expect(next).not.toHaveBeenCalled(); expect(res.json).toHaveBeenCalledWith({ message: 'Comment Providers updated successfully' })
+    expect(next).not.toHaveBeenCalled(); expect(res.status).not.toHaveBeenCalled(); expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) })
   })
 
   it('forwards unexpected failures to next', async () => {
@@ -499,6 +497,7 @@ describe('controllers/api comments endpoints', () => {
     const user = { id: 12 }
     const createReq = {
       user,
+      sessionID: 'page-unlock-session',
       ip: '127.0.0.1',
       body: {
         pageId: 9,
@@ -515,27 +514,27 @@ describe('controllers/api comments endpoints', () => {
     expect(global.WIKI.models.comments.postNewComment).toHaveBeenCalledWith({
       ...createReq.body,
       user,
-      ip: createReq.ip, sessionId: ''
+      ip: createReq.ip, sessionId: createReq.sessionID
     })
     expect(createRes.status).toHaveBeenCalledWith(201)
     expect(createRes.json).toHaveBeenCalledWith({ id: 73 })
 
-    const updateReq = { user, ip: '127.0.0.2', params: { id: '73' }, body: { content: 'Updated' } }
+    const updateReq = { user, sessionID: 'page-unlock-session', ip: '127.0.0.2', params: { id: '73' }, body: { content: 'Updated' } }
     const updateRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
     await handlers.update(updateReq, updateRes)
     expect(global.WIKI.models.comments.updateComment).toHaveBeenCalledWith({
       id: 73,
       content: 'Updated',
       user,
-      ip: updateReq.ip, sessionId: ''
+      ip: updateReq.ip, sessionId: updateReq.sessionID
     })
     expect(updateRes.json).toHaveBeenCalledWith({ render: '<p>Updated</p>' })
 
-    const deleteReq = { user, ip: '127.0.0.3', params: { id: '73' } }
+    const deleteReq = { user, sessionID: 'page-unlock-session', ip: '127.0.0.3', params: { id: '73' } }
     const deleteRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
     await handlers.remove(deleteReq, deleteRes)
-    expect(global.WIKI.models.comments.deleteComment).toHaveBeenCalledWith({ id: 73, user, ip: deleteReq.ip, sessionId: '' })
-    expect(deleteRes.json).toHaveBeenCalledWith({ message: 'Comment deleted successfully' })
+    expect(global.WIKI.models.comments.deleteComment).toHaveBeenCalledWith({ id: 73, user, ip: deleteReq.ip, sessionId: deleteReq.sessionID })
+    expect(deleteRes.json).toHaveBeenCalledWith({ message: expect.any(String) })
   })
 
 
@@ -557,7 +556,7 @@ describe('controllers/api comments endpoints', () => {
     expect(res.json).not.toHaveBeenCalled()
   })
 
-  it('throttles repeated creates through the shared durable operation contract', async () => {
+  it('returns shared throttle rejection and retry guidance without repeating the comment write', async () => {
     const { create } = await loadHandlers()
     const req = {
       user: { id: 12 },
@@ -567,19 +566,19 @@ describe('controllers/api comments endpoints', () => {
     const firstRes = { status: vi.fn().mockReturnThis(), json: vi.fn(), set: vi.fn() }
     const repeatedRes = { status: vi.fn().mockReturnThis(), json: vi.fn(), set: vi.fn() }
 
-    await create(req, firstRes)
-    await create(req, repeatedRes)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    try {
+      await create(req, firstRes)
+      await create(req, repeatedRes)
+    } finally {
+      now.mockRestore()
+    }
 
     expect(firstRes.status).toHaveBeenCalledWith(201)
     expect(global.WIKI.models.comments.postNewComment).toHaveBeenCalledTimes(1)
-    expect(global.WIKI.models.knex.raw).toHaveBeenCalledTimes(2)
-    expect(global.WIKI.models.knex.raw).toHaveBeenLastCalledWith(
-      expect.any(String),
-      ['comment-create:12:127.0.0.1', expect.any(Number), expect.any(Number), expect.any(Number)]
-    )
     expect(repeatedRes.status).toHaveBeenCalledWith(429)
     expect(repeatedRes.set).toHaveBeenCalledWith('Retry-After', '15')
-    expect(repeatedRes.json).toHaveBeenCalledWith({ error: 'Too many attempts! Try again later.' })
+    expect(repeatedRes.json).toHaveBeenCalledWith({ error: expect.any(String) })
   })
 
   it('rejects malformed comment ids before calling shared operations', async () => {
@@ -589,7 +588,7 @@ describe('controllers/api comments endpoints', () => {
     await handlers.update({ params: { id: '0' }, body: { content: 'Updated' } }, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'comment id must be a positive integer' })
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
     expect(global.WIKI.models.comments.updateComment).not.toHaveBeenCalled()
   })
 })

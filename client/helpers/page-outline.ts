@@ -5,23 +5,6 @@ export type OutlineNode = OutlineEntry & {
   parentAnchor: string | null
 }
 
-/** Keep matching headings and their ancestors so filtered results retain context. */
-export function filterOutline<T extends OutlineEntry>(entries: T[], query: string): T[] {
-  const term = query.trim().toLocaleLowerCase()
-  if (!term) return entries
-  const included = new Set<number>()
-  const ancestors: number[] = []
-  entries.forEach((entry, index) => {
-    while (ancestors.length && entries[ancestors[ancestors.length - 1]].depth >= entry.depth) ancestors.pop()
-    if (entry.title.toLocaleLowerCase().includes(term)) {
-      included.add(index)
-      for (const ancestor of ancestors) included.add(ancestor)
-    }
-    ancestors.push(index)
-  })
-  return entries.filter((_, index) => included.has(index))
-}
-
 /**
  * Builds a hierarchical outline tree preserving arbitrary heading depths,
  * resolving parent anchors and child lists.
@@ -199,45 +182,6 @@ export function activeOutlineIndex(positions: number[], scrollTop: number): numb
     } else high = middle - 1
   }
   return active
-}
-
-/**
- * Resolve the active outline entry for a viewport position.
- *
- * A heading whose normal activation point is below the reachable reading end
- * gets a progressively compressed terminal activation point. This keeps the
- * final heading reachable at the end of the article without replacing all
- * preceding headings at one discontinuous boundary.
- */
-export function activeOutlineIndexAtScroll(
-  positions: number[],
-  scrollY: number,
-  viewportHeight: number,
-  articleBottom: number,
-  thresholdOffset: number,
-  documentScrollHeight = articleBottom
-): number {
-  if (positions.length === 0) return -1
-
-  const activationPositions = positions.map(position => position - thresholdOffset)
-  const maxScroll = Math.max(0, documentScrollHeight - viewportHeight)
-  const terminalEnd = Math.max(0, Math.min(maxScroll, articleBottom - viewportHeight))
-  const lastActivation = activationPositions[activationPositions.length - 1]!
-  if (terminalEnd > 0 && lastActivation > terminalEnd) {
-    const terminalStart = Math.max(0, terminalEnd - Math.max(1, viewportHeight - thresholdOffset))
-    const naturalTerminalSpan = lastActivation - terminalStart
-    const reachableTerminalSpan = terminalEnd - terminalStart
-    if (naturalTerminalSpan > 0 && reachableTerminalSpan > 0) {
-      for (let index = 0; index < activationPositions.length; index++) {
-        const natural = activationPositions[index]!
-        if (natural > terminalStart) {
-          activationPositions[index] = terminalStart + ((natural - terminalStart) * reachableTerminalSpan) / naturalTerminalSpan
-        }
-      }
-    }
-  }
-
-  return activeOutlineIndex(activationPositions, scrollY)
 }
 
 export type PageOutlineTracker = {

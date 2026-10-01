@@ -1,20 +1,11 @@
 import knexModule from 'knex'
 import type { Knex } from 'knex'
 import tfa from 'node-2fa'
+import bcrypt from 'bcryptjs-then'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  databaseName.endsWith('_user_tfa_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        database: databaseName,
-        password
-      }
-    : null
+const connection = getPostgresTestConnection('_user_tfa_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 
 const authErrors = {
@@ -41,7 +32,7 @@ const wikiRuntime = {
 const { default: User } = await import('../../models/users.ts')
 const { default: UserKey } = await import('../../models/userKeys.ts')
 
-suite('PostgreSQL setup TFA concurrency', () => {
+suite('PostgreSQL account security transactions', () => {
   let db: Knex
   const observations = {
     afterLoginCalls: 0,
@@ -67,7 +58,7 @@ suite('PostgreSQL setup TFA concurrency', () => {
       }
     })
     wikiRuntime.models = {
-      knex: { transaction },
+      knex: Object.assign((table: string) => db(table), { transaction, raw: db.raw.bind(db) }),
       users,
       userKeys: boundUserKey
     }
@@ -90,6 +81,7 @@ suite('PostgreSQL setup TFA concurrency', () => {
       table.boolean('mustChangePwd').notNullable().defaultTo(false)
       table.integer('authVersion').notNullable().defaultTo(0)
       table.string('adminRevision')
+      table.string('sessionsRevokedAt')
       table.string('createdAt')
       table.string('updatedAt')
     })
@@ -101,6 +93,10 @@ suite('PostgreSQL setup TFA concurrency', () => {
       table.integer('authVersion').notNullable()
       table.string('validUntil').notNullable()
       table.string('createdAt')
+    })
+    await db.schema.createTable('settings', table => {
+      table.string('key').primary()
+      table.json('value')
     })
   })
 
@@ -135,6 +131,7 @@ suite('PostgreSQL setup TFA concurrency', () => {
 
   afterAll(async () => {
     if (db) {
+      await db.schema.dropTableIfExists('settings')
       await db.schema.dropTableIfExists('userKeys')
       await db.schema.dropTableIfExists('users')
       await db.destroy()
@@ -161,5 +158,54 @@ suite('PostgreSQL setup TFA concurrency', () => {
     expect(await db('users').where('id', 10).first()).toMatchObject({ tfaIsActive: true })
     expect(observations.afterLoginCalls).toBe(1)
     expect(observations.afterLoginTransactionCompletions).toEqual([1])
+
+    await expect(User.loginTFA({ securityCode: generated.token, continuationToken: setupToken, setup: true }, context))
+      .rejects.toBeInstanceOf(authErrors.AuthValidationTokenInvalid)
+    expect(await db('userKeys').where({ kind: 'tfaSetup', token: setupToken })).toHaveLength(0)
+    expect(await db('users').where('id', 10).first()).toMatchObject({ tfaIsActive: true })
+    expect(observations.transactionCompletions).toBe(1)
+    expect(observations.afterLoginCalls).toBe(1)
+    expect(observations.afterLoginTransactionCompletions).toEqual([1])
+  })
+
+  it.each(['resetPwd', 'changePwd'] as const)('commits %s with the real account generation expression and one-use key', async kind => {
+    const previousRevocation = '2000-01-01T00:00:00.000Z'
+    const oldPassword = 'old-password-123!'
+    const newPassword = 'new-password-123!'
+    await db('users').where('id', 10).update({
+      password: await bcrypt.hash(oldPassword, 4),
+      authVersion: 7,
+      sessionsRevokedAt: previousRevocation,
+      mustChangePwd: true,
+      isVerified: false
+    })
+    await db('userKeys').update({ kind, authVersion: 7 })
+
+    if (kind === 'resetPwd') {
+      await expect(User.resetPassword({ token: setupToken, newPassword })).resolves.toBe(10)
+    } else {
+      // Session issuance is downstream of the persistence contract exercised here.
+      const usersModel = wikiRuntime.models.users as typeof User
+      const previousRefreshToken = usersModel.refreshToken
+      Object.assign(usersModel, { refreshToken: async () => ({ token: 'signed-jwt' }) })
+      try {
+        await User.loginChangePassword(
+          { continuationToken: setupToken, newPassword },
+          { req: { logIn: (_user: unknown, _options: unknown, callback: () => void) => callback() } } as never
+        )
+      } finally {
+        usersModel.refreshToken = previousRefreshToken
+      }
+    }
+
+    const account = await db('users').where('id', 10).first()
+    expect(account).toMatchObject({ authVersion: 8, mustChangePwd: false, isVerified: kind === 'resetPwd' })
+    expect(account.sessionsRevokedAt).not.toBe(previousRevocation)
+    expect(new Date(account.sessionsRevokedAt).toISOString()).toBe(account.sessionsRevokedAt)
+    expect(await bcrypt.compare(newPassword, account.password)).toBe(true)
+    expect(await bcrypt.compare(oldPassword, account.password)).toBe(false)
+    expect(await db('userKeys').where('userId', 10)).toHaveLength(0)
+    expect(observations.transactionCompletions).toBe(1)
+    expect(observations.afterLoginCalls).toBe(0)
   })
 })

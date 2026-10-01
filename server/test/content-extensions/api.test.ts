@@ -1,3 +1,8 @@
+import createKnex, { type Knex } from 'knex'
+import { up as createRegistry } from '../../db/migrations/2.5.135.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
+
 vi.mockModule('express', import.meta.url, () => {
   const routers: Array<Record<string, ReturnType<typeof vi.fn>>> = []
   const expressMock = {
@@ -11,6 +16,12 @@ vi.mockModule('express', import.meta.url, () => {
   return { default: expressMock, ...expressMock }
 })
 
+// Capture real implementations before the controller dependency mock replaces the module exports.
+const {
+  listContentExtensions: realListContentExtensions,
+  setContentExtensionEnabled: realSetContentExtensionEnabled
+} = await import('../../content-extensions/operations.ts')
+
 const operations = vi.hoisted(() => ({
   listContentExtensions: vi.fn(),
   setContentExtensionEnabled: vi.fn()
@@ -21,11 +32,23 @@ const pages = vi.hoisted(() => ({ listIndex: vi.fn() }))
 vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({ default: pages }))
 
 const express = await import('express')
-import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
-type TestWiki = { auth: { checkAccess: ReturnType<typeof vi.fn> } }
+type TestWiki = { auth: { checkAccess: ReturnType<typeof vi.fn> }; models?: { knex: Knex } }
 let wiki: TestWiki
+let db: Knex | undefined
 
+const installRegistry = async () => {
+  db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+  await db.schema.createTable('users', table => { table.integer('id').primary() })
+  await db('users').insert({ id: 1 })
+  await createRegistry(db)
+  await createDurableJobs(db)
+  await addDurableJobLeaseToken(db)
+  await db('contentExtensions').where({ key: 'qr' }).update({ isEnabled: true })
+  wiki.models = { knex: db }
+  return db
+}
 const response = () => ({
   json: vi.fn(),
   sendStatus: vi.fn(),
@@ -53,19 +76,37 @@ describe('content extension API', () => {
     wiki = { auth: { checkAccess: vi.fn() } }
     ;(globalThis as unknown as { WIKI: TestWiki }).WIKI = wiki
   })
+  afterEach(async () => {
+    await db?.destroy()
+    db = undefined
+  })
 
   it('lists editor compatibility diagnostics', async () => {
-    const payload = { hostVersion: 1, extensions: [{ key: 'qr', compatible: true }] }
-    operations.listContentExtensions.mockResolvedValue(payload)
+    await installRegistry()
+    operations.listContentExtensions.mockImplementation(realListContentExtensions)
     const { list } = await loadHandlers()
     const res = response()
 
     await list({}, res, vi.fn())
 
-    expect(res.json).toHaveBeenCalledWith(payload)
+    expect(res.json).toHaveBeenCalledWith({
+      hostVersion: 1,
+      extensions: expect.arrayContaining([
+        expect.objectContaining({
+          key: 'qr',
+          version: 1,
+          title: expect.any(String),
+          description: expect.any(String),
+          icon: expect.any(String),
+          isEnabled: true,
+          compatible: true,
+          diagnostic: null
+        })
+      ])
+    })
   })
 
-  it('returns a no-store page index filtered by the current requester', async () => {
+  it('passes the current requester and bounded query controls with private no-store index headers', async () => {
     operations.listContentExtensions.mockResolvedValue({
       hostVersion: 1,
       extensions: [{ key: 'index', isEnabled: true, compatible: true }]
@@ -90,7 +131,7 @@ describe('content extension API', () => {
     })
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.setHeader).toHaveBeenCalledWith('Vary', 'Cookie')
-    expect(res.json).toHaveBeenCalledWith({ items: [{ id: 7, title: 'Visible', href: '/en/guide/visible' }] })
+    expect(res.json).toHaveBeenCalledWith({ items: expect.any(Array) })
   })
 
   it('fails closed when the page index extension is disabled', async () => {
@@ -120,22 +161,41 @@ describe('content extension API', () => {
 
   it('validates and persists an administrator toggle', async () => {
     wiki.auth.checkAccess.mockReturnValue(true)
-    operations.setContentExtensionEnabled.mockResolvedValue({ key: 'qr', isEnabled: false })
+    const registry = await installRegistry()
+    operations.listContentExtensions.mockImplementation(realListContentExtensions)
+    operations.setContentExtensionEnabled.mockImplementation(realSetContentExtensionEnabled)
     const { update } = await loadHandlers()
     const res = response()
 
     await update({ body: { isEnabled: false }, params: { key: 'qr' }, user: { id: 1 } }, res, vi.fn())
 
-    expect(operations.setContentExtensionEnabled).toHaveBeenCalledWith('qr', false, 1)
-    expect(res.json).toHaveBeenCalledWith({ key: 'qr', isEnabled: false })
+    expect(await registry('contentExtensions').where({ key: 'qr' }).first('isEnabled', 'updatedBy')).toEqual({
+      isEnabled: 0,
+      updatedBy: 1
+    })
+    expect(await registry('durableJobs').where({ type: 'rerender-content-extension' }).first()).toMatchObject({
+      version: 1,
+      state: 'pending',
+      attempts: 0,
+      payload: JSON.stringify({ key: 'qr' })
+    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      key: 'qr',
+      isEnabled: false,
+      compatible: true,
+      diagnostic: null
+    }))
   })
 
-  it('rejects extra or incorrectly typed toggle fields', async () => {
+  it.each([
+    [{ isEnabled: false, force: true }],
+    [{ isEnabled: 'false' }]
+  ])('rejects extra or incorrectly typed toggle fields independently', async body => {
     wiki.auth.checkAccess.mockReturnValue(true)
     const { update } = await loadHandlers()
     const res = response()
 
-    await update({ body: { isEnabled: 'false', force: true }, params: { key: 'qr' }, user: { id: 1 } }, res, vi.fn())
+    await update({ body, params: { key: 'qr' }, user: { id: 1 } }, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(operations.setContentExtensionEnabled).not.toHaveBeenCalled()

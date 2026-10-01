@@ -39,18 +39,13 @@ describe('skill command filtering', () => {
   })
 
   it('normalizes command boundaries without mutating the source list', () => {
-    const result = filterSkillsForCommand(skills, '  NOTES  ')
+    const input = skills.map(skill => ({ ...skill }))
+    const original = skills.map(skill => ({ ...skill }))
+    const result = filterSkillsForCommand(input, '  NOTES  ')
     expect(result.map(skill => skill.name)).toEqual(['release-notes'])
-    expect(result).not.toBe(skills)
-    expect(filterSkillsForCommand(skills, '')).not.toBe(skills)
-  })
-
-  it('keeps a mixed draft query on the trailing command token boundary', () => {
-    const mixedDraft = 'Explain /release-notes'
-    const command = /(^|\s)\/([^\s/]*)$/.exec(mixedDraft)
-    expect(command?.[2]).toBe('release-notes')
-    expect(filterSkillsForCommand(skills, command?.[2] ?? '').map(skill => skill.name)).toEqual(['release-notes'])
-    expect(/(^|\s)\/([^\s/]*)$/.exec('Explain docs/release-notes')).toBeNull()
+    expect(input).toEqual(original)
+    expect(filterSkillsForCommand(input, '')).toEqual(original)
+    expect(input).toEqual(original)
   })
 
   it('keeps equal-ranked duplicate names in their source order', () => {
@@ -66,6 +61,20 @@ describe('skill command filtering', () => {
     expect(filterSkillsForCommand(skills, 'q').map(skill => skill.name)).toEqual(['qa-runbook'])
     expect(filterSkillsForCommand(skills, 'notes').map(skill => skill.name)).toEqual(['release-notes'])
     expect(filterSkillsForCommand(skills, 'rln').map(skill => skill.name)).toEqual(['release-notes'])
+    const candidates = [
+      { name: 'doc', description: 'build', exposureMode: 'owner' as const },
+      { name: 'b_u_i_l_d', description: '', exposureMode: 'owner' as const },
+      { name: 'prebuild', description: '', exposureMode: 'owner' as const },
+      { name: 'build-tool', description: '', exposureMode: 'owner' as const },
+      { name: 'build', description: '', exposureMode: 'owner' as const }
+    ]
+    expect(filterSkillsForCommand(candidates, 'build').map(skill => skill.name)).toEqual([
+      'build',
+      'build-tool',
+      'prebuild',
+      'b_u_i_l_d',
+      'doc'
+    ])
   })
 
   it('falls back to description matches and excludes unrelated skills', () => {

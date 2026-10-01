@@ -1,3 +1,5 @@
+const ActualRouter = (await import('express')).default.Router
+let mountedRouter
 const workspace = () => ({ id: 42, fingerprint: 'account-version', profile: { name: 'Alice', email: 'alice@example.com', location: '', jobTitle: '', timezone: 'UTC', groups: [3] }, isActive: true, isVerified: false, twoFactor: 'off', capabilities: { edit: true } })
 const accounts = { creationOptions: vi.fn(), create: vi.fn(), inspect: vi.fn(), updateProfile: vi.fn(), remove: vi.fn(), act: vi.fn(), prepareWelcome: vi.fn(), finishWelcome: vi.fn() }
 vi.mockModule('../../operations/account-administration.ts', import.meta.url, () => ({ accountAdministration: () => accounts }))
@@ -18,14 +20,14 @@ vi.mockModule('express', import.meta.url, () => {
   }
 
   const expressMock = {
-    Router: () => router,
+    Router: () => mountedRouter ?? router,
     __router: router
   }
 
   return { default: expressMock, ...expressMock }
 })
 
-const express = await import('express')
+const express = (await import('express')).default
 
 describe('controllers/api users endpoints', () => {
   beforeEach(() => {
@@ -43,7 +45,6 @@ describe('controllers/api users endpoints', () => {
       },
       auth: {
         checkAccess: vi.fn().mockReturnValue(true),
-        checkAssignUserToGroupAccess: vi.fn().mockResolvedValue(true),
         revokeUserTokens: vi.fn(),
         strategies: {
           local: {
@@ -136,6 +137,7 @@ describe('controllers/api users endpoints', () => {
               tfaIsActive: true,
               password: 'secret',
               tfaSecret: 'hidden',
+              continuationToken: 'database-continuation-token',
               permissions: ['manage:system'],
               $relatedQuery: vi.fn().mockImplementation(() => {
                 const groups = [
@@ -176,24 +178,23 @@ describe('controllers/api users endpoints', () => {
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
+  const dispatchGet = async (url, user) => {
+    mountedRouter = ActualRouter()
+    try {
+      await vi.importFresh('../../controllers/api/users.ts', import.meta.url)
+      return await new Promise((resolve, reject) => {
+        const response = {
+          statusCode: 200,
+          status (code) { this.statusCode = code; return this },
+          json (body) { resolve({ status: this.statusCode, body }) }
+        }
+        mountedRouter.handle({ method: 'GET', url, user }, response, error => reject(error ?? new Error(`No route handled ${url}`)))
+      })
+    } finally {
+      mountedRouter = undefined
+    }
+  }
 
-  it('registers the users routes', async () => {
-    const handlers = await loadHandler()
-
-    expect(typeof handlers.create).toBe('function')
-    expect(typeof handlers.welcomeEmail).toBe('function')
-    expect(typeof handlers.list).toBe('function')
-    expect(typeof handlers.search).toBe('function')
-    expect(typeof handlers.lastLogins).toBe('function')
-    expect(typeof handlers.whoami).toBe('function')
-    expect(typeof handlers.update).toBe('function')
-    expect(typeof handlers.delete).toBe('function')
-    expect(typeof handlers.status).toBe('function')
-    expect(typeof handlers.verification).toBe('function')
-    expect(typeof handlers.tfa).toBe('function')
-    expect(typeof handlers.preferences).toBe('function')
-    expect(typeof handlers.detail).toBe('function')
-  })
 
   it('creates admin users for authorized requests', async () => {
     const { create } = await loadHandler(), user = { permissions: ['write:users'] }, body = { providerKey: 'local', email: 'alice@example.com', passwordRaw: 'temporary-secret', name: 'Alice', groups: [3], mustChangePassword: true, sendWelcomeEmail: false, ignored: true }, res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
@@ -235,7 +236,8 @@ describe('controllers/api users endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'groups must be an array' })
-    expect(global.WIKI.models.users.createNewUser).not.toHaveBeenCalled()
+    expect(accounts.creationOptions).not.toHaveBeenCalled()
+    expect(accounts.create).not.toHaveBeenCalled()
   })
 
   it('returns 403 for unauthorized admin user create requests', async () => {
@@ -248,14 +250,15 @@ describe('controllers/api users endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:users, manage:users or manage:system is required' })
-    expect(global.WIKI.models.users.createNewUser).not.toHaveBeenCalled()
+    expect(accounts.creationOptions).not.toHaveBeenCalled()
+    expect(accounts.create).not.toHaveBeenCalled()
   })
 
-  it('returns 403 when admin user create assigns disallowed elevated groups', async () => {
+  it('preserves reviewed account creation scope denial without sending welcome mail', async () => {
     accounts.create.mockRejectedValueOnce(Object.assign(new Error('Group is outside your scope.'), { status: 403 }))
     const { create } = await loadHandler(), res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-    await create({ user: { permissions: ['write:users'] }, body: { providerKey: 'local', email: 'alice@example.com', passwordRaw: 'temporary-secret', name: 'Alice', groups: [1] } }, res)
-    expect(res.status).toHaveBeenCalledWith(403); expect(global.WIKI.models.users.createNewUser).not.toHaveBeenCalled()
+    await create({ user: { permissions: ['write:users'] }, body: { providerKey: 'local', email: 'alice@example.com', passwordRaw: 'temporary-secret', name: 'Alice', groups: [1], sendWelcomeEmail: true } }, res)
+    expect(res.status).toHaveBeenCalledWith(403); expect(accounts.create).toHaveBeenCalledOnce(); expect(global.WIKI.models.users.sendWelcomeEmail).not.toHaveBeenCalled()
   })
 
   it('returns model validation errors for admin user create failures', async () => {
@@ -283,7 +286,8 @@ describe('controllers/api users endpoints', () => {
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'user id must be a positive integer' })
     expect(res.status).toHaveBeenNthCalledWith(2, 400)
     expect(res.json).toHaveBeenNthCalledWith(2, { error: 'groups must be an array' })
-    expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
+    expect(accounts.inspect).not.toHaveBeenCalled()
+    expect(accounts.updateProfile).not.toHaveBeenCalled()
   })
 
   it('returns 403 for unauthorized admin user update requests', async () => {
@@ -296,10 +300,11 @@ describe('controllers/api users endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
-    expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
+    expect(accounts.inspect).not.toHaveBeenCalled()
+    expect(accounts.updateProfile).not.toHaveBeenCalled()
   })
 
-  it('returns 403 when admin user update assigns disallowed elevated groups', async () => {
+  it('preserves privileged-target update denial without revoking existing sessions', async () => {
     accounts.updateProfile.mockRejectedValueOnce(Object.assign(new Error('Target account is privileged.'), { status: 403 }))
     const { update } = await loadHandler(), res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     await update({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { name: 'Changed' } }, res)
@@ -330,7 +335,8 @@ describe('controllers/api users endpoints', () => {
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'user id must be a positive integer' })
     expect(res.status).toHaveBeenNthCalledWith(2, 400)
     expect(res.json).toHaveBeenNthCalledWith(2, { error: 'user id must be a positive integer' })
-    expect(global.WIKI.models.users.deleteUser).not.toHaveBeenCalled()
+    expect(accounts.inspect).not.toHaveBeenCalled()
+    expect(accounts.remove).not.toHaveBeenCalled()
   })
 
   it('returns 403 for unauthorized admin user delete requests', async () => {
@@ -343,17 +349,20 @@ describe('controllers/api users endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
-    expect(global.WIKI.models.users.deleteUser).not.toHaveBeenCalled()
+    expect(accounts.inspect).not.toHaveBeenCalled()
+    expect(accounts.remove).not.toHaveBeenCalled()
   })
 
-  it('rejects protected admin user deletes before calling the model', async () => {
+  it('preserves protected-account deletion denial without revoking sessions locally or on peers', async () => {
     accounts.remove.mockRejectedValueOnce(Object.assign(new Error('System account cannot be deleted.'), { status: 403 }))
     const { delete: remove } = await loadHandler(), res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     await remove({ user: { permissions: ['manage:users'] }, params: { id: '1' }, body: { replaceId: 77 } }, res)
-    expect(res.status).toHaveBeenCalledWith(403); expect(global.WIKI.models.users.deleteUser).not.toHaveBeenCalled(); expect(global.WIKI.auth.revokeUserTokens).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(403); expect(global.WIKI.auth.revokeUserTokens).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ error: 'System account cannot be deleted.' })
+    expect(global.WIKI.events.outbound.emit).not.toHaveBeenCalledWith('addAuthRevoke', expect.anything())
   })
 
-  it('maps foreign constraint admin user delete failures', async () => {
+  it('preserves private-history ownership denial on account deletion', async () => {
     accounts.remove.mockRejectedValueOnce(Object.assign(new Error('Private history still belongs to this account.'), { status: 403 }))
     const { delete: remove } = await loadHandler(), res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     await remove({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { replaceId: 77 } }, res)
@@ -373,23 +382,36 @@ describe('controllers/api users endpoints', () => {
 
     expect(registeredGetPaths.indexOf('/last-logins')).toBeGreaterThanOrEqual(0)
     expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/last-logins'))
+    const builder = global.WIKI.models.users.query()
+    global.WIKI.models.users.query.mockReturnValue(builder)
+    const result = await dispatchGet('/last-logins', { permissions: ['manage:users'] })
+    expect(result).toEqual({
+      status: 200,
+      body: [
+        { id: 42, name: 'Alice', lastLoginAt: '2026-01-03T00:00:00.000Z' },
+        { id: 77, name: 'Bob', lastLoginAt: '2026-01-02T00:00:00.000Z' }
+      ]
+    })
+    expect(builder.findById).not.toHaveBeenCalled()
   })
 
-  it('registers the list route before the detail route', async () => {
+
+  it('registers the named profile GET before the detail GET', async () => {
     await loadHandler()
     const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
 
-    expect(registeredGetPaths.indexOf('/')).toBeGreaterThanOrEqual(0)
-    expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/'))
-  })
-
-  it('registers admin user action routes before the detail route', async () => {
-    await loadHandler()
-    const registeredPatchPaths = express.__router.patch.mock.calls.map(([path]) => path)
-    const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
-
-    expect(registeredPatchPaths).toEqual(['/profile', '/profile/preferences', '/:id/status', '/:id/verification', '/:id/tfa'])
     expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/profile'))
+    global.WIKI.models.pages.query.mockReturnValue({
+      count: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue({ total: 3 }) }) })
+    })
+    const result = await dispatchGet('/profile', { id: 42 })
+    expect(result.status).toBe(200)
+    expect(result.body).toMatchObject({
+      id: 42, name: 'Alice', email: 'alice@example.com', groups: ['Administrators', 'Editors'], pagesTotal: 3,
+      reduceMotion: true, underlineLinks: true, contentTextSize: 'larger', communicationLocale: 'fr-CA'
+    })
+    expect(result.body).not.toHaveProperty('password')
+    expect(result.body).not.toHaveProperty('tfaSecret')
   })
 
   it.each([
@@ -479,6 +501,8 @@ describe('controllers/api users endpoints', () => {
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
     expect(global.WIKI.models.users.query).not.toHaveBeenCalled()
+    expect(accounts.inspect).not.toHaveBeenCalled()
+    expect(accounts.act).not.toHaveBeenCalled()
   })
 
   it('returns 400 for malformed admin user action ids and booleans', async () => {
@@ -576,12 +600,10 @@ describe('controllers/api users endpoints', () => {
     await list(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
-    expect(global.WIKI.models.users.query).toHaveBeenCalledTimes(2)
     expect(countFilterBuilder.where).toHaveBeenCalledWith('email', 'like', '%ali%')
     expect(countFilterBuilder.orWhere).toHaveBeenCalledWith('name', 'like', '%ali%')
     expect(countBuilder.andWhere).toHaveBeenCalledWith('providerKey', 'local')
     expect(countBuilder.count).toHaveBeenCalledWith('* as total')
-    expect(countBuilder.first).toHaveBeenCalled()
     expect(listFilterBuilder.where).toHaveBeenCalledWith('email', 'like', '%ali%')
     expect(listFilterBuilder.orWhere).toHaveBeenCalledWith('name', 'like', '%ali%')
     expect(listBuilder.andWhere).toHaveBeenCalledWith('providerKey', 'local')
@@ -618,6 +640,8 @@ describe('controllers/api users endpoints', () => {
 
   it('uses safe defaults for invalid admin users list query options', async () => {
     const countBuilder = {
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
       count: vi.fn().mockReturnThis(),
       first: vi.fn().mockResolvedValue({ total: 0 })
     }
@@ -645,8 +669,8 @@ describe('controllers/api users endpoints', () => {
 
     await list(req, res, vi.fn())
 
-    expect(countBuilder.where).toBeUndefined()
-    expect(countBuilder.andWhere).toBeUndefined()
+    expect(countBuilder.where).not.toHaveBeenCalled()
+    expect(countBuilder.andWhere).not.toHaveBeenCalled()
     expect(listBuilder.orderBy).toHaveBeenCalledWith('name', 'asc')
     expect(listBuilder.offset).toHaveBeenCalledWith(0)
     expect(listBuilder.limit).toHaveBeenCalledWith(15)
@@ -932,7 +956,8 @@ describe('controllers/api users endpoints', () => {
         permissions: ['manage:system'],
         password: 'secret',
         tfaSecret: 'hidden',
-        providerId: 'provider-42'
+        providerId: 'provider-42',
+        continuationToken: 'request-continuation-token'
       }
     }
     const res = { json: vi.fn(), set: vi.fn() }
@@ -959,6 +984,11 @@ describe('controllers/api users endpoints', () => {
         authVersion: 7
       }
     })
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.user.password).toBeUndefined()
+    expect(payload.user.tfaSecret).toBeUndefined()
+    expect(payload.user.providerId).toBeUndefined()
+    expect(payload.user.continuationToken).toBeUndefined()
   })
   it('returns persisted presentation and communication preferences in the private profile', async () => {
     const { profile } = await loadHandler()
@@ -983,31 +1013,5 @@ describe('controllers/api users endpoints', () => {
     })
     expect(res.json.mock.calls[0][0]).not.toHaveProperty('password')
     expect(res.json.mock.calls[0][0]).not.toHaveProperty('tfaSecret')
-  })
-  it('does not leak sensitive user fields', async () => {
-    const { whoami } = await loadHandler()
-    const req = {
-      user: {
-        id: 42,
-        name: 'Alice',
-        email: 'alice@example.com',
-        providerKey: 'local',
-        permissions: ['manage:system'],
-        password: 'secret',
-        tfaSecret: 'hidden',
-        providerId: 'provider-42',
-        continuationToken: 'token-123'
-      }
-    }
-    const res = { json: vi.fn(), set: vi.fn() }
-
-    await whoami(req, res)
-    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
-
-    const payload = res.json.mock.calls[0][0]
-    expect(payload.user.password).toBeUndefined()
-    expect(payload.user.tfaSecret).toBeUndefined()
-    expect(payload.user.providerId).toBeUndefined()
-    expect(payload.user.continuationToken).toBeUndefined()
   })
 })

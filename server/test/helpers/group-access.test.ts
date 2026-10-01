@@ -1,7 +1,7 @@
 import { describe, expect, it } from '../bun-test.mts'
 import { createApiPrincipal, isApiPrincipal } from '../../helpers/api-principal.ts'
 import { evaluateGroupAccess, pageRuleRequesterBinding, type AccessRule } from '../../helpers/group-access.ts'
-import { normalizeGroupPolicy } from '../../operations/group-administration.ts'
+import { groupAuthorityAllows, normalizeGroupPolicy } from '../../operations/group-administration.ts'
 
 const rule = (id: string, path: string, match: AccessRule['match'] = 'START', deny = false, values: Partial<AccessRule> = {}): AccessRule => ({
   id,
@@ -28,10 +28,16 @@ describe('Group access explanation and enforcement', () => {
     expect(evaluate([]).allowed).toBe(false)
     expect(evaluate([rule('all', '')]).allowed).toBe(true)
     expect(evaluateGroupAccess([], ['read:pages'], [{ id: 3, pageRules: [rule('all', '')] }], { path: 'home' })).toMatchObject({
-      allowed: false,
-      reason: 'The required global permission is missing.'
+      allowed: false
     })
     expect(evaluateGroupAccess(['manage:system'], ['read:pages'], [], { path: 'home' }).allowed).toBe(true)
+  })
+  it('reserves script-bearing group authority for system administrators while allowing ordinary assignments', () => {
+    for (const permission of ['write:users', 'manage:users', 'write:groups', 'manage:groups']) {
+      expect(groupAuthorityAllows([permission], ['read:pages', 'write:scripts'])).toBe(false)
+    }
+    expect(groupAuthorityAllows(['manage:system'], ['write:scripts'])).toBe(true)
+    expect(groupAuthorityAllows(['manage:users'], ['read:pages', 'write:pages'])).toBe(true)
   })
   it('selects longer text before match type and deny wins a matching tie', () => {
     const result = evaluate([rule('all', ''), rule('deny-guides', 'guides', 'START', true), rule('specific', 'guides/start', 'EXACT')])

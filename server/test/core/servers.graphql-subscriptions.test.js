@@ -1,4 +1,10 @@
 import http from 'node:http'
+import express from 'express'
+import { buildSchema, GraphQLError } from 'graphql'
+import { createYoga as dependencyCreateYoga, maskError as dependencyMaskError } from 'graphql-yoga'
+
+// Capture the real dependency before Bun's module mocks replace its live exports.
+const realYoga = { createYoga: dependencyCreateYoga, maskError: dependencyMaskError }
 
 describe('core/servers GraphQL transports', () => {
   let previousWiki
@@ -16,15 +22,15 @@ describe('core/servers GraphQL transports', () => {
     vi.restoreAllMocks()
   })
 
-  const setupModule = async () => {
+  const setupModule = async ({ realHttp = false } = {}) => {
     vi.resetModules()
 
     const yoga = Object.assign(vi.fn(), {
       graphqlEndpoint: '/graphql',
       getEnveloped: vi.fn()
     })
-    const createYoga = vi.fn().mockReturnValue(yoga)
-    const maskError = vi.fn((_error, message) => new Error(message))
+    const createYoga = realHttp ? realYoga.createYoga : vi.fn().mockReturnValue(yoga)
+    const maskError = realYoga.maskError
     const wsServer = {
       close: vi.fn(callback => callback()),
       emit: vi.fn(),
@@ -46,10 +52,12 @@ describe('core/servers GraphQL transports', () => {
       default: { Server: WebSocketServer },
       WebSocketServer
     }))
-    const createGraphQLArtifacts = vi.fn().mockResolvedValue({ schema: { kind: 'schema' } })
+    const createGraphQLArtifacts = vi.fn().mockResolvedValue({
+      schema: realHttp ? buildSchema('type Query { greeting: String }') : { kind: 'schema' }
+    })
     vi.mockModule('../../graph/index.ts', import.meta.url, () => ({ createGraphQLArtifacts }))
 
-    const app = Object.assign(vi.fn((_request, response) => response.end()), {
+    const app = realHttp ? express() : Object.assign(vi.fn((_request, response) => response.end()), {
       use: vi.fn()
     })
     const collaboration = {
@@ -57,8 +65,10 @@ describe('core/servers GraphQL transports', () => {
       dispose: vi.fn().mockResolvedValue(undefined)
     }
     const logger = {
+      debug: vi.fn(),
       error: vi.fn(),
-      info: vi.fn()
+      info: vi.fn(),
+      warn: vi.fn()
     }
     const authenticateUserToken = vi.fn()
     const checkAccess = vi.fn((user, permissions = []) =>
@@ -144,26 +154,23 @@ describe('core/servers GraphQL transports', () => {
     }
   })
 
-  it('mounts Yoga on the existing GraphQL endpoint', async () => {
-    const { servers, createYoga, yoga } = await setupModule()
-
-    await servers.startGraphQL()
-
-    expect(createYoga).toHaveBeenCalledWith(expect.objectContaining({
-      schema: { kind: 'schema' },
-      graphqlEndpoint: '/graphql',
-      logging: global.WIKI.logger,
-      maskedErrors: {
-        isDev: false,
-        maskError: expect.any(Function)
-      },
-      graphiql: expect.any(Function)
-    }))
-    expect(global.WIKI.app.use).toHaveBeenCalledWith('/graphql', expect.any(Function))
-    const request = { kind: 'request' }
-    const response = { kind: 'response' }
-    global.WIKI.app.use.mock.calls[0][1](request, response, vi.fn())
-    expect(yoga).toHaveBeenCalledWith(request, response)
+  it('executes GraphQL over HTTP at the existing endpoint', async () => {
+    const { servers } = await setupModule({ realHttp: true })
+    try {
+      await servers.startGraphQL()
+      await servers.startHTTP()
+      const address = servers.servers.http.address()
+      if (!address || typeof address === 'string') throw new Error('Expected a TCP listener')
+      const response = await fetch(`http://127.0.0.1:${address.port}/graphql`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query: '{ __typename }' })
+      })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ data: { __typename: 'Query' } })
+    } finally {
+      await servers.stopServers()
+    }
   })
 
   it('serves GraphiQL only to users with API administration access', async () => {
@@ -180,35 +187,37 @@ describe('core/servers GraphQL transports', () => {
   })
 
   it('masks unexpected GraphQL causes while retaining classified conflicts', async () => {
-    const { servers, createYoga, maskError } = await setupModule()
+    const { servers, createYoga } = await setupModule()
     await servers.startGraphQL()
     const options = createYoga.mock.calls[0][0]
-    const unexpected = new Error('database password is secret')
-    const wrappedUnexpected = Object.assign(new Error(unexpected.message), { originalError: unexpected })
-    const masked = options.maskedErrors.maskError(wrappedUnexpected, 'Unexpected error.')
-    expect(maskError).toHaveBeenCalledWith(wrappedUnexpected, 'Unexpected error.')
-    expect(masked.message).toBe('Unexpected error.')
+    expect(options.maskedErrors.isDev).toBe(false)
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+    try {
+      const unexpected = new Error('database password is secret')
+      const wrappedUnexpected = new GraphQLError(unexpected.message, { originalError: unexpected })
+      const masked = options.maskedErrors.maskError(wrappedUnexpected, 'Unexpected error.')
+      expect(masked).not.toBe(wrappedUnexpected)
+      expect(masked.message).not.toContain(unexpected.message)
+      expect(JSON.stringify(masked.toJSON())).not.toContain(unexpected.message)
 
-    maskError.mockClear()
-    const conflict = Object.assign(new Error('The page changed.'), { status: 409 })
-    const wrappedConflict = Object.assign(new Error(conflict.message), { originalError: conflict })
-    expect(options.maskedErrors.maskError(wrappedConflict, 'Unexpected error.')).toBe(wrappedConflict)
-    expect(maskError).not.toHaveBeenCalled()
+      const conflict = Object.assign(new Error('The page changed.'), { status: 409 })
+      const wrappedConflict = new GraphQLError(conflict.message, { originalError: conflict })
+      expect(options.maskedErrors.maskError(wrappedConflict, 'Unexpected error.')).toBe(wrappedConflict)
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV
+      else process.env.NODE_ENV = previousNodeEnv
+    }
   })
 
-  it('attaches graphql-ws to the maintained subscription endpoint', async () => {
-    const { servers, useServer, WebSocketServer, createHttpServer } = await setupModule()
+  it('keeps WebSocket upgrade admission under the shared HTTP listener', async () => {
+    const { servers, WebSocketServer, createHttpServer } = await setupModule()
     const httpServer = createHttpServer()
 
     await servers.startGraphQL()
     servers.installGraphQLSubscriptions(httpServer)
 
     expect(WebSocketServer).toHaveBeenCalledWith({ noServer: true })
-    expect(httpServer.on).toHaveBeenCalledWith('upgrade', expect.any(Function))
-    expect(useServer).toHaveBeenCalledWith(expect.objectContaining({
-      onConnect: expect.any(Function),
-      onSubscribe: expect.any(Function)
-    }), expect.any(Object))
   })
   it('routes only the maintained GraphQL upgrade path', async () => {
     const { servers, wsServer, createHttpServer } = await setupModule()
@@ -241,7 +250,7 @@ describe('core/servers GraphQL transports', () => {
     const protocol = useServer.mock.calls[0][0]
     const context = {
       connectionParams: { token: 'ignored-client-token' },
-      extra: { request: { headers: { cookie: 'jwt=cookie-token' } } }
+      extra: { request: { headers: { cookie: 'foo=bar; jwt=cookie-token' } } }
     }
     await protocol.onConnect(context)
 
@@ -250,16 +259,6 @@ describe('core/servers GraphQL transports', () => {
     expect(checkAccess).toHaveBeenCalledWith(user, ['manage:system'])
   })
 
-  it('falls back to the jwt cookie', async () => {
-    const { servers, authenticateUserToken } = await setupModule()
-    const user = { id: 9, permissions: ['manage:system'] }
-    authenticateUserToken.mockResolvedValue(user)
-
-    await expect(servers.authenticateGraphQLSubscription({}, {
-      headers: { cookie: 'foo=bar; jwt=cookie-token' }
-    })).resolves.toEqual({ token: 'cookie-token', user })
-    expect(authenticateUserToken).toHaveBeenCalledWith('cookie-token')
-  })
 
   it('rejects missing, invalid, and underprivileged credentials', async () => {
     const { servers, authenticateUserToken } = await setupModule()
@@ -297,7 +296,7 @@ describe('core/servers GraphQL transports', () => {
       schema: { kind: 'schema' },
       document: { kind: 'document' }
     })
-    await expect(protocol.onNext(context)).resolves.toBeUndefined()
+    await protocol.onNext(context)
 
     expect(authenticateUserToken).toHaveBeenCalledTimes(3)
     expect(authenticateUserToken).toHaveBeenNthCalledWith(1, 'direct-token')
@@ -390,17 +389,17 @@ describe('core/servers GraphQL transports', () => {
     await expect(protocol.onNext(context)).rejects.toThrow('Unauthorized')
   })
 
-  it('disposes the graphql-ws handler and WebSocket server', async () => {
-    const { servers, cleanup, wsServer, createHttpServer } = await setupModule()
+  it('disposes the graphql-ws handler and unregisters its installed upgrade listener', async () => {
+    const { servers, cleanup, createHttpServer } = await setupModule()
     const httpServer = createHttpServer()
 
     await servers.startGraphQL()
     servers.installGraphQLSubscriptions(httpServer)
+    const upgradeListener = httpServer.on.mock.calls[0][1]
     await servers.disposeGraphQLSubscriptions(httpServer)
 
     expect(cleanup.dispose).toHaveBeenCalledTimes(1)
-    expect(wsServer.close).toHaveBeenCalledTimes(1)
-    expect(httpServer.off).toHaveBeenCalledWith('upgrade', expect.any(Function))
+    expect(httpServer.off).toHaveBeenCalledWith('upgrade', upgradeListener)
     expect(servers.servers.graph.subscriptions).toEqual([])
   })
 })

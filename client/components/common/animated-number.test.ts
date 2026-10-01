@@ -282,14 +282,14 @@ describe('animated-number runtime animation and reactivity', () => {
     expect(harness.getAnnouncementValue()).toBe('300')
   })
 
-  it('commits target immediately when duration is 0 or target equals current rendered value', async () => {
+  it('commits a zero-duration target and skips frames for an initially equal target with positive duration', async () => {
     const harness = await mountAnimatedNumber({ value: 25, duration: 0 })
     expect(scheduledFrames.length).toBe(0)
     expect(harness.getDisplayValue()).toBe('25')
 
-    // Setting same value again should not schedule any frame
-    harness.propsRef.value = 25
-    await Vue.nextTick()
+    const equalTarget = await mountAnimatedNumber({ value: 0, duration: 500 })
+    expect(equalTarget.getDisplayValue()).toBe('0')
+    expect(equalTarget.getAnnouncementValue()).toBe('0')
     expect(scheduledFrames.length).toBe(0)
   })
 })

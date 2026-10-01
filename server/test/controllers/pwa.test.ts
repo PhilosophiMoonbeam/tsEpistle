@@ -79,14 +79,14 @@ const prepareFixture = async (): Promise<string> => {
 }
 
 const iconDescriptor = (hash: string): LogoIconDescriptor => ({
-  favicon16Url: `/_site-logo/${hash}/icon.png`,
-  favicon32Url: `/_site-logo/${hash}/icon.png`,
-  tile150Url: `/_site-logo/${hash}/icon.png`,
-  apple180Url: `/_site-logo/${hash}/icon.png`,
-  app192Url: `/_site-logo/${hash}/icon.png`,
-  app512Url: `/_site-logo/${hash}/icon.png`,
-  maskable512Url: `/_site-logo/${hash}/icon.png`,
-  faviconIcoUrl: `/_site-logo/${hash}/favicon.ico`
+  favicon16Url: `/_site-logo/${hash.slice(0, 63)}0/icon.png`,
+  favicon32Url: `/_site-logo/${hash.slice(0, 63)}1/icon.png`,
+  tile150Url: `/_site-logo/${hash.slice(0, 63)}2/icon.png`,
+  apple180Url: `/_site-logo/${hash.slice(0, 63)}3/icon.png`,
+  app192Url: `/_site-logo/${hash.slice(0, 63)}4/icon.png`,
+  app512Url: `/_site-logo/${hash.slice(0, 63)}5/icon.png`,
+  maskable512Url: `/_site-logo/${hash.slice(0, 63)}6/icon.png`,
+  faviconIcoUrl: `/_site-logo/${hash.slice(0, 63)}7/favicon.ico`
 })
 
 const workspaceColors = {
@@ -204,12 +204,12 @@ describe('mounted PWA delivery', () => {
       expect(browserConfig.status).toBe(200)
       expect(browserConfig.headers.get('content-type')).toMatch(/^application\/xml(?:; charset=utf-8)?$/u)
       const browserConfigBody = await browserConfig.text()
-      expect(browserConfigBody).toContain(`src="/_site-logo/${secondHash}/icon.png"`)
+      expect(browserConfigBody).toContain(`src="${iconDescriptor(secondHash).tile150Url}"`)
       expect(browserConfigBody).toContain('<TileColor>#123456</TileColor>')
 
       const favicon = await fetch(`${brandedServer.baseURL}${PWA_FAVICON_PATH}`, { redirect: 'manual' })
       expect(favicon.status).toBe(302)
-      expect(favicon.headers.get('location')).toBe(`/_site-logo/${secondHash}/favicon.ico`)
+      expect(favicon.headers.get('location')).toBe(iconDescriptor(secondHash).faviconIcoUrl)
       expect(favicon.headers.get('cache-control')).toBe('public, max-age=0, must-revalidate')
     } finally {
       await closeServer(brandedServer.server)
@@ -285,18 +285,16 @@ describe('mounted PWA delivery', () => {
     const missingRoot = await mkdtemp(path.join(os.tmpdir(), 'tsepistle-pwa-missing-'))
     const missingServer = await startServer(missingRoot)
     try {
-      for (const [route, message] of [
-        [PWA_MANIFEST_PATH, 'The PWA manifest is unavailable.'],
-        [PWA_BROWSERCONFIG_PATH, 'The browser configuration is unavailable.'],
-        [OFFLINE_PATH, 'The neutral offline document is unavailable.'],
-        [SERVICE_WORKER_PATH, 'The service worker is unavailable.']
-      ] as const) {
+      for (const route of [PWA_MANIFEST_PATH, PWA_BROWSERCONFIG_PATH, OFFLINE_PATH, SERVICE_WORKER_PATH]) {
         const response = await fetch(`${missingServer.baseURL}${route}`)
         expect(response.status).toBe(503)
         expect(response.headers.get('cache-control')).toBe('no-store')
         expect(response.headers.get('content-type')).toBe('text/plain; charset=utf-8')
         expect(response.headers.get('x-content-type-options')).toBe('nosniff')
-        expect(await response.text()).toBe(message)
+        const body = await response.text()
+        expect(body).not.toContain(missingRoot)
+        expect(body).not.toContain('ENOENT')
+        expect(body).not.toMatch(/\bat\s+\S+\s+\([^)]*:\d+:\d+\)/u)
       }
     } finally {
       await closeServer(missingServer.server)
@@ -312,7 +310,6 @@ describe('mounted PWA delivery', () => {
       const response = await fetch(`${running.baseURL}${OFFLINE_PATH}`)
       expect(response.status).toBe(503)
       expect(response.headers.get('cache-control')).toBe('no-store')
-      expect(await response.text()).toBe('The neutral offline document is unavailable.')
     } finally {
       await writeFile(offlinePath, original)
     }

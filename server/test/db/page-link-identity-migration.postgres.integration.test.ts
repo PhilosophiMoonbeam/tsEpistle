@@ -1,32 +1,10 @@
-import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
 import { down, up } from '../../db/migrations/tsfranki-000003-page-link-identity.ts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  databaseName.endsWith('_page_link_identity_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        password,
-        database: databaseName
-      }
-    : null
-const directlyInvoked =
-  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') &&
-  process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('page-link-identity-migration.postgres.integration.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error(
-    'Explicit page-link identity PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _page_link_identity_test and a PostgreSQL password.'
-  )
-}
+const connection = getPostgresTestConnection('_page_link_identity_test', import.meta.path)
 
 const suite = connection ? describe : describe.skip
 

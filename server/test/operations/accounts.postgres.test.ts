@@ -1,16 +1,12 @@
-import fs from 'node:fs'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import knexModule, { type Knex } from 'knex'
 import bcrypt from 'bcryptjs-then'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { createAccountAdministrationStore } from '../../operations/account-administration.ts'
 import { up, down } from '../../db/migrations/tsepistle-000017-account-administration.ts'
 import { up as groupUp } from '../../db/migrations/tsepistle-000018-group-administration.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_account_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password }
-    : null
+import { up as presentationUp } from '../../db/migrations/tsepistle-000036-user-presentation-defaults.ts'
+const connection = getPostgresTestConnection('_account_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const admin = { id: 1, authVersion: 0 } as never,
   operator = { id: 4, authVersion: 0 } as never
@@ -48,6 +44,7 @@ suite('PostgreSQL account administration', () => {
       t.increments('id')
       for (const name of ['name', 'email', 'providerKey', 'password', 'tfaSecret', 'location', 'jobTitle', 'timezone', 'createdAt', 'updatedAt', 'lastLoginAt'])
         t.string(name)
+      t.string('dateFormat').notNullable().defaultTo('')
       for (const name of ['isActive', 'isSystem', 'isVerified', 'tfaIsActive', 'mustChangePwd']) t.boolean(name).notNullable().defaultTo(false)
       t.unique(['providerKey', 'email'])
     })
@@ -100,6 +97,7 @@ suite('PostgreSQL account administration', () => {
     await down(db)
     await up(db)
     await groupUp(db)
+    await presentationUp(db)
     await db.schema.createTable('apiKeys', t => {
       t.increments('id')
       t.text('key')
@@ -244,6 +242,23 @@ suite('PostgreSQL account administration', () => {
     expect(JSON.stringify(list)).not.toContain('SECRET')
     expect(JSON.stringify(await store.inspect(admin, 3))).not.toContain('SECRET')
     await expect(store.list(admin, { limit: 100000 })).rejects.toMatchObject({ status: 400 })
+    await db('users').insert([
+      account(7, { name: 'AnXExample%' }),
+      account(8, { name: 'An_Example suffix' }),
+      account(9, { name: 'An_Example%', isActive: false }),
+      account(10, { name: 'An_Example%', providerKey: 'oidc' }),
+      account(11, { name: 'An_Example%' })
+    ])
+    await db('userGroups').insert([
+      { userId: 7, groupId: 3 },
+      { userId: 8, groupId: 3 },
+      { userId: 9, groupId: 3 },
+      { userId: 10, groupId: 3 },
+      { userId: 11, groupId: 4 }
+    ])
+    const filtered = await store.list(admin, { search: 'an_example%', state: 'active', provider: 'local', group: 3, limit: 100 })
+    expect(filtered.total).toBe(1)
+    expect(filtered.items.map(row => row.id)).toEqual([3])
   })
   it('checks persisted requester authority and generation instead of request permissions', async () => {
     await expect(store.list({ id: 3, permissions: ['manage:system'] } as never, {})).rejects.toMatchObject({ status: 403 })
@@ -252,6 +267,8 @@ suite('PostgreSQL account administration', () => {
     await expect(store.inspect({ id: 1, authVersion: 1 } as never, 3)).resolves.toMatchObject({ id: 3 })
   })
   it('guards the current privileged target even when the requested change contains no groups', async () => {
+    await db('users').where('id', 1).update({ tfaIsActive: true, tfaSecret: 'PRIVILEGED-ENROLLED-SECRET' })
+    expect((await store.inspect(admin, 1)).capabilities.actions).toContain('reset-2fa')
     const protectedUser = await store.inspect(operator, 1)
     expect(protectedUser.capabilities.edit).toBe(false)
     await expect(store.act(operator, 1, { ...(await review(1, operator)), action: 'reset-2fa' })).rejects.toMatchObject({ status: 403 })
@@ -261,6 +278,11 @@ suite('PostgreSQL account administration', () => {
     await expect(
       store.setPassword(operator, 1, { ...(await review(1, operator)), password: 'strong-fixture-password', mustChangePassword: true })
     ).rejects.toMatchObject({ status: 403 })
+    expect(await db('users').where('id', 1).first()).toMatchObject({
+      tfaIsActive: true,
+      tfaSecret: 'PRIVILEGED-ENROLLED-SECRET',
+      authVersion: 0
+    })
     expect(await db('userAdministrationEvents')).toHaveLength(0)
   })
   it('clears profile fields without ending sessions for a cosmetic edit and records only changed field names', async () => {
@@ -281,23 +303,44 @@ suite('PostgreSQL account administration', () => {
   })
   it('ends existing sessions on membership changes, preserves private ownership and rejects escalation', async () => {
     await db('pages').insert({ id: 1, ownerId: 3, creatorId: 3, authorId: 3, visibility: 'private' })
+    await db('groups').insert({ id: 6, name: 'Script authors', permissions: JSON.stringify(['read:pages', 'write:scripts']), isSystem: false })
     const initial = await store.inspect(operator, 3)
     expect(initial.privateOwnershipBlocksDeletion).toBe(true)
     expect(initial.capabilities.delete).toBe(false)
     await expect(store.updateProfile(operator, 3, { ...(await review(3, operator)), profile: { ...initial.profile, groups: [1] } })).rejects.toMatchObject({
       status: 403
     })
+    const beforeScriptDenial = await db('users').where('id', 3).first()
+    await expect(
+      store.updateProfile(operator, 3, {
+        ...(await review(3, operator)),
+        profile: { ...initial.profile, name: 'Unauthorized script author', groups: [3, 6] }
+      })
+    ).rejects.toMatchObject({ status: 403 })
+    expect(await db('users').where('id', 3).first()).toEqual(beforeScriptDenial)
+    expect(await db('userGroups').where('userId', 3)).toEqual([{ userId: 3, groupId: 3 }])
+    expect(await db('userAdministrationEvents').where('userId', 3)).toEqual([])
     const changed = await store.updateProfile(admin, 3, { ...(await review()), profile: { ...initial.profile, groups: [] } })
     expect(changed.groups).toEqual([])
     expect(changed.sessionsRevokedAt).toBeTruthy()
     expect((await db('users').where('id', 3).first()).authVersion).toBe(1)
     expect(await db('pages').first()).toMatchObject({ ownerId: 3, creatorId: 3, authorId: 3, visibility: 'private' })
+    await store.updateProfile(admin, 3, { ...(await review()), profile: { ...changed.profile, groups: [6] } })
+    expect(await db('userGroups').where('userId', 3)).toEqual([{ userId: 3, groupId: 6 }])
+    expect((await db('users').where('id', 3).first()).authVersion).toBe(2)
+    expect((await db('userAdministrationEvents').where('userId', 3).orderBy('id', 'desc').first()).details).toMatchObject({
+      groups: [6],
+      previousGroups: [],
+      sessionsEnded: true
+    })
   })
   it('protects the Guest identity without inventing a ban on ordinary membership in its group', async () => {
     const initial = await store.inspect(operator, 3)
     expect(initial.availableGroups.find(group => group.id === 2)?.canAssign).toBe(true)
     const next = await store.updateProfile(operator, 3, { ...(await review(3, operator)), profile: { ...initial.profile, groups: [2, 3] } })
     expect(next.profile.groups).toEqual([2, 3])
+    expect(await db('userGroups').where('userId', 3).orderBy('groupId')).toEqual([{ userId: 3, groupId: 2 }, { userId: 3, groupId: 3 }])
+    expect((await db('users').where('id', 3).first()).authVersion).toBe(1)
     expect((await store.inspect(admin, 2)).capabilities.edit).toBe(false)
   })
   it('invalidates email verification and sessions and refuses an existing normalized identity', async () => {
@@ -384,6 +427,7 @@ suite('PostgreSQL account administration', () => {
     expect((await db('users').where('id', 1).first()).authVersion).toBe(0)
   })
   it('creates an account with reviewed membership and a password hash, with no implicit mail', async () => {
+    await db('groups').insert({ id: 6, name: 'Script authors', permissions: JSON.stringify(['read:pages', 'write:scripts']), isSystem: false })
     const options = await store.creationOptions(operator)
     const profile = { name: 'A new author', email: 'new@example.invalid', location: '', jobTitle: '', timezone: 'UTC', groups: [3] }
     const created = await store.create(operator, {
@@ -410,6 +454,37 @@ suite('PostgreSQL account administration', () => {
         reason: 'Attempt group escalation'
       })
     ).rejects.toMatchObject({ status: 403 })
+    await db('groups').where('id', 4).update({ permissions: JSON.stringify(['write:users']) })
+    const creationReview = await store.creationOptions(operator)
+    const scriptInput = {
+      fingerprint: creationReview.fingerprint,
+      profile: { ...profile, groups: [6], email: 'script-boundary@example.invalid' },
+      providerKey: 'oidc',
+      isVerified: true,
+      mustChangePassword: false,
+      reason: 'Review delegated script assignment'
+    }
+    const usersBeforeDenial = await db('users').orderBy('id')
+    const membershipsBeforeDenial = await db('userGroups').orderBy('userId').orderBy('groupId')
+    const eventsBeforeDenial = await db('userAdministrationEvents').orderBy('id')
+    await expect(store.create(operator, scriptInput)).rejects.toMatchObject({ status: 403 })
+    expect(await db('users').orderBy('id')).toEqual(usersBeforeDenial)
+    expect(await db('userGroups').orderBy('userId').orderBy('groupId')).toEqual(membershipsBeforeDenial)
+    expect(await db('userAdministrationEvents').orderBy('id')).toEqual(eventsBeforeDenial)
+    const delegated = await store.create(operator, { ...scriptInput, profile: { ...scriptInput.profile, groups: [3] } })
+    expect(await db('userGroups').where('userId', delegated.id)).toEqual([{ userId: delegated.id, groupId: 3 }])
+    expect((await db('users').where('id', delegated.id).first()).email).toBe(scriptInput.profile.email)
+    const systemCreated = await store.create(admin, {
+      ...scriptInput,
+      fingerprint: (await store.creationOptions(admin)).fingerprint,
+      profile: { ...scriptInput.profile, email: 'system-script@example.invalid' }
+    })
+    expect(await db('userGroups').where('userId', systemCreated.id)).toEqual([{ userId: systemCreated.id, groupId: 6 }])
+    expect(await db('userAdministrationEvents').where('userId', systemCreated.id).first()).toMatchObject({
+      actorId: 1,
+      action: 'account-created',
+      details: { groups: [6] }
+    })
   })
   it('serializes competing normalized account creates and rejects a stale creation policy', async () => {
     const options = await store.creationOptions(admin),
@@ -423,10 +498,17 @@ suite('PostgreSQL account administration', () => {
       }
     const result = await Promise.allSettled([
       store.create(admin, input),
-      store.create({ id: 6, authVersion: 0 } as never, { ...input, fingerprint: (await store.creationOptions({ id: 6, authVersion: 0 } as never)).fingerprint })
+      store.create({ id: 6, authVersion: 0 } as never, {
+        ...input,
+        profile: { ...input.profile, email: 'WORK@EXAMPLE.INVALID' },
+        fingerprint: (await store.creationOptions({ id: 6, authVersion: 0 } as never)).fingerprint
+      })
     ])
     expect(result.filter(row => row.status === 'fulfilled')).toHaveLength(1)
     expect(result.find(row => row.status === 'rejected')).toMatchObject({ reason: { status: 409 } })
+    expect(await db('users').where('providerKey', 'oidc').whereRaw('LOWER(??) = ?', ['email', input.profile.email]).select('email')).toEqual([
+      { email: input.profile.email }
+    ])
     await db('groups').where('id', 3).update({ name: 'Renamed authors' })
     await expect(store.create(admin, { ...input, profile: { ...input.profile, email: 'different@example.invalid' } })).rejects.toMatchObject({ status: 409 })
   })
@@ -525,7 +607,9 @@ suite('PostgreSQL account administration', () => {
   })
   it('refuses a downgrade after a durable revocation even if action history is absent', async () => {
     await db('users').where('id', 3).update({ authVersion: 1 })
-    await expect(down(db)).rejects.toThrow('Cannot roll down account administration')
+    const before = await db('users').where('id', 3).first()
+    await expect(down(db)).rejects.toBeInstanceOf(Error)
     expect(await db.schema.hasColumn('users', 'authVersion')).toBe(true)
+    expect(await db('users').where('id', 3).first()).toEqual(before)
   })
 })

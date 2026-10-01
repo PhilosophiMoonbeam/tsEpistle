@@ -1,22 +1,11 @@
-import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { up as migrateTaxonomy } from '../../db/migrations/tsepistle-000015-taxonomy-lifecycle.ts'
 import type PageModel from '../../models/pages.ts'
 import type TagModel from '../../models/tags.ts'
 import { afterAll, beforeAll, describe, expect, it, vi } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = databaseName.endsWith('_tags_test')
-  ? {
-      host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
-      port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-      user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-      password,
-      database: databaseName
-    }
-  : null
+const connection = getPostgresTestConnection('_tags_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const wikiGlobal = globalThis as unknown as { WIKI?: unknown }
 const originalWiki = wikiGlobal.WIKI
@@ -76,37 +65,38 @@ suite('PostgreSQL tag association', () => {
 
   it('commits concurrent normalized tag creation and relates both pages to the canonical tag', async () => {
     const blocker = await db.transaction()
-    await blocker.raw('LOCK TABLE "tags" IN SHARE MODE')
-
     let insertAttempts = 0
-    let resolveInsertAttempts: () => void
-    const bothInsertsAttempted = new Promise<void>(resolve => {
-      resolveInsertAttempts = resolve
-    })
+    const bothInsertsAttempted = Promise.withResolvers<void>()
     const onQuery = ({ sql }: { sql?: string }) => {
       if (sql?.toLowerCase().startsWith('insert into "tags"')) {
         insertAttempts += 1
-        if (insertAttempts === 2) resolveInsertAttempts()
+        if (insertAttempts === 2) bothInsertsAttempted.resolve()
       }
     }
-    db.on('query', onQuery)
-
-    const associations = Promise.all([
-      db.transaction(async transaction => {
-        const page = await Page.query(transaction).findById(1).throwIfNotFound()
-        return await Tag.associateTags({ tags: [' Shared ', 'shared'], page, transaction })
-      }),
-      db.transaction(async transaction => {
-        const page = await Page.query(transaction).findById(2).throwIfNotFound()
-        return await Tag.associateTags({ tags: ['SHARED'], page, transaction })
-      })
-    ])
-
-    await bothInsertsAttempted
-    db.removeListener('query', onQuery)
-    await blocker.commit()
-
-    expect(await associations).toEqual([true, true])
+    const associations: Array<Promise<boolean>> = []
+    try {
+      await blocker.raw('LOCK TABLE "tags" IN SHARE MODE')
+      db.on('query', onQuery)
+      associations.push(
+        db.transaction(async transaction => {
+          const page = await Page.query(transaction).findById(1).throwIfNotFound()
+          return await Tag.associateTags({ tags: [' Shared ', 'shared'], page, transaction })
+        }),
+        db.transaction(async transaction => {
+          const page = await Page.query(transaction).findById(2).throwIfNotFound()
+          return await Tag.associateTags({ tags: ['SHARED'], page, transaction })
+        })
+      )
+      const results = Promise.all(associations)
+      await Promise.race([bothInsertsAttempted.promise, results])
+      expect(insertAttempts).toBe(2)
+      await blocker.commit()
+      expect(await results).toEqual([true, true])
+    } finally {
+      db.removeListener('query', onQuery)
+      if (!blocker.isCompleted()) await blocker.rollback()
+      await Promise.allSettled(associations)
+    }
     const canonicalTags = await db('tags').select('id', 'tag', 'title')
     expect(canonicalTags).toHaveLength(1)
     expect(canonicalTags[0]).toMatchObject({ tag: 'shared', title: 'shared' })
@@ -125,28 +115,39 @@ suite('PostgreSQL tag association', () => {
     const page = await Page.query().findById(1).throwIfNotFound()
     await Tag.associateTags({ tags: ['old-label', 'canonical'], page })
     expect(await db('pageTags').where('pageId', 1).pluck('tagId')).toEqual([canonical.id])
-    await expect(Tag.associateTags({ tags: ['retired'], page })).rejects.toThrow('archived')
+    await expect(Tag.associateTags({ tags: ['retired'], page })).rejects.toMatchObject({ status: 400 })
     expect(await db('pageTags').where('pageId', 1).pluck('tagId')).toEqual([canonical.id])
   })
   it('rejects invalid tag containers atomically and accepts exactly 100 canonical entries', async () => {
     const page = await Page.query().findById(2).throwIfNotFound()
     await Tag.associateTags({ tags: ['Keep'], page })
+    const assignments = () => db('pageTags')
+      .join('tags', 'tags.id', 'pageTags.tagId')
+      .where('pageTags.pageId', 2)
+      .select('pageTags.tagId', 'tags.tag')
+      .orderBy('pageTags.tagId')
+    const keptAssignments = await assignments()
+    expect(keptAssignments.map(assignment => assignment.tag)).toEqual(['keep'])
     const invalidInputs = [null, 'tag', ['valid', 1], [''], ['\u0000'], ['x'.repeat(256)]]
     for (const tags of invalidInputs) {
       await expect(Tag.associateTags({ tags, page })).rejects.toMatchObject({ status: 400 })
+      expect(await assignments()).toEqual(keptAssignments)
     }
-    expect(await db('pageTags').where('pageId', 2)).toHaveLength(1)
 
     const hundred = Array.from({ length: 100 }, (_, index) => `Bounded-${index}`)
     await Tag.associateTags({ tags: hundred, page })
-    expect(await db('pageTags').where('pageId', 2)).toHaveLength(100)
+    const hundredAssignments = await assignments()
+    expect(hundredAssignments).toHaveLength(100)
+    expect(hundredAssignments.map(assignment => assignment.tag).sort()).toEqual(
+      Array.from({ length: 100 }, (_, index) => `bounded-${index}`).sort()
+    )
     await expect(
       Tag.associateTags({
         tags: [...hundred, 'one-too-many'],
         page
       })
     ).rejects.toMatchObject({ status: 400 })
-    expect(await db('pageTags').where('pageId', 2)).toHaveLength(100)
+    expect(await assignments()).toEqual(hundredAssignments)
 
     await Tag.associateTags({ tags: [], page })
     expect(await db('pageTags').where('pageId', 2)).toHaveLength(0)

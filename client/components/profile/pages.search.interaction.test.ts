@@ -198,7 +198,8 @@ describe('My Pages local search', () => {
     expect(host.querySelectorAll('.profile-page-link')).toHaveLength(2)
     expect(host.querySelector('a[href="/_private/en/records/2"]')).toBeTruthy()
     expect(host.querySelector('a[href="/_private/en/records/3"]')).toBeTruthy()
-    expect([...host.querySelectorAll('.ms-2')].some(node => node.textContent?.trim() === 'Private')).toBe(true)
+    const privateRow = host.querySelector('a[href="/_private/en/records/2"]')?.closest('tr')
+    expect([...privateRow!.querySelectorAll('div')].some(node => node.textContent?.trim() === 'Private')).toBe(true)
     expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('2 of 3 pages')
 
     await search(host, ' ROADMAP ')
@@ -214,16 +215,16 @@ describe('My Pages local search', () => {
     expect(host.querySelectorAll('.profile-page-link')).toHaveLength(3)
   })
 
-  test('explains an empty private view and keeps its reset available', async () => {
+  test('keeps an empty private view isolated and its reset available', async () => {
     const { host } = await mount([makePage(1, { title: 'Roadmap notes' })])
     await click(host, 'Show private pages only')
-    expect(host.textContent).toContain('No private pages yet')
-    expect(host.textContent).toContain('Turn off Private only to see all your pages.')
+    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
+    expect(host.querySelector('table [role="status"]')).toBeTruthy()
     expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('0 of 1 pages')
 
     await search(host, 'ROADMAP')
-    expect(host.textContent).toContain('No matching private pages')
-    expect(host.textContent).toContain('clear your search or turn off Private only')
+    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
+    expect(host.querySelector('button[aria-label="Show private pages only"]')?.hasAttribute('disabled')).toBe(false)
     await click(host, 'Show private pages only')
     expect(host.querySelectorAll('.profile-page-link')).toHaveLength(1)
     expect(host.querySelector('.profile-page-link')?.getAttribute('href')).toBe('/en/records/1')
@@ -232,19 +233,19 @@ describe('My Pages local search', () => {
   test('keeps the private link and indicator in mobile rows', async () => {
     const { host } = await mount([makePage(7, { title: 'Private mobile page', visibility: 'private' })], true)
     expect(host.querySelector('.profile-pages-mobile-title')?.getAttribute('href')).toBe('/_private/en/records/7')
-    expect(host.querySelector('.profile-pages-mobile-meta .me-2')?.textContent?.trim()).toBe('Private')
+    const mobileRow = host.querySelector('a[href="/_private/en/records/7"]')?.closest('tr')
+    expect([...mobileRow!.querySelectorAll('div')].some(node => node.textContent?.trim() === 'Private')).toBe(true)
   })
 
   test('distinguishes no matching results from an account with no contributions', async () => {
     const { host, fetchPages } = await mount([makePage(1)])
     await search(host, 'nonexistent')
-    expect(host.textContent).toContain('No matching pages')
+    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
     expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('0 of 1 pages')
-    expect(host.textContent).not.toContain('Pages you create or contribute to')
     fetchPages.mockResolvedValue([])
     await click(host, 'Refresh pages')
-    expect(host.textContent).toContain('Pages you create or contribute to will appear here.')
-    expect(host.textContent).not.toContain('No matching pages')
+    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
+    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('0 of 0 pages')
   })
 
   test('resets a later page when filtering and clamps pagination when refresh removes matching pages', async () => {

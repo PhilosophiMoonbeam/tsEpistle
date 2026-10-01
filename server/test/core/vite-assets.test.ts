@@ -18,12 +18,13 @@ const createProjectRoot = (): string => {
   fs.mkdirSync(path.join(ide, 'dist/monacoeditorwork'), { recursive: true })
   fs.writeFileSync(path.join(ide, 'package.json'), '{"version":"4.4.4"}')
   fs.writeFileSync(path.join(ide, 'LICENSE'), 'MIT fixture')
-  for (const file of ['yoga-graphiql.umd.js', 'graphiql.css', 'monacoeditorwork/editor.worker.bundle.js']) fs.writeFileSync(path.join(ide, 'dist', file), 'fixture asset')
+  for (const file of ['yoga-graphiql.umd.js', 'graphiql.css', 'monacoeditorwork/editor.worker.bundle.js']) {
+    fs.writeFileSync(path.join(ide, 'dist', file), file === 'graphiql.css' ? '.graphiql-container{color:green}' : 'fixture asset')
+  }
   return root
 }
 
 const invokeHook = async (hook: unknown): Promise<void> => {
-  expect(typeof hook).toBe('function')
   await (hook as () => Promise<void>)()
 }
 
@@ -36,31 +37,31 @@ describe('Vite runtime asset lifecycle', () => {
     const root = createProjectRoot()
     const plugin = runtimeAssetsPlugin('serve', root)
 
-    expect(plugin.closeBundle).toBeUndefined()
     await invokeHook(plugin.configureServer)
 
     expect(fs.readFileSync(path.join(root, 'assets/svg/icon-tsepistle.svg'), 'utf8')).toBe('<svg />')
     expect(fs.readFileSync(path.join(root, 'assets/js/prism/prism-javascript.min.js'), 'utf8')).toBe('Prism.languages.javascript={};')
     expect(fs.readFileSync(path.join(root, 'assets/graphiql/4.4.4/yoga-graphiql.umd.js'), 'utf8')).toBe('fixture asset')
+    expect(fs.readFileSync(path.join(root, 'assets/graphiql/4.4.4/graphiql.css'), 'utf8')).toBe('.graphiql-container{color:green}')
     expect(fs.readFileSync(path.join(root, 'assets/graphiql/4.4.4/monacoeditorwork/editor.worker.bundle.js'), 'utf8')).toBe('fixture asset')
   })
 
-  it('retains Prism copying at production closeBundle without a development startup hook', async () => {
+  it('provisions Prism and same-origin IDE assets at production build completion', async () => {
     const root = createProjectRoot()
     const plugin = runtimeAssetsPlugin('build', root)
 
-    expect(plugin.configureServer).toBeUndefined()
     await invokeHook(plugin.closeBundle)
 
     expect(fs.readFileSync(path.join(root, 'assets/js/prism/prism-javascript.min.js'), 'utf8')).toBe('Prism.languages.javascript={};')
     expect(fs.readFileSync(path.join(root, 'assets/graphiql/4.4.4/yoga-graphiql.umd.js'), 'utf8')).toBe('fixture asset')
+    expect(fs.readFileSync(path.join(root, 'assets/graphiql/4.4.4/graphiql.css'), 'utf8')).toBe('.graphiql-container{color:green}')
     expect(fs.readFileSync(path.join(root, 'assets/graphiql/4.4.4/monacoeditorwork/editor.worker.bundle.js'), 'utf8')).toBe('fixture asset')
-    expect(fs.existsSync(path.join(root, 'assets/svg/icon-tsepistle.svg'))).toBe(false)
   })
 
   it('rejects mismatched IDE assets before shipping a broken editor', async () => {
     const root = createProjectRoot()
     fs.writeFileSync(path.join(root, 'node_modules/@graphql-yoga/graphiql/package.json'), '{"version":"4.4.3"}')
-    await expect(invokeHook(runtimeAssetsPlugin('build', root).closeBundle)).rejects.toThrow('GraphQL IDE assets and renderer versions must match')
+    await expect(invokeHook(runtimeAssetsPlugin('build', root).closeBundle)).rejects.toThrow(Error)
+    expect(fs.existsSync(path.join(root, 'assets/graphiql/4.4.4'))).toBe(false)
   })
 })

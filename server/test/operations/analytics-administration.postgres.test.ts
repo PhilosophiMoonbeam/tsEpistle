@@ -8,12 +8,8 @@ import { recordAnalyticsResponse, pruneAnalyticsInsights, analyticsRetentionStar
 import { readAnalyticsSnapshot, compileAnalyticsSnapshot } from '../../repositories/analytics-runtime.ts'
 import { up, down } from '../../db/migrations/tsepistle-000022-analytics-administration.ts'
 import type { AnalyticsPolicy, AnalyticsRequestContext } from '../../../shared/analytics-policy.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_analytics_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_analytics_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 const request: AnalyticsRequestContext = {

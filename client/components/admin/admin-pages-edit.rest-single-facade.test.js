@@ -1,15 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { document } from '../../test/browser-dom.mts'
+
+const Vue = await import('vue')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const componentPath = path.join(__dirname, 'admin-pages-edit.vue')
 const source = fs.readFileSync(componentPath, 'utf8')
 const script = source.match(/<script(?:\s+lang=["']ts["'])?>([\s\S]*?)<\/script>/)[1]
-const loadPageStart = script.indexOf('async loadPage () {')
-const loadPageEnd = script.indexOf('    async deletePage', loadPageStart)
-const loadPageBody = script.slice(loadPageStart, loadPageEnd)
 
 const deferred = () => {
   let resolve
@@ -48,7 +48,7 @@ const createComponentOptions = ({ fetchPage, wikiStore }) => {
     async () => {},
     fetchPage,
     wikiStore,
-    { fetch: async () => {}, removeEventListener() {} }
+    { fetch: async () => {}, addEventListener() {}, removeEventListener() {} }
   )
 }
 
@@ -69,16 +69,12 @@ const loadRoutedPage = (options, viewModel) => {
 }
 
 describe('admin pages edit REST single facade', () => {
-  it('loads page details through the pages REST helper instead of Apollo', () => {
-    expect(script).toContain("import { deletePage as deletePageById, fetchPage, type PageDetails } from '../../helpers/pages-api'")
-    expect(script).not.toContain('pages-query-single.gql')
-    expect(script).not.toContain('pageQuery')
+  it('keeps page administration independent of Apollo', () => {
     expect(script).not.toMatch(/apollo\s*:/)
     expect(script).not.toContain('this.$apollo')
-    expect(loadPageBody).toContain('window.fetch.bind(window)')
   })
 
-  it('surfaces current page detail errors and releases loading', async () => {
+  it('loads the initial route automatically, surfaces detail errors and releases loading', async () => {
     const failure = new Error('Page details failed')
     const details = deferred()
     const requestedPageIds = []
@@ -95,26 +91,35 @@ describe('admin pages edit REST single facade', () => {
         showError: error => errors.push(error)
       }
     })
-    const viewModel = createViewModel(options)
+    const app = Vue.createApp({ ...options, render: () => null })
+    app.config.globalProperties.$route = { params: { id: '1' }, hash: '' }
+    app.config.globalProperties.$t = () => 'Unexpected error'
+    const host = document.createElement('div')
+    document.body.append(host)
 
-    expect(options.watch['$route.params.id'].immediate).toBe(true)
-    const pendingLoad = loadRoutedPage(options, viewModel)
-    expect(requestedPageIds).toEqual([1])
-    expect(viewModel.loading).toBe(true)
+    try {
+      const viewModel = app.mount(host)
+      expect(requestedPageIds).toEqual([1])
+      expect(viewModel.loading).toBe(true)
 
-    details.reject(failure)
-    await pendingLoad
+      details.reject(failure)
+      await details.promise.catch(() => {})
+      await Vue.nextTick()
 
-    expect(viewModel.errorMessage).toBe('Page details failed')
-    expect(viewModel.loading).toBe(false)
-    expect(errors).toEqual([failure])
-    expect(loadingEvents).toEqual([
-      ['start', 'admin-pages-refresh'],
-      ['stop', 'admin-pages-refresh']
-    ])
+      expect(viewModel.errorMessage).toBe('Page details failed')
+      expect(viewModel.loading).toBe(false)
+      expect(errors).toEqual([failure])
+      expect(loadingEvents).toEqual([
+        ['start', 'admin-pages-refresh'],
+        ['stop', 'admin-pages-refresh']
+      ])
+    } finally {
+      app.unmount()
+      host.remove()
+    }
   })
 
-  it('keeps only the latest routed page response and error while releasing every loading owner', async () => {
+  it('keeps only the latest routed page response after a late success while releasing every loading owner', async () => {
     const page1 = deferred()
     const page2 = deferred()
     const errors = []
@@ -130,25 +135,21 @@ describe('admin pages edit REST single facade', () => {
     const viewModel = createViewModel(options)
 
     const firstLoad = viewModel.loadPage()
-    expect(viewModel.loadGeneration).toBe(1)
     viewModel.deletePageDialog = true
     viewModel.$route.params.id = '2'
     const secondLoad = loadRoutedPage(options, viewModel)
-    expect(viewModel.loadGeneration).toBe(2)
     expect(viewModel.deletePageDialog).toBe(false)
 
     const latestPage = { id: 2, title: 'Page 2' }
     page2.resolve(latestPage)
     await secondLoad
     expect(viewModel.page).toBe(latestPage)
-    expect(viewModel.resolvedPageRouteId).toBe(2)
     expect(viewModel.loading).toBe(false)
     expect(stoppedLoads).toEqual(['admin-pages-refresh'])
 
     page1.resolve({ id: 1, title: 'Page 1' })
     await firstLoad
     expect(viewModel.page).toBe(latestPage)
-    expect(viewModel.resolvedPageRouteId).toBe(2)
     expect(viewModel.loading).toBe(false)
     expect(errors).toEqual([])
     expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh'])
@@ -178,5 +179,7 @@ describe('admin pages edit REST single facade', () => {
     await firstLoad
     expect(errors).toEqual([])
     expect(viewModel.page).toEqual({ id: 2, title: 'Page 2' })
+    expect(viewModel.errorMessage).toBe('')
+    expect(viewModel.loading).toBe(false)
   })
 })

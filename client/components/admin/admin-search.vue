@@ -18,7 +18,7 @@
           <section class="search-panel" aria-labelledby="search-engine-title">
             <header><div class="search-kicker">Retrieval foundation</div><h2 id="search-engine-title">Search engine</h2><p>The saved engine serves reader searches and the Agent's page-retrieval tools.</p></header>
             <v-radio-group v-model="selectedEngine" label="Choose an engine" :disabled="saving || rebuilding">
-              <v-radio v-for="eng in engines" :key="eng.key" :value="eng.key" :disabled="!eng.isAvailable" class="engine-choice">
+              <v-radio v-for="eng in engines" :key="eng.key" :value="eng.key" :disabled="saving || rebuilding || !eng.isAvailable" class="engine-choice">
                 <template #label><span><strong>{{ eng.title }}</strong><small>{{ eng.description }}{{ !eng.isAvailable ? ' · Unavailable on this deployment' : '' }}</small><v-chip v-if="eng.isEnabled" size="x-small" variant="tonal" class="mt-1">Saved engine</v-chip></span></template>
               </v-radio>
             </v-radio-group>

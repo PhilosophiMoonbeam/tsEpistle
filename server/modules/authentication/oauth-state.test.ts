@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from '../../test/bun-test.mts'
 
@@ -13,6 +14,9 @@ type Strategy = {
   redirect(url: string, status?: number): void
   fail(challenge: unknown, status?: number): void
   error(error: Error): void
+  _oauth2: {
+    getOAuthAccessToken(code: string, parameters: Record<string, unknown>, callback: (error: Error | null, accessToken?: string) => void): void
+  }
 }
 
 type OAuthRequest = {
@@ -200,11 +204,13 @@ describe('OAuth provider durable state requirements', () => {
     const started = await startAuthorization(strategy, createRequest(key, sessionID))
     const location = new URL(String(started.redirect.mock.calls[0]?.[0]))
 
-    expect(location.searchParams.get('state')).toBe(started.state)
-    expect(location.searchParams.get('code_challenge')).toBeTruthy()
+    const attempt = await database('federatedLoginAttempts').where({ providerKey: key }).first<{ payload: string }>('payload')
+    if (!attempt) throw new Error(`Provider ${key} did not persist an OAuth authorization attempt.`)
+    const payload = JSON.parse(attempt.payload) as { codeVerifier: string }
+    expect(location.searchParams.get('code_challenge')).toBe(createHash('sha256').update(payload.codeVerifier).digest('base64url'))
     expect(location.searchParams.get('code_challenge_method')).toBe('S256')
     expect(await countAttempts(key)).toBe(1)
-    expect(await database('federatedLoginAttempts').where({ providerKey: key }).first('payload')).toMatchObject({ payload: expect.not.stringContaining(started.state) })
+    expect(attempt).toMatchObject({ payload: expect.not.stringContaining(started.state) })
   })
 
   it('rejects missing and mismatched callback state before token exchange', async () => {
@@ -214,14 +220,20 @@ describe('OAuth provider durable state requirements', () => {
     const strategy = await loadStrategy('./oauth2/authentication.ts', createConfig(key))
     const started = await startAuthorization(strategy, createRequest(key, sessionID))
     const fail = vi.fn<(challenge: unknown, status?: number) => void>()
+    const exchange = vi.spyOn(strategy._oauth2, 'getOAuthAccessToken').mockImplementation(() => undefined)
+    try {
+      expect(await awaitFailure(strategy, createRequest(key, sessionID, { code: 'authorization-code' }), fail)).toBe(403)
+      expect(fail).toHaveBeenCalledTimes(1)
+      expect(await countAttempts(key)).toBe(1)
+      expect(exchange).not.toHaveBeenCalled()
 
-    expect(await awaitFailure(strategy, createRequest(key, sessionID, { code: 'authorization-code' }), fail)).toBe(403)
-    expect(fail).toHaveBeenCalledTimes(1)
-    expect(await countAttempts(key)).toBe(1)
-
-    fail.mockClear()
-    expect(await awaitFailure(strategy, createRequest(key, sessionID, { code: 'authorization-code', state: `${started.state}-mismatch` }), fail)).toBe(403)
-    expect(fail).toHaveBeenCalledTimes(1)
+      fail.mockClear()
+      expect(await awaitFailure(strategy, createRequest(key, sessionID, { code: 'authorization-code', state: `${started.state}-mismatch` }), fail)).toBe(403)
+      expect(fail).toHaveBeenCalledTimes(1)
+      expect(exchange).not.toHaveBeenCalled()
+    } finally {
+      exchange.mockRestore()
+    }
   })
 
   it('isolates two configured instances and consumes a matching state only once', async () => {

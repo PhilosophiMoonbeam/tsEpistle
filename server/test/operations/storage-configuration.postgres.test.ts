@@ -3,17 +3,13 @@ import path from 'node:path'
 import * as yaml from 'js-yaml'
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import common from '../../helpers/common.ts'
 import { up as storageMigration } from '../../db/migrations/tsepistle-000023-storage-administration.ts'
 import { storageModuleDefinition } from '../../repositories/storage-configuration.ts'
 import { createStorageConfigurationStore } from '../../operations/storage-configuration.ts'
 import type { StorageConfigurationWorkspace, StorageModuleDefinition, StorageTargetDraft } from '../../../shared/storage-workspace.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_storage_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_storage_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 const drafts = (workspace: StorageConfigurationWorkspace): StorageTargetDraft[] =>
@@ -210,7 +206,9 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
     expect(current.history).toHaveLength(1)
     expect(['/tmp/first-review', '/tmp/second-review']).toContain(current.targets[0]?.config.path)
   })
-  it('requires complete unique inventory and rejects unknown or prototype field names', async () => {
+  it('requires complete unique inventory and rejects missing known or foreign configuration fields', async () => {
+    const before = await db('storage').orderBy('key'),
+      settings = await db('settings').orderBy('key')
     let input = body(await read())
     input.targets.pop()
     await expect(store.save(admin, input)).rejects.toMatchObject({ status: 400 })
@@ -219,8 +217,18 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
     await expect(store.save(admin, input)).rejects.toMatchObject({ status: 400 })
     input = body(await read())
     delete input.targets[0]!.config.path
-    Object.defineProperty(input.targets[0]!.config, '__proto__', { value: 'bad', enumerable: true })
     await expect(store.save(admin, input)).rejects.toMatchObject({ status: 400 })
+    expect(await db('storage').orderBy('key')).toEqual(before)
+    expect(await db('settings').orderBy('key')).toEqual(settings)
+    for (const field of ['unknown', 'constructor', 'prototype']) {
+      input = body(await read())
+      const disk = input.targets.find((row) => row.key === 'disk')!
+      disk.config.path = '/tmp/foreign-field-must-not-save'
+      Object.defineProperty(disk.config, field, { value: 'bad', enumerable: true })
+      await expect(store.save(admin, input)).rejects.toMatchObject({ status: 400 })
+      expect(await db('storage').orderBy('key')).toEqual(before)
+      expect(await db('settings').orderBy('key')).toEqual(settings)
+    }
   })
   it('allows disabling an unavailable target while preserving its full opaque configuration', async () => {
     await db('storage').insert({
@@ -231,26 +239,35 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
       config: '{"secret":"untouched"}',
       state: '{"status":"error"}'
     })
+    const unavailableBefore = await db('storage').where('key', 'legacy-unavailable').first()
     let input = body(await read())
     input.targets.find((row) => row.key === 'legacy-unavailable')!.isEnabled = false
     await store.save(admin, input)
-    expect((await db('storage').where('key', 'legacy-unavailable').first()).config).toEqual({ secret: 'untouched' })
+    const unavailableSaved = await db('storage').where('key', 'legacy-unavailable').first()
+    expect(unavailableSaved.config).toEqual({ secret: 'untouched' })
+    expect(unavailableSaved).toEqual({ ...unavailableBefore, isEnabled: false })
     definitions.find((row) => row.key === 'git')!.isAvailable = false
     await db('storage').where('key', 'git').update({ isEnabled: true })
+    const gitBefore = await db('storage').where('key', 'git').first()
     input = body(await read())
     input.targets.find((row) => row.key === 'git')!.isEnabled = false
     await store.save(admin, input)
-    expect((await db('storage').where('key', 'git').first()).config.sshPrivateKeyContent).toBe('original-secret')
+    const gitSaved = await db('storage').where('key', 'git').first()
+    expect(gitSaved.config.sshPrivateKeyContent).toBe('original-secret')
+    expect(gitSaved).toEqual({ ...gitBefore, isEnabled: false })
   })
   it('allows disabling invalid legacy configuration without forcing unrelated repairs', async () => {
     const row = await db('storage').where('key', 'git').first()
     await db('storage')
       .where('key', 'git')
       .update({ isEnabled: true, mode: 'unsupported-old-mode', syncInterval: 'bad', config: JSON.stringify({ ...row.config, authType: 'legacy' }) })
+    const before = await db('storage').where('key', 'git').first()
     const input = body(await read())
     input.targets.find((row) => row.key === 'git')!.isEnabled = false
     await store.save(admin, input)
-    expect((await db('storage').where('key', 'git').first()).mode).toBe('unsupported-old-mode')
+    const saved = await db('storage').where('key', 'git').first()
+    expect(saved.mode).toBe('unsupported-old-mode')
+    expect(saved).toEqual({ ...before, isEnabled: false })
   })
   it('normalizes zero-duration schedules and rejects timer-overflow, busy-loop and unsupported schedules', async () => {
     let input = body(await read())

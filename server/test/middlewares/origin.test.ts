@@ -45,6 +45,15 @@ describe('cookie request origin policy', () => {
 
 
   it('admits exact-origin cookie requests and protects uploads', () => {
+    for (const origin of [undefined, 'https://foreign.example.test']) {
+      const get = vi.fn((name: string) => name === 'origin' ? origin : undefined)
+      const { next, response } = invoke({ method: 'POST', path: '/u', get })
+
+      expect(next).not.toHaveBeenCalled()
+      expect(response.status).toHaveBeenCalledWith(403)
+      expect(response.json).toHaveBeenCalledWith({ error: expect.any(String) })
+    }
+
     const get = vi.fn((name: string) => name === 'origin' ? 'https://wiki.example.test' : undefined)
     const { next, response } = invoke({ method: 'POST', path: '/u', get })
 

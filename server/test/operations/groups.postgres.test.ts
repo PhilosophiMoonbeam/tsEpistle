@@ -2,12 +2,8 @@ import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
 import { createGroupAdministrationStore, getGroupAdministrationStore, normalizeGroupPolicy } from '../../operations/group-administration.ts'
 import { up, down } from '../../db/migrations/tsepistle-000018-group-administration.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_group_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password }
-    : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_group_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const admin = { id: 1, authVersion: 0 } as never,
   steward = { id: 4, authVersion: 0 } as never,
@@ -210,11 +206,57 @@ suite('PostgreSQL reviewed group administration', () => {
     await expect(store.changeMembers(steward, 3, { ...(await review(3, steward)), action: 'add', userIds: [5] })).rejects.toMatchObject({ status: 403 })
     const previous = await review()
     await store.changeMembers(steward, 3, { ...(await review(3, steward)), action: 'add', userIds: [6] })
+    expect(await db('userGroups').where({ userId: 6, groupId: 3 })).toEqual([{ userId: 6, groupId: 3 }])
     expect((await db('users').where('id', 6).first()).authVersion).toBe(1)
     expect(await db('userAdministrationEvents')).toHaveLength(1)
     await store.changeMembers(admin, 3, { ...(await review()), action: 'remove', userIds: [6] })
+    expect(await db('userGroups').where({ userId: 6, groupId: 3 })).toEqual([])
+    expect((await store.inspect(admin, 3)).history).toMatchObject([
+      { action: 'members-removed', actorId: 1, details: { userIds: [6], sessionsEnded: 1 } },
+      { action: 'members-added', actorId: 4, details: { userIds: [6], sessionsEnded: 1 } }
+    ])
+    expect(await db('userAdministrationEvents').where('userId', 6).orderBy('id')).toMatchObject([
+      { userId: 6, actorId: 4, action: 'membership-updated', details: { groupId: 3, action: 'add', sessionsEnded: true } },
+      { userId: 6, actorId: 1, action: 'membership-updated', details: { groupId: 3, action: 'remove', sessionsEnded: true } }
+    ])
     await expect(store.remove(admin, 3, previous)).rejects.toMatchObject({ status: 409 })
     expect((await db('users').where('id', 6).first()).authVersion).toBe(2)
+    await db('groups').insert({
+      id: 6,
+      name: 'Script authors',
+      permissions: JSON.stringify(['read:pages', 'write:scripts']),
+      pageRules: JSON.stringify(policy().pageRules),
+      redirectOnLogin: '/',
+      isSystem: false,
+      createdAt: '2026-09-01T00:00:00Z',
+      updatedAt: '2026-09-01T00:00:00Z'
+    })
+    const accountBeforeDenial = await db('users').where('id', 6).first()
+    const groupBeforeDenial = await db('groups').where('id', 6).first()
+    const eventsBeforeDenial = await db('userAdministrationEvents').where('userId', 6).orderBy('id')
+    for (const actor of [steward, manager]) {
+      await expect(store.changeMembers(actor, 6, { ...(await review(6, actor)), action: 'add', userIds: [6] })).rejects.toMatchObject({ status: 403 })
+      expect(await db('userGroups').where('userId', 6)).toEqual([])
+      expect(await db('users').where('id', 6).first()).toEqual(accountBeforeDenial)
+      expect(await db('groups').where('id', 6).first()).toEqual(groupBeforeDenial)
+      expect(await db('userAdministrationEvents').where('userId', 6).orderBy('id')).toEqual(eventsBeforeDenial)
+      expect(await db('groupAdministrationEvents').where('groupId', 6)).toEqual([])
+    }
+    await store.changeMembers(manager, 3, { ...(await review(3, manager)), action: 'add', userIds: [6] })
+    expect(await db('userGroups').where('userId', 6)).toEqual([{ userId: 6, groupId: 3 }])
+    await store.changeMembers(admin, 6, { ...(await review(6)), action: 'add', userIds: [6] })
+    expect(await db('userGroups').where('userId', 6).orderBy('groupId')).toEqual([{ userId: 6, groupId: 3 }, { userId: 6, groupId: 6 }])
+    expect((await db('users').where('id', 6).first()).authVersion).toBe(4)
+    expect(await db('groupAdministrationEvents').where('groupId', 6).first()).toMatchObject({
+      actorId: 1,
+      action: 'members-added',
+      details: { userIds: [6], sessionsEnded: 1 }
+    })
+    expect(await db('userAdministrationEvents').where('userId', 6).orderBy('id', 'desc').first()).toMatchObject({
+      actorId: 1,
+      action: 'membership-updated',
+      details: { groupId: 6, action: 'add', sessionsEnded: true }
+    })
   })
   it('rolls back policy and revocation when event persistence fails', async () => {
     await db.raw('ALTER TABLE "groupAdministrationEvents" ADD CONSTRAINT reject_event CHECK (action <> \'policy-updated\')')
@@ -247,10 +289,7 @@ suite('PostgreSQL reviewed group administration', () => {
     expect((await db('users').where('id', 3).first()).authVersion).toBe(1)
     expect(await db('groupAdministrationEvents').where('groupId', 3)).toHaveLength(1)
   })
-  it('preserves global API principal scope and excludes credentials from returned metadata', async () => {
-    const principal = { id: 1, ownershipUserId: null, groups: [4] } as never
-    expect((await store.inspect(principal, 3)).capabilities.edit).toBe(true)
-    expect((await store.inspect(principal, 1)).capabilities.edit).toBe(false)
+  it('filters the group directory and candidate-account search', async () => {
     expect((await store.list(admin, { search: 'Readers' })).items.map(g => g.id)).toEqual([3])
     expect((await store.members(admin, 3, { candidates: 'true', search: 'Person 6' })).items.map(u => u.id)).toEqual([6])
   })
@@ -291,12 +330,22 @@ suite('PostgreSQL reviewed group administration', () => {
     await db('groups')
       .whereIn('id', [3, 4, 5])
       .update({ pageRules: JSON.stringify(rules) })
+    await db('groups')
+      .where('id', 5)
+      .update({
+        pageRules: JSON.stringify(
+          rules.map((rule, index) => index === 99 ? { ...rule, id: 'late-home-deny', match: 'EXACT', path: 'home', deny: true } : rule)
+        )
+      })
     await db('userGroups').insert([
       { userId: 3, groupId: 4 },
       { userId: 3, groupId: 5 }
     ])
     const result = await store.evaluate(admin, 3, { path: 'home', locale: 'en', permission: 'read:pages', tags: [], memberId: 3 })
-    expect(result).toMatchObject({ allowed: true, ruleCount: 300, rulesTruncated: true })
+    expect(result).toMatchObject({ allowed: false, ruleCount: 300, rulesTruncated: true })
+    expect(result.rules.filter(rule => rule.outcome === 'winner').map(({ groupId, ruleId }) => ({ groupId, ruleId }))).toEqual([
+      { groupId: 5, ruleId: 'late-home-deny' }
+    ])
     expect(result.rules).toHaveLength(200)
     const directory = await store.list(admin, {})
     expect(directory.items.find(group => group.id === 3)?.ruleCount).toBe(100)
@@ -317,9 +366,12 @@ suite('PostgreSQL reviewed group administration', () => {
       expect(result.sessionsEnded).toBe(1)
       expect(revokeUserTokens).toHaveBeenCalledWith({ id: 3, kind: 'u' })
       expect(emit).toHaveBeenCalledWith('addAuthRevoke', { id: 3, kind: 'u' })
-      expect(warn).toHaveBeenCalledTimes(2)
+      expect(reloadGroups).toHaveBeenCalled()
       expect((await db('users').where('id', 3).first()).authVersion).toBe(1)
       expect(await db('groupAdministrationEvents').where('groupId', 3)).toHaveLength(1)
+      expect((await store.inspect(admin, 3)).history).toMatchObject([
+        { action: 'policy-updated', actorId: 1, details: { fields: ['permissions'], permissionsAdded: ['write:pages'], permissionsRemoved: [], sessionsEnded: 1 } }
+      ])
     } finally {
       globalThis.WIKI = previousWiki
     }
@@ -328,12 +380,22 @@ suite('PostgreSQL reviewed group administration', () => {
     await down(db)
     await up(db)
     await store.savePolicy(admin, 3, { ...(await review()), policy: { ...policy(), description: 'Purpose' } })
-    await expect(down(db)).rejects.toThrow('Cannot discard')
+    const saved = await store.inspect(admin, 3)
+    await expect(down(db)).rejects.toThrow()
+    const retained = await store.inspect(admin, 3)
+    expect(retained.description).toBe('Purpose')
+    expect(retained.fingerprint).toBe(saved.fingerprint)
+    expect(retained.history).toMatchObject([
+      { action: 'policy-updated', actorId: 1, details: { fields: ['description'], sessionsEnded: 0 } }
+    ])
   })
 })
 describe('Group policy input boundaries', () => {
   it('checks only regex rules for exponential expressions and validates redirects/actions', () => {
-    expect(() => normalizeGroupPolicy({ ...policy(), pageRules: [{ ...policy().pageRules[0], path: '(a+)+$', match: 'START' }] })).not.toThrow()
+    const normalized = normalizeGroupPolicy({ ...policy(), pageRules: [{ ...policy().pageRules[0], path: '(a+)+$', match: 'START' }] })
+    expect(normalized.pageRules).toEqual([
+      { id: 'all', path: '(a+)+$', match: 'START', deny: false, roles: ['read:pages'], locales: [] }
+    ])
     expect(() => normalizeGroupPolicy({ ...policy(), pageRules: [{ ...policy().pageRules[0], path: '(a+)+$', match: 'REGEX' }] })).toThrow()
     expect(() => normalizeGroupPolicy({ ...policy(), redirectOnLogin: 'javascript:alert(1)' })).toThrow()
     expect(() => normalizeGroupPolicy({ ...policy(), permissions: ['invented:permission'] })).toThrow()

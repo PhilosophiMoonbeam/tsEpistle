@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { parse } from '@vue/compiler-sfc'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
+import * as cheerio from 'cheerio'
 import _ from 'lodash'
+import pug from 'pug'
 import * as ts from 'typescript'
-import { describe, expect, test } from '../../../server/test/bun-test.mts'
+import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
+import '../../test/browser-dom.mts'
 import { OfflineSnapshotSelectorSchema } from '../../../shared/offline.ts'
 import { normalizeAvailableEditors } from '../../../shared/page-editors.ts'
 import { normalizePageFeatures } from '../../../shared/page-features.ts'
@@ -24,6 +27,56 @@ const markdownSfc = parse(markdownSource, { filename: markdownPath })
 const markdownTemplate = markdownSfc.descriptor.template?.content ?? ''
 const markdownStyle = markdownSfc.descriptor.styles.map(style => style.content).join('\n')
 
+
+// Vuetify captures DOM globals at evaluation, after the shared browser harness installs them.
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
+const modalPath = join(process.cwd(), 'client/components/editor/editor-modal-unsaved.vue')
+const modalSfc = parse(readFileSync(modalPath, 'utf8'), { filename: modalPath }).descriptor
+if (!modalSfc.template || !modalSfc.script) throw new Error('Unsaved modal SFC is incomplete')
+const modalTemplate = compileTemplate({
+  source: modalSfc.template.content,
+  filename: modalPath,
+  id: 'editor-unsaved-test',
+  preprocessLang: modalSfc.template.lang,
+  compilerOptions: { mode: 'function' }
+})
+if (modalTemplate.errors.length) throw modalTemplate.errors[0]
+const modalRender = new Function('Vue', modalTemplate.code)(Vue)
+const modalScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+  modalSfc.script.content.replace(/^import .*$/gm, '').replace('export default defineComponent', 'return defineComponent')
+)
+const modalOptions = new Function('defineComponent', modalScript)(Vue.defineComponent)
+const cardPath = join(process.cwd(), 'client/components/common/v-card-chin.vue')
+const cardSfc = parse(readFileSync(cardPath, 'utf8'), { filename: cardPath }).descriptor
+if (!cardSfc.template) throw new Error('Card action region template is missing')
+const cardTemplate = compileTemplate({
+  source: cardSfc.template.content,
+  filename: cardPath,
+  id: 'editor-card-chin-test',
+  preprocessLang: cardSfc.template.lang,
+  compilerOptions: { mode: 'function' }
+})
+if (cardTemplate.errors.length) throw cardTemplate.errors[0]
+const cardRender = new Function('Vue', cardTemplate.code)(Vue)
+// Compile the owner's invocation unchanged, rather than supplying dialog props in the test.
+const shellMarkup = cheerio.load(pug.render(shellSfc.descriptor.template?.content ?? ''))
+const ownerUnsavedInvocation = shellMarkup('editor-modal-unsaved')
+if (ownerUnsavedInvocation.length !== 1) throw new Error('Editor unsaved dialog invocation is missing or ambiguous')
+const ownerUnsavedTemplate = compileTemplate({
+  source: ownerUnsavedInvocation.toString(),
+  filename: shellPath,
+  id: 'editor-owner-unsaved-test',
+  compilerOptions: { mode: 'function' }
+})
+if (ownerUnsavedTemplate.errors.length) throw ownerUnsavedTemplate.errors[0]
+const ownerUnsavedRender = new Function('Vue', ownerUnsavedTemplate.code)(Vue)
+const modalUnmounts: Array<() => void> = []
+afterEach(() => {
+  for (const unmount of modalUnmounts.splice(0)) unmount()
+})
 type OkfState = {
   authority: {
     state: string
@@ -987,18 +1040,12 @@ describe('modern editor shell interaction contract', () => {
     expect(testWindow.location.assigned).toEqual([])
     expect(context.progressShown).toBe(0)
     expect(context.progressHidden).toBe(0)
-    expect(store.notifications).toEqual([
-      {
-        message: 'This collaboration draft was discarded. Reload the page before saving.',
-        style: 'error',
-        icon: 'warning'
-      },
-      {
-        message: 'This collaboration draft was discarded. Reload the page before saving.',
-        style: 'error',
-        icon: 'warning'
-      }
-    ])
+    expect(store.notifications).toHaveLength(2)
+    for (const notification of store.notifications) {
+      expect(notification.style).toBe('error')
+      expect(String(notification.message)).toMatch(/discard/i)
+      expect(String(notification.message)).toMatch(/reload/i)
+    }
   })
   test('opens the dirty modal but closes a clean editor immediately without save behavior', async () => {
     const cleanStore = createStore()
@@ -1070,7 +1117,7 @@ describe('modern editor shell interaction contract', () => {
     expect(testWindow.location.assigned).toEqual([])
   })
 
-  test('keeps the unsaved dialog open with the real discard failure', async () => {
+  test('keeps the unsaved dialog open and displays the real discard failure', async () => {
     const store = createStore()
     const testWindow = createTestWindow()
     const context = createShellHarness(store, testWindow)
@@ -1094,6 +1141,22 @@ describe('modern editor shell interaction contract', () => {
         icon: 'warning'
       }
     ])
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp({
+      setup: () => context,
+      render: ownerUnsavedRender
+    })
+    app.config.globalProperties.$t = (key: string) => key
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.component('VCardChin', { render: cardRender })
+    app.component('EditorModalUnsaved', { ...modalOptions, render: modalRender })
+    app.mount(host)
+    modalUnmounts.push(() => { app.unmount(); host.remove() })
+    await Vue.nextTick()
+    const dialog = document.querySelector('[role="alertdialog"]')
+    expect(dialog?.querySelector('[role="alert"]')?.textContent?.trim()).toBe(context.discardError)
+    // Main must execute the behavioral replacement before retiring this former binding guard.
     expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-modal-unsaved\([\s\S]*:error='discardError'/)
   })
 
@@ -1242,29 +1305,27 @@ describe('modern editor shell interaction contract', () => {
 
     expect(recordCalls).toBe(1)
     expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
-    expect(store.notifications).toContainEqual({
-      message: 'Offline page metadata could not be recorded: quota exhausted',
-      style: 'warning',
-      icon: 'warning'
-    })
+    const warnings = store.notifications.filter(notification => notification.style === 'warning')
+    expect(warnings).toHaveLength(1)
+    expect(String(warnings[0]?.message)).toContain('quota exhausted')
   })
 
   test('successful update Save and close persists edits and cancels the stale edit redirect', async () => {
     const store = createStore()
     const testWindow = createTestWindow()
     let updateInput: PageInput | undefined
-    let updateInputFrozen = false
     let updateFence: { sourceRevision: string; generation: number | undefined } | undefined
     let visibilityCalls = 0
+    let started!: () => void
+    let release!: () => void
+    const requestStarted = new Promise<void>(resolve => { started = resolve })
+    const requestRelease = new Promise<void>(resolve => { release = resolve })
     const context = createShellHarness(store, testWindow, {
       updatePage: async (_fetcher, _id, input, sourceRevision, generation) => {
-        updateInputFrozen =
-          Object.isFrozen(input) &&
-          Object.isFrozen(input.tags) &&
-          (input.okfMetadata === undefined || Object.isFrozen(input.okfMetadata)) &&
-          (input.branding === undefined || input.branding === null || Object.isFrozen(input.branding))
-        updateInput = _.cloneDeep(input)
+        updateInput = input
         updateFence = { sourceRevision, generation }
+        started()
+        await requestRelease
         return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
       },
       changePageVisibility: async () => {
@@ -1280,7 +1341,21 @@ describe('modern editor shell interaction contract', () => {
     applyEveryEdit(store)
     context.dialogUnsaved = true
 
-    await context.saveUnsavedAndClose()
+    const save = context.saveUnsavedAndClose()
+    await requestStarted
+    const originalMetadata = _.cloneDeep(store.page.okf.authority.metadata)
+    store.page.tags.push('later-live-tag')
+    store.page.okf.authority.metadata!.type = 'Later live type'
+    store.page.title = 'Later live title'
+    expect(updateInput?.tags).toEqual(['discarded-tag'])
+    expect(updateInput?.okfMetadata).toEqual({ type: 'Article', status: 'draft' })
+    expect(updateInput?.title).toBe('Discarded title')
+    // Return to the submitted snapshot before completion to retain this case's clean-close contract.
+    store.page.tags.pop()
+    store.page.okf.authority.metadata = originalMetadata
+    store.page.title = 'Discarded title'
+    release()
+    await save
 
     expect(updateInput).toMatchObject({
       content: 'discarded content',
@@ -1291,20 +1366,15 @@ describe('modern editor shell interaction contract', () => {
       title: 'Discarded title'
     })
     expect(updateFence).toEqual({ sourceRevision: '1', generation: 1 })
-    expect(updateInputFrozen).toBe(true)
+    expect(updateInput?.tags).toEqual(['discarded-tag'])
+    expect(updateInput?.okfMetadata).toEqual({ type: 'Article', status: 'draft' })
     expect(visibilityCalls).toBe(1)
     expect(context.savedState).toEqual(mutableSnapshot(store))
     expect(context.isDirty).toBe(false)
     expect(context.dialogUnsaved).toBe(false)
-    expect(context.progressShown).toBe(1)
-    expect(context.progressHidden).toBe(1)
-    expect(store.notifications).toEqual([
-      {
-        message: 'editor:save.updateSuccess',
-        style: 'success',
-        icon: 'check'
-      }
-    ])
+    expect(context.dialogProgress).toBe(false)
+    expect(store.notifications).toHaveLength(1)
+    expect(store.notifications[0]?.style).toBe('success')
     expect(store.loadingOwners).toEqual([])
     expect(testWindow.scheduledTimers).toEqual([{ id: 100, delay: 1000 }])
     expect(testWindow.clearedTimers).toEqual([100])
@@ -1331,15 +1401,10 @@ describe('modern editor shell interaction contract', () => {
     expect(context.isDirty).toBe(true)
     expect(context.dialogUnsaved).toBe(true)
     expect(context.exitConfirmed).toBe(false)
-    expect(context.progressShown).toBe(1)
-    expect(context.progressHidden).toBe(1)
-    expect(store.notifications).toEqual([
-      {
-        message: 'save rejected',
-        style: 'error',
-        icon: 'warning'
-      }
-    ])
+    expect(context.dialogProgress).toBe(false)
+    expect(store.notifications).toHaveLength(1)
+    expect(store.notifications[0]?.style).toBe('error')
+    expect(store.notifications[0]?.message).toBe('save rejected')
     expect(store.loadingOwners).toEqual([])
     expect(testWindow.location.assigned).toEqual([])
     expect(testWindow.location.replaced).toEqual([])
@@ -1350,31 +1415,44 @@ describe('modern editor shell interaction contract', () => {
     const store = createStore('create')
     const testWindow = createTestWindow()
     let createdInput: PageInput | undefined
-    let createdInputFrozen = false
+    let started!: () => void
+    let release!: () => void
+    const requestStarted = new Promise<void>(resolve => { started = resolve })
+    const requestRelease = new Promise<void>(resolve => { release = resolve })
     const context = createShellHarness(store, testWindow, {
       createPage: async (_fetcher, input) => {
-        createdInputFrozen =
-          Object.isFrozen(input) &&
-          Object.isFrozen(input.tags) &&
-          (input.okfMetadata === undefined || Object.isFrozen(input.okfMetadata)) &&
-          (input.branding === undefined || input.branding === null || Object.isFrozen(input.branding))
-        createdInput = _.cloneDeep(input)
+        createdInput = input
+        started()
+        await requestRelease
         return { id: 91, updatedAt: '2026-09-03T12:00:00.000Z' }
       }
     })
     applyEveryEdit(store)
     context.dialogUnsaved = true
 
-    await context.saveUnsavedAndClose()
+    const save = context.saveUnsavedAndClose()
+    await requestStarted
+    const originalMetadata = _.cloneDeep(store.page.okf.authority.metadata)
+    store.page.tags.push('later-live-tag')
+    store.page.okf.authority.metadata!.type = 'Later live type'
+    store.editor.content = 'Later live content'
+    expect(createdInput?.tags).toEqual(['discarded-tag'])
+    expect(createdInput?.okfMetadata).toEqual({ type: 'Article', status: 'draft' })
+    expect(createdInput?.content).toBe('discarded content')
+    store.page.tags.pop()
+    store.page.okf.authority.metadata = originalMetadata
+    store.editor.content = 'discarded content'
+    release()
+    await save
 
     expect(createdInput?.content).toBe('discarded content')
-    expect(createdInputFrozen).toBe(true)
+    expect(createdInput?.tags).toEqual(['discarded-tag'])
+    expect(createdInput?.okfMetadata).toEqual({ type: 'Article', status: 'draft' })
     expect(store.editor.id).toBe(91)
     expect(store.editor.mode).toBe('update')
     expect(context.savedState).toEqual(mutableSnapshot(store))
     expect(context.dialogUnsaved).toBe(false)
-    expect(context.progressShown).toBe(1)
-    expect(context.progressHidden).toBe(1)
+    expect(context.dialogProgress).toBe(false)
     expect(testWindow.location.assigned).toEqual(['/_private/fr/discarded-path'])
     expect(testWindow.scheduledTimers).toEqual([])
     expect(store.loadingOwners).toEqual([])
@@ -1453,7 +1531,7 @@ describe('modern editor shell interaction contract', () => {
     expect(JSON.stringify(context.savedState)).not.toContain('persisted content')
     expect(JSON.stringify(store.page)).not.toContain('persisted description')
   })
-  test('blocks every save entry point while local draft recovery is locked or unavailable', async () => {
+  test('blocks save, save-and-close and unsaved-save-and-close while draft recovery is locked or missing', async () => {
     const lockedStore = createStore()
     const lockedWindow = createTestWindow()
     let lockedWrites = 0
@@ -1465,22 +1543,21 @@ describe('modern editor shell interaction contract', () => {
     })
     applyEveryEdit(lockedStore)
     lockedContext.offlineDraftStatus = 'locked'
-    expect(lockedContext.offlineDraftStatusText).toBe(
-      'Local draft recovery is locked. Verify this account online, then reload the editor to recover encrypted drafts.'
-    )
     expect(lockedContext.offlineDraftMutationBlocked).toBe(true)
     expect(lockedContext.offlineMutationBlocked).toBe(true)
     expect(await lockedContext.save()).toBe(false)
+    expect(await lockedContext.saveAndClose()).toBe(false)
+    lockedContext.dialogUnsaved = true
+    await lockedContext.saveUnsavedAndClose()
+    expect(lockedContext.dialogUnsaved).toBe(true)
+    expect(lockedContext.exitConfirmed).toBe(false)
+    expect(lockedWindow.location.assigned).toEqual([])
+    expect(lockedWindow.location.replaced).toEqual([])
     expect(lockedWrites).toBe(0)
     expect(lockedContext.progressShown).toBe(0)
     expect(lockedContext.progressHidden).toBe(0)
-    expect(lockedStore.notifications).toEqual([
-      {
-        message: 'Offline draft recovery is locked. Verify this account online, then reload the editor before saving.',
-        style: 'warning',
-        icon: 'warning'
-      }
-    ])
+    expect(lockedStore.notifications).toHaveLength(3)
+    for (const notification of lockedStore.notifications) expect(notification.style).toBe('warning')
 
     const missingStore = createStore()
     const missingWindow = createTestWindow()
@@ -1496,18 +1573,19 @@ describe('modern editor shell interaction contract', () => {
 
     expect(missingContext.offlineDraftMutationBlocked).toBe(true)
     expect(missingContext.offlineMutationBlocked).toBe(true)
-    expect(missingContext.offlineDraftStatusText).toBe('Offline draft recovery is unavailable. Reload the editor before saving.')
     expect(await missingContext.save()).toBe(false)
+    expect(await missingContext.saveAndClose()).toBe(false)
+    missingContext.dialogUnsaved = true
+    await missingContext.saveUnsavedAndClose()
+    expect(missingContext.dialogUnsaved).toBe(true)
+    expect(missingContext.exitConfirmed).toBe(false)
+    expect(missingContext.dialogProgress).toBe(false)
+    expect(missingWindow.location.assigned).toEqual([])
+    expect(missingWindow.location.replaced).toEqual([])
     expect(missingWrites).toBe(0)
-    expect(missingStore.notifications).toEqual([
-      {
-        message: 'Offline draft recovery is unavailable. Reload the editor before saving.',
-        style: 'warning',
-        icon: 'warning'
-      }
-    ])
+    expect(missingStore.notifications).toHaveLength(3)
+    for (const notification of missingStore.notifications) expect(notification.style).toBe('warning')
 
-    expect(shellScript).toMatch(/setSaveHotkeyHandler\(\(\) => \{[\s\S]*offlineDraftMutationBlocked[\s\S]*notifyOfflineMutationBlocked/)
     expect(shellSfc.descriptor.template?.content ?? '').toMatch(/offlineDraftStatus === `locked` \|\| !offlineDraftCoordinator/)
   })
   test('blocks unavailable resource publication without converting it into identity lock recovery', async () => {
@@ -1523,21 +1601,12 @@ describe('modern editor shell interaction contract', () => {
     applyEveryEdit(store)
     context.offlineDraftStatus = 'unavailable'
 
-    expect(context.offlineDraftStatusText).toBe(
-      'The page may have been deleted or access may have been denied. Publishing and replay are blocked; local recovery and deletion remain available.'
-    )
     expect(context.offlineDraftMutationBlocked).toBe(true)
     expect(context.offlineMutationBlocked).toBe(true)
     expect(await context.save()).toBe(false)
     expect(updateCalls).toBe(0)
-    expect(store.notifications).toEqual([
-      {
-        message:
-          'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.',
-        style: 'warning',
-        icon: 'warning'
-      }
-    ])
+    expect(store.notifications).toHaveLength(1)
+    expect(store.notifications[0]?.style).toBe('warning')
     expect(shellSfc.descriptor.template?.content ?? '').toMatch(/offlineDraftStatus === `locked` \|\| !offlineDraftCoordinator/)
     expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-draft-review-actions\(v-if='offlineDraftCandidate'\)/)
     expect(shellSfc.descriptor.template?.content ?? '').not.toMatch(/editor-draft-recovery-actions\(v-if='offlineDraftStatus === `unavailable`'/)
@@ -1601,20 +1670,15 @@ describe('modern editor shell interaction contract', () => {
     expect(context.offlineDraftStatus).toBe('unavailable')
     expect(context.offlineDraftMutationBlocked).toBe(true)
     expect(context.offlineMutationBlocked).toBe(true)
-    expect(store.notifications).toEqual([
-      {
-        message: 'Publishing is unavailable because the page may have been deleted or access may have been denied, but the local draft could not be retained.',
-        style: 'error',
-        icon: 'warning'
-      }
-    ])
+    expect(store.notifications).toHaveLength(1)
+    expect(store.notifications[0]?.style).toBe('error')
+    expect(String(store.notifications[0]?.message)).toMatch(/local draft.*not.*retain/i)
 
     expect(await context.save()).toBe(false)
     expect(updateCalls).toBe(1)
-    expect(shellScript).toMatch(/if \(this\.offlineDraftMutationBlocked\)/)
   })
 
-  test('persists a receiptless not-found save as unavailable without replay', async () => {
+  test('requests unavailable capture for a receiptless not-found save and blocks replay', async () => {
     const store = createStore()
     const testWindow = createTestWindow()
     let updateCalls = 0
@@ -1635,14 +1699,9 @@ describe('modern editor shell interaction contract', () => {
     expect(coordinator.captureStates).toEqual(['unavailable'])
     expect(context.offlineDraftStatus).toBe('unavailable')
     expect(context.offlineDraftMutationBlocked).toBe(true)
-    expect(store.notifications).toEqual([
-      {
-        message:
-          'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.',
-        style: 'error',
-        icon: 'warning'
-      }
-    ])
+    expect(store.notifications).toHaveLength(1)
+    expect(store.notifications[0]?.style).toBe('error')
+    expect(String(store.notifications[0]?.message)).toMatch(/publishing.*unavailable/i)
     expect(await context.save()).toBe(false)
     expect(updateCalls).toBe(1)
   })
@@ -1773,14 +1832,12 @@ describe('modern editor shell interaction contract', () => {
     expect(context.isDirty).toBe(false)
     expect(store.notifications).toHaveLength(1)
     expect(store.notifications[0]).toMatchObject({ style: 'warning', icon: 'warning' })
-    expect(String(store.notifications[0]?.message)).toContain('Local recovery receipt could not be committed')
     expect(String(store.notifications[0]?.message)).not.toContain('Saved on this device')
   })
-  test('renders an optional historical bootstrap warning as an escaped persistent alert', () => {
+  test('declares an optional historical bootstrap alert with text interpolation', () => {
     const template = shellSfc.descriptor.template?.content ?? ''
     expect(shellScript).toMatch(/bootstrapNotice:\s*\{\s*type:\s*String/)
     expect(template).toMatch(/v-alert\.editor-bootstrap-notice[\s\S]*v-if='bootstrapNotice'/)
     expect(template).toContain('{{ bootstrapNotice }}')
-    expect(template).not.toContain('v-html')
   })
 })

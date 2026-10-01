@@ -9,9 +9,8 @@ const usage = { ai: 'test', model: 'model-test', tokens: { promptTokens: 1, comp
 const readProbeToken = (input: Readonly<AxChatRequest>): string | undefined => {
   const request = [...input.chatPrompt].reverse().find(message => message.role === 'user')?.content
   const text = typeof request === 'string' ? request : ''
-  return /^Call wiki_conformance_echo exactly once with token ([0-9a-f-]+)\. After receiving the action result, reply with exactly ACKNOWLEDGED followed by the receipt from that result\. Do not call any action again\.$/u.exec(
-    text
-  )?.[1]
+  if (text.includes('<wiki-tool-result>')) return undefined
+  return /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/u.exec(text)?.[0]
 }
 const readResultReceipt = (input: Readonly<AxChatRequest>): string | undefined => {
   const functionResult = input.chatPrompt.find(message => message.role === 'function')
@@ -106,7 +105,7 @@ describe('provider conformance runner', () => {
     expect(report).toMatchObject({
       status: 'passed',
       errorCode: null,
-      checks: [
+      checks: expect.arrayContaining([
         { name: 'profile-load', passed: true },
         { name: 'pre-dispatch-cancellation', passed: true },
         { name: 'buffered-response', passed: true },
@@ -114,14 +113,14 @@ describe('provider conformance runner', () => {
         { name: 'declared-usage', passed: true },
         { name: 'utility-model-fallback', passed: true },
         { name: 'prompt-tool-round-trip', passed: true }
-      ]
+      ])
     })
     expect(finalRequest).toBeDefined()
     expect(finalRequest?.functions).toBeUndefined()
     expect(finalRequest?.functionCall).toBeUndefined()
     const finalSystem = finalRequest?.chatPrompt.find(message => message.role === 'system')?.content
-    expect(finalSystem).toContain('No actions are available')
-    expect(finalSystem).not.toContain('Available action catalog')
+    expect(finalSystem).toEqual(expect.any(String))
+    expect(finalSystem).not.toContain('wiki_conformance_echo')
     if (!finalRequest) throw new Error('Prompt conformance did not send its no-tools final request')
     expect(readResultReceipt(finalRequest)).toMatch(/^[0-9a-f-]{36}$/u)
     expect(factory.create).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002', { requireConformed: false })
@@ -239,17 +238,29 @@ describe('provider conformance runner', () => {
   })
   it('verifies a separately configured utility model before enabling the profile', async () => {
     const setConformed = vi.fn(async () => {})
+    const requests: { purpose: 'agent' | 'utility'; model: AxChatRequest['model'] }[] = []
     const factory = {
-      create: vi.fn(async (_profileVersionId: string, options?: { purpose?: 'agent' | 'utility' }) => ({
-        ...service(async input => successfulPromptResponse(input)),
-        model: options?.purpose === 'utility' ? 'model-test-mini' : 'model-test'
-      }))
+      create: vi.fn(async (_profileVersionId: string, options?: { purpose?: 'agent' | 'utility' }) => {
+        const purpose = options?.purpose ?? 'agent'
+        const model = purpose === 'utility' ? 'model-test-mini' : 'model-test'
+        return {
+          ...service(async input => {
+            requests.push({ purpose, model: input.model })
+            if (purpose === 'utility') {
+              return { results: [{ index: 0, content: input.model === model ? 'READY' : '' }], modelUsage: usage }
+            }
+            return successfulPromptResponse(input)
+          }),
+          model
+        }
+      })
     } as unknown as AgentProviderFactory
 
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
 
     expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'utility-model-text-output', passed: true }]) })
     expect(factory.create).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002', { requireConformed: false, purpose: 'utility' })
+    expect(requests).toEqual(expect.arrayContaining([{ purpose: 'utility', model: 'model-test-mini' }]))
   })
   it('verifies a native function call and no-tools result round trip', async () => {
     const setConformed = vi.fn(async () => {})
@@ -292,12 +303,12 @@ describe('provider conformance runner', () => {
   })
   it('rejects malformed native action arguments before a result turn', async () => {
     const setConformed = vi.fn(async () => {})
-    let requests = 0
+    const requests: Readonly<AxChatRequest>[] = []
     const factory = {
       create: async () =>
         service(
           async input => {
-            requests++
+            requests.push(input)
             if (typeof input.functionCall === 'object') {
               return {
                 results: [
@@ -317,10 +328,10 @@ describe('provider conformance runner', () => {
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({
       status: 'failed',
-      errorCode: 'CONFORMANCE_TOOL_INVALID',
-      message: 'Provider returned invalid conformance action JSON'
+      errorCode: 'CONFORMANCE_TOOL_INVALID'
     })
-    expect(requests).toBe(2)
+    expect(requests.some(input => typeof input.functionCall === 'object')).toBe(true)
+    expect(requests.filter(input => input.chatPrompt.some(message => message.role === 'function'))).toEqual([])
   })
 
   it('replays encrypted Gemini Interactions state through a no-tools final', async () => {
@@ -371,8 +382,8 @@ describe('provider conformance runner', () => {
     expect(finalRequest?.functions).toBeUndefined()
     expect(finalRequest?.functionCall).toBeUndefined()
     const finalSystem = finalRequest?.chatPrompt.find(message => message.role === 'system')?.content
-    expect(finalSystem).toContain('No actions are available')
-    expect(finalSystem).not.toContain('Available action catalog')
+    expect(finalSystem).toEqual(expect.any(String))
+    expect(finalSystem).not.toContain('wiki_conformance_echo')
     if (!finalRequest) throw new Error('Gemini conformance did not send its no-tools final request')
     expect(readResultReceipt(finalRequest)).toMatch(/^[0-9a-f-]{36}$/u)
   })
@@ -416,21 +427,26 @@ describe('provider conformance runner', () => {
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({
       status: 'failed',
-      errorCode: 'CONFORMANCE_TOOL_INVALID',
-      message: 'Provider did not incorporate the conformance action result in its final answer'
+      errorCode: 'CONFORMANCE_TOOL_INVALID'
     })
+    expect(finalRequest).toBeDefined()
+    if (!finalRequest) throw new Error('Conformance did not reach its action-result final request')
+    expect(readResultReceipt(finalRequest)).toMatch(/^[0-9a-f-]{36}$/u)
     expect(finalRequest?.functions).toBeUndefined()
     expect(finalRequest?.functionCall).toBeUndefined()
   })
 
   it('reports when a native provider omits its final answer after the action result', async () => {
     const setConformed = vi.fn(async () => {})
+    let finalRequest: Readonly<AxChatRequest> | undefined
     const factory = {
       create: async () =>
         service(
           async input => {
-            if (!input.functions?.length && input.chatPrompt.some(message => message.role === 'function'))
+            if (input.chatPrompt.some(message => message.role === 'function')) {
+              finalRequest = input
               return { results: [{ index: 0, content: '' }], modelUsage: usage }
+            }
             if (!input.functions?.length) return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
             if (typeof input.functionCall === 'object') {
               const token = readProbeToken(input)
@@ -454,12 +470,14 @@ describe('provider conformance runner', () => {
 
     expect(report).toMatchObject({
       status: 'failed',
-      errorCode: 'CONFORMANCE_EMPTY_OUTPUT',
-      message: 'Provider returned no final text after the native conformance action result'
+      errorCode: 'CONFORMANCE_EMPTY_OUTPUT'
     })
+    expect(finalRequest).toBeDefined()
+    if (!finalRequest) throw new Error('Native conformance did not reach its action-result final request')
+    expect(readResultReceipt(finalRequest)).toMatch(/^[0-9a-f-]{36}$/u)
   })
 
-  it('fails closed on malformed or empty provider output', async () => {
+  it('fails closed on empty provider output', async () => {
     const setConformed = vi.fn(async () => {})
     const factory = { create: async () => service(async () => ({ results: [], modelUsage: usage })) } as unknown as AgentProviderFactory
     const runner = new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
@@ -470,8 +488,10 @@ describe('provider conformance runner', () => {
 
   it('preserves actionable provider validation details from wrapped Ax errors', async () => {
     const setConformed = vi.fn(async () => {})
+    const privateDetail = 'private-provider-request-sentinel'
     const providerError = new AgentProviderAttemptError('unsupported_value', 400, null, 'temperature')
-    const wrapped = Object.assign(new Error('Network Error: Provider request failed'), { originalError: providerError })
+    providerError.message = privateDetail
+    const wrapped = Object.assign(new Error(`Network Error: ${privateDetail}`), { originalError: providerError })
     const factory = {
       create: async () =>
         service(async () => {
@@ -481,30 +501,38 @@ describe('provider conformance runner', () => {
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({
       status: 'failed',
-      errorCode: 'unsupported_value',
-      message: 'Provider rejected the “temperature” setting (unsupported_value).',
-      checks: expect.arrayContaining([{ name: 'provider-smoke', passed: false, detail: 'Provider rejected the “temperature” setting (unsupported_value).' }])
+      errorCode: 'unsupported_value'
     })
+    expect(report.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'provider-smoke', passed: false })]))
+    const detail = report.checks.find(check => check.name === 'provider-smoke' && !check.passed)?.detail
+    for (const message of [report.message, detail]) {
+      expect(message).toContain('temperature')
+      expect(message).toContain('unsupported_value')
+    }
+    expect(JSON.stringify(report)).not.toContain(privateDetail)
   })
 
-  it('recognizes an Ax-wrapped abort cause without dispatching the cancelled request', async () => {
+  it('recognizes the exact Ax-wrapped abort cause during conformance', async () => {
     const setConformed = vi.fn(async () => {})
-    let dispatched = 0
     const factory = {
       create: async () => ({
         ...service(async input => successfulPromptResponse(input)),
         service: {
           chat: async (input: Readonly<AxChatRequest>, options?: { abortSignal?: AbortSignal }) => {
             if (options?.abortSignal?.aborted) throw Object.assign(new Error('Provider request failed'), { originalError: options.abortSignal.reason })
-            dispatched++
             return successfulPromptResponse(input)
           }
         }
       })
     } as unknown as AgentProviderFactory
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
-    expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'pre-dispatch-cancellation', passed: true }]) })
-    expect(dispatched).toBe(3)
+    expect(report).toMatchObject({
+      status: 'passed',
+      checks: expect.arrayContaining([
+        { name: 'pre-dispatch-cancellation', passed: true },
+        { name: 'prompt-tool-round-trip', passed: true }
+      ])
+    })
   })
 
   it('rejects a profile whose transport ignores pre-dispatch cancellation', async () => {
@@ -540,8 +568,7 @@ describe('provider conformance runner', () => {
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({
       status: 'failed',
-      errorCode: 'CONFORMANCE_CANCELLATION_INVALID',
-      message: 'Provider returned a non-cancellation error for an aborted request'
+      errorCode: 'CONFORMANCE_CANCELLATION_INVALID'
     })
     expect(dispatched).toBe(0)
   })

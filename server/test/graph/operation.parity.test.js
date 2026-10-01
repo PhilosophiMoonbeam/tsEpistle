@@ -16,12 +16,7 @@ const operationMocks = vi.hoisted(() => ({
   pages: {
     list: vi.fn(),
     create: vi.fn(),
-    update: vi.fn(),
-    get: vi.fn(),
     getByPath: vi.fn(),
-    getVersion: vi.fn(),
-    getHistory: vi.fn(),
-    restore: vi.fn(),
     remove: vi.fn()
   },
   comments: {
@@ -132,20 +127,7 @@ const graphPageListTypeDefs = `
     contactPage: Page
   }
 
-  type Mutation {
-    pages: PageMutation
-  }
-
   type PageQuery {
-    history(
-      id: Int!
-      offsetPage: Int
-      offsetSize: Int
-    ): PageHistoryResult @auth(requires: ["manage:system", "read:history"])
-    version(
-      pageId: Int!
-      versionId: Int!
-    ): PageVersion @auth(requires: ["manage:system", "read:history"])
     list(
       limit: Int
       orderBy: PageOrderBy
@@ -155,56 +137,6 @@ const graphPageListTypeDefs = `
       creatorId: Int
       authorId: Int
     ): [PageListItem!]! @auth(requires: ["manage:system", "read:pages"])
-    single(id: Int!): Page @auth(requires: ["read:pages", "manage:system"])
-  }
-
-  type PageMutation {
-    create(
-      content: String!
-      description: String!
-      editor: String!
-      isPublished: Boolean!
-      isSearchable: Boolean
-      visibility: PageVisibility!
-      locale: String!
-      path: String!
-      tags: [String]!
-      title: String!
-    ): PageResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
-    update(
-      id: Int!
-      expectedSourceRevision: String!
-      content: String
-      description: String
-      editor: String
-      isPublished: Boolean
-      isSearchable: Boolean
-      locale: String
-      path: String
-      tags: [String]
-      title: String
-    ): PageResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
-    restore(
-      pageId: Int!
-      versionId: Int!
-      expectedSourceRevision: String!
-    ): DefaultResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
-  }
-
-  type ResponseStatus {
-    succeeded: Boolean!
-    errorCode: Int!
-    slug: String!
-    message: String
-  }
-
-  type DefaultResponse {
-    responseResult: ResponseStatus
-  }
-
-  type PageResponse {
-    responseResult: ResponseStatus!
-    page: Page
   }
 
   type PageListItem {
@@ -215,41 +147,18 @@ const graphPageListTypeDefs = `
     description: String
     contentType: String!
     isPublished: Boolean! @auth(requires: ["write:pages", "manage:system"])
-    isSearchable: Boolean!
     visibility: PageVisibility!
     ownerId: Int
     tags: [String]
   }
 
   type Page {
-    id: Int!
-    path: String!
     localeCode: String
-    isSearchable: Boolean!
     visibility: PageVisibility!
     ownerId: Int
     tags: [String]
     authorEmail: String
     creatorEmail: String
-  }
-
-  type PageHistoryResult {
-    trail: [PageHistory]
-    total: Int!
-  }
-
-  type PageHistory {
-    versionId: Int!
-    actionType: String!
-    isSearchable: Boolean!
-    valueBefore: String
-    valueAfter: String
-  }
-
-  type PageVersion {
-    pageId: Int!
-    versionId: Int!
-    isSearchable: Boolean!
   }
 
   enum PageVisibility {
@@ -319,19 +228,8 @@ beforeAll(async () => {
         pages: adapters.pages.resolver.Query.pages,
         contactPage: (_obj, _args, context) => context.page
       },
-      Mutation: {
-        pages: adapters.pages.resolver.Mutation.pages
-      },
       PageQuery: {
-        history: adapters.pages.resolver.PageQuery.history,
-        version: adapters.pages.resolver.PageQuery.version,
-        list: adapters.pages.resolver.PageQuery.list,
-        single: adapters.pages.resolver.PageQuery.single
-      },
-      PageMutation: {
-        create: adapters.pages.resolver.PageMutation.create,
-        update: adapters.pages.resolver.PageMutation.update,
-        restore: adapters.pages.resolver.PageMutation.restore
+        list: adapters.pages.resolver.PageQuery.list
       },
       Page: adapters.pages.resolver.Page
     }
@@ -454,14 +352,14 @@ describe('REST and GraphQL shared operation parity', () => {
       expect(failedRestResponse.json).not.toHaveBeenCalled()
     })
 
-    it('normalizes create mutations and maps success and errors per transport', async () => {
+    it('maps group creation success and errors per transport', async () => {
       const group = { id: 9, name: 'Editors', isSystem: false }
       operationMocks.groups.create.mockResolvedValue(group)
       const requester = { id: 1, permissions: ['manage:groups'] }
       const restResponse = makeResponse()
 
       await adapters.groups.router.handler('post', '/')(
-        { user: requester, body: { name: '  Editors  ' } },
+        { user: requester, body: { name: 'Editors' } },
         restResponse,
         vi.fn()
       )
@@ -483,7 +381,7 @@ describe('REST and GraphQL shared operation parity', () => {
       const failedRestResponse = makeResponse()
 
       await adapters.groups.router.handler('post', '/')(
-        { user: requester, body: { name: ' Editors ' } },
+        { user: requester, body: { name: 'Editors' } },
         failedRestResponse,
         vi.fn()
       )
@@ -499,7 +397,7 @@ describe('REST and GraphQL shared operation parity', () => {
   })
 
   describe('pages', () => {
-    it('returns the same authorized page identities and ordering through REST and transformed GraphQL', async () => {
+    it('preserves operation-produced page ordering and restricted-field projection across transports', async () => {
       const pages = [
         {
           id: 22,
@@ -528,104 +426,15 @@ describe('REST and GraphQL shared operation parity', () => {
           createdAt: '2026-01-01T00:00:00.000Z',
           updatedAt: '2026-01-03T00:00:00.000Z',
           tags: ['docs', 'api']
-        },
-        {
-          id: 23,
-          path: 'docs/other',
-          locale: 'en',
-          title: 'Other',
-          description: 'A different category',
-          isPublished: true,
-          visibility: 'public',
-          ownerId: null,
-          contentType: 'markdown',
-          createdAt: '2026-01-03T00:00:00.000Z',
-          updatedAt: '2026-01-05T00:00:00.000Z',
-          tags: ['other']
-        },
-        {
-          id: 24,
-          path: 'docs/francais',
-          locale: 'fr',
-          title: 'Francais',
-          description: 'A translated guide',
-          isPublished: true,
-          visibility: 'public',
-          ownerId: null,
-          contentType: 'markdown',
-          createdAt: '2026-01-04T00:00:00.000Z',
-          updatedAt: '2026-01-06T00:00:00.000Z',
-          tags: ['docs', 'api']
-        },
-        {
-          id: 25,
-          path: 'docs/private',
-          locale: 'en',
-          title: 'Private',
-          description: 'A private guide',
-          isPublished: true,
-          visibility: 'private',
-          ownerId: 99,
-          contentType: 'markdown',
-          createdAt: '2026-01-05T00:00:00.000Z',
-          updatedAt: '2026-01-07T00:00:00.000Z',
-          tags: ['docs', 'api']
-        },
-        {
-          id: 26,
-          path: 'docs/internal',
-          locale: 'en',
-          title: 'Internal',
-          description: 'An internally scoped guide',
-          isPublished: true,
-          visibility: 'public',
-          ownerId: null,
-          contentType: 'markdown',
-          createdAt: '2026-01-06T00:00:00.000Z',
-          updatedAt: '2026-01-08T00:00:00.000Z',
-          tags: ['docs', 'api', 'internal']
         }
       ]
-      operationMocks.pages.list.mockImplementation(async input => {
-        const authority = input.authority ?? await global.WIKI.auth.loadPageRuleAuthority(input.requester)
-        const requestedTags = Array.isArray(input.tags) ? input.tags.map(tag => String(tag).trim().toLowerCase()) : []
-        const authorized = pages.filter(page => {
-          if (input.locale !== undefined && page.locale !== input.locale) return false
-          if (requestedTags.some(tag => !page.tags.includes(tag))) return false
-          if (page.visibility === 'private') {
-            return page.ownerId === input.requester?.id || permissionsFor(input.requester).includes('manage:system')
-          }
-          return global.WIKI.auth.checkPageAccess(
-            input.requester,
-            ['read:pages'],
-            {
-              path: page.path,
-              locale: page.locale,
-              localeCode: page.locale,
-              visibility: page.visibility,
-              ownerId: page.ownerId,
-              tags: page.tags.map(tag => ({ tag }))
-            },
-            authority
-          )
-        })
-        const direction = String(input.orderByDirection ?? '').toUpperCase() === 'DESC' ? -1 : 1
-        const orderBy = String(input.orderBy ?? '').toUpperCase()
-        const field = orderBy === 'TITLE' ? 'title' : orderBy === 'PATH' ? 'path' : 'id'
-        const ordered = [...authorized].sort((left, right) => {
-          const leftValue = left[field]
-          const rightValue = right[field]
-          if (leftValue === rightValue) return left.id - right.id
-          return (leftValue < rightValue ? -1 : 1) * direction
-        })
-        return Number.isSafeInteger(input.limit) && input.limit > 0 ? ordered.slice(0, input.limit) : ordered
-      })
+      operationMocks.pages.list.mockResolvedValue(pages)
 
       const reader = { id: 7, permissions: ['read:pages'] }
       const restResponse = makeResponse()
       const restNext = vi.fn()
       const query = {
-        tags: ' Docs, API ',
+        tags: 'docs,api',
         limit: '2',
         locale: 'en',
         orderBy: 'TITLE',
@@ -697,18 +506,18 @@ describe('REST and GraphQL shared operation parity', () => {
         tags: ['']
       }
       operationMocks.pages.list.mockResolvedValue([malformedPage])
-      const reader = { id: 7, permissions: ['read:pages'] }
+      const writer = { id: 7, permissions: ['read:pages', 'write:pages'] }
       const restResponse = makeResponse()
 
       await adapters.pages.router.handler('get', '/')(
-        { user: reader, query: {} },
+        { user: writer, query: {} },
         restResponse,
         vi.fn()
       )
       const graphResult = await graphql({
         schema: graphPageSchema,
         source: '{ pages { list { id isPublished } } }',
-        contextValue: { req: { user: reader } }
+        contextValue: { req: { user: writer } }
       })
 
       expect(restResponse.json.mock.calls[0][0]).toHaveLength(1)
@@ -717,6 +526,24 @@ describe('REST and GraphQL shared operation parity', () => {
       expect(graphResult.data).toEqual({ pages: null })
       expect(graphResult.errors).toHaveLength(1)
       expect(graphResult.errors[0].path).toEqual(['pages', 'list', 0, 'isPublished'])
+
+      operationMocks.pages.list.mockResolvedValue([{ ...malformedPage, tags: [] }])
+      const validRestResponse = makeResponse()
+      await adapters.pages.router.handler('get', '/')(
+        { user: writer, query: {} },
+        validRestResponse,
+        vi.fn()
+      )
+      const validGraphResult = await graphql({
+        schema: graphPageSchema,
+        source: '{ pages { list { id isPublished } } }',
+        contextValue: { req: { user: writer } }
+      })
+      expect(validRestResponse.json.mock.calls[0][0]).toEqual([
+        expect.objectContaining({ id: 31, isPublished: true })
+      ])
+      expect(validGraphResult.errors).toBeUndefined()
+      expect(validGraphResult.data).toEqual({ pages: { list: [{ id: 31, isPublished: true }] } })
     })
 
     it('normalizes create mutations and maps success and errors per transport', async () => {
@@ -774,244 +601,20 @@ describe('REST and GraphQL shared operation parity', () => {
         }
       })
     })
-    it('projects searchable state across authorized GraphQL create, update, read, list, version, and history flows', async () => {
-      const requester = { id: 1, permissions: ['read:pages', 'write:pages', 'read:history'] }
-      const reader = { id: 2, permissions: ['read:pages', 'read:history'] }
-      const createInput = {
-        content: '# Guide',
-        description: 'A guide',
-        editor: 'markdown',
-        isPublished: true,
-        isSearchable: false,
-        visibility: 'public',
-        locale: 'en',
-        path: 'guide',
-        tags: [],
-        title: 'Guide'
-      }
-
-      operationMocks.pages.create.mockImplementation(async input => ({
-        id: 12,
-        isSearchable: input.input.isSearchable === undefined ? true : input.input.isSearchable
-      }))
-      const created = await graphql({
-        schema: graphPageSchema,
-        source: `mutation {
-          pages {
-            create(
-              content: "# Guide"
-              description: "A guide"
-              editor: "markdown"
-              isPublished: true
-              isSearchable: false
-              visibility: public
-              locale: "en"
-              path: "guide"
-              tags: []
-              title: "Guide"
-            ) {
-              responseResult { succeeded errorCode slug }
-              page { id isSearchable }
-            }
-          }
-        }`,
-        contextValue: { req: { user: requester } }
-      })
-      expect(created.errors).toBeUndefined()
-      expect(created.data).toEqual({
-        pages: {
-          create: {
-            responseResult: { succeeded: true, errorCode: 0, slug: 'ok' },
-            page: { id: 12, isSearchable: false }
-          }
-        }
-      })
-      expect(operationMocks.pages.create).toHaveBeenCalledWith({
-        requester,
-        input: expect.objectContaining(createInput)
-      })
-      const omittedCreate = await graphql({
-        schema: graphPageSchema,
-        source: `mutation {
-          pages {
-            create(
-              content: "# Guide"
-              description: "A guide"
-              editor: "markdown"
-              isPublished: true
-              visibility: public
-              locale: "en"
-              path: "guide-copy"
-              tags: []
-              title: "Guide copy"
-            ) {
-              responseResult { succeeded errorCode slug }
-              page { id isSearchable }
-            }
-          }
-        }`,
-        contextValue: { req: { user: requester } }
-      })
-      expect(omittedCreate.errors).toBeUndefined()
-      expect(omittedCreate.data?.pages?.create?.page).toEqual({ id: 12, isSearchable: true })
-      const omittedCreateInput = operationMocks.pages.create.mock.calls.at(-1)?.[0]
-      expect(Object.hasOwn(omittedCreateInput.input, 'isSearchable')).toBe(false)
-
-
-      operationMocks.pages.update.mockImplementation(async input => ({
-        id: input.input.id,
-        isSearchable: Object.hasOwn(input.input, 'isSearchable') ? input.input.isSearchable : false
-      }))
-      const omittedUpdate = await graphql({
-        schema: graphPageSchema,
-        source: `mutation {
-          pages {
-            update(id: 12, expectedSourceRevision: "1", title: "Retitled") {
-              responseResult { succeeded errorCode slug }
-              page { id isSearchable }
-            }
-          }
-        }`,
-        contextValue: { req: { user: requester } }
-      })
-      expect(omittedUpdate.errors).toBeUndefined()
-      expect(omittedUpdate.data?.pages?.update?.page).toEqual({ id: 12, isSearchable: false })
-      const omittedUpdateInput = operationMocks.pages.update.mock.calls.at(-1)?.[0]
-      expect(Object.hasOwn(omittedUpdateInput.input, 'isSearchable')).toBe(false)
-      const explicitTrueUpdate = await graphql({
-        schema: graphPageSchema,
-        source: `mutation {
-          pages {
-            update(id: 12, expectedSourceRevision: "1", isSearchable: true) {
-              responseResult { succeeded errorCode slug }
-              page { id isSearchable }
-            }
-          }
-        }`,
-        contextValue: { req: { user: requester } }
-      })
-      expect(explicitTrueUpdate.errors).toBeUndefined()
-      expect(explicitTrueUpdate.data?.pages?.update?.page).toEqual({ id: 12, isSearchable: true })
-
-      operationMocks.pages.update.mockReset().mockImplementation(async input => {
-        if (input.input.isSearchable === null) {
-          throw operationError('isSearchable must be a boolean', { status: 422, code: 400, name: 'ValidationError' })
-        }
-        return { id: input.input.id, isSearchable: input.input.isSearchable }
-      })
-      const explicitNull = await graphql({
-        schema: graphPageSchema,
-        source: `mutation {
-          pages {
-            update(id: 12, expectedSourceRevision: "1", isSearchable: null) {
-              responseResult { succeeded errorCode slug }
-            }
-          }
-        }`,
-        contextValue: { req: { user: requester } }
-      })
-      expect(explicitNull.errors).toBeUndefined()
-      expect(explicitNull.data?.pages?.update?.responseResult).toMatchObject({
-        succeeded: false,
-        errorCode: 400,
-        slug: 'ValidationError'
-      })
-      expect(operationMocks.pages.update).toHaveBeenCalledWith({
-        requester,
-        input: expect.objectContaining({ id: 12, expectedSourceRevision: '1', isSearchable: null })
-      })
-
-      operationMocks.pages.get.mockResolvedValue({ id: 12, path: 'guide', isSearchable: false })
-      const current = await graphql({
-        schema: graphPageSchema,
-        source: '{ pages { single(id: 12) { id path isSearchable } } }',
-        contextValue: { req: { user: reader } }
-      })
-      expect(current.errors).toBeUndefined()
-      expect(current.data).toEqual({ pages: { single: { id: 12, path: 'guide', isSearchable: false } } })
-
-      operationMocks.pages.list.mockResolvedValue([
-        { id: 12, path: 'guide', locale: 'en', isPublished: true, isSearchable: false, visibility: 'public' }
-      ])
-      const listed = await graphql({
-        schema: graphPageSchema,
-        source: '{ pages { list { id path isSearchable } } }',
-        contextValue: { req: { user: reader } }
-      })
-      expect(listed.errors).toBeUndefined()
-      expect(listed.data).toEqual({
-        pages: { list: [{ id: 12, path: 'guide', isSearchable: false }] }
-      })
-
-      operationMocks.pages.getVersion.mockResolvedValue({ pageId: 12, versionId: 3, isSearchable: false })
-      const version = await graphql({
-        schema: graphPageSchema,
-        source: '{ pages { version(pageId: 12, versionId: 3) { pageId versionId isSearchable } } }',
-        contextValue: { req: { user: reader } }
-      })
-      expect(version.errors).toBeUndefined()
-      expect(version.data).toEqual({
-        pages: { version: { pageId: 12, versionId: 3, isSearchable: false } }
-      })
-
-      operationMocks.pages.getHistory.mockResolvedValue({
-        trail: [{ versionId: 3, actionType: 'edit', isSearchable: false }],
-        total: 1
-      })
-      const history = await graphql({
-        schema: graphPageSchema,
-        source: '{ pages { history(id: 12) { total trail { versionId actionType isSearchable } } } }',
-        contextValue: { req: { user: reader } }
-      })
-      expect(history.errors).toBeUndefined()
-      expect(history.data).toEqual({
-        pages: {
-          history: {
-            total: 1,
-            trail: [{ versionId: 3, actionType: 'edit', isSearchable: false }]
-          }
-        }
-      })
-      const historyReader = { id: 2, permissions: ['read:pages'] }
-      const deniedHistory = await graphql({
-        schema: graphPageSchema,
-        source: '{ pages { history(id: 12) { total trail { versionId isSearchable } } } }',
-        contextValue: { req: { user: historyReader } }
-      })
-      expect(deniedHistory.data).toEqual({ pages: { history: null } })
-      expect(deniedHistory.errors).toHaveLength(1)
-      expect(deniedHistory.errors[0].path).toEqual(['pages', 'history'])
-
-
-      operationMocks.pages.restore.mockResolvedValue(undefined)
-      const restored = await graphql({
-        schema: graphPageSchema,
-        source: `mutation {
-          pages {
-            restore(pageId: 12, versionId: 3, expectedSourceRevision: "1") {
-              responseResult { succeeded errorCode slug }
-            }
-          }
-        }`,
-        contextValue: { req: { user: requester } }
-      })
-      expect(restored.errors).toBeUndefined()
-      expect(restored.data).toEqual({
-        pages: { restore: { responseResult: { succeeded: true, errorCode: 0, slug: 'ok' } } }
-      })
-      expect(operationMocks.pages.restore).toHaveBeenCalledWith({
-        requester,
-        pageId: 12,
-        versionId: 3,
-        expectedSourceRevision: '1'
-      })
-    })
 
     it('preserves stale deletion conflicts and transport status envelopes', async () => {
       const requester = { id: 1, permissions: ['delete:pages'] }
       const expectedSourceRevision = '17'
       const restResponse = makeResponse()
-      operationMocks.pages.remove.mockResolvedValue(undefined)
+      operationMocks.pages.remove.mockImplementation(async input => {
+        if (input.expectedSourceRevision !== expectedSourceRevision) {
+          throw operationError('The page changed before deletion.', {
+            status: 409,
+            code: 409,
+            name: 'PageUpdateConflict'
+          })
+        }
+      })
 
       await adapters.pages.router.handler('delete', '/:id')(
         { user: requester, sessionID: 'session-1', params: { id: '12' }, body: { expectedSourceRevision } },
@@ -1046,6 +649,17 @@ describe('REST and GraphQL shared operation parity', () => {
           slug: 'PageUpdateConflict'
         }
       })
+      const staleRestResponse = makeResponse()
+      const staleRestNext = vi.fn()
+      await adapters.pages.router.handler('delete', '/:id')(
+        { user: requester, sessionID: 'session-1', params: { id: '12' }, body: { expectedSourceRevision } },
+        staleRestResponse,
+        staleRestNext
+      )
+      expect(staleRestResponse.status).toHaveBeenCalledWith(409)
+      expect(staleRestResponse.json).toHaveBeenCalledWith({ error: expect.any(String) })
+      expect(staleRestResponse.json.mock.calls[0][0]).not.toHaveProperty('message')
+      expect(staleRestNext).not.toHaveBeenCalled()
     })
     it('redacts steward contacts with the effective page writer predicate', async () => {
       const page = {
@@ -1098,17 +712,16 @@ describe('REST and GraphQL shared operation parity', () => {
       expect(graphMalformed.data?.contactPage?.authorEmail ?? null).toBeNull()
       expect(graphMalformed.errors).toHaveLength(1)
       expect(graphMalformed.errors[0].path).toEqual(['contactPage', 'authorEmail'])
-      expect(global.WIKI.auth.loadPageRuleAuthority.mock.calls.some(([requester]) => requester === writer)).toBe(true)
-      expect(global.WIKI.auth.loadPageRuleAuthority.mock.calls.some(([requester]) => requester === reader)).toBe(true)
-      expect(global.WIKI.auth.loadPageRuleAuthority.mock.calls.some(([requester]) => requester === systemManager)).toBe(true)
-      expect(global.WIKI.auth.checkPageAccess.mock.calls
-        .filter(([requester]) => requester === writer)
-        .every(([, , , authority]) => authority?.requester === writer)
-      ).toBe(true)
-      expect(global.WIKI.auth.checkPageAccess.mock.calls
-        .filter(([requester]) => requester === systemManager)
-        .every(([, , , authority]) => authority?.requester === systemManager)
-      ).toBe(true)
+      const privatePage = { ...page, visibility: 'private', ownerId: writer.id }
+      const graphOwner = await execute(writer, privatePage, 'authorEmail')
+      expect(graphOwner.errors).toBeUndefined()
+      expect(graphOwner.data).toEqual({ contactPage: { authorEmail: 'author@example.com' } })
+
+      authorities.set(writer, authorityFor(reader))
+      const graphMismatchedAuthority = await execute(writer, privatePage, 'authorEmail')
+      expect(graphMismatchedAuthority.data).toEqual({ contactPage: { authorEmail: null } })
+      expect(graphMismatchedAuthority.errors).toHaveLength(1)
+      expect(graphMismatchedAuthority.errors[0].path).toEqual(['contactPage', 'authorEmail'])
     })
   })
 

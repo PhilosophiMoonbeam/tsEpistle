@@ -96,10 +96,11 @@ describe('auth rate limiter', () => {
     await invoke(limiter, req)
     expect(onLimit).toHaveBeenLastCalledWith(req, {}, 10 * 60 * 1000)
 
-    for (const waitMinutes of [10, 15, 25, 40, 60, 60]) {
-      now += waitMinutes * 60 * 1000 + 1
+    for (const [elapsedPriorMinutes, nextWaitMinutes] of [[10, 15], [15, 25], [25, 40], [40, 60], [60, 60], [60, 60]]) {
+      now += elapsedPriorMinutes * 60 * 1000 + 1
       expect(await invoke(limiter, req)).toHaveBeenCalledOnce()
-      await invoke(limiter, req)
+      expect(await invoke(limiter, req)).not.toHaveBeenCalled()
+      expect(onLimit).toHaveBeenLastCalledWith(req, {}, nextWaitMinutes * 60 * 1000)
     }
     expect(onLimit.mock.calls.at(-1)[2]).toBe(60 * 60 * 1000)
   })
@@ -119,6 +120,8 @@ describe('auth rate limiter', () => {
 
     expect(await invoke(secondLimiter, req)).not.toHaveBeenCalled()
     expect(secondOnLimit).toHaveBeenCalledWith(req, {}, 5 * 60 * 1000)
+    expect(await invoke(limiter, req)).not.toHaveBeenCalled()
+    expect(onLimit).toHaveBeenLastCalledWith(req, {}, 5 * 60 * 1000)
   })
 
   it('deletes persisted attempt and block state when reset', async () => {
@@ -131,5 +134,11 @@ describe('auth rate limiter', () => {
     onLimit.mockClear()
     expect(await invoke(limiter, req)).toHaveBeenCalledOnce()
     expect(onLimit).not.toHaveBeenCalled()
+    for (let attempt = 1; attempt < 6; attempt += 1) {
+      expect(await invoke(limiter, req)).toHaveBeenCalledOnce()
+      expect(onLimit).not.toHaveBeenCalled()
+    }
+    expect(await invoke(limiter, req)).not.toHaveBeenCalled()
+    expect(onLimit).toHaveBeenLastCalledWith(req, {}, 5 * 60 * 1000)
   })
 })

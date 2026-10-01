@@ -24,7 +24,6 @@ import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { localeRelationMovePatch } from '../helpers/page-locale-relations.ts'
 import path from 'node:path'
 import fs from 'fs-extra'
-import * as yaml from 'js-yaml'
 import striptags from 'striptags'
 import emojiRegex from 'emoji-regex'
 import he from 'he'
@@ -860,12 +859,6 @@ const replacePageTree = async (transaction: Knex.Transaction): Promise<void> => 
   for (const rows of _.chunk(tree, 100)) await transaction('pageTree').insert(rows)
 }
 
-const frontmatterRegex = {
-  html: /^(<!-{2}(?:\n|\r)([\w\W]+?)(?:\n|\r)-{2}>)?(?:\n|\r)*([\w\W]*)*/,
-  legacy: /^(<!-- TITLE: ?([\w\W]+?) ?-{2}>)?(?:\n|\r)?(<!-- SUBTITLE: ?([\w\W]+?) ?-{2}>)?(?:\n|\r)*([\w\W]*)*/i,
-  markdown: /^(-{3}(?:\n|\r)([\w\W]+?)(?:\n|\r)-{3})?(?:\n|\r)*([\w\W]*)*/
-}
-
 const punctuationRegex = /[!,:;/\\_+\-=()&#@<>$~%^*[\]{}"'|]+|(\.\s)|(\s\.)/gi
 // const htmlEntitiesRegex = /(&#[0-9]{3};)|(&#x[a-zA-Z0-9]{2};)/ig
 
@@ -1058,56 +1051,6 @@ export default class Page extends Model {
    */
   getFileExtension(): string {
     return pageHelper.getFileExtension(this.contentType)
-  }
-
-  /**
-   * Parse injected page metadata from raw content
-   *
-   * @param {String} raw Raw file contents
-   * @param {String} contentType Content Type
-   * @returns {Object} Parsed Page Metadata with Raw Content
-   */
-  static parseMetadata(raw: string, contentType: string): UnknownRecord & { content: string } {
-    let result
-    try {
-      switch (contentType) {
-        case 'markdown':
-          result = frontmatterRegex.markdown.exec(raw)
-          if (result?.[2]) {
-            const metadata = yaml.load(result[2])
-            return {
-              ...(typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata) ? metadata : {}),
-              content: result[3] ?? ''
-            }
-          } else {
-            // Attempt legacy v1 format
-            result = frontmatterRegex.legacy.exec(raw)
-            if (result?.[2]) {
-              return {
-                title: result[2],
-                description: result[4],
-                content: result[5] ?? ''
-              }
-            }
-          }
-          break
-        case 'html':
-          result = frontmatterRegex.html.exec(raw)
-          if (result?.[2]) {
-            const metadata = yaml.load(result[2])
-            return {
-              ...(typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata) ? metadata : {}),
-              content: result[3] ?? ''
-            }
-          }
-          break
-      }
-    } catch {
-      wiki.logger.warn('Failed to parse page metadata. Invalid syntax.')
-    }
-    return {
-      content: raw
-    }
   }
 
   static assertCreateAccess(opts: {

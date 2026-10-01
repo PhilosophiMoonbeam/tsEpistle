@@ -861,9 +861,14 @@ describe('pages api helper', () => {
       createJsonResponse({
         versionId: 9,
         content: '# Before',
+        contentType: 'markdown',
         title: 'Before',
         description: '',
-        path: 'before'
+        locale: 'en',
+        path: 'before',
+        tags: ['docs'],
+        versionDate: '2026-08-15T00:00:00.000Z',
+        visibility: 'private'
       })
     )
 
@@ -874,7 +879,7 @@ describe('pages api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page version restored successfully.' }))
     const expectedSourceRevision = '8'
 
-    expect(await restorePageVersion(fetchImpl, 42, 9, expectedSourceRevision)).toBeUndefined()
+    await restorePageVersion(fetchImpl, 42, 9, expectedSourceRevision)
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/history/9/restore', {
       method: 'POST',
       credentials: 'same-origin',
@@ -904,7 +909,20 @@ describe('pages api helper', () => {
       })
     )
 
-    expect(await fetchPageHistory(fetchImpl, 42, 0, 25)).toMatchObject({ total: 1 })
+    expect(await fetchPageHistory(fetchImpl, 42, 0, 25)).toEqual({
+      total: 1,
+      trail: [
+        {
+          versionId: 9,
+          authorId: 7,
+          authorName: 'Owner',
+          actionType: 'edit',
+          valueBefore: null,
+          valueAfter: null,
+          versionDate: '2026-08-15T00:00:00.000Z'
+        }
+      ]
+    })
     expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/42/history?offsetPage=0&offsetSize=25')
   })
   test('rejects history rows with non-positive or unsafe revision and author IDs', async () => {
@@ -1088,7 +1106,7 @@ describe('pages api helper', () => {
       fetchMoveLinkReview(
         reviewFetch,
         7,
-        { destinationLocale: 'en', destinationPath: 'docs/new', expectedSourceRevision: 'revision-5', selectedPageIds: [21] },
+        { destinationLocale: 'en', destinationPath: 'docs/new', expectedSourceRevision: '5', selectedPageIds: [21] },
         'Invalid move review'
       )
     ).rejects.toThrow('Invalid move review')
@@ -1100,7 +1118,7 @@ describe('pages api helper', () => {
       updated: [],
       projections: 'pending'
     }))
-    await expect(movePage(receiptFetch, 7, 'en', 'docs/new', 'revision-5', 'Invalid move receipt', 'signed-review-token'))
+    await expect(movePage(receiptFetch, 7, 'en', 'docs/new', '5', 'Invalid move receipt', 'signed-review-token'))
       .rejects.toThrow('Invalid move receipt')
   })
 })

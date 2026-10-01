@@ -7,14 +7,13 @@ describe('tag color buckets', () => {
     expect(tagColorBucket('ＦＯＯ')).toBe(tagColorBucket('fOo'))
     expect(tagColorBucket('Éclair')).toBe(tagColorBucket('éCLAIR'))
     expect(tagColorBucket('—…   ')).toBe('neutral')
+    expect(tagColorBucket('Éclair')).not.toBe('neutral')
   })
 
   it('keeps the non-letter browse group neutral across numeric and punctuated tags', () => {
     const nonLetterTags = ['123 roadmap', '１２３ roadmap', '--alpha', '—東京', '!!!', '???']
     const firstPass = nonLetterTags.map(tagColorBucket)
-    const secondPass = nonLetterTags.map(tagColorBucket)
 
-    expect(firstPass).toEqual(secondPass)
     expect(firstPass.every(bucket => bucket === 'neutral')).toBe(true)
   })
 

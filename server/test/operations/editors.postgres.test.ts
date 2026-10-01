@@ -1,10 +1,8 @@
-import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { createEditorPolicyStore } from '../../operations/editors.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE ? fs.readFileSync(process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_editor_policy_test') && password ? { host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki', database, password } : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_editor_policy_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 suite('PostgreSQL editor policy persistence', () => {
   let db: Knex, store: ReturnType<typeof createEditorPolicyStore>, activations: unknown[] = [], failActivation = false
@@ -22,7 +20,25 @@ suite('PostgreSQL editor policy persistence', () => {
     const initial = await store.read()
     expect(initial.available).toEqual(['markdown', 'visual-markdown'])
     expect(await db('settings').where('key', 'editors')).toHaveLength(0)
-    const saved = await store.write({ available: ['visual-markdown', 'markdown'], recommended: 'visual-markdown' }, initial.fingerprint)
+    const observer = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 1 } })
+    let committedPolicy: unknown
+    const observingStore = createEditorPolicyStore({
+      db,
+      fallback: () => ({ available: ['markdown', 'visual-markdown'], recommended: null, custom: 'preserved' }),
+      async activate(value) {
+        committedPolicy = (await observer('settings').where('key', 'editors').first())?.value
+        activations.push(value)
+        return []
+      }
+    })
+    const saved = await (async () => {
+      try {
+        return await observingStore.write({ available: ['visual-markdown', 'markdown'], recommended: 'visual-markdown' }, initial.fingerprint)
+      } finally {
+        await observer.destroy()
+      }
+    })()
+    expect(committedPolicy).toMatchObject({ available: ['markdown', 'visual-markdown'], recommended: 'visual-markdown', custom: 'preserved' })
     expect(saved.policy).toMatchObject({ available: ['markdown', 'visual-markdown'], recommended: 'visual-markdown' })
     expect((await db('settings').where('key', 'editors').first()).value).toMatchObject({ custom: 'preserved', recommended: 'visual-markdown' })
     expect((await db('settings').where('key', 'title').first()).value).toEqual({ v: 'Workspace' })

@@ -338,6 +338,16 @@ describe('offline editor draft coordinator', () => {
     })
     expect(storage.records.size).toBe(1)
     coordinator.destroy()
+    invalidateOfflineSession()
+
+    const reader = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => values('server text')
+    }).coordinator
+    const recovered = await reader.initialize()
+    expect(recovered.candidate?.payload.content).toBe('latest debounced value')
+    reader.destroy()
   })
 
   it('rewraps a same-owner ordinary draft after a generation-only identity boundary', async () => {
@@ -656,11 +666,11 @@ describe('offline editor draft coordinator', () => {
     reader.destroy()
   })
 
-  it('retains an exact outcome-unknown receipt and performs no automatic replay', async () => {
+  it('retains an exact outcome-unknown receipt for review after later editor changes', async () => {
     const storage = new InMemoryDraftStorage()
     const owner = ownerKey(7)
     let current = values('transport-uncertain publish')
-    const { coordinator, fetchCalls } = makeCoordinator({ storage, owner, currentValues: () => current })
+    const { coordinator } = makeCoordinator({ storage, owner, currentValues: () => current })
 
     const submission = await coordinator.prepareSubmission()
     expect(submission).not.toBeNull()
@@ -678,7 +688,6 @@ describe('offline editor draft coordinator', () => {
     expect(storage.records.size).toBe(2)
     expect(coordinator.view).toMatchObject({ state: 'outcome-unknown', candidate: null, committed: true, inFlight: false })
     expect(coordinator.view.submissionCandidates).toHaveLength(1)
-    expect(fetchCalls.count).toBe(1)
 
     current = values('must not be replayed automatically')
     expect(coordinator.hasInFlightWork).toBe(false)

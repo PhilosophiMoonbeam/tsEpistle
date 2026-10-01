@@ -17,8 +17,10 @@ describe('HTML code highlighter metadata', () => {
     )
     const blocks = $('pre').toArray()
 
-    expect($(blocks[0]).attr('class')).toBe('prismjs')
-    expect($(blocks[1]).attr('class')).toBe('prismjs line-numbers')
+    expect($(blocks[0]).hasClass('prismjs')).toBe(true)
+    expect($(blocks[0]).hasClass('line-numbers')).toBe(false)
+    expect($(blocks[1]).hasClass('prismjs')).toBe(true)
+    expect($(blocks[1]).hasClass('line-numbers')).toBe(true)
   })
 
   it('preserves explicit line metadata and numbering requests', async () => {
@@ -28,7 +30,9 @@ describe('HTML code highlighter metadata', () => {
     )
     const block = $('pre')
 
-    expect(block.attr('class')).toBe('prismjs language-ts line-numbers')
+    expect(block.hasClass('prismjs')).toBe(true)
+    expect(block.hasClass('language-ts')).toBe(true)
+    expect(block.hasClass('line-numbers')).toBe(true)
     expect(block.attr('data-start')).toBe('30')
     expect(block.attr('data-line-offset')).toBe('29')
     expect(block.attr('data-line')).toBe('30')

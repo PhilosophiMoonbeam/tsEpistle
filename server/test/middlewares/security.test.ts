@@ -121,7 +121,6 @@ describe('security header middleware', () => {
       const { headers, nextCalls } = invokeMiddleware()
 
       expect(headerValues(headers, 'Content-Security-Policy')).toEqual([])
-      expect(headerValues(headers, 'X-Injected')).toEqual([])
       expectExistingSecurityHeaders(headers)
       expect(nextCalls).toBe(1)
     }

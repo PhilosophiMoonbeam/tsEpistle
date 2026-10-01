@@ -123,6 +123,14 @@ describe('HTML diagram image prefetch security', () => {
     const $ = cheerio.load(diagram('Alice -> Bob'), null, false)
     expect($('img').attr('src')?.startsWith('https://diagram.example/svg/')).toBe(true)
     expect($('img').attr('data-diagram-prefetch')).toBeDefined()
+    const sourceUrl = $('img').attr('src')
+    const redirectUrl = 'https://diagram.example/rendered/value'
+    const firstAddress = { address: '93.184.216.34', family: 4 }
+    const redirectAddress = { address: '1.1.1.1', family: 4 }
+    resolveState.implementation = async value => ({
+      url: new URL(value),
+      ...(value === sourceUrl ? firstAddress : redirectAddress)
+    })
     const redirect = new MockResponse(302, { location: '/rendered/value' })
     const rendered = new MockResponse(200, { 'content-type': 'image/svg+xml; charset=utf-8' })
     let requestNumber = 0
@@ -145,10 +153,14 @@ describe('HTML diagram image prefetch security', () => {
     expect(requestMock).toHaveBeenCalledTimes(2)
     expect(redirect.resumed).toBe(true)
     expect($('img').attr('src')).toBe(`data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`)
-    const lookup = requestMock.mock.calls[0][1].lookup
-    const { promise, resolve, reject } = Promise.withResolvers()
-    lookup('diagram.example', {}, (error, address, family) => error ? reject(error) : resolve({ address, family }))
-    await expect(promise).resolves.toEqual({ address: '93.184.216.34', family: 4 })
+    expect(resolveUrlMock.mock.calls.map(([url]) => url)).toEqual([sourceUrl, redirectUrl])
+    expect(requestMock.mock.calls.map(([url]) => url.toString())).toEqual([sourceUrl, redirectUrl])
+    for (const [index, expected] of [firstAddress, redirectAddress].entries()) {
+      const lookup = requestMock.mock.calls[index][1].lookup
+      const { promise, resolve, reject } = Promise.withResolvers()
+      lookup('diagram.example', {}, (error, address, family) => error ? reject(error) : resolve({ address, family }))
+      await expect(promise).resolves.toEqual(expected)
+    }
   })
 
   it('does not resolve or request redirects that change scheme, host, or port', async () => {

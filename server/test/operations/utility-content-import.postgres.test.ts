@@ -6,13 +6,9 @@ import { up as utilitiesMigration } from '../../db/migrations/tsepistle-000026-u
 import { storageConfigurationKey } from '../../helpers/storage-configuration-key.ts'
 import { runUtilityContentImport } from '../../operations/utility-content-import.ts'
 import { createUtilitiesWorkspaceStore, type UtilitiesWorkspaceStore } from '../../operations/utilities-workspace.ts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_utility_content_import_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT), user: 'wiki', database, password }
-    : null
+const connection = getPostgresTestConnection('_utility_content_import_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const requester = { user: { id: 1, authVersion: 0 } } as never
 const rawDefinitions = [
@@ -54,7 +50,7 @@ const rawDefinitions = [
 suite('legacy content import storage handoff on PostgreSQL', () => {
   let db: Knex, previousWiki: unknown, utilities: UtilitiesWorkspaceStore
   const effects = { beforeActivation: async () => undefined }
-  const executeAction = vi.fn(async () => ({
+  const completeImport = async () => ({
     targetKey: 'disk',
     handler: 'importAll',
     outcome: 'succeeded',
@@ -63,7 +59,8 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
     failed: 0,
     formats: { okf: 1, legacyV1: 0, legacyWiki: 0, plain: 0, invalid: 0 },
     items: [{ kind: 'page', outcome: 'succeeded', format: 'okf', path: 'guide.md', message: null, diagnostics: [] }]
-  }))
+  })
+  const executeAction = vi.fn(completeImport)
   const runtime = {
     ROOTPATH: process.cwd(),
     models: {
@@ -200,20 +197,48 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
     throw Error('Timed out waiting for the content import receipt.')
   }
 
+  const expectPublishedDisk = async () => {
+    expect(await db('storage').where('key', 'disk').first()).toMatchObject({
+      isEnabled: true,
+      mode: 'push',
+      syncInterval: 'P0D',
+      config: { path: '/approved-source', createDailyBackups: true, opaque: 'disk-opaque' }
+    })
+    const metadata = (await db('settings').where('key', 'storageAdministration').first()).value
+    expect(metadata.revision).toEqual(expect.stringMatching(/\S/))
+    expect(metadata.history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: metadata.revision,
+          actorId: 1,
+          reason: 'Import the approved content source',
+          targets: expect.arrayContaining([
+            expect.objectContaining({ key: 'disk', fields: expect.arrayContaining(['isEnabled', 'config.path']) })
+          ])
+        })
+      ])
+    )
+  }
+
   it('preserves unselected Git bytes and accepts a second import from unchanged disk storage', async () => {
     const before = await db('storage').where('key', 'git').first()
     const importDisk = () =>
       runUtilityContentImport(requester, { mode: 'disk', path: '/approved-source' }, 'Import the approved content source', async () => undefined)
     await expect(importDisk()).resolves.toMatchObject({ outcome: 'succeeded', counts: { total: 1, succeeded: 1, failed: 0 } })
     expect(await db('storage').where('key', 'git').first()).toEqual(before)
+    await expectPublishedDisk()
     const afterFirst = await db('settings').where('key', 'storageAdministration').first()
     await expect(importDisk()).resolves.toMatchObject({ outcome: 'succeeded' })
     expect(await db('settings').where('key', 'storageAdministration').first()).toEqual(afterFirst)
     expect(executeAction).toHaveBeenCalledTimes(2)
   })
 
-  it('completes a full Utilities-reviewed import through the default Storage executor after publishing storageAdministration', async () => {
+  it('completes a full Utilities-reviewed import through default coordinator dependencies and controlled Storage runtime after publishing storageAdministration', async () => {
     const input = await contentRequest()
+    executeAction.mockImplementationOnce(async () => {
+      await expectPublishedDisk()
+      return completeImport()
+    })
     await utilities.start(requester, input)
     await expect(terminalReceipt(input.id)).resolves.toMatchObject({
       state: 'succeeded',

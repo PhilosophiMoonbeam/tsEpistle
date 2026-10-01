@@ -15,6 +15,8 @@ describe('browser target registry', () => {
     const created = await registry.create({ canonicalUrl: 'https://example.com/docs', enabled: false, actorId: 7 })
     expect(created).toMatchObject({ canonicalUrl: 'https://example.com/docs', enabled: false, createdBy: 7, updatedBy: 7 })
     expect(created.policySha256).toMatch(/^[a-f0-9]{64}$/)
+    const other = await registry.create({ canonicalUrl: 'https://example.com/other', enabled: false, actorId: 7 })
+    expect(other.policySha256).not.toBe(created.policySha256)
     expect(await registry.setEnabled({ id: created.id, enabled: true, actorId: 8 })).toMatchObject({ enabled: true, createdBy: 7, updatedBy: 8, policySha256: created.policySha256 })
     await expect(Promise.resolve(registry.create({ canonicalUrl: 'http://example.com/', enabled: true, actorId: 7 }))).rejects.toMatchObject({ code: 'BROWSER_HTTPS_REQUIRED' })
     await expect(Promise.resolve(registry.create({ canonicalUrl: 'https://EXAMPLE.com/docs', enabled: true, actorId: 7 }))).rejects.toMatchObject({ code: 'INVALID_BROWSER_TARGET' })

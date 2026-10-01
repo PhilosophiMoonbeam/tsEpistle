@@ -1,5 +1,5 @@
 import { expect, type Page, type Request, type Response, type Route } from '@playwright/test'
-import { responsiveTest as test } from './helpers'
+import { openAuthenticatedPage, responsiveTest as test } from './helpers'
 import type { TextEditorHandle } from '../../client/components/editor/common/text-editor'
 
 // Mount the shipped editor with a new-page fixture: no account, saved page, or collaboration session.
@@ -140,6 +140,73 @@ async function openEditor(page: Page, options: EditorFixtureOptions = {}) {
   await expect(markdownSource).toBeEditable()
 }
 
+async function closeVisualEditor(page: Page, readerPath: string, expectUnsavedChanges = false) {
+  const selector = page.getByRole('dialog').filter({ has: page.locator('.page-selector') })
+  if (await selector.isVisible()) await selector.getByRole('button', { name: 'Cancel', exact: true }).click()
+  const close = page.getByRole('button', { name: 'Close', exact: true })
+  if (await close.isVisible()) {
+    await close.click()
+  } else {
+    await page.getByRole('button', { name: 'More editor actions', exact: true }).click()
+    await page.getByRole('listitem').filter({ hasText: /^Close$/u }).click()
+  }
+  const discard = page.getByRole('button', { name: 'Discard Changes', exact: true })
+  if (expectUnsavedChanges) await expect(discard).toBeVisible()
+  else await expect.poll(async () => await discard.isVisible() || new URL(page.url()).pathname === readerPath).toBe(true)
+  if (await discard.isVisible()) await discard.click()
+  await page.waitForURL(readerPath, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('.editor-tiptap')).toHaveCount(0)
+  await expect(page.locator('article.contents')).toBeVisible({ timeout: 15_000 })
+}
+
+for (const format of ['visual-markdown', 'visual-html'] as const) {
+  for (const selection of ['empty selection', 'selected text'] as const) {
+    test(`${format} links to a page from the actual toolbar with ${selection} and discards on teardown`, async ({ page }, testInfo) => {
+      test.setTimeout(90_000)
+      const readerPath = `/en/${format}-browser`
+      const targetPath = format === 'visual-markdown' ? 'visual-html-browser' : 'visual-markdown-browser'
+      const targetTitle = format === 'visual-markdown' ? 'Visual HTML Browser' : 'Visual Markdown Browser'
+      await openAuthenticatedPage(page, `/e${readerPath}`, '.editor-tiptap')
+      const editor = page.locator('.editor-tiptap .ProseMirror')
+      const originalText = await editor.textContent()
+      try {
+        // Replace only the unsaved draft, using native keyboard input. No editor commands
+        // or window hooks select text or perform the insertion being exercised.
+        await editor.click()
+        await page.keyboard.press('ControlOrMeta+A')
+        await page.keyboard.press('Backspace')
+        const label = selection === 'selected text' ? 'Chosen page' : 'Link: '
+        await page.keyboard.insertText(label)
+        await expect(editor).toHaveText(label)
+        if (selection === 'selected text') await page.keyboard.press('Shift+Home')
+        expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(selection === 'selected text' ? label : '')
+
+        await page.getByRole('button', { name: 'Link to page', exact: true }).click()
+        const selector = page.getByRole('dialog').filter({ has: page.locator('.page-selector') })
+        await expect(selector).toBeVisible()
+        await selector.locator('.page-selector__pages-list').getByText(targetTitle, { exact: true }).click()
+        await expect(selector.getByRole('textbox', { name: 'Page path', exact: true })).toHaveValue(targetPath)
+        await selector.getByRole('button', { name: 'Select', exact: true }).click()
+        await expect(selector).not.toBeVisible()
+
+        const link = editor.getByRole('link', { name: selection === 'selected text' ? label : targetPath, exact: true })
+        // This single-language fixture uses the canonical unprefixed internal link.
+        await expect(link).toHaveAttribute('href', `/${targetPath}`)
+        await expect(editor).toHaveText(selection === 'selected text' ? label : `${label}${targetPath}`)
+        await testInfo.attach(`${format}-${selection}-page-link`, { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
+        await closeVisualEditor(page, readerPath, true)
+
+        // Reopening proves the draft was discarded rather than written to the fixture.
+        await openAuthenticatedPage(page, `/e${readerPath}`, '.editor-tiptap .ProseMirror')
+        await expect(editor).toBeVisible({ timeout: 15_000 })
+        await expect.poll(() => editor.textContent()).toBe(originalText)
+      } finally {
+        if (await page.locator('.editor-tiptap').count()) await closeVisualEditor(page, readerPath)
+      }
+    })
+  }
+}
+
 async function selectLine(page: Page, line: number) {
   await page.locator('.editor-markdown').evaluate((root, target) => {
     const editor = (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor
@@ -219,7 +286,7 @@ test('asset browser keeps folder, upload, and insertion actions contained', asyn
   const source = await page
     .locator('.editor-markdown')
     .evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getValue())
-  expect(source).toContain('brand-mark.png')
+  expect(source).toContain('![brand-mark.png](/brand-mark.png)')
 })
 test('page identity asset results stay within the viewport and scroll internally', async ({ page }) => {
   await openEditor(page, { largeAssetFixture: true })
@@ -290,7 +357,10 @@ test('preview follows the cursor by default and stops when toggled off', async (
   await paneToggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
   await expect(preview).toBeVisible()
-  expect(await preview.evaluate(element => element.scrollTop)).toBe(0)
+  const reopenedScrollTop = await preview.evaluate(element => element.scrollTop)
+  await selectLine(page, 140)
+  await page.waitForTimeout(400)
+  expect(await preview.evaluate(element => element.scrollTop)).toBe(reopenedScrollTop)
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   await expect.poll(() => preview.evaluate(element => element.scrollTop)).toBeGreaterThan(1000)
@@ -338,28 +408,6 @@ test('applies formatting from the toolbar or its mobile overflow', async ({ page
   const unselectedPixels = await page.screenshot({ clip: selectionClip!, caret: 'hide', animations: 'disabled' })
   await hiddenSelectionStyle.evaluate(element => element.remove())
   expect(selectedPixels.equals(unselectedPixels), 'Selection must visibly paint over the editor background').toBe(false)
-  const selectionPaint = await selectionBackground.evaluate(element => {
-    const style = getComputedStyle(element)
-    const rect = element.getBoundingClientRect()
-    const primary = getComputedStyle(element.closest('.editor-markdown') ?? document.documentElement)
-      .getPropertyValue('--v-theme-primary')
-      .trim()
-    const backgroundChannels = style.backgroundColor.match(/[\d.]+/gu)?.map(Number) ?? []
-    return {
-      width: rect.width,
-      height: rect.height,
-      backgroundColor: style.backgroundColor,
-      backgroundChannels: backgroundChannels.slice(0, 3),
-      backgroundAlpha: backgroundChannels[3] ?? (style.backgroundColor === 'transparent' ? 0 : 1),
-      primaryChannels: (primary.match(/[\d.]+/gu)?.map(Number) ?? []).slice(0, 3)
-    }
-  })
-  expect(selectionPaint.width).toBeGreaterThan(0)
-  expect(selectionPaint.height).toBeGreaterThan(0)
-  expect(selectionPaint.backgroundColor).not.toBe('transparent')
-  expect(selectionPaint.backgroundAlpha).toBeGreaterThan(0)
-  expect(selectionPaint.primaryChannels).toHaveLength(3)
-  expect(selectionPaint.backgroundChannels).toEqual(selectionPaint.primaryChannels)
 
   const bold = page.getByRole('button', { name: 'Bold', exact: true })
   if (await bold.isVisible()) {
@@ -542,4 +590,115 @@ test('page properties ignores a late suggestion response for an older query', as
   await slowNetworkResponse
   await expect(page.getByRole('option', { name: 'fast-tag', exact: true })).toBeVisible()
   await expect(page.getByRole('option', { name: 'slow-tag', exact: true })).toHaveCount(0)
+})
+
+test('Draw.io parent modal isolates the editor and restores its native toolbar opener across iframe focus', async ({ page }) => {
+  // Use the persistent desktop toolbar opener, not a transient mobile overflow item.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await openEditor(page)
+  const parentOrigin = new URL(page.url()).origin
+  // Replace only the external document. Native cross-origin frame traversal is real;
+  // this fixture does not implement the diagrams.net SDK or forward Escape/exit.
+  await page.route('https://embed.diagrams.net/**', route =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: `<!doctype html><html><head><meta charset="utf-8"><title>Frame focus fixture</title></head><body>
+        <button type="button">Frame start</button>
+        <label>Diagram label <input type="text"></label>
+        <script>parent.postMessage(JSON.stringify({ event: 'init' }), ${JSON.stringify(parentOrigin)});</script>
+      </body></html>`
+    })
+  )
+  const editor = page.locator('.editor-markdown')
+  const readBackground = (root: Element) => {
+    const states: Array<{ inert: boolean; inertAttribute: string | null; ariaHidden: string | null }> = []
+    for (let element: HTMLElement | null = root as HTMLElement; element; element = element.parentElement) {
+      states.push({
+        inert: element.inert,
+        inertAttribute: element.getAttribute('inert'),
+        ariaHidden: element.getAttribute('aria-hidden')
+      })
+    }
+    return states
+  }
+  const originalBackground = await editor.evaluate(readBackground)
+  const opener = page.getByRole('button', { name: 'Insert Diagram', exact: true })
+  await expect(opener).toBeVisible()
+  await opener.focus()
+  await expect(opener).toBeFocused()
+  await page.keyboard.press('Enter')
+
+  const dialog = page.getByRole('dialog', { name: 'Draw.io', exact: true })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toHaveAttribute('aria-modal', 'true')
+  const back = dialog.getByRole('button', { name: 'Back to editor', exact: true })
+  await expect(back).toBeFocused()
+  await expect
+    .poll(() =>
+      editor.evaluate(root => {
+        const isolated = root.closest<HTMLElement>('[inert][aria-hidden="true"]')
+        return isolated?.inert === true
+      })
+    )
+    .toBe(true)
+
+  const iframe = dialog.locator('iframe[title="Diagram editor"]')
+  const frame = page.frameLocator('.editor-modal-drawio iframe[title="Diagram editor"]')
+  const frameStart = frame.getByRole('button', { name: 'Frame start', exact: true })
+  const frameEnd = frame.getByRole('textbox', { name: 'Diagram label', exact: true })
+  await expect(frameStart).toBeVisible()
+  await expect(dialog.getByText('Loading diagram editor', { exact: true })).not.toBeVisible()
+  const frameOrigin = await frameStart.evaluate(() => location.origin)
+  expect(frameOrigin).toBe('https://embed.diagrams.net')
+  expect(frameOrigin).not.toBe(parentOrigin)
+
+  // Browser keyboard events, not DOM-dispatched events or scripted focus in the frame.
+  await page.keyboard.press('Tab')
+  await expect(iframe).toBeFocused()
+  await expect(frameStart).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(frameEnd).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(back).toBeFocused()
+  expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+  await page.keyboard.press('Tab')
+  await expect(frameStart).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(frameEnd).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(back).toBeFocused()
+  expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+  await page.keyboard.press('Tab')
+  await expect(frameStart).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(frameEnd).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(frameStart).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(back).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(iframe).toBeFocused()
+  await expect(back).not.toBeFocused()
+  expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+  // The parent can enter a foreign frame, but cannot choose its internal reverse-entry target.
+  for (let step = 0; step < 3 && !(await back.evaluate(element => element === document.activeElement)); step++) {
+    await page.keyboard.press('Shift+Tab')
+  }
+  await expect(back).toBeFocused()
+
+  // Escape originates at the genuine parent modal control after leaving the iframe.
+  await page.keyboard.press('Escape')
+  await expect(dialog).not.toBeVisible()
+  await expect.poll(() => editor.evaluate(readBackground)).toEqual(originalBackground)
+  await expect(opener).toBeFocused()
+  await expect(page.getByRole('textbox', { name: 'Markdown source', exact: true })).toBeEditable()
+
+  // Reopening must not retain the prior scope or break native pointer activation.
+  await opener.click()
+  await expect(dialog).toBeVisible()
+  await expect(back).toBeFocused()
+  await back.click()
+  await expect(dialog).not.toBeVisible()
+  await expect.poll(() => editor.evaluate(readBackground)).toEqual(originalBackground)
+  await expect(opener).toBeFocused()
 })

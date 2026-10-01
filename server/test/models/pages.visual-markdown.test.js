@@ -120,25 +120,24 @@ describe('Visual Markdown page contracts', () => {
     return { patch, where }
   }
 
-  function arrangeUpdate (page, editorKey) {
+  function arrangeUpdate (page) {
     const pagePatch = {
       where: vi.fn(),
       then: resolve => Promise.resolve(1).then(resolve)
     }
     pagePatch.where.mockReturnValue(pagePatch)
-    const updatedPage = {
-      ...page,
-      content: 'Math: $x + y$',
-      editorKey,
-      updatedAt: '2026-08-14T00:00:01.000Z'
-    }
+    const updatedPage = { ...page }
+    const patch = vi.fn(values => {
+      Object.assign(updatedPage, values)
+      return pagePatch
+    })
     global.WIKI.models.pages = {
       query: vi.fn()
         .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(page) })
-        .mockReturnValueOnce({ patch: vi.fn().mockReturnValue(pagePatch) })
+        .mockReturnValueOnce({ patch })
         .mockReturnValueOnce({
           findById: vi.fn().mockReturnValue({
-            select: vi.fn().mockResolvedValue({ updatedAt: updatedPage.updatedAt })
+            select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:00:01.000Z' })
           })
         }),
       getPageFromDb: vi.fn().mockResolvedValue(updatedPage),
@@ -147,25 +146,14 @@ describe('Visual Markdown page contracts', () => {
     global.WIKI.models.knex.table = vi.fn().mockReturnValue({
       where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })
     })
+    return { patch }
   }
 
-  it('changes Markdown to Visual Markdown without rewriting content or creating a conversion snapshot', async () => {
-    const { patch } = arrangeConversion(basePage)
-
-    await Page.convertPage({ id: basePage.id, editor: 'visual-markdown', user: requester })
-
-    expect(patch).toHaveBeenCalledOnce()
-    expect(patch.mock.calls[0][0]).toMatchObject({
-      contentType: 'markdown',
-      editorKey: 'visual-markdown',
-      renderedSourceRevision: null
-    })
-    expect(patch.mock.calls[0][0]).not.toHaveProperty('content')
-    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
-  })
-
-  it('changes extended Markdown to Visual Markdown without rewriting content', async () => {
-    const page = { ...basePage, content: '## Callout\n{.is-info}' }
+  it.each([
+    ['plain', basePage.content],
+    ['extended', '## Callout\n{.is-info}']
+  ])('changes %s Markdown to Visual Markdown without rewriting content or creating a conversion snapshot', async (_label, content) => {
+    const page = { ...basePage, content }
     const { patch } = arrangeConversion(page)
 
     await Page.convertPage({ id: page.id, editor: 'visual-markdown', user: requester })
@@ -207,8 +195,6 @@ describe('Visual Markdown page contracts', () => {
       render: '<h1>Visual Markdown</h1><p>Rendered text.</p>'
     }
     const { patch } = arrangeConversion(page)
-    expect(page.contentType).toBe('markdown')
-    expect(global.WIKI.data.editors.find(editor => editor.key === 'ckeditor')?.contentType).toBe('html')
 
     await Page.convertPage({ id: page.id, editor: 'ckeditor', user: requester })
 
@@ -224,10 +210,10 @@ describe('Visual Markdown page contracts', () => {
 
 
   it('accepts extended content when a Visual Markdown page is updated', async () => {
-    arrangeUpdate({
+    const { patch } = arrangeUpdate({
       ...basePage,
       editorKey: 'visual-markdown'
-    }, 'visual-markdown')
+    })
 
     const page = await Page.updatePage({
       id: basePage.id,
@@ -235,13 +221,17 @@ describe('Visual Markdown page contracts', () => {
       content: 'Math: $x + y$'
     })
 
+    expect(patch).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'Math: $x + y$',
+      editorKey: 'visual-markdown'
+    }))
     expect(page.content).toBe('Math: $x + y$')
     expect(page.editorKey).toBe('visual-markdown')
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
   })
 
   it('accepts extended content when a revision switches into Visual Markdown', async () => {
-    arrangeUpdate(basePage, 'visual-markdown')
+    const { patch } = arrangeUpdate(basePage)
 
     const page = await Page.updatePage({
       id: basePage.id,
@@ -250,6 +240,11 @@ describe('Visual Markdown page contracts', () => {
       editor: 'visual-markdown'
     })
 
+    expect(patch).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'Math: $x + y$',
+      editorKey: 'visual-markdown'
+    }))
+    expect(page.content).toBe('Math: $x + y$')
     expect(page.editorKey).toBe('visual-markdown')
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
   })
@@ -272,7 +267,7 @@ describe('Visual Markdown page contracts', () => {
 
   it('rejects a same-user save after collaboration discard advances the room generation', async () => {
     const page = { ...basePage, sourceRevision: '2' }
-    arrangeUpdate(page, 'markdown')
+    arrangeUpdate(page)
     const lockedTables = []
     global.WIKI.models.knex.mockImplementation(table => {
       lockedTables.push(table)

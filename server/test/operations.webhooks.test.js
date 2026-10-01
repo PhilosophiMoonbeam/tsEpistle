@@ -17,6 +17,10 @@ afterEach(async () => { await runtime.models.knex.destroy() })
 describe('webhook subscriptions', () => {
   it('persists actual hyphenated event subscriptions and never returns stored secrets', async () => {
     const created = await operations.create({ name: 'Receiver', url: 'https://example.test', events: ['page.visibility-changed'], isEnabled: false })
+    const stored = await runtime.models.knex('webhooks').where('id', created.id).first()
+    expect(JSON.parse(stored.events)).toEqual(['page.visibility-changed'])
+    expect(Boolean(stored.isEnabled)).toBe(false)
+    expect(stored.secretCiphertext).toBe('encrypted-fixture')
     await operations.update(created.id, { events: ['page.ownership-transferred', 'page.ownership-transferred'] })
     const hooks = await operations.list()
     expect(hooks).toHaveLength(1)

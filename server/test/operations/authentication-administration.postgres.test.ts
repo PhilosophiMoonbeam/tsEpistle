@@ -4,12 +4,8 @@ import { createAuthenticationAdministrationStore, normalizeAuthenticationDomains
 import { createProviderGroupSynchronizer, loadEnrollmentPolicy } from '../../helpers/authentication-provisioning.ts'
 import { up, down } from '../../db/migrations/tsepistle-000019-authentication-administration.ts'
 import type { AuthenticationDefinition, AuthenticationProviderDraft } from '../../../shared/authentication-policy.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
-  password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  database.endsWith('_auth_test') && password
-    ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password }
-    : null
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+const connection = getPostgresTestConnection('_auth_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 const definitions: AuthenticationDefinition[] = [
@@ -28,6 +24,7 @@ const definitions: AuthenticationDefinition[] = [
     ]
   }
 ]
+definitions.push({ ...definitions[1]!, key: 'alternate-oidc', title: 'Alternate OpenID Connect' })
 const draft = (key = 'local'): AuthenticationProviderDraft => ({
   key,
   strategyKey: key === 'local' ? 'local' : 'oidc',
@@ -217,34 +214,36 @@ suite('PostgreSQL reviewed authentication administration', () => {
     expect(row.autoEnrollGroups).toEqual({ v: [3] })
   })
   it('protects Local recovery and rejects system enrollment, missing groups, duplicate IDs and type changes', async () => {
-    for (const change of [
-      (rows: AuthenticationProviderDraft[]) => {
+    for (const { change, status } of [
+      { change: (rows: AuthenticationProviderDraft[]) => {
         rows[0]!.isEnabled = false
-      },
-      (rows: AuthenticationProviderDraft[]) => {
+      }, status: 400 },
+      { change: (rows: AuthenticationProviderDraft[]) => {
         rows.shift()
-      },
-      (rows: AuthenticationProviderDraft[]) => {
+      }, status: 400 },
+      { change: (rows: AuthenticationProviderDraft[]) => {
         rows[1]!.autoEnrollGroups = [1]
-      },
-      (rows: AuthenticationProviderDraft[]) => {
+      }, status: 400 },
+      { change: (rows: AuthenticationProviderDraft[]) => {
         rows[1]!.autoEnrollGroups = [999]
-      },
-      (rows: AuthenticationProviderDraft[]) => {
+      }, status: 409 },
+      { change: (rows: AuthenticationProviderDraft[]) => {
         rows[1]!.key = 'local'
-      },
-      (rows: AuthenticationProviderDraft[]) => {
-        rows[1]!.strategyKey = 'local'
-      }
+      }, status: 400 },
+      { change: (rows: AuthenticationProviderDraft[]) => {
+        rows[1]!.strategyKey = 'alternate-oidc'
+        rows[1]!.description = 'An independently valid provider purpose'
+      }, status: 400 }
     ]) {
       const rows = structuredClone((await read()).providers)
       change(rows)
-      await expect(write(rows)).rejects.toBeInstanceOf(Error)
+      await expect(write(rows)).rejects.toMatchObject({ status })
     }
     expect(await db('authenticationAdministrationEvents')).toHaveLength(0)
     expect((await db('authentication').where('key', 'local').first()).isEnabled).toBe(true)
   })
   it('rejects invalid configuration fields/types and invalid secret replacement actions without leaking inputs', async () => {
+    const previous = await db('authentication').where('key', 'org').first()
     for (const change of [
       (p: AuthenticationProviderDraft) => {
         p.config.mapGroups = 'true'
@@ -257,10 +256,21 @@ suite('PostgreSQL reviewed authentication administration', () => {
       }
     ]) {
       const rows = (await read()).providers
+      rows[1]!.description = 'An independently valid policy change'
       change(rows[1]!)
-      await expect(write(rows)).rejects.toBeInstanceOf(Error)
+      const error = await write(rows).then(() => undefined, error => error)
+      expect(error).toBeInstanceOf(Error)
+      expect(error).toMatchObject({ status: 400 })
+      const publicError = JSON.stringify({ status: error.status, error: error.message })
+      for (const privateValue of ['private-test-value', 'stored-secret-value', 'unknown-private-value'])
+        expect(publicError).not.toContain(privateValue)
+      const persisted = await db('authentication').where('key', 'org').first()
+      expect(persisted.config).toEqual(previous.config)
+      expect(persisted.description).toBe(previous.description)
     }
     expect(await db('authenticationAdministrationEvents')).toHaveLength(0)
+    expect(await db('userAdministrationEvents')).toHaveLength(0)
+    expect(await db('groupAdministrationEvents')).toHaveLength(0)
   })
   it('checks all deletion dependencies before changing another provider', async () => {
     const rows = (await read()).providers
@@ -283,6 +293,8 @@ suite('PostgreSQL reviewed authentication administration', () => {
     const outcomes = await Promise.allSettled([store.save(admin, input), store.save(admin, input)])
     expect(outcomes.filter(r => r.status === 'fulfilled')).toHaveLength(1)
     expect(outcomes.filter(r => r.status === 'rejected')).toHaveLength(1)
+    expect(outcomes.find(r => r.status === 'rejected')).toMatchObject({ reason: { status: 409 } })
+    expect(await db('authenticationAdministrationEvents')).toHaveLength(1)
     w = await read()
     await db('groups').where('id', 3).update({ adminRevision: 'new-group-review' })
     await expect(store.save(admin, { ...input, providers: w.providers, fingerprint: w.fingerprint })).rejects.toMatchObject({ status: 409 })
@@ -378,8 +390,14 @@ suite('PostgreSQL reviewed authentication administration', () => {
       [3, 'members-removed'],
       [4, 'members-added']
     ])
+    const userEvents = await db('userAdministrationEvents').orderBy('id')
+    const groupEvents = await db('groupAdministrationEvents').orderBy('id')
+    const sessionState = await db('users').where('id', 3).first('authVersion', 'adminRevision', 'sessionsRevokedAt')
     expect(await sync({ userId: 3, providerKey: 'org', groupNames: ['People managers'] })).toMatchObject({ authVersion: 1, changed: false })
     expect(committed).toHaveBeenCalledOnce()
+    expect(await db('userAdministrationEvents').orderBy('id')).toEqual(userEvents)
+    expect(await db('groupAdministrationEvents').orderBy('id')).toEqual(groupEvents)
+    expect(await db('users').where('id', 3).first('authVersion', 'adminRevision', 'sessionsRevokedAt')).toEqual(sessionState)
     await sync({ userId: 3, providerKey: 'org', groupNames: [] })
     expect(await db('userGroups').where('userId', 3)).toHaveLength(0)
   })

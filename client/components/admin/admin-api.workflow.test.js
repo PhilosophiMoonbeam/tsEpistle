@@ -54,7 +54,6 @@ describe('guided API-key issuance', () => {
     instance.name = 'Indexer'
     instance.nextStep()
     expect(instance.step).toBe(2)
-    expect(instance.selectableGroups).toEqual([eligibleGroup])
 
     instance.group = 2
     instance.nextStep()
@@ -73,14 +72,14 @@ describe('guided API-key issuance', () => {
 
   it('preserves the one-time credential when an inventory refresh rejects', async () => {
     const { instance, create, refreshApiKeys } = harness({ createFullAccess: true, assignableGroups: [] })
-    Object.assign(instance, { name: 'Indexer', step: 3, scope: 'full', mcpAccess: false })
+    Object.assign(instance, { name: 'Indexer', step: 3, scope: 'full', mcpAccess: false, expiration: '180d' })
     refreshApiKeys.mockRejectedValueOnce(new Error('Inventory unavailable'))
 
     await instance.generate()
 
     expect(create).toHaveBeenCalledWith(expect.any(Function), {
       name: 'Indexer',
-      expiration: '90d',
+      expiration: '180d',
       fullAccess: true,
       group: null,
       mcpAccess: false
@@ -119,7 +118,7 @@ describe('guided API-key issuance', () => {
 
     instance.nextStep()
     expect(instance.step).toBe(2)
-    expect(instance.formError).toContain('MCP configuration is unavailable')
+    expect(instance.mcpAccess).toBe(true)
     expect(create).not.toHaveBeenCalled()
 
     instance.mcpAccess = false

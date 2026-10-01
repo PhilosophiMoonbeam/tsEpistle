@@ -1,6 +1,7 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { load } from 'js-yaml'
 
 import { productDefinition } from '../../core/product.ts'
 
@@ -13,7 +14,7 @@ describe('product build and publication metadata', () => {
     const output = execFileSync(process.execPath, ['server/scripts/export-build-environment.ts'], {
       cwd: rootPath,
       encoding: 'utf8',
-      env: { ...process.env, GITHUB_SHA: revision }
+      env: { ...process.env, GITHUB_SHA: revision, SOURCE_DATE_EPOCH: '1786624496' }
     })
     const values = Object.fromEntries(output.trim().split('\n').map(line => line.split(/=(.*)/s).slice(0, 2)))
 
@@ -27,13 +28,12 @@ describe('product build and publication metadata', () => {
       WIKI_SOURCE_REPOSITORY: productDefinition.sourceRepository,
       WIKI_UPSTREAM_BASE: `${productDefinition.upstreamName} ${productDefinition.upstreamVersion}`
     })
-    expect(new Date(values.WIKI_BUILD_DATE).toISOString()).toBe(values.WIKI_BUILD_DATE)
-    expect(Number(values.SOURCE_DATE_EPOCH)).toBe(Math.floor(Date.parse(values.WIKI_BUILD_DATE) / 1000))
+    expect(values.WIKI_BUILD_DATE).toBe('2026-08-13T12:34:56.000Z')
+    expect(values.SOURCE_DATE_EPOCH).toBe('1786624496')
   })
 
   test('publishes only fork-owned images and includes required OCI labels', () => {
     const workflow = read('.github/workflows/build.yml')
-    const dockerfiles = `${read('dev/build/Dockerfile')}\n${read('dev/build-arm/Dockerfile')}`
 
     expect(workflow).toContain('server/scripts/export-build-environment.ts')
     expect(workflow).toContain('IMAGE_REPOSITORY')
@@ -41,10 +41,13 @@ describe('product build and publication metadata', () => {
       expect.stringMatching(new RegExp(`^ghcr\\.io/requarks/wiki:${productDefinition.upstreamVersion}@sha256:[a-f0-9]{64}$`))
     ])
     expect(workflow).not.toMatch(/(?:--tag|tags:)[^\n]*requarks\/wiki/)
-    for (const label of ['created', 'description', 'licenses', 'revision', 'source', 'title', 'version']) {
-      expect(dockerfiles).toContain(`org.opencontainers.image.${label}`)
+    for (const recipe of ['dev/build/Dockerfile', 'dev/build-arm/Dockerfile']) {
+      const dockerfile = read(recipe)
+      for (const label of ['created', 'description', 'licenses', 'revision', 'source', 'title', 'version']) {
+        expect(dockerfile).toContain(`org.opencontainers.image.${label}`)
+      }
+      expect(dockerfile).toContain('io.tsepistle.upstream-base')
     }
-    expect(dockerfiles).toContain('io.tsepistle.upstream-base')
   })
 
   test('keeps deployment defaults on fork-owned artifacts without an upstream updater', () => {
@@ -66,37 +69,49 @@ describe('product build and publication metadata', () => {
   })
 
   test('runs the canonical static contract before PR and protected-branch tests and validates changed chart sources', () => {
-    const workflow = read('.github/workflows/build.yml')
+    const workflow = load(read('.github/workflows/build.yml'))
     const staticCommands = JSON.parse(read('package.json')).scripts['ci:static']
-    const actionlint = read('.github/actionlint.yaml')
     const helmContract = read('server/test/scripts/check-helm-lifecycle-contract.sh')
     for (const command of ['dependencies:check', 'licenses:check', 'openapi:check', 'placeholders:check', 'agents:release-check']) {
       expect(staticCommands).toContain(`bun run ${command}`)
     }
-    expect(actionlint).toContain('config-variables: []')
-    const prQuality = workflow.slice(workflow.indexOf('  pr-quality:'), workflow.indexOf('\n  quality:'))
-    const protectedQuality = workflow.slice(workflow.indexOf('  quality:'), workflow.indexOf('\n  agent-postgres:'))
-
+    const prQuality = workflow.jobs['pr-quality'].steps
+    const protectedQuality = workflow.jobs.quality.steps
+    const runs = step => typeof step?.run === 'string' ? step.run : ''
     for (const qualityJob of [prQuality, protectedQuality]) {
-      const staticContract = qualityJob.indexOf('run: bun run ci:static')
+      const staticContract = qualityJob.findIndex(step => runs(step).trim() === 'bun run ci:static')
+      const tests = qualityJob.findIndex(step => runs(step).trim() === 'bun run test')
+      const build = qualityJob.findIndex(step => runs(step).trim() === 'bun run build')
       expect(staticContract).toBeGreaterThan(-1)
-      expect(staticContract).toBeLessThan(qualityJob.indexOf('run: bun run test'))
-      expect(staticContract).toBeLessThan(qualityJob.indexOf('run: bun run build'))
+      expect(tests).toBeGreaterThan(staticContract)
+      expect(build).toBeGreaterThan(staticContract)
     }
 
-    expect(prQuality).toContain('git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- dev/helm/')
-    expect(prQuality.match(/if: steps\.chart-changes\.outputs\.changed == 'true'/g)).toHaveLength(2)
-    expect(prQuality).toContain('run: server/test/scripts/check-helm-lifecycle-contract.sh')
-    expect(workflow.match(/server\/test\/scripts\/check-helm-lifecycle-contract\.sh/g)).toHaveLength(2)
-    expect(workflow).not.toContain('helm lint dev/helm')
-    const releaseHelm = workflow.slice(workflow.indexOf('    - name: Package Helm Chart'), workflow.indexOf('\n    - name: Stage Release Artifacts'))
-    expect(releaseHelm.indexOf('server/test/scripts/check-helm-lifecycle-contract.sh')).toBeLessThan(releaseHelm.indexOf('helm package --destination dist dev/helm'))
+    const chartChanges = prQuality.find(step => step.id === 'chart-changes')
+    expect(runs(chartChanges)).toContain('git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- dev/helm/')
+    const installHelm = prQuality.findIndex(step => runs(step).includes('https://get.helm.sh/'))
+    const validateHelm = prQuality.findIndex(step => runs(step).trim() === 'server/test/scripts/check-helm-lifecycle-contract.sh')
+    expect(installHelm).toBeGreaterThan(-1)
+    expect(validateHelm).toBeGreaterThan(installHelm)
+    for (const index of [installHelm, validateHelm]) {
+      expect(prQuality[index].if).toBe("steps.chart-changes.outputs.changed == 'true'")
+    }
+    for (const job of Object.values(workflow.jobs)) {
+      for (const step of job.steps ?? []) expect(runs(step)).not.toContain('helm lint dev/helm')
+    }
+    const releaseHelm = workflow.jobs.release.steps.find(step => runs(step).includes('helm package --destination dist dev/helm'))
+    const releaseRun = runs(releaseHelm)
+    const validation = releaseRun.indexOf('server/test/scripts/check-helm-lifecycle-contract.sh')
+    const packaging = releaseRun.indexOf('helm package --destination dist dev/helm')
+    expect(validation).toBeGreaterThan(-1)
+    expect(packaging).toBeGreaterThan(validation)
     expect(helmContract).toContain('helm lint dev/helm')
     expect(helmContract).toContain('helm template wiki dev/helm')
     expect(helmContract).toContain('helm install wiki dev/helm')
     expect(helmContract).toContain('--dry-run=client')
-    expect(`${prQuality}\n${helmContract}`).not.toContain('kind create cluster')
-    expect(`${prQuality}\n${helmContract}`).not.toContain('helm package')
+    const sourceValidation = `${prQuality.map(runs).join('\n')}\n${helmContract}`
+    expect(sourceValidation).not.toContain('kind create cluster')
+    expect(sourceValidation).not.toContain('helm package')
   })
 
   test('commits the complete canary set once from a revision-bound immutable promotion record after exact-image gates', () => {
@@ -239,6 +254,7 @@ fi
         PATH: `${fakeBin}:${process.env.PATH}`,
         WIKI_CANARY_PROMOTION_REPOSITORY: 'registry.test/wiki-canary-promotion',
         WIKI_IMAGE_REPOSITORY: 'registry.test/wiki',
+        WIKI_AGENT_BROWSER_IMAGE_REPOSITORY: 'registry.test/wiki-agent-browser',
         CANARY_POINTER_MANIFEST: pointerManifest,
         CANARY_IMMUTABLE_MANIFEST: immutableManifest
       }
@@ -266,24 +282,68 @@ fi
       expect(deploymentEnvironment).toContain(`export WIKI_IMAGE='${applicationArm64}'`)
       expect(deploymentEnvironment).toContain(`export WIKI_AGENT_BROWSER_IMAGE='${agentBrowserArm64}'`)
 
-      fs.writeFileSync(immutableManifest, '{}')
-      expect(() => execFileSync('bash', ['dev/resolve-canary-promotion.sh', '--format=json'], {
+      const mismatchedManifest = JSON.parse(manifest)
+      mismatchedManifest.annotations['io.tsepistle.canary-promotion.application-amd64'] = `registry.test/wiki@sha256:${'f'.repeat(64)}`
+      fs.writeFileSync(immutableManifest, JSON.stringify(mismatchedManifest))
+      const mismatch = spawnSync('bash', ['dev/resolve-canary-promotion.sh', '--format=json'], {
         cwd: rootPath,
         env,
-        stdio: 'ignore'
-      })).toThrow()
+        encoding: 'utf8'
+      })
+      expect(mismatch.status).toBe(1)
+      expect(mismatch.stdout).toBe('')
+      expect(mismatch.stderr).toContain(`${env.WIKI_CANARY_PROMOTION_REPOSITORY}:${revision}`)
     } finally {
       fs.rmSync(temporaryDirectory, { recursive: true, force: true })
     }
   })
 
   test('release artifacts include complete revision-specific Corresponding Source', () => {
-    const workflow = read('.github/workflows/build.yml')
-    expect(workflow).toContain('git archive --format=tar.gz')
-    expect(workflow).toContain('tsepistle-source.tar.gz')
-    expect(workflow).toContain('$WIKI_SOURCE_REPOSITORY/tree/$WIKI_BUILD_REVISION')
-    for (const path of ['package.json', 'bun.lock', 'patches', 'dev/build/Dockerfile', 'dev/build-arm/Dockerfile', 'server/scripts/generate-build-metadata.ts']) {
-      expect(() => execFileSync('git', ['ls-files', '--error-unmatch', path], { cwd: rootPath })).not.toThrow()
+    const workflowText = read('.github/workflows/build.yml')
+    const releaseSteps = load(workflowText).jobs.release.steps
+    const archiveStep = releaseSteps.find(step => step.run?.startsWith('git archive '))
+    expect(archiveStep?.run).toMatch(/--format=tar\.gz\b/)
+    expect(archiveStep?.run).toMatch(/--prefix="tsepistle-\$REL_VERSION_STRICT\/"/)
+    expect(archiveStep?.run).toMatch(/--output=tsepistle-source\.tar\.gz\b/)
+    expect(archiveStep?.run).toMatch(/"\$WIKI_BUILD_REVISION"\s*$/)
+    expect(workflowText).toContain('$WIKI_SOURCE_REPOSITORY/tree/$WIKI_BUILD_REVISION')
+    const checksums = releaseSteps.find(step => step.run?.includes('server/scripts/generate-release-manifest.ts'))
+    expect(checksums?.run).toMatch(/^\s*tsepistle-source\.tar\.gz\s*\\$/m)
+    const upload = releaseSteps.find(step => step.uses?.startsWith('ncipollo/release-action@'))
+    expect(upload?.with.artifacts.split(',')).toContain('tsepistle-source.tar.gz')
+
+    const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: rootPath, encoding: 'utf8' }).trim()
+    const temporaryDirectory = fs.mkdtempSync(path.join(rootPath, 'source-archive-contract-'))
+    const archive = path.join(temporaryDirectory, 'source.tar.gz')
+    const prefix = `tsepistle-${productDefinition.version}/`
+    const untracked = path.join(temporaryDirectory, 'untracked-build-input')
+    try {
+      fs.writeFileSync(untracked, 'not Corresponding Source')
+      const archiveCommand = archiveStep.run.replace('--output=tsepistle-source.tar.gz', '--output="$TEST_SOURCE_ARCHIVE"')
+      execFileSync('bash', ['-euo', 'pipefail', '-c', archiveCommand], {
+        cwd: rootPath,
+        env: {
+          ...process.env,
+          BASH_ENV: '',
+          REL_VERSION_STRICT: productDefinition.version,
+          WIKI_BUILD_REVISION: revision,
+          TEST_SOURCE_ARCHIVE: archive
+        }
+      })
+      const members = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split('\n')
+      expect(members).not.toContain(`${prefix}${path.relative(rootPath, untracked)}`)
+      for (const input of ['package.json', 'bun.lock', 'patches', 'dev/build/Dockerfile', 'dev/build-arm/Dockerfile', 'server/scripts/generate-build-metadata.ts']) {
+        const trackedInputs = execFileSync('git', ['ls-tree', '-r', '--name-only', revision, '--', input], { cwd: rootPath, encoding: 'utf8' }).trim().split('\n')
+        expect(trackedInputs).not.toContain('')
+        for (const tracked of trackedInputs) {
+          expect(members).toContain(`${prefix}${tracked}`)
+          const archivedBytes = execFileSync('tar', ['-xOzf', archive, `${prefix}${tracked}`])
+          const revisionBytes = execFileSync('git', ['show', `${revision}:${tracked}`], { cwd: rootPath })
+          expect(archivedBytes).toEqual(revisionBytes)
+        }
+      }
+    } finally {
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true })
     }
   })
 })

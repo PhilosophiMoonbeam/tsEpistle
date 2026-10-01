@@ -22,10 +22,14 @@ describe('page locale relations migration', () => {
     expect(await db.schema.hasColumn('pages', 'localeGroupId')).toBe(true)
     await db('pages').insert({ id: 1, localeCode: 'en', localeGroupId: '00000000-0000-4000-8000-000000000001' })
     await expect(Promise.resolve(db('pages').insert({ id: 2, localeCode: 'en', localeGroupId: '00000000-0000-4000-8000-000000000001' }))).rejects.toThrow()
-    expect(await db('pages').insert([
+    await db('pages').insert([
       { id: 3, localeCode: 'en', localeGroupId: null },
       { id: 4, localeCode: 'en', localeGroupId: null }
-    ])).toBeDefined()
+    ])
+    expect(await db('pages').whereIn('id', [3, 4]).orderBy('id').select('id', 'localeCode', 'localeGroupId')).toEqual([
+      { id: 3, localeCode: 'en', localeGroupId: null },
+      { id: 4, localeCode: 'en', localeGroupId: null }
+    ])
   })
 
   it('removes only translation grouping on rollback', async () => {

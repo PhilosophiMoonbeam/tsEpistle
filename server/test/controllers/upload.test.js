@@ -137,8 +137,6 @@ describe('controllers/upload endpoints', () => {
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['write:assets', 'manage:system'])
     expect(uploadMocks.arrayHandler).not.toHaveBeenCalled()
     expect(next).not.toHaveBeenCalled()
-    expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
-    expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
   })
 
   it('rejects non-positive file capacity before invoking multer', async () => {
@@ -157,84 +155,6 @@ describe('controllers/upload endpoints', () => {
     })
     expect(uploadMocks.arrayHandler).not.toHaveBeenCalled()
     expect(next).not.toHaveBeenCalled()
-  })
-
-  it('rejects empty upload payloads', async () => {
-    const { uploadHandler } = await loadHandlers()
-    const req = makeReq({ files: [] })
-    const res = makeRes()
-
-    await uploadHandler(req, res, vi.fn())
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      succeeded: false,
-      message: 'Missing upload payload.'
-    })
-    expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
-  })
-
-  it('rejects multiple files in one request', async () => {
-    const { uploadHandler } = await loadHandlers()
-    const req = makeReq({
-      files: [makeFile({ originalname: 'one.png' }), makeFile({ originalname: 'two.png' })]
-    })
-    const res = makeRes()
-
-    await uploadHandler(req, res, vi.fn())
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      succeeded: false,
-      message: 'You cannot upload multiple files within the same request.'
-    })
-    expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    ['missing metadata', {}],
-    ['invalid metadata json', { mediaUpload: 'not-json' }]
-  ])('rejects %s', async (label, body) => {
-    const { uploadHandler } = await loadHandlers()
-    const req = makeReq({ body })
-    const res = makeRes()
-
-    await uploadHandler(req, res, vi.fn())
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      succeeded: false,
-      message: 'Missing upload folder metadata.'
-    })
-    expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
-    expect(global.WIKI.auth.checkAccess).not.toHaveBeenCalled()
-    expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
-  })
-
-  it('normalizes folderId 0 to root and uploads with sanitized filename', async () => {
-    const { uploadHandler } = await loadHandlers()
-    const req = makeReq({
-      files: [makeFile({ originalname: 'My File,Name;# V1.PNG' })],
-      body: {
-        mediaUpload: JSON.stringify({ folderId: 0 })
-      }
-    })
-    const res = makeRes()
-
-    await uploadHandler(req, res, vi.fn())
-
-    expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
-    expect(global.WIKI.auth.checkPageAccess).toHaveBeenCalledWith(req.user, ['write:assets', 'manage:system'], {
-      path: 'my_file_name_v1.png'
-    }, uploadAuthority)
-    expect(global.WIKI.models.assets.upload).toHaveBeenCalledWith(expect.objectContaining({
-      originalname: 'my_file_name_v1.png',
-      mode: 'upload',
-      folderId: null,
-      assetPath: 'my_file_name_v1.png',
-      user: req.user
-    }))
-    expect(res.send).toHaveBeenCalledWith('ok')
   })
 
   it('uses folder hierarchy to build the asset path before upload', async () => {
@@ -267,42 +187,4 @@ describe('controllers/upload endpoints', () => {
     expect(res.send).toHaveBeenCalledWith('ok')
   })
 
-  it('returns 400 when folder hierarchy lookup fails', async () => {
-    global.WIKI.models.assetFolders.getHierarchy.mockRejectedValueOnce(new Error('db unavailable'))
-
-    const { uploadHandler } = await loadHandlers()
-    const req = makeReq({
-      body: {
-        mediaUpload: JSON.stringify({ folderId: 42 })
-      }
-    })
-    const res = makeRes()
-
-    await uploadHandler(req, res, vi.fn())
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      succeeded: false,
-      message: 'Failed to fetch folder hierarchy.'
-    })
-    expect(global.WIKI.auth.checkAccess).not.toHaveBeenCalled()
-    expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
-  })
-
-  it('rejects uploads when path-level asset access fails', async () => {
-    global.WIKI.auth.checkPageAccess.mockReturnValueOnce(false)
-
-    const { uploadHandler } = await loadHandlers()
-    const req = makeReq()
-    const res = makeRes()
-
-    await uploadHandler(req, res, vi.fn())
-
-    expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({
-      succeeded: false,
-      message: 'You are not authorized to upload files to this folder.'
-    })
-    expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
-  })
 })

@@ -49,6 +49,9 @@ describe('Git bounded admission', () => {
     const symlink = fakeCommand(`120000 blob ${oid}          7\tunsafe\0`)
     await expect(admitGitTree(symlink, oid)).rejects.toThrow('disallowed mode')
 
+    const gitlink = fakeCommand(`160000 commit ${oid}          -\tsubmodule\0`)
+    await expect(admitGitTree(gitlink, oid)).rejects.toThrow('disallowed mode: 160000')
+
     const internal = fakeCommand(`100644 blob ${oid}          4\t.git/config\0`)
     await expect(admitGitTree(internal, oid)).rejects.toThrow('internal path')
   })

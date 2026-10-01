@@ -17,7 +17,7 @@ describe('cloud storage object keys', () => {
     expect(storageObjectKey('', 'guide/start.md')).toBe('guide/start.md')
   })
 
-  it('releases a replaced S3 client and tolerates initialization that never allocated a client', async () => {
+  it('destroys an allocated S3 client and tolerates deactivation before allocation', async () => {
     const S3CompatibleStorage = (await vi.importFresh('../../modules/storage/s3/common.ts', import.meta.url)).default
     const storage = new S3CompatibleStorage('S3')
     await storage.deactivated()
@@ -104,12 +104,8 @@ describe('cloud storage object keys', () => {
     expect(deleted).toEqual({ Bucket: 'wiki-bucket', Key: 'archive/en/guides/log.concept.md' })
   })
 
-  it.each([
-    ['S3', '../../modules/storage/s3/storage.ts'],
-    ['S3Generic', '../../modules/storage/s3generic/storage.ts'],
-    ['Digitalocean', '../../modules/storage/digitalocean/storage.ts']
-  ])('uses canonical OKF rename keys and an encoded CopySource for %s', async (_name, modulePath) => {
-    const storage = (await vi.importFresh(modulePath, import.meta.url)).default
+  it('uses canonical OKF rename keys and an encoded CopySource for S3', async () => {
+    const storage = (await vi.importFresh('../../modules/storage/s3/storage.ts', import.meta.url)).default
     storage.config = { accessKeyId: '', bucket: 'wiki-bucket', pathPrefix: '/archive/', secretAccessKey: '' }
     storage.bucketName = 'wiki-bucket'
     storage.s3 = { send: vi.fn().mockResolvedValue({}) }

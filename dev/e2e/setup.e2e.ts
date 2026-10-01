@@ -290,7 +290,7 @@ test.describe('critical post-install workflows', () => {
       setTimeout(resolve, 1200)
       await promise
       await route.continue()
-    }, { times: 1 })
+    })
     await page.addInitScript(() => {
       const modes: string[] = []
       Reflect.set(window, '__appearanceFrames', modes)
@@ -315,6 +315,7 @@ test.describe('critical post-install workflows', () => {
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await expectLightFromFirstFrame()
     await page.reload()
+    await page.locator('.admin-main').waitFor({ state: 'visible', timeout: 15_000 })
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await expectLightFromFirstFrame()
 
@@ -584,10 +585,13 @@ test.describe('critical post-install workflows', () => {
   test('exposes the full editor catalog through administration', async ({ page }) => {
     await openAuthenticatedHome(page)
     await page.goto('/a/editor')
-    await expect(page.getByRole('heading', { name: 'Editors', exact: true })).toBeVisible()
+    const registeredChoices = page.locator('.authoring-option').filter({ hasNot: page.locator('.authoring-registration') }).getByRole('checkbox')
+    await expect(registeredChoices.first()).toBeVisible()
+    const enabledChoiceNames = await registeredChoices.evaluateAll(elements => elements.map(element => element.getAttribute('aria-label')!))
     await page.getByRole('button', { name: 'Enable all registered', exact: true }).click()
-    const availableInDraft = page.locator('.authoring-intro dl > div').filter({ has: page.getByText('Available in draft', { exact: true }) })
-    await expect(availableInDraft).toContainText(/5\s*\/\s*5/)
+    for (const name of enabledChoiceNames) {
+      await expect(page.getByRole('checkbox', { name, exact: true })).toBeChecked()
+    }
     const reviewChanges = page.getByRole('button', { name: 'Review changes', exact: true })
     await reviewChanges.click()
     const review = page.getByRole('dialog', { name: 'A clearer starting point.' })
@@ -595,6 +599,11 @@ test.describe('critical post-install workflows', () => {
     await review.getByRole('button', { name: 'Save editor policy', exact: true }).click()
     await expect(review).not.toBeVisible()
     await expect(reviewChanges).toBeDisabled()
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.locator('.authoring-options').waitFor({ state: 'visible', timeout: 15_000 })
+    for (const name of enabledChoiceNames) {
+      await expect(page.getByRole('checkbox', { name, exact: true })).toBeChecked()
+    }
   })
 
   test('retains the Visual HTML editor and HTML content type', async ({ page }) => {
@@ -1094,6 +1103,9 @@ test.describe('critical post-install workflows', () => {
     await reviewDialog.getByRole('button', { name: 'Save sign-in policy' }).click()
     expect((await saved).ok()).toBe(true)
     await expect(displayName).toHaveValue('Local Browser')
+    await openClientPage(page, '/a/auth', '.identity-register')
+    await page.getByRole('button', { name: 'Configure Local Browser', exact: true }).click()
+    await expect(displayName).toHaveValue('Local Browser')
   })
 
   test('applies the PostgreSQL search configuration and rebuilds its index', async ({ page }) => {
@@ -1107,6 +1119,11 @@ test.describe('critical post-install workflows', () => {
     const saved = page.waitForResponse(response => response.url().endsWith('/_api/search/engines') && response.request().method() === 'POST')
     await page.getByRole('button', { name: 'Save configuration' }).click()
     expect((await saved).ok()).toBe(true)
+    await openClientPage(page, '/a/search', '.search-configuration')
+    await expect(page.getByRole('radio', { name: /^Database - PostgreSQL\b/ })).toBeChecked()
+    await dictionary.press('ArrowDown')
+    await expect(page.getByRole('option', { name: 'simple', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await dictionary.press('Escape')
 
     await page.getByRole('tab', { name: 'Index maintenance' }).click()
     await page.getByRole('button', { name: 'Rebuild index', exact: true }).click()
@@ -1114,6 +1131,15 @@ test.describe('critical post-install workflows', () => {
     const rebuilt = page.waitForResponse(response => response.url().endsWith('/_api/search/rebuild-index') && response.request().method() === 'POST')
     await rebuildDialog.getByRole('button', { name: 'Rebuild index', exact: true }).click()
     expect((await rebuilt).ok()).toBe(true)
+    await openClientPage(page, '/en/home', '.page-header-section')
+    const search = await openSearch(page)
+    await search.fill('home')
+    const searchDialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
+    const homeResult = searchDialog.locator('.search-results-item').filter({ has: page.getByText('Home', { exact: true }) })
+    await expect(homeResult).toBeVisible()
+    await homeResult.click()
+    await expect(page).toHaveURL('/en/home')
+    await expect(page.getByRole('heading', { name: 'Browser Workflow', exact: true })).toBeVisible()
   })
 
   test('requires and recovers from two-factor authentication', async ({ page }) => {

@@ -24,6 +24,13 @@ describe('Mail diagnostic evidence', () => {
     }
     expect(mailDiagnosticFailure('test', { code: 'ESOCKET' }).state).toBe('uncertain')
     expect(mailDiagnosticFailure('connection', { code: 'ESOCKET' }).state).toBe('failed')
-    expect(mailDiagnosticFailure('dkim', { code: 'ENODATA' }).summary).toContain('No DKIM TXT record')
+    const providerMessage = 'private DNS provider trace'
+    const noRecord = mailDiagnosticFailure('dkim', { code: 'ENODATA', message: providerMessage })
+    const lookupFailure = mailDiagnosticFailure('dkim', { code: 'ESERVFAIL', message: providerMessage })
+    expect(noRecord.state).toBe('failed')
+    expect(lookupFailure.state).toBe('failed')
+    expect(noRecord.summary).not.toBe(lookupFailure.summary)
+    expect(JSON.stringify(noRecord)).not.toContain(providerMessage)
+    expect(JSON.stringify(lookupFailure)).not.toContain(providerMessage)
   })
 })

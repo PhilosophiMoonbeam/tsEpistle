@@ -291,9 +291,3 @@ export const serializeSkillFrontmatter = (frontmatter: ParsedSkillFrontmatter): 
   'allowed-tools': frontmatter.allowedTools,
   ...frontmatter.unknown
 })
-
-export const intersectAllowedTools = (available: readonly string[], allowedTools: readonly string[]): readonly string[] => {
-  if (allowedTools.length === 0) return [...available]
-  const allowed = new Set(allowedTools)
-  return available.filter(tool => allowed.has(tool))
-}

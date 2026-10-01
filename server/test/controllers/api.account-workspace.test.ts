@@ -16,10 +16,17 @@ describe('reviewed account workspace transports', () => {
     }
     await handlers.get('post /workspace/:id/welcome-email')!({ user, params: { id: '7' }, body }, response()); expect(welcome).toHaveBeenCalledWith(7, user, body)
   })
-  it('returns a created identity only after persistence and does not send mail implicitly', async () => {
-    store.create.mockResolvedValue({ id: 17 }); const res = response(), user = { id: 1 }, body = { profile: {}, fingerprint: 'options' }
-    await handlers.get('post /workspace')!({ user, body }, res)
-    expect(store.create).toHaveBeenCalledWith(user, body); expect(res.status).toHaveBeenCalledWith(201); expect(res.json).toHaveBeenCalledWith({ id: 17 }); expect(welcome).not.toHaveBeenCalled()
+  it('returns a created identity only after the creation owner completes and does not send mail implicitly', async () => {
+    let finishCreate!: (identity: { id: number }) => void
+    store.create.mockReturnValue(new Promise<{ id: number }>(resolve => { finishCreate = resolve }))
+    const res = response(), user = { id: 1 }, body = { profile: {}, fingerprint: 'options' }
+    const pending = handlers.get('post /workspace')!({ user, body }, res)
+    expect(store.create).toHaveBeenCalledWith(user, body)
+    expect(res.json).not.toHaveBeenCalled()
+    expect(welcome).not.toHaveBeenCalled()
+    finishCreate({ id: 17 })
+    await pending
+    expect(res.status).toHaveBeenCalledWith(201); expect(res.json).toHaveBeenCalledWith({ id: 17 }); expect(welcome).not.toHaveBeenCalled()
   })
   it('denies every workspace route before reading or mutating accounts for an unauthorized requester', async () => {
     ;(WIKI.auth.checkAccess as ReturnType<typeof vi.fn>).mockReturnValue(false)

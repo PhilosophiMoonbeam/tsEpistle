@@ -1,30 +1,10 @@
-import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import knexModule from 'knex'
 import type { Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  databaseName.endsWith('_beta_migration_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        password,
-        database: databaseName
-      }
-    : null
-const directlyInvoked =
-  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') &&
-  process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('beta-migration.postgres.integration.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error('Explicit beta-migration PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _beta_migration_test and a PostgreSQL password.')
-}
+const connection = getPostgresTestConnection('_beta_migration_test', import.meta.path)
 
 const wikiDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'WIKI')
 Object.defineProperty(globalThis, 'WIKI', {

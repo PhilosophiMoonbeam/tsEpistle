@@ -11,7 +11,6 @@ import {
   rearmPageMutationEffect,
   supersedeStalePageRenderEffects,
   PageProjectionLifecycle,
-  PageMutationOutboxError,
   type PageProjectionSink
 } from '../../core/page-mutation-outbox.ts'
 
@@ -164,6 +163,9 @@ describe('page mutation projection outbox', () => {
       ownerId: null
     })
     await knex.transaction(transaction => supersedeStalePageRenderEffects(transaction, { pageId: 42, sourceRevision: '9' }))
+    const persisted = await knex('pageMutationOutbox').where({ id: effectId }).first('status', 'result')
+    expect(persisted.status).toBe('superseded')
+    expect(JSON.parse(persisted.result)).toMatchObject({ superseded: true })
     await expect(readPageRenderEffectStatus(knex, { effectId })).resolves.toMatchObject({
       effectId,
       pageId: 42,
@@ -175,6 +177,7 @@ describe('page mutation projection outbox', () => {
   it('represents deletion without retaining deleted source', async () => {
     await enqueue({ desiredState: 'absent', action: 'delete', source: undefined, location: undefined, previousLocation: location })
     const rows = await knex('pageMutationOutbox').orderBy('effectKind')
+    expect(rows.map(row => row.effectKind)).toEqual(['knowledge', 'links', 'render', 'search'])
     for (const row of rows) {
       expect(JSON.parse(row.payload)).toMatchObject({ desiredState: 'absent', sourceSha256: null, location: null, previousLocation: location })
       expect(row.payload).not.toContain('# Start')
@@ -182,15 +185,32 @@ describe('page mutation projection outbox', () => {
   })
 
   it('claims in deterministic order with fenced leases and reclaims expiry', async () => {
-    await enqueue({ effects: ['render', 'knowledge'] })
+    const [renderId, knowledgeId] = await enqueue({ effects: ['render', 'knowledge'] })
+    if (!renderId || !knowledgeId) throw new Error('effects missing')
+    await knex('pageMutationOutbox').where({ id: knowledgeId }).update({
+      availableAt: '2100-08-15T00:00:00.000Z',
+      createdAt: '2100-08-15T00:00:00.000Z'
+    })
+    await knex('pageMutationOutbox').where({ id: renderId }).update({
+      availableAt: '2100-08-16T00:00:00.000Z',
+      createdAt: '2100-08-16T00:00:00.000Z'
+    })
     const now = new Date('2100-08-17T00:00:00.000Z')
     const first = await claimPageMutationEffects(knex, { leaseOwner: 'worker-a', limit: 1, leaseMs: 1_000, now })
     expect(first).toHaveLength(1)
     expect(first[0]).toMatchObject({ attempts: 1, leaseToken: expect.any(String) })
-    expect(await claimPageMutationEffects(knex, { leaseOwner: 'worker-b', limit: 1, leaseMs: 1_000, now })).toHaveLength(1)
+    expect(first.map(item => item.id)).toEqual([knowledgeId])
+    const second = await claimPageMutationEffects(knex, { leaseOwner: 'worker-b', limit: 1, leaseMs: 1_000, now })
+    expect(second).toHaveLength(1)
+    expect(second.map(item => item.id)).toEqual([renderId])
+    expect(await claimPageMutationEffects(knex, { leaseOwner: 'worker-d', limit: 2, leaseMs: 1_000, now })).toEqual([])
     const reclaimed = await claimPageMutationEffects(knex, { leaseOwner: 'worker-c', limit: 2, leaseMs: 1_000, now: new Date(now.valueOf() + 1_001) })
     expect(reclaimed).toHaveLength(2)
     expect(reclaimed.map(item => item.attempts)).toEqual([2, 2])
+    expect(reclaimed.map(item => item.id)).toEqual([knowledgeId, renderId])
+    for (const original of [...first, ...second]) {
+      expect(reclaimed.find(item => item.id === original.id)?.leaseToken).not.toBe(original.leaseToken)
+    }
   })
 
   it('optionally bounds a claim to unexpired active leases while leaving unconstrained effects unchanged', async () => {
@@ -531,7 +551,20 @@ describe('page mutation projection outbox', () => {
     }
     await expect(
       Promise.resolve(executePageMutationEffect(knex, badClaim, new Map([['render', badSink]]), new AbortController().signal))
-    ).rejects.toBeInstanceOf(PageMutationOutboxError)
+    ).rejects.toMatchObject({ code: 'PROJECTION_POSTCONDITION_FAILED' })
+    expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'failed' })
+
+    await knex('pageMutationOutbox').delete()
+    await enqueue({ effects: ['render'] })
+    const [malformedClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'worker-c' })
+    if (!malformedClaim) throw new Error('claim missing')
+    const malformedSink = {
+      kind: 'render',
+      reconcile: async () => ({ result: {}, postcondition: { satisfied: 'true', observedSourceRevision: '8', detail: 'invalid boolean' } })
+    } as unknown as PageProjectionSink
+    await expect(
+      Promise.resolve(executePageMutationEffect(knex, malformedClaim, new Map([['render', malformedSink]]), new AbortController().signal))
+    ).rejects.toMatchObject({ code: 'PROJECTION_POSTCONDITION_FAILED' })
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'failed' })
   })
 
@@ -618,7 +651,8 @@ describe('production page projection lifecycle', () => {
     await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
 
     expect(renderPage).toHaveBeenCalledWith(42)
-    expect(evicted).toEqual(['en/docs/old/public', 'en/docs/old/public'])
+    expect(evicted).toContain('en/docs/old/public')
+    expect(evicted.every(identity => identity === 'en/docs/old/public')).toBe(true)
     expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'target' }])
     expect(await knex('pagesVector').select('pageId', 'sourceRevision')).toEqual([{ pageId: 42, sourceRevision: 8 }])
     expect(await knex('pageMutationOutbox').select('effectKind', 'status').orderBy('effectKind')).toEqual([
@@ -654,8 +688,7 @@ describe('production page projection lifecycle', () => {
     expect(settled.status).toBe('succeeded')
     expect(JSON.parse(settled.postcondition)).toMatchObject({
       satisfied: true,
-      observedSourceRevision: '8',
-      detail: expect.stringContaining('Persisted links exactly match')
+      observedSourceRevision: '8'
     })
   })
 
@@ -693,7 +726,9 @@ describe('production page projection lifecycle', () => {
     const linkEffect = await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'postcondition')
     expect(linkEffect.status).toBe('succeeded')
     expect(JSON.parse(linkEffect.postcondition)).toMatchObject({ satisfied: true, observedSourceRevision: '8' })
-    expect(await knex('pageLinks').select('pageId', 'localeCode', 'path').where({ pageId: 42 })).toEqual([...expectedLinks].reverse())
+    const persistedLinks = await knex('pageLinks').select('pageId', 'localeCode', 'path').where({ pageId: 42 })
+    const linkIdentity = (link: { pageId: number; localeCode: string; path: string }): string => JSON.stringify([link.pageId, link.localeCode, link.path])
+    expect(persistedLinks.map(linkIdentity).sort()).toEqual(expectedLinks.map(linkIdentity).sort())
   })
 
   it.each([
@@ -738,8 +773,7 @@ describe('production page projection lifecycle', () => {
     expect(linkEffect.status).toBe('failed')
     expect(JSON.parse(linkEffect.postcondition)).toMatchObject({
       satisfied: false,
-      observedSourceRevision: '8',
-      detail: expect.stringContaining('did not prove')
+      observedSourceRevision: '8'
     })
   })
 

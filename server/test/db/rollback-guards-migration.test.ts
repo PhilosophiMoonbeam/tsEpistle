@@ -135,8 +135,11 @@ describe('asset relocation rollback guard', () => {
     expect(await db.schema.hasTable('assetRelocationEffects')).toBe(false)
     expect(await db.schema.hasTable('assetRelocationOperations')).toBe(false)
     expect(await db.schema.hasColumn('pageProtectedAssets', 'assetId')).toBe(false)
-    const indexes = (await db.raw('PRAGMA index_list("assets")')) as Array<{ name: string }>
-    expect(indexes.some(index => index.name === 'assets_folder_filename_unique')).toBe(false)
+    await db('assets').insert({ id: 2, filename: 'ASSET.TXT', hash: assetHash('ASSET.TXT'), folderId: 0 })
+    expect(await db('assets').select('id', 'filename', 'folderId').orderBy('id')).toEqual([
+      { id: 1, filename: 'asset.txt', folderId: null },
+      { id: 2, filename: 'ASSET.TXT', folderId: 0 }
+    ])
   })
 })
 

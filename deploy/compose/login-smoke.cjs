@@ -56,19 +56,27 @@ async function main() {
   const field = page.locator('.login-particle-logo')
   if (await field.count()) {
     if ((await field.getAttribute('aria-hidden')) !== 'true') throw new Error('Particle logo is exposed to assistive technology')
-    if (await field.locator('.login-particle-logo__silhouette').count()) throw new Error('Obsolete logo silhouette is present')
     const deadline = Date.now() + 20_000
-    let committed = false
+    let outcome = null
+    let state = null
     while (Date.now() < deadline) {
-      const state = await field.evaluate(element => ({
-        canvases: element.querySelectorAll('canvas').length,
-        opacity: getComputedStyle(element.querySelector('.login-particle-logo__image')).opacity
-      }))
-      if (state.canvases === 1 && state.opacity === '0') { committed = true; break }
-      if (state.canvases === 0 && state.opacity === '1' && Date.now() > deadline - 10_000) break
+      state = await field.evaluate(element => {
+        const image = element.querySelector('.login-particle-logo__image')
+        const style = image ? getComputedStyle(image) : null
+        const bounds = image?.getBoundingClientRect()
+        return {
+          canvases: element.querySelectorAll('canvas').length,
+          opacity: style?.opacity ?? null,
+          staticVisible: Boolean(image?.complete && image.naturalWidth > 0 && style?.opacity === '1' &&
+            style.display !== 'none' && style.visibility === 'visible' && bounds?.width > 0 && bounds?.height > 0)
+        }
+      })
+      if (state.canvases === 1 && state.opacity === '0') { outcome = 'committed'; break }
+      if (state.canvases === 0 && state.staticVisible && Date.now() > deadline - 10_000) { outcome = 'static'; break }
       await page.waitForTimeout(200)
     }
-    if (committed) {
+    if (!outcome) throw new Error(`Particle logo did not reach a rendered terminal state: ${JSON.stringify(state)}`)
+    if (outcome === 'committed') {
       const canvas = field.locator('canvas')
       const backend = await canvas.evaluate(element => element.getContext('webgl2') ? 'webgl2' : 'unknown')
       if (backend !== 'webgl2') throw new Error(`Forced fallback committed unexpected backend: ${backend}`)
@@ -82,6 +90,14 @@ async function main() {
     reducedMotionTeardownStarted = true
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.waitForFunction(() => document.querySelectorAll('.login-particle-logo canvas').length === 0)
+    await page.waitForFunction(() => {
+      const image = document.querySelector('.login-particle-logo__image')
+      if (!image) return false
+      const style = getComputedStyle(image)
+      const bounds = image.getBoundingClientRect()
+      return image.complete && image.naturalWidth > 0 && style.opacity === '1' &&
+        style.display !== 'none' && style.visibility === 'visible' && bounds.width > 0 && bounds.height > 0
+    }, undefined, { timeout: 20_000 })
     if (!(await email.evaluate(element => element === document.activeElement))) throw new Error('Reduced-motion teardown disturbed login focus')
   }
   if (failures.length > 0) throw new Error(failures.join(' | '))

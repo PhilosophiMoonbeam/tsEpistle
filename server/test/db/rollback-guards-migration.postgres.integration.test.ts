@@ -1,38 +1,78 @@
-import fs from 'node:fs'
 import { createHash } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
 import { down as downSearchability, up as upSearchability } from '../../db/migrations/tsepistle-000035-page-search-inclusion.ts'
 import { down as downAssetRelocation, up as upAssetRelocation } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
 import { down as downAvatarOrigin, up as upAvatarOrigin } from '../../db/migrations/tsepistle-000038-user-avatar-origin.ts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection =
-  databaseName.endsWith('_rollback_guards_test') && password
-    ? {
-        host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
-        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-        password,
-        database: databaseName
-      }
-    : undefined
-const directlyInvoked =
-  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') &&
-  process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('rollback-guards-migration.postgres.integration.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-
-if (databaseContractRequired && !connection) {
-  throw new Error(
-    'Explicit rollback guard PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _rollback_guards_test and a PostgreSQL password.'
-  )
-}
+const connection = getPostgresTestConnection('_rollback_guards_test', import.meta.path)
 
 const suite = connection ? describe : describe.skip
 const assetHash = (assetPath: string): string => createHash('sha1').update(assetPath).digest('hex')
+
+const expectWriterBlockedRollback = async (
+  tableName: string,
+  write: (transaction: Knex.Transaction) => PromiseLike<unknown>,
+  migrateDown: (database: Knex) => Promise<void>,
+  refusal: string
+): Promise<void> => {
+  const writer = knexModule({ client: 'pg', connection, pool: { min: 0, max: 1 } })
+  const rollbackDatabase = knexModule({ client: 'pg', connection, pool: { min: 0, max: 1 } })
+  const observer = knexModule({ client: 'pg', connection, pool: { min: 0, max: 1 } })
+  let blocker: Knex.Transaction | undefined
+  let rollbackSettled: Promise<void> | undefined
+  try {
+    blocker = await writer.transaction()
+    await write(blocker)
+    const writerPid = (await blocker.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid
+    await rollbackDatabase.raw(`SET statement_timeout = '3s'`)
+    await observer.raw(`SET statement_timeout = '1s'`)
+    // A single-connection pool keeps the observed PID attached to the migration.
+    const rollbackPid = (await rollbackDatabase.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid
+    let finished = false
+    const rollback = migrateDown(rollbackDatabase)
+    rollbackSettled = rollback.then(
+      () => { finished = true },
+      () => { finished = true }
+    )
+    const deadline = performance.now() + 2_000
+    let waiting = false
+    while (performance.now() < deadline && !finished) {
+      const result = await observer.raw<{ rows: Array<{ waiting: boolean }> }>(`
+        SELECT EXISTS (
+          SELECT 1 FROM pg_locks
+          WHERE pid = ?
+            AND locktype = 'relation'
+            AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+            AND relation = ?::regclass
+            AND NOT granted
+            AND ? = ANY(pg_blocking_pids(pid))
+        ) AS waiting
+      `, [rollbackPid, `"${tableName}"`, writerPid])
+      if (result.rows[0]?.waiting) {
+        waiting = true
+        break
+      }
+      // PostgreSQL lock state advances outside Bun's clock; poll the observed condition, not a guessed completion delay.
+      await Bun.sleep(20)
+    }
+    expect(waiting).toBe(true)
+    await blocker.commit()
+    await expect(Promise.resolve(rollback)).rejects.toThrow(refusal)
+  } finally {
+    try {
+      if (blocker && !blocker.isCompleted()) await blocker.rollback()
+    } finally {
+      try {
+        await rollbackSettled
+      } finally {
+        await Promise.all([observer.destroy(), rollbackDatabase.destroy(), writer.destroy()])
+      }
+    }
+  }
+}
 
 suite('PostgreSQL rollback guards', () => {
   let db: Knex
@@ -66,27 +106,12 @@ suite('PostgreSQL rollback guards', () => {
     await upSearchability(db)
     await db('pages').insert({ isSearchable: true })
 
-    const writer = knexModule({ client: 'pg', connection, pool: { min: 0, max: 1 } })
-    const blocker = await writer.transaction()
-    await blocker('pages').where({ id: 1 }).update({ isSearchable: false })
-
-    let resolveLock!: () => void
-    const lockIssued = new Promise<void>(resolve => {
-      resolveLock = resolve
-    })
-    const onQuery = ({ sql }: { sql?: string }) => {
-      if (sql?.toLowerCase().includes('lock table "pages"')) resolveLock()
-    }
-    db.on('query', onQuery)
-    const rollback = downSearchability(db)
-    try {
-      await lockIssued
-      await blocker.commit()
-      await expect(Promise.resolve(rollback)).rejects.toThrow('Cannot roll down page search inclusion migration')
-    } finally {
-      db.removeListener('query', onQuery)
-      await writer.destroy()
-    }
+    await expectWriterBlockedRollback(
+      'pages',
+      transaction => transaction('pages').where({ id: 1 }).update({ isSearchable: false }),
+      downSearchability,
+      'Cannot roll down page search inclusion migration'
+    )
 
     expect(await db.schema.hasColumn('pages', 'isSearchable')).toBe(true)
     expect(Boolean((await db('pages').first('isSearchable'))?.isSearchable)).toBe(false)
@@ -111,29 +136,12 @@ suite('PostgreSQL rollback guards', () => {
     await db('pageProtectedAssets').insert({ pageId: 1, assetPath: 'asset.txt' })
     await upAssetRelocation(db)
 
-    const writer = knexModule({ client: 'pg', connection, pool: { min: 0, max: 1 } })
-    const blocker = await writer.transaction()
-    await blocker('assets')
-      .where({ id: 1 })
-      .update({ filename: 'changed.txt', hash: assetHash('changed.txt') })
-
-    let resolveLock!: () => void
-    const lockIssued = new Promise<void>(resolve => {
-      resolveLock = resolve
-    })
-    const onQuery = ({ sql }: { sql?: string }) => {
-      if (sql?.toLowerCase().includes('lock table "assets"')) resolveLock()
-    }
-    db.on('query', onQuery)
-    const rollback = downAssetRelocation(db)
-    try {
-      await lockIssued
-      await blocker.commit()
-      await expect(Promise.resolve(rollback)).rejects.toThrow('Cannot roll down asset relocation migration')
-    } finally {
-      db.removeListener('query', onQuery)
-      await writer.destroy()
-    }
+    await expectWriterBlockedRollback(
+      'assets',
+      transaction => transaction('assets').where({ id: 1 }).update({ filename: 'changed.txt', hash: assetHash('changed.txt') }),
+      downAssetRelocation,
+      'Cannot roll down asset relocation migration'
+    )
 
     expect(await db.schema.hasColumn('pageProtectedAssets', 'assetId')).toBe(true)
     expect(await db.schema.hasTable('assetRelocationOperations')).toBe(true)
@@ -148,27 +156,12 @@ suite('PostgreSQL rollback guards', () => {
     await upAvatarOrigin(db)
     await db('userAvatars').update({ origin: 'provider' })
 
-    const writer = knexModule({ client: 'pg', connection, pool: { min: 0, max: 1 } })
-    const blocker = await writer.transaction()
-    await blocker('userAvatars').where({ id: 1 }).update({ origin: 'self-service', data: Buffer.from('self-service-avatar') })
-
-    let resolveLock!: () => void
-    const lockIssued = new Promise<void>(resolve => {
-      resolveLock = resolve
-    })
-    const onQuery = ({ sql }: { sql?: string }) => {
-      if (sql?.toLowerCase().includes('lock table "useravatars"')) resolveLock()
-    }
-    db.on('query', onQuery)
-    const rollback = downAvatarOrigin(db)
-    try {
-      await lockIssued
-      await blocker.commit()
-      await expect(Promise.resolve(rollback)).rejects.toThrow('Cannot roll down user avatar origin')
-    } finally {
-      db.removeListener('query', onQuery)
-      await writer.destroy()
-    }
+    await expectWriterBlockedRollback(
+      'userAvatars',
+      transaction => transaction('userAvatars').where({ id: 1 }).update({ origin: 'self-service', data: Buffer.from('self-service-avatar') }),
+      downAvatarOrigin,
+      'Cannot roll down user avatar origin'
+    )
 
     const avatar = await db('userAvatars').where({ id: 1 }).first()
     expect(await db.schema.hasColumn('userAvatars', 'origin')).toBe(true)

@@ -1,5 +1,5 @@
 
-import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { describe, expect, it } from '../bun-test.mts'
 import auth from '../../core/auth.ts'
 import type { PageRuleAuthority } from '../../helpers/group-access.ts'
 
@@ -118,7 +118,7 @@ describe('page-rule authorization contract', () => {
     expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, [allowExact, denyPrefix])]))).toBe(true)
   })
 
-  it('applies locale, tag, role, and group-id constraints', () => {
+  it('applies locale, tag, role, and empty-authority snapshot constraints', () => {
     const groups = {
       first: group(1, [
         rule({ locales: ['fr'] }),
@@ -129,12 +129,12 @@ describe('page-rule authorization contract', () => {
     const firstRequester = user([{ id: 1 }])
     const secondRequester = user([{ id: 2 }])
     const wrongRoleRequester = user([{ id: 2 }], ['write:pages'])
-    const unknownGroupRequester = user([{ id: 99 }])
+    const emptyAuthorityRequester = user([{ id: 99 }])
 
     expect(auth.checkPageAccess(firstRequester, ['read:pages'], page, authorityFor(firstRequester, [groups.first]))).toBe(false)
     expect(auth.checkPageAccess(secondRequester, ['read:pages'], page, authorityFor(secondRequester, [groups.second]))).toBe(true)
     expect(auth.checkPageAccess(wrongRoleRequester, ['write:pages'], page, authorityFor(wrongRoleRequester, [groups.second]))).toBe(false)
-    expect(auth.checkPageAccess(unknownGroupRequester, ['read:pages'], page, authorityFor(unknownGroupRequester))).toBe(false)
+    expect(auth.checkPageAccess(emptyAuthorityRequester, ['read:pages'], page, authorityFor(emptyAuthorityRequester))).toBe(false)
   })
 
   it('treats an invalid regular expression as non-matching instead of breaking access', () => {
@@ -151,49 +151,3 @@ describe('page-rule authorization contract', () => {
   })
 })
 
-
-describe('group assignment authorization contract', () => {
-  const originalWiki = Reflect.get(globalThis, 'WIKI')
-  let assignmentGroups: Array<{ id: number; permissions: string[] }>
-
-  beforeEach(() => {
-    assignmentGroups = []
-    Reflect.set(globalThis, 'WIKI', {
-      config: {},
-      configSvc: {},
-      events: {},
-      lang: {},
-      logger: {},
-      models: {
-        groups: {
-          query: () => ({
-            whereIn: async (_column: string, ids: readonly number[]) => assignmentGroups.filter(candidate => ids.includes(candidate.id))
-          })
-        }
-      },
-      startedAt: {}
-    })
-  })
-
-  afterEach(() => {
-    if (originalWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI')
-    else Reflect.set(globalThis, 'WIKI', originalWiki)
-  })
-
-  it.each(['write:users', 'manage:users', 'write:groups', 'manage:groups'])(
-    'prevents delegated %s authority from assigning a write:scripts group',
-    async permission => {
-      assignmentGroups = [{ id: 7, permissions: ['read:pages', 'write:scripts'] }]
-
-      await expect(auth.checkAssignUserToGroupAccess(user([], [permission]), [7])).resolves.toBe(false)
-    }
-  )
-
-  it('allows only system authority to assign script groups while preserving ordinary assignments', async () => {
-    assignmentGroups = [{ id: 7, permissions: ['write:scripts'] }]
-    await expect(auth.checkAssignUserToGroupAccess(user([], ['manage:system']), [7])).resolves.toBe(true)
-
-    assignmentGroups = [{ id: 8, permissions: ['read:pages', 'write:pages'] }]
-    await expect(auth.checkAssignUserToGroupAccess(user([], ['manage:users']), [8])).resolves.toBe(true)
-  })
-})

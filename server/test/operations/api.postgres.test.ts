@@ -4,18 +4,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bu
 import type { SystemRequester } from '../../helpers/system-authority.ts'
 import { describeApiKeyGrant } from '../../operations/api-connections.ts'
 import type ApiKeyModel from '../../models/apiKeys.ts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_api_operations_test') && password
-  ? {
-      host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1',
-      port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-      user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-      password,
-      database
-    }
-  : null
+const connection = getPostgresTestConnection('_api_operations_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const originalWiki = Reflect.get(globalThis, 'WIKI')
 const administrator: SystemRequester = { user: { id: 1, authVersion: 0 } as never }
@@ -41,7 +32,7 @@ suite('API credential authority operations on PostgreSQL', () => {
   const emit = vi.fn()
 
   const delegatedApi = (): SystemRequester => ({
-    user: { id: 1, ownershipUserId: null, groups: [3] } as never,
+    user: { api: delegatedApiKeyId, grp: 3, ownershipUserId: null, groups: [3] } as never,
     apiKey: {
       id: delegatedApiKeyId,
       groupId: 3,

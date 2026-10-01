@@ -321,7 +321,7 @@ describe('collaboration service multi-instance transport', () => {
       expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
       expectedSourceRevision: '1',
       requester: { id: 1 } as Express.User
-    })).rejects.toThrow('Another user changed this shared draft')
+    })).rejects.toMatchObject({ name: 'COLLABORATION_DRAFT_CONTRIBUTOR_CONFLICT', status: 409 })
     expect(collaborationStateContent((await roomStore.get(42))?.state ?? '')).toContain('other user')
   })
 
@@ -360,7 +360,7 @@ describe('collaboration service multi-instance transport', () => {
         expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
         expectedSourceRevision: '1',
         requester: { id: 1 } as Express.User
-      })).rejects.toThrow('Another user is actively editing this page')
+      })).rejects.toMatchObject({ name: 'COLLABORATION_ACTIVE_PEERS', status: 409 })
       expect(socket.readyState).toBe(WebSocket.OPEN)
       expect(peerSocket.readyState).toBe(WebSocket.OPEN)
     } finally {

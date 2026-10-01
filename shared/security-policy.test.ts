@@ -26,6 +26,8 @@ describe('Workspace security policy boundaries', () => {
   it('rejects malformed CSP and header controls, including duplicate directives', () => {
     for (const directives of ["default-src 'self'\rX-Injected: yes", "default-src 'self'; default-src *", 'Default-Src *', 'x\u0000y', 'é'])
       expect(validateSecurityPolicy({ ...policy(), securityCSPDirectives: directives }).ok).toBe(false)
+    for (const directives of ["default-src 'self'\u0000", 'img-src https://é.example.invalid'])
+      expect(validateSecurityPolicy({ ...policy(), securityCSPDirectives: directives }).ok).toBe(false)
     expect(validateSecurityPolicy({ ...policy(), securityCSPMode: 'enforce' }).ok).toBe(false)
   })
   it('allows empty or same-workspace backgrounds while excluding script, protocol-relative and credential URLs', () => {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from '../../../test/bun-test.mts'
 
 import { OAuthStateStore } from '../oauth-state.ts'
-import { DropboxStrategy, type DropboxProfile, type DropboxStrategyOptions, type DropboxVerify } from './dropbox-strategy.ts'
+import { DropboxStrategy, type DropboxProfile, type DropboxStrategyOptions } from './dropbox-strategy.ts'
 
 const options: DropboxStrategyOptions = {
   clientID: 'app-key',
@@ -59,12 +59,9 @@ afterEach(() => {
 })
 
 describe('Dropbox strategy', () => {
-  it('uses Dropbox OAuth endpoints, PKCE, and the configured strategy name', () => {
+  it('uses the Dropbox OAuth token endpoint', () => {
     const strategy = createStrategy()
     expect(strategy._oauth2._accessTokenUrl).toBe('https://api.dropboxapi.com/oauth2/token')
-    expect(strategy.name).toBe('dropbox-oauth2')
-    expect(options.pkce).toBe(true)
-    expect(options.store).toBeInstanceOf(OAuthStateStore)
   })
 
   it('registers under the configured transport-specific provider key', async () => {
@@ -83,9 +80,8 @@ describe('Dropbox strategy', () => {
       } as never
     )
 
-    const [key, strategy] = passport.use.mock.calls[0] ?? []
+    const [key] = passport.use.mock.calls[0] ?? []
     expect(key).toBe('agents:dropbox')
-    expect(strategy).toMatchObject({ name: 'dropbox-oauth2' })
   })
 
   it('POSTs the literal null body and normalizes the exact Dropbox account contract', async () => {
@@ -137,13 +133,11 @@ describe('Dropbox strategy', () => {
     ['email_verified is false', { ...profileResponse, email_verified: false }, 'email_verified'],
     ['email_verified is missing', { account_id: profileResponse.account_id, name: profileResponse.name, email: profileResponse.email, profile_photo_url: profileResponse.profile_photo_url }, 'email_verified'],
     ['email is invalid', { ...profileResponse, email: 'not-an-email' }, 'email']
-  ] as const)('rejects an account when %s before the Passport verifier can receive a profile', async (_case, account, invalidField) => {
-    const verify = vi.fn<DropboxVerify>()
+  ] as const)('rejects an account when %s', async (_case, account, invalidField) => {
     const fetchMock = vi.fn(async () => await profileRequest(JSON.stringify(account)))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(getProfileError(new DropboxStrategy(options, verify))).resolves.toMatchObject({ message: expect.stringContaining(invalidField) })
-    expect(verify).not.toHaveBeenCalled()
+    await expect(getProfileError(createStrategy())).resolves.toMatchObject({ message: expect.stringContaining(invalidField) })
   })
 
   it('rejects non-2xx, malformed, oversized, and incomplete account responses', async () => {

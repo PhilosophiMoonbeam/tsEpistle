@@ -72,12 +72,29 @@ describe('Analytics provider contracts and compiled browser code', () => {
   })
   it('emits an explicit Yandex replay boolean and a version-pinned Elastic loader', async () => {
     const yandex = { key: 'yandex', isEnabled: true, config: { tagNumber: '42', webvisor: 'false' } }
-    const replayOff = compileAnalyticsTemplate(await readAnalyticsTemplate(serverPath, 'yandex'), yandex)
-    expect(replayOff.head).toContain('webvisor:false')
-    expect(replayOff.head).not.toContain('webvisor:true')
-
-    yandex.config.webvisor = 'true'
-    expect(compileAnalyticsTemplate(await readAnalyticsTemplate(serverPath, 'yandex'), yandex).head).toContain('webvisor:true')
+    const template = await readAnalyticsTemplate(serverPath, 'yandex')
+    for (const [configuredReplay, expectedReplay] of [['false', false], ['true', true]] as const) {
+      yandex.config.webvisor = configuredReplay
+      const code = compileAnalyticsTemplate(template, yandex)
+      const calls: unknown[][] = []
+      const ym = (...args: unknown[]): void => { calls.push(args) }
+      const $ = cheerio.load(code.head)
+      const context = {
+        ym,
+        window: { ym },
+        document: {
+          createElement: () => ({}),
+          getElementsByTagName: () => [{ parentNode: { insertBefore: () => {} } }]
+        }
+      }
+      for (const script of $('script:not([src])').toArray()) new Script($(script).html() ?? '').runInNewContext(context)
+      expect(calls).toHaveLength(1)
+      const [tag, command, options] = calls[0]!
+      expect(tag).toBe(42)
+      expect(command).toBe('init')
+      if (options === null || typeof options !== 'object' || !('webvisor' in options)) throw new Error('Expected Yandex initialization options')
+      expect(options.webvisor).toBe(expectedReplay)
+    }
     expect(analyticsProviderIssues({ ...yandex, config: { ...yandex.config, webvisor: 'yes' } })).toContain('Session replay must be true or false.')
 
     const elastic = analyticsProviderDefinitions.find(definition => definition.key === 'elasticapm')!

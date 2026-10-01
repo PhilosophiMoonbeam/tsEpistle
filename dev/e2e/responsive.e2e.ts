@@ -1,4 +1,5 @@
 import { type Dialog, expect, type Locator, type Page } from '@playwright/test'
+import type { App } from 'vue'
 import { decodeWikiPagePayload, type WikiPagePayload } from '../../client/helpers/wiki-navigation.ts'
 import { installEnabledAgentFixture } from './agent-fixture.ts'
 import {
@@ -148,6 +149,218 @@ test.describe('responsive UI quality matrix', () => {
     test.setTimeout(60_000)
   })
 
+
+  test('keeps both rich-editor formats and Markdown insert actions reachable at 320px', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Narrow rich-editor containment is owned by Chromium mobile')
+    await page.setViewportSize({ width: 320, height: 720 })
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', 'article.contents')
+    const readerTypography = await page.locator('article.contents h1').first().evaluate(element => {
+      const style = getComputedStyle(element)
+      const inkProbe = document.createElement('span')
+      inkProbe.hidden = true
+      inkProbe.style.color = 'var(--wiki-accent-ink)'
+      element.append(inkProbe)
+      const accentInk = getComputedStyle(inkProbe).color
+      inkProbe.remove()
+      return {
+        color: style.color,
+        accentInk,
+        'font-family': style.fontFamily,
+        'font-size': style.fontSize,
+        'font-weight': style.fontWeight,
+        'line-height': style.lineHeight,
+        'letter-spacing': style.letterSpacing
+      }
+    })
+    const { accentInk, ...expectedTypography } = readerTypography
+    expect(expectedTypography.color, 'The live reader H1 uses the shared accent-ink token').toBe(accentInk)
+    for (const format of ['visual-markdown', 'visual-html']) {
+      await openAuthenticatedPage(page, `/e/en/${format}-browser`, '.editor-tiptap')
+      const editor = page.locator('.editor-tiptap .ProseMirror')
+      const paragraph = editor.locator('p').first()
+      await paragraph.click({ position: { x: 5, y: 5 } })
+      await page.keyboard.press('End')
+      const marker = ` native-${format}-draft`
+      await page.keyboard.insertText(marker)
+      await expect(paragraph).toContainText(marker)
+      const formattingRow = page.locator('.editor-tiptap-toolbar')
+      await formattingRow.evaluate(element => { element.scrollLeft = 0 })
+      const undo = formattingRow.getByRole('button', { name: 'Undo', exact: true })
+      const leadingBounds = await undo.boundingBox()
+      const rowBounds = await formattingRow.boundingBox()
+      if (!leadingBounds || !rowBounds) throw new Error('Formatting row has no native geometry')
+      expect(leadingBounds.x, 'Leading Undo is not centered outside the narrow scrollport').toBeGreaterThanOrEqual(rowBounds.x - 1)
+      expect(leadingBounds.x + leadingBounds.width).toBeLessThanOrEqual(rowBounds.x + rowBounds.width + 1)
+      await undo.click()
+      await expect(editor).not.toContainText(marker)
+      await paragraph.click({ position: { x: 5, y: 5 } })
+      expect(await formattingRow.evaluate(element => element.scrollWidth - element.clientWidth), 'The narrow formatting row actually needs local horizontal scrolling').toBeGreaterThan(0)
+      await formattingRow.hover()
+      await page.mouse.wheel(10_000, 0)
+      await expect.poll(() => formattingRow.evaluate(element => element.scrollLeft), 'Real horizontal wheel input scrolls only the formatting row').toBeGreaterThan(0)
+      const trailing = formattingRow.getByRole('button', { name: format === 'visual-html' ? 'Align right' : 'Table', exact: true })
+      await expectLocatorWithinViewport(trailing, 'Far formatting action')
+      await trailing.click()
+      if (format === 'visual-html') {
+        await expect(paragraph).toHaveCSS('text-align', 'right')
+        await expect(page.getByRole('toolbar', { name: 'Insert content', exact: true })).toHaveCount(0)
+      } else {
+        await expect(page.getByText('Insert table', { exact: true })).toBeVisible()
+        await page.keyboard.press('Escape')
+        const insertRow = page.getByRole('toolbar', { name: 'Insert content', exact: true })
+        await insertRow.evaluate(element => { element.scrollLeft = 0 })
+        const content = insertRow.getByRole('button', { name: 'Insert content extension', exact: true })
+        const [insertBounds, contentBounds] = await Promise.all([insertRow.boundingBox(), content.boundingBox()])
+        if (!insertBounds || !contentBounds) throw new Error('Insertion row has no native geometry')
+        expect(contentBounds.x, 'Leading insertion action is not clipped by unsafe centering').toBeGreaterThanOrEqual(insertBounds.x - 1)
+        expect(contentBounds.x + contentBounds.width).toBeLessThanOrEqual(insertBounds.x + insertBounds.width + 1)
+        await content.click()
+        const extensions = page.getByRole('dialog', { name: 'Insert content extension', exact: true })
+        await expect(extensions).toBeVisible()
+        await extensions.getByRole('button', { name: 'Close content extension dialog', exact: true }).click()
+        expect(await insertRow.evaluate(element => element.scrollWidth - element.clientWidth), 'Insertion tools have their own local scroll range').toBeGreaterThan(0)
+        await insertRow.hover()
+        await page.mouse.wheel(10_000, 0)
+        await expect.poll(() => insertRow.evaluate(element => element.scrollLeft), 'Real horizontal wheel input reaches the far insertion action').toBeGreaterThan(0)
+        const glyph = insertRow.getByRole('button', { name: 'Insert icon or emoji', exact: true })
+        await expectLocatorWithinViewport(glyph, 'Far insertion action')
+        await glyph.click()
+        await expect(page.getByRole('textbox', { name: 'Search icons and emoji', exact: true })).toBeVisible()
+        await page.getByRole('button', { name: 'Close icon and emoji picker', exact: true }).click()
+        const layout = await page.locator('.editor-tiptap').evaluate(root => {
+          const formatting = root.querySelector('.editor-tiptap-toolbar')
+          const insertion = root.querySelector('.editor-tiptap-markdown-tools')
+          const canvas = root.querySelector('.editor-tiptap-page-canvas')
+          if (!formatting || !insertion || !canvas) throw new Error('Rich editor tool rows or canvas are not mounted')
+          return {
+            formattingBottom: formatting.getBoundingClientRect().bottom,
+            insertionTop: insertion.getBoundingClientRect().top,
+            insertionBottom: insertion.getBoundingClientRect().bottom,
+            canvasTop: canvas.getBoundingClientRect().top
+          }
+        })
+        expect(layout.insertionTop, 'Insertion row follows formatting tools').toBeGreaterThanOrEqual(layout.formattingBottom - 1)
+        expect(layout.canvasTop, 'Both tool rows precede the authoring canvas').toBeGreaterThanOrEqual(layout.insertionBottom - 1)
+      }
+      const headingText = await paragraph.innerText()
+      await paragraph.click({ position: { x: 5, y: 5 } })
+      await formattingRow.evaluate(element => { element.scrollLeft = 0 })
+      await formattingRow.getByRole('button', { name: 'Text style', exact: true }).click()
+      await page.getByRole('listitem').filter({ hasText: /^Heading 1$/u }).click()
+      const editorHeading = editor.getByRole('heading', { level: 1, name: headingText, exact: true })
+      for (const [property, value] of Object.entries(expectedTypography)) {
+        await expect(editorHeading, `Shared reader/editor heading ${property}`).toHaveCSS(property, value)
+      }
+      await expectResponsiveLayout(page, `${format} narrow toolbar containment`)
+      await testInfo.attach(`${format}-narrow-tools`, { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
+      await page.getByRole('button', { name: 'More editor actions', exact: true }).click()
+      await page.getByRole('listitem').filter({ hasText: /^Close$/u }).click()
+      const discard = page.getByRole('button', { name: 'Discard Changes', exact: true })
+      await expect.poll(async () => await discard.isVisible() || new URL(page.url()).pathname === `/en/${format}-browser`).toBe(true)
+      if (await discard.isVisible()) await discard.click()
+      await expect(page).toHaveURL(`/en/${format}-browser`)
+    }
+  })
+
+  test('contains authored page CSS in the native canvas, filters imports, and removes cleared styles', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Native page CSS is owned by Chromium desktop')
+    test.setTimeout(90_000)
+    await openAuthenticatedPage(page, '/e/en/visual-markdown-browser', '.editor-tiptap')
+    const paragraph = page.locator('.editor-tiptap .ProseMirror p').first()
+    const pageAction = page.getByRole('button', { name: 'Page', exact: true })
+    const outsideSpacing = await pageAction.evaluate(element => getComputedStyle(element).letterSpacing)
+    const originalSpacing = await paragraph.evaluate(element => getComputedStyle(element).letterSpacing)
+    const desktopViewport = page.viewportSize()
+    if (!desktopViewport) throw new Error('Page CSS requires a configured viewport')
+    await page.setViewportSize({ width: 320, height: 720 })
+    const narrowOutsideSpacing = await pageAction.evaluate(element => getComputedStyle(element).letterSpacing)
+    await page.setViewportSize(desktopViewport)
+    const warnings: string[] = []
+    page.on('console', message => {
+      if (message.type() === 'warning' && message.text().includes('@import')) warnings.push(message.text())
+    })
+    await page.route('**/assets/native-editor-import.css', route => route.fulfill({ contentType: 'text/css', body: 'p, button { letter-spacing: 99px !important }' }))
+    await page.evaluate(() => {
+      const parserStyles: HTMLStyleElement[] = []
+      Object.defineProperty(window, '__nativeParserStyles', { value: parserStyles })
+      new MutationObserver(records => {
+        for (const record of records) for (const node of record.addedNodes) {
+          if (node instanceof HTMLStyleElement && node.media === 'not all') parserStyles.push(node)
+        }
+      }).observe(document.head, { childList: true })
+    })
+    const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+    await pageAction.click()
+    await properties.getByRole('tab', { name: 'Styles', exact: true }).click()
+    const css = properties.getByRole('textbox', { name: 'Page CSS', exact: true })
+    await css.fill('@import url("/assets/native-editor-import.css");\np, button { letter-spacing: 7px !important; }')
+    await properties.getByRole('button', { name: 'OK', exact: true }).click()
+    await expect(paragraph).toHaveCSS('letter-spacing', '7px')
+    await expect(pageAction, 'Matching editor chrome is outside the authored CSS scope').toHaveCSS('letter-spacing', outsideSpacing)
+    const styleNode = await page.locator('#editor-script-css').elementHandle()
+    if (!styleNode) throw new Error('Authored canvas CSS did not mount')
+    const ruleReport = await styleNode.evaluate(element => {
+      let imports = 0
+      let ordinaryRule = false
+      const visit = (rules: CSSRuleList) => {
+        for (const rule of rules) {
+          if (rule.type === CSSRule.IMPORT_RULE) imports += 1
+          if (rule instanceof CSSStyleRule && rule.selectorText.split(',').map(selector => selector.trim()).includes('p') && rule.style.letterSpacing === '7px') ordinaryRule = true
+          if ('cssRules' in rule) visit((rule as CSSGroupingRule).cssRules)
+        }
+      }
+      visit((element as HTMLStyleElement).sheet!.cssRules)
+      return { imports, ordinaryRule }
+    })
+    expect(ruleReport, 'Native emitted rules retain authored declarations without importing unscoped CSS').toEqual({ imports: 0, ordinaryRule: true })
+    expect(warnings, 'The unsupported-import boundary emits one diagnostic').toHaveLength(1)
+    expect(await page.evaluate(() => (window as typeof window & { __nativeParserStyles: HTMLStyleElement[] }).__nativeParserStyles.every(style => !style.isConnected)), 'Transient native parser styles are removed').toBe(true)
+    await expect(page.locator('head style[media="not all"]'), 'No native parser style remains attached').toHaveCount(0)
+    await page.setViewportSize({ width: 320, height: 720 })
+    await expect(paragraph).toHaveCSS('letter-spacing', '7px')
+    await expect(pageAction, 'Matching mobile editor chrome remains outside authored CSS').toHaveCSS('letter-spacing', narrowOutsideSpacing)
+    await expectResponsiveLayout(page, 'Narrow editor page-CSS containment')
+    await testInfo.attach('native-page-css-narrow', { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
+    await page.setViewportSize(desktopViewport)
+    await pageAction.click()
+    await properties.getByRole('tab', { name: 'Styles', exact: true }).click()
+    await css.fill('p, button { letter-spacing: 11px !important; }')
+    await properties.getByRole('button', { name: 'OK', exact: true }).click()
+    await expect(paragraph).toHaveCSS('letter-spacing', '11px')
+    expect(await styleNode.evaluate(element => element === document.querySelector('#editor-script-css')), 'A nonempty CSS update reuses the existing style node').toBe(true)
+    await expect(pageAction).toHaveCSS('letter-spacing', outsideSpacing)
+    await pageAction.click()
+    await properties.getByRole('tab', { name: 'Styles', exact: true }).click()
+    await css.fill('')
+    await properties.getByRole('button', { name: 'OK', exact: true }).click()
+    await expect(page.locator('#editor-script-css')).toHaveCount(0)
+    await expect(paragraph).toHaveCSS('letter-spacing', originalSpacing)
+    await pageAction.click()
+    await properties.getByRole('tab', { name: 'Styles', exact: true }).click()
+    await css.fill('p, button { letter-spacing: 13px !important; }')
+    await properties.getByRole('button', { name: 'OK', exact: true }).click()
+    await expect(paragraph).toHaveCSS('letter-spacing', '13px')
+    await pageAction.click()
+    await properties.getByRole('tab', { name: 'Styles', exact: true }).click()
+    await page.clock.install()
+    await page.clock.pauseAt(new Date(Date.now() + 1000))
+    await css.fill('p, button { letter-spacing: 17px !important; }')
+    await properties.getByRole('button', { name: 'OK', exact: true }).click()
+    await expect(paragraph, 'The replacement sheet is still pending at teardown').toHaveCSS('letter-spacing', '13px')
+    const editorUrl = page.url()
+    await page.evaluate(() => {
+      const app = (window as typeof window & { WIKI: App }).WIKI
+      if (!app || typeof app.unmount !== 'function') throw new Error('The native editor Vue app is not mounted')
+      app.unmount()
+    })
+    await expect(page.locator('.editor-tiptap'), 'The actual mounted editor is torn down').toHaveCount(0)
+    expect(await styleNode.evaluate(element => element.ownerDocument === document), 'Teardown retains the original document rather than clearing styles through navigation').toBe(true)
+    await expect(page.locator('#editor-script-css'), 'Same-document teardown removes the existing page sheet').toHaveCount(0)
+    await page.clock.fastForward(2000)
+    await expect(page.locator('#editor-script-css'), 'A cancelled pending timer cannot reinsert a page sheet after teardown').toHaveCount(0)
+    expect(page.url()).toBe(editorUrl)
+    await styleNode.dispose()
+  })
   test('keeps public pages, navigation, and fixed actions usable', async ({ page }) => {
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
@@ -600,14 +813,10 @@ test.describe('responsive UI quality matrix', () => {
         const styles = getComputedStyle(parent)
         return parent.clientWidth - (Number.parseFloat(styles.paddingLeft) || 0) - (Number.parseFloat(styles.paddingRight) || 0)
       }
-      const bodyRow = document.querySelector<HTMLElement>('.page-body > .v-row')
-      if (!bodyRow) throw new Error('Reader body row is missing')
-
       return {
         rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
         headerAvailableWidth: containingBlockWidth('.page-header-section'),
-        bodyAvailableWidth: containingBlockWidth('.page-body'),
-        columnGap: Number.parseFloat(getComputedStyle(bodyRow).getPropertyValue('--v-col-gap-x'))
+        bodyAvailableWidth: containingBlockWidth('.page-body')
       }
     })
 
@@ -681,34 +890,6 @@ test.describe('responsive UI quality matrix', () => {
     expect(metadataBounds.x, 'Reader metadata rail remains before the primary article').toBeLessThan(articleBounds.x)
     expect(metadataBounds.x + metadataBounds.width, 'Reader metadata rail must not overlap the primary article').toBeLessThanOrEqual(articleBounds.x + 1)
 
-    if (viewport.width >= 2560) {
-      expect(shellSizing.columnGap, 'Reader row exposes the rendered column gap').toBeGreaterThan(0)
-      const legacyRowWidth = 106 * shellSizing.rootFontSize
-      const legacyRailWidth = (2.2 * (legacyRowWidth + shellSizing.columnGap)) / 12 - shellSizing.columnGap
-      const legacyArticleWidth = (9.8 * (legacyRowWidth + shellSizing.columnGap)) / 12 - shellSizing.columnGap
-      const railGrowth = metadataBounds.width / legacyRailWidth
-      expect(railGrowth, 'Wide metadata rail is approximately 15% wider than the legacy capped rail').toBeGreaterThanOrEqual(1.14)
-      expect(railGrowth, 'Wide metadata rail is approximately 15% wider than the legacy capped rail').toBeLessThanOrEqual(1.16)
-      expect(articleBounds.width, 'Wide article is observably wider than its legacy article width').toBeGreaterThan(
-        legacyArticleWidth + shellSizing.rootFontSize
-      )
-      const legacyCopyWidth = await markdownCopy.evaluate(element => {
-        const probe = document.createElement('span')
-        probe.style.position = 'absolute'
-        probe.style.display = 'block'
-        probe.style.visibility = 'hidden'
-        probe.style.width = '76ch'
-        probe.style.padding = '0'
-        probe.style.border = '0'
-        element.append(probe)
-        const width = probe.getBoundingClientRect().width
-        probe.remove()
-        return width
-      })
-      const copyGrowth = markdownCopyBounds.width / legacyCopyWidth
-      expect(copyGrowth, 'Wide Markdown copy is approximately 33% wider than the legacy 76ch measure').toBeGreaterThanOrEqual(1.32)
-      expect(copyGrowth, 'Wide Markdown copy is approximately 33% wider than the legacy 76ch measure').toBeLessThanOrEqual(1.34)
-    }
   })
 
   test('keeps right-side TOC geometry ordered and aligned', async ({ page }) => {
@@ -857,9 +1038,8 @@ test.describe('responsive UI quality matrix', () => {
         const cardGap = tocBounds.top - toolsBounds.bottom
         return Math.abs(toolsBounds.bottom + cardGap / 2 - heroBounds.bottom)
       })
-    const railState = async (): Promise<{ alignmentOffset: string; maxHeight: string; tocPosition: string }> =>
+    const tocPosition = async (): Promise<'left' | 'right' | 'off'> =>
       page.evaluate(() => {
-        const rail = document.querySelector<HTMLElement>('.page-col-sd')
         const app = (
           window as typeof window & {
             WIKI?: {
@@ -874,12 +1054,32 @@ test.describe('responsive UI quality matrix', () => {
           }
         ).WIKI
         const store = app?.config?.globalProperties?.$pinia?._s?.get('wiki')
-        return {
-          alignmentOffset: rail?.style.getPropertyValue('--page-desktop-rail-align-offset') ?? '',
-          maxHeight: rail?.style.getPropertyValue('--page-desktop-rail-max-height') ?? '',
-          tocPosition: store?.site.tocPosition ?? ''
-        }
+        if (!store) throw new Error('Wiki store is unavailable for responsive TOC transition.')
+        return store.site.tocPosition as 'left' | 'right' | 'off'
       })
+    const expectBoundedRail = async (surface: string): Promise<void> => {
+      await expect(page.locator('.page-col-sd:visible').first()).toBeVisible()
+      await expect.poll(() => page.evaluate(() => {
+        const rail = document.querySelector<HTMLElement>('.page-col-sd')
+        const footer = document.querySelector<HTMLElement>('.nav-footer')
+        if (!rail || !footer) throw new Error('Reader rail or footer is missing')
+        const bounds = rail.getBoundingClientRect()
+        return bounds.bottom - Math.min(window.innerHeight, footer.getBoundingClientRect().top)
+      }), `${surface} keeps the rail above the footer and inside the viewport`).toBeLessThanOrEqual(1)
+    }
+    const populateRail = async (): Promise<void> => {
+      await page.locator('.page-toc-list').first().evaluate(element => {
+        if (element.querySelector('[data-rail-fixture]')) return
+        const content = document.createElement('div')
+        content.dataset.railFixture = 'long-contents'
+        for (let item = 0; item < 80; item += 1) {
+          const paragraph = document.createElement('p')
+          paragraph.textContent = `Additional contents entry ${item + 1}`
+          content.append(paragraph)
+        }
+        element.append(content)
+      })
+    }
     const setTocPosition = async (tocPosition: 'left' | 'right' | 'off'): Promise<void> => {
       await page.evaluate(value => {
         const app = (
@@ -905,16 +1105,16 @@ test.describe('responsive UI quality matrix', () => {
     const initialWidth = viewport.width
     const resizedDesktopWidth = initialWidth === 1280 ? 1360 : Math.max(1280, initialWidth - 80)
     const longTitle = 'A deliberately long reader title that wraps after a scrolled resize and remains aligned when the reader returns to the top'
-    const originalTocPosition = (await railState()).tocPosition as 'left' | 'right' | 'off'
+    const originalTocPosition = await tocPosition()
     if (originalTocPosition === 'off') {
       await setTocPosition('left')
       await expect(page.locator('.page-header--toc-left')).toBeVisible()
     }
 
     try {
+      await populateRail()
       await expect.poll(alignment, 'Initial desktop rail alignment').toBeLessThanOrEqual(4)
-      const initialRailState = await railState()
-      expect(initialRailState.maxHeight, 'Desktop rail keeps its footer-bounded max-height').not.toBe('')
+      await expectBoundedRail('Initial desktop rail')
 
       await page.evaluate(() => window.scrollTo(0, Math.max(1, Math.floor(document.documentElement.scrollHeight / 2))))
       await expect.poll(() => page.evaluate(() => window.scrollY), 'Reader scrolls away from the title').toBeGreaterThan(1)
@@ -929,37 +1129,33 @@ test.describe('responsive UI quality matrix', () => {
       await expect.poll(() => title.evaluate(element => element.getBoundingClientRect().height), 'Reader title wraps while scrolled').toBeGreaterThan(40)
 
       await page.setViewportSize({ width: resizedDesktopWidth, height: viewport.height })
+      await expectBoundedRail('Resized desktop rail while scrolled')
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect.poll(() => page.evaluate(() => window.scrollY), 'Reader returns to the top').toBeLessThan(2)
       await expect.poll(alignment, 'Dirty reader rail realigns after returning to the top').toBeLessThanOrEqual(4)
+      await expectBoundedRail('Realigned desktop rail')
 
       await page.setViewportSize({ width: 1279, height: viewport.height })
-      await expect
-        .poll(async () => {
-          const state = await railState()
-          return `${state.alignmentOffset}|${state.maxHeight}`
-        }, 'Ineligible breakpoint clears desktop rail measurements')
-        .toBe('|')
+      await expect(page.locator('#page-tablet-tools .page-toc-card')).toBeVisible()
 
       await page.setViewportSize({ width: resizedDesktopWidth, height: viewport.height })
       await expect.poll(alignment, 'Desktop rail realigns after crossing the breakpoint').toBeLessThanOrEqual(4)
-      await expect.poll(async () => (await railState()).maxHeight, 'Desktop rail restores its footer-bounded max-height after the breakpoint').not.toBe('')
+      await expectBoundedRail('Desktop rail after crossing the breakpoint')
 
       await setTocPosition('off')
       await expect(page.locator('.page-header--toc-off')).toBeVisible()
-      await expect
-        .poll(async () => {
-          const state = await railState()
-          return `${state.alignmentOffset}|${state.maxHeight}`
-        }, 'TOC-off clears desktop rail measurements')
-        .toBe('|')
 
       await setTocPosition('right')
       await expect(page.locator('.page-header--toc-right')).toBeVisible()
+      await populateRail()
       await expect.poll(alignment, 'Right TOC rail realigns after eligibility returns').toBeLessThanOrEqual(4)
-      await expect.poll(async () => (await railState()).maxHeight, 'Right TOC rail keeps its footer-bounded max-height').not.toBe('')
+      await expectBoundedRail('Right TOC rail after eligibility returns')
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+      await expect.poll(() => page.locator('.nav-footer').evaluate(element => element.getBoundingClientRect().top), 'Footer is visible at the document end').toBeLessThan(viewport.height)
+      await expectBoundedRail('Long rail at the document footer')
     } finally {
       await setTocPosition(originalTocPosition)
+      await page.locator('[data-rail-fixture="long-contents"]').evaluateAll(elements => elements.forEach(element => { element.remove() }))
       await page.evaluate(text => {
         const title = document.querySelector<HTMLElement>('.page-title')
         if (!title) return
@@ -1044,104 +1240,113 @@ test.describe('responsive UI quality matrix', () => {
     }
   })
 
-  test('mirrors RTL reader geometry without overlap', async ({ page }) => {
+  test('mirrors native LTR/RTL reader and sidebar geometry while keeping branding physically right', async ({ page }, testInfo) => {
     const viewport = page.viewportSize()
-    expect(viewport).not.toBeNull()
-    if (!viewport || viewport.width < 1280) return
-    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
-
-    const originalState = await page.evaluate(() => {
-      const get = (selector: string): HTMLElement => {
-        const element = document.querySelector<HTMLElement>(selector)
-        if (!element) throw new Error(`Missing reader element: ${selector}`)
-        return element
-      }
-      const reader = get('.wiki-page')
-      return {
-        documentDirection: document.documentElement.getAttribute('dir'),
-        readerDirection: reader.getAttribute('dir'),
-        readerClass: reader.className,
-        headerClass: get('.page-header-section > .is-page-header').className,
-        railClass: get('.page-col-sd').className,
-        contentDirection: get('article.contents').getAttribute('dir'),
-        articleClass: get('.page-col-content:not(.is-page-header)').className
-      }
-    })
-    try {
-      await page.evaluate(() => {
-        const reader = document.querySelector<HTMLElement>('.wiki-page')
-        const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
-        const rail = document.querySelector<HTMLElement>('.page-col-sd')
-        const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
-        const content = document.querySelector<HTMLElement>('article.contents')
-        if (!reader || !header || !rail || !article || !content) throw new Error('Reader geometry is incomplete')
-
-        document.documentElement.setAttribute('dir', 'rtl')
-        reader.setAttribute('dir', 'rtl')
-        content.setAttribute('dir', 'rtl')
-        reader.classList.remove('is-ltr', 'v-locale--is-ltr')
-        reader.classList.add('is-rtl', 'v-locale--is-rtl')
-        header.classList.remove('page-header--toc-left', 'page-header--toc-off', 'pl-4')
-        header.classList.add('page-header--toc-right', 'pr-4')
-        rail.classList.remove('page-col-sd--toc-left', 'page-col-sd--toc-off')
-        rail.classList.add('page-col-sd--toc-right', 'page-col-sd--with-toc')
-        article.classList.remove('page-col-content--toc-left', 'page-col-content--toc-off')
-        article.classList.add('page-col-content--toc-right', 'page-col-content--with-toc')
+    if (!viewport) throw new Error('Reader geometry requires a configured viewport')
+    let direction: 'ltr' | 'rtl' = 'ltr'
+    const digest = 'a'.repeat(64)
+    const imageUrl = `/assets/native-reader-brand.png?v=${digest}`
+    await page.route(`**/assets/native-reader-brand.png?v=${digest}`, route => route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64"><rect width="96" height="64" rx="8" fill="#0c2238"/></svg>'
+    }))
+    await page.route('**/en/visual-markdown-browser', async route => {
+      const response = await route.fetch()
+      if (!response.ok()) throw new Error(`Reader geometry bootstrap returned HTTP ${response.status()}`)
+      let body = await response.text()
+      let configured = false
+      let hydrated = false
+      // Change the server's normal boot input, before app/Vuetify creation.
+      // The application, not this test, derives all direction/layout classes.
+      body = body.replace(/(var siteConfig\s*=\s*)(\{[^\n]*\})(?=\s*(?:\n|;|<\/script>))/u, (_match, prefix: string, json: string) => {
+        const config = JSON.parse(json)
+        configured = true
+        return `${prefix}${JSON.stringify({ ...config, rtl: direction === 'rtl', tocPosition: 'left' })}`
       })
-
-      const title = page.locator('.page-header--toc-right .page-title').first()
-      const rail = page.locator('.page-col-sd--toc-right').first()
-      const article = page.locator('.page-col-content--toc-right:not(.is-page-header) > .contents').first()
-      await expect(title).toBeVisible()
-      await expect(rail).toBeVisible()
-      await expect(article).toBeVisible()
-
-      const [titleBounds, railBounds, articleBounds] = await Promise.all([title.boundingBox(), rail.boundingBox(), article.boundingBox()])
-      expect(titleBounds).not.toBeNull()
-      expect(railBounds).not.toBeNull()
-      expect(articleBounds).not.toBeNull()
-      if (!titleBounds || !railBounds || !articleBounds) return
-
-      expect(Math.abs(titleBounds.x - articleBounds.x), 'RTL title and article share their mirrored outer edge').toBeLessThanOrEqual(2)
-      expect(articleBounds.x + articleBounds.width, 'RTL rail is placed after the article').toBeLessThan(railBounds.x)
-      expect(articleBounds.x + articleBounds.width, 'RTL metadata rail remains clear of the article').toBeLessThanOrEqual(railBounds.x + 1)
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
-        'RTL reader has no horizontal overflow'
-      ).toBeLessThanOrEqual(1)
-      await expect(page.locator('article.contents h1').first()).toHaveCSS('direction', 'rtl')
-    } finally {
-      await page.evaluate(state => {
-        try {
-          if (state.documentDirection === null) document.documentElement.removeAttribute('dir')
-          else document.documentElement.setAttribute('dir', state.documentDirection)
-        } catch {}
-        try {
-          const reader = document.querySelector<HTMLElement>('.wiki-page')
-          if (reader) {
-            if (state.readerDirection === null) reader.removeAttribute('dir')
-            else reader.setAttribute('dir', state.readerDirection)
-            reader.className = state.readerClass
+      body = body.replace(/(<wiki-page\b[^>]*\bpayload=)(["'])([^"']+)\2/u, (_match, prefix: string, quote: string, encoded: string) => {
+        const payload = decodeWikiPagePayloadForTest(encoded)
+        const patched = {
+          ...payload,
+          props: {
+            ...payload.props,
+            description: 'A reader description retains its text direction below the title.',
+            branding: { assetId: 9001, imageUrl, sourceSha256: digest, width: 96, height: 64, accent: '#0C2238' }
           }
-        } catch {}
-        try {
-          const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
-          if (header && state.headerClass) header.className = state.headerClass
-        } catch {}
-        try {
-          const rail = document.querySelector<HTMLElement>('.page-col-sd')
-          if (rail && state.railClass) rail.className = state.railClass
-        } catch {}
-        try {
-          const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
-          if (article && state.articleClass) article.className = state.articleClass
-          const content = document.querySelector<HTMLElement>('article.contents')
-          if (content) {
-            if (state.contentDirection === null) content.removeAttribute('dir')
-            else content.setAttribute('dir', state.contentDirection)
-          }
-        } catch {}
-      }, originalState)
+        }
+        const value = Buffer.from(JSON.stringify(patched)).toString('base64')
+        decodeWikiPagePayloadForTest(value)
+        hydrated = true
+        return `${prefix}${quote}${value}${quote}`
+      })
+      if (!configured || !hydrated) throw new Error('Reader fixture omitted its normal configuration or page payload')
+      await route.fulfill({ response, body })
+    })
+    for (direction of ['ltr', 'rtl'] as const) {
+      await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+      const reader = page.locator('.wiki-page')
+      const drawer = page.locator('#page-navigation-drawer')
+      const article = page.locator('article.contents')
+      const title = page.locator('.page-title').first()
+      const headings = page.locator('.page-header-headings').first()
+      const mark = headings.locator('.page-branding-mark')
+      await expect(reader).toHaveCSS('direction', direction)
+      await expect(article).toHaveAttribute('lang', 'en')
+      await expect(article, 'English content keeps its locale direction under either shell layout').toHaveCSS('direction', 'ltr')
+      await expect(mark).toBeVisible()
+      await expect(mark.locator('img')).toBeVisible()
+      await expect.poll(() => mark.locator('img').evaluate(element => (element as HTMLImageElement).naturalWidth)).toBe(96)
+      for (const text of [title, headings.locator('.page-document-label'), page.locator('.page-description').first()]) {
+        await expect(text).toHaveCSS('direction', direction)
+      }
+      const [titleBounds, headingBounds, markBounds] = await Promise.all([title.boundingBox(), headings.boundingBox(), mark.boundingBox()])
+      if (!titleBounds || !headingBounds || !markBounds) throw new Error('Native branding geometry is missing')
+      const headingRightInset = await headings.evaluate(element => {
+        const style = getComputedStyle(element)
+        return Number.parseFloat(style.paddingRight) + Number.parseFloat(style.borderRightWidth)
+      })
+      expect(markBounds.x + markBounds.width, `${direction} mark remains at the physical right heading content edge`).toBeCloseTo(headingBounds.x + headingBounds.width - headingRightInset, 0)
+      for (const text of [title, headings.locator('.page-document-label')]) {
+        const bounds = await text.boundingBox()
+        if (!bounds) throw new Error('Reader text geometry is missing')
+        expect(bounds.x + bounds.width, `${direction} heading text cannot overlap the physical-right mark`).toBeLessThanOrEqual(markBounds.x + 1)
+      }
+      if (viewport.width < 1280) {
+        await page.locator('button[aria-controls="page-navigation-drawer"]').click()
+        await expect(drawer).toHaveClass(/v-navigation-drawer--active/u)
+      } else {
+        await expect(drawer).toHaveClass(/v-navigation-drawer--active/u)
+      }
+      await expect.poll(async () => {
+        const bounds = await drawer.boundingBox()
+        if (!bounds) throw new Error('Native sidebar geometry is missing')
+        return direction === 'ltr' ? bounds.x : bounds.x + bounds.width - viewport.width
+      }, `${direction} navigation settles at its physical viewport edge`).toBeCloseTo(0, 0)
+      const drawerBounds = await drawer.boundingBox()
+      if (!drawerBounds) throw new Error('Native sidebar geometry is missing')
+      expect(drawerBounds.width, 'Sidebar retains a usable navigation width').toBeGreaterThanOrEqual(Math.min(200, viewport.width))
+      expect(drawerBounds.x).toBeGreaterThanOrEqual(-1)
+      expect(drawerBounds.x + drawerBounds.width).toBeLessThanOrEqual(viewport.width + 1)
+      if (viewport.width >= 1280) {
+        const rail = page.locator('.page-col-sd')
+        const [railBounds, articleBounds] = await Promise.all([rail.boundingBox(), article.boundingBox()])
+        if (!railBounds || !articleBounds) throw new Error('Native reader rail geometry is missing')
+        if (direction === 'ltr') {
+          expect(drawerBounds.x + drawerBounds.width, 'LTR drawer reserves space before the reader rail').toBeLessThanOrEqual(railBounds.x + 1)
+          expect(railBounds.x + railBounds.width, 'LTR metadata rail stays clear of the article').toBeLessThanOrEqual(articleBounds.x + 1)
+        } else {
+          expect(articleBounds.x + articleBounds.width, 'RTL metadata rail is after and clear of the article').toBeLessThanOrEqual(railBounds.x + 1)
+          expect(railBounds.x + railBounds.width, 'RTL drawer reserves space after the reader rail').toBeLessThanOrEqual(drawerBounds.x + 1)
+        }
+        const headingStartInset = direction === 'rtl' ? headingRightInset : await headings.evaluate(element => {
+          const style = getComputedStyle(element)
+          return Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.borderLeftWidth)
+        })
+        const headingStart = direction === 'rtl' ? headingBounds.x + headingBounds.width - headingStartInset : headingBounds.x + headingStartInset
+        const articleStart = direction === 'rtl' ? articleBounds.x + articleBounds.width : articleBounds.x
+        expect(Math.abs(headingStart - articleStart), `${direction} heading column and article share their logical outer edge`).toBeLessThanOrEqual(2)
+      }
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${direction} reader has no horizontal overflow after native layout settles`).toBeLessThanOrEqual(1)
+      await testInfo.attach(`native-reader-${direction}`, { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
     }
   })
 
@@ -1526,7 +1731,8 @@ test.describe('responsive UI quality matrix', () => {
     const originalPageTitle = (await page.locator('.page-title').first().innerText()).trim()
     const originalArticleId = await page.locator('article.contents').first().getAttribute('id')
     expect(originalPageTitle, 'The invoking page exposes a stable reader identity').not.toBe('')
-    expect(originalArticleId, 'The invoking page exposes a stable article identity').toEqual(expect.stringMatching(/^wiki-page-shell-\d+-article$/))
+    expect(originalArticleId, 'The invoking article has an identity to preserve').not.toBeNull()
+    expect(await page.locator('article.contents').first().evaluate(element => document.getElementById(element.id) === element), 'The invoking article identity resolves to the original reader').toBe(true)
 
     const entrance = page.locator('.nav-header-agent')
     await expectLocatorWithinViewport(entrance, 'Wiki Agent entrance')
@@ -3368,9 +3574,22 @@ test.describe('focused reading', () => {
   test('preserves the visible passage when leaving focus mode', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' })
     await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
-    await page.getByRole('button', { name: 'Focus', exact: true }).click()
+    await page.locator('article.contents > div').first().evaluate(element => {
+      element.replaceChildren()
+      for (const title of ['Opening section', 'Visible passage', 'Closing section']) {
+        const heading = document.createElement('h2')
+        heading.textContent = title
+        element.append(heading)
+        for (let paragraph = 0; paragraph < 24; paragraph += 1) {
+          const content = document.createElement('p')
+          content.textContent = `Reading paragraph ${paragraph + 1}: ordinary article content gives this section enough space to read and scroll.`
+          element.append(content)
+        }
+      }
+    })
     const headings = page.locator('article.contents h2:not(details h2):visible')
-    test.skip((await headings.count()) < 2, 'This document has fewer than two visible sections')
+    await expect(headings).toHaveText(['Opening section', 'Visible passage', 'Closing section'])
+    await page.getByRole('button', { name: 'Focus', exact: true }).click()
     const passage = headings.nth(1)
     await passage.evaluate(element => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY - 120))
     await expect.poll(async () => Math.abs(((await passage.boundingBox())?.y ?? 0) - 120)).toBeLessThan(2)

@@ -90,10 +90,11 @@ describe('optional public offline branding', () => {
     const slot = [...cache.entries.keys()][0]!
     cache.entries.set(slot, image(png(2), { 'X-Tsepistle-Logo-Path': path }))
     expect(await cachedOfflineLogo(path, origin)).toBeUndefined()
-    const unexpectedFetch = async () => { throw new Error('This URL must never be fetched') }
+    const unexpectedFetch = vi.fn(async () => { throw new Error('This URL must never be fetched') })
     for (const value of ['/uploads/private.png', '/_private/en/secret', 'https://other.test/logo.png', OFFLINE_DEFAULT_LOGO_PATH]) {
       expect(await rememberOfflineLogo(value, origin, unexpectedFetch)).toBe(false)
     }
+    expect(unexpectedFetch).not.toHaveBeenCalled()
   })
 
   it('fences late logo downloads after a different presentation has been selected', async () => {
@@ -111,10 +112,22 @@ describe('optional public offline branding', () => {
     expect(await cachedOfflineLogo(second, origin)).toBeDefined()
   })
 
-  it('treats denied cache storage and failed logo requests as optional', async () => {
+  it('treats denied cache storage as optional', async () => {
     vi.stubGlobal('caches', { open: async () => { throw new Error('Denied') } })
     const path = await pathFor(png())
     expect(await rememberOfflineLogo(path, origin, async () => image())).toBe(false)
     expect(await cachedOfflineLogo(path, origin)).toBeUndefined()
+  })
+
+  it('treats a failed logo request as optional and retains the prior verified logo', async () => {
+    installCache()
+    const first = await pathFor(png())
+    expect(await rememberOfflineLogo(first, origin, async () => image())).toBe(true)
+    const next = await pathFor(png(2))
+    const failedFetch = vi.fn(async () => { throw new Error('Network is offline') })
+
+    await expect(rememberOfflineLogo(next, origin, failedFetch)).resolves.toBe(false)
+    expect(failedFetch).toHaveBeenCalledTimes(1)
+    expect(new Uint8Array(await (await cachedOfflineLogo(first, origin))!.arrayBuffer())).toEqual(png())
   })
 })

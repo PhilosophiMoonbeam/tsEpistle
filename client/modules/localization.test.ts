@@ -39,8 +39,11 @@ describe('localization cache version', () => {
     const firstBuild = { revision: 'abc123', date: '2026-09-08T07:30:45.000Z' }
     const secondBuild = { ...firstBuild, date: '2026-09-08T08:00:00.000Z' }
 
-    expect(localizationCacheVersion(firstBuild)).toBe('abc123:2026-09-08T07:30:45.000Z:legacy')
+    expect(localizationCacheVersion({ ...firstBuild })).toBe(localizationCacheVersion(firstBuild))
     expect(localizationCacheVersion(secondBuild)).not.toBe(localizationCacheVersion(firstBuild))
-    expect(localizationCacheVersion(firstBuild, 'locale-2')).toBe('abc123:2026-09-08T07:30:45.000Z:locale-2')
+    expect(localizationCacheVersion({ ...firstBuild, revision: 'def456' })).not.toBe(localizationCacheVersion(firstBuild))
+    expect(localizationCacheVersion({ ...firstBuild }, 'locale-1')).toBe(localizationCacheVersion(firstBuild, 'locale-1'))
+    expect(localizationCacheVersion(firstBuild, 'locale-2')).not.toBe(localizationCacheVersion(firstBuild, 'locale-1'))
+    expect(localizationCacheVersion(firstBuild, 'locale-1')).not.toBe(localizationCacheVersion(firstBuild))
   })
 })

@@ -15,6 +15,8 @@ const fixture = () => {
 describe('extensions workspace observations', () => {
   it('commits the current-authority read before it begins a bounded extension refresh', async () => {
     const { transaction, db, service, authority } = fixture()
+    const committed = Promise.withResolvers<void>()
+    transaction.commit.mockReturnValue(committed.promise)
     const observed = Promise.withResolvers<never[]>()
     service.inspect.mockReturnValue(observed.promise)
     const store = createExtensionsWorkspaceStore({
@@ -25,12 +27,19 @@ describe('extensions workspace observations', () => {
     })
 
     const inspection = store.inspect(requester)
-    await vi.waitFor(() => expect(service.inspect).toHaveBeenCalledTimes(1))
-    expect(authority).toHaveBeenCalledWith(transaction, requester)
-    expect(transaction.commit).toHaveBeenCalledTimes(1)
-    expect(transaction.commit.mock.invocationCallOrder[0]).toBeLessThan(service.inspect.mock.invocationCallOrder[0])
-    observed.resolve([])
-    await inspection
+    try {
+      await vi.waitFor(() => expect(transaction.commit).toHaveBeenCalledTimes(1))
+      expect(service.inspect).not.toHaveBeenCalled()
+      committed.resolve()
+      await vi.waitFor(() => expect(service.inspect).toHaveBeenCalledTimes(1))
+      expect(authority).toHaveBeenCalledWith(transaction, requester)
+      expect(transaction.commit).toHaveBeenCalledTimes(1)
+      expect(transaction.commit.mock.invocationCallOrder[0]).toBeLessThan(service.inspect.mock.invocationCallOrder[0])
+    } finally {
+      committed.resolve()
+      observed.resolve([])
+      await inspection
+    }
   })
 
   it('does not reveal or refresh process observations after current authority is rejected', async () => {
@@ -38,7 +47,7 @@ describe('extensions workspace observations', () => {
     authority.mockRejectedValueOnce(Object.assign(new Error('Current system administration access is required.'), { status: 403 }))
     const store = createExtensionsWorkspaceStore({ db, extensions: service, requireAuthority: authority })
 
-    await expect(store.inspect(requester)).rejects.toThrow('Current system administration access is required.')
+    await expect(store.inspect(requester)).rejects.toMatchObject({ status: 403 })
     expect(transaction.rollback).toHaveBeenCalledTimes(1)
     expect(service.inspect).not.toHaveBeenCalled()
   })

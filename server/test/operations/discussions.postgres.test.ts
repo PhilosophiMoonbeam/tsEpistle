@@ -1,14 +1,12 @@
-import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createDiscussionSettingsStore, type DiscussionDefinition, writeDiscussionWorkspace } from '../../operations/discussion-settings.ts'
 import { createDiscussionModerationStore } from '../../operations/discussion-moderation.ts'
 import { createDiscussionPostingStore, type DiscussionPostInput } from '../../operations/discussion-posting.ts'
 import { up, down } from '../../db/migrations/tsepistle-000016-discussion-moderation.ts'
 import { up as addCommentMentions, down as removeCommentMentions } from '../../db/migrations/tsepistle-000033-comment-mentions.ts'
-const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const password = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE ? fs.readFileSync(process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_discussion_test') && password ? { host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password } : null
+const connection = getPostgresTestConnection('_discussion_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const definitions: DiscussionDefinition[] = [{ key: 'default', title: 'Default', isAvailable: true, props: { akismet: { type: 'string', sensitive: true }, minDelay: { type: 'number' } } }, { key: 'commento', title: 'Commento', isAvailable: true, codeTemplate: true, props: { instanceUrl: { type: 'string' } } }]
 const permissions = (user: unknown): string[] => { const value = user && typeof user === 'object' ? Reflect.get(user, 'permissions') : undefined; return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [] }
@@ -22,6 +20,17 @@ const admin = { id: 1, permissions: ['manage:system', 'read:pages', 'write:comme
 suite('PostgreSQL discussion lifecycle and policy', () => {
   let db: Knex, settings: ReturnType<typeof createDiscussionSettingsStore>, moderation: ReturnType<typeof createDiscussionModerationStore>, posts: ReturnType<typeof createDiscussionPostingStore>, failActivation = false, spamChecks: number[] = [], oldWiki: unknown
   const post = (overrides: Partial<DiscussionPostInput> = {}): DiscussionPostInput => ({ pageId: 1, replyTo: 0, content: 'A useful contribution', render: '<p>A useful contribution</p>', user: { id: 1, name: 'Reader', email: 'reader@example.invalid', ip: '192.0.2.1' }, requester: admin, sessionId: 'test-session', ...overrides })
+  const waitForPendingAdvisoryLock = async (classid: number, objid: number, objsubid: number): Promise<void> => {
+    const deadline = performance.now() + 2_000
+    do {
+      const waiting = await db('pg_locks')
+        .where({ locktype: 'advisory', classid, objid, objsubid, mode: 'ExclusiveLock', granted: false })
+        .where('database', db.raw('(SELECT oid FROM pg_database WHERE datname = current_database())'))
+        .first('pid')
+      if (waiting) return
+    } while (performance.now() < deadline)
+    throw new Error('Expected the policy change to wait for the admitted post advisory lock')
+  }
   beforeAll(async () => {
     globalThis.WIKI = {
       auth: {
@@ -187,18 +196,37 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     await expect(moderation.list(user, {})).rejects.toMatchObject({ status: 403 }); await expect(moderation.inspect(user, 1)).rejects.toMatchObject({ status: 403 }); await expect(moderation.policy(user, 2)).rejects.toMatchObject({ status: 403 })
   })
   it('filters literal search characters and visibility with stable pagination', async () => {
-    await posts.post(post({ content: 'Contains 100%_literal', pageId: 2 }))
-    await posts.post(post({ user: { ...post().user, id: 3 }, content: 'Other text' }))
-    expect((await moderation.list(admin, { search: '%_', visibility: 'private', limit: 1 })).total).toBe(1)
+    const privateLiteral = await posts.post(post({ content: 'Contains 100%_literal', pageId: 2 }))
+    const otherPublic = await posts.post(post({ user: { ...post().user, id: 3 }, content: 'Other text' }))
+    const unrelatedPrivate = await posts.post(post({ user: { ...post().user, id: 4 }, content: 'Unrelated private contribution', pageId: 2 }))
+    const publicLiteral = await posts.post(post({ user: { ...post().user, id: 5 }, content: 'Public 100%_literal contribution' }))
+    const ids = [privateLiteral, otherPublic, unrelatedPrivate, publicLiteral]
+    await db('comments').whereIn('id', ids).update({ createdAt: '2026-01-01T00:00:00.000Z' })
+    const matching = await moderation.list(admin, { search: '%_', visibility: 'private', limit: 1 })
+    expect(matching.total).toBe(1)
+    expect(matching.items.map(item => item.id)).toEqual([privateLiteral])
     const first = await moderation.list(admin, { limit: 1 }), next = await moderation.list(admin, { limit: 1, offset: 1 })
-    expect(first.items[0]?.id).not.toBe(next.items[0]?.id); expect(first.items[0]).not.toHaveProperty('authorEmail')
+    const third = await moderation.list(admin, { limit: 1, offset: 2 }), fourth = await moderation.list(admin, { limit: 1, offset: 3 })
+    expect([first, next, third, fourth].map(result => result.items[0]?.id)).toEqual([publicLiteral, unrelatedPrivate, otherPublic, privateLiteral])
+    expect(first.items[0]).not.toHaveProperty('authorEmail')
   })
   it('closes/reopens with a reason, retains comments and rejects posts while closed', async () => {
     const id = await posts.post(post()), initial = await moderation.policy(admin, 1)
     const closed = await moderation.setPolicy(admin, 1, { closed: true, reason: 'Question has been resolved', fingerprint: initial.fingerprint })
     expect(closed.closed).toBe(true); expect((await moderation.closedPages(admin, {})).total).toBe(1)
     await expect(posts.post(post({ user: { ...post().user, id: 3 } }))).rejects.toMatchObject({ status: 409 }); expect(await db('comments').where('id', id)).toHaveLength(1)
-    await moderation.setPolicy(admin, 1, { closed: false, reason: 'New evidence available', fingerprint: closed.fingerprint })
+    const reopened = await moderation.setPolicy(admin, 1, { closed: false, reason: 'New evidence available', fingerprint: closed.fingerprint })
+    expect(reopened.closed).toBe(false)
+    expect(await db('pageDiscussionPolicy').where('pageId', 1).first()).toMatchObject({ closed: false, reason: 'New evidence available' })
+    const saved = await moderation.policy(admin, 1)
+    expect(saved.closed).toBe(false)
+    expect(saved.history.map(({ action, actorId, reason }) => ({ action, actorId, reason }))).toEqual([
+      { action: 'reopen', actorId: 1, reason: 'New evidence available' },
+      { action: 'close', actorId: 1, reason: 'Question has been resolved' }
+    ])
+    const accepted = await posts.post(post({ user: { ...post().user, id: 4 }, content: 'Contribution after reopening' }))
+    expect(await db('comments').where('id', accepted).first()).toMatchObject({ pageId: 1, content: 'Contribution after reopening' })
+    expect(await db('comments').where('id', id)).toHaveLength(1)
     await expect(moderation.setPolicy(admin, 1, { closed: true, reason: 'Stale page review', fingerprint: initial.fingerprint })).rejects.toMatchObject({ status: 409 })
   })
   it('separates guest delays by IP and serializes simultaneous posts from the same identity', async () => {
@@ -210,7 +238,10 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
   })
   it('uses creation time rather than edit time for posting delay', async () => {
     const id = await posts.post(post()); await db('comments').where('id', id).update({ createdAt: new Date(Date.now() - 60000).toISOString(), updatedAt: new Date().toISOString() })
-    await expect(posts.post(post())).resolves.toBeNumber()
+    const accepted = await posts.post(post())
+    expect(accepted).not.toBe(id)
+    expect(await db('comments').where('id', accepted).first()).toMatchObject({ pageId: 1, content: post().content })
+    expect(await db('comments').where('id', id)).toHaveLength(1)
   })
   it('does not send private/protected content to spam checking and enforces password grants', async () => {
     await posts.post(post({ pageId: 2 })); expect(spamChecks).toEqual([])
@@ -240,8 +271,8 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     await expect(posts.post(post())).rejects.toMatchObject({ status: 409 }); expect(spamChecks).toEqual([])
   })
   it('holds the page closure boundary until an in-flight accepted post is persisted', async () => {
-    let release!: () => void, entered!: () => void
-    const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+    const { promise: ready, resolve: entered } = Promise.withResolvers<void>()
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>()
     const slow = createDiscussionPostingStore({
       db,
       fallbackFeatures: () => ({ featurePageComments: true }),
@@ -249,15 +280,33 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
       canPost: () => true,
       async checkSpam() { entered(); await gate }
     })
-    const posting = slow.post(post()); await ready
-    const initial = await moderation.policy(admin, 1); let closed = false
-    const closing = moderation.setPolicy(admin, 1, { closed: true, reason: 'End this conversation', fingerprint: initial.fingerprint }).then(value => { closed = true; return value })
-    await new Promise(resolve => setTimeout(resolve, 60)); expect(closed).toBe(false); release(); await posting; await closing
-    await expect(posts.post(post({ user: { ...post().user, id: 3 } }))).rejects.toMatchObject({ status: 409 })
+    const initial = await moderation.policy(admin, 1)
+    let closed = false
+    const posting = slow.post(post())
+    let drained: Promise<PromiseSettledResult<unknown>[]> = Promise.allSettled([posting])
+    try {
+      await Promise.race([ready, posting.then(() => { throw new Error('Post completed before entering the spam gate') })])
+      const closing = moderation.setPolicy(admin, 1, { closed: true, reason: 'End this conversation', fingerprint: initial.fingerprint }).then(async value => {
+        closed = true
+        expect(await db('comments').where({ pageId: 1, content: post().content }).first()).toMatchObject({ pageId: 1, content: post().content })
+        return value
+      })
+      drained = Promise.allSettled([posting, closing])
+      await waitForPendingAdvisoryLock(72401641, 1, 2)
+      expect(closed).toBe(false)
+      release()
+      const accepted = await posting
+      expect(await db('comments').where('id', accepted).first()).toMatchObject({ pageId: 1, content: post().content })
+      await closing
+      await expect(posts.post(post({ user: { ...post().user, id: 3 } }))).rejects.toMatchObject({ status: 409 })
+    } finally {
+      release()
+      await drained
+    }
   })
   it('serializes a first persisted global pause against a post using fallback feature settings', async () => {
-    let release!: () => void, entered!: () => void
-    const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+    const { promise: ready, resolve: entered } = Promise.withResolvers<void>()
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>()
     const slow = createDiscussionPostingStore({
       db,
       fallbackFeatures: () => ({ featurePageComments: true }),
@@ -265,10 +314,29 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
       canPost: () => true,
       async checkSpam() { entered(); await gate }
     })
-    const posting = slow.post(post()); await ready; let paused = false
-    const pausing = settings.patchFeatures({ featurePageComments: false }).then(() => { paused = true })
-    await new Promise(resolve => setTimeout(resolve, 60)); expect(paused).toBe(false); release(); await posting; await pausing
-    await expect(posts.post(post({ user: { ...post().user, id: 3 } }))).rejects.toMatchObject({ status: 409 })
+    expect(await db('settings').where('key', 'features').first()).toBeUndefined()
+    let paused = false
+    const posting = slow.post(post())
+    let drained: Promise<PromiseSettledResult<unknown>[]> = Promise.allSettled([posting])
+    try {
+      await Promise.race([ready, posting.then(() => { throw new Error('Post completed before entering the spam gate') })])
+      expect(await db('settings').where('key', 'features').first()).toBeUndefined()
+      const pausing = settings.patchFeatures({ featurePageComments: false }).then(async () => {
+        paused = true
+        expect(await db('comments').where({ pageId: 1, content: post().content }).first()).toMatchObject({ pageId: 1, content: post().content })
+      })
+      drained = Promise.allSettled([posting, pausing])
+      await waitForPendingAdvisoryLock(0, 72401640, 1)
+      expect(paused).toBe(false)
+      release()
+      const accepted = await posting
+      expect(await db('comments').where('id', accepted).first()).toMatchObject({ pageId: 1, content: post().content })
+      await pausing
+      await expect(posts.post(post({ user: { ...post().user, id: 3 } }))).rejects.toMatchObject({ status: 409 })
+    } finally {
+      release()
+      await drained
+    }
   })
   it('preserves lifecycle state on downgrade and permits a clean up/down migration', async () => {
     const initial = await moderation.policy(admin, 1); await moderation.setPolicy(admin, 1, { closed: true, reason: 'Preserve this policy', fingerprint: initial.fingerprint })

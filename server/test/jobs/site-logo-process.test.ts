@@ -387,8 +387,9 @@ describe('managed site logo v7 durable publication', () => {
 
   it('keeps the v3 pipeline-5 fence and never lets an old writer create v7 artifacts', async () => {
     const { revisionId, job } = await enqueueCandidate({ pipelineVersion: 5, jobVersion: 3 })
-    await run(job, async () => artifacts('must-not-run'))
-    expect(processingMocks.defaultProcessor).not.toHaveBeenCalled()
+    const selectedProcessor = vi.fn(async () => artifacts('must-not-run'))
+    await run(job, selectedProcessor)
+    expect(selectedProcessor).not.toHaveBeenCalled()
     expect(await knex('siteLogoObjects').whereNot({ kind: 'source' })).toHaveLength(0)
     expect(await knex('siteLogoRevisions').where({ id: revisionId }).first('pipelineVersion', 'status', 'errorCode')).toEqual({
       pipelineVersion: 5,
@@ -399,8 +400,9 @@ describe('managed site logo v7 durable publication', () => {
 
   it('terminalizes pipeline-6 work under historical job v4 without running the v7 processor', async () => {
     const { revisionId, job } = await enqueueCandidate({ pipelineVersion: 6, jobVersion: 4 })
-    await run(job, async () => artifacts('must-not-run'))
-    expect(processingMocks.defaultProcessor).not.toHaveBeenCalled()
+    const selectedProcessor = vi.fn(async () => artifacts('must-not-run'))
+    await run(job, selectedProcessor)
+    expect(selectedProcessor).not.toHaveBeenCalled()
     expect(await knex('siteLogoObjects').whereNot({ kind: 'source' })).toHaveLength(0)
     expect(await knex('siteLogoRevisions').where({ id: revisionId }).first('pipelineVersion', 'status', 'errorCode')).toEqual({
       pipelineVersion: 6,
@@ -626,10 +628,11 @@ describe('managed site logo v7 durable publication', () => {
     })
     const [replay] = await new DurableJobStore(knex).claim({ workerId: `replay-${repair.revisionId}`, leaseMs: 60_000 })
     if (!replay) throw new Error('Site logo replay job was not claimed')
-    await createSiteLogoProcessHandler(5, async () => artifacts('must-not-run'))(replay, { knex, signal: new AbortController().signal })
+    const replayProcessor = vi.fn(async () => artifacts('must-not-run'))
+    await createSiteLogoProcessHandler(5, replayProcessor)(replay, { knex, signal: new AbortController().signal })
     expect(await new DurableJobStore(knex).complete(replay)).toBe(true)
     expect(await knex('siteLogoState').where({ id: 1 }).first('activeRevisionId', 'desiredRevisionId', 'generation')).toEqual(publishedState)
-    expect(processingMocks.defaultProcessor).not.toHaveBeenCalled()
+    expect(replayProcessor).not.toHaveBeenCalled()
   })
 
   it('fails closed when a repair payload has a malformed or tampered expected active revision', async () => {
@@ -695,6 +698,19 @@ describe('managed site logo v7 cleanup', () => {
     await insertObjects(retired)
     const retiredId = await insertRevision({ hash: retiredHash, status: 'ready', output: retired, completedAt: old, retiredAt: old })
     await knex('siteLogoState').where({ id: 1 }).update({ activeRevisionId: activeId, desiredRevisionId: activeId })
+    const identities = (output: SiteLogoArtifacts, sourceHash: string): Array<{ kind: string; sha256: string }> => {
+      if (output.enhancement.status !== 'ready') throw new Error('Expected a complete cleanup fixture')
+      return [
+        { kind: 'source', sha256: sourceHash },
+        { kind: 'logo-png', sha256: digest(output.logoPng) },
+        ...Object.values(output.icons).map(bytes => ({ kind: 'icon-png', sha256: digest(bytes) })),
+        { kind: 'favicon-ico', sha256: digest(output.faviconIco) },
+        { kind: 'particle-v1', sha256: digest(output.enhancement.particleV1) },
+        { kind: 'effect-static-png', sha256: digest(output.enhancement.effectStaticPng) }
+      ]
+    }
+    const activeIdentities = identities(active, activeHash)
+    const retiredIdentities = identities(retired, retiredHash)
 
     await cleanupSiteLogoRevisions({} as DurableJob, { knex, signal: new AbortController().signal })
 
@@ -704,5 +720,9 @@ describe('managed site logo v7 cleanup', () => {
     expect(await knex('siteLogoObjects').where({ kind: 'favicon-ico' })).toHaveLength(1)
     expect(await knex('siteLogoObjects').where({ kind: 'particle-v1' })).toHaveLength(1)
     expect(await knex('siteLogoRevisions').where({ id: activeId })).toHaveLength(1)
+    const survivors = await knex('siteLogoObjects').select('kind', 'sha256')
+    const identityKey = ({ kind, sha256 }: { kind: string; sha256: string }): string => `${kind}:${sha256}`
+    expect(survivors.map(identityKey).sort()).toEqual(activeIdentities.map(identityKey).sort())
+    for (const identity of retiredIdentities) expect(survivors).not.toContainEqual(identity)
   })
 })

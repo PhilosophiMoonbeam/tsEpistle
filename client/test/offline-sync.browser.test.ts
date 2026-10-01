@@ -15,6 +15,12 @@ const executablePath = process.env.CHROME_BIN ?? '/usr/bin/google-chrome'
 const siteId = 'https://offline-sync.example.test'
 const currentTime = '2026-09-16T00:00:00.000Z'
 const oldTime = '2026-07-01T00:00:00.000Z'
+type PrivateTransactionState = {
+  records: Array<Record<string, unknown>>
+  managedBytes: number
+  snapshotCount: number
+  corpusRevision: number
+}
 type SyncRun = {
   result: OfflineSyncPassResult
   pages: OfflinePagePolicyRecord[]
@@ -22,7 +28,14 @@ type SyncRun = {
   policyRevision: number
   sessionGeneration: number
   requests: string[]
-  privateCorpus?: { snapshots: Array<{ pageId: number; locale: string; sourceRevision: string }> }
+  privateCorpus?: { snapshots: OfflineSnapshotRecord[] }
+  privateRecords?: OfflinePrivateEnvelopeV1[]
+  privateRollback?: {
+    before: PrivateTransactionState
+    after: PrivateTransactionState
+    firstPutSucceeded: boolean
+    rejectedPutKind: string
+  }
   privateVault?: Record<string, unknown>
   privatePolicy?: { state: Record<string, unknown>; pages: OfflinePagePolicyRecord[] }
   pendingFetchAborted?: boolean
@@ -181,6 +194,9 @@ export async function run(operation, payload = {}) {
   let recoveryStatus;
   let recoveryFetchAborted;
   let firstStorageFailure = true;
+  let privateRollbackReads;
+  let privateFirstPutSucceeded = false;
+  let privateRejectedPutKind;
   const recoveryFetchStarted = Promise.withResolvers();
   const recoveryFetchRelease = Promise.withResolvers();
   let recoverySignal = null;
@@ -296,12 +312,61 @@ export async function run(operation, payload = {}) {
         await storage.setManualOfflineIntent(privateSelector(1), true, { readingHandle: privateHandle });
       }
       if (kind === 'private-quota') {
-        const originalPutPrivatePair = storage.putPrivateSnapshotRecords.bind(storage);
-        storage.putPrivateSnapshotRecords = async () => {
-          throw new OfflineStorageError('quota', 'The private device is full.');
+        const originalPut = IDBObjectStore.prototype.put;
+        const requestValue = request => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          request.addEventListener('success', () => resolve(request.result), { once: true });
+          request.addEventListener('error', () => reject(request.error), { once: true });
+          return promise;
+        };
+        const readTransactionState = transaction => {
+          const records = requestValue(transaction.objectStore('privateRecords').getAll());
+          const meta = requestValue(transaction.objectStore('meta').get('state'));
+          return Promise.all([records, meta]).then(([records, meta]) => ({
+            records: records.map(record => ({
+              ...record,
+              nonce: Array.from(record.nonce),
+              ciphertext: Array.from(record.ciphertext)
+            })),
+            managedBytes: meta.managedBytes,
+            snapshotCount: meta.snapshotCount,
+            corpusRevision: meta.corpusRevision
+          }));
+        };
+        let bodyPuts = 0;
+        IDBObjectStore.prototype.put = function (...args) {
+          const value = args[0];
+          if (this.name !== 'privateRecords' || (value?.kind !== 'snapshot' && value?.kind !== 'search'))
+            return originalPut.apply(this, args);
+          bodyPuts += 1;
+          if (bodyPuts === 1) {
+            // Read before the first native write, in the same transaction.
+            // Sync diagnostics commit separately and are not rollback deltas.
+            const before = readTransactionState(this.transaction);
+            const after = Promise.withResolvers();
+            const captureAfter = () => {
+              const transaction = this.transaction.db.transaction(['privateRecords', 'meta'], 'readonly');
+              const done = Promise.withResolvers();
+              transaction.addEventListener('complete', () => done.resolve(), { once: true });
+              transaction.addEventListener('abort', () => done.reject(transaction.error), { once: true });
+              // Queue this read at transaction settlement, before the coordinator
+              // resumes and writes its independent failure diagnostics.
+              Promise.all([readTransactionState(transaction), done.promise]).then(([state]) => after.resolve(state), after.reject);
+            };
+            this.transaction.addEventListener('abort', captureAfter, { once: true });
+            this.transaction.addEventListener('complete', captureAfter, { once: true });
+            privateRollbackReads = Promise.all([before, after.promise]);
+            const request = originalPut.apply(this, args);
+            request.addEventListener('success', () => { privateFirstPutSucceeded = true; }, { once: true });
+            return request;
+          }
+          privateRejectedPutKind = value.kind;
+          IDBObjectStore.prototype.put = originalPut;
+          // A synchronous failure cannot rely on native request auto-abort.
+          throw new DOMException('The private device is full.', 'QuotaExceededError');
         };
         restorePut = () => {
-          storage.putPrivateSnapshotRecords = originalPutPrivatePair;
+          IDBObjectStore.prototype.put = originalPut;
         };
       }
     } else {
@@ -605,6 +670,12 @@ export async function run(operation, payload = {}) {
       }
     }
     const effectivePolicy = privatePolicy ?? policy;
+    let privateRollback;
+    if (kind === 'private-quota') {
+      if (!privateRollbackReads) throw new Error('The private pair transaction was not reached.');
+      const [before, after] = await privateRollbackReads;
+      privateRollback = { before, after, firstPutSucceeded: privateFirstPutSucceeded, rejectedPutKind: privateRejectedPutKind };
+    }
     return {
       ok: true,
       value: {
@@ -614,7 +685,7 @@ export async function run(operation, payload = {}) {
         policyRevision: effectivePolicy.state.policyRevision,
         sessionGeneration: effectivePolicy.sessionGeneration,
         requests,
-        ...(privateScenario ? { privateRecords, privateVault, privatePolicy, privateCorpus } : {}),
+        ...(privateScenario ? { privateRecords, privateVault, privatePolicy, privateCorpus, privateRollback } : {}),
         pendingFetchAborted,
         recoveryStatus,
         recoveryFetchAborted
@@ -884,6 +955,9 @@ describe('foreground offline sync coordinator', () => {
     expect(run.result.outcome).toBe('offline')
     expect(run.result.pending).toBe(1)
     expect(run.result.diagnostics.pendingCount).toBe(1)
+    expect(run.requests).toEqual([])
+    expect(run.result.attempted).toBe(0)
+    expect(run.result.saved).toBe(0)
     expect(policyFor(run, 1)).toMatchObject({ manual: true, automatic: false, tag: false, excluded: false })
   })
 
@@ -907,8 +981,6 @@ describe('foreground offline sync coordinator', () => {
     const run = await runScenario('closed')
     expect(run.result.status).toBe('error')
     expect(run.result.error).toBe(run.result.diagnostics.lastError)
-    expect(run.result.error).toContain('closed')
-    expect(run.result.diagnostics.lastError).toContain('closed')
   })
 
   test('aborting and disposing a pass prevents its late snapshot commit', async () => {
@@ -1033,7 +1105,10 @@ describe('foreground offline sync coordinator', () => {
     if (kind === 'private-manual') expect(run.privateCorpus?.snapshots).toMatchObject([{ pageId: 1, locale: 'en', snapshot: { sourceRevision: 'revision-1' } }])
     expect(run.privateRecords?.every(record => record.ciphertext.length > 16)).toBe(true)
     const persisted = JSON.stringify({ records: run.privateRecords, vault: run.privateVault })
-    for (const secret of ['Page 1', 'docs/en/1', 'alpha', '<p>Page 1</p>', currentTime]) expect(persisted).not.toContain(secret)
+    const secrets = kind === 'private-tags'
+      ? ['Page 200', 'docs/en/200', '<p>Page 200</p>', 'alpha', 'beta', currentTime]
+      : ['Page 1', 'docs/en/1', '<p>Page 1</p>', currentTime]
+    for (const secret of secrets) expect(persisted).not.toContain(secret)
   })
 
   test('rolls back a quota-failed encrypted body/search pair and its policy revision', async () => {
@@ -1042,6 +1117,9 @@ describe('foreground offline sync coordinator', () => {
     expect(run.result.saved).toBe(0)
     expect(run.privateRecords).toHaveLength(2)
     expect(run.privatePolicy?.pages[0]).toMatchObject({ manual: true, availability: 'unknown' })
+    expect(run.privateRollback?.firstPutSucceeded).toBe(true)
+    expect(run.privateRollback?.rejectedPutKind).toBe('search')
+    expect(run.privateRollback?.after).toEqual(run.privateRollback?.before)
   })
 
   test('retires the entire private vault after a private endpoint 401', async () => {

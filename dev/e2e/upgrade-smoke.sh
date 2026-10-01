@@ -22,6 +22,8 @@ DATA_FIXTURE=$FIXTURE_DIR/$(jq -r '.dataArtifact.path' "$FIXTURE_MANIFEST")
 SOURCE_IMAGE=$(jq -r '.sourceImage' "$FIXTURE_MANIFEST")
 ADMIN_EMAIL=$(jq -r '.fixtureIdentity.administratorEmail' "$FIXTURE_MANIFEST")
 ADMIN_PASSWORD=$(jq -r '.fixtureIdentity.administratorPassword' "$FIXTURE_MANIFEST")
+# SHA-256 of the original dump's continuity.txt bytes: "legacy fixture asset\n".
+FIXTURE_ASSET_SHA256=4f98e067d1d0dbf1c8614bfc50236e8de2afaeddbdea639b5c2ced24b64addab
 MIGRATION_MAX_SECONDS=${MIGRATION_MAX_SECONDS:-120}
 MIGRATION_MAX_DB_GROWTH_BYTES=${MIGRATION_MAX_DB_GROWTH_BYTES:-268435456}
 MIGRATION_MAX_DB_AMPLIFICATION_PERCENT=${MIGRATION_MAX_DB_AMPLIFICATION_PERCENT:-500}
@@ -179,6 +181,21 @@ verify_legacy_login() {
   login_graphql >/dev/null
 }
 
+assert_fixture_asset_bytes() {
+  local asset_sha
+  asset_sha=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align \
+    --command="SELECT encode(sha256(data.data), 'hex')
+      FROM \"assetData\" AS data JOIN assets ON assets.id = data.id
+      WHERE assets.filename = 'continuity.txt'")
+  [ "$asset_sha" = "$FIXTURE_ASSET_SHA256" ]
+}
+
+assert_fixture_asset_download() {
+  local download=$RECOVERY_DIR/continuity.txt
+  wiki_curl --fail --silent --show-error --output "$download" "$WIKI_ORIGIN/continuity.txt"
+  printf '%s  %s\n' "$FIXTURE_ASSET_SHA256" "$download" | sha256sum --check --status
+}
+
 resource_report() {
   docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align --command="
     SELECT json_build_object(
@@ -306,10 +323,17 @@ assert_fixture_report "$before_report"
 start_wiki "$SOURCE_IMAGE"
 wait_for_url "$WIKI_ORIGIN/login"
 verify_legacy_login
+assert_fixture_asset_bytes
+assert_fixture_asset_download
 remove_wiki
 
 docker exec "$DB_CONTAINER" pg_dump --username=wiki --format=custom --compress=9 --file=/tmp/pre-upgrade.dump wiki
 backup_sha=$(docker exec "$DB_CONTAINER" sha256sum /tmp/pre-upgrade.dump | cut -d ' ' -f 1)
+# The owned root sentinel is outside cache, which application startup may clear.
+printf 'pre-upgrade data\000sentinel\n' > "$RECOVERY_DIR/data-sentinel.expected"
+docker run --rm --user 0 --entrypoint sh \
+  -v "$DATA_VOLUME":/data -v "$RECOVERY_DIR":/backup:ro "$WIKI_TEST_IMAGE" \
+  -c 'set -eu; mkdir /data/.upgrade-smoke; cp /backup/data-sentinel.expected /data/.upgrade-smoke/original'
 snapshot_data_volume
 database_bytes_before=$(database_size_bytes)
 database_bytes_before=${database_bytes_before//[[:space:]]/}
@@ -340,6 +364,8 @@ peak_memory_bytes=${peak_memory_bytes//[[:space:]]/}
 [[ "$peak_memory_bytes" =~ ^[0-9]+$ ]]
 after_report=$(resource_report)
 assert_upgraded_report "$after_report"
+assert_fixture_asset_bytes
+assert_fixture_asset_download
 
 current_cookie_file=$RECOVERY_DIR/current.cookies
 login_response=$(wiki_curl --fail --silent --show-error \
@@ -383,10 +409,17 @@ database_peak_amplification_percent=$(((database_bytes_peak * 100 + database_byt
 [ "$peak_memory_bytes" -le "$MIGRATION_MAX_PEAK_MEMORY_BYTES" ]
 
 remove_wiki
+docker run --rm --user 0 --entrypoint sh -v "$DATA_VOLUME":/data "$WIKI_TEST_IMAGE" \
+  -c 'set -eu; printf "candidate changed data\n" > /data/.upgrade-smoke/original; printf "candidate-only data\n" > /data/.upgrade-smoke/candidate-only'
 docker exec "$DB_CONTAINER" dropdb --username=wiki --force wiki
 docker exec "$DB_CONTAINER" createdb --username=wiki --owner=wiki wiki
 docker exec "$DB_CONTAINER" pg_restore --username=wiki --dbname=wiki /tmp/pre-upgrade.dump
 restore_data_volume
+# Check restored bytes before the old image can recreate or clear any files.
+docker run --rm --user 0 --entrypoint sh \
+  -v "$DATA_VOLUME":/data:ro -v "$RECOVERY_DIR":/backup:ro "$WIKI_TEST_IMAGE" \
+  -c 'set -eu; cmp /backup/data-sentinel.expected /data/.upgrade-smoke/original; test ! -e /data/.upgrade-smoke/candidate-only'
+assert_fixture_asset_bytes
 rollback_report=$(resource_report)
 [ "$rollback_report" = "$before_report" ]
 rollback_discarded=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align \
@@ -395,6 +428,7 @@ rollback_discarded=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname=w
 start_wiki "$SOURCE_IMAGE"
 wait_for_url "$WIKI_ORIGIN/login"
 verify_legacy_login
+assert_fixture_asset_download
 
 jq --null-input \
   --arg sourceImage "$SOURCE_IMAGE" \

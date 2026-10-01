@@ -15,14 +15,34 @@ afterAll(() => {
 })
 
 describe('authentication certificate rotation', () => {
-  let savedCertificates: Record<string, unknown> | undefined
+  interface SettingsRow {
+    key: string
+    value: Record<string, unknown>
+    updatedAt: string
+  }
+  interface ApiKeyRow {
+    id: number
+    isRevoked: boolean
+    updatedAt: string
+  }
+  let settingsRows: SettingsRow[]
+  let apiKeys: ApiKeyRow[]
+  let settingsInsertKey: string | undefined
+  let settingsConflictColumn: keyof SettingsRow | undefined
   let activate: ((strict?: boolean) => Promise<void>) & { mock?: unknown }
   let reloadApiKeys: (() => Promise<void>) & { mock?: unknown }
   let auth: AuthUtilities
   const encryptionRoot = 'preserved-encryption-root'
 
   beforeEach(async () => {
-    savedCertificates = undefined
+    settingsRows = [{ key: 'certs', value: { public: 'old-public', private: 'old-private' }, updatedAt: 'before-rotation' }]
+    apiKeys = [
+      { id: 7, isRevoked: false, updatedAt: 'before-rotation' },
+      { id: 8, isRevoked: false, updatedAt: 'before-rotation' },
+      { id: 9, isRevoked: true, updatedAt: 'already-revoked' }
+    ]
+    settingsInsertKey = undefined
+    settingsConflictColumn = undefined
     activate = vi.fn(async () => undefined)
     reloadApiKeys = vi.fn(async () => undefined)
     globalThis.WIKI = {
@@ -45,18 +65,32 @@ describe('authentication certificate rotation', () => {
             await work((table: string) => {
               if (table === 'settings') {
                 return {
-                  insert: ({ value }: { value: Record<string, unknown> }) => ({
-                    onConflict: () => ({
-                      merge: async () => {
-                        savedCertificates = value
+                  insert: (inserted: SettingsRow) => {
+                    settingsInsertKey = inserted.key
+                    return {
+                      onConflict: (column: keyof SettingsRow) => {
+                        settingsConflictColumn = column
+                        return {
+                          merge: async (changes: Partial<SettingsRow>) => {
+                            const existing = settingsRows.find(row => row[column] === inserted[column])
+                            if (existing) Object.assign(existing, structuredClone(changes))
+                            else settingsRows.push(structuredClone(inserted))
+                          }
+                        }
                       }
-                    })
-                  })
+                    }
+                  }
                 }
               }
               if (table === 'apiKeys') {
                 return {
-                  where: () => ({ update: async () => [{ id: 7 }, { id: 8 }] })
+                  where: (column: keyof ApiKeyRow, value: ApiKeyRow[keyof ApiKeyRow]) => ({
+                    update: async (changes: Partial<ApiKeyRow>, returning: (keyof ApiKeyRow)[]) => {
+                      const affected = apiKeys.filter(row => row[column] === value)
+                      for (const row of affected) Object.assign(row, changes)
+                      return affected.map(row => Object.fromEntries(returning.map(key => [key, row[key]])))
+                    }
+                  })
                 }
               }
               throw new Error(`Unexpected table ${table}`)
@@ -75,12 +109,21 @@ describe('authentication certificate rotation', () => {
     const result = await auth.regenerateCertificates()
 
     expect(result).toEqual({ revokedApiKeys: 2 })
+    expect(apiKeys.filter(row => row.id === 7 || row.id === 8).map(row => ({ id: row.id, isRevoked: row.isRevoked }))).toEqual([
+      { id: 7, isRevoked: true },
+      { id: 8, isRevoked: true }
+    ])
+    expect(apiKeys.find(row => row.id === 9)).toEqual({ id: 9, isRevoked: true, updatedAt: 'already-revoked' })
+    expect(settingsInsertKey).toBe('certs')
+    expect(settingsConflictColumn).toBe('key')
+    const savedCertificates = settingsRows.find(row => row.key === 'certs')?.value
     expect(globalThis.WIKI.config.sessionSecret).toBe(encryptionRoot)
     expect(decryptWebhookSecret(encrypted, globalThis.WIKI.config.sessionSecret)).toBe('fixture-webhook-secret')
     expect(savedCertificates).toMatchObject({
       public: expect.stringContaining('BEGIN RSA PUBLIC KEY'),
       private: expect.stringContaining('BEGIN RSA PRIVATE KEY')
     })
+    expect(globalThis.WIKI.config.certs).toEqual(savedCertificates)
     expect(globalThis.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
     expect(activate).toHaveBeenCalledWith(true)
     expect(reloadApiKeys).toHaveBeenCalledOnce()

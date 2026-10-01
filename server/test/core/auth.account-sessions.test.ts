@@ -28,7 +28,7 @@ describe('HTTP session authority and safe renewal', () => {
   it('treats a revoked or inactive account session as guest without renewing it', async () => {
     for (const value of [{ ...account(), authVersion: 1 }, { ...account(), isActive: false }]) { findById.mockResolvedValue(value); const { req } = await run(); expect(req.authContext).toMatchObject({ kind: 'guest' }); expect(req.logIn).not.toHaveBeenCalled(); expect(refreshToken).not.toHaveBeenCalled() }
   })
-  it('verifies an expired token and carries its generation into the renewal transaction boundary', async () => {
+  it('verifies an expired token before generation-bound renewal', async () => {
     principal = false; info = { name: 'TokenExpiredError', expiredAt: new Date(Date.now() - 10000) }; verify.mockReturnValue(currentClaims())
     const { req, res } = await run(); expect(verify).toHaveBeenCalledWith('signed-token', 'PUBLIC-KEY', { audience: 'urn:test', issuer: 'urn:wiki.js', algorithms: ['RS256'], ignoreExpiration: true }); expect(refreshToken).toHaveBeenCalledWith(7, { expectedAuthVersion: 0 }); expect(res.cookie).toHaveBeenCalledWith('jwt', 'replacement', expect.any(Object)); expect(res.set).toHaveBeenCalledWith('x-wiki-auth-refreshed', '1'); expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store'); expect(req.authContext).toMatchObject({ kind: 'user' })
   })
@@ -39,7 +39,7 @@ describe('HTTP session authority and safe renewal', () => {
   })
   it('does not issue a replacement when account state changes during renewal', async () => {
     principal = false; info = { name: 'TokenExpiredError', expiredAt: new Date(Date.now() - 10000) }; verify.mockReturnValue(currentClaims()); refreshToken.mockRejectedValue(new Error('session generation changed'))
-    const { req, res } = await run(); expect(req.authContext).toBeUndefined(); expect(res.set).not.toHaveBeenCalled(); expect(req.logIn).not.toHaveBeenCalled()
+    const { req, res } = await run(); expect(refreshToken).toHaveBeenCalledWith(7, { expectedAuthVersion: 0 }); expect(req.authContext).toBeUndefined(); expect(res.cookie).not.toHaveBeenCalled(); expect(res.set).not.toHaveBeenCalled(); expect(req.logIn).not.toHaveBeenCalled()
   })
   it('fails closed when account authority cannot be read', async () => {
     const failure = new Error('database unavailable'); findById.mockRejectedValue(failure); const { req, next } = await run(); expect(next).toHaveBeenCalledWith(failure); expect(req.logIn).not.toHaveBeenCalled()

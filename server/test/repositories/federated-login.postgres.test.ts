@@ -1,25 +1,11 @@
 import createKnex, { type Knex } from 'knex'
-import fs from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
 import { up as migrateFederatedLogin } from '../../db/migrations/tsepistle-000030-federated-login-state.ts'
 import { FederatedLoginStore } from '../../repositories/federated-login.ts'
 
-const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
-const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const password = passwordFile ? fs.readFileSync(passwordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = databaseName.endsWith('_federated_login_test') && password
-  ? {
-      host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
-      port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
-      user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-      password,
-      database: databaseName
-    }
-  : null
-const directlyInvoked = !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('federated-login.postgres.test.ts'))
-const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
-if (databaseContractRequired && !connection) throw new Error('Explicit federated-login PostgreSQL execution requires a *_federated_login_test database and password.')
+const connection = getPostgresTestConnection('_federated_login_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 
 suite('PostgreSQL federated login authority', () => {

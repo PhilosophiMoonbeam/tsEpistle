@@ -29,31 +29,6 @@ afterEach(async () => {
 })
 
 describe('portable durable jobs', () => {
-  it('creates the versioned payload, lease, retry, and observability columns', async () => {
-    const columns = await knex('durableJobs').columnInfo()
-
-    expect(Object.keys(columns)).toEqual(
-      expect.arrayContaining([
-        'id',
-        'type',
-        'version',
-        'payload',
-        'state',
-        'attempts',
-        'maxAttempts',
-        'nextRunAt',
-        'leaseOwner',
-        'leaseToken',
-        'leaseExpiresAt',
-        'lastError',
-        'deduplicationKey',
-        'createdAt',
-        'updatedAt',
-        'completedAt'
-      ])
-    )
-  })
-
   it('allows only one instance to claim a ready job', async () => {
     await store.enqueue({
       type: 'cleanup-durable-jobs',
@@ -69,16 +44,22 @@ describe('portable durable jobs', () => {
     expect(claims.flat()[0].attempts).toBe(1)
   })
 
-  it('claims and runs only jobs with a supported handler identity', async () => {
+  it('claims and runs only jobs with a supported handler type and version', async () => {
     const unsupported = await store.enqueue({
       type: 'unsupported-handler',
-      version: 1,
+      version: 5,
       payload: {},
       nextRunAt: new Date('2026-08-14T10:00:00.000Z')
     })
+    const unsupportedVersion = await store.enqueue({
+      type: 'process-site-logo',
+      version: 4,
+      payload: {},
+      nextRunAt: new Date('2026-08-14T10:30:00.000Z')
+    })
     const supported = await store.enqueue({
-      type: 'supported-handler',
-      version: 1,
+      type: 'process-site-logo',
+      version: 5,
       payload: {},
       nextRunAt: new Date('2026-08-14T11:00:00.000Z')
     })
@@ -88,39 +69,22 @@ describe('portable durable jobs', () => {
       workerId: 'instance-a',
       limit: 1,
       now: new Date('2026-08-14T12:00:00.000Z'),
-      handlers: { 'supported-handler@1': handler }
-    })
-
-    expect(claimed).toEqual([expect.objectContaining({ id: supported.id, attempts: 1 })])
-    expect(handler).toHaveBeenCalledOnce()
-    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ id: supported.id }), expect.objectContaining({ knex, signal: expect.any(AbortSignal) }))
-    expect(await store.get(supported.id)).toMatchObject({ state: 'succeeded', attempts: 1 })
-    expect(await store.get(unsupported.id)).toMatchObject({
-      state: 'pending',
-      attempts: 0,
-      leaseOwner: null,
-      leaseToken: null,
-      leaseExpiresAt: null,
-      lastError: null
-    })
-  })
-
-  it('dispatches the current process-site-logo protocol identity', async () => {
-    const job = await store.enqueue({
-      type: 'process-site-logo',
-      version: 5,
-      payload: { revisionId: 'fixture', retrySequence: 0 }
-    })
-    const handler = vi.fn()
-
-    const claimed = await runDurableJobBatch(knex, {
-      workerId: 'instance-a',
       handlers: { 'process-site-logo@5': handler }
     })
 
-    expect(claimed).toEqual([expect.objectContaining({ id: job.id, version: 5, attempts: 1 })])
+    expect(claimed).toEqual([expect.objectContaining({ id: supported.id, version: 5, attempts: 1 })])
     expect(handler).toHaveBeenCalledOnce()
-    expect(await store.get(job.id)).toMatchObject({ state: 'succeeded', attempts: 1 })
+    expect(await store.get(supported.id)).toMatchObject({ state: 'succeeded', attempts: 1 })
+    for (const job of [unsupported, unsupportedVersion]) {
+      expect(await store.get(job.id)).toMatchObject({
+        state: 'pending',
+        attempts: 0,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        lastError: null
+      })
+    }
   })
 
   it('renews the lease while a handler remains blocked', async () => {
@@ -386,7 +350,7 @@ describe('portable durable jobs', () => {
       leaseOwner: null,
       leaseToken: null,
       leaseExpiresAt: null,
-      lastError: 'Durable job lease expired after its final allowed attempt',
+      lastError: expect.any(String),
       completedAt: recoveredAt,
       updatedAt: recoveredAt
     })

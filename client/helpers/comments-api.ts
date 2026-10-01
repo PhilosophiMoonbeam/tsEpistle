@@ -14,7 +14,7 @@ type JsonResponse = {
 
 type FetchImpl = (url: string, options?: RequestInit) => Promise<JsonResponse>
 
-export type CommentOperation = 'read' | 'create' | 'update' | 'delete' | 'manage'
+export type CommentOperation = 'read' | 'create' | 'update' | 'delete'
 export type CommentOutcomeKind = 'auth' | 'permission' | 'not-found' | 'validation' | 'conflict' | 'rate-limit' | 'server' | 'transport' | 'transport-unknown'
 export type CommentRequestOutcome = 'rejected' | 'unknown'
 
@@ -47,33 +47,6 @@ export class CommentApiError extends Error {
     this.operation = operation
     this.cause = cause
   }
-}
-
-export type CommentProviderConfigValue = Record<string, unknown> & {
-  type?: string
-  title?: string
-  hint?: string | false
-  enum?: unknown[] | false
-  multiline?: boolean
-  maxWidth?: number
-  order?: number
-  value?: string | number | boolean | null
-}
-
-export type CommentProviderConfig = {
-  key: string
-  value: CommentProviderConfigValue
-}
-
-export type CommentProvider = {
-  isEnabled: boolean
-  key: string
-  title: string
-  description: string
-  logo: string
-  website: string
-  isAvailable: boolean
-  config: CommentProviderConfig[]
 }
 
 export type CommentSaveResponse = {
@@ -247,120 +220,6 @@ async function sendJson<T>(
       body: JSON.stringify(body)
     }),
     normalize
-  )
-}
-
-function normalizeCommentProviderConfig(row: unknown, fallbackMessage: string): CommentProviderConfig {
-  if (
-    !row ||
-    typeof row !== 'object' ||
-    Array.isArray(row) ||
-    typeof (row as { key?: unknown }).key !== 'string' ||
-    typeof (row as { value?: unknown }).value !== 'string'
-  ) {
-    throw new Error(fallbackMessage)
-  }
-
-  let value: unknown
-  try {
-    value = JSON.parse((row as { value: string }).value)
-  } catch (err) {
-    throw new Error(fallbackMessage, { cause: err })
-  }
-
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return {
-    key: (row as { key: string }).key,
-    value: value as CommentProviderConfigValue
-  }
-}
-
-function normalizeCommentProvider(row: unknown, fallbackMessage: string): CommentProvider {
-  if (!row || typeof row !== 'object' || Array.isArray(row)) {
-    throw new Error(fallbackMessage)
-  }
-
-  const provider = row as Record<string, unknown>
-  const requiredStringFields = ['key', 'title', 'description', 'logo', 'website']
-  if (requiredStringFields.some(field => typeof provider[field] !== 'string')) {
-    throw new Error(fallbackMessage)
-  }
-  if (typeof provider.isEnabled !== 'boolean' || typeof provider.isAvailable !== 'boolean' || !Array.isArray(provider.config)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return {
-    isEnabled: provider.isEnabled,
-    key: provider.key as string,
-    title: provider.title as string,
-    description: provider.description as string,
-    logo: provider.logo as string,
-    website: provider.website as string,
-    isAvailable: provider.isAvailable,
-    config: provider.config
-      .map(cfg => normalizeCommentProviderConfig(cfg, fallbackMessage))
-      .sort((a, b) => {
-        const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
-        const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
-        return aOrder - bOrder
-      })
-  }
-}
-
-function normalizeCommentProvidersPayload(payload: unknown, fallbackMessage: string): CommentProvider[] {
-  if (!Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload.map(row => normalizeCommentProvider(row, fallbackMessage))
-}
-
-export async function fetchCommentProviders(fetchImpl: FetchImpl, fallbackMessage = 'Comment providers response is invalid'): Promise<CommentProvider[]> {
-  return requestJson(
-    'read',
-    fallbackMessage,
-    () => sameOriginJsonFetch(fetchImpl, '/_api/comments/providers', {
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json'
-      }
-    }),
-    payload => normalizeCommentProvidersPayload(payload, fallbackMessage)
-  )
-}
-
-function normalizeCommentSavePayload(payload: unknown, fallbackMessage: string): CommentSaveResponse {
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    Array.isArray(payload) ||
-    typeof (payload as { message?: unknown }).message !== 'string' ||
-    (payload as { message: string }).message.length < 1
-  ) {
-    throw new Error(fallbackMessage)
-  }
-
-  return {
-    message: (payload as { message: string }).message
-  }
-}
-
-export async function saveCommentProviders(
-  fetchImpl: FetchImpl,
-  providers: unknown[],
-  fallbackMessage = 'Comment providers save response is invalid'
-): Promise<CommentSaveResponse> {
-  return sendJson(
-    fetchImpl,
-    '/_api/comments/providers',
-    'POST',
-    { providers },
-    fallbackMessage,
-    'manage',
-    payload => normalizeCommentSavePayload(payload, fallbackMessage)
   )
 }
 

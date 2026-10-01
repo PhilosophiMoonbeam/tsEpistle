@@ -14,6 +14,11 @@ const guardedListenerFiles = [
   'client/components/editor/editor-asciidoc.vue',
   'client/components/editor/editor-markdown.vue'
 ]
+const liveVisualEditorFiles = [
+  'client/components/editor/editor-ckeditor.vue',
+  'client/components/editor/editor-visual-markdown.vue',
+  'client/components/editor/tiptap/editor.vue'
+]
 
 function getLineNumber(content, index) {
   return content.slice(0, index).split(/\r?\n/).length
@@ -35,7 +40,6 @@ describe('editor insert events', () => {
   test('editor insert helper uses the shared non-Vue event bus', () => {
     const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-insert-events.ts'), 'utf8')
 
-    expect(source).toContain("import { createEventBus } from '" + "./simple-event-bus'")
     expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
@@ -118,6 +122,24 @@ describe('editor insert event listener usage', () => {
       }
       while ((match = helperPattern.exec(content)) !== null) {
         offenders.push(`${relPath}:${getLineNumber(content, match.index)}: root-backed editor insert helper call`)
+      }
+    }
+
+    expect(offenders).toEqual([])
+  })
+
+  test('live visual editors never subscribe through the removed Vue 3 root events API', () => {
+    const offenders = []
+
+    for (const relPath of liveVisualEditorFiles) {
+      const content = fs.readFileSync(path.join(repoRoot, relPath), 'utf8')
+      // Vue 3 removed $on/$off for every event, not just editorInsert.
+      // Component $emit remains supported and must not be prohibited here.
+      const rootSubscription = /\bthis\s*\.\s*\$root\s*\.\s*\$(?:on|off)\s*\(/g
+      let match
+
+      while ((match = rootSubscription.exec(content)) !== null) {
+        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: unsupported Vue 3 root subscription`)
       }
     }
 

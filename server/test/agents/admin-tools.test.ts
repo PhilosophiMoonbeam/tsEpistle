@@ -25,7 +25,9 @@ describe('administration tool eligibility', () => {
   })
 
   it('blocks every interface when the parent agent feature is disabled', () => {
-    for (const tool of buildAgentAdminTools({ ...enabled, 'agents.enabled': false })) {
+    const disabledTools = buildAgentAdminTools({ ...enabled, 'agents.enabled': false })
+    expect(new Set(disabledTools.map(tool => tool.name))).toEqual(new Set(buildAgentAdminTools(enabled).map(tool => tool.name)))
+    for (const tool of disabledTools) {
       expect(tool.agentBlockers).toContain('agents.enabled')
       expect(tool.mcpBlockers).toContain('agents.enabled')
     }

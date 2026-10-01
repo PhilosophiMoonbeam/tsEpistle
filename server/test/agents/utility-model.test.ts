@@ -20,7 +20,11 @@ describe('agent utility model', () => {
     expect(fallback).toBe('Diagnose production cache misses')
     expect(normalizeConversationTitle('Title: “Production Cache Investigation.”', fallback)).toBe('Production Cache Investigation')
     expect(normalizeConversationTitle('Untitled conversation', fallback)).toBe(fallback)
-    expect(conversationTitleFallback('A '.repeat(80))).toHaveLength(71)
+    const longSource = 'A '.repeat(80)
+    const bounded = conversationTitleFallback(longSource)
+    expect([...bounded].length).toBeLessThanOrEqual(72)
+    expect(bounded.at(-1)).toBe('A')
+    expect([...bounded].length).toBeLessThan([...longSource].length)
   })
 
   it('uses the provider utility role without tools and reports its token usage', async () => {
@@ -374,13 +378,12 @@ describe('agent utility model', () => {
   it('reserves unknown attempted title exposure at the configured maximum rate', async () => {
     const reserve = vi.fn(async () => ({ id: 1, tokens: 100_000, costMicros: 100_000 }))
     const release = vi.fn(async () => {})
+    const chat = vi.fn(async (_providerRequest: unknown) => {
+      throw new Error('provider request failed')
+    })
     const utility = new AgentUtilityModel({
       create: vi.fn(async () => ({
-        service: {
-          chat: vi.fn(async () => {
-            throw new Error('provider request failed')
-          })
-        },
+        service: { chat },
         model: 'model-mini',
         transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
@@ -400,13 +403,22 @@ describe('agent utility model', () => {
         }
       })
     ).resolves.toMatchObject({ source: 'fallback', totalTokens: 0 })
+    expect(reserve).toHaveBeenCalledOnce()
+    expect(chat).toHaveBeenCalledOnce()
+    const providerRequest = chat.mock.calls[0]?.[0]
+    const maximumTokens = Buffer.byteLength(JSON.stringify(providerRequest), 'utf8') + 128
     const admission = reserve.mock.calls[0]?.[0] as { tokens: number; costMicros: number } | undefined
     expect(admission).toBeDefined()
+    expect(admission?.tokens).toBe(maximumTokens)
+    expect(admission?.costMicros).toBe(maximumTokens * 2)
     expect(admission?.costMicros).toBe((admission?.tokens ?? 0) * 2)
     expect(release).not.toHaveBeenCalled()
   })
   it('cancels a rejected stream before releasing its reader and retains attempted exposure', async () => {
-    let cancelReason: unknown
+    let lockedWhenCancelled: boolean | undefined
+    const cancel = vi.fn((): void => {
+      lockedWhenCancelled = stream.locked
+    })
     const stream = new ReadableStream({
       start(controller) {
         controller.enqueue({
@@ -414,9 +426,7 @@ describe('agent utility model', () => {
           modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4580 } }
         })
       },
-      cancel(reason) {
-        cancelReason = reason
-      }
+      cancel
     })
     const reserve = vi.fn(async () => ({ id: 1, tokens: 100_000, costMicros: 100_000 }))
     const reconcile = vi.fn(async () => {})
@@ -443,7 +453,9 @@ describe('agent utility model', () => {
       outputTokens: 0,
       totalTokens: 0
     })
-    expect(cancelReason).toBe('provider stream failed')
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(lockedWhenCancelled).toBe(true)
+    expect(stream.locked).toBe(false)
     expect(reconcile).not.toHaveBeenCalled()
     expect(release).not.toHaveBeenCalled()
   })
@@ -588,7 +600,7 @@ describe('agent utility model', () => {
     expect(chat.mock.calls[0]?.[0]).not.toHaveProperty('functions')
   })
 
-  it('rejects undeclared or malformed utility knowledge output instead of filling gaps', async () => {
+  it('rejects unknown provider JSON fields in utility knowledge output', async () => {
     const chat = vi.fn(async () => ({
       results: [
         {
@@ -604,7 +616,8 @@ describe('agent utility model', () => {
             unexpected: 'field'
           })
         }
-      ]
+      ],
+      modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
     }))
     const utility = new AgentUtilityModel({
       create: vi.fn(async () => ({
@@ -624,7 +637,9 @@ describe('agent utility model', () => {
           signal: request.signal
         })
       )
-    ).rejects.toThrow()
+    ).rejects.toMatchObject({
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'unrecognized_keys', path: [], keys: ['unexpected'] })])
+    })
   })
 
   it('clamps knowledge source and output to resolved provider capabilities', async () => {

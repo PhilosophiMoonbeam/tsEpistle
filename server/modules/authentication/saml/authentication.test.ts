@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from '../../../test/bun-test.mts'
 import { federatedLoginCookieName } from '../../../helpers/federated-login.ts'
 import { FederatedLoginStore } from '../../../repositories/federated-login.ts'
@@ -110,18 +111,39 @@ describe('SAML federation correlation', () => {
 
     expect(options.validateInResponseTo).toBe('always')
     expect(options.requestIdExpirationPeriodMs).toBe(600_000)
-    expect(typeof options.generateUniqueId).toBe('function')
+    const requestId = (options.generateUniqueId as () => string)()
+    expect(requestId).toBeTruthy()
+    expect(issue).toHaveBeenCalledTimes(1)
     expect(request.res.cookie).toHaveBeenCalledTimes(1)
+    const [cookieName, browserNonce, cookieOptions] = request.res.cookie.mock.calls[0]!
+    expect(cookieName).toBe(federatedLoginCookieName(config.key))
+    expect(cookieName).toMatch(/^__Host-/u)
+    expect(browserNonce).toEqual(expect.any(String))
+    expect(browserNonce).toBeTruthy()
+    expect(cookieOptions).toMatchObject({
+      secure: true,
+      httpOnly: true,
+      sameSite: 'none',
+      path: '/',
+      maxAge: 600_000
+    })
+    expect(cookieOptions).not.toHaveProperty('domain')
     expect(issue).toHaveBeenCalledWith(expect.objectContaining({
       providerKey: 'saml:primary',
       protocol: 'saml',
       providerRevision: 'revision-a',
-      payload: expect.objectContaining({ requestId: expect.any(String) })
+      sessionId: request.sessionID,
+      browserNonceHash: createHash('sha256').update(browserNonce).digest(),
+      payload: expect.objectContaining({ requestId })
     }))
 
-    const requestId = (options.generateUniqueId as () => string)()
-    const cache = options.cacheProvider as { saveAsync(key: string, value: string): Promise<unknown> }
-    await cache.saveAsync(requestId, '2026-09-09T00:00:00.000Z')
+    const cache = options.cacheProvider as {
+      saveAsync(key: string, value: string): Promise<unknown>
+      getAsync(key: string): Promise<string | null>
+    }
+    const timestamp = '2026-09-09T00:00:00.000Z'
+    await expect(cache.saveAsync(requestId, timestamp)).resolves.toEqual({ value: timestamp, createdAt: Date.parse(timestamp) })
+    await expect(cache.getAsync(requestId)).resolves.toBe(timestamp)
   })
 
   it('consumes the durable attempt once and serves repeated request-id cache reads locally', async () => {
@@ -153,10 +175,25 @@ describe('SAML federation correlation', () => {
   })
 
   it('rejects a callback without a SAML response instead of starting unsolicited login', async () => {
+    const issue = vi.spyOn(FederatedLoginStore.prototype, 'issue').mockResolvedValue({
+      attemptId: 'attempt-a',
+      state: 'state-a',
+      issuedAt: new Date('2026-09-09T00:00:00.000Z'),
+      expiresAt: new Date('2026-09-09T00:10:00.000Z')
+    })
     const strategy = await loadStrategy()
     const request = createRequest({ path: '/login/saml:primary/callback', originalUrl: '/login/saml:primary/callback' })
-    await expect(new Promise((resolve, reject) => {
-      strategy._options.getSamlOptions(request, (error, value) => error ? resolve(error) : reject(value))
-    })).resolves.toMatchObject({ message: 'SAML callback correlation is missing.' })
+    const done = vi.fn<(error: Error | null, options?: Record<string, unknown>) => void>()
+    await new Promise<void>(resolve => {
+      strategy._options.getSamlOptions(request, (error, options) => {
+        done(error, options)
+        resolve()
+      })
+    })
+    expect(done).toHaveBeenCalledTimes(1)
+    expect(done.mock.calls[0]?.[0]).toBeInstanceOf(Error)
+    expect(done.mock.calls[0]?.[1]).toBeUndefined()
+    expect(issue).not.toHaveBeenCalled()
+    expect(request.res.cookie).not.toHaveBeenCalled()
   })
 })

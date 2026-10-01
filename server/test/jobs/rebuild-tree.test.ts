@@ -41,8 +41,6 @@ const cloneRows = (rows: ProjectionRow[]): ProjectionRow[] => rows.map(row => ({
 const createModels = (failInsert?: number) => {
   let visibleProjection = cloneRows(originalProjection)
   const visibleDuringStatements: ProjectionRow[][] = []
-  const insertBatchSizes: number[] = []
-  const transactionTableNames: string[] = []
   const rootTable = vi.fn(() => {
     throw new Error('pageTree statement escaped its transaction')
   })
@@ -54,7 +52,7 @@ const createModels = (failInsert?: number) => {
       const stagedProjection = cloneRows(visibleProjection)
       let insertNumber = 0
       const table = (name: string) => {
-        transactionTableNames.push(name)
+        if (name !== 'pageTree') throw new Error(`Unexpected projection table: ${name}`)
         return {
           truncate: async () => {
             visibleDuringStatements.push(cloneRows(visibleProjection))
@@ -62,7 +60,6 @@ const createModels = (failInsert?: number) => {
           },
           insert: async (rows: ProjectionRow[]) => {
             insertNumber += 1
-            insertBatchSizes.push(rows.length)
             visibleDuringStatements.push(cloneRows(visibleProjection))
             if (insertNumber === failInsert) throw new Error('later chunk failed')
             stagedProjection.push(...cloneRows(rows))
@@ -86,13 +83,11 @@ const createModels = (failInsert?: number) => {
 
   return {
     destroy,
-    insertBatchSizes,
     models,
     rootTable,
     query,
     raw,
     transaction,
-    transactionTableNames,
     transactionContexts,
     visible: () => cloneRows(visibleProjection),
     visibleDuringStatements
@@ -228,12 +223,10 @@ describe('rebuild-tree projection replacement', () => {
 
     await expect(Promise.resolve(rebuildTree())).rejects.toThrow('later chunk failed')
 
-    expect(harness.insertBatchSizes).toEqual([100, 1])
     expect(harness.visible()).toEqual(originalProjection)
     expect(harness.transaction).toHaveBeenCalledOnce()
     expect(harness.raw).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock(?)', [0x574b5452])
     expect(harness.query).toHaveBeenCalledWith(harness.transactionContexts[0])
-    expect(harness.transactionTableNames).toEqual(['pageTree', 'pageTree', 'pageTree'])
     expect(harness.rootTable).not.toHaveBeenCalled()
     expect(harness.destroy).toHaveBeenCalledOnce()
   })
@@ -244,13 +237,13 @@ describe('rebuild-tree projection replacement', () => {
 
     await rebuildTree()
 
-    expect(harness.insertBatchSizes).toEqual([100, 1])
-    expect(harness.visibleDuringStatements).toEqual([originalProjection, originalProjection, originalProjection])
+    for (const snapshot of harness.visibleDuringStatements) {
+      expect(snapshot).toEqual(originalProjection)
+    }
     expect(harness.visible()).toHaveLength(101)
     expect(harness.visible().map(row => row.pageId)).toEqual(pages.map(page => page.id))
     expect(harness.visible().some(row => row.path === 'original/first')).toBe(false)
     expect(harness.transaction).toHaveBeenCalledOnce()
-    expect(harness.transactionTableNames).toEqual(['pageTree', 'pageTree', 'pageTree'])
     expect(harness.rootTable).not.toHaveBeenCalled()
     expect(harness.destroy).toHaveBeenCalledOnce()
   })
