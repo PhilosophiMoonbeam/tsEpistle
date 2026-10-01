@@ -1,6 +1,7 @@
 import type { AxChatResponse, AxChatResponseResult, AxFunctionJSONSchema } from '@ax-llm/ax'
 import { z } from 'zod'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
+import { classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import {
   combineGeminiInteractionState,
   createGeminiInteractionsService,
@@ -340,6 +341,63 @@ describe('Gemini Interactions Google Search grounding', () => {
     expect(readGeminiGoogleSearchGrounding(terminal.results[0]!)).toEqual({
       citations: [{ url: 'https://grounding.example.test/source', title: 'Example source', startIndex: 0, endIndex: 5 }],
       searchSuggestions: ['<a>query</a>']
+    })
+  })
+
+  it.each([
+    ['out-of-order event', [{ event_type: 'step.stop', index: 0 }], 'protocol_stream_event_out_of_order'],
+    [
+      'unknown event',
+      [
+        { event_type: 'interaction.created', interaction: { id: 'private-provider-detail', status: 'in_progress', model } },
+        { event_type: 'private-provider-detail', error: 'private-provider-detail' }
+      ],
+      'protocol_stream_event_unknown'
+    ],
+    [
+      'unfinished step',
+      [
+        { event_type: 'interaction.created', interaction: { id: 'private-provider-detail', status: 'in_progress', model } },
+        { event_type: 'step.start', index: 0, step: { type: 'model_output' } },
+        { event_type: 'interaction.completed', interaction: { id: 'private-provider-detail', model, status: 'completed', usage } }
+      ],
+      'protocol_stream_step_unfinished'
+    ],
+    [
+      'mismatched delta',
+      [
+        { event_type: 'interaction.created', interaction: { id: 'private-provider-detail', status: 'in_progress', model } },
+        { event_type: 'step.start', index: 0, step: { type: 'model_output' } },
+        { event_type: 'step.delta', index: 0, delta: { type: 'thought_signature', signature: 'private-provider-detail' } }
+      ],
+      'protocol_stream_delta_step_mismatch'
+    ]
+  ] as const)('distinguishes %s without exposing provider data in failure diagnostics', async (_name, events, providerErrorCode) => {
+    const wire = `${events.map(value => `event: ${value.event_type}\ndata: ${JSON.stringify(value)}`).join('\n\n')}\n\n`
+    const service = createGeminiInteractionsService({
+      apiKey: 'private-provider-detail',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      model,
+      fetch: (async () => new Response(wire, { headers: { 'content-type': 'text/event-stream' } })) as typeof globalThis.fetch,
+      timeoutMs: 10_000
+    })
+    const consume = async (): Promise<void> => {
+      try {
+        const response = await service.chat({ chatPrompt: [{ role: 'user', content: 'private-provider-detail' }], model }, { stream: true })
+        if (!(response instanceof ReadableStream)) throw new Error('Expected stream')
+        for await (const chunk of response) void chunk
+      } catch (error) {
+        const failure = classifyAgentExecutionFailure(error, 'provider_stream')
+        expect(failure.diagnostics).toEqual({ transportKind: 'gemini-api', providerErrorCode })
+        expect(JSON.stringify(failure)).not.toContain('private-provider-detail')
+        throw failure
+      }
+    }
+    await expect(consume()).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      stage: 'provider_stream',
+      message: 'Agent inference failed',
+      diagnostics: { transportKind: 'gemini-api', providerErrorCode }
     })
   })
 

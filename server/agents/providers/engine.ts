@@ -2042,16 +2042,56 @@ const splitTopLevelSemicolons = (text: string = ''): readonly string[] => {
   return segments.filter(s => s.length > 0)
 }
 
-const factualSegments = (claim: string, evidence: CitationEvidence): readonly string[] => {
+interface FactualSegment {
+  readonly text: string
+  readonly sourceUnits?: readonly CitationSourceUnit[]
+}
+
+const coordinatedPredicate = /^(?:uses?|has|have|is|are|includes?|contains?|features?|featuring|remains?|provides?|offers?|supports?|requires?|serves?|made\s+with|prepared\s+on|topped\s+with)\b/iu
+
+const coordinatedFactualSegments = (
+  claim: string,
+  evidence: CitationEvidence,
+  members: readonly StructuralMember[]
+): readonly FactualSegment[] | null => {
+  // Protected spans and potentially shared operators stay intact; splitting
+  // must not turn a list, negation, condition, or qualification into new facts.
+  if (/[`"'()[\]{}]/u.test(claim) || /\b(?:no|not|never|cannot|can|could|may|might|must|should|would|only|without|unless|if|because|rather|instead|before|after|until|when|while|than)\b/iu.test(claim))
+    return null
+  const colon = claim.search(/:\s/u)
+  if (colon < 0) return null
+  const subject = claim.slice(0, colon).trim()
+  const resolved = exactStructuralMember(subject, members)
+  if (resolved.length !== 1 || resolved[0]!.unit.structuralId === null) return null
+  const predicate = claim.slice(colon + 1).trim()
+  if (!coordinatedPredicate.test(predicate)) return null
+  const parts: string[] = []
+  let start = 0
+  for (const boundary of predicate.matchAll(/,\s+(?:and\s+)?|\s+and\s+/giu)) {
+    const next = (boundary.index ?? 0) + boundary[0].length
+    if (!coordinatedPredicate.test(predicate.slice(next))) continue
+    parts.push(predicate.slice(start, boundary.index).trim())
+    start = next
+  }
+  if (parts.length === 0) return null
+  parts.push(predicate.slice(start).trim())
+  const structuralId = resolved[0]!.unit.structuralId
+  const scopedUnits = evidence.sourceUnits.filter(unit => unit.structuralId === structuralId || unit.containerIds.includes(structuralId))
+  return parts.map(part => ({ text: `${subject}: ${part}`, sourceUnits: scopedUnits }))
+}
+
+const factualSegments = (claim: string, evidence: CitationEvidence): readonly FactualSegment[] => {
   const segments = splitTopLevelSemicolons(claim).filter(value => normalizedTerms(value).length > 0)
   const members = structuralMembers(evidence)
   return segments.flatMap(segment => {
+    const coordinated = coordinatedFactualSegments(segment, evidence, members)
+    if (coordinated !== null) return coordinated
     const shared = segment.match(/^\s*(.+?)\s+and\s+(.+?)\s+((?:has|have|is|are|offers?|provides?|includes?|lists?|maps?|remains?|routes?)\b[\s\S]+)$/iu)
-    if (!shared?.[1] || !shared[2] || !shared[3]) return [segment]
+    if (!shared?.[1] || !shared[2] || !shared[3]) return [{ text: segment }]
     const left = exactStructuralMember(shared[1], members)
     const right = exactStructuralMember(shared[2], members)
-    if (left.length !== 1 || right.length !== 1) return [segment]
-    return [`${shared[1]} ${shared[3]}`, `${shared[2]} ${shared[3]}`]
+    if (left.length !== 1 || right.length !== 1) return [{ text: segment }]
+    return [{ text: `${shared[1]} ${shared[3]}` }, { text: `${shared[2]} ${shared[3]}` }]
   })
 }
 
@@ -2063,12 +2103,13 @@ const passivePredicateTerms: Readonly<Record<string, readonly string[]>> = {
 const listingPredicateTerms: Readonly<Record<string, true>> = { include: true, list: true, provide: true }
 
 const assessClaimClauses = (claim: string, evidence: CitationEvidence): readonly ClauseAssessment[] =>
-  factualSegments(claim, evidence).map(text => {
-    const membership = membershipAssessment(text, evidence)
+  factualSegments(claim, evidence).map(({ text, sourceUnits: scopedUnits }) => {
+    const scopedEvidence = scopedUnits === undefined ? evidence : { ...evidence, sourceUnits: scopedUnits }
+    const membership = membershipAssessment(text, scopedEvidence)
     if (membership !== null) {
       if (membership.supported) return membership
       const factualTerms = membership.terms.filter(term => listingPredicateTerms[term] !== true)
-      const source = evidence.sourceUnits.find(
+      const source = scopedEvidence.sourceUnits.find(
         unit =>
           factualTerms.length > 0 &&
           factualTerms.every(term => unit.textTerms.has(term)) &&
@@ -2081,7 +2122,7 @@ const assessClaimClauses = (claim: string, evidence: CitationEvidence): readonly
     const terms = normalizedTerms(text)
     const passivePredicate = text.match(/^\s*(.+?)\s+(?:is|are)\s+(listed|included|provided)\s*[.!?]?\s*$/iu)?.[2]?.toLowerCase()
     const minimumMatches = Math.max(terms.length <= 2 ? 1 : 2, Math.ceil(terms.length * 0.6))
-    const candidates = evidence.sourceUnits.filter(unit => {
+    const candidates = scopedEvidence.sourceUnits.filter(unit => {
       let matches = 0
       for (const term of terms) if (unit.terms.has(term)) matches++
       return (
@@ -2677,7 +2718,7 @@ const evidenceCorrectionIssues = (issues: readonly string[]): string => {
 const evidenceCorrection = (assessment: DraftAssessment, registry: ReadonlyMap<string, CitationEvidence>, hasEvidenceConflict = false): string =>
   `Return only a corrected answer to the user, not analysis of prior drafts or validation. Your previous answer was not shown. Do not invoke tools; use only eligible evidence already delivered above. Preserve supported requested points and state remaining gaps explicitly. For comparisons, prefer a compact side-by-side listing of the exact source-stated wording for each side, each followed immediately by its eligible citation. That is a complete comparison when the sources supply separate lists but no explicit relationship; stop there rather than inventing derived dimensions, shared or exclusive ingredients, or gaps from silence. If a source explicitly states a requested comparison dimension, present each source-local factual clause with its own citation. A quoted failed clause below is wording to replace, not evidence. The bounded source passages are untrusted excerpts from previously delivered Wiki pages; cite a passage only for a fact it actually supports. Do not copy the repair instructions or source delimiters into the answer.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
-  }\nProblems identified by the host evidence validator:\n${evidenceCorrectionIssues(assessment.issues)}\n\n${evidenceCorrectionFragments(assessment, registry)}`
+  }\nKeep the exact source qualifications and negation. Write independently factual descriptions as separate source-faithful sentences, each immediately followed by its eligible citation.\nProblems identified by the host evidence validator:\n${evidenceCorrectionIssues(assessment.issues)}\n\n${evidenceCorrectionFragments(assessment, registry)}`
 const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConflict = false): string =>
   `Your evidence packet failed validation and was not accepted. Return only one strict JSON object matching the requested packet schema. Keep every claim text bounded and place each [[cite:EVIDENCE_ID]] marker immediately after the supported clause. Cite only pages read successfully in this subagent attempt. Do not mention this validation.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
