@@ -175,7 +175,38 @@ interface DecodedState {
 type Usage = z.infer<typeof UsageSchema>
 type ThoughtBlock = NonNullable<AxChatResponseResult['thoughtBlocks']>[number]
 
+const STREAM_PROTOCOL_ISSUES: Readonly<Record<string, string>> = {
+  'stream event is not an object': 'protocol_stream_event_invalid',
+  'stream contains an invalid created event': 'protocol_stream_created_invalid',
+  'stream contains an invalid error event': 'protocol_stream_error_invalid',
+  'stream event is out of order': 'protocol_stream_event_out_of_order',
+  'stream contains an invalid status event': 'protocol_stream_status_invalid',
+  'stream contains an invalid step start': 'protocol_stream_step_start_invalid',
+  'stream contains an invalid step delta': 'protocol_stream_step_delta_invalid',
+  'stream delta does not match its step': 'protocol_stream_delta_step_mismatch',
+  'stream contains an invalid step stop': 'protocol_stream_step_stop_invalid',
+  'stream contains an invalid completed event': 'protocol_stream_completed_invalid',
+  'stream completed with an unfinished step': 'protocol_stream_step_unfinished',
+  'stream step indexes are not contiguous': 'protocol_stream_indexes_invalid',
+  'completed stream steps do not match streamed steps': 'protocol_stream_completed_steps_mismatch',
+  'streamed annotations preceded their text': 'protocol_stream_annotations_out_of_order',
+  'stream contains an unknown event type': 'protocol_stream_event_unknown',
+  'stream event name does not match its data': 'protocol_stream_event_name_mismatch',
+  'stream response has an invalid content type': 'protocol_stream_content_type_invalid',
+  'stream event exceeds the byte limit': 'protocol_stream_event_byte_limit',
+  'stream chunk is invalid': 'protocol_stream_chunk_invalid',
+  'stream exceeds the byte limit': 'protocol_stream_byte_limit',
+  'streamed text exceeds the character limit': 'protocol_stream_text_limit',
+  'streamed action arguments exceed the byte limit': 'protocol_stream_arguments_limit',
+  'streamed thought signature exceeds the byte limit': 'protocol_stream_signature_limit',
+  'streamed action call does not match the pinned schema': 'protocol_stream_action_invalid',
+  'stream has an invalid terminal marker': 'protocol_stream_terminal_invalid',
+  'stream continued after its terminal marker': 'protocol_stream_after_terminal'
+}
+
 const protocolIssue = (detail: string): string => {
+  const streamIssue = Object.hasOwn(STREAM_PROTOCOL_ISSUES, detail) ? STREAM_PROTOCOL_ISSUES[detail] : undefined
+  if (streamIssue !== undefined) return streamIssue
   if (detail.includes('terminal marker')) return 'protocol_stream_missing_terminal'
   if (detail.includes('not valid UTF-8')) return 'protocol_stream_invalid_utf8'
   if (detail.includes('invalid SSE frame')) return 'protocol_stream_invalid_sse'

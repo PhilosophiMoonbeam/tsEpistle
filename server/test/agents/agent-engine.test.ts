@@ -2490,6 +2490,30 @@ describe('Ax agent engine', () => {
     ['source-local listing paraphrase', 'Contract pricing includes discount schedules.[[cite:page:1:revision:9:section:2]]'],
     ['faithful numeric punctuation', 'Discount: 10 percent; freight: 20 percent.[[cite:page:1:revision:9:section:1]]'],
     ['faithful numeric reordered subjects', 'Freight: 20 percent; discount: 10 percent.[[cite:page:1:revision:9:section:1]]'],
+    [
+      'coordinated descriptions',
+      '**Lumen Pizza**: uses tomato, mozzarella, basil, oregano, ricotta, garlic, and thyme, and remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.[[cite:page:1:revision:9:section:2]]'
+    ],
+    [
+      'coordinated sibling effect',
+      '**Lumen Pizza**: uses tomato, mozzarella, basil, oregano, ricotta, garlic, and thyme, and remains flat, smooth, firm, dense, dark, dry, brittle, and cold.[[cite:page:1:revision:9]]'
+    ],
+    [
+      'coordinated split ingredient list',
+      '**Split Pizza**: uses tomato, mozzarella, basil, oregano, ricotta, garlic, thyme, and parsley, and remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.[[cite:page:1:revision:9:section:2]]'
+    ],
+    [
+      'coordinated shared negation',
+      '**Lumen Pizza**: does not use tomato, mozzarella, basil, oregano, ricotta, garlic, and thyme, and remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.[[cite:page:1:revision:9:section:2]]'
+    ],
+    [
+      'coordinated ambiguous subject',
+      '**Repeated Pizza**: uses tomato, mozzarella, basil, oregano, ricotta, garlic, and thyme, and remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.[[cite:page:1:revision:9:section:2]]'
+    ],
+    [
+      'coordinated changed quantity',
+      '**Measured Pizza**: uses 4 cups flour, 3 cups milk, salt, yeast, and olive oil, and remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.[[cite:page:1:revision:9:section:2]]'
+    ],
     ['source-local listing substitution', 'Contract pricing includes rebate schedules.[[cite:page:1:revision:9:section:2]]'],
     ['numeric swap', 'Terms remain valid for 90 days.[[cite:page:1:revision:9:section:1]]'],
     ['short identifier assignment swap', 'Chair assignments map IU to 250 lb and OM to 300 lb.[[cite:page:1:revision:9:section:1]]'],
@@ -2582,6 +2606,22 @@ describe('Ax agent engine', () => {
         '',
         '# Operations',
         'Contract pricing lists discount schedules.',
+        '## Lumen Pizza',
+        'Lumen Pizza uses tomato, mozzarella, basil, oregano, ricotta, garlic, and thyme.',
+        'Lumen Pizza remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.',
+        '## Lumen Pizza Variant',
+        'Lumen Pizza Variant remains flat, smooth, firm, dense, dark, dry, brittle, and cold.',
+        '## Split Pizza',
+        'Split Pizza uses tomato, mozzarella, basil, and oregano.',
+        'Split Pizza uses ricotta, garlic, thyme, and parsley.',
+        'Split Pizza remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.',
+        '## Measured Pizza',
+        'Measured Pizza uses 2 cups flour, 3 cups milk, salt, yeast, and olive oil.',
+        'Measured Pizza remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.',
+        '## Repeated Pizza',
+        'Repeated Pizza uses tomato, mozzarella, basil, oregano, ricotta, garlic, and thyme.',
+        '## Repeated Pizza',
+        'Repeated Pizza remains warm, crisp, light, golden, airy, tender, fragrant, and chewy.',
         '',
         '# Promotions',
         '- [Acme](/acme)',
@@ -2652,6 +2692,7 @@ describe('Ax agent engine', () => {
     if (
       caseName === 'source-local paraphrase' ||
       caseName === 'source-local listing paraphrase' ||
+      caseName === 'coordinated descriptions' ||
       caseName === 'faithful numeric punctuation' ||
       caseName === 'faithful numeric reordered subjects'
     ) {
@@ -2663,7 +2704,11 @@ describe('Ax agent engine', () => {
         accepted: true,
         issues: [],
         claims: expect.arrayContaining([expect.objectContaining({ supported: true })]),
-        finalCitationIds: [caseName === 'source-local listing paraphrase' ? 'page:1:revision:9:section:2' : 'page:1:revision:9:section:1']
+        finalCitationIds: [
+          caseName === 'source-local listing paraphrase' || caseName === 'coordinated descriptions'
+            ? 'page:1:revision:9:section:2'
+            : 'page:1:revision:9:section:1'
+        ]
       })
     } else {
       expect(await execution).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
