@@ -2135,16 +2135,19 @@ test.describe('responsive UI quality matrix', () => {
         expect(Math.abs(after.x - before.x), 'Adding source chips keeps remaining composer controls stable').toBeLessThanOrEqual(1)
         expect(Math.abs(after.y - before.y), 'Adding source chips keeps remaining composer controls stable').toBeLessThanOrEqual(1)
       }
-      const [sourceBounds, goalBounds, moreOptionsBounds] = await Promise.all([
+      const [sourceBounds, scopeBounds, editorBounds] = await Promise.all([
         agent.locator('.agent-context__sources').boundingBox(),
-        goal.boundingBox(),
-        moreOptions.boundingBox()
+        agent.locator('.agent-context__scope').boundingBox(),
+        agent.locator('.agent-composer__editor').boundingBox()
       ])
       expect(sourceBounds).not.toBeNull()
-      expect(moreOptionsBounds).not.toBeNull()
-      if (sourceBounds && moreOptionsBounds) {
-        const controlsBottom = Math.max(moreOptionsBounds.y + moreOptionsBounds.height, goalBounds ? goalBounds.y + goalBounds.height : 0)
-        expect(sourceBounds.y).toBeGreaterThanOrEqual(controlsBottom - 1)
+      expect(scopeBounds).not.toBeNull()
+      expect(editorBounds).not.toBeNull()
+      if (sourceBounds && scopeBounds && editorBounds) {
+        // D3 keeps attached page context in the composer, after the source
+        // controls and before the prompt; it must not obscure either control.
+        expect(sourceBounds.y).toBeGreaterThanOrEqual(scopeBounds.y + scopeBounds.height - 1)
+        expect(sourceBounds.y + sourceBounds.height).toBeLessThanOrEqual(editorBounds.y + 1)
       }
       // Remove the chips after testing placement so the small viewport can focus on reading behavior.
       for (const source of sources) await agent.getByRole('button', { name: `Remove source ${source.title}`, exact: true }).click()
