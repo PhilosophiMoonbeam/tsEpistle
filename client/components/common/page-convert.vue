@@ -22,7 +22,7 @@
           variant="outlined"
           density="compact"
           hide-details
-          label='New editor'
+          :label='$t(`common:pageConvert.newEditor`)'
           v-model='newEditor'
         )
         v-alert.mt-5(
@@ -47,13 +47,6 @@ import { defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { convertPage } from '../../helpers/pages-api'
 
-const editorOptions = markRaw([
-  { value: 'markdown', title: 'Markdown' },
-  { value: 'visual-markdown', title: 'Visual Markdown' },
-  { value: 'ckeditor', title: 'Visual Editor (HTML)' },
-  { value: 'code', title: 'Raw HTML' }
-])
-
 export default defineComponent({
   emits: ['update:modelValue'],
   props: {
@@ -66,7 +59,6 @@ export default defineComponent({
     return {
       loading: false,
       newEditor: '',
-      editorOptions,
       convertAbortController: null as AbortController | null,
       returnFocusTarget: null as HTMLElement | null
     }
@@ -83,6 +75,12 @@ export default defineComponent({
     pageId(): number { return wikiStore.page.id },
     pageEditor(): string { return wikiStore.page.editor },
     pageSourceRevision(): string { return wikiStore.page.sourceRevision },
+    editorOptions(): { value: string, title: string }[] { return markRaw([
+      { value: 'markdown', title: this.$t('common:pageConvert.editorMarkdown') },
+      { value: 'visual-markdown', title: this.$t('common:pageConvert.editorVisualMarkdown') },
+      { value: 'ckeditor', title: this.$t('common:pageConvert.editorVisualHtml') },
+      { value: 'code', title: this.$t('common:pageConvert.editorRawHtml') }
+    ]) },
     canConvert(): boolean { return Boolean(this.newEditor) && this.newEditor !== this.pageEditor }
   },
   watch: {
