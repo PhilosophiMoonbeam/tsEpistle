@@ -11,6 +11,8 @@ import { describe, expect, test } from '../../../server/test/bun-test.mts'
 import type { AgentMessageView } from '../../../shared/agents/contracts.ts'
 import { buildAgentThreadPresentation } from './agent-thread-presentation.ts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 resetBody()
 
 const componentPath = join(process.cwd(), 'client/components/agents/agent-thread.vue')
@@ -116,6 +118,7 @@ const renderDuplicateSources = async (): Promise<string> => {
   )
   const emptyStub = defineComponent({ render: () => null })
   const app = createSSRApp(component)
+  app.config.globalProperties.$t = translateEnglish
   for (const name of ['AgentAnswerActions', 'AgentArtifactGrid', 'WikiSourcePreview', 'AgentMarkdown', 'AgentTaskProgress', 'AgentToolCard', 'v-avatar', 'v-btn', 'v-icon']) {
     app.component(name, emptyStub)
   }
