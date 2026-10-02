@@ -408,7 +408,7 @@
             .d-flex.align-center.mb-4
               div
                 .text-label-small {{$t('editor:props.translations')}}
-                .text-body-small.text-grey {{$t('editor:props.translationsHint')}}
+                .text-body-small.text-medium-emphasis {{$t('editor:props.translationsHint')}}
               v-spacer
               v-btn(
                 color='primary'
@@ -1220,7 +1220,7 @@ export default defineComponent({
 
 .editor-properties-branding-status {
   min-height: 20px;
-  color: rgba(var(--v-theme-on-surface), .62);
+  color: var(--wiki-text-muted);
   font-size: .78rem;
   line-height: 1.35;
   margin-top: 8px;
@@ -1232,7 +1232,7 @@ export default defineComponent({
 .editor-properties-tags-persistence-hint,
 .editor-properties-tag-search-state,
 .editor-properties-tag-status {
-  color: rgba(var(--v-theme-on-surface), .68);
+  color: var(--wiki-text-muted);
   font-size: .8rem;
   line-height: 1.4;
   margin-top: 8px;
@@ -1305,7 +1305,7 @@ export default defineComponent({
   &-hint {
     background: rgba(var(--v-theme-on-surface), .04);
     border-top: 1px solid rgba(var(--v-theme-on-surface), .12);
-    color: rgba(var(--v-theme-on-surface), .62);
+    color: var(--wiki-text-muted);
     flex: 0 0 auto;
     padding: 5px 10px;
   }

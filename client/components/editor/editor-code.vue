@@ -2,23 +2,24 @@
   .editor-code(ref='root')
     .editor-code-main
       .editor-code-sidebar
-        v-tooltip(location="right", color='teal')
+        v-tooltip(location="right")
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, rounded='0', v-bind='props', aria-label='Insert assets', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
-              v-icon(:color='activeModal === `editorModalMedia` ? `teal` : ``') mdi-folder-multiple-image
+            v-btn.mt-3(icon, rounded='0', v-bind='props', aria-label='Insert assets', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
+              v-icon(:color='activeModal === `editorModalMedia` ? `primary` : undefined') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
-          v-tooltip(location="right", color='teal')
+          v-tooltip(location="right")
             template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, rounded='0', v-bind='props', aria-label='Toggle distraction-free mode', @click='toggleFullscreen').mx-0
+              v-btn.mt-3(icon, rounded='0', v-bind='props', aria-label='Toggle distraction-free mode', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-code-editor
         div(ref='cm', role='region', aria-label='Code editor')
-    v-system-bar.editor-status-bar.editor-code-sysbar(absolute, color="grey-darken-3")
+    v-system-bar.editor-status-bar.editor-code-sysbar(absolute)
       .text-body-small.editor-code-sysbar-locale {{locale.toUpperCase()}}
-      .editor-status-path(title='/' + path) /{{path}}
+      .editor-status-path /{{path}}
+        v-tooltip(activator='parent', location='top') /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .text-body-small Code
@@ -249,7 +250,7 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
   }
 
   &-editor {
-    background-color: darken(mc('grey', '900'), 4.5%);
+    background-color: rgb(var(--v-theme-background));
     flex: 1 1 50%;
     display: block;
     height: $editor-height;
@@ -262,14 +263,14 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
     }
 
     &-title {
-      background-color: mc('grey', '800');
+      background-color: var(--wiki-surface-raised);
       border-bottom-left-radius: 5px;
       display: inline-flex;
       height: 30px;
       justify-content: center;
       align-items: center;
       padding: 0 1rem;
-      color: mc('grey', '500');
+      color: var(--wiki-text-muted);
       position: absolute;
       top: 0;
       right: 0;
@@ -288,7 +289,8 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
   }
 
   &-sidebar {
-    background-color: mc('grey', '900');
+    background-color: var(--wiki-surface-sunken);
+    border-inline-end: 1px solid var(--wiki-surface-border);
     width: 64px;
     display: flex;
     flex-direction: column;
@@ -304,9 +306,14 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
 
   &-sysbar {
     padding-left: 0;
+    background: var(--wiki-surface-raised) !important;
+    border-top: 1px solid var(--wiki-surface-border);
+    color: var(--wiki-text-muted);
 
     &-locale {
-      background-color: rgba(255,255,255,.25);
+      background-color: rgba(var(--v-theme-primary), .14);
+      color: var(--wiki-accent-ink);
+      font-weight: 700;
       display:inline-flex;
       padding: 0 12px;
       height: 24px;

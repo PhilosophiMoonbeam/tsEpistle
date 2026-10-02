@@ -1,6 +1,6 @@
 <template lang='pug'>
   v-dialog.editor-modal-conflict-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='editor-conflict-title', @update:model-value='onDialogModelUpdate')
-    v-card.editor-modal-conflict.animated.fadeIn(flat, rounded='xl', :aria-busy='isLoading')
+    v-card.editor-modal-conflict(flat, rounded='xl', :aria-busy='isLoading')
       .editor-modal-conflict-header
         v-toolbar(flat, color='surface', class='border-b')
           v-icon.mr-3(color='primary') mdi-merge

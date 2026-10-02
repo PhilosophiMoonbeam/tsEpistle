@@ -21,6 +21,11 @@ export type FormattingToolId =
   | 'unorderedList'
   | 'orderedList'
   | 'taskList'
+  | 'outdent'
+  | 'indent'
+  | 'alignLeft'
+  | 'alignCenter'
+  | 'alignRight'
   | 'horizontalBar'
   | 'codeBlock'
   | 'table'
@@ -63,6 +68,11 @@ export const FORMATTING_TOOLS: Readonly<Record<FormattingToolId, FormattingTool>
   unorderedList: tool('unorderedList', 'unorderedList', 'mdi-format-list-bulleted', 'structure'),
   orderedList: tool('orderedList', 'orderedList', 'mdi-format-list-numbered', 'structure'),
   taskList: tool('taskList', 'taskList', 'mdi-format-list-checks', 'structure'),
+  outdent: tool('outdent', 'outdent', 'mdi-format-indent-decrease', 'structure'),
+  indent: tool('indent', 'indent', 'mdi-format-indent-increase', 'structure'),
+  alignLeft: tool('alignLeft', 'alignLeft', 'mdi-format-align-left', 'structure'),
+  alignCenter: tool('alignCenter', 'alignCenter', 'mdi-format-align-center', 'structure'),
+  alignRight: tool('alignRight', 'alignRight', 'mdi-format-align-right', 'structure'),
   horizontalBar: tool('horizontalBar', 'horizontalBar', 'mdi-minus', 'structure'),
   codeBlock: tool('codeBlock', 'insertCodeBlock', 'mdi-code-braces', 'structure'),
   table: tool('table', 'tableHelper', 'mdi-table', 'structure'),

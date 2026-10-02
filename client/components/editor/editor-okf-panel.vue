@@ -440,7 +440,7 @@ export default defineComponent({
   }
 
   .text-medium-emphasis {
-    color: rgba(var(--v-theme-on-surface), .68);
+    color: var(--wiki-text-muted);
   }
 
   code {
