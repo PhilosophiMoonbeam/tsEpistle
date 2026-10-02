@@ -1,9 +1,9 @@
 <template lang='pug'>
-  v-card.editor-markdown-help.animated.fadeInLeft(flat, rounded='xl', role='region', aria-labelledby='markdown-help-title', tabindex='0')
+  v-card.editor-markdown-help(flat, rounded='xl', role='region', aria-labelledby='markdown-help-title', tabindex='0')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='6', xl='4')
-          v-card.radius-7.animated.fadeInUp
+          v-card.radius-7
             v-card-text
               .d-flex
                 v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat, height='44')
@@ -64,7 +64,7 @@
                       div(style='font-weight: 700; font-size: 16px;') Header 5
                       div(style='font-weight: 700; font-size: 14px;') Header 6
               h3.text-body-medium.mt-3 Unordered Lists
-              .text-body-small.text-grey-darken-1: em You can also use the asterisk symbol instead of the dash.
+              .text-body-small.text-medium-emphasis: em You can also use the asterisk symbol instead of the dash.
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -81,7 +81,7 @@
                         li Unordered List Item 2
                         li Unordered List Item 3
               h3.text-body-medium.mt-3 Ordered Lists
-              .text-body-small.text-grey-darken-1: em Even though we prefix all lines with #[strong 1.], the output will be correctly numbered automatically.
+              .text-body-small.text-medium-emphasis: em Even though we prefix all lines with #[strong 1.], the output will be correctly numbered automatically.
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -109,7 +109,7 @@
                     v-card-text
                       .editor-markdown-help-image-example Caption Text
         v-col(cols='12', lg='6', xl='4')
-          v-card.radius-7.animated.fadeInUp.wait-p1s
+          v-card.radius-7
             v-card-text
               .d-flex
                 v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat, height='44')
@@ -187,8 +187,8 @@
                     v-card-text
                       .text-body-small: abbr(title='HyperText Markup Language') HTML
               h3.text-body-medium.mt-3 Code Blocks
-              .text-body-small.text-grey-darken-1: em In the example below, #[strong js] defines the syntax highlighting language to use. It can be omitted.
-              .text-body-small.text-grey-darken-1.mt-1 Add #[code title="example.js"] for a caption, #[code linesStart="30"] to renumber, and #[code linesHighlight="31,33-35"] to mark lines.
+              .text-body-small.text-medium-emphasis: em In the example below, #[strong js] defines the syntax highlighting language to use. It can be omitted.
+              .text-body-small.text-medium-emphasis.mt-1 Add #[code title="example.js"] for a caption, #[code linesStart="30"] to renumber, and #[code linesHighlight="31,33-35"] to mark lines.
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -231,7 +231,7 @@
                       blockquote.editor-markdown-help-blockquote Lorem ipsum#[br]dolor sit amet#[br]consectetur adipiscing elit
 
         v-col(cols='12', xl='4')
-          v-card.radius-7.animated.fadeInUp.wait-p2s
+          v-card.radius-7
             v-card-text
               v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat)
                 v-icon.mr-3(color='teal') mdi-keyboard
@@ -284,7 +284,7 @@
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd F11]
 
-          v-card.radius-7.animated.fadeInUp.wait-p3s.mt-3
+          v-card.radius-7.mt-3
             v-card-text
               v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat)
                 v-icon.mr-3(color='teal') mdi-mouse
@@ -439,7 +439,7 @@ export default {
 
 @media (prefers-reduced-motion: reduce) {
   .editor-markdown-help,
-  .editor-markdown-help .animated {
+  .editor-markdown-help * {
     animation: none !important;
     transition: none !important;
   }

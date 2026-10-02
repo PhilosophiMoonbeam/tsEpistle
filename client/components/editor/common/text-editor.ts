@@ -112,7 +112,7 @@ const textEditorTheme = EditorView.theme({
   '.cm-cursor': { borderLeftColor: 'rgb(var(--v-theme-on-surface))' },
   '.cm-gutters': {
     backgroundColor: 'color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-on-surface)) 6%)',
-    color: 'rgba(var(--v-theme-on-surface), .54)',
+    color: 'var(--wiki-text-muted)',
     borderRight: '1px solid rgba(var(--v-theme-on-surface), .12)'
   },
   '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .04)' },

@@ -1,6 +1,6 @@
 <template lang='pug'>
-v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='xl')
-  v-toolbar(color="grey-darken-4", flat)
+v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks(flat, rounded='xl')
+  v-toolbar.editor-modal-blocks-toolbar(flat)
     v-icon.mr-3(color="secondary") {{activeStatus?.icon || 'mdi-shape-outline'}}
     v-toolbar-title#content-extension-title Insert content extension
     v-spacer
@@ -963,9 +963,11 @@ export default defineComponent({
   width: 100%;
   height: 100dvh;
   min-height: 0;
-  background-color: rgba(darken(mc('grey', '900'), 3%), .96) !important;
+  background-color: rgb(var(--v-theme-background)) !important;
 
   > .v-toolbar {
+    background: var(--wiki-surface-raised);
+    border-bottom: 1px solid var(--wiki-surface-border);
     flex: 0 0 auto;
   }
 
@@ -983,7 +985,7 @@ export default defineComponent({
     gap: 12px;
     padding: 12px 0;
     margin-top: 24px;
-    background: rgba(darken(mc('grey', '900'), 3%), .96);
+    background: rgb(var(--v-theme-background));
   }
 
   .source-textarea textarea {

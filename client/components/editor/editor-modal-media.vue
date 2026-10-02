@@ -1,8 +1,8 @@
 <template lang='pug'>
-  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='xl', :class='[`is-editor-${editorKey}`, { "is-editor-embedded": embedded, "is-page-branding": isBranding }]', :role='embedded ? undefined : `dialog`', :aria-modal='embedded ? undefined : `true`', aria-labelledby='editor-media-title', tabindex='-1')
+  v-card.editor-modal-media(flat, rounded='xl', :class='[`is-editor-${editorKey}`, { "is-editor-embedded": embedded, "is-page-branding": isBranding }]', :role='embedded ? undefined : `dialog`', :aria-modal='embedded ? undefined : `true`', aria-labelledby='editor-media-title', tabindex='-1')
     .editor-media-layout
       section.editor-media-browser(aria-labelledby='editor-media-title')
-        v-card.editor-media-panel.radius-7.animated.fadeInLeft.wait-p1s
+        v-card.editor-media-panel.radius-7
           v-card-text.editor-media-panel-content
             header.editor-media-header
               h2.editor-media-heading#editor-media-title {{ $t('editor:assets.title') }}
@@ -33,7 +33,7 @@
                       @keyup.enter='createFolder'
                       ref='folderNameIpt'
                       )
-                    i18next.text-body-small.text-grey-darken-1.pl-5(path='editor:assets.folderNameNamingRules', tag='div')
+                    i18next.text-body-small.text-medium-emphasis.pl-5(path='editor:assets.folderNameNamingRules', tag='div')
                       a(place='namingRules', href='https://docs-beta.requarks.io/guide/assets#naming-restrictions', target='_blank') {{$t('editor:assets.folderNameNamingRulesLink')}}
                   v-card-chin
                     v-spacer
@@ -86,7 +86,7 @@
                   td.text-body-small(v-if='$vuetify.display.smAndUp') {{ props.item.id }}
                   td.editor-media-filename
                     .text-body-medium: strong(:class='currentFileId === props.item.id ? `text-primary` : ``') {{ props.item.filename }}
-                    .text-body-small.text-grey {{ props.item.description }}
+                    .text-body-small.text-medium-emphasis {{ props.item.description }}
                   td.text-center(v-if='$vuetify.display.lgAndUp')
                     v-chip.ma-0(size="x-small", variant="tonal")
                       .text-label-small {{props.item.ext.toUpperCase().substring(1)}}
@@ -166,7 +166,7 @@
                   span Use image
 
       aside.editor-media-sidebar
-        v-card.editor-media-panel.radius-7.animated.fadeInRight.wait-p3s
+        v-card.editor-media-panel.radius-7
           v-alert.mb-0(v-if='isPrivatePage', type='info', variant="outlined", density="compact") Assets are site-wide and cannot be uploaded as private page content.
           v-card-text.editor-media-panel-content(v-if='!isPrivatePage')
             header.editor-media-header.editor-media-upload-header
@@ -194,7 +194,7 @@
             v-btn(color='primary', @click='upload') {{$t('common:actions.upload')}}
 
 
-        v-card.editor-media-panel.radius-7.animated.fadeInRight.wait-p4s(v-if='!isBranding && currentAsset && currentAsset.kind === `IMAGE`')
+        v-card.editor-media-panel.radius-7(v-if='!isBranding && currentAsset && currentAsset.kind === `IMAGE`')
           v-card-text.editor-media-panel-content.pb-0
             h2.editor-media-heading
               v-icon(aria-hidden='true') mdi-format-align-top
@@ -1664,7 +1664,7 @@ export default defineComponent({
   .editor-media-path {
     padding-block: var(--wiki-space-4);
     overflow-wrap: anywhere;
-    color: rgba(var(--v-theme-on-surface), .7);
+    color: var(--wiki-text-muted);
   }
 
   .editor-media-folders {
