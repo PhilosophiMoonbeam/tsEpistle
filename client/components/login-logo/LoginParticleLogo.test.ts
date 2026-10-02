@@ -331,8 +331,8 @@ browserWindow.HTMLElement.prototype.addEventListener = function (
 
 const nativeGetBoundingClientRect = browserWindow.HTMLElement.prototype.getBoundingClientRect
 browserWindow.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect {
-  if (this.classList.contains('login')) return rect({ left: 0, top: 0, width: environment.width, height: environment.height })
-  if (this.classList.contains('login-sd')) return rect(environment.card)
+  if (this.classList.contains('auth-shell')) return rect({ left: 0, top: 0, width: environment.width, height: environment.height })
+  if (this.classList.contains('auth-shell__card')) return rect(environment.card)
 
   const field = this.closest<HTMLElement>('.login-particle-logo')
   if (field) {
@@ -568,9 +568,9 @@ const mountLogo = async (initialEffect: LogoEffectDescriptor | null = managedEff
   const root = Vue.defineComponent({
     name: 'LoginParticleLogoBehaviorHarness',
     setup: () => () =>
-      Vue.h('div', { class: 'login' }, [
-        Vue.h('main', { class: 'login-sd' }, [
-          Vue.h('div', { class: 'login-brand' }, [Vue.h('img', { src: managedEffect.logoUrl, alt: '' })]),
+      Vue.h('div', { class: 'auth-shell login' }, [
+        Vue.h('main', { class: 'auth-shell__card' }, [
+          Vue.h('div', { class: 'auth-shell__brand' }, [Vue.h('img', { src: managedEffect.logoUrl, alt: '' })]),
           Vue.h('form', { class: 'login-form' }, [Vue.h('input', { name: 'username' })])
         ]),
         Vue.h(LoginParticleLogo, { effect: effect.value })
@@ -833,7 +833,7 @@ describe('LoginParticleLogo static behavior', () => {
 
     const failedImage = staticImage(mounted.host)
     expect(failedImage === null || failedImage.hidden || failedImage.style.display === 'none').toBe(true)
-    const ordinaryLogo = mounted.host.querySelector<HTMLImageElement>('.login-brand img')
+    const ordinaryLogo = mounted.host.querySelector<HTMLImageElement>('.auth-shell__brand img')
     expect(ordinaryLogo?.getAttribute('src')).toBe(managedEffect.logoUrl)
   })
 

@@ -923,7 +923,7 @@ async function installZeroFreeSpaceLogin(page: Page): Promise<void> {
       const loginDocument = await response.text()
       const zeroSpaceDocument = loginDocument.replace(
         '</head>',
-        '<style id="login-logo-zero-space-fixture">.login > main.login-sd { width: 100% !important; max-width: none !important; }</style></head>'
+        '<style id="login-logo-zero-space-fixture">.auth-shell > main.auth-shell__card { width: 100% !important; max-width: none !important; }</style></head>'
       )
       if (zeroSpaceDocument === loginDocument) throw new Error('The login document did not contain the expected head element.')
       await route.fulfill({ response, body: zeroSpaceDocument })
@@ -932,7 +932,7 @@ async function installZeroFreeSpaceLogin(page: Page): Promise<void> {
 }
 
 async function measureLogoFreeWidth(page: Page): Promise<number> {
-  return page.locator('main.login-sd').evaluate(card => {
+  return page.locator('main.auth-shell__card').evaluate(card => {
     const login = card.parentElement
     if (!(login instanceof HTMLElement)) throw new Error('The login card does not have the expected parent.')
     const loginRect = login.getBoundingClientRect()
@@ -948,10 +948,10 @@ function requireProjectRow(testInfo: TestInfo, projectNames: readonly string[]):
 }
 
 async function expectOrdinaryLogin(page: Page): Promise<void> {
-  const card = page.locator('main.login-sd')
+  const card = page.locator('main.auth-shell__card')
   const title = card.locator('#login-site-title')
   await expect(card).toBeVisible({ timeout: 15_000 })
-  await expect(card.locator('.login-brand .login-logo img')).toBeVisible()
+  await expect(card.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
   await expect(title).toBeVisible()
   expect((await title.textContent())?.trim()).toBeTruthy()
   await expect(page.getByLabel('Email Address', { exact: true })).toBeVisible()
@@ -973,7 +973,7 @@ async function expectLoginValidation(page: Page): Promise<void> {
   await email.fill('person@example.test')
   await password.fill('x')
   await page.getByRole('button', { name: 'Log In', exact: true }).click()
-  await expect(page.locator('main.login-sd > .v-alert[role="alert"]')).toBeVisible()
+  await expect(page.locator('main.auth-shell__card > .v-alert[role="alert"]')).toBeVisible()
   await expect(password).toBeFocused()
 }
 
@@ -1682,7 +1682,7 @@ function compareFrames(before: RgbaFrame, after: RgbaFrame, influence?: { readon
 async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<void> {
   const report = await page.locator('.login-particle-logo').evaluate((field, descriptor) => {
     const image = field.querySelector('.login-particle-logo__image')
-    const card = document.querySelector('main.login-sd')
+    const card = document.querySelector('main.auth-shell__card')
     const login = field.parentElement
     if (!(image instanceof HTMLImageElement) || !(card instanceof HTMLElement) || !(login instanceof HTMLElement)) return null
     const fieldRect = field.getBoundingClientRect()
@@ -1744,7 +1744,7 @@ interface LogoAnchorGeometry {
 async function readLogoAnchorGeometry(page: Page): Promise<LogoAnchorGeometry> {
   return page.locator('.login-particle-logo').evaluate((field): LogoAnchorGeometry => {
     const login = field.parentElement
-    const card = document.querySelector('main.login-sd')
+    const card = document.querySelector('main.auth-shell__card')
     const image = field.querySelector('.login-particle-logo__image')
     if (!(login instanceof HTMLElement) || !(card instanceof HTMLElement) || !(image instanceof HTMLImageElement)) {
       throw new Error('The managed login logo geometry is unavailable.')
@@ -2272,11 +2272,11 @@ test.describe('managed login logo auth independence', () => {
           if (fixture.name === 'wide') {
             await expect(samplePage.locator('.login-particle-logo__silhouette')).toHaveCount(0)
           }
-          const ordinaryLogo = samplePage.locator('.login-brand .login-logo img')
+          const ordinaryLogo = samplePage.locator('.auth-shell__brand .auth-shell__logo img')
           const staticImage = samplePage.locator('.login-particle-logo__image')
           await expect(ordinaryLogo).toHaveAttribute('src', fixture.effect.logoUrl)
           await expect(ordinaryLogo).toHaveCSS('width', '34px')
-          const logoFrame = samplePage.locator('.login-brand .login-logo')
+          const logoFrame = samplePage.locator('.auth-shell__brand .auth-shell__logo')
           await expect(logoFrame).toHaveCSS('width', '52px')
           await expect(logoFrame).toHaveCSS('height', '52px')
           await expect(logoFrame).toHaveCSS('padding', '8px')
@@ -2518,7 +2518,7 @@ test.describe('managed login logo auth independence', () => {
     await expectLoginValidation(page)
     await page.setViewportSize({ width: 960, height: 320 })
     await expect(page.locator('.login-particle-logo')).toHaveCount(0)
-    await expectScrollable(page.locator('main.login-sd'))
+    await expectScrollable(page.locator('main.auth-shell__card'))
   })
 
   test('preserves unmanaged landmark, heading, textbox, and button names, tab order, title, focus geometry, and auth controls', async ({ page }, testInfo) => {
@@ -2530,7 +2530,7 @@ test.describe('managed login logo auth independence', () => {
     const siteTitle = (await page.locator('#login-site-title').textContent())?.trim()
     expect(siteTitle).toBeTruthy()
     const baselineButtonNames = await accessibleButtonNames(page)
-    expect(baselineButtonNames).toEqual(expect.arrayContaining(['View Password', 'Log In']))
+    expect(baselineButtonNames).toEqual(expect.arrayContaining(['Show Password', 'Log In']))
     const expectedAccessibility: LoginAccessibilityContract = {
       buttons: baselineButtonNames,
       headings: [siteTitle ?? '', 'Enter your credentials'],
@@ -2693,7 +2693,7 @@ test.describe('managed login logo auth independence', () => {
 
     await page.goto('/login?logo-sample=motion', { waitUntil: 'domcontentloaded' })
     await expectOrdinaryLogin(page)
-    const ordinaryLogo = page.locator('.login-brand .login-logo img')
+    const ordinaryLogo = page.locator('.auth-shell__brand .auth-shell__logo img')
     await expect(ordinaryLogo).toHaveAttribute('src', squareEffect.logoUrl)
     await assertTransparentSourceIdentity(ordinaryLogo, squareEffect, 'ordinary')
     const field = page.locator('.login-particle-logo')
@@ -2842,7 +2842,7 @@ test.describe('managed login logo auth independence', () => {
     const artifacts = await installManagedLogo(page, squareEffect, { staticBody: Buffer.from('not-an-image') })
     await page.goto('/login')
     await expectOrdinaryLogin(page)
-    await expect(page.locator('.login-brand .login-logo img')).toHaveAttribute('src', squareEffect.logoUrl)
+    await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toHaveAttribute('src', squareEffect.logoUrl)
     await expect(page.locator('.login-particle-logo')).toHaveCount(0)
     expect(artifacts.particle).toHaveLength(0)
     await expectLoginValidation(page)
@@ -2869,7 +2869,7 @@ test.describe('managed login logo auth independence', () => {
 
     await page.goto('/login')
     await expectOrdinaryLogin(page)
-    await expect(page.locator('.login-brand .login-logo img')).toHaveAttribute('src', squareEffect.logoUrl)
+    await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toHaveAttribute('src', squareEffect.logoUrl)
     const field = page.locator('.login-particle-logo')
     const canvas = field.locator('canvas')
     const outcome = await waitForBackendOutcome(page)
@@ -2932,7 +2932,7 @@ test.describe('managed login logo auth independence', () => {
     await expect(image).toHaveCSS('pointer-events', 'none')
     expect(
       await field.evaluate(element => {
-        const cardElement = document.querySelector('main.login-sd')
+        const cardElement = document.querySelector('main.auth-shell__card')
         const formElement = document.querySelector('form.login-form')
         const sceneChildren = element.querySelectorAll('.login-particle-logo__stage, .login-particle-logo__scene, canvas')
         return {
@@ -2973,18 +2973,18 @@ test.describe('managed login logo auth independence', () => {
     await expectLoginValidation(page)
 
     await page.goto('/register')
-    const register = page.locator('main.register')
+    const register = page.locator('.register main.auth-shell__card')
     const email = page.getByLabel('Email Address', { exact: true })
     const password = page.getByLabel('Password', { exact: true })
     const verifyPassword = page.getByLabel('Verify Password', { exact: true })
     const name = page.getByLabel('Name', { exact: true })
     const submit = page.getByRole('button', { name: 'Register', exact: true })
     await expect(register).toBeVisible()
-    await expect(register.locator('.register-logo img')).toBeVisible()
-    await expect(register.locator('.register-logo img')).toHaveAttribute('src', wideEffect.logoUrl)
-    await assertTransparentSourceIdentity(register.locator('.register-logo img'), wideEffect, 'ordinary')
+    await expect(register.locator('.auth-shell__logo img')).toBeVisible()
+    await expect(register.locator('.auth-shell__logo img')).toHaveAttribute('src', wideEffect.logoUrl)
+    await assertTransparentSourceIdentity(register.locator('.auth-shell__logo img'), wideEffect, 'ordinary')
     await expect(register.locator('#register-site-title')).toBeVisible()
-    await expect(email).toBeFocused()
+    await expect(name).toBeFocused()
     await expect(password).toBeVisible()
     await expect(verifyPassword).toBeVisible()
     await expect(name).toBeVisible()
@@ -3042,10 +3042,10 @@ test.describe('particle compositor without service workers', () => {
       await installLogoFrameCapture(target)
       await installManagedLogo(target, colorProbeEffect, { particleBody: colorProbeParticleFixture })
       await target.goto(`/login?${query}`, { waitUntil: 'domcontentloaded' })
-      const card = target.locator('main.login-sd')
+      const card = target.locator('main.auth-shell__card')
       const title = card.locator('#login-site-title')
       await expect(card).toBeVisible({ timeout: 15_000 })
-      const ordinaryLogo = card.locator('.login-brand .login-logo img')
+      const ordinaryLogo = card.locator('.auth-shell__brand .auth-shell__logo img')
       await expect(ordinaryLogo).toHaveCount(1)
       await expect(ordinaryLogo).toHaveAttribute('src', colorProbeEffect.logoUrl)
       await expect(title).toBeVisible()

@@ -4,7 +4,7 @@
       :color='passwordStrengthColor'
       :model-value='passwordStrength'
       height='2'
-      :aria-label='$t(`common:password.label`)'
+      :aria-label='text(`label`)'
       :aria-valuetext='passwordStrengthValueText'
     )
     .text-body-small(v-if='!hideText', :class='`text-${passwordStrengthColor}`') {{passwordStrengthText}}
@@ -20,6 +20,20 @@
 import { defineComponent } from 'vue'
 import zxcvbn from 'zxcvbn'
 import debounce from 'lodash/debounce.js'
+
+type StrengthText = 'label' | 'unset' | 'veryWeak' | 'weak' | 'average' | 'strong' | 'veryStrong'
+type Translate = (key: string, options?: Record<string, unknown>) => string
+
+// English fallbacks keep the meter usable on first-run setup, which has no i18n.
+const STRENGTH_TEXT: Record<StrengthText, string> = {
+  label: 'Password strength',
+  unset: 'Not set',
+  veryWeak: 'Very weak',
+  weak: 'Weak',
+  average: 'Average',
+  strong: 'Strong',
+  veryStrong: 'Very strong'
+}
 
 export default defineComponent({
   props: {
@@ -48,19 +62,19 @@ export default defineComponent({
     },
     passwordStrengthText(): string {
       if (this.passwordStrength === 0) return ''
-      if (this.passwordStrength <= 20) return this.$t('common:password.veryWeak')
-      if (this.passwordStrength <= 40) return this.$t('common:password.weak')
-      if (this.passwordStrength <= 60) return this.$t('common:password.average')
-      if (this.passwordStrength <= 80) return this.$t('common:password.strong')
-      return this.$t('common:password.veryStrong')
+      if (this.passwordStrength <= 20) return this.text('veryWeak')
+      if (this.passwordStrength <= 40) return this.text('weak')
+      if (this.passwordStrength <= 60) return this.text('average')
+      if (this.passwordStrength <= 80) return this.text('strong')
+      return this.text('veryStrong')
     },
     passwordStrengthValueText(): string {
       return this.passwordStrength === 0
-        ? this.$t('common:password.unset')
+        ? this.text('unset')
         : `${this.passwordStrengthText} (${this.passwordStrength}%)`
     },
     passwordStrengthAnnouncement(): string {
-      return `${this.$t('common:password.label')}: ${this.passwordStrengthValueText}`
+      return `${this.text('label')}: ${this.passwordStrengthValueText}`
     }
   },
   watch: {
@@ -75,6 +89,12 @@ export default defineComponent({
     this.debouncedCheckPasswordStrength(this.modelValue)
   },
   methods: {
+    text(key: StrengthText): string {
+      const translate = (this as unknown as { $t?: Translate }).$t
+      return typeof translate === 'function'
+        ? translate(`common:password.${key}`, { defaultValue: STRENGTH_TEXT[key] })
+        : STRENGTH_TEXT[key]
+    },
     updatePasswordStrength(pwd: string) {
       this.passwordStrength = pwd ? (zxcvbn(pwd).score + 1) * 20 : 0
     }
