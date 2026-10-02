@@ -159,7 +159,7 @@ type ShellContext = {
   offlineDraftCandidate: unknown
   submissionCaptureValues: unknown
   submissionCaptureIdentity: unknown
-  dialogProgress: boolean
+  saveFeedback: string
   isSaving: boolean
   lifecycleGeneration: number
   accountId: number
@@ -508,7 +508,9 @@ const createShellContext = (
     },
     navigationTimer: null,
     dialogUnsaved: false,
-    dialogProgress: false,
+    saveFeedback: 'idle',
+    lastSavedAt: null,
+    lastSaveKind: 'server',
     exitConfirmed: false,
     lifecycleGeneration: 0,
     editorInstanceKey: 0,
