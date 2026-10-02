@@ -553,7 +553,7 @@ export default defineComponent({
     agentPageLocale(): string { return this.agentOpeningPage?.locale ?? '' },
     agentPagePath(): string { return this.agentOpeningPage?.path ?? '' },
     agentPageUpdatedAt(): string { return this.agentOpeningPage?.observedUpdatedAt ?? '' },
-    agentPageTitle(): string { return this.agentOpeningPage ? wikiStore.page.title : '' },
+    agentPageTitle(): string { return this.agentOpeningPage?.id === wikiStore.page.id ? wikiStore.page.title : '' },
     currentPageId(): number { return wikiStore.page.id },
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },
