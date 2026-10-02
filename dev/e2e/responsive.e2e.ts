@@ -1762,7 +1762,10 @@ test.describe('responsive UI quality matrix', () => {
     test.use({ serviceWorkers: 'block' })
 
     test('keeps long workspace titles readable with phone Agent actions available', async ({ page }, testInfo) => {
-      test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Phone title geometry is owned by Chromium mobile.')
+      test.skip(
+        testInfo.project.name !== 'responsive-chromium-mobile' && testInfo.project.name !== 'responsive-chromium-desktop',
+        'Narrow header geometry covers both fine and coarse Chromium pointers.'
+      )
       await authenticateAsAdmin(page)
       const workspaceTitle = 'Contract Design Team Workspace'
       await page.route('**/en/home?qa-title-fit=*', async route => {
