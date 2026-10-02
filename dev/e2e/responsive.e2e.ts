@@ -1830,6 +1830,41 @@ test.describe('responsive UI quality matrix', () => {
     }
   })
 
+  test('keeps empty phone Agent starter actions unobstructed above the composer', async ({ page }) => {
+    test.skip((page.viewportSize()?.width ?? 1280) >= 600, 'Phone landing reflow requires the xs breakpoint.')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'focus' })
+    try {
+      await page.setViewportSize({ width: 375, height: 812 })
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await openAuthenticatedPage(page, '/', '.nav-header')
+      await page.locator('.nav-header-mobile-actions').click()
+      await page.getByRole('button', { name: 'Open Wiki Agent', exact: true }).click()
+      const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
+      await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeEnabled()
+      await expect(page.locator('.v-menu.v-overlay')).toBeHidden()
+      await expect.poll(async () => agent.evaluate(element => {
+        const dock = element.querySelector('.inline-agent__conversation-dock')
+        const controls = element.querySelectorAll('.inline-agent__composer button')
+        const control = controls[controls.length - 1]
+        if (!dock || !control) throw new Error('The ready workspace must expose its composer dock and controls.')
+        const gap = element.getBoundingClientRect().bottom - dock.getBoundingClientRect().bottom
+        return gap - control.getBoundingClientRect().height
+      }), { message: 'An empty conversation must not leave its bottom dock beyond a touch target of the panel edge.' }).toBeLessThanOrEqual(1)
+      const starter = agent.getByRole('button', { name: /Catch up/i }).first()
+      await expect(starter).toBeEnabled()
+      await starter.scrollIntoViewIfNeeded()
+      await expect.poll(async () => starter.evaluate(element => {
+        const rect = element.getBoundingClientRect()
+        return [rect.y + rect.height / 2, rect.bottom - Math.min(12, rect.height / 4)].every(y => {
+          const target = document.elementFromPoint(rect.x + rect.width / 2, y)
+          return target !== null && element.contains(target)
+        })
+      }), { message: 'The composer must not intercept the last starter action or its description.' }).toBe(true)
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
   test('keeps Agent Chat readable and operable', async ({ page }) => {
     await openAuthenticatedPage(page, '/', '.page-header-section')
     const originalPageUrl = page.url()
