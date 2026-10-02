@@ -765,7 +765,6 @@
       "title": "This page is password-protected",
       "body": "Enter the page password to continue.",
       "password": "Page password",
-      "showPassword": "Show password",
       "submit": "Unlock page",
       "unavailable": "This protected page is not available.",
       "returnHome": "Return home"

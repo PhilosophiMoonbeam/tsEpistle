@@ -25,9 +25,24 @@ const compiled = compileTemplate({
 if (compiled.errors.length) throw new Error(`Cannot compile page-unlock.vue: ${compiled.errors}`)
 const render = new Function('Vue', compiled.code)(Vue) as RenderFunction
 const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const options = new Function('defineComponent', 'wikiStore', script)(Vue.defineComponent, {
+const toggleFilename = path.join(process.cwd(), 'client/components/common/password-visibility-toggle.vue')
+const toggleDescriptor = parse(fs.readFileSync(toggleFilename, 'utf8'), { filename: toggleFilename }).descriptor
+const toggleTemplate = compileTemplate({
+  filename: toggleFilename,
+  id: 'page-unlock-toggle-test',
+  source: toggleDescriptor.template!.content,
+  preprocessLang: toggleDescriptor.template!.lang,
+  preprocessOptions: { doctype: 'html' },
+  compilerOptions: { mode: 'function' }
+})
+const toggleScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(toggleDescriptor.script!.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
+const PasswordVisibilityToggle = {
+  ...new Function('defineComponent', toggleScript)(Vue.defineComponent),
+  render: new Function('Vue', toggleTemplate.code)(Vue) as RenderFunction
+}
+const options = new Function('defineComponent', 'wikiStore', 'PasswordVisibilityToggle', script)(Vue.defineComponent, {
   site: { title: 'Wiki', logoUrl: '' }
-}) as ComponentOptions
+}, PasswordVisibilityToggle) as ComponentOptions
 
 const passthrough = (tag = 'div') =>
   Vue.defineComponent({
@@ -81,7 +96,15 @@ describe('page unlock', () => {
     await Vue.nextTick()
     expect(submit?.dataset.loading).toBe('false')
 
-    const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="common:pageUnlock.showPassword"]')
+    // The shared toggle: a fixed name for the field, the state in aria-pressed.
+    const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="common:password.show"]')
+    const field = host.querySelector('[name="password"]')
     expect(toggle?.getAttribute('aria-pressed')).toBe('false')
+    expect(field?.getAttribute('type')).toBe('password')
+    toggle?.click()
+    await Vue.nextTick()
+    expect(toggle?.getAttribute('aria-pressed')).toBe('true')
+    expect(toggle?.getAttribute('aria-label')).toBe('common:password.show')
+    expect(field?.getAttribute('type')).toBe('text')
   })
 })
