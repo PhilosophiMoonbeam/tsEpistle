@@ -161,6 +161,26 @@ test.describe('responsive UI quality matrix', () => {
   })
 
 
+  test('keeps Table Helper reachable at 320px and 390px', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Narrow editor controls are owned by Chromium mobile')
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 844 })
+      await openAuthenticatedPage(page, '/e/en/visual-markdown-browser', '.editor-tiptap')
+      const row = page.locator('.editor-tiptap-toolbar')
+      const table = row.getByRole('button', { name: 'Table Helper', exact: true })
+      await expect(table).toBeVisible()
+      await row.evaluate(element => { element.scrollLeft = 0 })
+      expect(await row.evaluate(element => element.scrollWidth - element.clientWidth), `${width}px toolbar has a local scroll range`).toBeGreaterThan(0)
+      await row.hover()
+      await page.mouse.wheel(10_000, 0)
+      await expect.poll(() => row.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+      await expectLocatorWithinViewport(table, `${width}px Table Helper`)
+      await table.click()
+      await expect(page.getByText('Insert table', { exact: true })).toBeVisible()
+      await expectResponsiveLayout(page, `${width}px Table Helper`)
+    }
+  })
+
   test('keeps both rich-editor formats and Markdown insert actions reachable at 320px', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Narrow rich-editor containment is owned by Chromium mobile')
     await page.setViewportSize({ width: 320, height: 720 })
@@ -209,16 +229,16 @@ test.describe('responsive UI quality matrix', () => {
       await formattingRow.hover()
       await page.mouse.wheel(10_000, 0)
       await expect.poll(() => formattingRow.evaluate(element => element.scrollLeft), 'Real horizontal wheel input scrolls only the formatting row').toBeGreaterThan(0)
-      const trailing = formattingRow.getByRole('button', { name: format === 'visual-html' ? 'Align right' : 'Table', exact: true })
+      const trailing = formattingRow.getByRole('button', { name: format === 'visual-html' ? 'Align right' : 'Table Helper', exact: true })
       await expectLocatorWithinViewport(trailing, 'Far formatting action')
       await trailing.click()
       if (format === 'visual-html') {
         await expect(paragraph).toHaveCSS('text-align', 'right')
-        await expect(page.getByRole('toolbar', { name: 'Insert content', exact: true })).toHaveCount(0)
+        await expect(page.getByRole('toolbar', { name: 'Insert tools', exact: true })).toHaveCount(0)
       } else {
         await expect(page.getByText('Insert table', { exact: true })).toBeVisible()
         await page.keyboard.press('Escape')
-        const insertRow = page.getByRole('toolbar', { name: 'Insert content', exact: true })
+        const insertRow = page.getByRole('toolbar', { name: 'Insert tools', exact: true })
         await insertRow.evaluate(element => { element.scrollLeft = 0 })
         const content = insertRow.getByRole('button', { name: 'Insert content extension', exact: true })
         const [insertBounds, contentBounds] = await Promise.all([insertRow.boundingBox(), content.boundingBox()])
@@ -256,7 +276,7 @@ test.describe('responsive UI quality matrix', () => {
       const headingText = await paragraph.innerText()
       await paragraph.click({ position: { x: 5, y: 5 } })
       await formattingRow.evaluate(element => { element.scrollLeft = 0 })
-      await formattingRow.getByRole('button', { name: 'Text style', exact: true }).click()
+      await formattingRow.getByRole('button', { name: /^Text style:/u }).click()
       await page.getByRole('listitem').filter({ hasText: /^Heading 1$/u }).click()
       const editorHeading = editor.getByRole('heading', { level: 1, name: headingText, exact: true })
       for (const [property, value] of Object.entries(expectedTypography)) {

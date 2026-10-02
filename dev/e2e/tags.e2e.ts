@@ -238,14 +238,17 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
   if (!initialGeometry) throw new Error(`${surface} did not expose footer and bottom content geometry.`)
 
   const footerDocumentTopBeforeScroll = initialGeometry.footer.documentTop
-  if (expectInitiallyVisible) {
-    expect(
-      Math.abs(initialGeometry.scrollY + initialGeometry.viewportHeight - initialGeometry.scrollHeight),
-      `${surface} short content must not require scrolling`
-    ).toBeLessThanOrEqual(1)
+  // One card is short on desktop, but the mobile vocabulary, selection, filters,
+  // and result stack are taller than the viewport even after the index is narrowed.
+  const contentFits = expectInitiallyVisible && (page.viewportSize()?.width ?? 0) >= 960
+  if (contentFits) {
+    expect(initialGeometry.scrollHeight - initialGeometry.viewportHeight, `${surface} short desktop content needs no document scroll`).toBeLessThanOrEqual(1)
     expect(initialGeometry.footer.top, `${surface} footer must be visible without scrolling`).toBeGreaterThanOrEqual(-1)
     expect(initialGeometry.footer.bottom, `${surface} footer must fit without scrolling`).toBeLessThanOrEqual(initialGeometry.viewportHeight + 1)
   } else {
+    if (expectInitiallyVisible) {
+      expect(initialGeometry.bottomContent.documentBottom, `${surface} mobile content itself extends beyond the viewport`).toBeGreaterThan(initialGeometry.viewportHeight)
+    }
     expect(initialGeometry.footer.top, `${surface} footer must stay below the viewport before the document end`).toBeGreaterThan(initialGeometry.viewportHeight)
     const middleScroll = Math.max(0, Math.floor((initialGeometry.scrollHeight - initialGeometry.viewportHeight) / 2))
     await page.evaluate(scrollY => window.scrollTo(0, scrollY), middleScroll)
