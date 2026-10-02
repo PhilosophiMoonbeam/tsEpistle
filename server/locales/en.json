@@ -186,7 +186,6 @@
       "offlineCopyCouldNot": "The offline copy could not be removed.",
       "privateOfflineVaultCould": "The private offline vault could not be unlocked.",
       "scalex": "scaleX({{value}})",
-      "topEnd": "top end",
       "unlockPrivateOfflinePages": "Unlock private offline pages",
       "enterSecretSavedWhen": "Enter the secret saved when private offline reading was set up on this device.",
       "unlock": "Unlock",
