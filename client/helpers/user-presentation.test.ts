@@ -119,3 +119,28 @@ test('formats ISO sync times in the chosen time zone and time format, not the br
   `)
   assert.equal(output.formatted, output.expected)
 })
+
+test('names the browser zone until the reader zone is known, and re-renders computed labels', () => {
+  const output = runPresentation(`
+    const { computed } = await import('vue')
+    moment.locale('en')
+    const iso = '2024-01-15T10:03:00Z'
+    const label = computed(() => [helpers.formatMoment(iso, 'HH:mm'), helpers.timeZoneKnown(), helpers.timeZoneLabel(iso)].join('|'))
+    const browser = label.value
+    applyUserPresentation({ dateFormat: '', timeFormat: '24h', timezone: 'Asia/Tokyo' })
+    const reader = label.value
+    applyUserPresentation({ timezone: '' })
+    const cleared = label.value
+    console.log(JSON.stringify({ browser, reader, cleared }))
+  `, 'America/New_York')
+  assert.equal(output.browser, '05:03|false|EST')
+  assert.equal(output.reader, '19:03|true|JST')
+  assert.equal(output.cleared, '05:03|false|EST')
+})
+
+test('labels a browser zone without a common abbreviation by its UTC offset', () => {
+  const output = runPresentation(`
+    console.log(JSON.stringify({ label: helpers.timeZoneLabel('2024-01-15T10:03:00Z') }))
+  `, 'Asia/Dubai')
+  assert.equal(output.label, 'UTC+04')
+})

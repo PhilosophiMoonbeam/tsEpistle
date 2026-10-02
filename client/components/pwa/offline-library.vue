@@ -28,6 +28,8 @@ import {
 } from '../../helpers/offline-routes.ts'
 import { renderOfflineHtmlFragment } from '../../helpers/offline-renderer.ts'
 import { offlineServerReasonDetail } from '../../helpers/offline-page-status.ts'
+import { helpers } from '../../helpers/index.ts'
+import { wikiStore } from '../../store/index.ts'
 import {
   createOfflineSyncUnavailableResult,
   OFFLINE_SYNC_COORDINATOR_KEY,
@@ -1469,10 +1471,15 @@ const formatBytes = (value: number): string => {
   return `${amount.toFixed(amount >= 10 ? 0 : 1)} ${unit}`
 }
 
+// Same formatter as the page's "Updated" line: the reader's time zone and
+// date/time format. When that zone is unknown (for example in the offline
+// shell before the first sign-in), name the browser zone that is used.
 const formatDate = (value: string): string => {
-  const parsed = new Date(value)
-  if (!Number.isFinite(parsed.valueOf())) return 'date unavailable'
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(parsed)
+  if (!Number.isFinite(Date.parse(value))) return 'date unavailable'
+  const formatted = helpers.formatMoment(value, 'calendar')
+  if (typeof formatted !== 'string' || !formatted) return 'date unavailable'
+  if (helpers.timeZoneKnown() || wikiStore.authRefreshOutcome === 'anonymous') return formatted
+  return `${formatted} (${helpers.timeZoneLabel(value)})`
 }
 
 const expiryLabel = (record: OfflineSnapshotRecord): string => {

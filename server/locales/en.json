@@ -732,6 +732,15 @@
       "discard": "Discard",
       "keepEditing": "Keep editing"
     },
+    "routeLoad": {
+      "title": "This section could not be loaded.",
+      "message": "Reload the page to try again.",
+      "reload": "Reload",
+      "notNow": "Not now"
+    },
+    "dateTime": {
+      "withZone": "{{time}} ({{zone}})"
+    },
     "pageSelector": {
       "pages": "Pages",
       "moveTitle": "Move / Rename Page Location",
@@ -762,7 +771,6 @@
       "title": "This page is password-protected",
       "body": "Enter the page password to continue.",
       "password": "Page password",
-      "showPassword": "Show password",
       "submit": "Unlock page",
       "unavailable": "This protected page is not available.",
       "returnHome": "Return home"

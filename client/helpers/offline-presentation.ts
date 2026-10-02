@@ -3,6 +3,7 @@ import { normalizeThemeColors } from '../../shared/theme-colors.ts'
 import { normalizeReaderLayout } from '../../shared/theme-policy.ts'
 import product from '../../package.json'
 import { offlineLogoPath, rememberOfflineLogo } from './offline-branding.ts'
+import { isUserDateFormat, isUserTimeFormat, isUserTimezone, type UserPresentationDefaults } from '../../shared/user-presentation.ts'
 
 const KEY = 'tsepistle.offline.presentation.v1'
 // This allowlist is presentation only. Never persist bootstrap/session objects.
@@ -36,6 +37,56 @@ export function rememberOfflinePresentation(appearance = ''): void {
     /* Storage is optional. */
   }
   void rememberOfflineLogo(logoUrl, window.location.origin)
+}
+
+const DATES_KEY = 'tsepistle.offline.dates.v1'
+
+/**
+ * The signed-in reader's time zone and date/time format, so dates keep that
+ * zone when the server cannot be reached. Only these three validated values
+ * are stored. A confirmed sign-out removes them.
+ */
+export function rememberReaderDates(presentation: Partial<UserPresentationDefaults>): void {
+  if (!isUserTimezone(presentation.timezone)) {
+    forgetReaderDates()
+    return
+  }
+  try {
+    localStorage.setItem(
+      DATES_KEY,
+      JSON.stringify({
+        timezone: presentation.timezone,
+        dateFormat: isUserDateFormat(presentation.dateFormat) ? presentation.dateFormat : '',
+        timeFormat: isUserTimeFormat(presentation.timeFormat) ? presentation.timeFormat : 'locale'
+      })
+    )
+  } catch {
+    /* Storage is optional. */
+  }
+}
+
+export function savedReaderDates(): UserPresentationDefaults | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(DATES_KEY) ?? 'null')
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const saved = value as Record<string, unknown>
+    if (!isUserTimezone(saved.timezone)) return null
+    return {
+      timezone: saved.timezone,
+      dateFormat: isUserDateFormat(saved.dateFormat) ? saved.dateFormat : '',
+      timeFormat: isUserTimeFormat(saved.timeFormat) ? saved.timeFormat : 'locale'
+    }
+  } catch {
+    return null
+  }
+}
+
+export function forgetReaderDates(): void {
+  try {
+    localStorage.removeItem(DATES_KEY)
+  } catch {
+    /* Storage is optional. */
+  }
 }
 
 export function offlinePresentation(): { config: SiteConfig; appearance: string } {

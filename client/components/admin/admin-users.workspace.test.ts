@@ -27,6 +27,17 @@ const template = compileTemplate({
 })
 if (template.errors.length) throw template.errors[0]
 const renderAccount = new Function('Vue', template.code)(Vue)
+const toggleSource = parse(fs.readFileSync('client/components/common/password-visibility-toggle.vue', 'utf8')).descriptor
+const toggleTemplate = compileTemplate({
+  source: toggleSource.template!.content,
+  filename: 'client/components/common/password-visibility-toggle.vue',
+  id: 'account-workspace-password-toggle',
+  preprocessLang: toggleSource.template!.lang,
+  preprocessOptions: { doctype: 'html' },
+  compilerOptions: { mode: 'function' }
+})
+const toggleScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(toggleSource.script!.content.replace(/^import .+$/gm, '').replace('export default', 'return'))
+const PasswordVisibilityToggle = { ...new Function('defineComponent', toggleScript)(Vue.defineComponent), render: new Function('Vue', toggleTemplate.code)(Vue) }
 const settle = async () => {
   for (let pass = 0; pass < 4; pass++) {
     await Promise.resolve()
@@ -75,6 +86,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
     passwordPolicyMixin: {},
     newPasswordIssue,
     AsyncState: { render: () => Vue.h('div') },
+    PasswordVisibilityToggle,
     accountActionTitle,
     accountProfileIssues,
     wikiStore: { user: { id: 1 } },
@@ -160,6 +172,44 @@ describe('account workspace review and recovery', () => {
       expect(transport.saveAccountProfile).toHaveBeenCalledTimes(2)
       expect(state.dialog).toBe(false)
       expect(state.saved.fingerprint).toBe('version-two')
+    } finally {
+      app.unmount()
+      host.remove()
+      resetBody()
+    }
+  })
+  it('uses the shared password toggle in the replacement dialog and hides the password again on reopen', async () => {
+    const arranged = arrange()
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp({ ...arranged.component, render: renderAccount })
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.config.globalProperties.$route = arranged.state.$route
+    app.config.globalProperties.$router = arranged.state.$router
+    app.config.globalProperties.passwordMinimum = 12
+    app.config.globalProperties.$t = (key: string, options: { field?: string } = {}) => (key === 'common:password.show' ? `Show ${options.field}` : key)
+    app.component('AdminHero', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('header', [slots.default?.(), slots.actions?.()]) }))
+    app.component('RouterLink', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('a', slots.default?.()) }))
+    const state = app.mount(host) as unknown as typeof arranged.state
+    try {
+      await settle()
+      state.open('password')
+      await settle()
+      const toggle = () => document.querySelector<HTMLButtonElement>('.account-review-dialog .password-visibility-toggle')
+      const input = () => document.querySelector<HTMLInputElement>('.account-review-dialog input[autocomplete="new-password"]')
+      expect(toggle()?.getAttribute('aria-label')).toBe('Show new temporary password')
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('false')
+      expect(input()?.type).toBe('password')
+      toggle()!.click()
+      await settle()
+      expect(toggle()?.getAttribute('aria-label')).toBe('Show new temporary password')
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+      expect(input()?.type).toBe('text')
+      state.dialog = false
+      state.open('password')
+      await settle()
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('false')
+      expect(input()?.type).toBe('password')
     } finally {
       app.unmount()
       host.remove()
