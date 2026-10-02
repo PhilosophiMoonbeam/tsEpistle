@@ -15,7 +15,7 @@
           prepend-icon="mdi-refresh"
           :disabled="busy || loading"
           @click="reload"
-        >Reload workspace</v-btn>
+        >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved storage settings</v-tooltip></v-btn>
         <v-btn
           v-if="dirty"
           variant="text"

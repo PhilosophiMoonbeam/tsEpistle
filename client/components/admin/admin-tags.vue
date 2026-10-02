@@ -2,7 +2,7 @@
   <v-container fluid class="admin-taxonomy">
     <admin-hero title="Tags" description="A shared vocabulary for people and agents." icon="mdi-tag-multiple-outline">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || hasUnsavedChanges" @click="refresh">Refresh</v-btn>
+        <v-btn :aria-disabled="hasUnsavedChanges || undefined" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ hasUnsavedChanges ? 'Save or reset your tag changes before you reload.' : 'Reload saved tags' }}</v-tooltip></v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-plus" :disabled="busy" @click="openCreate">Create tag</v-btn>
       </template>
     </admin-hero>

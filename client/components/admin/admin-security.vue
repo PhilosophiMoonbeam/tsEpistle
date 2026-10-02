@@ -12,7 +12,7 @@
           :disabled="busy || initializing"
           :loading="loading"
           @click="reload"
-          >Reload policy</v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved security policy</v-tooltip></v-btn
         ><v-btn
           v-if="dirty || endSessions"
           variant="text"

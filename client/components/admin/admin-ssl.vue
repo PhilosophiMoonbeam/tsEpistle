@@ -7,7 +7,7 @@
           <h1>HTTPS &amp; certificates</h1>
           <p class="tls-intro">Know where encryption begins. Keep every connection and certificate change accountable.</p>
         </div>
-        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">Refresh evidence</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload certificate evidence</v-tooltip></v-btn>
       </header>
       <v-alert v-if="error" type="error" variant="tonal" class="mb-4" role="alert">{{ error }}</v-alert>
       <v-alert v-if="notice" type="info" variant="tonal" class="mb-4" role="status">{{ notice }}</v-alert>

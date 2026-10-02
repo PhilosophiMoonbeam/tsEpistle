@@ -2,7 +2,7 @@
   <v-container fluid class="analytics-workspace">
     <admin-hero icon="mdi-chart-areaspline" title="Analytics" description="Understand your readers. Be deliberate about what you measure.">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">Reload workspace</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved analytics settings</v-tooltip></v-btn>
         <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset">Reset draft</v-btn>
         <v-btn color="primary" :disabled="locked || !dirty" @click="review">Review changes</v-btn>
       </template>
