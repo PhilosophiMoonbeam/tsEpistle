@@ -2,9 +2,9 @@
 v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks(flat, rounded='xl')
   v-toolbar.editor-modal-blocks-toolbar(flat)
     v-icon.mr-3(color="secondary") {{activeStatus?.icon || 'mdi-shape-outline'}}
-    v-toolbar-title#content-extension-title Insert content extension
+    v-toolbar-title#content-extension-title {{ $t(`editor:editorModalBlocks.insertContentExtension`) }}
     v-spacer
-    v-btn(icon, aria-label='Close content extension dialog', @click='close')
+    v-btn(icon, :aria-label='$t(`editor:editorModalBlocks.closeContentExtensionDialog`)', @click='close')
       v-icon mdi-close
   v-container.editor-modal-blocks-body.py-6(fluid)
     v-row.justify-center
@@ -12,34 +12,34 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
         v-skeleton-loader(v-if='isLoading', type='heading, paragraph, paragraph, actions')
         template(v-else-if='loadError')
           v-alert.mb-4(type='error', variant='tonal') {{loadError}}
-          v-btn(color='primary', @click='loadExtensions') Retry
+          v-btn(color='primary', @click='loadExtensions') {{ $t(`editor:editorModalBlocks.retry`) }}
         template(v-else)
           v-select.mb-5(
             v-model='selectedKey'
             :items='extensionOptions'
-            label='Extension type'
+            :label='$t(`editor:editorModalBlocks.extensionType`)'
             item-title='title'
             item-value='value'
             hide-details
           )
           v-alert(v-if='!activeStatus || !canInsertActive', type='warning', variant='tonal')
-            .font-weight-medium {{activeStatus?.title || 'Content extension'}} is unavailable
+            .font-weight-medium {{ $t(`editor:editorModalBlocks.unavailable2`, { title: activeStatus?.title || $t(`editor:editorModalBlocks.contentExtension`), interpolation: { escapeValue: false } }) }}
             .mt-1 {{availabilityDiagnostic}}
           v-card.radius-7(v-else, flat)
             v-card-title.d-flex.align-center
               span {{activeStatus.title}}
               v-spacer
-              v-chip(color='primary', variant='tonal', size='small') Version {{activeStatus.version}}
+              v-chip(color='primary', variant='tonal', size='small') {{ $t(`editor:editorModalBlocks.version`, { version: activeStatus.version, interpolation: { escapeValue: false } }) }}
             v-card-subtitle {{activeStatus.description}}
             v-card-text
               v-form(@submit.prevent='insertExtension')
                 template(v-if='selectedKey === `qr`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | The QR code is generated locally when the page renders. No preview or data is sent to another service.
+                    | {{ $t(`editor:editorModalBlocks.qrCodeGeneratedLocally`) }}
                   v-textarea(
                     v-model='qr.value'
-                    label='Value'
-                    hint='Enter the text or URL to encode.'
+                    :label='$t(`editor:editorModalBlocks.value`)'
+                    :hint='$t(`editor:editorModalBlocks.enterTextUrlEncode`)'
                     persistent-hint
                     rows='4'
                     auto-grow
@@ -48,8 +48,8 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                   )
                   v-text-field.mt-5(
                     v-model='qr.label'
-                    label='Accessible label (optional)'
-                    hint='Describe the QR code purpose for screen reader users.'
+                    :label='$t(`editor:editorModalBlocks.accessibleLabelOptional`)'
+                    :hint='$t(`editor:editorModalBlocks.describeQrCodePurpose`)'
                     persistent-hint
                     counter='200'
                   )
@@ -61,7 +61,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         min='128'
                         max='1024'
                         step='1'
-                        label='Size (pixels)'
+                        :label='$t(`editor:editorModalBlocks.sizePixels`)'
                         hint='128–1024'
                         persistent-hint
                         @update:model-value='qr.size = parseNumber($event)'
@@ -70,49 +70,49 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                       v-select(
                         v-model='qr.errorCorrection'
                         :items='correctionLevels'
-                        label='Error correction'
-                        hint='Higher levels tolerate more damage.'
+                        :label='$t(`editor:editorModalBlocks.errorCorrection`)'
+                        :hint='$t(`editor:editorModalBlocks.higherLevelsTolerateMore`)'
                         persistent-hint
                       )
                 template(v-else-if='selectedKey === `gallery`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | Gallery images must be same-origin asset paths. Each image requires alternative text and remains available as a normal link without JavaScript.
+                    | {{ $t(`editor:editorModalBlocks.galleryImagesMustSame`) }}
                   v-card.mb-4(
                     v-for='(image, index) in gallery.images'
                     :key='image.id'
                     variant='outlined'
                     role='group'
-                    :aria-label='`Image ${index + 1}`'
+                    :aria-label='$t(`editor:editorModalBlocks.image`, { value: index + 1, interpolation: { escapeValue: false } })'
                   )
                     v-card-title.d-flex.align-center.text-body-large
-                      span Image {{index + 1}}
+                      span {{ $t(`editor:editorModalBlocks.image`, { value: index + 1, interpolation: { escapeValue: false } }) }}
                       v-spacer
                       v-btn(
                         icon
                         size='small'
                         :disabled='gallery.images.length === 1'
-                        :aria-label='`Remove image ${index + 1}`'
+                        :aria-label='$t(`editor:editorModalBlocks.removeImage`, { value: index + 1, interpolation: { escapeValue: false } })'
                         @click='removeGalleryImage(index)'
                       )
                         v-icon mdi-delete-outline
                     v-card-text
                       v-text-field(
                         v-model='image.src'
-                        label='Asset path'
-                        placeholder='/uploads/example.jpg'
-                        hint='A safe same-origin path beginning with /.'
+                        :label='$t(`editor:editorModalBlocks.assetPath`)'
+                        :placeholder='$t(`editor:editorModalBlocks.uploadsExampleJpg`)'
+                        :hint='$t(`editor:editorModalBlocks.safeSameOriginPath`)'
                         persistent-hint
                         required
                       )
                       v-text-field.mt-4(
                         v-model='image.alt'
-                        label='Alternative text'
+                        :label='$t(`editor:editorModalBlocks.alternativeText`)'
                         counter='200'
                         required
                       )
                       v-text-field.mt-4(
                         v-model='image.caption'
-                        label='Caption (optional)'
+                        :label='$t(`editor:editorModalBlocks.captionOptional`)'
                         counter='300'
                       )
                   v-btn.mb-5(
@@ -122,26 +122,26 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                     @click='addGalleryImage'
                   )
                     v-icon(start) mdi-plus
-                    | Add image
+                    | {{ $t(`editor:editorModalBlocks.addImage`) }}
                   v-row
                     v-col(cols='12', sm='4')
-                      v-select(v-model='gallery.columns', :items='galleryColumns', label='Maximum columns')
+                      v-select(v-model='gallery.columns', :items='galleryColumns', :label='$t(`editor:editorModalBlocks.maximumColumns`)')
                     v-col(cols='12', sm='4')
-                      v-select(v-model='gallery.fit', :items='galleryFits', label='Thumbnail fit')
+                      v-select(v-model='gallery.fit', :items='galleryFits', :label='$t(`editor:editorModalBlocks.thumbnailFit`)')
                     v-col(cols='12', sm='4')
-                      v-select(v-model='gallery.aspectRatio', :items='galleryAspectRatios', label='Tile shape')
+                      v-select(v-model='gallery.aspectRatio', :items='galleryAspectRatios', :label='$t(`editor:editorModalBlocks.tileShape`)')
                 template(v-else-if='selectedKey === `index`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | Results load for each reader and are filtered through current page ownership and page-rule permissions. Broad indexes fail closed instead of running an unbounded query.
+                    | {{ $t(`editor:editorModalBlocks.resultsLoadEachReader`) }}
                   v-text-field(
                     v-model='index.path'
-                    label='Parent path'
-                    hint='No leading or trailing slash. Leave empty for the locale root.'
+                    :label='$t(`editor:editorModalBlocks.parentPath`)'
+                    :hint='$t(`editor:editorModalBlocks.noLeadingTrailingSlash`)'
                     persistent-hint
                   )
                   v-text-field.mt-4(
                     v-model='index.locale'
-                    label='Locale'
+                    :label='$t(`editor:editorModalBlocks.locale`)'
                     counter='20'
                     required
                   )
@@ -153,11 +153,11 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         min='0'
                         max='5'
                         step='1'
-                        label='Nested depth'
+                        :label='$t(`editor:editorModalBlocks.nestedDepth`)'
                         @update:model-value='index.depth = parseNumber($event)'
                       )
                     v-col(cols='12', sm='4')
-                      v-select(v-model='index.columns', :items='indexColumns', label='Maximum columns')
+                      v-select(v-model='index.columns', :items='indexColumns', :label='$t(`editor:editorModalBlocks.maximumColumns`)')
                     v-col(cols='12', sm='4')
                       v-text-field(
                         :model-value='index.limit'
@@ -165,51 +165,51 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         min='1'
                         max='200'
                         step='1'
-                        label='Maximum pages'
+                        :label='$t(`editor:editorModalBlocks.maximumPages`)'
                         @update:model-value='index.limit = parseNumber($event)'
                       )
                   v-row
                     v-col(cols='12', sm='6')
-                      v-select(v-model='index.order', :items='indexOrders', label='Order by')
+                      v-select(v-model='index.order', :items='indexOrders', :label='$t(`editor:editorModalBlocks.order`)')
                     v-col.d-flex.align-center(cols='12', sm='6')
-                      v-switch(v-model='index.showIcons', label='Show page icons', hide-details)
+                      v-switch(v-model='index.showIcons', :label='$t(`editor:editorModalBlocks.showPageIcons`)', hide-details)
                   v-text-field.mt-2(
                     v-model='index.emptyLabel'
-                    label='Empty-state label (optional)'
+                    :label='$t(`editor:editorModalBlocks.emptyStateLabelOptional`)'
                     counter='200'
                   )
                 template(v-else-if='selectedKey === `tabs`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | Every panel keeps a readable no-script and print fallback. Panel content is preserved as plain text in canonical page source.
+                    | {{ $t(`editor:editorModalBlocks.everyPanelKeepsReadable`) }}
                   v-card.mb-4(
                     v-for='(panel, panelIndex) in tabs.panels'
                     :key='panel.id'
                     variant='outlined'
                     role='group'
-                    :aria-label='`Panel ${panelIndex + 1}`'
+                    :aria-label='$t(`editor:editorModalBlocks.panel`, { value: panelIndex + 1, interpolation: { escapeValue: false } })'
                   )
                     v-card-title.d-flex.align-center.text-body-large
-                      span Panel {{panelIndex + 1}}
+                      span {{ $t(`editor:editorModalBlocks.panel`, { value: panelIndex + 1, interpolation: { escapeValue: false } }) }}
                       v-spacer
                       v-btn(
                         icon
                         size='small'
                         :disabled='tabs.panels.length <= 2'
-                        :aria-label='`Remove panel ${panelIndex + 1}`'
+                        :aria-label='$t(`editor:editorModalBlocks.removePanel`, { value: panelIndex + 1, interpolation: { escapeValue: false } })'
                         @click='removeTabPanel(panelIndex)'
                       )
                         v-icon mdi-delete-outline
                     v-card-text
-                      v-text-field(v-model='panel.label', label='Tab label', counter='100', required)
+                      v-text-field(v-model='panel.label', :label='$t(`editor:editorModalBlocks.tabLabel`)', counter='100', required)
                       v-select.mt-4(
                         v-model='panel.headingLevel'
                         :items='tabHeadingLevels'
-                        label='Contents heading level (optional)'
-                        hint='Lists this tab label in the page table of contents. Opening that entry reveals this panel.'
+                        :label='$t(`editor:editorModalBlocks.contentsHeadingLevelOptional`)'
+                        :hint='$t(`editor:editorModalBlocks.listsTabLabelPage`)'
                         persistent-hint
                         clearable
                       )
-                      v-textarea.mt-4.source-textarea(v-model='panel.content', label='Panel content', rows='4', auto-grow, counter='20000', required)
+                      v-textarea.mt-4.source-textarea(v-model='panel.content', :label='$t(`editor:editorModalBlocks.panelContent`)', rows='4', auto-grow, counter='20000', required)
                   v-btn.mb-5(
                     ref='addTabButton'
                     variant='outlined'
@@ -217,51 +217,51 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                     @click='addTabPanel'
                   )
                     v-icon(start) mdi-plus
-                    | Add panel
+                    | {{ $t(`editor:editorModalBlocks.addPanel`) }}
                   v-select(
                     v-model='tabs.active'
                     :items='tabPanelOptions'
-                    label='Initially selected panel'
+                    :label='$t(`editor:editorModalBlocks.initiallySelectedPanel`)'
                   )
                 template(v-else-if='selectedKey === `spoiler`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | Hidden content remains readable without JavaScript and in print. The browser disclosure control is added only after hydration.
-                  v-text-field(v-model='spoiler.label', label='Cover label', counter='200')
-                  v-text-field.mt-4(v-model='spoiler.hint', label='Cover hint', counter='200')
-                  v-textarea.mt-4.source-textarea(v-model='spoiler.content', label='Hidden content', rows='6', auto-grow, counter='20000', required)
+                    | {{ $t(`editor:editorModalBlocks.hiddenContentRemainsReadable`) }}
+                  v-text-field(v-model='spoiler.label', :label='$t(`editor:editorModalBlocks.coverLabel`)', counter='200')
+                  v-text-field.mt-4(v-model='spoiler.hint', :label='$t(`editor:editorModalBlocks.coverHint`)', counter='200')
+                  v-textarea.mt-4.source-textarea(v-model='spoiler.content', :label='$t(`editor:editorModalBlocks.hiddenContent`)', rows='6', auto-grow, counter='20000', required)
                 template(v-else-if='selectedKey === `infobox`')
-                  v-text-field(v-model='infobox.title', label='Title', counter='200', required)
+                  v-text-field(v-model='infobox.title', :label='$t(`editor:editorModalBlocks.title`)', counter='200', required)
                   v-text-field.mt-4(
                     v-model='infobox.image'
-                    label='Image asset path (optional)'
-                    placeholder='/uploads/example.jpg'
-                    hint='Same-origin asset paths only.'
+                    :label='$t(`editor:editorModalBlocks.imageAssetPathOptional`)'
+                    :placeholder='$t(`editor:editorModalBlocks.uploadsExampleJpg`)'
+                    :hint='$t(`editor:editorModalBlocks.sameOriginAssetPaths`)'
                     persistent-hint
                   )
-                  v-text-field.mt-4(v-if='infobox.image', v-model='infobox.imageAlt', label='Image alternative text', counter='200', required)
-                  v-text-field.mt-4(v-if='infobox.image', v-model='infobox.caption', label='Image caption (optional)', counter='300')
+                  v-text-field.mt-4(v-if='infobox.image', v-model='infobox.imageAlt', :label='$t(`editor:editorModalBlocks.imageAlternativeText`)', counter='200', required)
+                  v-text-field.mt-4(v-if='infobox.image', v-model='infobox.caption', :label='$t(`editor:editorModalBlocks.imageCaptionOptional`)', counter='300')
                   v-card.mt-4.mb-4(
                     v-for='(fact, factIndex) in infobox.facts'
                     :key='fact.id'
                     variant='outlined'
                     role='group'
-                    :aria-label='`Fact ${factIndex + 1}`'
+                    :aria-label='$t(`editor:editorModalBlocks.fact`, { value: factIndex + 1, interpolation: { escapeValue: false } })'
                   )
                     v-card-title.d-flex.align-center.text-body-large
-                      span Fact {{factIndex + 1}}
+                      span {{ $t(`editor:editorModalBlocks.fact`, { value: factIndex + 1, interpolation: { escapeValue: false } }) }}
                       v-spacer
                       v-btn(
                         icon
                         size='small'
                         :disabled='infobox.facts.length === 1'
-                        :aria-label='`Remove fact ${factIndex + 1}`'
+                        :aria-label='$t(`editor:editorModalBlocks.removeFact`, { value: factIndex + 1, interpolation: { escapeValue: false } })'
                         @click='removeInfoboxFact(factIndex)'
                       )
                         v-icon mdi-delete-outline
                     v-card-text
-                      v-text-field(v-model='fact.label', label='Label', counter='100', required)
-                      v-select.mt-4(v-model='fact.kind', :items='factKinds', label='Value type')
-                      v-textarea.mt-4(v-if='fact.kind === `text`', v-model='fact.value', label='Value', rows='2', auto-grow, counter='1000')
+                      v-text-field(v-model='fact.label', :label='$t(`editor:editorModalBlocks.label`)', counter='100', required)
+                      v-select.mt-4(v-model='fact.kind', :items='factKinds', :label='$t(`editor:editorModalBlocks.valueType`)')
+                      v-textarea.mt-4(v-if='fact.kind === `text`', v-model='fact.value', :label='$t(`editor:editorModalBlocks.value`)', rows='2', auto-grow, counter='1000')
                   v-btn.mb-5(
                     ref='addFactButton'
                     variant='outlined'
@@ -269,12 +269,12 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                     @click='addInfoboxFact'
                   )
                     v-icon(start) mdi-plus
-                    | Add fact
+                    | {{ $t(`editor:editorModalBlocks.addFact`) }}
                 template(v-else-if='selectedKey === `pdf`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | PDFs must be same-origin assets. Readers retain a normal open/download link when the embedded viewer is unavailable.
-                  v-text-field(v-model='pdf.src', label='PDF asset path', placeholder='/uploads/document.pdf', required)
-                  v-text-field.mt-4(v-model='pdf.title', label='Accessible title', counter='200')
+                    | {{ $t(`editor:editorModalBlocks.pdfsMustSameOrigin`) }}
+                  v-text-field(v-model='pdf.src', :label='$t(`editor:editorModalBlocks.pdfAssetPath`)', :placeholder='$t(`editor:editorModalBlocks.uploadsDocumentPdf`)', required)
+                  v-text-field.mt-4(v-model='pdf.title', :label='$t(`editor:editorModalBlocks.accessibleTitle`)', counter='200')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
                       v-text-field(
@@ -282,7 +282,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         type='number'
                         min='1'
                         max='100000'
-                        label='Opening page'
+                        :label='$t(`editor:editorModalBlocks.openingPage`)'
                         @update:model-value='pdf.page = parseNumber($event)'
                       )
                     v-col(cols='12', sm='6')
@@ -291,33 +291,33 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         type='number'
                         min='320'
                         max='1600'
-                        label='Viewer height'
+                        :label='$t(`editor:editorModalBlocks.viewerHeight`)'
                         @update:model-value='pdf.height = parseNumber($event)'
                       )
                 template(v-else-if='selectedKey === `media`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | Audio and video files must be same-origin assets and use native browser controls.
-                  v-select(v-model='media.kind', :items='mediaKinds', label='Media type')
-                  v-text-field.mt-4(v-model='media.src', label='Media asset path', placeholder='/uploads/media.mp4', required)
-                  v-text-field.mt-4(v-model='media.title', label='Accessible title', counter='200')
+                    | {{ $t(`editor:editorModalBlocks.audioVideoFilesMust`) }}
+                  v-select(v-model='media.kind', :items='mediaKinds', :label='$t(`editor:editorModalBlocks.mediaType`)')
+                  v-text-field.mt-4(v-model='media.src', :label='$t(`editor:editorModalBlocks.mediaAssetPath`)', :placeholder='$t(`editor:editorModalBlocks.uploadsMediaMp4`)', required)
+                  v-text-field.mt-4(v-model='media.title', :label='$t(`editor:editorModalBlocks.accessibleTitle`)', counter='200')
                   v-text-field.mt-4(
                     v-if='media.kind === `video`'
                     v-model='media.poster'
-                    label='Poster asset path (optional)'
-                    placeholder='/uploads/poster.jpg'
+                    :label='$t(`editor:editorModalBlocks.posterAssetPathOptional`)'
+                    :placeholder='$t(`editor:editorModalBlocks.uploadsPosterJpg`)'
                   )
-                  v-text-field.mt-4(v-model='media.caption', label='Caption (optional)', counter='300')
+                  v-text-field.mt-4(v-model='media.caption', :label='$t(`editor:editorModalBlocks.captionOptional`)', counter='300')
                 template(v-else-if='selectedKey === `youtube`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | The privacy-enhanced player is not requested until the reader explicitly loads it. A normal YouTube link remains available.
+                    | {{ $t(`editor:editorModalBlocks.privacyEnhancedPlayerNot`) }}
                   v-text-field(
                     v-model='youtube.url'
-                    label='YouTube video URL or ID'
-                    hint='Watch, youtu.be, shorts, live, and embed URLs are accepted.'
+                    :label='$t(`editor:editorModalBlocks.youtubeVideoUrlId`)'
+                    :hint='$t(`editor:editorModalBlocks.watchYoutuShortsLive`)'
                     persistent-hint
                     required
                   )
-                  v-text-field.mt-4(v-model='youtube.title', label='Accessible title', counter='200')
+                  v-text-field.mt-4(v-model='youtube.title', :label='$t(`editor:editorModalBlocks.accessibleTitle`)', counter='200')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
                       v-text-field(
@@ -325,45 +325,45 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         type='number'
                         min='0'
                         max='86400'
-                        label='Start time (seconds)'
+                        :label='$t(`editor:editorModalBlocks.startTimeSeconds`)'
                         @update:model-value='youtube.start = parseNumber($event)'
                       )
                     v-col.d-flex.align-center(cols='12', sm='6')
-                      v-switch(v-model='youtube.controls', label='Show player controls', hide-details)
+                      v-switch(v-model='youtube.controls', :label='$t(`editor:editorModalBlocks.showPlayerControls`)', hide-details)
                 template(v-else-if='selectedKey === `diagram`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
-                    | Mermaid renders locally with strict security and no remote network request. Unsupported or unsafe SVG falls back to visible source.
-                  v-textarea.source-textarea(v-model='diagram.source', label='Mermaid source', rows='8', counter='50000', required)
-                  v-text-field.mt-4(v-model='diagram.caption', label='Caption (optional)', counter='300')
+                    | {{ $t(`editor:editorModalBlocks.mermaidRendersLocallyStrict`) }}
+                  v-textarea.source-textarea(v-model='diagram.source', :label='$t(`editor:editorModalBlocks.mermaidSource`)', rows='8', counter='50000', required)
+                  v-text-field.mt-4(v-model='diagram.caption', :label='$t(`editor:editorModalBlocks.captionOptional`)', counter='300')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
-                      v-select(v-model='diagram.theme', :items='diagramThemes', label='Theme')
+                      v-select(v-model='diagram.theme', :items='diagramThemes', :label='$t(`editor:editorModalBlocks.theme`)')
                     v-col(cols='12', sm='6')
-                      v-select(v-model='diagram.align', :items='diagramAlignments', label='Alignment')
+                      v-select(v-model='diagram.align', :items='diagramAlignments', :label='$t(`editor:editorModalBlocks.alignment`)')
                 template(v-else-if='selectedKey === `kroki`')
                   v-alert.mb-5(type='warning', variant='tonal', density='compact')
-                    | Diagram source is sent to kroki.io only after the reader explicitly chooses to render it.
-                  v-select(v-model='kroki.type', :items='krokiTypes', label='Diagram language')
-                  v-textarea.mt-4.source-textarea(v-model='kroki.source', label='Diagram source', rows='8', counter='50000', required)
-                  v-text-field.mt-4(v-model='kroki.caption', label='Caption (optional)', counter='300')
+                    | {{ $t(`editor:editorModalBlocks.diagramSourceSentKroki`) }}
+                  v-select(v-model='kroki.type', :items='krokiTypes', :label='$t(`editor:editorModalBlocks.diagramLanguage`)')
+                  v-textarea.mt-4.source-textarea(v-model='kroki.source', :label='$t(`editor:editorModalBlocks.diagramSource`)', rows='8', counter='50000', required)
+                  v-text-field.mt-4(v-model='kroki.caption', :label='$t(`editor:editorModalBlocks.captionOptional`)', counter='300')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
-                      v-select(v-model='kroki.format', :items='diagramFormats', label='Output format')
+                      v-select(v-model='kroki.format', :items='diagramFormats', :label='$t(`editor:editorModalBlocks.outputFormat`)')
                     v-col(cols='12', sm='6')
-                      v-select(v-model='kroki.align', :items='diagramAlignments', label='Alignment')
+                      v-select(v-model='kroki.align', :items='diagramAlignments', :label='$t(`editor:editorModalBlocks.alignment`)')
                 template(v-else-if='selectedKey === `plantuml`')
                   v-alert.mb-5(type='warning', variant='tonal', density='compact')
-                    | Diagram source is sent to plantuml.com only after the reader explicitly chooses to render it.
-                  v-textarea.source-textarea(v-model='plantuml.source', label='PlantUML source', rows='8', counter='50000', required)
-                  v-text-field.mt-4(v-model='plantuml.caption', label='Caption (optional)', counter='300')
+                    | {{ $t(`editor:editorModalBlocks.diagramSourceSentPlantuml`) }}
+                  v-textarea.source-textarea(v-model='plantuml.source', :label='$t(`editor:editorModalBlocks.plantumlSource`)', rows='8', counter='50000', required)
+                  v-text-field.mt-4(v-model='plantuml.caption', :label='$t(`editor:editorModalBlocks.captionOptional`)', counter='300')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
-                      v-select(v-model='plantuml.format', :items='diagramFormats', label='Output format')
+                      v-select(v-model='plantuml.format', :items='diagramFormats', :label='$t(`editor:editorModalBlocks.outputFormat`)')
                     v-col(cols='12', sm='6')
-                      v-select(v-model='plantuml.align', :items='diagramAlignments', label='Alignment')
+                      v-select(v-model='plantuml.align', :items='diagramAlignments', :label='$t(`editor:editorModalBlocks.alignment`)')
                 template(v-else-if='selectedKey === `map`')
                   v-alert.mb-5(type='warning', variant='tonal', density='compact')
-                    | Map data loads from OpenStreetMap only after the reader explicitly continues. Coordinates are bounded and no arbitrary embed URL is accepted.
+                    | {{ $t(`editor:editorModalBlocks.mapDataLoadsOpenstreetmap`) }}
                   v-row
                     v-col(cols='12', sm='6')
                       v-text-field(
@@ -372,7 +372,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         min='-90'
                         max='90'
                         step='any'
-                        label='Latitude'
+                        :label='$t(`editor:editorModalBlocks.latitude`)'
                         required
                         @update:model-value='map.latitude = parseNumber($event)'
                       )
@@ -383,7 +383,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         min='-180'
                         max='180'
                         step='any'
-                        label='Longitude'
+                        :label='$t(`editor:editorModalBlocks.longitude`)'
                         required
                         @update:model-value='map.longitude = parseNumber($event)'
                       )
@@ -394,7 +394,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         type='number'
                         min='1'
                         max='19'
-                        label='Zoom'
+                        :label='$t(`editor:editorModalBlocks.zoom`)'
                         @update:model-value='map.zoom = parseNumber($event)'
                       )
                     v-col(cols='12', sm='6')
@@ -403,16 +403,16 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         type='number'
                         min='240'
                         max='800'
-                        label='Map height'
+                        :label='$t(`editor:editorModalBlocks.mapHeight`)'
                         @update:model-value='map.height = parseNumber($event)'
                       )
-                  v-text-field(v-model='map.label', label='Location label (optional)', counter='200')
+                  v-text-field(v-model='map.label', :label='$t(`editor:editorModalBlocks.locationLabelOptional`)', counter='200')
                 v-alert.mt-4(v-if='submitError', type='error', variant='tonal', density='compact') {{submitError}}
                 .editor-modal-blocks-actions
-                  v-btn.mr-3(variant="text", @click='close') Cancel
+                  v-btn.mr-3(variant="text", @click='close') {{ $t(`common:actions.cancel`) }}
                   v-btn(color='primary', type='submit', :disabled='!canSubmit || !canInsertActive')
                     v-icon(start) mdi-plus
-                    | Insert {{activeStatus.title}}
+                    | {{ $t(`editor:editorModalBlocks.insert`, { title: activeStatus.title, interpolation: { escapeValue: false } }) }}
 
 </template>
 
@@ -439,38 +439,38 @@ const createGalleryImage = (): GalleryImageForm => ({ id: ++nextFormItemId, src:
 const createTabPanel = (label: string, content = ''): TabPanelForm => ({ id: ++nextFormItemId, label, content, headingLevel: null })
 const createInfoboxFact = (): InfoboxFactForm => ({ id: ++nextFormItemId, label: '', value: '', kind: 'text' })
 const CORRECTION_LEVELS = markRaw([
-  { title: 'Low (L)', value: 'L' },
-  { title: 'Medium (M)', value: 'M' },
-  { title: 'Quartile (Q)', value: 'Q' },
-  { title: 'High (H)', value: 'H' }
+  { title: 'editor:editorModalBlocks.lowL', value: 'L' },
+  { title: 'editor:editorModalBlocks.mediumM', value: 'M' },
+  { title: 'editor:editorModalBlocks.quartileQ', value: 'Q' },
+  { title: 'editor:editorModalBlocks.highH', value: 'H' }
 ])
 const GALLERY_COLUMNS = markRaw([1, 2, 3, 4])
 const GALLERY_FITS = markRaw([
-  { title: 'Crop to fill', value: 'cover' },
-  { title: 'Show whole image', value: 'contain' }
+  { title: 'editor:editorModalBlocks.cropFill', value: 'cover' },
+  { title: 'editor:editorModalBlocks.showWholeImage', value: 'contain' }
 ])
 const GALLERY_ASPECT_RATIOS = markRaw([
-  { title: 'Square tiles', value: 'square' },
-  { title: 'Natural image ratio', value: 'natural' }
+  { title: 'editor:editorModalBlocks.squareTiles', value: 'square' },
+  { title: 'editor:editorModalBlocks.naturalImageRatio', value: 'natural' }
 ])
 const INDEX_COLUMNS = markRaw([1, 2, 3])
 const INDEX_ORDERS = markRaw([
-  { title: 'Path', value: 'path' },
-  { title: 'Title', value: 'title' },
-  { title: 'Recently updated', value: 'updated' }
+  { title: 'editor:editorModalBlocks.path', value: 'path' },
+  { title: 'editor:editorModalBlocks.title', value: 'title' },
+  { title: 'editor:editorModalBlocks.recentlyUpdated', value: 'updated' }
 ])
 const TAB_HEADING_LEVELS = markRaw([1, 2, 3, 4, 5, 6].map(level => ({
   title: `Heading ${level}`,
   value: level as TabHeadingLevel
 })))
 const FACT_KINDS = markRaw([
-  { title: 'Text', value: 'text' },
-  { title: 'Yes', value: 'yes' },
-  { title: 'No', value: 'no' }
+  { title: 'editor:editorModalBlocks.text', value: 'text' },
+  { title: 'editor:editorModalBlocks.yes', value: 'yes' },
+  { title: 'editor:editorModalBlocks.no', value: 'no' }
 ])
 const MEDIA_KINDS = markRaw([
-  { title: 'Video', value: 'video' },
-  { title: 'Audio', value: 'audio' }
+  { title: 'editor:editorModalBlocks.video', value: 'video' },
+  { title: 'editor:editorModalBlocks.audio', value: 'audio' }
 ])
 const DIAGRAM_THEMES = markRaw(['auto', 'default', 'dark', 'neutral', 'forest'])
 const DIAGRAM_ALIGNMENTS = markRaw(['left', 'center'])
@@ -531,14 +531,14 @@ export default defineComponent({
       },
       tabs: {
         panels: [
-          createTabPanel('First tab', 'Content of the first tab.'),
-          createTabPanel('Second tab', 'Content of the second tab.')
+          createTabPanel(this.$t('editor:editorModalBlocks.firstTab'), this.$t('editor:editorModalBlocks.contentFirstTab')),
+          createTabPanel(this.$t('editor:editorModalBlocks.secondTab'), this.$t('editor:editorModalBlocks.contentSecondTab'))
         ] as TabPanelForm[],
         active: 0
       },
       spoiler: {
-        label: 'Spoiler',
-        hint: 'Show hidden content',
+        label: this.$t('editor:editorModalBlocks.spoiler'),
+        hint: this.$t('editor:editorModalBlocks.showHiddenContent'),
         content: ''
       },
       infobox: {
@@ -550,38 +550,38 @@ export default defineComponent({
       },
       pdf: {
         src: '',
-        title: 'PDF document',
+        title: this.$t('editor:editorModalBlocks.pdfDocument'),
         page: 1,
         height: 720
       },
       media: {
         kind: 'video' as 'audio' | 'video',
         src: '',
-        title: 'Video player',
+        title: this.$t('editor:editorModalBlocks.videoPlayer'),
         poster: '',
         caption: ''
       },
       youtube: {
         url: '',
-        title: 'YouTube video',
+        title: this.$t('editor:editorModalBlocks.youtubeVideo'),
         start: 0,
         controls: true
       },
       diagram: {
-        source: 'flowchart LR\n  A[Start] --> B{Ready?}\n  B -->|Yes| C[Ship it]\n  B -->|No| A',
+        source: this.$t('editor:editorModalBlocks.flowchartLrStartB'),
         caption: '',
         theme: 'auto' as 'auto' | 'default' | 'dark' | 'neutral' | 'forest',
         align: 'left' as 'left' | 'center'
       },
       kroki: {
         type: 'graphviz' as typeof KROKI_DIAGRAM_TYPES[number],
-        source: 'digraph G {\n  Hello -> World\n}',
+        source: this.$t('editor:editorModalBlocks.digraphGHelloWorld'),
         format: 'svg' as 'svg' | 'png',
         caption: '',
         align: 'left' as 'left' | 'center'
       },
       plantuml: {
-        source: '@startuml\nAlice -> Bob : hello\nBob --> Alice : hi\n@enduml',
+        source: this.$t('editor:editorModalBlocks.startumlAliceBobHello'),
         format: 'svg' as 'svg' | 'png',
         caption: '',
         align: 'left' as 'left' | 'center'
@@ -593,15 +593,15 @@ export default defineComponent({
         height: 400,
         label: ''
       },
-      correctionLevels: CORRECTION_LEVELS,
+      correctionLevels: CORRECTION_LEVELS.map(item => ({ ...item, title: this.$t(item.title) })),
       galleryColumns: GALLERY_COLUMNS,
-      galleryFits: GALLERY_FITS,
-      galleryAspectRatios: GALLERY_ASPECT_RATIOS,
+      galleryFits: GALLERY_FITS.map(item => ({ ...item, title: this.$t(item.title) })),
+      galleryAspectRatios: GALLERY_ASPECT_RATIOS.map(item => ({ ...item, title: this.$t(item.title) })),
       indexColumns: INDEX_COLUMNS,
-      indexOrders: INDEX_ORDERS,
-      tabHeadingLevels: TAB_HEADING_LEVELS,
-      factKinds: FACT_KINDS,
-      mediaKinds: MEDIA_KINDS,
+      indexOrders: INDEX_ORDERS.map(item => ({ ...item, title: this.$t(item.title) })),
+      tabHeadingLevels: TAB_HEADING_LEVELS.map(item => ({ ...item, title: this.$t('editor:editorModalBlocks.headingN', { level: item.value }) })),
+      factKinds: FACT_KINDS.map(item => ({ ...item, title: this.$t(item.title) })),
+      mediaKinds: MEDIA_KINDS.map(item => ({ ...item, title: this.$t(item.title) })),
       diagramThemes: DIAGRAM_THEMES,
       diagramAlignments: DIAGRAM_ALIGNMENTS,
       diagramFormats: DIAGRAM_FORMATS,
@@ -611,13 +611,13 @@ export default defineComponent({
   computed: {
     extensionOptions(): Array<{ title: string, value: ContentExtensionKey }> {
       return this.extensions.map(extension => ({
-        title: `${extension.title}${extension.isEnabled && extension.compatible ? '' : ' (unavailable)'}`,
+        title: `${extension.title}${extension.isEnabled && extension.compatible ? '' : ` ${this.$t('editor:editorModalBlocks.unavailable')}`}`,
         value: extension.key
       }))
     },
     tabPanelOptions(): Array<{ title: string, value: number }> {
       return this.tabs.panels.map((panel, panelIndex) => ({
-        title: panel.label || `Panel ${panelIndex + 1}`,
+        title: panel.label || this.$t('editor:editorModalBlocks.panel', { value: panelIndex + 1, interpolation: { escapeValue: false } }),
         value: panelIndex
       }))
     },
@@ -628,10 +628,10 @@ export default defineComponent({
       return Boolean(this.activeStatus?.isEnabled && this.activeStatus.compatible)
     },
     availabilityDiagnostic(): string {
-      if (!this.activeStatus) return 'The server did not advertise this extension.'
+      if (!this.activeStatus) return this.$t('editor:editorModalBlocks.serverDidNotAdvertise')
       if (this.activeStatus.diagnostic) return this.activeStatus.diagnostic
-      if (!this.activeStatus.isEnabled) return 'This extension is disabled by an administrator.'
-      return 'This editor host is not compatible with the installed extension.'
+      if (!this.activeStatus.isEnabled) return this.$t('editor:editorModalBlocks.extensionDisabledAdministrator')
+      return this.$t('editor:editorModalBlocks.editorHostNotCompatible')
     },
     youtubeVideoId(): string | null {
       return readYoutubeVideoId(this.youtube.url)
@@ -726,7 +726,7 @@ export default defineComponent({
       this.$nextTick(() => this.focusControl(this.$refs.addGalleryButton))
     },
     addTabPanel () {
-      if (this.tabs.panels.length < 12) this.tabs.panels.push(createTabPanel(`Panel ${this.tabs.panels.length + 1}`))
+      if (this.tabs.panels.length < 12) this.tabs.panels.push(createTabPanel(this.$t('editor:editorModalBlocks.panel2', { panels: this.tabs.panels.length + 1, interpolation: { escapeValue: false } })))
     },
     removeTabPanel (index: number) {
       if (this.tabs.panels.length <= 2) return
@@ -924,7 +924,7 @@ export default defineComponent({
         if (available) this.selectedKey = available.key
       } catch (err) {
         if (requestId !== this.loadRequestId) return
-        this.loadError = err instanceof Error ? err.message : 'Content extensions could not be loaded.'
+        this.loadError = err instanceof Error ? err.message : this.$t('editor:editorModalBlocks.contentExtensionsCouldNot')
       } finally {
         if (requestId === this.loadRequestId) this.isLoading = false
       }
@@ -938,7 +938,7 @@ export default defineComponent({
         emitEditorInsert({ kind: 'EXTENSION', text: serializeContentExtensionFence(envelope) })
         this.close()
       } catch (err) {
-        this.submitError = err instanceof Error ? err.message : 'The extension settings are invalid.'
+        this.submitError = err instanceof Error ? err.message : this.$t('editor:editorModalBlocks.extensionSettingsInvalid')
       }
     }
   },

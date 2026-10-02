@@ -45,6 +45,9 @@ import {
   unlockOfflineReading,
   type OfflineReadingHandleV1
 } from '../../helpers/offline-session.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 type OfflineAudience = 'public' | 'private'
 type OfflinePageSelector = {
@@ -267,8 +270,8 @@ const readerReady = computed(() => Boolean(selectedSnapshot.value && readerState
 const canUseNativeShare = computed(() => {
   if (!readerReady.value || !selectedOfflineUrl.value || typeof navigator === 'undefined' || typeof navigator.share !== 'function') return false
   const payload = {
-    title: selectedSnapshot.value?.title || 'Saved page',
-    text: `${selectedOfflineText.value}\n\nOpen this page online, or from a saved copy on your device.`.trim(),
+    title: selectedSnapshot.value?.title || t('common:offlineLibrary.savedPage'),
+    text: t('common:offlineLibrary.openPageOnlineSaved', { value: selectedOfflineText.value, interpolation: { escapeValue: false } }).trim(),
     url: selectedOfflineUrl.value
   }
   return typeof navigator.canShare !== 'function' || navigator.canShare(payload)
@@ -284,25 +287,25 @@ const selectedTags = computed(() => policy.value?.state.selectedTags ?? [])
 const syncDiagnostics = computed(() => policy.value?.state.syncDiagnostics ?? null)
 const syncDiagnosticsDetail = computed(() => {
   const diagnostics = syncDiagnostics.value
-  if (!diagnostics) return 'Offline sync has not reported a status yet.'
-  const pending = `${diagnostics.pendingCount} pending`
-  const retained = `${diagnostics.retainedCount} retained`
-  const removed = `${diagnostics.removedCount} removed`
+  if (!diagnostics) return t('common:offlineLibrary.offlineSyncHasNot')
+  const pending = t('common:offlineLibrary.pending', { pendingCount: diagnostics.pendingCount, interpolation: { escapeValue: false } })
+  const retained = t('common:offlineLibrary.retained', { retainedCount: diagnostics.retainedCount, interpolation: { escapeValue: false } })
+  const removed = t('common:offlineLibrary.removed', { removedCount: diagnostics.removedCount, interpolation: { escapeValue: false } })
   const timing = diagnostics.lastSuccessAt
-    ? ` Last successful sync ${formatDate(diagnostics.lastSuccessAt)}.`
+    ? ` ${t('common:offlineLibrary.lastSuccessfulSync', { lastSuccessAt: formatDate(diagnostics.lastSuccessAt), interpolation: { escapeValue: false } })}`
     : diagnostics.lastAttemptAt
-      ? ` Last attempted sync ${formatDate(diagnostics.lastAttemptAt)}.`
+      ? ` ${t('common:offlineLibrary.lastAttemptedSync', { lastAttemptAt: formatDate(diagnostics.lastAttemptAt), interpolation: { escapeValue: false } })}`
       : ''
   const error = diagnostics.lastError ? ` ${diagnostics.lastError}` : ''
-  return `Sync ${diagnostics.status}: ${pending}, ${retained}, ${removed}.${timing}${error}`
+  return t('common:offlineLibrary.sync', { status: diagnostics.status, pending, retained, removed, timing, error, interpolation: { escapeValue: false } })
 })
 const provenanceLabelForPolicy = (entry: OfflinePagePolicyRecord | null): string => {
-  if (!entry) return 'Policy details unavailable'
+  if (!entry) return t('common:offlineLibrary.policyDetailsUnavailable')
   const sources: string[] = []
-  if (entry.manual) sources.push('Manual')
-  if (entry.automatic) sources.push('Automatic')
-  if (entry.tag) sources.push(entry.tagNames.length ? `Tag: ${entry.tagNames.join(', ')}` : 'Tag subscription')
-  return sources.length ? sources.join(' + ') : 'No active intent'
+  if (entry.manual) sources.push(t('common:offlineLibrary.manual'))
+  if (entry.automatic) sources.push(t('common:offlineLibrary.automatic'))
+  if (entry.tag) sources.push(entry.tagNames.length ? t('common:offlineLibrary.tag', { tagNames: entry.tagNames.join(', '), interpolation: { escapeValue: false } }) : t('common:offlineLibrary.tagSubscription'))
+  return sources.length ? sources.join(' + ') : t('common:offlineLibrary.noActiveIntent')
 }
 const provenanceLabel = (record: OfflineSnapshotRecord): string => provenanceLabelForPolicy(policyForRecord(record))
 const availabilityLabel = (record: OfflineSnapshotRecord): string =>
@@ -342,7 +345,7 @@ const missingPolicyPageStatus = (page: OfflinePagePolicyRecord): MissingPolicyPa
   return 'stale'
 }
 const missingPolicyStatusLabel = (status: MissingPolicyPageStatus): string =>
-  status === 'pending' ? 'Waiting for sync' : status === 'denied' ? 'Not eligible' : 'Saved copy is stale'
+  status === 'pending' ? t('common:offlineLibrary.waitingSync') : status === 'denied' ? t('common:offlineLibrary.notEligible') : t('common:offlineLibrary.savedCopyStale')
 
 
 const missingPolicyPages = computed<MissingPolicyPage[]>(() => {
@@ -392,7 +395,7 @@ const unlockSavedPages = async (): Promise<void> => {
     await unlockOfflineReading(storage, secret)
     await refreshReadingVault()
   } catch {
-    unlockError.value = 'The private offline vault could not be unlocked.'
+    unlockError.value = t('common:offlineLibrary.privateOfflineVaultCould')
   } finally {
     secret?.fill(0)
     unlockBusy.value = false
@@ -401,27 +404,27 @@ const unlockSavedPages = async (): Promise<void> => {
 
 
 const searchDetail = computed(() => {
-  if (storageChecking.value || loading.value || !hasCorpus.value) return 'Checking saved pages on this device.'
-  if (searching.value) return `Searching ${activeRecords.value.length} saved page${activeRecords.value.length === 1 ? '' : 's'}…`
-  if (searchError.value) return 'Search could not be completed. Your saved pages were not changed.'
+  if (storageChecking.value || loading.value || !hasCorpus.value) return t('common:offlineLibrary.checkingSavedPagesDevice')
+  if (searching.value) return t('common:offlineLibrary.searchingSavedPage', { valueCount: activeRecords.value.length, activeRecords: activeRecords.value.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
+  if (searchError.value) return t('common:offlineLibrary.searchCouldNotCompleted')
   if (searchQuery.value.trim()) {
-    if (!resultRecords.value.length) return `No saved pages match “${searchQuery.value.trim().slice(0, 120)}”.`
-    const more = searchHasMore.value ? ' More matches are available.' : ''
-    return `${resultRecords.value.length} matching saved page${resultRecords.value.length === 1 ? '' : 's'}.${more}`
+    if (!resultRecords.value.length) return t('common:offlineLibrary.noSavedPagesMatch', { value: searchQuery.value.trim().slice(0, 120), interpolation: { escapeValue: false } })
+    const more = searchHasMore.value ? ` ${t('common:offlineLibrary.moreMatchesAvailable')}` : ''
+    return t('common:offlineLibrary.matchingSavedPage', { valueCount: resultRecords.value.length, resultRecords: resultRecords.value.length === 1 ? '' : 's', more, interpolation: { escapeValue: false } })
   }
-  if (!activeRecords.value.length) return readingVaultLocked.value ? 'Unlock private reading to see pages saved for your account.' : 'No saved pages yet.'
-  const more = searchHasMore.value ? ' Showing the first 50.' : ''
-  return `${activeRecords.value.length} saved page${activeRecords.value.length === 1 ? '' : 's'} on this device.${more}`
+  if (!activeRecords.value.length) return readingVaultLocked.value ? t('common:offlineLibrary.unlockPrivateReadingSee') : t('common:offlineLibrary.noSavedPagesYet')
+  const more = searchHasMore.value ? ` ${t('common:offlineLibrary.showingFirst50')}` : ''
+  return t('common:offlineLibrary.savedPageDevice', { valueCount: activeRecords.value.length, activeRecords: activeRecords.value.length === 1 ? '' : 's', more, interpolation: { escapeValue: false } })
 })
 
 const libraryMessage = computed(() => {
-  if (storageChecking.value) return 'Checking local storage without opening an account session.'
-  if (storageUnavailable.value) return props.storageMessage ?? 'Saved pages are unavailable on this device right now.'
-  if (loading.value) return 'Reading saved pages without changing them…'
+  if (storageChecking.value) return t('common:offlineLibrary.checkingLocalStorageWithout')
+  if (storageUnavailable.value) return props.storageMessage ?? t('common:offlineLibrary.savedPagesUnavailableDevice')
+  if (loading.value) return t('common:offlineLibrary.readingSavedPagesWithout')
   if (loadError.value) return loadError.value
-  if (searchError.value) return 'Try Search again. Saved pages remain unchanged.'
-  if (!activeRecords.value.length) return 'When you save an eligible public page, it appears here with its saved version and known expiry.'
-  if (searchQuery.value.trim() && !resultRecords.value.length) return 'Try a different phrase or clear the search to see every saved page.'
+  if (searchError.value) return t('common:offlineLibrary.trySearchAgainSaved')
+  if (!activeRecords.value.length) return t('common:offlineLibrary.whenYouSaveEligible')
+  if (searchQuery.value.trim() && !resultRecords.value.length) return t('common:offlineLibrary.tryDifferentPhraseClear')
   return ''
 })
 
@@ -459,7 +462,7 @@ const copyToClipboard = async (value: string): Promise<void> => {
   document.body.append(input)
   input.select()
   try {
-    if (!document.execCommand('copy')) throw new Error('Copy is unavailable.')
+    if (!document.execCommand('copy')) throw new Error(t('common:offlineLibrary.copyUnavailable'))
   } finally {
     input.remove()
   }
@@ -494,15 +497,15 @@ const shareSelected = async (): Promise<void> => {
   shareStatus.value = ''
   try {
     await navigator.share({
-      title: snapshot.title || 'Saved page',
-      text: `${selectedOfflineText.value}\n\nOpen this page online, or from a saved copy on your device.`.trim(),
+      title: snapshot.title || t('common:offlineLibrary.savedPage'),
+      text: t('common:offlineLibrary.openPageOnlineSaved', { value: selectedOfflineText.value, interpolation: { escapeValue: false } }).trim(),
       url
     })
     if (operation === readerToken && selectedKey.value === key && readerReady.value && isReadingCurrent(handle, epoch))
-      shareStatus.value = 'Excerpt and page link shared.'
+      shareStatus.value = t('common:offlineLibrary.excerptPageLinkShared')
   } catch (error) {
     if (!isAbortError(error) && operation === readerToken && selectedKey.value === key && isReadingCurrent(handle, epoch))
-      shareStatus.value = 'Sharing is unavailable. Copy the page link or full page text instead.'
+      shareStatus.value = t('common:offlineLibrary.sharingUnavailableCopyPage')
   } finally {
     sharing.value = false
   }
@@ -517,9 +520,9 @@ const copySelectedLink = async (): Promise<void> => {
   if (!readerReady.value || !url || !isReadingCurrent(handle, epoch)) return
   try {
     await copyToClipboard(url)
-    if (operation === readerToken && selectedKey.value === key && readerReady.value && isReadingCurrent(handle, epoch)) shareStatus.value = 'Page link copied.'
+    if (operation === readerToken && selectedKey.value === key && readerReady.value && isReadingCurrent(handle, epoch)) shareStatus.value = t('common:offlineLibrary.pageLinkCopied')
   } catch {
-    if (operation === readerToken && selectedKey.value === key && isReadingCurrent(handle, epoch)) shareStatus.value = 'The page link could not be copied.'
+    if (operation === readerToken && selectedKey.value === key && isReadingCurrent(handle, epoch)) shareStatus.value = t('common:offlineLibrary.pageLinkCouldNot')
   }
 }
 
@@ -535,12 +538,12 @@ const copySelectedText = async (): Promise<void> => {
     await copyToClipboard(text)
     if (operation === readerToken && selectedKey.value === key && readerReady.value && isReadingCurrent(handle, epoch)) {
       copyFallbackText.value = ''
-      shareStatus.value = 'Full page text copied.'
+      shareStatus.value = t('common:offlineLibrary.fullPageTextCopied')
     }
   } catch {
     if (operation !== readerToken || selectedKey.value !== key || !readerReady.value || !isReadingCurrent(handle, epoch)) return
     await revealCopyFallback(text)
-    if (operation === readerToken && selectedKey.value === key && isReadingCurrent(handle, epoch)) shareStatus.value = 'Clipboard access was denied. The full page text is selected below.'
+    if (operation === readerToken && selectedKey.value === key && isReadingCurrent(handle, epoch)) shareStatus.value = t('common:offlineLibrary.clipboardAccessWasDenied')
   }
 }
 const runSearch = async (): Promise<void> => {
@@ -555,7 +558,7 @@ const runSearch = async (): Promise<void> => {
   searching.value = true
   searchError.value = ''
   try {
-    if (!prepared || revision === null || generation === null) throw new Error('Saved pages are still being checked.')
+    if (!prepared || revision === null || generation === null) throw new Error(t('common:offlineLibrary.savedPagesStillBeing'))
     const response = await searchPreparedOfflineDocumentsAsync(prepared, searchQuery.value, {
       signal: controller.signal,
       limit: 50
@@ -569,7 +572,7 @@ const runSearch = async (): Promise<void> => {
     if (!isReadingCurrent(handle, epoch)) return
     searchResults.value = []
     searchHasMore.value = false
-    searchError.value = normalizeError(error, 'Saved-page search could not be completed.')
+    searchError.value = normalizeError(error, t('common:offlineLibrary.savedPageSearchCould'))
   } finally {
     if (searchController === controller) {
       searchController = null
@@ -659,7 +662,7 @@ const decorateReaderTree = (target: HTMLElement): void => {
     region.className = 'offline-code-region'
     region.tabIndex = 0
     region.setAttribute('role', 'region')
-    region.setAttribute('aria-label', 'Scrollable code block')
+    region.setAttribute('aria-label', t('common:offlineLibrary.scrollableCodeBlock'))
     pre.replaceWith(region)
     region.append(pre)
   }
@@ -669,7 +672,7 @@ const decorateReaderTree = (target: HTMLElement): void => {
     region.className = 'offline-table-region'
     region.tabIndex = 0
     region.setAttribute('role', 'region')
-    region.setAttribute('aria-label', 'Scrollable table')
+    region.setAttribute('aria-label', t('common:offlineLibrary.scrollableTable'))
     table.replaceWith(region)
     region.append(table)
   }
@@ -703,11 +706,11 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
     if (typeof window !== 'undefined' && selectedKey.value === null) listScrollTop.value = window.scrollY
   }
   if (!origin || !isValidSnapshotRecord(record, origin) || (record.audience === 'private' && !isReadingCurrent(openHandle, openEpoch))) {
-    emit('error', 'This saved page is invalid or no longer available to open.')
+    emit('error', t('common:offlineLibrary.savedPageInvalidNo'))
     return
   }
   if (isExpired(record)) {
-    emit('error', 'This saved page has expired and cannot be opened.')
+    emit('error', t('common:offlineLibrary.savedPageHasExpired'))
     return
   }
   if (
@@ -718,14 +721,14 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
     view.corpusRevision !== corpusRevision.value ||
     currentPolicy.sessionGeneration !== view.sessionGeneration
   ) {
-    emit('error', 'Saved pages changed before this page could open. Try again.')
+    emit('error', t('common:offlineLibrary.savedPagesChangedBefore'))
     return
   }
   setSelectionUrl(record, mode)
   const operation = ++readerToken
   selectedKey.value = key
   readerState.value = 'loading'
-  readerMessage.value = 'Opening the saved page…'
+  readerMessage.value = t('common:offlineLibrary.openingSavedPage')
   shareStatus.value = ''
   copyFallbackText.value = ''
   renderTarget.value?.replaceChildren()
@@ -753,7 +756,7 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
       candidate.siteId === record.siteId && candidate.pageId === record.pageId && candidate.locale === record.locale
     )
     if (verifiedView.corpusRevision !== revision || !verifiedRecord || isExpired(verifiedRecord)) {
-      finishReaderError(operation, key, 'This saved page changed or expired before it finished opening.')
+      finishReaderError(operation, key, t('common:offlineLibrary.savedPageChangedExpired'))
       return
     }
     let opened = true
@@ -767,7 +770,7 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
       )
     }
     if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch) || !opened) {
-      finishReaderError(operation, key, 'This saved page is no longer available on this device.')
+      finishReaderError(operation, key, t('common:offlineLibrary.savedPageNoLonger'))
       return
     }
     const committedView = await storage.readSnapshotCorpus({
@@ -780,7 +783,7 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
       candidate.siteId === record.siteId && candidate.pageId === record.pageId && candidate.locale === record.locale
     )
     if (committedView.corpusRevision !== revision || !committedRecord || isExpired(committedRecord)) {
-      finishReaderError(operation, key, 'This saved page changed before it could be committed for reading.')
+      finishReaderError(operation, key, t('common:offlineLibrary.savedPageChangedBefore'))
       return
     }
     decorateReaderTree(staging)
@@ -789,8 +792,8 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
     target.replaceChildren(...Array.from(staging.childNodes))
     target.setAttribute('dir', 'auto')
     readerState.value = 'ready'
-    readerMessage.value = 'Reading the saved version. Changes will sync when you reconnect.'
-    document.title = `${record.snapshot.title || 'Untitled page'} | ${siteConfig.title}`
+    readerMessage.value = t('common:offlineLibrary.readingSavedVersionChanges')
+    document.title = `${record.snapshot.title || t('common:offlineLibrary.untitledPage')} | ${siteConfig.title}`
     emit('selected', record)
     await nextTick()
     if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
@@ -800,7 +803,7 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
     }
   } catch (error) {
     if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
-    finishReaderError(operation, key, normalizeError(error, 'This saved page failed its integrity or safety checks.'))
+    finishReaderError(operation, key, normalizeError(error, t('common:offlineLibrary.savedPageFailedIntegrity')))
     emit('error', readerMessage.value)
   }
 }
@@ -874,7 +877,7 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     privateRecords.value = []
     corpus.value = null
     preparedCorpus.value = null
-    loadError.value = 'The current site identity is unavailable; saved pages cannot be opened safely.'
+    loadError.value = t('common:offlineLibrary.currentSiteIdentityUnavailable')
     loading.value = false
     return false
   }
@@ -887,7 +890,7 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     privateRecords.value = []
     corpus.value = null
     preparedCorpus.value = null
-    loadError.value = 'The requested saved-page link is invalid or belongs to another site.'
+    loadError.value = t('common:offlineLibrary.requestedSavedPageLink')
     emit('error', loadError.value)
     loading.value = false
     return false
@@ -988,7 +991,7 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       ++readerToken
       renderTarget.value?.replaceChildren()
       readerState.value = 'error'
-      readerMessage.value = 'Saved pages changed on this device. Retry opening this page to verify the new saved version.'
+      readerMessage.value = t('common:offlineLibrary.savedPagesChangedDevice')
     }
     let prepared = preparedCorpus.value
     if (!sameCommittedCorpus) {
@@ -1042,19 +1045,19 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       requestedSelectorConsumed.value = selectorKey
       const selected = activeRecords.value.find(record => recordKey(record) === selectorKey)
       if (!selected) {
-        emit('error', 'The requested saved page is no longer available on this device.')
+        emit('error', t('common:offlineLibrary.requestedSavedPageNo'))
         return true
       }
       await openRecord(selected, undefined, { history: 'initial' })
       if (!currentLoad()) return false
     }
     if (!props.navigateOnOpen && !requested && window.location.pathname !== '/' && window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
-      emit('error', 'This page has not been saved on this device. You can open another saved page below or reconnect to continue.')
+      emit('error', t('common:offlineLibrary.pageHasNotBeen'))
     }
     return true
   } catch (error) {
     if (!currentLoad() || isAbortError(error)) return false
-    loadError.value = normalizeError(error, 'Saved pages could not be read from this device.')
+    loadError.value = normalizeError(error, t('common:offlineLibrary.savedPagesCouldNot'))
     emit('error', loadError.value)
     return false
   } finally {
@@ -1111,17 +1114,17 @@ const reconcileAfterCommittedRemoval = async (): Promise<void> => {
   try {
     const syncResult: OfflineSyncResult = offlineSyncService
       ? await offlineSyncService.reconcile('manual')
-      : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+      : createOfflineSyncUnavailableResult(t('common:offlineLibrary.offlineSynchronizationUnavailable'))
     if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable') {
-      const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization could not be completed.')
+      const detail = offlineSyncResultDetail(syncResult, t('common:offlineLibrary.offlineSynchronizationCouldNot'))
       syncFailure = syncResult.outcome === 'unavailable'
-        ? `Saved page removed locally, but offline sync is unavailable: ${detail}`
-        : `Saved page removed locally, but offline sync failed: ${detail}`
+        ? t('common:offlineLibrary.savedPageRemovedLocally', { detail, interpolation: { escapeValue: false } })
+        : t('common:offlineLibrary.savedPageRemovedLocally2', { detail, interpolation: { escapeValue: false } })
       policyError.value = syncFailure
       emit('error', policyError.value)
     }
   } catch (error) {
-    syncFailure = `Saved page removed locally, but offline sync failed: ${normalizeError(error, 'Offline synchronization could not be completed.').slice(0, 512)}`
+    syncFailure = t('common:offlineLibrary.savedPageRemovedLocally3', { 512: normalizeError(error, 'Offline synchronization could not be completed.').slice(0, 512), interpolation: { escapeValue: false } })
     policyError.value = syncFailure
     emit('error', policyError.value)
   }
@@ -1131,13 +1134,13 @@ const reconcileAfterCommittedRemoval = async (): Promise<void> => {
   try {
     refreshed = await loadRecords({ preservePolicyError: Boolean(syncFailure) })
   } catch (error) {
-    refillDetail = normalizeError(error, 'Saved pages could not be refreshed.').slice(0, 512)
+    refillDetail = normalizeError(error, t('common:offlineLibrary.savedPagesCouldNot2')).slice(0, 512)
   }
   if (!refreshed && !refillDetail) refillDetail = loadError.value || (storageUnavailable.value ? libraryMessage.value : '')
   if (refillDetail) {
     policyError.value = syncFailure
-      ? `${syncFailure} Saved-page list could not be refreshed: ${refillDetail}`
-      : `Saved page removed locally, but the saved-page list could not be refreshed: ${refillDetail}`
+      ? t('common:offlineLibrary.savedPageListCould', { syncFailure, refillDetail, interpolation: { escapeValue: false } })
+      : t('common:offlineLibrary.savedPageRemovedLocally4', { refillDetail, interpolation: { escapeValue: false } })
     emit('error', policyError.value)
   }
 }
@@ -1181,7 +1184,7 @@ const removeRecord = async (record: OfflineVisibleRecord): Promise<void> => {
       if (record.audience === 'private' && !isReadingCurrent(handle, epoch)) return
       removalCommitted = true
     } catch (error) {
-      emit('error', normalizeError(error, 'The saved page could not be removed.'))
+      emit('error', normalizeError(error, t('common:offlineLibrary.savedPageCouldNot')))
     }
     if (!removalCommitted) return
     removeLocalPageProjection(record)
@@ -1214,21 +1217,21 @@ const toggleAutomaticSaving = async (): Promise<void> => {
     emit('changed')
     const syncResult: OfflineSyncResult = offlineSyncService
       ? await offlineSyncService.reconcile('policy')
-      : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+      : createOfflineSyncUnavailableResult(t('common:offlineLibrary.offlineSynchronizationUnavailable'))
     if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable') {
-      const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization could not be completed.')
+      const detail = offlineSyncResultDetail(syncResult, t('common:offlineLibrary.offlineSynchronizationCouldNot'))
       policyError.value = syncResult.outcome === 'unavailable'
-        ? `Automatic offline saving was changed locally, but offline sync is unavailable: ${detail}`
-        : `Automatic offline saving was changed locally, but offline sync failed: ${detail}`
+        ? t('common:offlineLibrary.automaticOfflineSavingWas', { detail, interpolation: { escapeValue: false } })
+        : t('common:offlineLibrary.automaticOfflineSavingWas2', { detail, interpolation: { escapeValue: false } })
       emit('error', policyError.value)
       await loadRecords({ preservePolicyError: true })
       return
     }
     await loadRecords()
   } catch (error) {
-    const detail = normalizeError(error, 'Automatic offline saving could not be changed.').slice(0, 512)
+    const detail = normalizeError(error, t('common:offlineLibrary.automaticOfflineSavingCould')).slice(0, 512)
     if (policyMutationCommitted) {
-      policyError.value = `Automatic offline saving was changed locally, but offline sync failed: ${detail}`
+      policyError.value = t('common:offlineLibrary.automaticOfflineSavingWas2', { detail, interpolation: { escapeValue: false } })
     } else {
       policyError.value = detail
     }
@@ -1260,21 +1263,21 @@ const removeSelectedTag = async (tag: string): Promise<void> => {
     emit('changed')
     const syncResult: OfflineSyncResult = offlineSyncService
       ? await offlineSyncService.reconcile('tags')
-      : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+      : createOfflineSyncUnavailableResult(t('common:offlineLibrary.offlineSynchronizationUnavailable'))
     if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable') {
-      const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization could not be completed.')
+      const detail = offlineSyncResultDetail(syncResult, t('common:offlineLibrary.offlineSynchronizationCouldNot'))
       policyError.value = syncResult.outcome === 'unavailable'
-        ? `The offline tag subscription was removed locally, but offline sync is unavailable: ${detail}`
-        : `The offline tag subscription was removed locally, but offline sync failed: ${detail}`
+        ? t('common:offlineLibrary.offlineTagSubscriptionWas', { detail, interpolation: { escapeValue: false } })
+        : t('common:offlineLibrary.offlineTagSubscriptionWas2', { detail, interpolation: { escapeValue: false } })
       emit('error', policyError.value)
       await loadRecords({ preservePolicyError: true })
       return
     }
     await loadRecords()
   } catch (error) {
-    const detail = normalizeError(error, 'The offline tag subscription could not be removed.').slice(0, 512)
+    const detail = normalizeError(error, t('common:offlineLibrary.offlineTagSubscriptionCould')).slice(0, 512)
     if (policyMutationCommitted) {
-      policyError.value = `The offline tag subscription was removed locally, but offline sync failed: ${detail}`
+      policyError.value = t('common:offlineLibrary.offlineTagSubscriptionWas2', { detail, interpolation: { escapeValue: false } })
     } else {
       policyError.value = detail
     }
@@ -1292,19 +1295,19 @@ const refreshOfflineSync = async (): Promise<void> => {
   try {
     const syncResult: OfflineSyncResult = offlineSyncService
       ? await offlineSyncService.reconcile('manual')
-      : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+      : createOfflineSyncUnavailableResult(t('common:offlineLibrary.offlineSynchronizationUnavailable'))
     if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable') {
-      const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization could not be refreshed.')
+      const detail = offlineSyncResultDetail(syncResult, t('common:offlineLibrary.offlineSynchronizationCouldNot2'))
       policyError.value = syncResult.outcome === 'unavailable'
-        ? `Offline sync is unavailable: ${detail}`
-        : `Offline sync could not be refreshed: ${detail}`
+        ? t('common:offlineLibrary.offlineSyncUnavailable', { detail, interpolation: { escapeValue: false } })
+        : t('common:offlineLibrary.offlineSyncCouldNot', { detail, interpolation: { escapeValue: false } })
       emit('error', policyError.value)
       await loadRecords({ preservePolicyError: true })
       return
     }
     await loadRecords()
   } catch (error) {
-    policyError.value = normalizeError(error, 'Offline sync could not be refreshed.').slice(0, 512)
+    policyError.value = normalizeError(error, t('common:offlineLibrary.offlineSyncCouldNot2')).slice(0, 512)
     emit('error', policyError.value)
     await loadRecords({ preservePolicyError: true })
   } finally {
@@ -1322,8 +1325,8 @@ const retryMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> =>
   const storage = props.storage
   if (!storage || storageUnavailable.value) {
     policyError.value = storageUnavailable.value
-      ? props.storageMessage ?? 'Saved pages are unavailable on this device right now.'
-      : 'Offline storage is unavailable.'
+      ? props.storageMessage ?? t('common:offlineLibrary.savedPagesUnavailableDevice')
+      : t('common:offlineLibrary.offlineStorageUnavailable')
     emit('error', policyError.value)
     return
   }
@@ -1350,7 +1353,7 @@ const retryMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> =>
     resetCommitted = true
     emit('changed')
   } catch (error) {
-    policyError.value = normalizeError(error, 'The denied page could not be queued for another attempt.').slice(0, 512)
+    policyError.value = normalizeError(error, t('common:offlineLibrary.deniedPageCouldNot')).slice(0, 512)
     emit('error', policyError.value)
     await loadRecords({ preservePolicyError: true })
   } finally {
@@ -1397,7 +1400,7 @@ const removeMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> =
       if (handle && !isReadingCurrent(handle, epoch)) return
       removalCommitted = true
     } catch (error) {
-      emit('error', normalizeError(error, 'The selected page could not be removed.'))
+      emit('error', normalizeError(error, t('common:offlineLibrary.selectedPageCouldNot')))
     }
     if (!removalCommitted) return
     removeLocalPageProjection(page)
@@ -1459,7 +1462,7 @@ const invalidateLocalProjection = (): void => {
 const retryStorage = (): void => emit('retry-storage')
 
 const formatBytes = (value: number): string => {
-  if (!Number.isFinite(value) || value < 0) return 'unknown size'
+  if (!Number.isFinite(value) || value < 0) return t('common:offlineLibrary.unknownSize')
   if (value < 1024) return `${Math.round(value)} B`
   const units = ['KiB', 'MiB', 'GiB']
   let amount = value / 1024
@@ -1475,18 +1478,18 @@ const formatBytes = (value: number): string => {
 // date/time format. When that zone is unknown (for example in the offline
 // shell before the first sign-in), name the browser zone that is used.
 const formatDate = (value: string): string => {
-  if (!Number.isFinite(Date.parse(value))) return 'date unavailable'
+  if (!Number.isFinite(Date.parse(value))) return t('common:offlineLibrary.dateUnavailable')
   const formatted = helpers.formatMoment(value, 'calendar')
-  if (typeof formatted !== 'string' || !formatted) return 'date unavailable'
+  if (typeof formatted !== 'string' || !formatted) return t('common:offlineLibrary.dateUnavailable')
   if (helpers.timeZoneKnown() || wikiStore.authRefreshOutcome === 'anonymous') return formatted
   return `${formatted} (${helpers.timeZoneLabel(value)})`
 }
 
 const expiryLabel = (record: OfflineSnapshotRecord): string => {
-  if (!record.snapshot.expiresAt) return 'No known expiry'
+  if (!record.snapshot.expiresAt) return t('common:offlineLibrary.noKnownExpiry')
   const expiry = Date.parse(record.snapshot.expiresAt)
-  if (!Number.isFinite(expiry) || expiry <= clock.value) return 'Expired'
-  return `Expires ${formatDate(record.snapshot.expiresAt)}`
+  if (!Number.isFinite(expiry) || expiry <= clock.value) return t('common:offlineLibrary.expired')
+  return t('common:offlineLibrary.expires', { expiresAt: formatDate(record.snapshot.expiresAt), interpolation: { escapeValue: false } })
 }
 
 const handlePopState = (): void => {
@@ -1500,7 +1503,7 @@ const handlePopState = (): void => {
   historyMode.value = 'history'
   if (!selected) {
     if (selectedKey.value) closeRecord({ fromHistory: true })
-    emit('error', 'The requested saved page is no longer available on this device.')
+    emit('error', t('common:offlineLibrary.requestedSavedPageNo'))
     return
   }
   void openRecord(selected, undefined, { history: 'history' })
@@ -1600,22 +1603,22 @@ onBeforeUnmount(() => {
   <section class="offline-library" aria-labelledby="downloaded-pages-title">
     <div v-if="!selectedRecord" class="library-heading">
       <div>
-        <h2 id="downloaded-pages-title">Saved pages</h2>
+        <h2 id="downloaded-pages-title">{{ $t('common:offlineLibrary.savedPages') }}</h2>
       </div>
-      <span class="count-note" aria-label="Saved page count">{{ hasCorpus ? activeRecords.length : '—' }}</span>
+      <span class="count-note" :aria-label="$t('common:offlineLibrary.savedPageCount')">{{ hasCorpus ? activeRecords.length : '—' }}</span>
     </div>
 
-    <p v-if="!selectedRecord" class="scope-note">Pages available on this device. Your saved copies stay available while the connection is interrupted.</p>
+    <p v-if="!selectedRecord" class="scope-note">{{ $t('common:offlineLibrary.pagesAvailableDeviceSaved') }}</p>
     <form v-if="!selectedRecord && readingVaultLocked" class="reading-unlock" @submit.prevent="unlockSavedPages">
-      <strong>Private saved pages are locked</strong>
-      <p>Enter this device’s private reading secret to see your saved pages, even while offline.</p>
-      <label for="saved-pages-unlock-secret">Private reading secret</label>
+      <strong>{{ $t('common:offlineLibrary.privateSavedPagesLocked') }}</strong>
+      <p>{{ $t('common:offlineLibrary.enterDevicesPrivateReading') }}</p>
+      <label for="saved-pages-unlock-secret">{{ $t('common:offlineLibrary.privateReadingSecret') }}</label>
       <input id="saved-pages-unlock-secret" v-model="unlockSecret" type="password" autocomplete="off" spellcheck="false" :disabled="unlockBusy" />
-      <button class="secondary-button" type="submit" :disabled="unlockBusy || !unlockSecret">{{ unlockBusy ? 'Unlocking…' : 'Unlock private pages' }}</button>
+      <button class="secondary-button" type="submit" :disabled="unlockBusy || !unlockSecret">{{ unlockBusy ? $t('common:offlineLibrary.unlocking') : $t('common:offlineLibrary.unlockPrivatePages') }}</button>
       <p v-if="unlockError" role="alert">{{ unlockError }}</p>
     </form>
     <div v-if="!selectedRecord" class="search-field">
-      <label for="downloaded-pages-search">Search saved pages</label>
+      <label for="downloaded-pages-search">{{ $t('common:offlineLibrary.searchSavedPages') }}</label>
       <input
         id="downloaded-pages-search"
         ref="searchInput"
@@ -1623,7 +1626,7 @@ onBeforeUnmount(() => {
         type="search"
         autocomplete="off"
         spellcheck="false"
-        placeholder="Search this device"
+        :placeholder="$t('common:offlineLibrary.searchDevice')"
         aria-describedby="downloaded-pages-search-detail"
       />
       <p id="downloaded-pages-search-detail" class="field-hint" role="status" aria-live="polite" aria-atomic="true">{{ searchDetail }}</p>
@@ -1631,11 +1634,11 @@ onBeforeUnmount(() => {
     <section v-if="showSettings" class="offline-policy" aria-labelledby="offline-policy-title">
       <div class="policy-heading">
         <div>
-          <p class="section-kicker">On this device</p>
-          <h3 id="offline-policy-title">What gets saved</h3>
+          <p class="section-kicker">{{ $t('common:offlineLibrary.device') }}</p>
+          <h3 id="offline-policy-title">{{ $t('common:offlineLibrary.whatGetsSaved') }}</h3>
         </div>
         <button class="text-button" type="button" :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing" @click="refreshOfflineSync">
-          {{ policyLoading || refreshing ? 'Refreshing…' : 'Sync now' }}
+          {{ policyLoading || refreshing ? $t('common:offlineLibrary.refreshing') : $t('common:offlineLibrary.syncNow') }}
         </button>
       </div>
       <label class="policy-toggle">
@@ -1646,22 +1649,22 @@ onBeforeUnmount(() => {
           @change="toggleAutomaticSaving"
         />
         <span>
-          <strong>Save frequently visited and recently edited pages</strong>
-          <small>On by default. Save up to 10 eligible public pages, including your most recently edited page and the pages you visit most within 60 days. Removing a page excludes it from automatic saving and makes room for another. Manual saves and followed tags are managed separately.</small>
+          <strong>{{ $t('common:offlineLibrary.saveFrequentlyVisitedRecently') }}</strong>
+          <small>{{ $t('common:offlineLibrary.defaultSaveUp10') }}</small>
         </span>
       </label>
       <div class="policy-tags">
         <div class="policy-tags-heading">
-          <strong>Followed tags</strong>
-          <a class="text-button" href="/t">Browse tags</a>
+          <strong>{{ $t('common:offlineLibrary.followedTags') }}</strong>
+          <a class="text-button" href="/t">{{ $t('common:offlineLibrary.browseTags') }}</a>
         </div>
-        <span v-if="!selectedTags.length" class="policy-muted">None yet</span>
+        <span v-if="!selectedTags.length" class="policy-muted">{{ $t('common:offlineLibrary.noneYet') }}</span>
         <button
           v-for="tag in selectedTags"
           :key="`offline-tag-${tag}`"
           class="policy-tag"
           type="button"
-          :aria-label="`Unfollow ${tag}`"
+          :aria-label="$t('common:offlineLibrary.unfollow', { tag, interpolation: { escapeValue: false } })"
           :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing"
           @click="removeSelectedTag(tag)"
         >
@@ -1674,19 +1677,19 @@ onBeforeUnmount(() => {
     <section v-if="showSettings && missingPolicyPages.length" class="offline-policy missing-pages" aria-labelledby="missing-pages-title">
       <div class="policy-heading">
         <div>
-          <p class="section-kicker">Needs attention</p>
-          <h3 id="missing-pages-title">Selected pages without a saved copy</h3>
+          <p class="section-kicker">{{ $t('common:offlineLibrary.needsAttention') }}</p>
+          <h3 id="missing-pages-title">{{ $t('common:offlineLibrary.selectedPagesWithoutSaved') }}</h3>
         </div>
-        <span class="policy-muted">{{ missingPolicyPages.length }} waiting</span>
+        <span class="policy-muted">{{ $t('common:offlineLibrary.waiting', { missingPolicyPagesCount: missingPolicyPages.length, interpolation: { escapeValue: false } }) }}</span>
       </div>
-      <p class="policy-muted">These pages are selected for offline saving, but their copies are not ready on this device. Reconnect and sync to make them available.</p>
+      <p class="policy-muted">{{ $t('common:offlineLibrary.thesePagesSelectedOffline') }}</p>
       <ul class="missing-page-list">
         <li v-for="entry in missingPolicyPages" :key="entry.page.key" class="missing-page-item">
           <div class="missing-page-main">
-            <strong>Page #{{ entry.page.pageId }} · {{ entry.page.locale }}</strong>
+            <strong>{{ $t('common:offlineLibrary.page', { pageId: entry.page.pageId, locale: entry.page.locale, interpolation: { escapeValue: false } }) }}</strong>
             <span class="missing-page-status" :data-state="entry.status">{{ missingPolicyStatusLabel(entry.status) }}</span>
             <small v-if="entry.status === 'denied' && entry.page.ineligibleReason">{{ offlineServerReasonDetail(entry.page.ineligibleReason, $t) }}</small>
-            <small>Saved via: {{ provenanceLabelForPolicy(entry.page) }}</small>
+            <small>{{ $t('common:offlineLibrary.savedVia', { page: provenanceLabelForPolicy(entry.page), interpolation: { escapeValue: false } }) }}</small>
           </div>
           <div class="missing-page-actions">
             <button
@@ -1695,7 +1698,7 @@ onBeforeUnmount(() => {
               :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing || Boolean(removingKey)"
               @click="retryMissingPage(entry.page)"
             >
-              {{ refreshing || policyLoading ? 'Refreshing…' : 'Retry sync' }}
+              {{ refreshing || policyLoading ? $t('common:offlineLibrary.refreshing') : $t('common:offlineLibrary.retrySync') }}
             </button>
             <button
               class="text-button"
@@ -1704,7 +1707,7 @@ onBeforeUnmount(() => {
               :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing || Boolean(removingKey)"
               @click="removeMissingPage(entry.page)"
             >
-              {{ removingKey === recordKey(entry.page) ? 'Removing…' : 'Remove / exclude' }}
+              {{ removingKey === recordKey(entry.page) ? $t('common:offlineLibrary.removing') : $t('common:offlineLibrary.removeExclude') }}
             </button>
           </div>
         </li>
@@ -1713,61 +1716,61 @@ onBeforeUnmount(() => {
 
     <div v-if="storageChecking && !activeRecords.length && !selectedRecord" class="library-message" role="status" aria-live="polite">
       <span class="loading-mark" aria-hidden="true">…</span>
-      <h3>Checking saved pages</h3>
+      <h3>{{ $t('common:offlineLibrary.checkingSavedPages') }}</h3>
       <p>{{ libraryMessage }}</p>
     </div>
 
     <div v-else-if="storageUnavailable && !activeRecords.length && !selectedRecord" class="library-message is-error" role="alert">
       <span class="empty-rule" aria-hidden="true"></span>
-      <h3>Saved pages are unavailable</h3>
+      <h3>{{ $t('common:offlineLibrary.savedPagesUnavailable') }}</h3>
       <p>{{ libraryMessage }}</p>
-      <button class="secondary-button" type="button" @click="retryStorage">Retry saved pages</button>
+      <button class="secondary-button" type="button" @click="retryStorage">{{ $t('common:offlineLibrary.retrySavedPages') }}</button>
     </div>
 
     <div v-else-if="loading && !selectedRecord && !activeRecords.length" class="library-message" role="status" aria-live="polite">
       <span class="loading-mark" aria-hidden="true">…</span>
-      <h3>Reading saved pages</h3>
+      <h3>{{ $t('common:offlineLibrary.readingSavedPages') }}</h3>
       <p>{{ libraryMessage }}</p>
     </div>
 
     <div v-else-if="loadError && !selectedRecord && !activeRecords.length" class="library-message is-error" role="alert">
       <span class="empty-rule" aria-hidden="true"></span>
-      <h3>Saved pages could not be read</h3>
+      <h3>{{ $t('common:offlineLibrary.savedPagesCouldNot3') }}</h3>
       <p>{{ libraryMessage }}</p>
-      <button class="secondary-button" type="button" @click="retryStorage">Retry saved pages</button>
+      <button class="secondary-button" type="button" @click="retryStorage">{{ $t('common:offlineLibrary.retrySavedPages') }}</button>
     </div>
 
     <article v-else-if="selectedRecord && selectedSnapshot" class="offline-reader" :lang="selectedSnapshot.locale" dir="auto" aria-labelledby="offline-reader-title" aria-describedby="offline-reader-status">
       <div class="reader-heading">
         <div class="reader-title-block">
-          <p class="section-kicker">Saved on this device</p>
-          <h1 id="offline-reader-title" ref="selectedHeading" tabindex="-1">{{ selectedSnapshot.title || 'Untitled page' }}</h1>
+          <p class="section-kicker">{{ $t('common:offlineLibrary.savedDevice') }}</p>
+          <h1 id="offline-reader-title" ref="selectedHeading" tabindex="-1">{{ selectedSnapshot.title || $t('common:offlineLibrary.untitledPage') }}</h1>
         </div>
-        <div class="reader-actions" aria-label="Saved page actions">
+        <div class="reader-actions" :aria-label="$t('common:offlineLibrary.savedPageActions')">
           <button v-if="canUseNativeShare" class="text-button" type="button" :disabled="sharing || !readerReady" @click="shareSelected">
-            {{ sharing ? 'Sharing…' : 'Share page' }}
+            {{ sharing ? $t('common:offlineLibrary.sharing') : $t('common:offlineLibrary.sharePage') }}
           </button>
-          <button class="text-button" type="button" :disabled="!readerReady" @click="copySelectedLink">Copy page link</button>
-          <button class="text-button" type="button" :disabled="!readerReady" @click="copySelectedText">Copy full page text</button>
-          <button class="text-button" type="button" @click="closeRecord()">Back to saved pages</button>
+          <button class="text-button" type="button" :disabled="!readerReady" @click="copySelectedLink">{{ $t('common:offlineLibrary.copyPageLink') }}</button>
+          <button class="text-button" type="button" :disabled="!readerReady" @click="copySelectedText">{{ $t('common:offlineLibrary.copyFullPageText') }}</button>
+          <button class="text-button" type="button" @click="closeRecord()">{{ $t('common:offlineLibrary.backSavedPages') }}</button>
         </div>
       </div>
       <p v-if="selectedSnapshot.description" class="reader-description">{{ selectedSnapshot.description }}</p>
       <p class="reader-meta">
-        <span>{{ selectedSnapshot.locale }}</span><span aria-hidden="true"> · </span><bdi>{{ selectedSnapshot.path }}</bdi><span aria-hidden="true"> · </span><span>Saved version</span><span aria-hidden="true"> </span><bdi>{{ selectedSnapshot.sourceRevision }}</bdi><span aria-hidden="true"> · </span>{{ expiryLabel(selectedRecord) }}
+        <span>{{ selectedSnapshot.locale }}</span><span aria-hidden="true"> · </span><bdi>{{ selectedSnapshot.path }}</bdi><span aria-hidden="true"> · </span><span>{{ $t('common:offlineLibrary.savedVersion') }}</span><span aria-hidden="true"> </span><bdi>{{ selectedSnapshot.sourceRevision }}</bdi><span aria-hidden="true"> · </span>{{ expiryLabel(selectedRecord) }}
       </p>
       <p v-if="showSettings" class="reader-meta reader-policy-meta">
-        <span>Provenance: {{ provenanceLabel(selectedRecord) }}</span><span aria-hidden="true"> · </span><span>Availability: {{ availabilityLabel(selectedRecord) }}</span>
+        <span>{{ $t('common:offlineLibrary.provenance', { selectedRecord: provenanceLabel(selectedRecord), interpolation: { escapeValue: false } }) }}</span><span aria-hidden="true"> · </span><span>{{ $t('common:offlineLibrary.availability', { selectedRecord: availabilityLabel(selectedRecord), interpolation: { escapeValue: false } }) }}</span>
       </p>
       <p v-if="storageUnavailable || loadError" class="library-inline-error" role="alert">
         <span>{{ storageUnavailable ? libraryMessage : loadError }}</span>
-        <button class="text-button" type="button" @click="retryStorage">Retry saved pages</button>
+        <button class="text-button" type="button" @click="retryStorage">{{ $t('common:offlineLibrary.retrySavedPages') }}</button>
       </p>
       <p id="offline-reader-status" class="reader-status" :class="`is-${readerState}`" role="status" aria-live="polite" aria-atomic="true">{{ readerMessage }}</p>
-      <div ref="renderTarget" class="offline-page-body contents" aria-label="Saved page content" :aria-busy="readerState === 'loading' ? 'true' : 'false'"></div>
+      <div ref="renderTarget" class="offline-page-body contents" :aria-label="$t('common:offlineLibrary.savedPageContent')" :aria-busy="readerState === 'loading' ? 'true' : 'false'"></div>
       <div v-if="readerState === 'error'" class="reader-error" role="alert">
         <p>{{ readerMessage }}</p>
-        <button class="secondary-button" type="button" @click="retryReader">Retry opening this page</button>
+        <button class="secondary-button" type="button" @click="retryReader">{{ $t('common:offlineLibrary.retryOpeningPage') }}</button>
       </div>
       <textarea
         v-if="copyFallbackText"
@@ -1775,7 +1778,7 @@ onBeforeUnmount(() => {
         class="copy-fallback"
         readonly
         rows="8"
-        aria-label="Full saved page text for manual copying"
+        :aria-label="$t('common:offlineLibrary.fullSavedPageText')"
         :value="copyFallbackText"
       ></textarea>
       <p v-if="shareStatus" class="reader-status" role="status" aria-live="polite">{{ shareStatus }}</p>
@@ -1784,44 +1787,44 @@ onBeforeUnmount(() => {
 
     <div v-else-if="searchError" class="library-message is-error" role="alert">
       <span class="empty-rule" aria-hidden="true"></span>
-      <h3>Search is unavailable</h3>
+      <h3>{{ $t('common:offlineLibrary.searchUnavailable') }}</h3>
       <p>{{ libraryMessage }}</p>
-      <button class="secondary-button" type="button" @click="runSearch">Search again</button>
+      <button class="secondary-button" type="button" @click="runSearch">{{ $t('common:offlineLibrary.searchAgain') }}</button>
     </div>
 
     <div v-else-if="!resultRecords.length" class="library-message" role="status" aria-live="polite">
       <span class="empty-rule" aria-hidden="true"></span>
-      <h3>{{ searchQuery.trim() ? 'No matching saved pages' : readingVaultLocked ? 'Private saved pages are locked' : 'No saved pages yet' }}</h3>
+      <h3>{{ searchQuery.trim() ? $t('common:offlineLibrary.noMatchingSavedPages') : readingVaultLocked ? $t('common:offlineLibrary.privateSavedPagesLocked') : $t('common:offlineLibrary.noSavedPagesYet2') }}</h3>
       <p v-if="storageUnavailable || loadError" class="library-inline-error" role="alert">
         <span>{{ storageUnavailable ? libraryMessage : loadError }}</span>
-        <button class="text-button" type="button" @click="retryStorage">Retry saved pages</button>
+        <button class="text-button" type="button" @click="retryStorage">{{ $t('common:offlineLibrary.retrySavedPages') }}</button>
       </p>
-      <small>Automatic saving is on by default and includes frequently visited pages and your most recently edited eligible page. Manual downloads and followed tags are listed with their sources above.</small>
+      <small>{{ $t('common:offlineLibrary.automaticSavingDefaultIncludes') }}</small>
     </div>
 
-    <ol v-else class="page-list" aria-label="Saved public pages">
+    <ol v-else class="page-list" :aria-label="$t('common:offlineLibrary.savedPublicPages')">
       <li v-if="storageUnavailable || loadError" class="page-list-notice" role="alert">
         <span>{{ storageUnavailable ? libraryMessage : loadError }}</span>
-        <button class="text-button" type="button" @click="retryStorage">Retry saved pages</button>
+        <button class="text-button" type="button" @click="retryStorage">{{ $t('common:offlineLibrary.retrySavedPages') }}</button>
       </li>
       <li v-for="record in resultRecords" :key="recordKey(record)" class="page-list-item">
         <article class="page-card" :data-selected="selectedKey === recordKey(record)" :data-offline-record-key="recordDomKey(record)">
           <div class="page-card-main">
             <span class="page-card-kicker">{{ record.snapshot.locale }} <span aria-hidden="true">/</span> {{ formatBytes(record.byteSize) }}</span>
-            <strong class="page-card-title">{{ record.snapshot.title || 'Untitled page' }}</strong>
+            <strong class="page-card-title">{{ record.snapshot.title || $t('common:offlineLibrary.untitledPage') }}</strong>
             <span v-if="record.snapshot.description" class="page-card-description">{{ record.snapshot.description }}</span>
             <span class="page-card-meta">
-              <span>{{ `Saved ${formatDate(record.snapshot.capturedAt)}` }}</span>
-              <span>Saved version <bdi>{{ record.snapshot.sourceRevision }}</bdi></span>
-              <span>Provenance: {{ provenanceLabel(record) }}</span>
-              <span>Availability: {{ availabilityLabel(record) }}</span>
+              <span>{{ $t('common:offlineLibrary.saved', { capturedAt: formatDate(record.snapshot.capturedAt), interpolation: { escapeValue: false } }) }}</span>
+              <span>{{ $t('common:offlineLibrary.savedVersion') }} <bdi>{{ record.snapshot.sourceRevision }}</bdi></span>
+              <span>{{ $t('common:offlineLibrary.provenance2', { record: provenanceLabel(record), interpolation: { escapeValue: false } }) }}</span>
+              <span>{{ $t('common:offlineLibrary.availability2', { record: availabilityLabel(record), interpolation: { escapeValue: false } }) }}</span>
             </span>
             <span class="page-card-expiry" :data-expiring="isExpiringSoon(record) ? 'soon' : 'current'">{{ expiryLabel(record) }}</span>
           </div>
           <div class="page-card-actions">
-            <button class="secondary-button" type="button" :data-offline-record-key="recordDomKey(record)" :aria-label="`Open saved page ${record.snapshot.title || 'Untitled page'}`" @click="openRecord(record, $event)">Open page</button>
+            <button class="secondary-button" type="button" :data-offline-record-key="recordDomKey(record)" :aria-label="$t('common:offlineLibrary.openSavedPage', { title: record.snapshot.title || 'Untitled page', interpolation: { escapeValue: false } })" @click="openRecord(record, $event)">{{ $t('common:offlineLibrary.openPage') }}</button>
             <button v-if="showSettings" class="text-button" type="button" :disabled="removingKey === recordKey(record) || policyMutationLoading || refreshing" @click="removeRecord(record)">
-              {{ removingKey === recordKey(record) ? 'Removing…' : 'Remove page' }}
+              {{ removingKey === recordKey(record) ? $t('common:offlineLibrary.removing') : $t('common:offlineLibrary.removePage') }}
             </button>
           </div>
         </article>
