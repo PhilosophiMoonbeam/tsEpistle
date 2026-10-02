@@ -134,7 +134,7 @@ export const offlineSavedSourceDetail = (input: Pick<OfflinePageControlInput, 'm
       ? tr(t, 'sourceTagNamed', 'Saved with tag #{{tags}}.', { tags: names.join(', #') })
       : tr(t, 'sourceTag', 'Saved with a tag you save offline.')
   }
-  if (input.automatic) return tr(t, 'sourceAutomatic', 'Saved automatically. Remove it to stop saving it automatically.')
+  if (input.automatic) return tr(t, 'sourceAutomatic', 'Saved automatically. Select to remove it.')
   return ''
 }
 

@@ -77,6 +77,34 @@
     }
   }
 
+  // Filled buttons (flat, elevated, tonal) drop their color when disabled.
+  // Vuetify keeps the `bg-<color>` utility (which is !important) on a
+  // disabled button and darkens it with its overlay, so a disabled primary
+  // button read as an active dark one. A neutral fill with muted, opaque ink
+  // reads as unavailable in light and dark mode and keeps the label legible
+  // (about 4.5:1 on the default surfaces).
+  &:is(.v-btn--disabled, [aria-disabled='true']):is(.v-btn--variant-flat, .v-btn--variant-elevated, .v-btn--variant-tonal) {
+    background-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, rgb(var(--v-theme-surface))) !important;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, rgb(var(--v-theme-surface))) !important;
+    filter: none;
+
+    > .v-btn__overlay,
+    > .v-btn__underlay {
+      opacity: 0 !important;
+    }
+
+    > .v-btn__content,
+    > .v-btn__prepend,
+    > .v-btn__append {
+      opacity: 1;
+    }
+
+    @media (forced-colors: active) {
+      border: 1px solid GrayText;
+      color: GrayText !important;
+    }
+  }
+
   &.v-btn--loading {
     transform: none;
     box-shadow: var(--wiki-button-shadow);

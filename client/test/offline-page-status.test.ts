@@ -99,7 +99,7 @@ describe('offline page toggle', () => {
       const control = offlinePageControl({ ...saved, ...source }, t)
       expect(control).toMatchObject({ state: 'saved', tone: 'saved', icon: 'mdi-cloud-check', action: 'remove', blocked: false, pressed: true, label: 'Save offline' })
     }
-    expect(offlinePageControl({ ...saved, automatic: true }, t).detail).toContain('stop saving it automatically')
+    expect(offlinePageControl({ ...saved, automatic: true }, t).detail).toBe('Saved automatically. Select to remove it.')
   })
 
   it('offers to save an excluded page again and says why it is not saved', () => {

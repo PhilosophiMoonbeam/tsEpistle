@@ -63,6 +63,9 @@ const PasswordVisibilityToggle = {
 
 const translations: Record<string, string> = {
   'common:password.show': 'Afficher : {{field}}',
+  'common:password.fields.currentPassword': 'le mot de passe actuel',
+  'common:password.fields.newPassword': 'le nouveau mot de passe',
+  'common:password.fields.newPasswordConfirmation': 'la confirmation du mot de passe',
   'profile:displayName': 'Nom affiché',
   'profile:mentionHandle': 'Identifiant de mention',
   'profile:location': 'Lieu',
@@ -491,8 +494,8 @@ describe('profile workspace contracts', () => {
     const { host } = await mount()
     const inputs = passwordInputs(host)
     expect(inputs).toHaveLength(3)
-    for (const [index, key] of ['currentPassword', 'newPassword', 'verifyPassword'].entries()) {
-      const toggle = button(host, `Afficher : ${translations[`profile:auth.${key}`]}`)
+    for (const [index, key] of ['currentPassword', 'newPassword', 'newPasswordConfirmation'].entries()) {
+      const toggle = button(host, `Afficher : ${translations[`common:password.fields.${key}`]}`)
       expect(inputs[index]!.type).toBe('password')
       expect(toggle.getAttribute('aria-pressed')).toBe('false')
       toggle.click()
@@ -518,7 +521,7 @@ describe('profile workspace contracts', () => {
     const { host, fetch, store, activeLoading } = await mount()
     await fillPasswords(host)
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
-    button(host, `Afficher : ${translations['profile:auth.newPassword']}`).click()
+    button(host, `Afficher : ${translations['common:password.fields.newPassword']}`).click()
     await settle()
     expect(passwordInputs(host)[1]!.type).toBe('text')
     const pending = deferred()
