@@ -28,19 +28,19 @@
 
 .v-input {
   .v-field-label {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+    color: var(--wiki-text-muted);
     opacity: 1;
     font-weight: 560;
     letter-spacing: .005em;
   }
 
   .v-field__input::placeholder {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 50%, transparent);
+    color: var(--wiki-text-muted);
     opacity: 1;
   }
 
   .v-messages {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+    color: var(--wiki-text-muted);
     opacity: 1;
     font-size: var(--wiki-label-size, .6875rem);
     line-height: 1.35;

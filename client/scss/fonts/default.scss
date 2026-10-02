@@ -61,3 +61,14 @@
   font-display: swap;
   src: url('../../fonts/default/RobotoMono-Regular.woff2') format('woff2');
 }
+
+/* Rare-script fallback. unicode-range keeps the file off the network until a
+   page actually contains Egyptian hieroglyphs (otherwise shown as tofu boxes). */
+@font-face {
+  font-family: 'Noto Sans Egyptian Hieroglyphs';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../../fonts/default/NotoSansEgyptianHieroglyphs-v30-egyptian-hieroglyphs.woff2') format('woff2');
+  unicode-range: U+13000-13455, U+13460-143FA;
+}

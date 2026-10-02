@@ -40,10 +40,11 @@ const expectedFaces = [
   { file: 'Newsreader-v26-latin-ext-normal.woff2', family: "'Newsreader'", style: 'normal', weight: '200 800', range: LATIN_EXT },
   { file: 'Newsreader-v26-latin-normal.woff2', family: "'Newsreader'", style: 'normal', weight: '200 800', range: LATIN },
   { file: 'Newsreader-v26-latin-ext-italic.woff2', family: "'Newsreader'", style: 'italic', weight: '200 800', range: LATIN_EXT },
-  { file: 'Newsreader-v26-latin-italic.woff2', family: "'Newsreader'", style: 'italic', weight: '200 800', range: LATIN }
+  { file: 'Newsreader-v26-latin-italic.woff2', family: "'Newsreader'", style: 'italic', weight: '200 800', range: LATIN },
+  { file: 'NotoSansEgyptianHieroglyphs-v30-egyptian-hieroglyphs.woff2', family: "'Noto Sans Egyptian Hieroglyphs'", style: 'normal', weight: '400', range: 'U+13000-13455, U+13460-143FA' }
 ]
 
-const expectedLicenses = ['Newsreader-OFL.txt', 'RobotoFlex-OFL.txt', 'RobotoMono-OFL.txt']
+const expectedLicenses = ['Newsreader-OFL.txt', 'RobotoFlex-OFL.txt', 'RobotoMono-OFL.txt', 'NotoSansEgyptianHieroglyphs-OFL.txt']
 
 describe('self-hosted typography contracts', () => {
   const base = read('client/scss/base/base.scss')
@@ -65,6 +66,13 @@ describe('self-hosted typography contracts', () => {
       const stack = families(rootTokens[token])
       expect(stack[0]).toBe(primary)
       expect(stack).toContain(generic)
+    }
+    // Rare scripts (e.g. Egyptian hieroglyphs) fall back to the vendored face before the generic family.
+    expect(families(rootTokens['--wiki-font-script-fallback'])[0]).toBe('Noto Sans Egyptian Hieroglyphs')
+    for (const token of ['--wiki-font-newsreader', '--wiki-font-roboto-flex']) {
+      const stack = families(rootTokens[token])
+      expect(stack.indexOf('var(--wiki-font-script-fallback)')).toBeGreaterThan(0)
+      expect(stack.indexOf('var(--wiki-font-script-fallback)')).toBeLessThan(stack.length - 1)
     }
     expect(rootTokens['--wiki-font-selected']).toBe('var(--wiki-font-roboto-flex)')
     expect(rootTokens['--wiki-font-display']).toBe('var(--wiki-font-newsreader)')
@@ -118,7 +126,7 @@ describe('self-hosted typography contracts', () => {
     for (const license of expectedLicenses) {
       const notice = read(`client/fonts/default/${license}`)
       expect(notice).toMatch(/SIL OPEN FONT LICENSE Version 1\.1/i)
-      const family = { 'Newsreader-OFL.txt': 'Newsreader', 'RobotoFlex-OFL.txt': 'Roboto Flex', 'RobotoMono-OFL.txt': 'Roboto Mono' }[license]
+      const family = { 'Newsreader-OFL.txt': 'Newsreader', 'RobotoFlex-OFL.txt': 'Roboto Flex', 'RobotoMono-OFL.txt': 'Roboto Mono', 'NotoSansEgyptianHieroglyphs-OFL.txt': 'Noto' }[license]
       expect(notice).toMatch(new RegExp(`^Copyright \\d{4} The ${family} Project Authors \\(https?://[^)]+\\)`, 'm'))
     }
   })

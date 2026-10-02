@@ -192,7 +192,7 @@ export default defineComponent({
       margin: 0;
       padding: var(--wiki-space-3) var(--wiki-space-4);
       border-inline-end: 1px solid var(--wiki-surface-border);
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+      color: var(--wiki-text-muted);
       font-size: .875rem;
       font-weight: 650;
       line-height: 1.35;

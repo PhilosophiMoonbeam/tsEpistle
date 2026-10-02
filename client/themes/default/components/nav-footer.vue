@@ -113,7 +113,7 @@ export default defineComponent({
   flex-wrap: wrap;
   gap: 8px;
   margin-inline: auto;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-body);
   font-size: .625rem;
   line-height: 1.2;
@@ -123,7 +123,7 @@ export default defineComponent({
     min-width: 0;
     padding-inline-end: 8px;
     border-inline-end: 1px solid var(--wiki-surface-border);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+    color: var(--wiki-text-muted);
     overflow-wrap: anywhere;
   }
 
@@ -139,7 +139,7 @@ export default defineComponent({
   }
 
   &__product {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
+    color: var(--wiki-text-muted);
     font-family: var(--wiki-font-mono);
     font-size: .625rem;
     font-weight: var(--wiki-label-weight);

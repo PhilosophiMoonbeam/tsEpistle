@@ -60,6 +60,23 @@
     filter: saturate(.7);
   }
 
+  // Disabled-with-reason: the button stays focusable (so its tooltip or
+  // described-by helper can explain why), but looks inactive and gives no
+  // hover or press feedback. Its click handler must refuse the action.
+  &[aria-disabled='true']:not(.v-btn--disabled) {
+    cursor: not-allowed;
+
+    > .v-btn__content,
+    > .v-btn__prepend,
+    > .v-btn__append {
+      opacity: var(--wiki-aria-disabled-opacity, .5);
+    }
+
+    > .v-btn__overlay {
+      opacity: 0 !important;
+    }
+  }
+
   &.v-btn--loading {
     transform: none;
     box-shadow: var(--wiki-button-shadow);
