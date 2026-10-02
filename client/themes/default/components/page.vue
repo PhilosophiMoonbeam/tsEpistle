@@ -221,7 +221,7 @@
               //- the top bar, the page title or the Updated/author line, and
               //- their width is capped so long reasons wrap.
               .page-tools-card__utilities(v-if='!printView')
-                v-menu(:location='isTocMobile ? 'top end' : `bottom`', min-width='300')
+                v-menu(:location='isTocMobile ? "top end" : `bottom`', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                       template(v-slot:activator='{ props: tooltipProps }')
@@ -262,7 +262,7 @@
                       v-icon mdi-bell-outline
                   span {{$t('common:page.watchPage')}}
                   span.page-tool-blocked-reason(v-if='pageWatchBlockedReason') {{ pageWatchBlockedReason }}
-                v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? 'top end' : `bottom`', :close-on-content-click='false', min-width='260')
+                v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? "top end" : `bottom`', :close-on-content-click='false', min-width='260')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                       template(v-slot:activator='{ props: tooltipProps }')
