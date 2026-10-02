@@ -732,6 +732,12 @@
       "discard": "Discard",
       "keepEditing": "Keep editing"
     },
+    "routeLoad": {
+      "title": "This section could not be loaded.",
+      "message": "Reload the page to try again.",
+      "reload": "Reload",
+      "notNow": "Not now"
+    },
     "dateTime": {
       "withZone": "{{time}} ({{zone}})"
     },

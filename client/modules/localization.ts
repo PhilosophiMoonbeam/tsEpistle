@@ -25,15 +25,17 @@ export const fallbackLocalizationLabel = (key: string): string => {
 export const localizationCacheVersion = (product: { revision: string; date: string }, localeRevision?: string): string =>
   `${product.revision}:${product.date}:${localeRevision || 'legacy'}`
 
+/** The app's `$t`, for modules outside components (for example the router). */
+export const translate = (key: string, options?: Record<string, unknown>): string => {
+  if (!i18next.isInitialized) {
+    return typeof options?.defaultValue === 'string' ? options.defaultValue : fallbackLocalizationLabel(key)
+  }
+  const { namespace, path } = parseKey(key)
+  return i18next.t(path, { ns: namespace, ...options })
+}
+
 const plugin: Plugin = {
   install(app: App) {
-    const translate = (key: string, options?: Record<string, unknown>): string => {
-      if (!i18next.isInitialized) {
-        return typeof options?.defaultValue === 'string' ? options.defaultValue : fallbackLocalizationLabel(key)
-      }
-      const { namespace, path } = parseKey(key)
-      return i18next.t(path, { ns: namespace, ...options })
-    }
     app.config.globalProperties.$t = translate
     app.config.globalProperties.$i18n = i18next
   }

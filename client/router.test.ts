@@ -77,4 +77,44 @@ describe('profile route loading ownership', () => {
     afterEachHandlers[0]!(secondNavigation)
     expect(wikiStore.loadingCounts.profile).toBeUndefined()
   })
+
+  it('asks the reload question in the reader language', async () => {
+    vi.stubGlobal('window', {
+      location: { pathname: '/a', reload: vi.fn() },
+      confirm: vi.fn(() => true),
+      siteConfig: {
+        company: '',
+        contentLicense: '',
+        footerOverride: '',
+        banner: {},
+        darkMode: false,
+        tocPosition: 'left',
+        title: 'Test',
+        logoUrl: '',
+        product: { name: 'Test', version: '1.0.0' }
+      }
+    })
+    vi.mockModule('vue-router', import.meta.url, () => ({
+      createWebHistory: vi.fn(() => ({})),
+      createRouter: vi.fn(() => router)
+    }))
+    const { default: i18next } = await import('i18next')
+    await i18next.init({
+      lng: 'de',
+      resources: {
+        de: {
+          common: {
+            routeLoad: { title: 'Dieser Bereich wurde nicht geladen.', message: 'Laden Sie die Seite neu.', reload: 'Neu laden', notNow: 'Nicht jetzt' }
+          }
+        }
+      }
+    })
+    await vi.importFresh<typeof RouterModule>('./router.ts', import.meta.url)
+    errorHandlers[0]!(new Error('chunk failed'), {})
+    await Promise.resolve()
+    await Promise.resolve()
+    const stubbedWindow = globalThis.window as unknown as { confirm: ReturnType<typeof vi.fn>; location: { reload: ReturnType<typeof vi.fn> } }
+    expect(stubbedWindow.confirm).toHaveBeenCalledWith('Dieser Bereich wurde nicht geladen.\n\nLaden Sie die Seite neu.')
+    expect(stubbedWindow.location.reload).toHaveBeenCalledOnce()
+  })
 })
