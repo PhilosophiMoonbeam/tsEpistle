@@ -503,103 +503,108 @@ test.describe('release accessibility profiles', () => {
     await expectNoBlockingAccessibilityViolations(page, '/a/theme (dark)')
   })
 
-  test('keeps the native short-page footer thin, bottom-pinned, and content-driven', async ({ page }, testInfo) => {
-    requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
-    test.setTimeout(60_000)
-    const width = testInfo.project.name === 'accessibility-mobile' ? 320 : 1280
-    let expanded = false
-    await page.route('**/en/visual-markdown-browser', async route => {
-      const response = await route.fetch()
-      if (!response.ok()) throw new Error(`Footer reader bootstrap returned HTTP ${response.status()}`)
-      const document = await response.text()
-      let configured = false
-      // Only normal server boot inputs change. Vue/Vuetify render the real
-      // shell, footer Markdown, product attribution and links without overrides.
-      const notice = expanded
-        ? 'Usage terms: This knowledge is shared for readers who retain attribution and review the applicable license before redistribution. '.repeat(16)
-        : 'Usage terms.'
-      let body = document.replace(/(var siteConfig\s*=\s*)(\{[^\n]*\})(?=\s*(?:\n|;|<\/script>))/u, (_match, prefix: string, json: string) => {
-        configured = true
-        return `${prefix}${JSON.stringify({ ...JSON.parse(json), footerOverride: `${notice} [Usage terms](/en/home).` })}`
-      })
-      body = body.replace(
-        /(<template\b[^>]*data-wiki-page-contents[^>]*>)[\s\S]*?<\/template>/u,
-        '$1<div><p id="native-short-footer-content">A short reader page.</p></div></template>'
-      )
-      if (!configured || !body.includes('id="native-short-footer-content"')) throw new Error('Footer fixture omitted its normal configuration or contents slot')
-      await route.fulfill({ response, body })
-    })
-    const footer = page.locator('.nav-footer')
-    const measureFooterTextExtent = () => footer.evaluate(element => {
-      const bounds = element.getBoundingClientRect()
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-      const textBounds: Array<{ left: number; top: number; right: number; bottom: number }> = []
-      const hiddenText: string[] = []
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        if (!node.textContent?.trim()) continue
-        const parent = node.parentElement
-        if (!parent) throw new Error('Footer text has no containing element')
-        const style = getComputedStyle(parent)
-        const range = document.createRange()
-        range.selectNodeContents(node)
-        const fragments = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
-        if (!fragments.length || style.visibility !== 'visible' || Number(style.opacity) === 0) hiddenText.push(node.textContent)
-        for (const rect of fragments) textBounds.push({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })
-      }
-      return {
-        top: bounds.top, bottom: bounds.bottom, height: bounds.height,
-        contentHeight: Math.max(...textBounds.map(rect => rect.bottom)) - Math.min(...textBounds.map(rect => rect.top)),
-        textBounds, hiddenText, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
-        documentHeight: document.documentElement.scrollHeight, scrollY: window.scrollY
-      }
-    })
-    let compactHeight = 0
-    for (expanded of [false, true]) {
-      await page.setViewportSize({ width, height: 1600 })
-      await openAuthenticatedPage(page, '/en/visual-markdown-browser', '#native-short-footer-content')
-      await page.evaluate(() => document.fonts.ready.then(() => undefined))
-      await expect(footer.getByRole('link', { name: 'Usage terms', exact: true })).toBeVisible()
-      await expect(footer.getByRole('link', { name: 'Source Code', exact: true })).toBeVisible()
-      let firstHeight = 0
-      for (const height of [1600, 2200]) {
-        await page.setViewportSize({ width, height })
-        await expect.poll(async () => {
-          const geometry = await measureFooterTextExtent()
-          return Math.abs(geometry.bottom - geometry.viewportHeight)
-        }, 'Short-page footer reaches the viewport bottom without scrolling').toBeLessThanOrEqual(1)
-        const geometry = await measureFooterTextExtent()
-        expect(geometry.scrollY, 'A genuinely short reader needs no scroll to see its footer').toBe(0)
-        expect(geometry.documentHeight, 'Short content and the footer fit in the viewport').toBeLessThanOrEqual(geometry.viewportHeight + 1)
-        const article = await page.locator('#native-short-footer-content').boundingBox()
-        if (!article) throw new Error('Short reader content has no visible geometry')
-        expect(article.y + article.height, 'Real reader content leaves substantial viewport remainder').toBeLessThan(geometry.viewportHeight / 2)
-        expect(geometry.hiddenText, 'All legal and product attribution text remains rendered').toEqual([])
-        expect(geometry.height, 'The attribution retains a thin readable minimum').toBeGreaterThanOrEqual(15)
-        expect(geometry.height, 'Footer extent follows its text, not the unused viewport remainder').toBeLessThanOrEqual(Math.max(32, geometry.contentHeight + 2))
-        for (const rect of geometry.textBounds) {
-          expect(rect.left, 'Footer text stays inside the viewport').toBeGreaterThanOrEqual(-1)
-          expect(rect.right).toBeLessThanOrEqual(geometry.viewportWidth + 1)
-          expect(rect.top, 'Footer contains the top of every attribution line').toBeGreaterThanOrEqual(geometry.top - 1)
-          expect(rect.bottom, 'Footer contains the bottom of every attribution line').toBeLessThanOrEqual(geometry.bottom + 1)
-        }
-        for (const link of await footer.getByRole('link').all()) {
-          await expect(link).toBeVisible()
-          await expect(link).toBeInViewport({ ratio: 1 })
-        }
-        await expectResponsiveLayout(page, `Native ${expanded ? 'wrapped' : 'compact'} footer at ${width}x${height}`)
-        if (height === 1600) firstHeight = geometry.height
-        else expect(Math.abs(geometry.height - firstHeight), 'Increasing viewport remainder does not inflate the footer').toBeLessThanOrEqual(1)
-        if (!expanded) {
-          expect(geometry.height, 'Compact attribution is a thin bar').toBeLessThanOrEqual(32)
-          compactHeight = geometry.height
-        } else {
-          expect(geometry.height, 'Wrapping legal content grows the footer rather than escaping a fixed-height bar').toBeGreaterThan(compactHeight + 12)
-        }
-        await testInfo.attach(`native-footer-${expanded ? 'wrapped' : 'compact'}-${width}x${height}`, {
-          body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png'
+  test.describe('native short-page footer fixture', () => {
+    // The HTML slot route must not be bypassed by an installed service worker.
+    test.use({ serviceWorkers: 'block' })
+
+    test('keeps the native short-page footer thin, bottom-pinned, and content-driven', async ({ page }, testInfo) => {
+      requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
+      test.setTimeout(60_000)
+      const width = testInfo.project.name === 'accessibility-mobile' ? 320 : 1280
+      let expanded = false
+      await page.route('**/en/visual-markdown-browser', async route => {
+        const response = await route.fetch()
+        if (!response.ok()) throw new Error(`Footer reader bootstrap returned HTTP ${response.status()}`)
+        const document = await response.text()
+        let configured = false
+        // Only normal server boot inputs change. Vue/Vuetify render the real
+        // shell, footer Markdown, product attribution and links without overrides.
+        const notice = expanded
+          ? 'Usage terms: This knowledge is shared for readers who retain attribution and review the applicable license before redistribution. '.repeat(16)
+          : 'Usage terms.'
+        let body = document.replace(/(var siteConfig\s*=\s*)(\{[^\n]*\})(?=\s*(?:\n|;|<\/script>))/u, (_match, prefix: string, json: string) => {
+          configured = true
+          return `${prefix}${JSON.stringify({ ...JSON.parse(json), footerOverride: `${notice} [Usage terms](/en/home).` })}`
         })
+        body = body.replace(
+          /(<template\b[^>]*data-wiki-page-contents[^>]*>)[\s\S]*?<\/template>/u,
+          '$1<div><p id="native-short-footer-content">A short reader page.</p></div></template>'
+        )
+        if (!configured || !body.includes('id="native-short-footer-content"')) throw new Error('Footer fixture omitted its normal configuration or contents slot')
+        await route.fulfill({ response, body })
+      })
+      const footer = page.locator('.nav-footer')
+      const measureFooterTextExtent = () => footer.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        const textBounds: Array<{ left: number; top: number; right: number; bottom: number }> = []
+        const hiddenText: string[] = []
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (!node.textContent?.trim()) continue
+          const parent = node.parentElement
+          if (!parent) throw new Error('Footer text has no containing element')
+          const style = getComputedStyle(parent)
+          const range = document.createRange()
+          range.selectNodeContents(node)
+          const fragments = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
+          if (!fragments.length || style.visibility !== 'visible' || Number(style.opacity) === 0) hiddenText.push(node.textContent)
+          for (const rect of fragments) textBounds.push({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })
+        }
+        return {
+          top: bounds.top, bottom: bounds.bottom, height: bounds.height,
+          contentHeight: Math.max(...textBounds.map(rect => rect.bottom)) - Math.min(...textBounds.map(rect => rect.top)),
+          textBounds, hiddenText, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+          documentHeight: document.documentElement.scrollHeight, scrollY: window.scrollY
+        }
+      })
+      let compactHeight = 0
+      for (expanded of [false, true]) {
+        await page.setViewportSize({ width, height: 1600 })
+        await openAuthenticatedPage(page, '/en/visual-markdown-browser', '#native-short-footer-content')
+        await page.evaluate(() => document.fonts.ready.then(() => undefined))
+        await expect(footer.getByRole('link', { name: 'Usage terms', exact: true })).toBeVisible()
+        await expect(footer.getByRole('link', { name: 'Source Code', exact: true })).toBeVisible()
+        let firstHeight = 0
+        for (const height of [1600, 2200]) {
+          await page.setViewportSize({ width, height })
+          await expect.poll(async () => {
+            const geometry = await measureFooterTextExtent()
+            return Math.abs(geometry.bottom - geometry.viewportHeight)
+          }, 'Short-page footer reaches the viewport bottom without scrolling').toBeLessThanOrEqual(1)
+          const geometry = await measureFooterTextExtent()
+          expect(geometry.scrollY, 'A genuinely short reader needs no scroll to see its footer').toBe(0)
+          expect(geometry.documentHeight, 'Short content and the footer fit in the viewport').toBeLessThanOrEqual(geometry.viewportHeight + 1)
+          const article = await page.locator('#native-short-footer-content').boundingBox()
+          if (!article) throw new Error('Short reader content has no visible geometry')
+          expect(article.y + article.height, 'Real reader content leaves substantial viewport remainder').toBeLessThan(geometry.viewportHeight / 2)
+          expect(geometry.hiddenText, 'All legal and product attribution text remains rendered').toEqual([])
+          expect(geometry.height, 'The attribution retains a thin readable minimum').toBeGreaterThanOrEqual(15)
+          expect(geometry.height, 'Footer extent follows its text, not the unused viewport remainder').toBeLessThanOrEqual(Math.max(32, geometry.contentHeight + 2))
+          for (const rect of geometry.textBounds) {
+            expect(rect.left, 'Footer text stays inside the viewport').toBeGreaterThanOrEqual(-1)
+            expect(rect.right).toBeLessThanOrEqual(geometry.viewportWidth + 1)
+            expect(rect.top, 'Footer contains the top of every attribution line').toBeGreaterThanOrEqual(geometry.top - 1)
+            expect(rect.bottom, 'Footer contains the bottom of every attribution line').toBeLessThanOrEqual(geometry.bottom + 1)
+          }
+          for (const link of await footer.getByRole('link').all()) {
+            await expect(link).toBeVisible()
+            await expect(link).toBeInViewport({ ratio: 1 })
+          }
+          await expectResponsiveLayout(page, `Native ${expanded ? 'wrapped' : 'compact'} footer at ${width}x${height}`)
+          if (height === 1600) firstHeight = geometry.height
+          else expect(Math.abs(geometry.height - firstHeight), 'Increasing viewport remainder does not inflate the footer').toBeLessThanOrEqual(1)
+          if (!expanded) {
+            expect(geometry.height, 'Compact attribution is a thin bar').toBeLessThanOrEqual(32)
+            compactHeight = geometry.height
+          } else {
+            expect(geometry.height, 'Wrapping legal content grows the footer rather than escaping a fixed-height bar').toBeGreaterThan(compactHeight + 12)
+          }
+          await testInfo.attach(`native-footer-${expanded ? 'wrapped' : 'compact'}-${width}x${height}`, {
+            body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png'
+          })
+        }
       }
-    }
+    })
   })
 
   test('avoids horizontal overflow across release viewport profiles', async ({ page }, testInfo) => {
