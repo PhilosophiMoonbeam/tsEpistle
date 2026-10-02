@@ -4,7 +4,7 @@
     nav-header(v-if='!printView', reserve-actions)
     //- Decorative: a live progressbar would announce every scroll step.
     .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
-      .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
+      .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
     .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
       span.page-reading-dock-title {{ title }}
@@ -221,7 +221,7 @@
               //- the top bar, the page title or the Updated/author line, and
               //- their width is capped so long reasons wrap.
               .page-tools-card__utilities(v-if='!printView')
-                v-menu(:location='isTocMobile ? `top end` : `bottom`', min-width='300')
+                v-menu(:location='isTocMobile ? $t(`common:page.topEnd`) : `bottom`', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                       template(v-slot:activator='{ props: tooltipProps }')
@@ -262,7 +262,7 @@
                       v-icon mdi-bell-outline
                   span {{$t('common:page.watchPage')}}
                   span.page-tool-blocked-reason(v-if='pageWatchBlockedReason') {{ pageWatchBlockedReason }}
-                v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? `top end` : `bottom`', :close-on-content-click='false', min-width='260')
+                v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? $t(`common:page.topEnd`) : `bottom`', :close-on-content-click='false', min-width='260')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                       template(v-slot:activator='{ props: tooltipProps }')
@@ -736,12 +736,12 @@
             v-btn(@click='approvalDialog = false') {{$t('common:actions.close')}}
     v-dialog(v-model='offlineUnlockOpen', max-width='480', :persistent='offlineUnlockBusy')
       v-card
-        v-card-title Unlock private offline pages
+        v-card-title {{ $t(`common:page.unlockPrivateOfflinePages`) }}
         v-card-text
-          p Enter the secret saved when private offline reading was set up on this device.
+          p {{ $t(`common:page.enterSecretSavedWhen`) }}
           v-text-field(
             v-model='offlineUnlockSecret'
-            label='Unlock secret'
+            :label='$t(`common:page.unlockSecret`)'
             type='password'
             autocomplete='off'
             spellcheck='false'
@@ -751,14 +751,14 @@
           )
         v-card-actions
           v-spacer
-          v-btn(variant='text', :disabled='offlineUnlockBusy', @click='closeOfflineUnlock') Cancel
+          v-btn(variant='text', :disabled='offlineUnlockBusy', @click='closeOfflineUnlock') {{ $t(`common:actions.cancel`) }}
           v-btn(
             color='primary'
             variant='tonal'
             :loading='offlineUnlockBusy'
             :disabled='offlineUnlockBusy || !offlineUnlockSecret'
             @click='unlockPrivateOfflinePage'
-          ) Unlock
+          ) {{ $t(`common:page.unlock`) }}
     v-fab-transition
       v-btn.page-return-top(
         v-if='upBtnShown'
@@ -859,6 +859,7 @@ import Prism from '../../../libs/prism/setup'
 import boot from '../../../modules/boot.ts'
 import { useSiteNotificationsStore } from '../../../store/site-notifications.ts'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
+import { translate } from '../../../modules/localization.ts'
 
 /* global siteLangs */
 
@@ -875,14 +876,14 @@ const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): s
   return (normalized || fallback).slice(0, 512)
 }
 
-const offlineSyncAggregateNotice = (result: OfflineSyncResult): string | null => {
+const offlineSyncAggregateNotice = (t: Translate, result: OfflineSyncResult): string | null => {
   if (result.outcome !== 'error' && result.outcome !== 'unavailable') return null
-  const detail = offlineSyncResultDetail(result, 'Offline synchronization reported an issue.')
-  return `Other saved pages need attention: ${detail}`.slice(0, 512)
+  const detail = offlineSyncResultDetail(result, t('common:offline.syncIssueDetail'))
+  return t('common:offline.otherPagesNeedAttention', { detail, interpolation: { escapeValue: false } }).slice(0, 512)
 }
 
-const offlineSyncFailureNotice = (detail: string): string =>
-  `Background offline synchronization reported an issue: ${(detail.trim() || 'The current page state was refreshed.').slice(0, 512)}`.slice(0, 512)
+const offlineSyncFailureNotice = (t: Translate, detail: string): string =>
+  t('common:offline.backgroundSyncIssue', { detail: (detail.trim() || t('common:offline.currentStateRefreshed')), interpolation: { escapeValue: false } }).slice(0, 512)
 
 type PageTag = {
   tag: string
@@ -1173,9 +1174,9 @@ function setupInlineCodeCopy (container: HTMLElement): void {
 }
 
 const PAGE_MERMAID_ERROR_CLASS = 'content-extension-diagram__error'
-const PAGE_MERMAID_ERROR_MESSAGE = 'Diagram could not be rendered locally. Its source remains available below.'
+const PAGE_MERMAID_ERROR_MESSAGE = 'common:page.diagramCouldNotRendered'
 const PAGE_MERMAID_LIMIT_NOTICE_CLASS = 'content-extension-diagram__limit-notice'
-const PAGE_MERMAID_LIMIT_NOTICE_MESSAGE = 'Additional diagrams remain available as source because automatic rendering is limited.'
+const PAGE_MERMAID_LIMIT_NOTICE_MESSAGE = 'common:page.additionalDiagramsRemainAvailable'
 
 const pageMermaidSource = (host: HTMLElement): string | null => {
   if (host.matches('.mermaid')) return host.textContent ?? ''
@@ -1186,7 +1187,7 @@ const showPageMermaidLimitNotice = (container: HTMLElement): void => {
   if (container.querySelector(`.${PAGE_MERMAID_LIMIT_NOTICE_CLASS}`)) return
   const notice = container.ownerDocument.createElement('p')
   notice.className = PAGE_MERMAID_LIMIT_NOTICE_CLASS
-  notice.textContent = PAGE_MERMAID_LIMIT_NOTICE_MESSAGE
+  notice.textContent = this.$t(PAGE_MERMAID_LIMIT_NOTICE_MESSAGE)
   container.append(notice)
 }
 
@@ -1236,7 +1237,7 @@ const renderPageMermaidDiagrams = async (
         })
         if (!safeSvg || !current()) return
         safeSvg.setAttribute('role', 'img')
-        safeSvg.setAttribute('aria-label', 'Mermaid diagram')
+        safeSvg.setAttribute('aria-label', 'common:page.mermaidDiagram')
         diagram.replaceChildren(safeSvg)
         diagram.dataset.pageMermaidState = 'rendered'
       } catch {
@@ -1245,7 +1246,7 @@ const renderPageMermaidDiagrams = async (
           const status = container.ownerDocument.createElement('p')
           status.className = PAGE_MERMAID_ERROR_CLASS
           status.setAttribute('role', 'alert')
-          status.textContent = PAGE_MERMAID_ERROR_MESSAGE
+          status.textContent = this.$t(PAGE_MERMAID_ERROR_MESSAGE)
           diagram.prepend(status)
         }
         diagram.dataset.pageMermaidState = 'failed'
@@ -1421,7 +1422,7 @@ export default defineComponent({
     },
     title: {
       type: String,
-      default: 'Untitled Page'
+      default: () => translate('common:page.untitledPage')
     },
     description: {
       type: String,
@@ -1445,7 +1446,7 @@ export default defineComponent({
     },
     authorName: {
       type: String,
-      default: 'Unknown'
+      default: () => translate('common:page.unknown')
     },
     authorId: {
       type: Number,
@@ -1810,7 +1811,7 @@ export default defineComponent({
     // i18next places {{author}} anywhere in the sentence; split around it so the
     // name renders in an isolated <bdi> without breaking word order.
     authorAttribution (): { before: string; after: string } {
-      const marker = '\u2063AUTHOR\u2063'
+      const marker = this.$t('common:page.author')
       const sentence = String(this.$t('common:page.byAuthor', { author: marker, interpolation: { escapeValue: false } }))
       const index = sentence.indexOf(marker)
       if (index < 0) return { before: `${sentence} `, after: '' }
@@ -1937,7 +1938,7 @@ export default defineComponent({
       return this.winWidth < 1280 ? '#page-tablet-tools' : '#page-desktop-rail'
     },
     utilityTooltipTarget (): string {
-      return `${this.pageToolsHost} .page-tools-card`
+      return this.$t('common:page.pageToolsCard', { pageToolsHost: this.pageToolsHost, interpolation: { escapeValue: false } })
     },
     // Signed-in readers whose account could not load and who have no saved
     // time zone see the browser zone; name it so the time is not misread.
@@ -2378,7 +2379,7 @@ export default defineComponent({
     async offlinePolicyForOperation (storage: OfflineStorage): Promise<OfflinePolicySnapshot> {
       if (!this.offlinePrivatePath) return await storage.readOfflinePolicy()
       const service = this.offlineAccountAwareService()
-      if (!service?.readOfflinePolicy) throw new Error('Offline private policy is locked.')
+      if (!service?.readOfflinePolicy) throw new Error(this.$t('common:page.offlinePrivatePolicyLocked'))
       return await service.readOfflinePolicy()
     },
     async offlineCorpusForOperation (storage: OfflineStorage, selector: OfflineSnapshotSelector, policy: OfflinePolicySnapshot): Promise<OfflineSnapshotCorpus> {
@@ -2389,13 +2390,13 @@ export default defineComponent({
         })
       }
       const service = this.offlineAccountAwareService()
-      if (!service?.readSnapshotCorpus) throw new Error('Offline private policy is locked.')
+      if (!service?.readSnapshotCorpus) throw new Error(this.$t('common:page.offlinePrivatePolicyLocked'))
       return await service.readSnapshotCorpus(selector)
     },
     async setOfflineManualIntent (storage: OfflineStorage, selector: OfflineSnapshotSelector, selected: boolean, policy: OfflinePolicySnapshot): Promise<OfflinePagePolicyRecord> {
       if (this.offlinePrivatePath) {
         const service = this.offlineAccountAwareService()
-        if (!service?.setManualOfflineIntent) throw new Error('Offline private policy is locked.')
+        if (!service?.setManualOfflineIntent) throw new Error(this.$t('common:page.offlinePrivatePolicyLocked'))
         return await service.setManualOfflineIntent(selector, selected)
       }
       return await storage.setManualOfflineIntent(selector, selected, {
@@ -2408,7 +2409,7 @@ export default defineComponent({
         const service = this.offlineAccountAwareService()
         if (service?.removeOfflinePage) return await service.removeOfflinePage(selector)
         if (service?.setManualOfflineIntent) return await service.setManualOfflineIntent(selector, false)
-        throw new Error('Offline private policy is locked.')
+        throw new Error(this.$t('common:page.offlinePrivatePolicyLocked'))
       }
       return await storage.removeOfflinePage(selector, {
         expectedSessionGeneration: policy.sessionGeneration,
@@ -2449,7 +2450,7 @@ export default defineComponent({
         } catch {
           if (!this.isCurrentOfflineOperation(operationId, pageId)) return
           this.offlineState = 'unavailable'
-          this.offlineAvailabilityError = 'Private offline reading is unavailable on this device.'
+          this.offlineAvailabilityError = this.$t('common:page.privateOfflineReadingUnavailable')
         }
         return
       }
@@ -2502,10 +2503,10 @@ export default defineComponent({
             expiresAt: this.offlineExpiresAt,
             refreshFailed
           })
-          if (refreshFailed) this.offlineAvailabilityError = 'The latest offline sync attempt could not be completed.'
+          if (refreshFailed) this.offlineAvailabilityError = this.$t('common:page.latestOfflineSyncAttempt')
         } else if (pagePolicy?.availability === 'transient-failure') {
           this.offlineState = 'error'
-          this.offlineAvailabilityError = 'The latest offline sync attempt could not be completed.'
+          this.offlineAvailabilityError = this.$t('common:page.latestOfflineSyncAttempt')
         } else {
           this.offlineState = 'eligible'
         }
@@ -2520,12 +2521,12 @@ export default defineComponent({
         }
         const status = error && typeof error === 'object' ? Number(Reflect.get(error, 'status')) : Number.NaN
         this.offlineAvailabilityError = typeof navigator !== 'undefined' && navigator.onLine === false
-          ? 'Waiting for a verified server connection.'
+          ? this.$t('common:page.waitingForConnection')
           : this.offlinePrivatePath
             ? [403, 404, 410, 422].includes(status)
-              ? 'This private page is not available for offline use under the current account.'
-              : 'Private offline availability could not be confirmed.'
-            : getErrorMessage(error) || 'Offline availability could not be checked.'
+              ? this.$t('common:page.privatePageNotAvailable')
+              : this.$t('common:page.privateOfflineAvailabilityCould')
+            : getErrorMessage(error) || this.$t('common:page.offlineAvailabilityCouldNot')
         const privateAuthorityDenied = this.offlinePrivatePath && [403, 404, 410, 422].includes(status)
         const unavailable = /unavailable|opening|closed/iu.test(this.offlineAvailabilityError)
         this.offlineState = privateAuthorityDenied ? 'error' : unavailable ? 'unavailable' : this.offlineHasSnapshot ? 'sync-pending' : 'error'
@@ -2550,7 +2551,7 @@ export default defineComponent({
         const updated = this.offlinePrivatePath
           ? await (service?.recordEligibleReaderVisit
               ? service.recordEligibleReaderVisit(selector)
-              : Promise.reject(new Error('Offline private policy is locked.')))
+              : Promise.reject(new Error(this.$t('common:page.offlinePrivatePolicyLocked'))))
           : await storage.recordEligibleReaderVisit(selector, {
               expectedSessionGeneration: policy.sessionGeneration,
               expectedPolicyRevision: policy.state.policyRevision
@@ -2562,7 +2563,7 @@ export default defineComponent({
         if (policy.state.automaticSavingEnabled) {
           await (this.offlineSyncService
             ? this.offlineSyncService.reconcile('visit')
-            : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.'))
+            : createOfflineSyncUnavailableResult(this.$t('common:page.offlineSynchronizationUnavailable')))
           if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         }
       } catch {
@@ -2635,7 +2636,7 @@ export default defineComponent({
         if (!isCurrentAdmission()) return
         showNotification(wikiStore, {
           style: 'red',
-          message: 'Offline admission could not be updated after the page protection change.',
+          message: this.$t('common:page.offlineAdmissionCouldNot'),
           icon: 'alert'
         })
       } finally {
@@ -2688,7 +2689,7 @@ export default defineComponent({
         this.offlinePolicyRevision = policy.state.policyRevision + (policyChanged ? 1 : 0)
         const syncResult: OfflineSyncResult = this.offlineSyncService
           ? await this.offlineSyncService.reconcile('manual')
-          : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+          : createOfflineSyncUnavailableResult(this.$t('common:page.offlineSynchronizationUnavailable'))
         if (!isCurrentOperation()) return
         authoritativeRefreshOperationId = this.offlineOperationId + 1
         this.offlinePassiveRefreshPending = false
@@ -2708,8 +2709,8 @@ export default defineComponent({
         const pageFailed = Boolean(this.offlineAvailabilityError) || ['stale', 'sync-pending', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
         if (pageFailed) {
           this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
-            ? 'This page is not available for offline use.'
-            : this.offlineAvailabilityError || 'The readable offline copy could not be committed.'
+            ? this.$t('common:page.pageNotAvailableOffline')
+            : this.offlineAvailabilityError || this.$t('common:page.readableOfflineCopyCould')
           showNotification(wikiStore, {
             style: 'red',
             message: this.offlineAvailabilityError,
@@ -2721,16 +2722,16 @@ export default defineComponent({
 
         const saved = this.offlineHasValidBody
         const message = saved
-          ? 'Page selected for offline sync; a readable copy is saved on this device.'
-          : 'Page selected for offline sync; a readable copy will be saved when available.'
+          ? this.$t('common:page.pageSelectedOfflineSync')
+          : this.$t('common:page.pageSelectedOfflineSync2')
         let notification = message
         if (syncResult.outcome === 'offline')
-          notification += ' Local synchronization will resume when a connection is available.'
+          notification += ` ${this.$t('common:page.localSynchronizationWillResume')}`
         showNotification(wikiStore, {
           style: 'success',
           message: notification
         })
-        const aggregateNotice = offlineSyncAggregateNotice(syncResult)
+        const aggregateNotice = offlineSyncAggregateNotice(this.$t, syncResult)
         if (aggregateNotice) {
           showNotification(wikiStore, {
             style: 'warning',
@@ -2742,8 +2743,8 @@ export default defineComponent({
         if (!isCurrentOperation()) return
         const detail = getErrorMessage(error).trim().slice(0, 512) || (
           policyMutationCommitted
-            ? 'Offline synchronization could not be completed.'
-            : 'The offline selection could not be committed.'
+            ? this.$t('common:page.offlineSynchronizationCouldNot')
+            : this.$t('common:page.offlineSelectionCouldNot')
         )
         if (!policyMutationCommitted) {
           this.offlineState = this.offlineHasSnapshot ? 'sync-pending' : 'error'
@@ -2765,8 +2766,8 @@ export default defineComponent({
         const pageFailed = Boolean(this.offlineAvailabilityError) || ['stale', 'sync-pending', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
         if (pageFailed) {
           this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
-            ? 'This page is not available for offline use.'
-            : this.offlineAvailabilityError || 'The readable offline copy could not be committed.'
+            ? this.$t('common:page.pageNotAvailableOffline')
+            : this.offlineAvailabilityError || this.$t('common:page.readableOfflineCopyCould')
           showNotification(wikiStore, {
             style: 'red',
             message: this.offlineAvailabilityError,
@@ -2780,12 +2781,12 @@ export default defineComponent({
         showNotification(wikiStore, {
           style: 'success',
           message: saved
-            ? 'Page selected for offline sync; a readable copy is saved on this device.'
-            : 'Page selected for offline sync; a readable copy will be saved when available.'
+            ? this.$t('common:page.pageSelectedOfflineSync')
+            : this.$t('common:page.pageSelectedOfflineSync2')
         })
         showNotification(wikiStore, {
           style: 'warning',
-          message: offlineSyncFailureNotice(detail),
+          message: offlineSyncFailureNotice(this.$t, detail),
           icon: 'warning'
         })
       } finally {
@@ -2845,7 +2846,7 @@ export default defineComponent({
         this.offlineState = 'ineligible'
         const syncResult: OfflineSyncResult = this.offlineSyncService
           ? await this.offlineSyncService.reconcile('manual')
-          : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+          : createOfflineSyncUnavailableResult(this.$t('common:page.offlineSynchronizationUnavailable'))
         if (!isCurrentOperation()) return
         authoritativeRefreshOperationId = this.offlineOperationId + 1
         this.offlinePassiveRefreshPending = false
@@ -2855,14 +2856,14 @@ export default defineComponent({
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
         const pageFailed = ['stale', 'sync-pending', 'error', 'unavailable'].includes(refreshedOfflineState)
         const message = syncResult.outcome === 'offline'
-          ? 'Offline copy removed and page excluded from offline sync. Local synchronization will resume when a connection is available.'
-          : 'Offline copy removed and page excluded from offline sync.'
+          ? this.$t('common:page.offlineCopyRemovedPage')
+          : this.$t('common:page.offlineCopyRemovedPage2')
         showNotification(wikiStore, {
           style: 'success',
           message
         })
         if (pageFailed) {
-          this.offlineAvailabilityError = this.offlineAvailabilityError || 'The current offline removal state could not be refreshed.'
+          this.offlineAvailabilityError = this.offlineAvailabilityError || this.$t('common:page.currentOfflineRemovalState')
           showNotification(wikiStore, {
             style: 'red',
             message: this.offlineAvailabilityError,
@@ -2871,7 +2872,7 @@ export default defineComponent({
           this.offlinePassiveRefreshPending = false
           return
         }
-        const aggregateNotice = offlineSyncAggregateNotice(syncResult)
+        const aggregateNotice = offlineSyncAggregateNotice(this.$t, syncResult)
         if (aggregateNotice) {
           showNotification(wikiStore, {
             style: 'warning',
@@ -2883,8 +2884,8 @@ export default defineComponent({
         if (!isCurrentOperation()) return
         const detail = getErrorMessage(error).trim().slice(0, 512) || (
           policyMutationCommitted
-            ? 'Offline synchronization could not be completed.'
-            : 'The offline copy could not be removed.'
+            ? this.$t('common:page.offlineSynchronizationCouldNot')
+            : this.$t('common:page.offlineCopyCouldNot')
         )
         if (!policyMutationCommitted) {
           this.offlineState = 'error'
@@ -2906,10 +2907,10 @@ export default defineComponent({
         const pageFailed = ['stale', 'sync-pending', 'error', 'unavailable'].includes(refreshedOfflineState)
         showNotification(wikiStore, {
           style: 'success',
-          message: 'Offline copy removed and page excluded from offline sync.'
+          message: this.$t('common:page.offlineCopyRemovedPage2')
         })
         if (pageFailed) {
-          this.offlineAvailabilityError = this.offlineAvailabilityError || 'The current offline removal state could not be refreshed.'
+          this.offlineAvailabilityError = this.offlineAvailabilityError || this.$t('common:page.currentOfflineRemovalState')
           showNotification(wikiStore, {
             style: 'red',
             message: this.offlineAvailabilityError,
@@ -2918,7 +2919,7 @@ export default defineComponent({
         } else {
           showNotification(wikiStore, {
             style: 'warning',
-            message: offlineSyncFailureNotice(detail),
+            message: offlineSyncFailureNotice(this.$t, detail),
             icon: 'warning'
           })
         }
@@ -2959,7 +2960,7 @@ export default defineComponent({
         this.offlineUnlockOpen = false
         await this.refreshOfflinePageState()
       } catch {
-        this.offlineUnlockError = 'The private offline vault could not be unlocked.'
+        this.offlineUnlockError = this.$t('common:page.privateOfflineVaultCould')
       } finally {
         secret?.fill(0)
         this.offlineUnlockBusy = false
