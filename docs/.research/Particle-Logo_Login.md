@@ -17,6 +17,8 @@ The Admin General page (`/general`, `manage:system`) provides one dedicated logo
 The large field is optional decoration, not a replacement for `.login-brand`, `siteConfig.logoUrl`, `siteConfig.title`, or `#login-site-title`. Mobile, coarse-pointer, short-viewport, and insufficient-space layouts omit only the large field; the ordinary full-canvas logo remains visible inside the framed `.login-logo` credential-card container. Reduced-motion eligible desktop users receive the personalized static effect, without WebGPU/WebGL or animation.
 Terminal ordinary authentication success may show a decorative TS Epistle open-book illustration in the login loader for a 900 ms opening sequence before redirect. The illustration is not shown for failed authentication, TFA, password-reset, verification, or other non-terminal states. Reduced-motion styling collapses the book animation without changing the success-only gate, and the artwork never participates in authentication.
 
+TFA setup explicitly paints sanitized QR modules black against a white quiet space, independent of inherited site foreground or SVG fill. The unscoped login stylesheet uses a normal SVG descendant selector; scoped-style `:deep()` syntax is not valid there. The manual enrollment key remains the accessible alternative.
+
 ## 2. Repository facts and integration boundaries
 
 - `client/components/login.vue` is a Pug-template Options API component. `.login` is a full-viewport flex layout; `main.login-sd` is at most 30 rem wide. `.login-brand` contains the runtime-configured full-canvas image in the framed `.login-logo` credential-card treatment; the separate success illustration is mounted only in the loader after terminal authentication.

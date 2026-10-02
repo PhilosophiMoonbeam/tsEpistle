@@ -2429,9 +2429,10 @@ test.describe('managed login logo auth independence', () => {
     const surface = dialog.locator('.login-tfa-qr')
     await expect(surface.locator(':scope > svg')).toHaveCount(1)
     await expect(surface.locator(':scope > svg')).toBeVisible()
+    // A light inherited SVG fill must not erase modules against the quiet space.
+    await surface.evaluate(element => { element.style.fill = '#fff' })
     const image = await surface.screenshot({ animations: 'disabled' })
     const pixels = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-    expect(pixels.info.channels).toBe(4)
     let dark = 0
     let light = 0
     for (let offset = 0; offset < pixels.data.length; offset += 4) {

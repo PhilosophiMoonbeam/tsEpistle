@@ -1758,52 +1758,56 @@ test.describe('responsive UI quality matrix', () => {
     await expectResponsiveLayout(page, 'Restored GraphQL query')
   })
 
-  test('keeps long workspace titles readable with phone Agent actions available', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Phone title geometry is owned by Chromium mobile.')
-    await authenticateAsAdmin(page)
-    const workspaceTitle = 'Contract Design Team Workspace'
-    await page.route('**/en/home?qa-title-fit=*', async route => {
-      const response = await route.fetch()
-      const html = await response.text()
-      const body = html.replace(
-        /(var\s+siteConfig\s*=\s*\{\s*"title"\s*:\s*)"(?:[^"\\]|\\.)*"/,
-        (_, prefix: string) => prefix + JSON.stringify(workspaceTitle)
-      )
-      if (body === html) throw new Error('Workspace-title bootstrap fixture could not be installed')
-      await route.fulfill({ status: response.status(), contentType: 'text/html; charset=utf-8', body })
-    })
+  test.describe('controlled phone workspace bootstrap', () => {
+    test.use({ serviceWorkers: 'block' })
 
-    for (const width of [320, 375]) {
-      await page.setViewportSize({ width, height: 812 })
-      await openAuthenticatedPage(page, `/en/home?qa-title-fit=${width}`, '.nav-header')
-      await page.evaluate(() => document.fonts.ready)
-      const title = page.locator('.nav-header-title-stacked')
-      await expectLocatorWithinViewport(title, 'Complete phone workspace title')
-      await expect.poll(() => title.evaluate(box => {
-        const lines = [...box.querySelectorAll<HTMLElement>('.nav-header-title-line')]
-        return {
-          title: lines.map(line => line.textContent).join(' '),
-          fits: box.scrollHeight <= box.clientHeight + 1 &&
-            lines.every(line => line.scrollWidth <= line.clientWidth + 1 && line.scrollHeight <= line.clientHeight + 1)
+    test('keeps long workspace titles readable with phone Agent actions available', async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Phone title geometry is owned by Chromium mobile.')
+      await authenticateAsAdmin(page)
+      const workspaceTitle = 'Contract Design Team Workspace'
+      await page.route('**/en/home?qa-title-fit=*', async route => {
+        const response = await route.fetch()
+        const html = await response.text()
+        const body = html.replace(
+          /(var\s+siteConfig\s*=\s*\{\s*"title"\s*:\s*)"(?:[^"\\]|\\.)*"/,
+          (_, prefix: string) => prefix + JSON.stringify(workspaceTitle)
+        )
+        if (body === html) throw new Error('Workspace-title bootstrap fixture could not be installed')
+        await route.fulfill({ status: response.status(), contentType: 'text/html; charset=utf-8', body })
+      })
+
+      for (const width of [320, 375]) {
+        await page.setViewportSize({ width, height: 812 })
+        await openAuthenticatedPage(page, `/en/home?qa-title-fit=${width}`, '.nav-header')
+        await page.evaluate(() => document.fonts.ready)
+        const title = page.locator('.nav-header-title-stacked')
+        await expectLocatorWithinViewport(title, 'Complete phone workspace title')
+        await expect.poll(() => title.evaluate(box => {
+          const lines = [...box.querySelectorAll<HTMLElement>('.nav-header-title-line')]
+          return {
+            title: lines.map(line => line.textContent).join(' '),
+            fits: box.scrollHeight <= box.clientHeight + 1 &&
+              lines.every(line => line.scrollWidth <= line.clientWidth + 1 && line.scrollHeight <= line.clientHeight + 1)
+          }
+        })).toEqual({ title: workspaceTitle, fits: true })
+        const overflow = page.locator('.nav-header-mobile-actions')
+        const search = page.getByRole('button', { name: 'Open search', exact: true })
+        for (const control of [overflow, search]) {
+          const bounds = await control.boundingBox()
+          if (!bounds) throw new Error('Phone header action has no geometry')
+          expect(bounds.width, 'Phone action target width').toBeGreaterThanOrEqual(44)
+          expect(bounds.height, 'Phone action target height').toBeGreaterThanOrEqual(44)
         }
-      })).toEqual({ title: workspaceTitle, fits: true })
-      const overflow = page.locator('.nav-header-mobile-actions')
-      const search = page.getByRole('button', { name: 'Open search', exact: true })
-      for (const control of [overflow, search]) {
-        const bounds = await control.boundingBox()
-        if (!bounds) throw new Error('Phone header action has no geometry')
-        expect(bounds.width, 'Phone action target width').toBeGreaterThanOrEqual(44)
-        expect(bounds.height, 'Phone action target height').toBeGreaterThanOrEqual(44)
+        await overflow.click()
+        const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+        await expect(entrance).toBeVisible()
+        await expect(page.getByRole('link', { name: 'Browse by Tags', exact: true })).toHaveAttribute('href', '/t')
+        await entrance.focus()
+        await entrance.press('Escape')
+        await expect(overflow).toBeFocused()
+        await expectResponsiveLayout(page, `Phone workspace title at ${width}px`)
       }
-      await overflow.click()
-      const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
-      await expect(entrance).toBeVisible()
-      await expect(page.getByRole('link', { name: 'Browse by Tags', exact: true })).toHaveAttribute('href', '/t')
-      await entrance.focus()
-      await entrance.press('Escape')
-      await expect(overflow).toBeFocused()
-      await expectResponsiveLayout(page, `Phone workspace title at ${width}px`)
-    }
+    })
   })
 
   test('restores the phone overflow opener after enabled Agent Escape from Search', async ({ page }) => {
