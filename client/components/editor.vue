@@ -19,6 +19,16 @@
           density="compact"
           :aria-label='$t(`editor:props.title`)'
         )
+          template(v-if='pageVisibility.chipKey', v-slot:append-inner)
+            v-chip.editor-visibility-chip(
+              size='small'
+              variant='tonal'
+              :prepend-icon='pageVisibility.icon'
+              :aria-label='$t(`editor:props.visibilityChipAction`, { state: $t(pageVisibility.chipKey ?? ``) })'
+              @click.stop='openPropsModal'
+            )
+              | {{ $t(pageVisibility.chipKey ?? '') }}
+              v-tooltip(activator='parent', location='bottom') {{ $t(pageVisibility.summaryKey, pageVisibility.values) }}
       template(v-slot:actions)
         span.editor-save-status.text-body-small(
           role='status'
@@ -321,6 +331,7 @@ import {
 } from '../helpers/offline-editor-drafts.ts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT, requestOfflineIdentityBoundary } from '../helpers/offline-session.ts'
 import { bindEditorFlushSignals, type EditorAdapter, type EditorAdapterCapture, type EditorAdapterSafety } from './editor/common/editor-adapter'
+import { describePageVisibility, type PageVisibilitySummary } from './editor/common/page-visibility'
 import type { OfflineDraftPayloadV1, OfflineDraftState } from '../../shared/offline.ts'
 import { OfflineSnapshotSelectorSchema, type OfflineSnapshotSelector } from '../../shared/offline.ts'
 import {
@@ -835,6 +846,14 @@ export default defineComponent({
           delta
         }
       })
+    },
+    pageVisibility(): PageVisibilitySummary {
+      const page = wikiStore.page
+      return describePageVisibility(
+        { visibility: page.visibility, isPublished: page.isPublished, publishStartDate: page.publishStartDate, publishEndDate: page.publishEndDate },
+        new Date(),
+        document.documentElement.lang || undefined
+      )
     },
     saveStatusText(): string {
       if (this.saveFeedback === 'saving') return this.$t('editor:save.saving')
@@ -2734,6 +2753,12 @@ export default defineComponent({
 
 .atom-spinner.is-inline {
   display: inline-block;
+}
+
+.editor-visibility-chip {
+  cursor: pointer;
+  flex: 0 0 auto;
+  margin-inline-start: var(--wiki-space-2);
 }
 
 // Formatting tools in the Markdown and visual editors share one neutral look.
