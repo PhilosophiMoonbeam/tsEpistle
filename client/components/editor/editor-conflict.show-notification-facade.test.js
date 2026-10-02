@@ -10,6 +10,8 @@ import { getOriginalDoc, unifiedMergeView } from '@codemirror/merge'
 import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 // Vuetify snapshots browser capabilities; load it only after the shared DOM harness.
 const Vue = await import('vue')
 const { createVuetify } = await import('vuetify')
@@ -109,9 +111,10 @@ const createConflictHarness = ({
     wikiStore,
     window: windowStub
   })
-  const state = component.data()
+  const state = component.data.call({ $t: translateEnglish })
   const context = Vue.reactive({
     ...state,
+    $t: translateEnglish,
     $nextTick: async () => {},
     $vuetify: { theme: { current: { dark } } },
     $refs: { cm: container },
@@ -177,7 +180,8 @@ const createTiptapConflictHarness = ({
     window
   })
   const context = {
-    ...component.data(),
+    ...component.data.call({ $t: translateEnglish }),
+    $t: translateEnglish,
     modelValue,
     $emit: (...args) => {
       emitted.push(args)
@@ -249,13 +253,14 @@ const mountTiptapConflict = fetchImplementation => {
   const host = document.body.appendChild(document.createElement('div'))
   const app = Vue.createApp(component, { modelValue: true })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.config.globalProperties.$t = translateEnglish
   app.component('VCardChin', CardChin)
   // Translation contents are irrelevant here; preserve named slots and real dialog/button behavior.
   app.component('i18next', Vue.defineComponent({
     props: { tag: { type: String, default: 'div' } },
     setup: (props, { slots }) => () => Vue.h(props.tag, slots.default?.())
   }))
-  app.config.globalProperties.$t = key => key
+  app.config.globalProperties.$t = translateEnglish
   app.config.globalProperties.$helpers = { formatMoment: value => value }
   const context = app.mount(host)
   mountedApps.push(() => { app.unmount(); host.remove() })
@@ -446,8 +451,8 @@ describe('Tiptap conflict component behavior', () => {
     const attempts = [failedFetch, retriedFetch]
     const context = mountTiptapConflict(() => attempts.shift().promise)
     await settle()
-    const localAction = () => document.querySelector('button[title="editor:conflict.useLocalHint"]')
-    const remoteAction = () => document.querySelector('button[title="editor:conflict.useRemoteHint"]')
+    const localAction = () => document.querySelector('button[title="Use content in the left panel"]')
+    const remoteAction = () => document.querySelector('button[title="Discard local changes and use latest version"]')
     const expectActionsUnavailable = () => {
       for (const action of [localAction(), remoteAction()]) {
         if (action) expect(action.disabled).toBe(true)
@@ -540,7 +545,7 @@ describe('Tiptap conflict component behavior', () => {
     }
 
     expectOnlyInGate('loadState === `loading`', ["role='status'"])
-    expectOnlyInGate('loadState === `error`', ["role='alert'", "@click='loadLatestVersion'", 'Retry'])
+    expectOnlyInGate('loadState === `error`', ["role='alert'", "@click='loadLatestVersion'", '$t(`editor:conflict.retry`)'])
     expectOnlyInGate('loadState === `success` && hasLatestVersion', ["@click='useLocal'", "@click='useRemote'"])
     expect(template).toContain("role='status'\n          aria-live='polite'")
     expect(template).toContain("role='alert'\n          tabindex='-1'")

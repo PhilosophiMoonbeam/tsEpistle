@@ -7,6 +7,8 @@ import { browserWindow, document, resetBody } from '../../test/browser-dom.mts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
 import { isRecord } from '../../helpers/type-guards.ts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 const componentPath = join(process.cwd(), 'client/components/editor/editor-modal-drawio.vue')
 const source = readFileSync(componentPath, 'utf8')
 const { descriptor } = parse(source, { filename: componentPath })
@@ -75,6 +77,7 @@ const mountModal = () => {
   const mountErrors: unknown[] = []
   app.config.errorHandler = error => { mountErrors.push(error) }
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.config.globalProperties.$t = translateEnglish
   const context = app.mount(host) as unknown as DrawioContext
   let mounted = true
   const unmount = () => {
@@ -131,6 +134,7 @@ describe('Draw.io editor modal contract', () => {
     // Isolate the message protocol from focus installation; the lifecycle runs unchanged in the focus case below.
     const app = Vue.createApp({ ...component, mounted: undefined, render })
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.config.globalProperties.$t = translateEnglish
     const context = app.mount(host) as unknown as DrawioContext
     mountedApps.push(() => { app.unmount(); host.remove() })
     await settle()

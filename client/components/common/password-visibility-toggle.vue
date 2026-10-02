@@ -34,7 +34,7 @@ export default defineComponent({
   computed: {
     label (): string {
       const translate = (this as unknown as { $t?: Translate }).$t
-      const fallback = `Show ${this.field}`
+      const fallback = this.$t('common:passwordVisibilityToggle.show', { field: this.field, interpolation: { escapeValue: false } })
       return typeof translate === 'function' ? translate('common:password.show', { field: this.field, defaultValue: fallback }) : fallback
     }
   }

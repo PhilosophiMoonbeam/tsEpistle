@@ -84,6 +84,9 @@ import { promptPwaInstall, pwaConnectionPresentation, pwaState } from '../../hel
 import { helpers } from '../../helpers/index.ts'
 import { wikiStore } from '../../store/index.ts'
 import type { OfflineSnapshotRecord, OfflineSyncDiagnostics } from '../../../shared/offline.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 type VisibleRecord = OfflineSnapshotRecord & { readonly audience: 'public' | 'private' }
 
@@ -134,7 +137,7 @@ const syncBlockedReason = (t: OfflineTranslate): string => {
   return ''
 }
 
-const siteTitle = computed(() => wikiStore.site.title?.trim() || (typeof siteConfig === 'undefined' ? '' : siteConfig.title?.trim() ?? '') || 'this wiki')
+const siteTitle = computed(() => wikiStore.site.title?.trim() || (typeof siteConfig === 'undefined' ? '' : siteConfig.title?.trim() ?? '') || t('common:accountOfflineSummary.wiki'))
 const canInstall = computed(() =>
   pwaState.installPromptAvailable && pwaState.installAvailability === 'available' && !pwaState.installed && !pwaState.isStandalone
 )
@@ -189,7 +192,7 @@ async function load (): Promise<void> {
     error.value = ''
   } catch (err) {
     if (disposed || token !== sequence) return
-    error.value = err instanceof Error && err.message.trim() ? err.message : 'Saved pages could not be read from this device.'
+    error.value = err instanceof Error && err.message.trim() ? err.message : t('common:accountOfflineSummary.savedPagesCouldNot')
   } finally {
     if (token === sequence) loading.value = false
   }
@@ -244,7 +247,7 @@ async function openStorage (): Promise<void> {
     await load()
   } catch (err) {
     if (disposed) return
-    error.value = err instanceof Error && err.message.trim() ? err.message : 'Offline storage is not available on this device.'
+    error.value = err instanceof Error && err.message.trim() ? err.message : t('common:accountOfflineSummary.offlineStorageNotAvailable')
     loading.value = false
   }
 }
