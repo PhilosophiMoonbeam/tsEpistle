@@ -581,7 +581,7 @@ onBeforeUnmount(() => {
 
 .personal-skills__heading p {
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .78rem;
   line-height: 1.5;
 }
@@ -599,7 +599,7 @@ onBeforeUnmount(() => {
   padding: var(--wiki-space-3) var(--wiki-space-5);
   border-bottom: 1px solid var(--wiki-surface-border);
   background: color-mix(in srgb, var(--personal-accent) 6%, var(--wiki-surface-sunken));
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
   line-height: 1.5;
 }
@@ -675,7 +675,7 @@ onBeforeUnmount(() => {
 
 .personal-inventory__summary {
   padding: var(--wiki-space-2) var(--wiki-space-2) var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-variant-numeric: tabular-nums;
   font-weight: var(--wiki-label-weight);
@@ -734,7 +734,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
+  color: var(--wiki-text-subtle);
 }
 
 .personal-skill-item__mode {
@@ -757,7 +757,7 @@ onBeforeUnmount(() => {
   align-content: center;
   gap: var(--wiki-space-2);
   padding: var(--wiki-space-6) var(--wiki-space-4);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  color: var(--wiki-text-muted);
   text-align: center;
 }
 
@@ -801,7 +801,7 @@ onBeforeUnmount(() => {
 
 .personal-editor__header p {
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
 }
 
@@ -852,7 +852,7 @@ onBeforeUnmount(() => {
 
 .personal-editor-section__heading p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .7rem;
   line-height: 1.45;
 }
@@ -875,7 +875,7 @@ onBeforeUnmount(() => {
 
 .personal-discovery p {
   margin: 0 var(--wiki-space-2) var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   line-height: 1.45;
 }
@@ -901,7 +901,7 @@ onBeforeUnmount(() => {
 
 .personal-provenance dt {
   margin-bottom: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .055em;
@@ -957,7 +957,7 @@ onBeforeUnmount(() => {
   flex: 1 1 22rem;
   align-items: center;
   gap: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .72rem;
 }
 

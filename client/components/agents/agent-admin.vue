@@ -29,10 +29,9 @@
       <span>{{ error }}</span>
       <template #append><v-btn variant="text" size="small" @click="load">Retry</v-btn></template>
     </v-alert>
-    <v-alert v-if="actionBusyKey" class="agent-operation-status" type="info" variant="tonal" density="compact" role="status" aria-live="polite">
-      <template #prepend><v-progress-circular indeterminate :size="18" :width="2" /></template>
-      {{ actionBusyMessage }}
-    </v-alert>
+    <!-- The triggering buttons show their own loading state; this live region only
+         announces it, so the layout does not shift while an action runs. -->
+    <p class="agent-operation-status" role="status" aria-live="polite">{{ actionBusyKey ? actionBusyMessage : '' }}</p>
 
 
     <div class="agent-workspace">
@@ -54,7 +53,7 @@
           @keydown.home.prevent="selectSection(0, $event)"
           @keydown.end.prevent="selectSection(sectionItems.length - 1, $event)"
         >
-          <span class="agent-section__icon"><v-icon size="20">{{ section.icon }}</v-icon></span>
+          <span class="agent-section__icon"><v-icon :icon="section.icon" size="20" aria-hidden="true" /></span>
           <span class="agent-section__copy"><strong>{{ section.title }}</strong><small>{{ section.description }}</small></span>
           <v-chip v-if="section.badge" class="agent-section__badge" size="x-small" variant="tonal">{{ section.badge }}</v-chip>
         </button>
@@ -65,7 +64,7 @@
           <section class="agent-overview">
             <div class="agent-overview__intro">
               <div class="agent-panel__eyebrow">Your knowledge, in conversation</div>
-              <h2>Models, expertise & access.</h2>
+              <h2>Models, expertise and access</h2>
               <p>Review conversation setup, then extend the Agent with approved skills and connected tools.</p>
             </div>
             <v-skeleton-loader v-if="!dataLoaded && loading" type="article, list-item-three-line" />
@@ -74,16 +73,16 @@
                 <h3 id="agent-setup-title">Conversation setup</h3>
                 <p class="agent-overview__caption">Configuration checks from the last refresh. Provider availability can change between runs.</p>
                 <button class="agent-setup__step" type="button" @click="tab = 'runtime'">
-                  <v-icon :color="runtime?.enabled && runtime?.providerEnabled ? 'success' : 'warning'">{{ runtime?.enabled && runtime?.providerEnabled ? 'mdi-check-circle-outline' : 'mdi-pause-circle-outline' }}</v-icon>
-                  <span><strong>Enable the runtime</strong><small>{{ runtime?.enabled && runtime?.providerEnabled ? 'Agent and provider inference are enabled' : 'Enable Agent and provider inference in deployment configuration' }}</small></span><v-icon size="18">mdi-arrow-right</v-icon>
+                  <v-icon :icon="runtime?.enabled && runtime?.providerEnabled ? 'mdi-check-circle-outline' : 'mdi-pause-circle-outline'" :color="runtime?.enabled && runtime?.providerEnabled ? 'success' : 'warning'" aria-hidden="true" />
+                  <span><strong>Enable the runtime</strong><small>{{ runtime?.enabled && runtime?.providerEnabled ? 'Agent and provider inference are enabled' : 'Enable Agent and provider inference in deployment configuration' }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" />
                 </button>
                 <button class="agent-setup__step" type="button" @click="tab = 'profiles'">
-                  <v-icon :color="readyProviders.length ? 'success' : 'warning'">{{ readyProviders.length ? 'mdi-check-circle-outline' : 'mdi-plus-circle-outline' }}</v-icon>
-                  <span><strong>Connect a model</strong><small>{{ readyProviders.length ? `${readyProviders.length} enabled profiles with credentials and a passed verification` : 'Add a provider and verify its connection' }}</small></span><v-icon size="18">mdi-arrow-right</v-icon>
+                  <v-icon :icon="readyProviders.length ? 'mdi-check-circle-outline' : 'mdi-plus-circle-outline'" :color="readyProviders.length ? 'success' : 'warning'" aria-hidden="true" />
+                  <span><strong>Connect a model</strong><small>{{ readyProviders.length ? `${readyProviders.length} enabled profiles with credentials and a passed verification` : 'Add a provider and verify its connection' }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" />
                 </button>
                 <button class="agent-setup__step" type="button" @click="tab = 'profiles'">
-                  <v-icon :color="defaultProvider ? 'success' : 'warning'">{{ defaultProvider ? 'mdi-check-circle-outline' : 'mdi-star-outline' }}</v-icon>
-                  <span><strong>Choose a workspace default</strong><small>{{ defaultProvider ? `${defaultProvider.displayName} · ${defaultProvider.model}` : 'Set a verified provider available to everyone as the fallback' }}</small></span><v-icon size="18">mdi-arrow-right</v-icon>
+                  <v-icon :icon="defaultProvider ? 'mdi-check-circle-outline' : 'mdi-star-outline'" :color="defaultProvider ? 'success' : 'warning'" aria-hidden="true" />
+                  <span><strong>Choose a workspace default</strong><small>{{ defaultProvider ? `${defaultProvider.displayName} · ${defaultProvider.model}` : 'Set a verified provider available to everyone as the fallback' }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" />
                 </button>
               </section>
               <aside class="agent-default">
@@ -94,9 +93,9 @@
                 <v-btn variant="tonal" color="primary" append-icon="mdi-arrow-right" @click="tab = 'profiles'">Manage providers</v-btn>
               </aside>
               <section class="agent-pathways" aria-label="Extend your agent">
-                <button type="button" @click="tab = 'skills'"><v-icon>mdi-book-open-variant-outline</v-icon><span><strong>Curate expertise</strong><small>Map wiki pages to approved skills and review changes before release.</small></span><v-icon size="18">mdi-arrow-right</v-icon></button>
-                <button type="button" @click="tab = 'tools'"><v-icon>mdi-connection</v-icon><span><strong>Connect another agent</strong><small>Explore tools, their permissions and the MCP connection details.</small></span><v-icon size="18">mdi-arrow-right</v-icon></button>
-                <button type="button" @click="tab = 'memory'"><v-icon>mdi-brain</v-icon><span><strong>Understand what persists</strong><small>Knowledge sources, personal memory and conversation retention.</small></span><v-icon size="18">mdi-arrow-right</v-icon></button>
+                <button type="button" @click="tab = 'skills'"><v-icon icon="mdi-book-open-variant-outline" aria-hidden="true" /><span><strong>Curate expertise</strong><small>Map wiki pages to approved skills and review changes before release.</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
+                <button type="button" @click="tab = 'tools'"><v-icon icon="mdi-connection" aria-hidden="true" /><span><strong>Connect another agent</strong><small>Explore tools, their permissions and the MCP connection details.</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
+                <button type="button" @click="tab = 'memory'"><v-icon icon="mdi-brain" aria-hidden="true" /><span><strong>Understand what persists</strong><small>Knowledge sources, personal memory and conversation retention.</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
               </section>
             </div>
           </section>
@@ -111,15 +110,15 @@
             <div class="agent-panel__header"><div><div class="agent-panel__eyebrow">Continuity & sources</div><h2>Knowledge & memory</h2><p>Understand what the Agent knows, who can access it, and how long it stays.</p></div></div>
             <div class="agent-panel__body">
               <div class="agent-memory-sources">
-                <article><v-icon>mdi-book-open-page-variant-outline</v-icon><h3>Wiki knowledge</h3><p>Pages are the shared source of truth. Search and page reads respect the current user's permissions and page rules.</p><a href="/a/search">Configure retrieval <v-icon size="16">mdi-arrow-right</v-icon></a></article>
-                <article><v-icon>mdi-file-certificate-outline</v-icon><h3>Approved expertise</h3><p>Organization skills package page instructions into reviewed revisions. Source changes require a new review before they replace the approved version.</p><button type="button" @click="tab = 'skills'">Manage skills <v-icon size="16">mdi-arrow-right</v-icon></button></article>
-                <article><v-icon>mdi-account-lock-outline</v-icon><h3>Personal memory</h3><p>Preferences and project notes belong to each user. Users review, edit and clear them in the Agent's Memory panel. MCP does not expose personal memory.</p><p>Updates are recalled in the next conversation; the current conversation keeps its starting snapshot.</p></article>
+                <article><v-icon icon="mdi-book-open-page-variant-outline" aria-hidden="true" /><h3>Wiki knowledge</h3><p>Pages are the shared source of truth. Search and page reads respect the current user's permissions and page rules.</p><a href="/a/search">Configure retrieval <v-icon icon="mdi-arrow-right" size="16" aria-hidden="true" /></a></article>
+                <article><v-icon icon="mdi-file-certificate-outline" aria-hidden="true" /><h3>Approved expertise</h3><p>Organization skills package page instructions into reviewed revisions. Source changes require a new review before they replace the approved version.</p><button type="button" @click="tab = 'skills'">Manage skills <v-icon icon="mdi-arrow-right" size="16" aria-hidden="true" /></button></article>
+                <article><v-icon icon="mdi-account-lock-outline" aria-hidden="true" /><h3>Personal memory</h3><p>Preferences and project notes belong to each user. Users review, edit and clear them in the Agent's Memory panel. MCP does not expose personal memory.</p><p>Updates are recalled in the next conversation; the current conversation keeps its starting snapshot.</p></article>
               </div>
               <section class="runtime-section">
                 <div class="section-heading"><div><h3>Conversation retention</h3><p>History is separate from personal memory. Deleting a conversation does not erase its owner's memory.</p></div></div>
                 <dl v-if="runtime" class="agent-retention">
                   <div><dt>Temporary conversations</dt><dd>{{ runtime.retention.temporarySessionHours }} hours</dd></div>
-                  <div><dt>Unfiled saved conversations</dt><dd>{{ runtime.retention.savedSessionDays }} days without activity</dd></div>
+                  <div><dt>Recent conversations (not in a folder)</dt><dd>{{ runtime.retention.savedSessionDays }} days without activity</dd></div>
                   <div><dt>Conversations in folders</dt><dd>Kept until removed from the folder or deleted</dd></div>
                   <div><dt>MCP proposal content</dt><dd>{{ runtime.retention.mcpContentDays }} days</dd></div>
                   <div><dt>Audit evidence</dt><dd>{{ runtime.retention.auditDays }} days</dd></div>
@@ -135,7 +134,7 @@
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
-                <span class="agent-panel__icon"><v-icon size="22">mdi-tune-variant</v-icon></span>
+                <span class="agent-panel__icon"><v-icon icon="mdi-tune-variant" size="22" aria-hidden="true" /></span>
                 <div>
                   <div class="agent-panel__eyebrow">Operational envelope</div>
                   <h2>Runtime policy</h2>
@@ -157,7 +156,7 @@
                 </div>
                 <div class="capability-map">
                   <div v-for="item in capabilityRows" :key="item.label" class="capability-item" :class="{ 'capability-item--enabled': item.enabled }">
-                    <span class="capability-item__state"><v-icon size="15">{{ item.enabled ? 'mdi-check' : 'mdi-minus' }}</v-icon></span>
+                    <span class="capability-item__state"><v-icon :icon="item.enabled ? 'mdi-check' : 'mdi-minus'" size="15" aria-hidden="true" /></span>
                     <span>{{ item.label }}</span>
                     <small>{{ item.enabled ? 'Available' : 'Blocked' }}</small>
                   </div>
@@ -167,24 +166,24 @@
                 <div class="section-heading"><div><h3>Operating limits</h3><p>Capacity, orchestration, continuity, and retention at a glance.</p></div></div>
                 <div class="policy-grid">
                   <article class="policy-card">
-                    <div class="policy-card__title"><span><v-icon size="19">mdi-gauge</v-icon></span><h4>Capacity</h4></div>
+                    <div class="policy-card__title"><span><v-icon icon="mdi-gauge" size="19" aria-hidden="true" /></span><h4>Capacity</h4></div>
                     <dl><div><dt>Concurrent runs</dt><dd>{{ runtime.quotas.globalConcurrency }} global</dd></div><div><dt>Per-user runs</dt><dd>{{ runtime.quotas.perUserConcurrency }}</dd></div><div><dt>SSE connections</dt><dd>{{ runtime.quotas.maximumSseConnectionsPerUser }} per user</dd></div><div><dt>Reconciliation</dt><dd>{{ runtime.quotas.pollingMilliseconds }} ms</dd></div></dl>
                   </article>
                   <article class="policy-card">
-                    <div class="policy-card__title"><span><v-icon size="19">mdi-account-multiple-outline</v-icon></span><h4>Specialist research</h4></div>
+                    <div class="policy-card__title"><span><v-icon icon="mdi-account-multiple-outline" size="19" aria-hidden="true" /></span><h4>Specialist research</h4></div>
                     <dl><div><dt>Concurrent specialists</dt><dd>{{ runtime.orchestration.maxConcurrentChildren }}</dd></div><div><dt>Tasks per response</dt><dd>{{ runtime.orchestration.maxChildren }}</dd></div><div><dt>Specialist deadline</dt><dd>{{ runtime.orchestration.childTimeoutMilliseconds / 1000 }} sec</dd></div><div><dt>Aggregate tokens</dt><dd>{{ runtime.orchestration.maxAggregateChildTokens }}</dd></div></dl>
                   </article>
                   <article class="policy-card">
-                    <div class="policy-card__title"><span><v-icon size="19">mdi-target</v-icon></span><h4>Durable goals</h4></div>
+                    <div class="policy-card__title"><span><v-icon icon="mdi-target" size="19" aria-hidden="true" /></span><h4>Durable goals</h4></div>
                     <dl><div><dt>Continuations</dt><dd>{{ runtime.goals.maxContinuations }}</dd></div><div><dt>Aggregate tokens</dt><dd>{{ runtime.goals.maxTokens }}</dd></div><div><dt>Tool calls</dt><dd>{{ runtime.goals.maxToolCalls }}</dd></div><div><dt>Maximum duration</dt><dd>{{ runtime.goals.maxDurationMilliseconds / 60000 }} min</dd></div></dl>
                   </article>
                   <article class="policy-card">
-                    <div class="policy-card__title"><span><v-icon size="19">mdi-archive-clock-outline</v-icon></span><h4>Retention</h4></div>
+                    <div class="policy-card__title"><span><v-icon icon="mdi-archive-clock-outline" size="19" aria-hidden="true" /></span><h4>Retention</h4></div>
                     <dl><div><dt>Temporary sessions</dt><dd>{{ runtime.retention.temporarySessionHours }} hr</dd></div><div><dt>MCP proposals</dt><dd>{{ runtime.retention.mcpContentDays }} days</dd></div><div><dt>Audit ledger</dt><dd>{{ runtime.retention.auditDays }} days</dd></div><div><dt>Maintenance batch</dt><dd>{{ runtime.retention.maintenanceBatchSize }}</dd></div></dl>
                   </article>
                 </div>
               </section>
-              <aside class="metrics-note"><span><v-icon size="20">mdi-chart-timeline-variant-shimmer</v-icon></span><div><strong>Metrics and health remain isolated</strong><p>Run, proposal, artifact, and usage gauges are exported through the metrics endpoint. Provider, browser-worker, and MCP failures do not affect <code>/healthz</code>.</p></div></aside>
+              <aside class="metrics-note"><span><v-icon icon="mdi-chart-timeline-variant-shimmer" size="20" aria-hidden="true" /></span><div><strong>Metrics and health remain isolated</strong><p>Run, proposal, artifact, and usage gauges are exported through the metrics endpoint. Provider, browser-worker, and MCP failures do not affect <code>/healthz</code>.</p></div></aside>
             </div>
           </section>
         </v-window-item>
@@ -193,7 +192,7 @@
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
-                <span class="agent-panel__icon agent-panel__icon--violet"><v-icon size="22">mdi-brain</v-icon></span>
+                <span class="agent-panel__icon agent-panel__icon--violet"><v-icon icon="mdi-brain" size="22" aria-hidden="true" /></span>
                 <div>
                   <div class="agent-panel__eyebrow">Inference foundation</div>
                   <h2>Provider profiles</h2>
@@ -205,9 +204,9 @@
             <div class="agent-panel__body">
               <v-progress-linear v-if="loading" indeterminate class="mb-4" aria-label="Loading provider profiles" />
               <aside class="provider-policy-strip" aria-label="Provider governance">
-                <span><v-icon size="17">mdi-connection</v-icon><strong>Verify</strong>Live capability check on every save</span>
-                <span><v-icon size="17">mdi-key-outline</v-icon><strong>Protect</strong>Credentials remain server-managed</span>
-                <span><v-icon size="17">mdi-account-lock-outline</v-icon><strong>Scope</strong>Access follows explicit grants</span>
+                <span><v-icon icon="mdi-connection" size="17" aria-hidden="true" /><strong>Verify</strong>Live capability check on every save</span>
+                <span><v-icon icon="mdi-key-outline" size="17" aria-hidden="true" /><strong>Protect</strong>Credentials remain server-managed</span>
+                <span><v-icon icon="mdi-account-lock-outline" size="17" aria-hidden="true" /><strong>Scope</strong>Access follows explicit grants</span>
               </aside>
               <v-alert v-if="runtime?.providerEnabled === false" type="info" variant="tonal" class="mb-4">Provider administration is unavailable while provider inference is disabled in deployment configuration. Enable <code>agents.provider.enabled</code>, configure the provider runtime keys, and restart Wiki before adding profiles.</v-alert>
               <v-alert v-if="profiles.some(profile => !profile.secretConfigured)" type="warning" variant="tonal" class="mb-4">A provider credential is unavailable. Edit the profile and enter its API key to verify and enable it.</v-alert>
@@ -220,7 +219,7 @@
               <div v-if="filteredProfiles.length" class="provider-grid">
                 <article v-for="profile in filteredProfiles" :key="profile.id" class="provider-card">
                   <div class="provider-card__top">
-                    <span class="provider-card__mark"><v-icon size="23">mdi-creation-outline</v-icon></span>
+                    <span class="provider-card__mark"><v-icon icon="mdi-creation-outline" size="23" aria-hidden="true" /></span>
                     <div class="provider-card__identity">
                       <div class="provider-card__name"><h3>{{ profile.displayName }}</h3><v-chip v-if="profile.isGlobalDefault" size="x-small" color="primary" variant="tonal">Default</v-chip></div>
                       <p>{{ agentProviderProtocolOption(profile.transportKind).title }}</p>
@@ -242,7 +241,7 @@
                   </div>
                   <div class="provider-card__status">
                     <span :class="['connection-state', `connection-state--${profile.conformed ? 'success' : profile.connectionCheck?.status === 'failed' ? 'error' : 'neutral'}`]">
-                      <v-icon size="15">{{ profile.conformed ? 'mdi-check-circle' : profile.connectionCheck?.status === 'failed' ? 'mdi-alert-circle' : 'mdi-clock-outline' }}</v-icon>
+                      <v-icon :icon="profile.conformed ? 'mdi-check-circle' : profile.connectionCheck?.status === 'failed' ? 'mdi-alert-circle' : 'mdi-clock-outline'" size="15" aria-hidden="true" />
                       {{ profile.conformed ? 'Connection verified' : profile.connectionCheck?.status === 'failed' ? 'Connection failed' : 'Not verified' }}
                     </span>
                     <span :class="['connection-state', profile.status === 'enabled' ? 'connection-state--success' : 'connection-state--neutral']"><span class="connection-state__dot" />{{ profile.status === 'enabled' ? 'Enabled' : 'Disabled' }}</span>
@@ -254,10 +253,10 @@
                   </div>
                   <p v-if="!profile.conformed && profile.connectionCheck?.message" class="provider-card__error">{{ profile.connectionCheck.message }}</p>
                   <div class="provider-card__meta">
-                    <div><v-icon size="17">mdi-account-multiple-outline</v-icon><span><small>Available to</small><strong>{{ profile.exposureMode === 'all_agent_users' ? 'Everyone' : groupNames(profile.groupIds) }}</strong></span></div>
-                    <div><v-icon size="17">mdi-server-outline</v-icon><span><small>Destination</small><strong>{{ profile.destinationHost }}</strong></span></div>
+                    <div><v-icon icon="mdi-account-multiple-outline" size="17" aria-hidden="true" /><span><small>Available to</small><strong>{{ profile.exposureMode === 'all_agent_users' ? 'Everyone' : groupNames(profile.groupIds) }}</strong></span></div>
+                    <div><v-icon icon="mdi-server-outline" size="17" aria-hidden="true" /><span><small>Destination</small><strong>{{ profile.destinationHost }}</strong></span></div>
                   </div>
-                  <button type="button" class="provider-card__edit" :disabled="Boolean(actionBusyKey)" @click="openProfile(profile)">Open configuration <v-icon size="17">mdi-arrow-right</v-icon></button>
+                  <button type="button" class="provider-card__edit" :disabled="Boolean(actionBusyKey)" @click="openProfile(profile)">Open configuration <v-icon icon="mdi-arrow-right" size="17" aria-hidden="true" /></button>
                 </article>
               </div>
               <div v-else-if="profiles.length" class="agent-empty">
@@ -265,7 +264,7 @@
                 <v-btn variant="tonal" @click="providerQuery = ''; providerState = 'all'">Clear filters</v-btn>
               </div>
               <div v-else-if="dataLoaded" class="agent-empty">
-                <span class="agent-empty__icon"><v-icon size="34">mdi-brain</v-icon></span>
+                <span class="agent-empty__icon"><v-icon icon="mdi-brain" size="34" aria-hidden="true" /></span>
                 <h3>Connect the first provider</h3>
                 <p>Start with the model your team trusts. Wiki verifies the connection and capabilities before making it available.</p>
                 <v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true || Boolean(actionBusyKey)" @click="openProfile()">Add provider</v-btn>
@@ -283,7 +282,7 @@
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
-                <span class="agent-panel__icon agent-panel__icon--teal"><v-icon size="22">mdi-web-check</v-icon></span>
+                <span class="agent-panel__icon agent-panel__icon--teal"><v-icon icon="mdi-web-check" size="22" aria-hidden="true" /></span>
                 <div>
                   <div class="agent-panel__eyebrow">Network boundary</div>
                   <h2>Browser access</h2>
@@ -296,7 +295,7 @@
               <v-progress-linear v-if="loading" indeterminate class="mb-4" aria-label="Loading browser targets" />
               <v-alert v-if="runtime?.browserEnabled === false" type="info" variant="tonal" density="compact" class="mb-4">The isolated browser is paused by deployment policy. Targets remain editable here and take effect only after the runtime boundary is enabled.</v-alert>
               <aside class="browser-boundary-note">
-                <v-icon size="19">mdi-shield-key-outline</v-icon>
+                <v-icon icon="mdi-shield-key-outline" size="19" aria-hidden="true" />
                 <span><strong>Exact destinations only.</strong> Each HTTPS URL is canonicalized, hashed into policy evidence, and can be paused without removing the record.</span>
               </aside>
               <div v-if="browserTargets.length" class="provider-inventory-toolbar" role="search" aria-label="Find browser destinations">
@@ -306,7 +305,7 @@
               <p v-if="browserTargets.length" class="provider-inventory-count" role="status">{{ filteredBrowserTargets.length }} of {{ browserTargets.length }} destinations</p>
               <div v-if="filteredBrowserTargets.length" class="target-list">
                 <article v-for="target in filteredBrowserTargets" :key="target.id" class="target-row">
-                  <span class="target-row__icon"><v-icon size="20">mdi-lock-outline</v-icon></span>
+                  <span class="target-row__icon"><v-icon icon="mdi-lock-outline" size="20" aria-hidden="true" /></span>
                   <div class="target-row__copy"><strong :title="target.canonicalUrl">{{ target.canonicalUrl }}</strong><small :title="`Policy ${target.policySha256}`">Policy {{ target.policySha256.slice(0, 16) }}…</small></div>
                   <div class="target-row__state"><span>{{ target.enabled ? 'Allowed' : 'Paused' }}</span><v-switch :model-value="target.enabled" color="primary" hide-details inset :loading="actionBusyKey === `browser:${target.id}`" :disabled="Boolean(actionBusyKey)" :aria-label="`${target.enabled ? 'Pause' : 'Allow'} browser target ${target.canonicalUrl}`" @update:model-value="value => setBrowserEnabled(target, Boolean(value))" /></div>
                 </article>
@@ -315,7 +314,7 @@
                 <h3>No destinations match</h3><v-btn variant="tonal" @click="browserQuery = ''; browserState = 'all'">Clear filters</v-btn>
               </div>
               <div v-else-if="dataLoaded" class="agent-empty">
-                <span class="agent-empty__icon agent-empty__icon--teal"><v-icon size="34">mdi-web-off</v-icon></span>
+                <span class="agent-empty__icon agent-empty__icon--teal"><v-icon icon="mdi-web-off" size="34" aria-hidden="true" /></span>
                 <h3>No browser destinations approved</h3>
                 <v-btn color="primary" prepend-icon="mdi-plus" :disabled="Boolean(actionBusyKey)" @click="openBrowserDialog">Add target</v-btn>
               </div>
@@ -327,14 +326,14 @@
 
     <v-dialog v-model="connectionHistoryDialog" max-width="46rem" scrollable aria-labelledby="connection-history-title">
       <v-card class="compact-dialog">
-        <div class="compact-dialog__header"><span><v-icon>mdi-history</v-icon></span><div><h2 id="connection-history-title">Connection history</h2><p>{{ connectionHistoryProfile?.displayName }} · latest 20 checks</p></div></div>
+        <div class="compact-dialog__header"><span><v-icon icon="mdi-history" aria-hidden="true" /></span><div><h2 id="connection-history-title">Connection history</h2><p>{{ connectionHistoryProfile?.displayName }} · latest 20 checks</p></div></div>
         <v-card-text>
           <v-progress-linear v-if="connectionHistoryLoading" indeterminate aria-label="Loading connection history" />
           <v-alert v-else-if="connectionHistoryError" type="error" variant="tonal">{{ connectionHistoryError }}<template #append><v-btn variant="text" @click="loadConnectionHistory">Retry</v-btn></template></v-alert>
           <p v-else-if="!connectionHistory.length">No connection checks have been recorded. Use Test connection on the provider to run a verification.</p>
           <div v-else class="connection-history">
             <details v-for="check in connectionHistory" :key="check.id">
-              <summary><v-icon :color="check.status === 'passed' ? 'success' : 'error'" size="20">{{ check.status === 'passed' ? 'mdi-check-circle-outline' : 'mdi-alert-circle-outline' }}</v-icon><strong>{{ check.status === 'passed' ? 'Passed' : 'Failed' }}</strong><time :datetime="check.completedAt">{{ formatConnectionCheckDate(check.completedAt) }}</time></summary>
+              <summary><v-icon :icon="check.status === 'passed' ? 'mdi-check-circle-outline' : 'mdi-alert-circle-outline'" :color="check.status === 'passed' ? 'success' : 'error'" size="20" aria-hidden="true" /><strong>{{ check.status === 'passed' ? 'Passed' : 'Failed' }}</strong><time :datetime="check.completedAt">{{ formatConnectionCheckDate(check.completedAt) }}</time></summary>
               <p v-if="check.message">{{ check.message }}</p>
               <ul><li v-for="probe in check.checks" :key="probe.name"><strong>{{ probe.passed ? 'Passed' : 'Failed' }} · {{ probe.name }}</strong><p v-if="probe.detail">{{ probe.detail }}</p></li></ul>
             </details>
@@ -347,7 +346,7 @@
     <v-dialog :model-value="profileDialog" max-width="76rem" scrollable :fullscreen="smAndDown" :persistent="saving" aria-labelledby="provider-profile-title" @update:model-value="onProfileDialogModelValue">
       <v-card class="profile-editor" :aria-busy="saving">
         <div class="profile-editor__header">
-          <span class="profile-editor__mark"><v-icon size="24">mdi-creation-outline</v-icon></span>
+          <span class="profile-editor__mark"><v-icon icon="mdi-creation-outline" size="24" aria-hidden="true" /></span>
           <div class="profile-editor__title">
             <div class="agent-panel__eyebrow">{{ editingProfile ? 'Provider configuration' : 'New inference connection' }}</div>
             <h2 id="provider-profile-title">{{ editingProfile ? `Edit ${editingProfile.displayName}` : 'Add provider profile' }}</h2>
@@ -365,14 +364,14 @@
             <button v-for="(step, index) in profileSteps" :key="step.value" type="button" :class="{ 'profile-step--active': profileStep === step.value }" :aria-current="profileStep === step.value ? 'step' : undefined" :disabled="!canNavigateProfileStep(index)" @click="profileStep = step.value">
               <span class="profile-step__index">{{ index + 1 }}</span>
               <span><strong>{{ step.title }}</strong><small>{{ step.description }}</small></span>
-              <v-icon size="17">mdi-chevron-right</v-icon>
+              <v-icon icon="mdi-chevron-right" size="17" aria-hidden="true" />
             </button>
           </nav>
           <v-form id="provider-profile-form" class="profile-editor__form" @submit.prevent="submitProfileStep">
             <v-alert v-if="profileError" type="error" variant="tonal" density="compact" class="mb-5" closable role="alert" @click:close="profileError = ''">{{ profileError }}</v-alert>
 
             <section v-if="profileStep === 'identity'" class="profile-form-section">
-              <div class="profile-form-section__intro"><span><v-icon size="21">mdi-card-account-details-outline</v-icon></span><div><h3>Name the connection</h3><p>Choose the API contract first; Wiki derives the safe behavior from it.</p></div></div>
+              <div class="profile-form-section__intro"><span><v-icon icon="mdi-card-account-details-outline" size="21" aria-hidden="true" /></span><div><h3>Name the connection</h3><p>Choose the API contract first; Wiki derives the safe behavior from it.</p></div></div>
               <div class="form-grid">
                 <v-text-field v-model="profileDraft.displayName" :rules="profileDisplayNameRules" label="Display name" placeholder="Production Agent" maxlength="255" counter="255" required autofocus />
                 <div class="protocol-field">
@@ -382,34 +381,34 @@
                       <v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="internalItem.raw.description" />
                     </template>
                   </v-select>
-                  <div class="field-note"><v-icon size="16">mdi-information-outline</v-icon><span>{{ selectedProtocol.description }} Requests use <code>{{ selectedProtocol.endpoint }}</code>.</span></div>
+                  <div class="field-note"><v-icon icon="mdi-information-outline" size="16" aria-hidden="true" /><span>{{ selectedProtocol.description }} Requests use <code>{{ selectedProtocol.endpoint }}</code>.</span></div>
                 </div>
               </div>
-              <aside class="selection-preview"><span class="selection-preview__icon"><v-icon size="22">mdi-api</v-icon></span><div><small>Selected protocol</small><strong>{{ selectedProtocol.title }}</strong><p>{{ selectedProtocol.group }} · {{ selectedProtocol.endpoint }}</p></div></aside>
+              <aside class="selection-preview"><span class="selection-preview__icon"><v-icon icon="mdi-api" size="22" aria-hidden="true" /></span><div><small>Selected protocol</small><strong>{{ selectedProtocol.title }}</strong><p>{{ selectedProtocol.group }} · {{ selectedProtocol.endpoint }}</p></div></aside>
             </section>
 
             <section v-else-if="profileStep === 'models'" class="profile-form-section">
-              <div class="profile-form-section__intro"><span><v-icon size="21">mdi-brain</v-icon></span><div><h3>Assign model roles</h3><p>Use one capable model for Agent work and, optionally, a faster model for bounded utility tasks.</p></div></div>
+              <div class="profile-form-section__intro"><span><v-icon icon="mdi-brain" size="21" aria-hidden="true" /></span><div><h3>Assign model roles</h3><p>Use one capable model for Agent work and, optionally, a faster model for bounded utility tasks.</p></div></div>
               <div class="form-grid">
                 <v-text-field v-model="profileDraft.model" :rules="profileModelRules" label="Agent model" :hint="agentModelHint" maxlength="255" persistent-hint required />
                 <v-text-field v-model="profileDraft.utilityModel" label="Utility model (optional)" hint="Titles, enrichment, classification, and routing. Leave blank to share the Agent model." maxlength="255" persistent-hint />
               </div>
               <div v-if="reasoningEffortOptions.length > 1" class="subsection-card">
-                <div class="subsection-card__heading"><div><h4>Reasoning effort</h4><p>{{ reasoningSupportHint }}</p></div><v-icon size="20">mdi-head-cog-outline</v-icon></div>
+                <div class="subsection-card__heading"><div><h4>Reasoning effort</h4><p>{{ reasoningSupportHint }}</p></div><v-icon icon="mdi-head-cog-outline" size="20" aria-hidden="true" /></div>
                 <div class="form-grid">
                   <v-select v-model="profileDraft.agentReasoningEffort" :items="reasoningEffortOptions" label="Agent reasoning" hint="Depth for answers and Wiki actions." persistent-hint />
                   <v-select v-model="profileDraft.utilityReasoningEffort" :items="reasoningEffortOptions" label="Utility reasoning" hint="Independent depth for bounded tasks." persistent-hint />
                 </div>
               </div>
               <div v-if="profileDraft.transportKind === 'gemini-api'" class="subsection-card">
-                <div class="subsection-card__heading"><div><h4>Media &amp; attachments</h4><p>Choose what this provider makes available in chat. Each capability stays hidden until enabled here.</p></div><v-icon size="20">mdi-image-outline</v-icon></div>
+                <div class="subsection-card__heading"><div><h4>Media &amp; attachments</h4><p>Choose what this provider makes available in chat. Each capability stays hidden until enabled here.</p></div><v-icon icon="mdi-image-outline" size="20" aria-hidden="true" /></div>
                 <v-switch v-model="profileDraft.mediaAttachments" label="PDF and image attachments" color="primary" hide-details />
                 <p class="text-body-2 mb-2">Attach up to four files: PDFs up to 250 MB, images up to 10 MB. Large PDFs are prepared automatically, preserving page content and numbering.</p>
                 <details class="media-storage-help mb-3">
                   <summary>Privacy, retention and storage</summary>
                   <dl>
                     <dt>Privacy and limits</dt><dd>Files stay private to the conversation and are sent to Google when used. A request can include up to 1,000 PDF pages, within the model’s context limit.</dd>
-                    <dt>Conversation retention</dt><dd>Originals and generated media follow the configured conversation policy. By default, unfiled saved conversations are removed after 90 days without activity. Conversations kept in folders remain until deleted.</dd>
+                    <dt>Conversation retention</dt><dd>Originals and generated media follow the configured conversation policy. By default, recent conversations that are not in a folder are removed after 90 days without activity. Conversations kept in folders remain until deleted.</dd>
                     <dt>Storage</dt><dd>Saved originals are limited to 1 GB per user and 10 GB overall. Prepared PDFs are cached privately for up to six hours, with limits of 1 GB per user and 2 GB overall.</dd>
                   </dl>
                 </details>
@@ -446,20 +445,20 @@
                 <p class="text-body-2 mt-3">Uses this profile’s Google credential and usage limits. Files are checked against the context limit before inference. Requires the official Google API endpoint. A rate of 1,000,000 microdollars equals $1 per million tokens.</p>
               </div>
               <div class="subsection-card">
-                <div class="subsection-card__heading"><div><h4>Tool calling</h4><p>How this model invokes governed Wiki actions.</p></div><v-icon size="20">mdi-tools</v-icon></div>
+                <div class="subsection-card__heading"><div><h4>Tool calling</h4><p>How this model invokes governed Wiki actions.</p></div><v-icon icon="mdi-tools" size="20" aria-hidden="true" /></div>
                 <v-select v-model="profileDraft.toolCalling" :items="toolCallingOptions" label="Tool calling" :disabled="profileDraft.transportKind === 'legacy-completions'" hint="Native uses the API contract. Prompt-emulated supports models without native tools and is verified before enablement." persistent-hint @update:model-value="selectToolCalling" />
               </div>
             </section>
 
             <section v-else-if="profileStep === 'connection'" class="profile-form-section">
-              <div class="profile-form-section__intro"><span><v-icon size="21">mdi-connection</v-icon></span><div><h3>Secure the connection</h3><p>Credentials stay server-managed and every save performs a live capability check.</p></div></div>
+              <div class="profile-form-section__intro"><span><v-icon icon="mdi-connection" size="21" aria-hidden="true" /></span><div><h3>Secure the connection</h3><p>Credentials stay server-managed and every save performs a live capability check.</p></div></div>
               <div class="form-grid">
                 <v-text-field v-model="profileDraft.baseUrl" :rules="providerBaseUrlRules" label="Base URL" hint="Public HTTPS API root or base path; query strings, fragments, credentials, and local destinations are not allowed." persistent-hint autocomplete="url" spellcheck="false" required />
                 <v-select v-if="availableAuthModes.length > 1" v-model="profileDraft.authMode" :items="availableAuthModes" label="Authentication mode" />
                 <v-text-field class="secret-field" v-model="profileDraft.secretValue" :rules="profileSecretRules" label="API key" type="password" autocomplete="new-password" :hint="editingProfile && editingProfile.secretConfigured ? 'Leave blank to retain the current encrypted credential, or enter a replacement.' : 'Encrypted with the server-managed provider key and never returned by the API.'" persistent-hint :required="!editingProfile || !editingProfile.secretConfigured" prepend-inner-icon="mdi-key-outline" />
               </div>
               <div class="protocol-behavior">
-                <div class="protocol-behavior__heading"><span><v-icon size="19">mdi-shield-check-outline</v-icon></span><div><h4>Protocol-derived behavior</h4><p>Wiki verifies the provider connection automatically after every save. A new profile is enabled only after that check succeeds.</p></div></div>
+                <div class="protocol-behavior__heading"><span><v-icon icon="mdi-shield-check-outline" size="19" aria-hidden="true" /></span><div><h4>Protocol-derived behavior</h4><p>Wiki verifies the provider connection automatically after every save. A new profile is enabled only after that check succeeds.</p></div></div>
                 <dl class="protocol-summary">
                   <div v-for="row in protocolBehaviorRows" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
                 </dl>
@@ -467,20 +466,20 @@
             </section>
 
             <section v-else-if="profileStep === 'access'" class="profile-form-section">
-              <div class="profile-form-section__intro"><span><v-icon size="21">mdi-account-multiple-outline</v-icon></span><div><h3>Choose the audience</h3><p>Make this profile a workspace option or limit it to selected Wiki groups.</p></div></div>
+              <div class="profile-form-section__intro"><span><v-icon icon="mdi-account-multiple-outline" size="21" aria-hidden="true" /></span><div><h3>Choose the audience</h3><p>Make this profile a workspace option or limit it to selected Wiki groups.</p></div></div>
               <div class="access-choice">
                 <label v-for="mode in exposureModes" :key="mode.value" :class="{ 'access-choice__item--active': profileDraft.exposureMode === mode.value }">
                   <input v-model="profileDraft.exposureMode" type="radio" :value="mode.value">
-                  <span class="access-choice__icon"><v-icon size="23">{{ mode.value === 'all_agent_users' ? 'mdi-account-group-outline' : 'mdi-account-lock-outline' }}</v-icon></span>
+                  <span class="access-choice__icon"><v-icon :icon="mode.value === 'all_agent_users' ? 'mdi-account-group-outline' : 'mdi-account-lock-outline'" size="23" aria-hidden="true" /></span>
                   <span><strong>{{ mode.title }}</strong><small>{{ mode.value === 'all_agent_users' ? 'Every user with Agent permission can select it.' : 'Only members of the groups you choose can access it.' }}</small></span>
-                  <v-icon class="access-choice__check" size="20">{{ profileDraft.exposureMode === mode.value ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank' }}</v-icon>
+                  <v-icon :icon="profileDraft.exposureMode === mode.value ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" class="access-choice__check" size="20" aria-hidden="true" />
                 </label>
               </div>
               <v-autocomplete v-if="profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" class="mt-5" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this provider through any selected group." persistent-hint />
             </section>
 
             <section v-else class="profile-form-section">
-              <div class="profile-form-section__intro"><span><v-icon size="21">mdi-gauge</v-icon></span><div><h3>Advanced limits and quotas</h3><p>Bound context, output, retries, time, and reservations for this profile.</p></div></div>
+              <div class="profile-form-section__intro"><span><v-icon icon="mdi-gauge" size="21" aria-hidden="true" /></span><div><h3>Advanced limits and quotas</h3><p>Bound context, output, retries, time, and reservations for this profile.</p></div></div>
               <v-alert type="info" variant="tonal" density="compact" class="mb-5">These safe defaults suit most deployments. Cost values are reservation ceilings enforced against this profile revision's immutable token pricing schedule.</v-alert>
               <div class="limit-group">
                 <h4>Model boundaries</h4>
@@ -507,7 +506,7 @@
             <span>{{ profileStepIndex + 1 }} of {{ profileSteps.length }} · {{ profileDirty ? 'Changes not yet saved' : 'Draft matches saved state' }}</span>
           </div>
           <div class="profile-editor__save-state" role="status" aria-live="polite">
-            <v-icon size="17">{{ saving ? 'mdi-progress-clock' : profileDirty ? 'mdi-circle-edit-outline' : 'mdi-shield-check-outline' }}</v-icon>
+            <v-icon :icon="saving ? 'mdi-progress-clock' : profileDirty ? 'mdi-circle-edit-outline' : 'mdi-shield-check-outline'" size="17" aria-hidden="true" />
             <span>{{ saving ? 'Verifying provider capabilities…' : profileDirty ? 'Ready to review and save' : 'Configuration unchanged' }}</span>
           </div>
           <v-spacer />
@@ -521,7 +520,7 @@
     </v-dialog>
     <v-dialog v-model="profileDiscardDialog" max-width="32rem" aria-labelledby="provider-discard-title">
       <v-card class="compact-dialog">
-        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-alert-outline</v-icon></span><div><div class="agent-panel__eyebrow">Unsaved configuration</div><h2 id="provider-discard-title">Discard provider changes?</h2><p>Your edits have not been verified or saved.</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon icon="mdi-alert-outline" size="23" aria-hidden="true" /></span><div><div class="agent-panel__eyebrow">Unsaved configuration</div><h2 id="provider-discard-title">Discard provider changes?</h2><p>Your edits have not been verified or saved.</p></div></div>
         <v-card-text>Keep editing to review the draft, or discard every change made since this editor was opened.</v-card-text>
         <v-card-actions><v-spacer /><v-btn @click="profileDiscardDialog = false">Keep editing</v-btn><v-btn color="error" variant="tonal" @click="discardProfileChanges">Discard changes</v-btn></v-card-actions>
       </v-card>
@@ -529,7 +528,7 @@
 
     <v-dialog :model-value="enablingProfile !== null" max-width="34rem" :persistent="Boolean(actionBusyKey)" aria-labelledby="provider-enable-title" @update:model-value="value => { if (!value && !actionBusyKey) enablingProfile = null }">
       <v-card class="compact-dialog" :aria-busy="actionBusyKey.startsWith('enabled:')">
-        <div class="compact-dialog__header"><span><v-icon size="23">mdi-play-circle-outline</v-icon></span><div><div class="agent-panel__eyebrow">Enablement review</div><h2 id="provider-enable-title">Enable provider profile?</h2><p>New Agent runs will be able to use this connection.</p></div></div>
+        <div class="compact-dialog__header"><span><v-icon icon="mdi-play-circle-outline" size="23" aria-hidden="true" /></span><div><div class="agent-panel__eyebrow">Enablement review</div><h2 id="provider-enable-title">Enable provider profile?</h2><p>New Agent runs will be able to use this connection.</p></div></div>
         <v-card-text><v-alert v-if="enableError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ enableError }}</v-alert><p><strong>{{ enablingProfile?.displayName }}</strong> has a verified connection and will become available to {{ enablingProfile?.exposureMode === 'all_agent_users' ? 'every Agent user' : groupNames(enablingProfile?.groupIds ?? []) }}.</p><v-alert v-if="enablingProfile && willBecomeDefault(enablingProfile)" type="warning" variant="tonal" density="compact">No global default exists. Enabling this profile will also make it the workspace default for every Agent user.</v-alert></v-card-text>
         <v-card-actions><v-spacer /><v-btn :disabled="Boolean(actionBusyKey)" @click="enablingProfile = null">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-play-circle-outline" :loading="actionBusyKey.startsWith('enabled:')" :disabled="Boolean(actionBusyKey)" @click="enableConfirmedProfile">Enable provider</v-btn></v-card-actions>
       </v-card>
@@ -537,7 +536,7 @@
 
     <v-dialog :model-value="browserEnableTarget !== null" max-width="36rem" :persistent="Boolean(actionBusyKey)" aria-labelledby="browser-enable-title" @update:model-value="value => { if (!value && !actionBusyKey) browserEnableTarget = null }">
       <v-card class="compact-dialog" :aria-busy="actionBusyKey.startsWith('browser:')">
-        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-check</v-icon></span><div><div class="agent-panel__eyebrow">Network allowlist review</div><h2 id="browser-enable-title">Allow this browser target?</h2><p>The isolated browser will be permitted to request this exact destination.</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon icon="mdi-web-check" size="23" aria-hidden="true" /></span><div><div class="agent-panel__eyebrow">Network allowlist review</div><h2 id="browser-enable-title">Allow this browser target?</h2><p>The isolated browser will be permitted to request this exact destination.</p></div></div>
         <v-card-text><v-alert v-if="browserEnableError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ browserEnableError }}</v-alert><p class="browser-confirm-url"><code>{{ browserEnableTarget?.canonicalUrl }}</code></p><p class="mb-0">Only this canonical URL is approved. The recorded policy hash remains unchanged.</p></v-card-text>
         <v-card-actions><v-spacer /><v-btn :disabled="Boolean(actionBusyKey)" @click="browserEnableTarget = null">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-shield-check-outline" :loading="actionBusyKey.startsWith('browser:')" :disabled="Boolean(actionBusyKey)" @click="allowConfirmedBrowserTarget">Allow target</v-btn></v-card-actions>
       </v-card>
@@ -546,7 +545,7 @@
 
     <v-dialog :model-value="removingProfile !== null" max-width="34rem" :persistent="actionBusyKey === 'remove'" aria-labelledby="provider-remove-title" @update:model-value="value => { if (!value) removingProfile = null }">
       <v-card class="compact-dialog" :aria-busy="actionBusyKey === 'remove'">
-        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-delete-outline</v-icon></span><div><div class="agent-panel__eyebrow">Destructive operation</div><h2 id="provider-remove-title">Remove provider profile?</h2><p>This cannot be undone.</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon icon="mdi-delete-outline" size="23" aria-hidden="true" /></span><div><div class="agent-panel__eyebrow">Destructive operation</div><h2 id="provider-remove-title">Remove provider profile?</h2><p>This cannot be undone.</p></div></div>
         <v-card-text><v-alert v-if="removeError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ removeError }}</v-alert><p><strong>{{ removingProfile?.displayName }}</strong> will no longer be available to sessions or new runs.</p><p class="mb-0">The configuration is removed from use and its server-managed API keys are permanently deleted. Audit records are retained.</p></v-card-text>
         <v-alert v-if="removingProfile?.isGlobalDefault" class="mx-6 mt-4 mb-0" type="warning" variant="tonal" density="compact">This is the global default. Removing it leaves new conversations without a default until another enabled provider is selected.</v-alert>
         <v-card-actions><v-spacer /><v-btn :disabled="Boolean(actionBusyKey)" @click="removingProfile = null">Cancel</v-btn><v-btn color="error" prepend-icon="mdi-delete-forever-outline" :loading="actionBusyKey === 'remove'" :disabled="Boolean(actionBusyKey)" @click="removeProfile">{{ removingProfile?.isGlobalDefault ? 'Remove default provider' : 'Remove provider' }}</v-btn></v-card-actions>
@@ -555,16 +554,16 @@
 
     <v-dialog v-model="grantsDialog" max-width="40rem" scrollable :persistent="actionBusyKey === 'grants'" aria-labelledby="provider-grants-title">
       <v-card class="compact-dialog">
-        <div class="compact-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><h2 id="provider-grants-title">{{ grantProfile ? `Access for ${grantProfile.displayName}` : 'Provider access' }}</h2><p>Control who can discover and use this profile.</p></div></div>
+        <div class="compact-dialog__header"><span><v-icon icon="mdi-account-multiple-outline" size="23" aria-hidden="true" /></span><div><h2 id="provider-grants-title">{{ grantProfile ? `Access for ${grantProfile.displayName}` : 'Provider access' }}</h2><p>Control who can discover and use this profile.</p></div></div>
         <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" label="Available to" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this provider through any selected group." persistent-hint /><v-alert class="mt-4" type="info" variant="tonal" density="compact">The global default is available to everyone. Group-assigned profiles augment that default and appear as a session choice only when a user has more than one available profile.</v-alert></v-card-text>
         <v-alert v-if="grantProfile?.isGlobalDefault && grantsDirty" class="mx-6 mt-4 mb-0" type="warning" variant="tonal" density="compact">Saving any access change clears this profile as the global default. Choose another global default before the next Agent conversation.</v-alert>
-        <v-card-actions><span class="compact-dialog__audit"><v-icon size="16">mdi-text-box-check-outline</v-icon>Access changes are audited</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="grantsDialog = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || !grantsDirty || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">{{ grantProfile?.isGlobalDefault ? 'Save and clear default' : 'Save access' }}</v-btn></v-card-actions>
+        <v-card-actions><span class="compact-dialog__audit"><v-icon icon="mdi-text-box-check-outline" size="16" aria-hidden="true" />Access changes are audited</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="grantsDialog = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || !grantsDirty || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">{{ grantProfile?.isGlobalDefault ? 'Save and clear default' : 'Save access' }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
     <v-dialog v-model="browserDialog" max-width="40rem" :persistent="actionBusyKey === 'browser-create'" aria-labelledby="browser-create-title">
       <v-card class="compact-dialog" :aria-busy="actionBusyKey === 'browser-create'">
-        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-plus</v-icon></span><div><div class="agent-panel__eyebrow">Network policy entry</div><h2 id="browser-create-title">Add browser target</h2><p>Approve one exact canonical HTTPS destination.</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon icon="mdi-web-plus" size="23" aria-hidden="true" /></span><div><div class="agent-panel__eyebrow">Network policy entry</div><h2 id="browser-create-title">Add browser target</h2><p>Approve one exact canonical HTTPS destination.</p></div></div>
         <v-form id="browser-target-form" @submit.prevent="createBrowserTarget">
           <v-card-text>
             <v-alert v-if="browserError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ browserError }}</v-alert>
@@ -573,7 +572,7 @@
             <v-checkbox v-model="browserEnabled" label="Enable immediately" hint="Leave off to stage the target in a paused state." persistent-hint />
           </v-card-text>
         </v-form>
-        <v-card-actions><span class="compact-dialog__audit"><v-icon size="16">mdi-fingerprint</v-icon>A policy hash will be recorded</span><v-spacer /><v-btn :disabled="actionBusyKey === 'browser-create'" @click="browserDialog = false">Cancel</v-btn><v-btn color="primary" type="submit" form="browser-target-form" :loading="actionBusyKey === 'browser-create'" :disabled="Boolean(actionBusyKey) || !isBrowserUrlValid">{{ browserEnabled ? 'Add and allow target' : 'Add paused target' }}</v-btn></v-card-actions>
+        <v-card-actions><span class="compact-dialog__audit"><v-icon icon="mdi-fingerprint" size="16" aria-hidden="true" />A policy hash will be recorded</span><v-spacer /><v-btn :disabled="actionBusyKey === 'browser-create'" @click="browserDialog = false">Cancel</v-btn><v-btn color="primary" type="submit" form="browser-target-form" :loading="actionBusyKey === 'browser-create'" :disabled="Boolean(actionBusyKey) || !isBrowserUrlValid">{{ browserEnabled ? 'Add and allow target' : 'Add paused target' }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
   </section>
@@ -1241,8 +1240,13 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
   border-radius: var(--wiki-control-radius);
 }
 .agent-operation-status {
-  margin-block-end: var(--wiki-space-4);
-  border-radius: var(--wiki-control-radius);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 
@@ -1273,7 +1277,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 .provider-card__models span,
 .provider-card__meta small,
 .selection-preview small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .06em;
@@ -1363,7 +1367,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .agent-section--active .agent-section__icon {
@@ -1383,7 +1387,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 }
 
 .agent-section__copy small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .7rem;
 }
 
@@ -1454,7 +1458,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 .agent-panel__header p,
 .profile-editor__header p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .78rem;
 }
 
@@ -1466,7 +1470,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 }
 
 .agent-panel__state > span {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 54%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .055em;
@@ -1503,7 +1507,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 .subsection-card__heading p,
 .protocol-behavior__heading p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
   line-height: 1.5;
 }
@@ -1530,14 +1534,14 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
   font-weight: 650;
 }
 
 .capability-item small {
   grid-column: 2;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .05em;
@@ -1636,7 +1640,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 }
 
 .policy-card dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .policy-card dd {
@@ -1677,7 +1681,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 
 .metrics-note p {
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .72rem;
   line-height: 1.5;
 }
@@ -1706,7 +1710,7 @@ code {
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--wiki-space-1) var(--wiki-space-2);
   padding: var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
 }
@@ -1792,7 +1796,7 @@ code {
 
 .provider-card__identity > p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .7rem;
 }
 
@@ -1805,7 +1809,7 @@ code {
 .provider-card__checked {
   display: block;
   margin-block-end: var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
 }
 
@@ -1817,7 +1821,7 @@ code {
   padding: var(--wiki-space-1) var(--wiki-space-2);
   border-radius: var(--wiki-radius-pill);
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 6%, transparent);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .65rem;
   font-weight: 680;
 }
@@ -1892,7 +1896,7 @@ code {
   min-width: 0;
   align-items: center;
   gap: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .provider-card__meta > div > span {
@@ -1966,12 +1970,12 @@ code {
 .agent-empty p {
   max-width: 34rem;
   margin: var(--wiki-space-2) auto var(--wiki-space-4);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .browser-boundary-note {
   margin-block: 0 var(--wiki-space-4);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
   line-height: 1.5;
 }
@@ -2020,7 +2024,7 @@ code {
 }
 
 .target-row__copy small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 54%, transparent);
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: .66rem;
 }
@@ -2029,7 +2033,7 @@ code {
   display: flex;
   align-items: center;
   gap: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .72rem;
   font-weight: 680;
 }
@@ -2132,7 +2136,7 @@ code {
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-radius-pill);
   background: var(--wiki-surface-raised);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: .65rem;
   font-weight: 750;
@@ -2155,7 +2159,7 @@ code {
 }
 
 .profile-steps small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 55%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .65rem;
 }
 
@@ -2206,7 +2210,7 @@ code {
   align-items: flex-start;
   gap: var(--wiki-space-2);
   margin: calc(var(--wiki-space-4) * -1) var(--wiki-space-1) var(--wiki-space-4);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .7rem;
   line-height: 1.45;
 }
@@ -2237,7 +2241,7 @@ code {
 
 .selection-preview p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .68rem;
 }
 
@@ -2301,7 +2305,7 @@ code {
 }
 
 .protocol-summary dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .7rem;
   font-weight: 650;
 }
@@ -2365,7 +2369,7 @@ code {
 }
 
 .access-choice__item small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .7rem;
   line-height: 1.45;
 }
@@ -2376,7 +2380,7 @@ code {
 
 .limit-group h4 {
   margin-block-end: var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .profile-editor__footer {
@@ -2400,7 +2404,7 @@ code {
 }
 
 .profile-editor__position span {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .65rem;
 }
 
@@ -2409,7 +2413,7 @@ code {
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--wiki-space-2);
   margin-inline-start: var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
 }
 
@@ -2446,7 +2450,7 @@ code {
 
 .compact-dialog__header p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
 }
 
@@ -2464,7 +2468,7 @@ code {
   display: inline-flex;
   align-items: center;
   gap: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
 }
 
@@ -2810,7 +2814,7 @@ code {
 .media-storage-help summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; border-radius: 2px; }
 .media-storage-help dl { margin-block: .65rem 0; }
 .media-storage-help dt { font-weight: 600; margin-top: .65rem; }
-.media-storage-help dd { margin: .1rem 0 0; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 75%, transparent); }
+.media-storage-help dd { margin: .1rem 0 0; color: var(--wiki-text-muted); }
 .connection-history details { padding-block: 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
 .connection-history summary { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; cursor: pointer; font-size: .85rem; }
 .connection-history summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }

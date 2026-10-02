@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from '../../../server/test/bun-test.m
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
 
 interface Ref<T> {
@@ -202,6 +203,7 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
     })))
   })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.config.globalProperties.$t = translateEnglish
   // Register cleanup before mounting so failed mounts restore the HTTP platform.
   let unmounted = false
   mountedComposers.push(() => {
@@ -370,6 +372,9 @@ interface MountedComposerOptions {
   readonly skillsEnabled?: boolean
   readonly mediaCapabilities?: { attachments?: boolean; transcription?: boolean }
   readonly mediaSession?: Record<string, unknown>
+  readonly googleSearchAvailable?: boolean
+  readonly googleSearchEnabled?: boolean
+  readonly draftEditable?: boolean
 }
 
 // Shared media-composer stub state; each test reads/adjusts these through the mounted harness helpers.
@@ -400,8 +405,9 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     skillsEnabled: options.skillsEnabled ?? false,
     goalsEnabled: true,
     generationToolsEnabled: true,
-    googleSearchAvailable: false,
-    googleSearchEnabled: false,
+    googleSearchAvailable: options.googleSearchAvailable ?? false,
+    googleSearchEnabled: options.googleSearchEnabled ?? false,
+    draftEditable: options.draftEditable,
     skills: [],
     skillsLoading: false,
     skillsLoadError: '',
@@ -510,6 +516,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
   app.component('AgentDictationWaveform', { template: '<canvas class="agent-dictation-waveform" />' })
   app.component('AgentComposerSkillMenu', RealAgentComposerSkillMenu)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.config.globalProperties.$t = translateEnglish
   app.mount(host)
   const root = host.querySelector<HTMLElement>('.agent-composer')
   if (!root) throw new Error('Agent composer did not render')
@@ -952,9 +959,36 @@ describe('Agent composer three-section layout', () => {
     if (!toggle) throw new Error('Web toggle did not render')
     expect(toggle.textContent?.trim()).toBe('Web')
     expect(toggle.querySelector('input')?.getAttribute('aria-label')).toBe('Use Google Search for this conversation')
-    expect(toggle.getAttribute('title')).toContain('Google Search')
+    // No native title: touch and keyboard users get the same disclosure through aria-describedby.
+    expect(toggle.hasAttribute('title')).toBe(false)
+    const noticeId = toggle.querySelector('input')?.getAttribute('aria-describedby')
+    const notice = noticeId ? mounted.root.querySelector<HTMLElement>(`[id="${noticeId}"]`) : null
+    expect(notice?.textContent).toContain('Google Search')
+    expect(notice?.textContent).toContain('charges')
+    expect(notice?.classList.contains('sr-only')).toBe(true)
     // Color-independent state attribute for the off state is absent; the checkbox aria-checked carries state.
     expect(toggle.querySelector('input')?.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('shows the Web cost and privacy notice while Google Search is on', () => {
+    const mounted = mountComposer({ initialDraft: '', googleSearchAvailable: true, googleSearchEnabled: true })
+    const input = mounted.root.querySelector<HTMLInputElement>('.agent-composer__web-search-toggle input')
+    const notice = mounted.root.querySelector<HTMLElement>('.agent-composer__web-notice')
+    expect(input?.getAttribute('aria-describedby')).toBe(notice?.id)
+    expect(notice?.classList.contains('sr-only')).toBe(false)
+    expect(notice?.getAttribute('role')).toBe('note')
+    expect(notice?.textContent).toContain('Search has its own charges')
+  })
+
+  it('keeps the message field editable while a reply streams but does not submit', async () => {
+    const mounted = mountComposer({ initialDraft: 'next question', sending: true, canStop: true, draftEditable: true })
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+    expect(textarea?.disabled).toBe(false)
+    textarea?.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await Vue.nextTick()
+    expect(mounted.sent).toEqual([])
+    const idle = mountComposer({ initialDraft: 'next question', sending: true, canStop: true })
+    expect(idle.root.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true)
   })
 
   it('keeps Goal and Web inline alongside More when Skills are available', () => {

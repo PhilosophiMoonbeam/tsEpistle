@@ -52,7 +52,7 @@ const frameHeight = computed(() => Math.min(280, 48 + props.suggestions.length *
   gap: var(--wiki-space-2);
   padding-inline: var(--wiki-space-3);
   border-block-end: 1px solid var(--wiki-surface-border);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .76rem;
 }
 .agent-search-suggestions header strong { color: rgb(var(--v-theme-on-surface)); }

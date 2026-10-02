@@ -13,15 +13,14 @@
         <v-icon :icon="locallyExpired ? 'mdi-timer-alert-outline' : 'mdi-shield-key-outline'" size="20" />
       </span>
       <div class="agent-operation__heading">
-        <span class="agent-operation__eyebrow">{{ locallyExpired ? 'Approval window closed' : 'Operation requires a decision' }}</span>
         <h3 :id="`agent-approval-title-${proposal.id}`" class="text-title-medium">{{ locallyExpired ? 'Approval expired' : approvalTitle }}</h3>
       </div>
       <v-chip
-        color="warning"
+        :color="!locallyExpired && proposal.risk === 'destructive-write' ? 'error' : 'warning'"
         size="small"
         variant="tonal"
         :prepend-icon="locallyExpired ? 'mdi-timer-alert-outline' : 'mdi-pause-circle-outline'"
-      >{{ locallyExpired ? 'Approval expired' : 'Awaiting approval' }}</v-chip>
+      >{{ locallyExpired ? 'Expired' : 'Awaiting approval' }}</v-chip>
     </header>
 
     <p class="agent-operation__summary text-body-medium">{{ proposal.summary }}</p>
@@ -515,16 +514,6 @@ const decide = (decision: 'approved' | 'denied'): void => {
   min-width: 0;
 }
 
-.agent-operation__eyebrow {
-  display: block;
-  margin-bottom: var(--wiki-space-1);
-  color: var(--operation-accent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .09em;
-  text-transform: uppercase;
-}
-
 .agent-operation__heading h3,
 .agent-operation__summary {
   margin: 0;
@@ -561,7 +550,7 @@ const decide = (decision: 'approved' | 'denied'): void => {
 
 .agent-operation__risk small,
 .agent-operation__decision-copy small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+  color: var(--wiki-text-muted);
   line-height: 1.45;
 }
 
@@ -578,7 +567,7 @@ const decide = (decision: 'approved' | 'denied'): void => {
 }
 
 .operation-facts dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .055em;
@@ -608,7 +597,7 @@ const decide = (decision: 'approved' | 'denied'): void => {
 }
 
 .operation-facts__secondary {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .82em;
 }
 
@@ -653,7 +642,7 @@ const decide = (decision: 'approved' | 'denied'): void => {
 
 .operation-disclosure summary small {
   margin-inline-start: auto;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   text-align: end;
 }
 
@@ -813,7 +802,7 @@ const decide = (decision: 'approved' | 'denied'): void => {
 .agent-operation-receipt__heading small,
 .agent-operation-receipt > summary time {
   overflow-wrap: anywhere;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
 }
 
@@ -829,7 +818,7 @@ const decide = (decision: 'approved' | 'denied'): void => {
 
 .agent-operation-receipt__note {
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .sr-only {

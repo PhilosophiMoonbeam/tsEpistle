@@ -186,7 +186,7 @@ const retrySkills = (): void => {
 }
 
 .agent-composer-skill-menu__load-state span {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   overflow-wrap: anywhere;
 }

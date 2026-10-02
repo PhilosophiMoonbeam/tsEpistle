@@ -864,7 +864,7 @@ onBeforeUnmount(() => {
 .approval-masthead h1 + p {
   max-width: 48rem;
   margin: var(--wiki-space-2) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+  color: var(--wiki-text-muted);
   line-height: 1.55;
 }
 
@@ -899,7 +899,7 @@ onBeforeUnmount(() => {
 }
 
 .approval-loading small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .approval-error__content {
@@ -975,14 +975,14 @@ onBeforeUnmount(() => {
 
 .operation-review__header code {
   display: block;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
   overflow-wrap: anywhere;
 }
 
 .operation-review__elapsed {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-variant-numeric: tabular-nums;
 }
@@ -1027,7 +1027,7 @@ onBeforeUnmount(() => {
 }
 
 .approval-sequence__step small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
 }
 
@@ -1063,7 +1063,7 @@ onBeforeUnmount(() => {
 }
 
 .risk-brief small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   line-height: 1.5;
 }
 
@@ -1101,7 +1101,7 @@ onBeforeUnmount(() => {
 
 .operation-section__heading p {
   margin-top: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .78rem;
   line-height: 1.45;
 }
@@ -1114,7 +1114,7 @@ onBeforeUnmount(() => {
 }
 
 .proposal-facts dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .055em;
@@ -1175,7 +1175,7 @@ onBeforeUnmount(() => {
 
 .proposal-verification summary small {
   margin-inline-start: auto;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .proposal-verification summary::after {
@@ -1215,7 +1215,7 @@ onBeforeUnmount(() => {
   gap: var(--wiki-space-3);
   padding: var(--wiki-space-2) var(--wiki-space-3);
   border-block-end: 1px solid var(--wiki-surface-border);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
 }
@@ -1279,7 +1279,7 @@ onBeforeUnmount(() => {
   border: 1px dashed var(--wiki-surface-border-strong);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .proposal-output__empty > span {
@@ -1311,7 +1311,7 @@ onBeforeUnmount(() => {
 
 .decision-zone__confirmation p {
   margin: var(--wiki-space-1) 0 var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   line-height: 1.5;
 }
 
@@ -1344,7 +1344,7 @@ onBeforeUnmount(() => {
 }
 
 .approval-actions__choice small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
 }
 

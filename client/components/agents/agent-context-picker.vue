@@ -24,32 +24,33 @@
     </div>
     <!-- One compact source chip for the current page. The chip itself means the
          page is included, so no separate Included badge is rendered. -->
-    <button
-      v-if="currentPage"
-      type="button"
-      class="agent-context__page-chip"
-      :class="{ 'agent-context__page-chip--excluded': !draft.includeCurrentPage }"
-      :disabled="disabled || connectionBlocked"
-      :aria-pressed="draft.includeCurrentPage"
-      :aria-label="draft.includeCurrentPage
-        ? `Current page ${currentPage.locale}/${currentPage.path} is included in the next message; activate to exclude it`
-        : `Current page ${currentPage.locale}/${currentPage.path} is excluded from the next message; activate to include it`"
-      :title="draft.includeCurrentPage ? 'Included in the next message. Activate to exclude this page.' : 'Excluded from the next message. Activate to include this page.'"
-      @click="emit('change', { includeCurrentPage: !draft.includeCurrentPage })"
-    >
-      <v-icon icon="mdi-file-link-outline" size="15" aria-hidden="true" />
-      <span class="agent-context__page-copy" :title="`${currentPage.locale}/${currentPage.path}`">
-        <strong>{{ currentPage.locale.toUpperCase() }}</strong>
-        <span aria-hidden="true"> · </span>
-        {{ currentPage.path }}
-      </span>
-      <v-icon
-        class="agent-context__page-state"
-        :icon="draft.includeCurrentPage ? 'mdi-check' : 'mdi-minus'"
-        size="14"
-        aria-hidden="true"
-      />
-    </button>
+    <v-tooltip v-if="currentPage" location="top" :text="connectionBlocked
+        ? $t('common:agentContext.pageNeedsConnection')
+        : disabled
+          ? $t('common:agentContext.pageBusy')
+          : $t(draft.includeCurrentPage ? 'common:agentContext.pageIncluded' : 'common:agentContext.pageExcluded', { path: `${currentPage.locale}/${currentPage.path}` })">
+      <template #activator="{ props: tooltipProps }">
+        <button
+          v-bind="tooltipProps"
+          type="button"
+          class="agent-context__page-chip"
+          :class="{ 'agent-context__page-chip--excluded': !draft.includeCurrentPage }"
+          :aria-disabled="disabled || connectionBlocked ? 'true' : undefined"
+          :aria-pressed="draft.includeCurrentPage"
+          :aria-label="$t('common:agentContext.includePage', { title: currentPageLabel })"
+          @click="toggleCurrentPage"
+        >
+          <v-icon :icon="draft.includeCurrentPage ? 'mdi-file-check-outline' : 'mdi-file-hidden'" size="15" aria-hidden="true" />
+          <span class="agent-context__page-copy">{{ currentPageLabel }}</span>
+          <v-icon
+            class="agent-context__page-state"
+            :icon="draft.includeCurrentPage ? 'mdi-check' : 'mdi-minus'"
+            size="14"
+            aria-hidden="true"
+          />
+        </button>
+      </template>
+    </v-tooltip>
     <div v-if="draft.sources.length" class="agent-context__sources" aria-label="Pages attached to the next message">
       <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :disabled="disabled || connectionBlocked" :close-label="`Remove source ${source.title}`" :aria-label="`Preview attached source ${source.title}`" variant="outlined" prepend-icon="mdi-file-document-outline" @click.stop="previewSelector = { id: source.id }" @click:close.stop="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
     </div>
@@ -207,6 +208,8 @@ const props = defineProps<{
   disabled?: boolean
   connectionBlocked?: boolean
   connectionRetrying?: boolean
+  /** Title of the page the Agent opened over; the chip falls back to its path. */
+  currentPageTitle?: string
 }>()
 const emit = defineEmits<{
   change: [patch: Partial<AgentDraft>]
@@ -235,6 +238,11 @@ let moreController: AbortController | null = null
 let resolveController: AbortController | null = null
 let requestGeneration = 0
 const interactionBlocked = computed(() => Boolean(props.disabled || props.connectionBlocked))
+const currentPageLabel = computed(() => props.currentPageTitle?.trim() || (props.currentPage ? `${props.currentPage.locale}/${props.currentPage.path}` : ''))
+const toggleCurrentPage = (): void => {
+  if (interactionBlocked.value) return
+  emit('change', { includeCurrentPage: !props.draft.includeCurrentPage })
+}
 
 const scopeLabel = computed(() => props.draft.scope.kind === 'selected' ? 'Selected pages' : props.draft.scope.kind === 'section' ? `Within ${props.draft.scope.path}` : props.draft.scope.kind === 'locale' ? `${props.draft.scope.locale.toUpperCase()} pages` : 'All Wiki')
 const attachedIds = computed(() => new Set(props.draft.sources.map(source => source.id)))
@@ -599,7 +607,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-radius-pill);
   background: color-mix(in srgb, var(--wiki-surface-raised) 72%, transparent);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
+  color: rgb(var(--v-theme-on-surface));
   cursor: pointer;
   font: inherit;
   font-size: var(--wiki-label-size);
@@ -608,32 +616,30 @@ onBeforeUnmount(() => {
 .agent-context__page-chip > .v-icon:first-child { flex: 0 0 auto; color: var(--wiki-accent-warm); }
 .agent-context__page-chip--excluded {
   border-style: dashed;
-  opacity: .72;
+  color: var(--wiki-text-muted);
 }
-.agent-context__page-chip--excluded .agent-context__page-copy strong {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+.agent-context__page-chip--excluded .agent-context__page-copy {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
 }
+.agent-context__page-chip--excluded > .v-icon:first-child { color: var(--wiki-text-muted); }
 .agent-context__page-chip:focus-visible {
   outline: 2px solid var(--wiki-focus-color);
   outline-offset: 2px;
 }
-.agent-context__page-chip:disabled { cursor: default; }
+.agent-context__page-chip[aria-disabled='true'] { cursor: default; opacity: .6; }
 .agent-context__page-state {
   flex: 0 0 auto;
   color: rgb(var(--v-theme-primary));
 }
 .agent-context__page-chip--excluded .agent-context__page-state {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 55%, transparent);
+  color: var(--wiki-text-muted);
 }
 .agent-context__page-copy {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.agent-context__page-copy strong {
-  color: rgb(var(--v-theme-on-surface));
-  font-weight: var(--wiki-label-weight);
 }
 .agent-context__sources {
   display: flex;
@@ -654,7 +660,7 @@ onBeforeUnmount(() => {
   order: 2;
   flex: 1 1 100%;
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .72rem;
   line-height: 1.3;
 }
@@ -666,11 +672,11 @@ onBeforeUnmount(() => {
 .agent-context__dialog-corner .v-btn--icon { align-self: center; }
 .agent-context__dialog-corner .v-btn--loading { flex: 0 0 auto; }
 .agent-context__dialog-body { max-height: min(68vh, 38rem); padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-2); }
-.agent-context__dialog-guidance { margin: 0 0 var(--wiki-space-3); color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, transparent); font-size: .82rem; line-height: 1.5; }
+.agent-context__dialog-guidance { margin: 0 0 var(--wiki-space-3); color: var(--wiki-text-muted); font-size: .82rem; line-height: 1.5; }
 .agent-context__search { margin-bottom: .15rem; }
 .agent-context__search :deep(.v-field) { touch-action: pan-y; }
-.agent-context__search-scope { display: flex; align-items: center; gap: .35rem; margin: .25rem 0 0; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-size: .72rem; line-height: 1.4; }
-.agent-context__status { min-height: 1.15rem; margin: .5rem 0 .35rem; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent); font-size: .74rem; line-height: 1.4; }
+.agent-context__search-scope { display: flex; align-items: center; gap: .35rem; margin: .25rem 0 0; color: var(--wiki-text-muted); font-size: .72rem; line-height: 1.4; }
+.agent-context__status { min-height: 1.15rem; margin: .5rem 0 .35rem; color: var(--wiki-text-muted); font-size: .74rem; line-height: 1.4; }
 .agent-context__error { margin: .45rem 0; }
 .agent-context__pending { margin: .6rem 0 .75rem; padding: .65rem .75rem; border: 1px solid color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 30%, var(--wiki-surface-border)); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 6%, var(--wiki-surface-raised)); }
 .agent-context__pending-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: rgb(var(--v-theme-on-surface)); font-size: .76rem; }
@@ -680,7 +686,7 @@ onBeforeUnmount(() => {
 .agent-context__pending-label { display: inline-flex; max-width: 16rem; flex-direction: column; min-width: 0; overflow: hidden; text-align: start; }
 .agent-context__pending-label small { overflow: hidden; color: color-mix(in srgb, currentColor 64%, transparent); font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
 .agent-context__results { --agent-context-results-rows: 6; min-height: 4.7rem; max-height: calc(var(--agent-context-results-rows) * 3.65rem + 1px); overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; overscroll-behavior-y: auto; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-surface-sunken) 42%, transparent); }
-.agent-context__results-state { display: flex; min-height: 4.7rem; align-items: center; justify-content: center; gap: .55rem; padding: 1rem; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-size: .8rem; text-align: center; }
+.agent-context__results-state { display: flex; min-height: 4.7rem; align-items: center; justify-content: center; gap: .55rem; padding: 1rem; color: var(--wiki-text-muted); font-size: .8rem; text-align: center; }
 .agent-context__result-list { display: grid; margin: 0; padding: 0; list-style: none; }
 .agent-context__result + .agent-context__result { border-top: 1px solid var(--wiki-surface-border); }
 .agent-context__result-label { display: flex; min-height: 3.65rem; align-items: center; gap: .7rem; padding: .6rem .75rem; cursor: pointer; touch-action: pan-y; }
@@ -692,10 +698,10 @@ onBeforeUnmount(() => {
 .agent-context__result-label input:checked + .agent-context__checkbox { border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); background: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); box-shadow: inset 0 0 0 3px var(--wiki-surface-raised); }
 .agent-context__result-copy { display: grid; min-width: 0; gap: .14rem; }
 .agent-context__result-copy strong { overflow: hidden; color: rgb(var(--v-theme-on-surface)); font-size: .8rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.agent-context__result-copy small { overflow: hidden; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+.agent-context__result-copy small { overflow: hidden; color: var(--wiki-text-muted); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
 .agent-context__result-state-label { color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); font-size: .68rem; font-weight: 650; }
 .agent-context__window-note, .agent-context__more-error { margin: .5rem 0 0; font-size: .72rem; line-height: 1.4; }
-.agent-context__window-note { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); }
+.agent-context__window-note { color: var(--wiki-text-muted); }
 .agent-context__more-error { color: rgb(var(--v-theme-error)); }
 .agent-context__more { margin-top: .35rem; }
 @media (max-width: 639.98px) {

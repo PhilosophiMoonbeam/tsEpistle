@@ -110,7 +110,7 @@
         variant="solo"
         flat
         hide-details
-        :disabled="disabled || sendInProgress"
+        :disabled="inputDisabled"
         :aria-controls="skillsEnabled && skillCommandOpen ? composerIds.commandResults : undefined"
         :aria-activedescendant="activeCommandOptionId"
         @select="handleSelectionChange"
@@ -142,6 +142,15 @@
     </div>
 
     <p v-if="error" class="agent-composer__notice" role="alert">{{ error }}</p>
+    <p
+      :id="composerIds.webNotice"
+      class="agent-composer__web-notice"
+      :class="{ 'sr-only': !googleSearchEnabled }"
+      :role="googleSearchEnabled ? 'note' : undefined"
+    >
+      <v-icon v-if="googleSearchEnabled" icon="mdi-web" size="15" aria-hidden="true" />
+      <span>{{ $t('common:agentComposer.webNotice') }}</span>
+    </p>
 
     <AgentComposerMedia
       ref="mediaComposer"
@@ -270,24 +279,28 @@
             <p class="agent-composer__tool-menu-note">Ask naturally. The assistant can combine your selected tools in one reply.</p>
           </v-list>
         </v-menu>
-        <label
-          v-if="!isControlFolded('web')"
-          class="agent-composer__web-search-toggle wiki-purpose-control"
-          :class="{ 'wiki-purpose-control--selected': googleSearchEnabled }"
-          :data-state="googleSearchEnabled ? 'selected' : undefined"
-          :title="googleSearchAvailable ? 'Use Google Search for future responses in this conversation. Search queries and relevant context may be sent to Google Search; charges are additional to model token charges.' : 'Google Search is unavailable for this provider'"
-        >
-          <input
-            type="checkbox"
-            :checked="googleSearchEnabled"
-            :aria-checked="googleSearchEnabled ? 'true' : 'false'"
-            :disabled="webSearchDisabled"
-            aria-label="Use Google Search for this conversation"
-            @change="toggleGoogleSearch"
-          >
-          <v-icon icon="mdi-web" size="17" aria-hidden="true" />
-          <span>Web</span>
-        </label>
+        <v-tooltip v-if="!isControlFolded('web')" location="top" :text="googleSearchAvailable ? $t('common:agentComposer.webTooltip') : $t('common:agentComposer.webUnavailable')">
+          <template #activator="{ props: tooltipProps }">
+            <label
+              v-bind="tooltipProps"
+              class="agent-composer__web-search-toggle wiki-purpose-control"
+              :class="{ 'wiki-purpose-control--selected': googleSearchEnabled }"
+              :data-state="googleSearchEnabled ? 'selected' : undefined"
+            >
+              <input
+                type="checkbox"
+                :checked="googleSearchEnabled"
+                :aria-checked="googleSearchEnabled ? 'true' : 'false'"
+                :disabled="webSearchDisabled"
+                aria-label="Use Google Search for this conversation"
+                :aria-describedby="composerIds.webNotice"
+                @change="toggleGoogleSearch"
+              >
+              <v-icon icon="mdi-web" size="17" aria-hidden="true" />
+              <span>Web</span>
+            </label>
+          </template>
+        </v-tooltip>
         <v-btn
           v-if="goalsEnabled && !goalMode && !isControlFolded('goal')"
           class="agent-composer__goal-toggle wiki-purpose-control"
@@ -474,6 +487,8 @@ const props = defineProps<{
   hasMessages?: boolean
   externalDescriptionId?: string
   networkBlocked?: boolean
+  /** Keep the message field editable while a reply streams; sending still follows `disabled`. */
+  draftEditable?: boolean
 }>()
 const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]]; updateGoogleSearch: [enabled: boolean] }>()
 const mediaComposer = useTemplateRef<{
@@ -683,6 +698,7 @@ const sendFailed = ref(false)
 const submissionPending = ref(false)
 const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
+const inputDisabled = computed(() => props.draftEditable === true ? false : props.disabled || sendInProgress.value)
 const webSearchDisabled = computed(() =>
   props.disabled || sendInProgress.value || props.googleSearchBusy || (!props.googleSearchAvailable && !props.googleSearchEnabled)
 )
@@ -708,7 +724,8 @@ const composerIds = {
   skillsDialog: `${composerId}-skills-dialog`,
   skillsHeading: `${composerId}-skills-heading`,
   skillsDescription: `${composerId}-skills-description`,
-  status: `${composerId}-status`
+  status: `${composerId}-status`,
+  webNotice: `${composerId}-web-notice`
 } as const
 const commandOptionId = (versionId: string): string => `${composerIds.commandResults}-${versionId}`
 const preferredSkillIds = computed(() => new Set(props.preferredSkills.map(skill => skill.skillId)))
@@ -1433,7 +1450,7 @@ onBeforeUnmount(() => {
 
 
 .agent-composer__input :deep(textarea::placeholder) {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
+  color: var(--wiki-text-subtle);
   opacity: 1;
 }
 
@@ -1461,7 +1478,7 @@ onBeforeUnmount(() => {
   min-height: calc(var(--wiki-control-height) - var(--wiki-space-3));
   align-items: center;
   gap: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   white-space: nowrap;
@@ -1606,7 +1623,7 @@ onBeforeUnmount(() => {
   gap: var(--wiki-space-2);
   padding-inline: var(--agent-composer-control-padding-inline);
   border-radius: var(--wiki-radius-pill);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
+  color: var(--wiki-text-muted);
   cursor: pointer;
   font-size: var(--agent-composer-control-font-size);
   font-weight: 500;
@@ -1641,6 +1658,16 @@ onBeforeUnmount(() => {
   margin: 0 var(--wiki-space-1) var(--wiki-space-1);
   color: rgb(var(--v-theme-error));
   font-size: var(--wiki-label-size);
+}
+
+.agent-composer__web-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-1);
+  margin: 0 var(--wiki-space-1) var(--wiki-space-1);
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  line-height: 1.4;
 }
 
 .agent-composer__goal-chip {
@@ -1826,7 +1853,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__command-help {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: 500;
 }

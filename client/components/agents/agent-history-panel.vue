@@ -6,17 +6,6 @@
     :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
     <AgentPanelHeader ref="historyCloseButton" title="Conversations" icon="mdi-history" close-label="Close chat history" :heading-id="headingId" :description-id="descriptionId" @close="closeHistory">
-    <template #actions>
-      <v-btn
-        class="agent-history__clear"
-        icon="mdi-delete-sweep-outline"
-        variant="text"
-        aria-label="Clear Unsaved History"
-        title="Clear Unsaved History"
-        :disabled="clearHistoryDisabled"
-        @click="requestClear"
-      />
-    </template>
       {{ archiveCountDescription }}
     </AgentPanelHeader>
 
@@ -48,13 +37,13 @@
     <v-alert v-if="sessionsRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
         <span>{{ sessionsRefreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="refreshSessions()">Retry conversations</v-btn>
+        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions || networkBlocked" @click="refreshSessions()">Retry conversations</v-btn>
       </div>
     </v-alert>
     <v-alert v-if="foldersRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
         <span>{{ foldersRefreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="refreshFolders()">Retry folders</v-btn>
+        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders || networkBlocked" @click="refreshFolders()">Retry folders</v-btn>
       </div>
     </v-alert>
 
@@ -89,9 +78,26 @@
           <div class="agent-history__section-heading">
             <div>
               <h3 id="agent-history-recent-title" class="agent-history__section-title">Recent</h3>
-              <div class="agent-history__section-copy">Your recent, unfiled conversations</div>
+              <div class="agent-history__section-copy">{{ $t('common:agentWorkspace.recentCopy') }}</div>
             </div>
-            <span class="agent-history__count" :aria-label="`${filteredRecentSessions.length} recent conversations`">{{ filteredRecentSessions.length }}</span>
+            <div class="agent-history__section-actions">
+              <span class="agent-history__count" :aria-label="`${filteredRecentSessions.length} recent conversations`">{{ filteredRecentSessions.length }}</span>
+              <!-- Destructive Clear lives with the list it empties, away from the panel's Close. -->
+              <v-tooltip v-if="hasUnfiledSessions" location="bottom" :disabled="!clearHistoryDisabled" :text="networkBlocked ? networkRequiredMessage : $t('common:agentWorkspace.waitForUpdate')">
+                <template #activator="{ props: tooltipProps }">
+                  <v-btn
+                    v-bind="tooltipProps"
+                    class="agent-history__clear"
+                    color="error"
+                    variant="text"
+                    size="small"
+                    prepend-icon="mdi-delete-sweep-outline"
+                    :aria-disabled="clearHistoryDisabled ? 'true' : undefined"
+                    @click="requestClear"
+                  >{{ $t('common:agentWorkspace.clearRecent') }}</v-btn>
+                </template>
+              </v-tooltip>
+            </div>
           </div>
 
           <template v-if="recentSessionGroups.length">
@@ -138,7 +144,7 @@
           </template>
           <div v-else class="agent-history__empty">
             <v-icon icon="mdi-message-outline" size="20" />
-            <span>Your unfiled conversations appear here.</span>
+            <span>Conversations that are not in a folder appear here.</span>
           </div>
 
             <div
@@ -153,7 +159,7 @@
               <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
                 <div class="agent-history__refresh-error">
                   <span>{{ sessionsLoadMoreError }}</span>
-                  <v-btn aria-label="Retry loading older conversations" size="small" variant="text" :disabled="networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="loadMoreSessions">Retry</v-btn>
+                  <v-btn aria-label="Retry loading older conversations" size="small" variant="text" :disabled="networkBlocked" @click="loadMoreSessions">Retry</v-btn>
                 </div>
               </v-alert>
               <v-btn
@@ -175,7 +181,7 @@
               <h3 id="agent-history-folders-title" class="agent-history__section-title">Saved folders</h3>
               <div class="agent-history__section-copy">Kept without expiry</div>
             </div>
-            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" aria-label="Create a conversation folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="beginCreateFolder">New folder</v-btn>
+            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" aria-label="Create a conversation folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginCreateFolder">New folder</v-btn>
           </div>
 
           <v-expansion-panels v-if="visibleFolderGroups.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
@@ -312,7 +318,6 @@
           color="primary"
           variant="tonal"
           :disabled="loading || !folderName.trim() || savingFolder || sessionMutationBusy || networkBlocked"
-          :title="networkBlocked ? networkRequiredMessage : undefined"
           :loading="savingFolder"
           @click="saveFolder"
         >
@@ -335,7 +340,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="savingSessionTitle" @click="sessionEditorOpen = false">Cancel</v-btn>
-        <v-btn color="primary" variant="tonal" :disabled="loading || !sessionRenameTitle.trim() || savingSessionTitle || sessionMutationBusy || networkBlocked" :loading="savingSessionTitle" :title="networkBlocked ? networkRequiredMessage : undefined" @click="saveSessionTitle">
+        <v-btn color="primary" variant="tonal" :disabled="loading || !sessionRenameTitle.trim() || savingSessionTitle || sessionMutationBusy || networkBlocked" :loading="savingSessionTitle" @click="saveSessionTitle">
           Save title
         </v-btn>
       </v-card-actions>
@@ -355,7 +360,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelDeleteSession">Cancel</v-btn>
-        <v-btn color="error" variant="tonal" :loading="deleting" :disabled="deleting || sessionMutationBusy || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="deleteSession">Delete permanently</v-btn>
+        <v-btn color="error" variant="flat" :loading="deleting" :disabled="deleting || sessionMutationBusy || networkBlocked" @click="deleteSession">Delete permanently</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -374,7 +379,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelRemoveFolder">Cancel</v-btn>
-        <v-btn color="warning" variant="tonal" :loading="deleting" :disabled="loading || deleting || sessionMutationBusy || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="deleteFolder">Remove folder</v-btn>
+        <v-btn color="error" variant="tonal" :loading="deleting" :disabled="loading || deleting || sessionMutationBusy || networkBlocked" @click="deleteFolder">Remove folder</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -1386,7 +1391,7 @@ onBeforeUnmount(() => {
 }
 .agent-history__loading {
   align-items: center;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -1425,7 +1430,7 @@ onBeforeUnmount(() => {
 }
 .agent-history__pagination-status {
   align-items: center;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   display: flex;
   font-size: var(--wiki-type-micro, .75rem);
   gap: var(--wiki-space-2);
@@ -1450,8 +1455,11 @@ onBeforeUnmount(() => {
 .agent-history__recent > .agent-history__section-heading,
 .agent-history__folders > .agent-history__section-heading { flex: 0 0 auto; }
 .agent-history__section-heading--folders { padding-top: 0; }
+.agent-history__section-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--wiki-space-1); }
+.agent-history__clear { letter-spacing: 0; text-transform: none; }
+.agent-history__clear[aria-disabled='true'] { opacity: .6; }
 .agent-history__section-title { font-size: .78rem; font-weight: 750; letter-spacing: .035em; margin: 0; }
-.agent-history__section-copy { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent); font-size: var(--wiki-type-micro, .75rem); margin-top: var(--wiki-space-1); }
+.agent-history__section-copy { color: var(--wiki-text-muted); font-size: var(--wiki-type-micro, .75rem); margin-top: var(--wiki-space-1); }
 .agent-history__count,
 .agent-history__retained {
   align-items: center;
@@ -1468,7 +1476,7 @@ onBeforeUnmount(() => {
 }
 .agent-history__time-group + .agent-history__time-group { margin-top: var(--wiki-space-2); }
 .agent-history__time-label {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-type-micro, .75rem);
   font-weight: 700;
   letter-spacing: .08em;
@@ -1515,7 +1523,7 @@ onBeforeUnmount(() => {
   align-items: center;
   border: 1px dashed var(--wiki-surface-border-strong);
   border-radius: var(--wiki-control-radius);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   display: flex;
   font-size: .72rem;
   gap: var(--wiki-space-2);

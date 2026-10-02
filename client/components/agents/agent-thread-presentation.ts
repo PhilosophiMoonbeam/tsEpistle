@@ -1,5 +1,6 @@
 import type {
   AgentActionName,
+  AgentArtifactView,
   AgentCitation,
   AgentMessageView,
   AgentPageActionLink,
@@ -438,3 +439,44 @@ export const isAgentApprovalOutsideViewport = (viewport: AgentVerticalBounds, ap
 
 export const shouldFollowGoalExpansion = (expanded: boolean, transcriptFollowing: boolean, transcriptNearBottom: boolean): boolean =>
   expanded && (transcriptFollowing || transcriptNearBottom)
+
+export interface AgentArtifactPlacement {
+  readonly byMessage: ReadonlyMap<string, readonly AgentArtifactView[]>
+  readonly unplaced: readonly AgentArtifactView[]
+}
+
+/**
+ * Places each browser screenshot under the assistant message that was active when it was
+ * captured: the latest assistant message created at or before the screenshot. Screenshots
+ * older than every assistant message (or with unreadable times) stay at the thread end.
+ */
+export const placeAgentArtifacts = (
+  messages: readonly Pick<AgentMessageView, 'id' | 'role' | 'createdAt'>[],
+  artifacts: readonly AgentArtifactView[]
+): AgentArtifactPlacement => {
+  const anchors = messages
+    .filter(message => message.role === 'assistant')
+    .map(message => ({ id: message.id, time: Date.parse(message.createdAt) }))
+    .filter(anchor => Number.isFinite(anchor.time))
+    .sort((left, right) => left.time - right.time)
+  const byMessage = new Map<string, AgentArtifactView[]>()
+  const unplaced: AgentArtifactView[] = []
+  for (const artifact of artifacts) {
+    const captured = Date.parse(artifact.createdAt)
+    let anchor: string | null = null
+    if (Number.isFinite(captured)) {
+      for (const candidate of anchors) {
+        if (candidate.time > captured) break
+        anchor = candidate.id
+      }
+    }
+    if (anchor === null) {
+      unplaced.push(artifact)
+      continue
+    }
+    const placed = byMessage.get(anchor)
+    if (placed) placed.push(artifact)
+    else byMessage.set(anchor, [artifact])
+  }
+  return { byMessage, unplaced }
+}
