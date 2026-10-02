@@ -732,6 +732,9 @@
       "discard": "Discard",
       "keepEditing": "Keep editing"
     },
+    "dateTime": {
+      "withZone": "{{time}} ({{zone}})"
+    },
     "pageSelector": {
       "pages": "Pages",
       "moveTitle": "Move / Rename Page Location",

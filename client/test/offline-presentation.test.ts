@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
-import { offlinePresentation, rememberOfflinePresentation } from '../helpers/offline-presentation.ts'
+import { forgetReaderDates, offlinePresentation, rememberOfflinePresentation, rememberReaderDates, savedReaderDates } from '../helpers/offline-presentation.ts'
 import { OFFLINE_DEFAULT_LOGO_PATH } from '../helpers/offline-branding.ts'
 
 const origin = 'https://wiki.example.test'
@@ -45,5 +45,41 @@ describe('offline presentation branding allowlist', () => {
     }
     values.set(key, JSON.stringify({ logoUrl: OFFLINE_DEFAULT_LOGO_PATH }))
     expect(offlinePresentation().config.logoUrl).toBe(OFFLINE_DEFAULT_LOGO_PATH)
+  })
+})
+
+describe('saved reader dates', () => {
+  const datesKey = 'tsepistle.offline.dates.v1'
+  function datesStorage() {
+    const values = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (name: string) => values.get(name) ?? null,
+      setItem: (name: string, next: string) => values.set(name, next),
+      removeItem: (name: string) => values.delete(name)
+    })
+    return values
+  }
+
+  it('keeps only the validated time zone and formats, and forgets them on request', () => {
+    const values = datesStorage()
+    rememberReaderDates({ timezone: 'America/New_York', dateFormat: 'YYYY-MM-DD', timeFormat: '24h', email: 'reader@example.test', id: 7 } as never)
+    expect(JSON.parse(values.get(datesKey)!)).toEqual({ timezone: 'America/New_York', dateFormat: 'YYYY-MM-DD', timeFormat: '24h' })
+    expect(savedReaderDates()).toEqual({ timezone: 'America/New_York', dateFormat: 'YYYY-MM-DD', timeFormat: '24h' })
+    forgetReaderDates()
+    expect(values.has(datesKey)).toBe(false)
+    expect(savedReaderDates()).toBeNull()
+  })
+
+  it('does not keep or trust an unknown time zone or format', () => {
+    const values = datesStorage()
+    rememberReaderDates({ timezone: 'America/New_York' })
+    rememberReaderDates({ timezone: '', dateFormat: 'YYYY-MM-DD', timeFormat: '24h' })
+    expect(values.has(datesKey)).toBe(false)
+    values.set(datesKey, JSON.stringify({ timezone: 'Not/AZone', dateFormat: '', timeFormat: 'locale' }))
+    expect(savedReaderDates()).toBeNull()
+    values.set(datesKey, JSON.stringify({ timezone: 'Europe/Berlin', dateFormat: '<b>', timeFormat: 'sometimes' }))
+    expect(savedReaderDates()).toEqual({ timezone: 'Europe/Berlin', dateFormat: '', timeFormat: 'locale' })
+    values.set(datesKey, '{broken')
+    expect(savedReaderDates()).toBeNull()
   })
 })
