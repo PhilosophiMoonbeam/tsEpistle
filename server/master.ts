@@ -606,7 +606,6 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       logoUrl: branding.logoUrl,
       logoEffect: branding.logoEffect,
       logoIcons: branding.logoIcons,
-      logoSourceSha256: branding.logoSourceSha256,
       availableEditors: normalizeAvailableEditors(wiki.config.editors?.available),
       featurePageRatings: wiki.config.features.featurePageRatings === true,
       recommendedEditor: normalizeEditorPolicy(wiki.config.editors).recommended,

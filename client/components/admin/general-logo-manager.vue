@@ -443,8 +443,6 @@ export default {
       this.logoStatusUnavailable = false
       this.logoPollFailures = 0
       if (status.active?.logoUrl) {
-        // The status API has no source digest; forget the old one until the next page load.
-        if (wikiStore.site.logoUrl !== status.active.logoUrl) wikiStore.site.logoSourceSha256 = null
         wikiStore.site.logoUrl = status.active.logoUrl
         if (status.active.logoIcons) {
           ;(wikiStore.site as typeof wikiStore.site & { logoIcons?: LogoIconDescriptor }).logoIcons = status.active.logoIcons

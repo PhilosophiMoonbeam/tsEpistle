@@ -340,6 +340,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
   const renderMissingPage = async (req: Request, res: Response, pageArgs: ParsedPageArgs, action: string): Promise<void> => {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     const createHref = await missingPageCreateHref(req, pageArgs)
+    res.set('Cache-Control', 'private, no-store')
+    res.vary('Cookie')
     res.status(404).render('notfound', createHref === undefined ? { action } : { action, createHref })
   }
 
