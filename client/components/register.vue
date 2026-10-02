@@ -78,7 +78,7 @@
             required
           )
             template(v-slot:append-inner)
-              password-visibility-toggle(v-model:visible='showPassword', :field='$t(`auth:fields.password`)', :disabled='isLoading')
+              password-visibility-toggle(v-model:visible='showPassword', :field='$t(`common:password.fields.password`)', :disabled='isLoading')
             template(v-slot:loader)
               password-strength(:model-value='password')
           v-text-field(
@@ -97,7 +97,7 @@
             required
           )
             template(v-slot:append-inner)
-              password-visibility-toggle(v-model:visible='showVerifyPassword', :field='$t(`auth:fields.verifyPassword`)', :disabled='isLoading')
+              password-visibility-toggle(v-model:visible='showVerifyPassword', :field='$t(`common:password.fields.passwordConfirmation`)', :disabled='isLoading')
           v-btn.register-submit(
             width='100%'
             size="large"
