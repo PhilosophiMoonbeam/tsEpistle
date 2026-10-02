@@ -46,13 +46,12 @@ const t = useTranslate()
 
 type Appearance = Extract<WikiThemeName, 'system' | 'light' | 'dark'>
 
-const {
-  label = t('common:appearanceSelector.appearance'),
-  description = t('common:appearanceSelector.oneToggleShowsCurrent')
-} = defineProps<{
+const props = defineProps<{
   label?: string
   description?: string
 }>()
+const label = computed(() => props.label ?? t('common:appearanceSelector.appearance'))
+const description = computed(() => props.description ?? t('common:appearanceSelector.oneToggleShowsCurrent'))
 
 const theme = useTheme()
 const selectedAppearance = computed<Appearance>(() => normalizeAppearance(wikiStore.user.appearance))
