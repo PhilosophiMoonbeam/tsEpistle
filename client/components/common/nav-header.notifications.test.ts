@@ -414,6 +414,8 @@ interface HeaderVm {
   handleNotificationFocus: () => void
   handleNotificationVisibility: () => void
   accountMenuVisibilityChanged: (open: boolean) => void
+  setAccountTooltip: (open: boolean) => void
+  accountTooltipOpen: boolean
 }
 
 const mountedApps: Array<() => void> = []
@@ -636,6 +638,20 @@ describe('notification header identity recovery', () => {
 })
 
 describe('account menu containment', () => {
+  it('keeps the account button tooltip closed while the account menu is open', async () => {
+    const mounted = await mountHeader({ smAndDown: true })
+    mounted.vm.setAccountTooltip(true)
+    expect(mounted.vm.accountTooltipOpen).toBe(true)
+    mounted.vm.accountMenuVisibilityChanged(true)
+    expect(mounted.vm.accountTooltipOpen).toBe(false)
+    // A touch tap leaves the hover state; it must not reopen over the menu.
+    mounted.vm.setAccountTooltip(true)
+    expect(mounted.vm.accountTooltipOpen).toBe(false)
+    mounted.vm.accountMenuVisibilityChanged(false)
+    mounted.vm.setAccountTooltip(true)
+    expect(mounted.vm.accountTooltipOpen).toBe(true)
+  })
+
   it('keeps authenticated profile, offline app, and session controls inside the account menu surface', async () => {
     const mounted = await mountHeader()
     const accountMenus = mounted.host.querySelectorAll('.nav-header-menu.account-menu')
