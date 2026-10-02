@@ -2,7 +2,7 @@
   <v-container fluid class="admin-api api-workspace">
     <admin-hero title="API access" description="Give every application and agent a clear identity in your wiki." eyebrow="Intelligence & connections" icon="mdi-api">
       <template #status><v-chip v-if="loadState === 'success'" size="small" :color="enabled ? 'success' : 'warning'">{{ enabled ? 'API-key access enabled' : 'API-key access disabled' }}</v-chip></template>
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loadState === 'loading'" :disabled="adminApiBusy" @click="refresh()">Refresh</v-btn><v-btn color="primary" prepend-icon="mdi-plus" :disabled="loadState !== 'success' || adminApiBusy || (!createFullAccess && !assignableGroups.length)" @click="newKey()">Create key</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loadState === 'loading'" :disabled="adminApiBusy" @click="refresh()">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload API keys and settings</v-tooltip></v-btn><v-btn color="primary" prepend-icon="mdi-plus" :disabled="loadState !== 'success' || adminApiBusy || (!createFullAccess && !assignableGroups.length)" @click="newKey()">Create key</v-btn></template>
     </admin-hero>
     <v-alert v-if="loadState === 'error'" type="error" variant="tonal" class="mb-4">Credential inventory could not be loaded. <v-btn variant="text" @click="refresh(false)">Retry</v-btn></v-alert>
     <v-alert v-if="loadState === 'success' && !enabled" type="warning" variant="tonal" class="mb-4">API-key authentication is disabled. You can prepare credentials here; applications and MCP clients can use them after access is enabled. Browser sessions remain separate.</v-alert>

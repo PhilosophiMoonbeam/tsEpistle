@@ -7,7 +7,7 @@
         icon="mdi-text-box-search-outline"
       >
         <template #actions>
-          <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy" @click="reload">Reload workspace</v-btn>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved logging settings</v-tooltip></v-btn>
           <v-btn v-if="dirty" variant="text" :disabled="busy" @click="askDiscard(reset)">Reset draft</v-btn>
           <v-btn color="primary" :disabled="locked || !dirty || issues.length > 0" @click="openReview">Review changes</v-btn>
         </template>

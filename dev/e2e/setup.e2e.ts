@@ -1066,7 +1066,7 @@ test.describe('critical post-install workflows', () => {
     await expect(groupRow).toBeVisible()
     await groupRow.click()
     await page.getByRole('textbox', { name: 'Sign-in destination' }).fill('/en/home')
-    await page.getByRole('button', { name: 'Review policy' }).click()
+    await page.getByRole('button', { name: 'Review changes', exact: true }).click()
     const reviewPolicyDialog = page.getByRole('dialog', { name: 'Review group policy' })
     await reviewPolicyDialog.getByRole('textbox', { name: 'Administrative reason' }).fill('Browser group policy verification.')
     await reviewPolicyDialog.getByRole('button', { name: 'Save group policy' }).click()

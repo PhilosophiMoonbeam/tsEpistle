@@ -2,7 +2,7 @@
   <v-container fluid class="system-workspace">
     <admin-hero title="System" description="Understand what is running. Find the evidence behind its state." icon="mdi-monitor-dashboard">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="loading" :aria-busy="loading" @click="load">Refresh observation</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="loading" :aria-busy="loading" @click="load">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload system information</v-tooltip></v-btn>
         <v-btn color="primary" prepend-icon="mdi-file-document-outline" :disabled="!snapshot" @click="selectSection('diagnostics')">
           Support report
         </v-btn>

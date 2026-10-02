@@ -10,7 +10,7 @@
             process.
           </p>
         </div>
-        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">Refresh observations</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload developer flag observations</v-tooltip></v-btn>
       </header>
 
       <async-state

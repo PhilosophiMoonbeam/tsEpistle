@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="account-directory">
     <admin-hero title="Users" description="The people who shape your shared knowledge." eyebrow="People & access" icon="mdi-account-outline">
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="creating" @click="load">Reload directory</v-btn><v-btn v-if="directory?.canCreate" color="primary" variant="flat" prepend-icon="mdi-account-plus-outline" @click="creating = true">Create account</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="creating" @click="load">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload the member directory</v-tooltip></v-btn><v-btn v-if="directory?.canCreate" color="primary" variant="flat" prepend-icon="mdi-account-plus-outline" @click="creating = true">Create account</v-btn></template>
     </admin-hero>
 
     <nav class="account-directory-stats" aria-label="Account status filters"><button :aria-pressed="state === 'all' && verified === 'all'" @click="setStatus('all')"><span>All accounts</span><strong>{{ directory?.counts.accounts ?? '—' }}</strong></button><button :aria-pressed="state === 'active' && verified === 'all'" @click="setStatus('active')"><span>Active</span><strong>{{ directory?.counts.active ?? '—' }}</strong></button><button :aria-pressed="state === 'inactive' && verified === 'all'" @click="setStatus('inactive')"><span>Inactive</span><strong>{{ directory?.counts.inactive ?? '—' }}</strong></button><button :aria-pressed="verified === 'unverified'" @click="setStatus('unverified')"><span>Email unverified</span><strong>{{ directory?.counts.unverified ?? '—' }}</strong></button></nav>

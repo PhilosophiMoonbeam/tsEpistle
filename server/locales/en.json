@@ -1111,7 +1111,8 @@
       "noResultsHint": "Try a topic such as search, members or MCP.",
       "clearSearch": "Clear search",
       "backToWiki": "Back to wiki",
-      "breadcrumb": "Breadcrumb"
+      "breadcrumb": "Breadcrumb",
+      "reload": "Reload"
     }
   },
   "editor": {

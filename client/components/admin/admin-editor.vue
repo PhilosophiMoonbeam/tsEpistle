@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="admin-authoring">
     <admin-hero title="Editors" description="Shape how people create knowledge." icon="mdi-pencil-ruler">
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :disabled="saving || reviewOpen" :loading="loading" @click="reload">Reload saved policy</v-btn><v-btn variant="flat" color="primary" :disabled="!dirty || loading || saving || !valid" @click="reviewOpen = true">Review changes</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :disabled="saving || reviewOpen" :loading="loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved editor policy</v-tooltip></v-btn><v-btn variant="flat" color="primary" :disabled="!dirty || loading || saving || !valid" @click="reviewOpen = true">Review changes</v-btn></template>
     </admin-hero>
     <section class="authoring-intro"><div><span class="authoring-kicker">The authoring experience</span><h2>A good starting point for every author.</h2><p>Offer the right tools, recommend a shared starting point, and understand the formats already in your workspace.</p></div><dl><div><dt>Available in draft</dt><dd>{{ loaded ? draft.available.length : '—' }}<small> / {{ editors.length }}</small></dd></div><div><dt>Existing pages</dt><dd>{{ loaded ? totalPages : '—' }}</dd></div><div><dt>Chooser formats in use</dt><dd>{{ loaded ? usedFormats : '—' }}</dd></div></dl></section>
     <v-alert v-if="success" type="success" variant="tonal" closable class="mb-4" @click:close="success = ''">{{ success }}</v-alert>

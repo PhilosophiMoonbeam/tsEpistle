@@ -12,7 +12,7 @@
           :disabled="busy || initializing"
           :loading="loading"
           @click="reload"
-          >Reload settings</v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved workspace settings</v-tooltip></v-btn
         >
         <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset"
           >Reset draft</v-btn

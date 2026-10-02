@@ -2,7 +2,7 @@
   <v-container fluid class="rendering-workspace">
     <admin-hero title="Rendering" description="From authored source to the reading experience." icon="mdi-text-box-edit-outline">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || reviewOpen" @click="reload">Reload saved configuration</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || reviewOpen" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved rendering configuration</v-tooltip></v-btn>
         <v-btn color="primary" variant="flat" :disabled="!dirty || busy || loading || errors.length > 0" @click="openReview">Review changes</v-btn>
       </template>
     </admin-hero>

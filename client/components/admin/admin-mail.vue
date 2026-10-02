@@ -3,7 +3,7 @@
     <div :inert="dialogOpen || undefined">
       <admin-hero title="Mail" description="A considered channel for invitations, account access and knowledge updates." icon="mdi-email-outline">
         <template #actions>
-          <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">Reload workspace</v-btn>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved mail settings</v-tooltip></v-btn>
           <v-btn v-if="dirty" variant="text" :disabled="busy" @click="askDiscard(reset)">Reset draft</v-btn>
           <v-btn color="primary" :disabled="locked || !dirty || issues.length > 0" @click="openReview">Review changes</v-btn>
         </template>
@@ -496,7 +496,7 @@
           </div>
           <div class="mail-inline-actions">
             <v-btn variant="text" :disabled="busy" @click="askDiscard(reset)">Reset changes</v-btn>
-            <v-btn color="primary" :disabled="locked || issues.length > 0" @click="openReview">Review draft</v-btn>
+            <v-btn color="primary" :disabled="locked || issues.length > 0" @click="openReview">Review changes</v-btn>
           </div>
         </div>
       </template>

@@ -28,7 +28,7 @@
           :disabled="busy"
           :loading="loading"
           @click="reload"
-          >Reload policy</v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved sign-in policy</v-tooltip></v-btn
         ><v-btn v-if="dirty" variant="text" :disabled="busy" @click="reset"
           >Reset draft</v-btn
         ><v-btn

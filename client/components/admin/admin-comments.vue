@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="discussion-workspace">
     <admin-hero title="Discussions" description="Make room for useful conversations around your knowledge." icon="mdi-comment-text-multiple-outline">
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || reviewOpen" @click="reload">Reload workspace</v-btn><v-btn color="primary" variant="flat" :disabled="!dirty || busy || loading || issues.length > 0" @click="reviewOpen = true; saveError = ''">Review policy changes</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || reviewOpen" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved discussion policy</v-tooltip></v-btn><v-btn color="primary" variant="flat" :disabled="!dirty || busy || loading || issues.length > 0" @click="reviewOpen = true; saveError = ''">Review changes</v-btn></template>
     </admin-hero>
     <section class="discussion-intro"><div><span class="discussion-eyebrow">Conversation & care</span><h2>A thoughtful space to contribute.</h2><p>Choose how discussions work, keep comments useful, and bring a conversation to a considered close.</p></div><dl><div><dt>Visible comments</dt><dd>{{ saved?.counts.visible ?? '—' }}</dd></div><div><dt>Hidden for review</dt><dd>{{ saved?.counts.hidden ?? '—' }}</dd></div><div><dt>Closed discussions</dt><dd>{{ saved?.counts.closedPages ?? '—' }}</dd></div></dl></section>
     <v-alert v-if="notice" :type="noticeWarning ? 'warning' : 'success'" variant="tonal" closable class="mb-4" @click:close="notice = ''">{{ notice }}</v-alert>

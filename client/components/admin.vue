@@ -326,6 +326,9 @@ export default defineComponent({
   .admin-main .v-list-item-subtitle { -webkit-line-clamp: 3; }
   .admin-main .v-card-info { gap: 1rem; padding: 1.25rem; }
   .admin-search .v-list-item-title { white-space: normal; line-height: 1.45; }
+
+  // Focusable "disabled" buttons keep their tooltip; the click handler blocks the action.
+  .admin-main .v-btn[aria-disabled='true'] { opacity: .62; cursor: default; }
 }
 
 @media (max-width: 599px) {

@@ -17,7 +17,9 @@ v-container.extensions-workspace(fluid)
           dt Observed
           dd: time(:datetime='workspace?.observedAt') {{ workspace ? dateTime(workspace.observedAt) : '—' }}
       div.extensions-heading-actions
-        v-btn(variant='outlined' color='primary' size='small' prepend-icon='mdi-refresh' :loading='loading' :disabled='loading' @click='refresh') Refresh observations
+        v-btn(variant='outlined' color='primary' size='small' prepend-icon='mdi-refresh' :loading='loading' :disabled='loading' @click='refresh')
+          | {{ $t('admin:shell.reload') }}
+          v-tooltip(activator='parent' location='bottom') Reload extension observations
         p.extensions-boundary
           v-icon(icon='mdi-shield-lock-outline' size='16' aria-hidden='true')
           span Availability is checked in this process. Installation is managed with the application image.
