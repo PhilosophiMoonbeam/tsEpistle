@@ -2139,9 +2139,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  /* The docked composer floats over the scroll bottom; this padding keeps the
-     last message and diagram sources fully visible and clickable above it. */
-  padding: var(--wiki-space-3) var(--wiki-space-1) 13rem;
+  /* The sticky dock already reserves its own height in this column. Extra
+     padding after it raises the composer and can cover welcome actions. */
+  padding: var(--wiki-space-3) var(--wiki-space-1);
   overflow-y: auto;
   outline: none;
   overscroll-behavior: contain;
