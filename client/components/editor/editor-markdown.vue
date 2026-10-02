@@ -1,245 +1,160 @@
 <template lang='pug'>
   .editor-markdown(ref='root')
-    v-toolbar.editor-markdown-toolbar(density="compact", flat, role='toolbar', aria-label='Formatting tools')
+    v-toolbar.editor-markdown-toolbar(density="compact", flat)
       template(v-if='isModalShown')
         v-spacer
-        v-btn.animated.fadeInRight.wiki-purpose-control(variant="text", data-purpose='info', @click='closeAllModal')
+        v-btn.editor-tool(variant="text", @click='closeAllModal')
           v-icon(start) mdi-arrow-left-circle
           span {{$t('editor:backToEditor')}}
-      template(v-else)
-        v-tooltip(location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', :aria-label='$t(`editor:markup.bold`)', @click='toggleMarkup({ start: `**` })').mx-0
-              v-icon mdi-format-bold
-          span {{$t('editor:markup.bold')}}
-        v-tooltip(location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p1s.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.italic`)', @click='toggleMarkup({ start: `*` })').mx-0
-              v-icon mdi-format-italic
-          span {{$t('editor:markup.italic')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p2s.wiki-purpose-control(icon, rounded='md', data-purpose='secondary', v-bind='props', :aria-label='$t(`editor:markup.strikethrough`)', @click='toggleMarkup({ start: `~~` })').mx-0
-              v-icon mdi-format-strikethrough
-          span {{$t('editor:markup.strikethrough')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p3s.wiki-purpose-control(icon, rounded='md', data-purpose='warning', v-bind='props', :aria-label='$t(`editor:markup.highlight`)', @click='toggleMarkup({ start: `==` })').mx-0
-              v-icon mdi-format-color-highlight
-          span {{$t('editor:markup.highlight')}}
-        v-menu(:open-on-hover='$vuetify.display.mdAndUp')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p3s.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', aria-label='Heading level').mx-0
-              v-icon mdi-format-header-pound
-          v-list.py-0
-            template(v-for='(n, idx) in 6', :key='idx')
-              v-list-item.wiki-purpose-control(data-purpose='primary', @click='setHeaderLine(n)')
-                template(v-slot:append)
-                  v-icon(:size='24 - (idx - 1) * 2') mdi-format-header-{{n}}
-                v-list-item-title {{$t('editor:markup.heading', { level: n })}}
-              v-divider(v-if='idx < 5')
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p4s.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', :aria-label='$t(`editor:markup.subscript`)', @click='toggleMarkup({ start: `~` })').mx-0
-              v-icon mdi-format-subscript
-          span {{$t('editor:markup.subscript')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p5s.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', :aria-label='$t(`editor:markup.superscript`)', @click='toggleMarkup({ start: `^` })').mx-0
-              v-icon mdi-format-superscript
-          span {{$t('editor:markup.superscript')}}
-        v-menu(v-if='$vuetify.display.mdAndUp', open-on-hover)
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p6s.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', aria-label='Admonition type').mx-0
-              v-icon mdi-alpha-t-box-outline
-          v-list.py-0
-            v-list-item.wiki-purpose-control(data-purpose='primary', @click='insertBeforeEachLine({ content: `> `})')
-              template(v-slot:append)
-                v-icon mdi-alpha-t-box-outline
-              v-list-item-title {{$t('editor:markup.blockquote')}}
-            v-divider
-            v-list-item.wiki-purpose-control(data-purpose='info', @click='insertBeforeEachLine({ content: `> `, after: `{.is-info}`})')
-              template(v-slot:append)
-                v-icon mdi-alpha-i-box-outline
-              v-list-item-title {{$t('editor:markup.blockquoteInfo')}}
-            v-divider
-            v-list-item.wiki-purpose-control(data-purpose='success', @click='insertBeforeEachLine({ content: `> `, after: `{.is-success}`})')
-              template(v-slot:append)
-                v-icon mdi-alpha-s-box-outline
-              v-list-item-title {{$t('editor:markup.blockquoteSuccess')}}
-            v-divider
-            v-list-item.wiki-purpose-control(data-purpose='warning', @click='insertBeforeEachLine({ content: `> `, after: `{.is-warning}`})')
-              template(v-slot:append)
-                v-icon mdi-alpha-w-box-outline
-              v-list-item-title {{$t('editor:markup.blockquoteWarning')}}
-            v-divider
-            v-list-item.wiki-purpose-control(data-purpose='error', @click='insertBeforeEachLine({ content: `> `, after: `{.is-danger}`})')
-              template(v-slot:append)
-                v-icon mdi-alpha-e-box-outline
-              v-list-item-title {{$t('editor:markup.blockquoteError')}}
-            v-divider
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p7s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.unorderedList`)', @click='insertBeforeEachLine({ content: `- `})').mx-0
-              v-icon mdi-format-list-bulleted
-          span {{$t('editor:markup.unorderedList')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p8s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.orderedList`)', @click='insertBeforeEachLine({ content: `1. `})').mx-0
-              v-icon mdi-format-list-numbered
-          span {{$t('editor:markup.orderedList')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p9s.wiki-purpose-control(icon, rounded='md', data-purpose='secondary', v-bind='props', :aria-label='$t(`editor:markup.inlineCode`)', @click='toggleMarkup({ start: "`" })').mx-0
-              v-icon mdi-code-tags
-          span {{$t('editor:markup.inlineCode')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p10s.wiki-purpose-control(icon, rounded='md', data-purpose='secondary', v-bind='props', :aria-label='$t(`editor:markup.keyboardKey`)', @click='toggleMarkup({ start: `<kbd>`, end: `</kbd>` })').mx-0
-              v-icon mdi-keyboard-variant
-          span {{$t('editor:markup.keyboardKey')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p11s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.horizontalBar`)', @click='insertAfter({ content: `---`, newLine: true })').mx-0
-              v-icon mdi-minus
-          span {{$t('editor:markup.horizontalBar')}}
-        template(v-if='$vuetify.display.mdAndUp')
-          v-spacer
-          v-tooltip(v-if='previewShown', location="bottom", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', aria-label='Align preview to cursor', :aria-pressed='previewAlignmentEnabled', :variant='previewAlignmentEnabled ? `tonal` : `text`', @click='togglePreviewAlignment').mx-0
-                v-icon mdi-crosshairs-gps
-            span {{ previewAlignmentEnabled ? 'Preview follows cursor' : 'Preview alignment off' }}
-          v-tooltip(location="bottom", color='primary', v-if='previewShown')
-            template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p1s.wiki-purpose-control(icon, rounded='md', data-purpose='warning', v-bind='props', :aria-label='$t(`editor:markup.toggleSpellcheck`)', :aria-pressed='spellModeActive', @click='spellModeActive = !spellModeActive').mx-0
-                v-icon mdi-spellcheck
-            span {{$t('editor:markup.toggleSpellcheck')}}
-          v-tooltip(location="bottom", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p2s.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='togglePreview').mx-0
-                v-icon mdi-book-open-outline
-            span {{$t('editor:markup.togglePreviewPane')}}
-        template(v-else)
-          v-spacer
-          v-tooltip(v-if='previewShown', location="bottom", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn.mx-0.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', aria-label='Align preview to cursor', :aria-pressed='previewAlignmentEnabled', :variant='previewAlignmentEnabled ? `tonal` : `text`', @click='togglePreviewAlignment')
-                v-icon mdi-crosshairs-gps
-            span {{ previewAlignmentEnabled ? 'Preview follows cursor' : 'Preview alignment off' }}
-          v-tooltip(location="bottom", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn.mx-0.wiki-purpose-control(
+      .editor-markdown-toolbar-inner(
+        v-else
+        role='toolbar'
+        :aria-label='$t(`editor:markup.formattingTools`)'
+        v-roving-toolbar='{ onEscape: focusEditor }'
+      )
+        template(v-for='group of toolbarGroups', :key='group.id')
+          .editor-tool-group(role='group', :aria-label='$t(group.labelKey)')
+            template(v-for='toolId of group.tools', :key='toolId')
+              v-menu(v-if='toolId === `heading`', :open-on-hover='$vuetify.display.mdAndUp')
+                template(v-slot:activator='{ props: menuProps }')
+                  v-btn.editor-tool(
+                    v-bind='menuProps'
+                    icon
+                    rounded='md'
+                    variant='text'
+                    :class='{ "is-active": formatState.headingLevel > 0 }'
+                    :aria-label='headingToolLabel'
+                  )
+                    v-icon {{ formatState.headingLevel > 0 ? `mdi-format-header-${formatState.headingLevel}` : tools.heading.icon }}
+                    v-tooltip(activator='parent', location='bottom') {{ headingToolLabel }}
+                v-list.py-0(density='compact')
+                  v-list-item(v-for='n in 6', :key='n', :active='formatState.headingLevel === n', @click='setHeaderLine(n)')
+                    template(v-slot:prepend)
+                      v-icon mdi-format-header-{{n}}
+                    v-list-item-title {{$t('editor:markup.heading', { level: n })}}
+              v-menu(v-else-if='toolId === `blockquote`', :open-on-hover='$vuetify.display.mdAndUp')
+                template(v-slot:activator='{ props: menuProps }')
+                  v-btn.editor-tool(
+                    v-bind='menuProps'
+                    icon
+                    rounded='md'
+                    variant='text'
+                    :class='{ "is-active": formatState.blockquote }'
+                    :aria-label='$t(`editor:markup.blockquoteType`)'
+                  )
+                    v-icon {{ tools.blockquote.icon }}
+                    v-tooltip(activator='parent', location='bottom') {{ $t('editor:markup.blockquoteType') }}
+                v-list.py-0(density='compact')
+                  v-list-item.wiki-purpose-control(
+                    v-for='kind of admonitionKinds'
+                    :key='kind.id'
+                    :data-purpose='kind.purpose'
+                    @click='insertBeforeEachLine({ content: `> `, after: kind.after })'
+                  )
+                    template(v-slot:prepend)
+                      v-icon {{ kind.icon }}
+                    v-list-item-title {{ $t(kind.labelKey) }}
+              v-btn.editor-tool(
+                v-else
                 icon
                 rounded='md'
-                v-bind='props'
-                data-purpose='info'
-                @click='togglePreview'
-                :aria-label='previewShown ? `Show editor` : `Show preview`'
+                variant='text'
+                :aria-label='toolLabel(toolId)'
+                :aria-pressed='toolPressed(toolId)'
+                :aria-disabled='toolUnavailable(toolId) ? `true` : undefined'
+                @click='runMarkdownTool(toolId)'
               )
-                v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
-            span {{ previewShown ? 'Show editor' : $t('editor:markup.togglePreviewPane') }}
-          v-menu(location="left", min-width='260')
-            template(v-slot:activator='{ props }')
-              v-btn.mx-0.wiki-purpose-control(
-                icon
-                rounded='md'
-                v-bind='props'
-                data-purpose='info'
-              )
+                v-icon {{ tools[toolId].icon }}
+                v-tooltip(activator='parent', location='bottom') {{ toolTooltipText(toolId) }}
+        v-spacer
+        .editor-tool-group(role='group', :aria-label='$t(`editor:markup.viewGroup`)')
+          v-btn.editor-tool(
+            v-if='previewShown'
+            icon
+            rounded='md'
+            variant='text'
+            :aria-label='$t(`editor:markup.alignPreview`)'
+            :aria-pressed='previewAlignmentEnabled'
+            @click='togglePreviewAlignment'
+          )
+            v-icon mdi-crosshairs-gps
+            v-tooltip(activator='parent', location='bottom') {{ previewAlignmentEnabled ? $t('editor:markup.previewFollows') : $t('editor:markup.previewAlignmentOff') }}
+          v-btn.editor-tool(
+            v-if='previewShown && $vuetify.display.mdAndUp'
+            icon
+            rounded='md'
+            variant='text'
+            :aria-label='$t(`editor:markup.toggleSpellcheck`)'
+            :aria-pressed='spellModeActive'
+            @click='spellModeActive = !spellModeActive'
+          )
+            v-icon mdi-spellcheck
+            v-tooltip(activator='parent', location='bottom') {{$t('editor:markup.toggleSpellcheck')}}
+          v-btn.editor-tool(
+            v-if='$vuetify.display.mdAndUp'
+            icon
+            rounded='md'
+            variant='text'
+            :aria-label='$t(`editor:markup.togglePreviewPane`)'
+            :aria-pressed='previewShown'
+            @click='togglePreview'
+          )
+            v-icon mdi-book-open-outline
+            v-tooltip(activator='parent', location='bottom') {{$t('editor:markup.togglePreviewPane')}}
+          v-btn.editor-tool(
+            v-else
+            icon
+            rounded='md'
+            variant='text'
+            :aria-label='previewShown ? $t(`editor:markup.showEditor`) : $t(`editor:markup.showPreview`)'
+            @click='togglePreview'
+          )
+            v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
+            v-tooltip(activator='parent', location='bottom') {{ previewShown ? $t('editor:markup.showEditor') : $t('editor:markup.showPreview') }}
+          v-menu(v-if='!$vuetify.display.mdAndUp', location="left", min-width='260')
+            template(v-slot:activator='{ props: menuProps }')
+              v-btn.editor-tool(v-bind='menuProps', icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.moreTools`)')
                 v-icon mdi-dots-horizontal
-            v-list(nav)
-              v-list-item.wiki-purpose-control(data-purpose='info', @click='insertLink')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-link-plus
-                v-list-item-title {{$t('editor:markup.insertLink')}}
-              v-list-item.wiki-purpose-control(data-purpose='success', @click='toggleModal(`editorModalMedia`)')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-folder-multiple-image
-                v-list-item-title {{$t('editor:markup.insertAssets')}}
-              v-list-item.wiki-purpose-control(data-purpose='success', @click='toggleModal(`editorModalDrawio`)')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-chart-multiline
-                v-list-item-title {{$t('editor:markup.insertDiagram')}}
-              v-list-item.wiki-purpose-control(data-purpose='success', @click='toggleModal(`editorModalBlocks`)')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-qrcode
-                v-list-item-title Insert content extension
-              v-list-item.wiki-purpose-control(data-purpose='success', @click='insertDefinitionList')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-format-list-group-plus
-                v-list-item-title {{$t('editor:markup.insertDefinitionList')}}
-              v-list-item.wiki-purpose-control(data-purpose='success', @click='insertAbbreviation')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-tooltip-plus-outline
-                v-list-item-title {{$t('editor:markup.insertAbbreviation')}}
+            v-list(nav, density='compact')
+              template(v-for='toolId of mobileMenuTools', :key='toolId')
+                v-divider(v-if='toolId === `divider`')
+                v-list-item(v-else, @click='runMarkdownTool(toolId)')
+                  template(v-slot:prepend)
+                    v-icon.mr-3 {{ tools[toolId].icon }}
+                  v-list-item-title {{ toolLabel(toolId) }}
               v-divider
-              v-list-item.wiki-purpose-control(data-purpose='secondary', @click='toggleMarkup({ start: `~~` })')
+              v-list-item(@click='toggleHelp')
                 template(v-slot:prepend)
-                  v-icon.mr-3 mdi-format-strikethrough
-                v-list-item-title {{$t('editor:markup.strikethrough')}}
-              v-list-item.wiki-purpose-control(data-purpose='primary', @click='insertBeforeEachLine({ content: `> `})')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-format-quote-open
-                v-list-item-title {{$t('editor:markup.blockquote')}}
-              v-list-item.wiki-purpose-control(data-purpose='secondary', @click='toggleMarkup({ start: "`" })')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-code-tags
-                v-list-item-title {{$t('editor:markup.inlineCode')}}
-              v-list-item.wiki-purpose-control(data-purpose='warning', @click='toggleMarkup({ start: `==` })')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-format-color-highlight
-                v-list-item-title {{$t('editor:markup.highlight')}}
-              v-divider
-              v-list-item.wiki-purpose-control(data-purpose='info', @click='toggleHelp')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-help-circle
+                  v-icon.mr-3 mdi-help-circle-outline
                 v-list-item-title {{$t('editor:markup.markdownFormattingHelp')}}
     .editor-markdown-main
-      .editor-markdown-sidebar
-        v-tooltip(location="right", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.insertLink`)', @click='insertLink').mx-0
-              v-icon mdi-link-plus
-          span {{$t('editor:markup.insertLink')}}
-        v-tooltip(location="right", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p1s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
-              v-icon mdi-folder-multiple-image
-          span {{$t('editor:markup.insertAssets')}}
-        v-tooltip(location="right", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p2s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', :aria-pressed='activeModal === `editorModalDrawio`', @click='toggleModal(`editorModalDrawio`)').mx-0
-              v-icon mdi-chart-multiline
-          span {{$t('editor:markup.insertDiagram')}}
-        v-tooltip(location="right", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p3s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', aria-label='Insert content extension', :aria-pressed='activeModal === `editorModalBlocks`', @click='toggleModal(`editorModalBlocks`)').mx-0
-              v-icon mdi-qrcode
-          span Insert content extension
-        v-tooltip(location="right", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p4s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.insertDefinitionList`)', @click='insertDefinitionList').mx-0
-              v-icon mdi-format-list-group-plus
-          span {{$t('editor:markup.insertDefinitionList')}}
-        v-tooltip(location="right", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p5s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.insertAbbreviation`)', @click='insertAbbreviation').mx-0
-              v-icon mdi-tooltip-plus-outline
-          span {{$t('editor:markup.insertAbbreviation')}}
+      .editor-markdown-sidebar(
+        role='toolbar'
+        aria-orientation='vertical'
+        :aria-label='$t(`editor:markup.insertTools`)'
+        v-roving-toolbar='{ onEscape: focusEditor }'
+      )
+        v-btn.editor-tool(
+          v-for='toolId of sidebarTools'
+          :key='toolId'
+          icon
+          rounded='md'
+          variant='text'
+          :aria-label='toolLabel(toolId)'
+          :aria-pressed='toolPressed(toolId)'
+          @click='runMarkdownTool(toolId)'
+        )
+          v-icon {{ tools[toolId].icon }}
+          v-tooltip(activator='parent', location='right') {{ toolLabel(toolId) }}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           .editor-markdown-sidebar-actions
-            v-tooltip(location="right", color='primary')
-              template(v-slot:activator='{ props }')
-                v-btn.mt-3.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
-                  v-icon mdi-arrow-expand-all
-              span {{$t('editor:markup.distractionFreeMode')}}
-            v-tooltip(location="right", color='primary')
-              template(v-slot:activator='{ props }')
-                v-btn.mt-3.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp').mx-0
-                  v-icon mdi-help-circle
-              span {{$t('editor:markup.markdownFormattingHelp')}}
+            v-btn.editor-tool(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen')
+              v-icon mdi-arrow-expand-all
+              v-tooltip(activator='parent', location='right') {{$t('editor:markup.distractionFreeMode')}} (F11)
+            v-btn.editor-tool(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp')
+              v-icon mdi-help-circle-outline
+              v-tooltip(activator='parent', location='right') {{$t('editor:markup.markdownFormattingHelp')}}
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')
       transition(name='editor-markdown-preview', :css='$vuetify.display.mdAndUp')
@@ -256,13 +171,13 @@
 
     .v-system-bar.editor-status-bar.editor-markdown-sysbar
       .text-body-small.editor-markdown-sysbar-locale {{locale.toUpperCase()}}
-      .text-body-small.editor-markdown-sysbar-path.px-3(:title='`/${path}`') /{{path}}
+      .text-body-small.editor-markdown-sysbar-path.px-3 /{{path}}
+        v-tooltip(activator='parent', location='top') /{{path}}
       template(v-if='collaborationStatus')
         v-spacer
         .text-body-small.d-flex.align-center.editor-markdown-sysbar-collaboration(
           role='status'
           aria-live='polite'
-          :title='collaborationLabel'
         )
           v-icon.mr-1(size="small", :color='collaborationColor') {{collaborationIcon}}
           span {{collaborationLabel}}
@@ -270,6 +185,7 @@
         v-spacer
         .text-body-small.editor-markdown-sysbar-mode Markdown
         v-spacer
+        .text-body-small.editor-markdown-sysbar-format(v-if='formatSummary', :aria-label='$t(`editor:markup.formatAtCursor`, { format: formatSummary })') {{ formatSummary }}
         .text-body-small.editor-markdown-sysbar-position Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}
 
     markdown-help(v-if='helpShown')
@@ -291,7 +207,7 @@ import { decodeBase64Text } from '../../helpers/base64'
 /* global siteConfig, siteLangs */
 
 import { autocompletion, type CompletionContext } from '@codemirror/autocomplete'
-import { markdown } from '@codemirror/lang-markdown'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorView, keymap } from '@codemirror/view'
 import {
   TextEditor,
@@ -302,6 +218,16 @@ import {
   type TextPosition
 } from './common/text-editor'
 import { EditorAdapterController } from './common/editor-adapter'
+import {
+  EMPTY_MARKDOWN_FORMAT_STATE,
+  FORMATTING_TOOLS,
+  describeMarkdownFormatState,
+  markdownFormatStateFromPath,
+  toolTooltip,
+  type FormattingToolId,
+  type MarkdownFormatState
+} from './common/formatting-tools'
+import { vRovingToolbar } from './common/roving-toolbar'
 import {
   createMarkdownCollaboration,
   type CollaborationStatus,
@@ -320,6 +246,36 @@ import { PreviewAlignmentScheduler, calculatePreviewAlignment, resolveVisiblePre
 import { WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../shared/wikilinks.ts'
 
 type MarkdownMarkerKind = 'diagram'
+
+type MarkdownToolbarGroup = {
+  id: string
+  labelKey: string
+  tools: FormattingToolId[]
+}
+
+type MobileMenuEntry = FormattingToolId | 'divider'
+
+const MODAL_TOOLS: Partial<Record<FormattingToolId, string>> = {
+  assets: 'editorModalMedia',
+  diagram: 'editorModalDrawio',
+  contentExtension: 'editorModalBlocks'
+}
+
+// Callout pickers keep their semantic purpose colour; plain tools stay neutral.
+const ADMONITION_KINDS = [
+  { id: 'quote', labelKey: 'editor:markup.blockquote', icon: 'mdi-format-quote-open', purpose: 'neutral', after: undefined },
+  { id: 'info', labelKey: 'editor:markup.blockquoteInfo', icon: 'mdi-information-outline', purpose: 'info', after: '{.is-info}' },
+  { id: 'success', labelKey: 'editor:markup.blockquoteSuccess', icon: 'mdi-check-circle-outline', purpose: 'success', after: '{.is-success}' },
+  { id: 'warning', labelKey: 'editor:markup.blockquoteWarning', icon: 'mdi-alert-outline', purpose: 'warning', after: '{.is-warning}' },
+  { id: 'error', labelKey: 'editor:markup.blockquoteError', icon: 'mdi-alert-octagon-outline', purpose: 'error', after: '{.is-danger}' }
+] as const
+
+const SIDEBAR_TOOLS: FormattingToolId[] = ['link', 'assets', 'diagram', 'contentExtension', 'definitionList', 'abbreviation']
+const MOBILE_MENU_TOOLS: MobileMenuEntry[] = [
+  'link', 'assets', 'diagram', 'contentExtension', 'definitionList', 'abbreviation',
+  'divider',
+  'strikethrough', 'highlight', 'blockquote', 'inlineCode', 'unorderedList', 'orderedList'
+]
 
 type ToggleMarkupOptions = {
   start: string
@@ -455,6 +411,9 @@ export default defineComponent({
   components: {
     markdownHelp
   },
+  directives: {
+    rovingToolbar: vRovingToolbar
+  },
   emits: ['collaboration-state', 'editor-adapter', 'editor-adapter-clear'],
   props: {
     save: {
@@ -488,10 +447,46 @@ export default defineComponent({
       collaborationStatus: null as CollaborationStatus | null,
       editorDisposed: false,
       editorAdapter: null as EditorAdapterController | null,
-      collaborationAbortController: null as AbortController | null
+      collaborationAbortController: null as AbortController | null,
+      formatState: EMPTY_MARKDOWN_FORMAT_STATE as MarkdownFormatState,
+      historyDepth: { undo: 0, redo: 0 },
+      tools: FORMATTING_TOOLS,
+      admonitionKinds: ADMONITION_KINDS,
+      sidebarTools: SIDEBAR_TOOLS,
+      mobileMenuTools: MOBILE_MENU_TOOLS
     }
   },
   computed: {
+    toolbarGroups(): MarkdownToolbarGroup[] {
+      if (!this.$vuetify.display.mdAndUp) {
+        return [
+          { id: 'history', labelKey: 'editor:markup.historyGroup', tools: ['undo', 'redo'] },
+          { id: 'text', labelKey: 'editor:markup.textGroup', tools: ['bold', 'italic', 'heading'] }
+        ]
+      }
+      return [
+        { id: 'history', labelKey: 'editor:markup.historyGroup', tools: ['undo', 'redo'] },
+        {
+          id: 'text',
+          labelKey: 'editor:markup.textGroup',
+          tools: ['bold', 'italic', 'strikethrough', 'highlight', 'subscript', 'superscript', 'inlineCode', 'keyboardKey']
+        },
+        {
+          id: 'structure',
+          labelKey: 'editor:markup.structureGroup',
+          tools: ['heading', 'blockquote', 'unorderedList', 'orderedList', 'horizontalBar']
+        }
+      ]
+    },
+    headingToolLabel(): string {
+      const level = this.formatState.headingLevel
+      return level > 0
+        ? String(this.$t('editor:markup.headingLevelCurrent', { level }))
+        : String(this.$t('editor:markup.headingLevel'))
+    },
+    formatSummary(): string {
+      return describeMarkdownFormatState(this.formatState, (key, values) => String(this.$t(key, values ?? {})))
+    },
     isModalShown() {
       return this.helpShown || this.activeModal !== ''
     },
@@ -515,10 +510,10 @@ export default defineComponent({
     collaborationLabel(): string {
       const status = this.collaborationStatus
       if (!status) return ''
-      if (status.state === 'connected') return `${status.participants} editing`
-      if (status.state === 'connecting') return 'Live: connecting'
-      if (status.state === 'offline') return 'Live: offline — edits kept locally'
-      return 'Live stopped — reload before saving'
+      if (status.state === 'connected') return String(this.$t('editor:collaboration.editing', { count: status.participants }))
+      if (status.state === 'connecting') return String(this.$t('editor:collaboration.connecting'))
+      if (status.state === 'offline') return String(this.$t('editor:collaboration.offline'))
+      return String(this.$t('editor:collaboration.stopped'))
     },
     collaborationIcon(): string {
       const state = this.collaborationStatus?.state
@@ -527,11 +522,11 @@ export default defineComponent({
       if (state === 'offline') return 'mdi-cloud-off-outline'
       return 'mdi-alert-outline'
     },
-    collaborationColor(): string {
+    collaborationColor(): string | undefined {
       const state = this.collaborationStatus?.state
-      if (state === 'connected') return 'green-lighten-2'
-      if (state === 'conflict') return 'amber-lighten-2'
-      return 'white'
+      if (state === 'connected') return 'success'
+      if (state === 'conflict') return 'warning'
+      return undefined
     },
   },
   watch: {
@@ -579,6 +574,114 @@ export default defineComponent({
     }
   },
   methods: {
+    toolLabel (toolId: FormattingToolId): string {
+      return String(this.$t(FORMATTING_TOOLS[toolId].labelKey))
+    },
+    toolTooltipText (toolId: FormattingToolId): string {
+      if (toolId === 'undo' && this.historyDepth.undo === 0) return String(this.$t('editor:markup.nothingToUndo'))
+      if (toolId === 'redo' && this.historyDepth.redo === 0) return String(this.$t('editor:markup.nothingToRedo'))
+      return toolTooltip(this.toolLabel(toolId), FORMATTING_TOOLS[toolId])
+    },
+    /** `aria-pressed` only for tools that toggle a state the syntax tree can report. */
+    toolPressed (toolId: FormattingToolId): boolean | undefined {
+      const modal = MODAL_TOOLS[toolId]
+      if (modal) return this.activeModal === modal
+      switch (toolId) {
+        case 'bold':
+        case 'italic':
+        case 'strikethrough':
+        case 'subscript':
+        case 'superscript':
+        case 'inlineCode':
+        case 'blockquote':
+        case 'unorderedList':
+        case 'orderedList':
+          return this.formatState[toolId]
+        default:
+          return undefined
+      }
+    },
+    toolUnavailable (toolId: FormattingToolId): boolean {
+      if (toolId === 'undo') return this.historyDepth.undo === 0
+      if (toolId === 'redo') return this.historyDepth.redo === 0
+      return false
+    },
+    runMarkdownTool (toolId: FormattingToolId) {
+      // Undo/Redo stay focusable while empty so their tooltip can explain why.
+      if (this.toolUnavailable(toolId)) return
+      const modal = MODAL_TOOLS[toolId]
+      if (modal) {
+        this.toggleModal(modal)
+        return
+      }
+      switch (toolId) {
+        case 'undo':
+          this.cm?.undo?.()
+          break
+        case 'redo':
+          this.cm?.redo?.()
+          break
+        case 'bold':
+          this.toggleMarkup({ start: '**' })
+          break
+        case 'italic':
+          this.toggleMarkup({ start: '*' })
+          break
+        case 'strikethrough':
+          this.toggleMarkup({ start: '~~' })
+          break
+        case 'highlight':
+          this.toggleMarkup({ start: '==' })
+          break
+        case 'subscript':
+          this.toggleMarkup({ start: '~' })
+          break
+        case 'superscript':
+          this.toggleMarkup({ start: '^' })
+          break
+        case 'inlineCode':
+          this.toggleMarkup({ start: '`' })
+          break
+        case 'keyboardKey':
+          this.toggleMarkup({ start: '<kbd>', end: '</kbd>' })
+          break
+        case 'blockquote':
+          this.insertBeforeEachLine({ content: '> ' })
+          break
+        case 'unorderedList':
+          this.insertBeforeEachLine({ content: '- ' })
+          break
+        case 'orderedList':
+          this.insertBeforeEachLine({ content: '1. ' })
+          break
+        case 'horizontalBar':
+          this.insertAfter({ content: '---', newLine: true })
+          break
+        case 'link':
+          this.insertLink()
+          return
+        case 'definitionList':
+          this.insertDefinitionList()
+          break
+        case 'abbreviation':
+          this.insertAbbreviation()
+          break
+        default:
+          return
+      }
+      this.syncFormatState()
+    },
+    /** Read active formatting and undo depth from CodeMirror after any change. */
+    syncFormatState () {
+      const cm = this.cm
+      if (!cm || this.editorDisposed) return
+      this.formatState = cm.syntaxPath ? markdownFormatStateFromPath(cm.syntaxPath()) : EMPTY_MARKDOWN_FORMAT_STATE
+      const depth = cm.historyDepth?.()
+      if (depth && (depth.undo !== this.historyDepth.undo || depth.redo !== this.historyDepth.redo)) this.historyDepth = depth
+    },
+    focusEditor () {
+      this.cm?.focus()
+    },
     togglePreview () {
       this.previewShown = !this.previewShown
     },
@@ -1010,7 +1113,7 @@ export default defineComponent({
             markers.push({
               from: { line: foundStart, ch: 3 },
               to: { line: foundStart, ch: 10 },
-              text: 'Edit Diagram',
+              text: String(this.$t('editor:markup.editDiagram')),
               action: () => {
                 const editor = requireEditor(this.cm)
                 editor.setSelection({ line: foundStart, ch: 0 }, { line, ch: 3 })
@@ -1019,7 +1122,7 @@ export default defineComponent({
                   this.toggleModal(`editorModalDrawio`)
                 } catch {
                   wikiStore.showNotification({
-                    message: 'Failed to process diagram data.',
+                    message: String(this.$t('editor:markup.diagramDataFailed')),
                     style: 'warning',
                     icon: 'warning'
                   })
@@ -1115,8 +1218,8 @@ export default defineComponent({
             if (firstConflict) {
               wikiStore.showNotification({
                 message: status.conflict === 'draft-discarded'
-                  ? 'This collaboration draft was discarded. Reload the page before saving.'
-                  : 'Live collaboration stopped because the page or your access changed. Your edits remain in this editor.',
+                  ? String(this.$t('editor:collaboration.draftDiscarded'))
+                  : String(this.$t('editor:collaboration.accessChanged')),
                 style: 'warning',
                 icon: 'warning'
               })
@@ -1139,7 +1242,7 @@ export default defineComponent({
         this.$emit('collaboration-state', { active: false, discarded: false, generation: null })
         if (!this.editorDisposed) {
           wikiStore.showNotification({
-            message: 'Live collaboration is unavailable. You can continue editing locally.',
+            message: String(this.$t('editor:collaboration.unavailable')),
             style: 'warning',
             icon: 'warning'
           })
@@ -1160,10 +1263,10 @@ export default defineComponent({
     }
     const cm = new TextEditor({
       parent: container,
-      ariaLabel: 'Markdown source',
+      ariaLabel: String(this.$t('editor:markup.sourceLabel')),
       dark: this.$vuetify.theme.current.dark,
       value: wikiStore.editor.content,
-      language: markdown(),
+      language: markdown({ base: markdownLanguage }),
       spellcheck: false,
       direction: siteConfig.rtl ? 'rtl' : 'ltr',
       extensions,
@@ -1171,9 +1274,11 @@ export default defineComponent({
         wikiStore.editor.content = value
         this.editorAdapter?.noteTextChange()
         this.onCmInput(value)
+        this.syncFormatState()
       },
       onCursor: position => {
         this.positionSync(position)
+        this.syncFormatState()
         this.requestPreviewAlignment()
       },
       onClick: () => {
@@ -1181,6 +1286,7 @@ export default defineComponent({
       }
     })
     this.cm = markRaw(cm)
+    this.syncFormatState()
     const adapter = new EditorAdapterController({
       readText: () => cm.getValue(),
       writeText: text => {
@@ -1437,6 +1543,19 @@ export default defineComponent({
     }
   }
 
+  &-toolbar-inner {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    gap: 3px;
+    min-width: max-content;
+
+    > .editor-tool-group + .editor-tool-group {
+      border-inline-start: 1px solid var(--wiki-surface-border);
+      padding-inline-start: 3px;
+    }
+  }
+
 
   &-sidebar {
     background: var(--wiki-surface-sunken);
@@ -1450,13 +1569,11 @@ export default defineComponent({
     width: 60px;
     flex: 0 0 60px;
 
+    gap: 8px;
+
     .v-btn.v-btn--icon {
       width: 44px;
       height: 44px;
-    }
-
-    .v-btn.mt-3 {
-      margin-top: 8px !important;
     }
 
     @include until($tablet) {
@@ -1467,6 +1584,7 @@ export default defineComponent({
     align-items: center;
     display: flex;
     flex-direction: column;
+    gap: 8px;
     transform: translateY(-24px);
   }
 
@@ -1481,7 +1599,7 @@ export default defineComponent({
     z-index: auto !important;
     background: var(--wiki-surface-raised) !important;
     border-top: 1px solid var(--wiki-surface-border);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+    color: var(--wiki-text-muted);
     flex: 0 0 calc(24px + env(safe-area-inset-bottom));
     min-width: 0;
     min-height: calc(24px + env(safe-area-inset-bottom));
@@ -1519,6 +1637,15 @@ export default defineComponent({
 
     &-mode {
       flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    &-format {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      padding-inline-end: var(--wiki-space-3);
+      text-overflow: ellipsis;
       white-space: nowrap;
     }
 

@@ -1,4 +1,5 @@
-import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
+import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import { Compartment, EditorSelection, EditorState, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
@@ -54,6 +55,10 @@ export interface TextEditorHandle {
   replaceSelection: (content: string) => void
   setMarkers: (markers: Array<{ from: TextPosition; to: TextPosition; text: string; action: EventListener }>) => void
   foldRange: (from: TextPosition, to: TextPosition) => void
+  undo?: () => boolean
+  redo?: () => boolean
+  historyDepth?: () => { undo: number; redo: number }
+  syntaxPath?: () => string[]
 }
 
 class ActionWidget extends WidgetType {
@@ -330,6 +335,28 @@ export class TextEditor implements TextEditorHandle {
       }).range(this.offsetAt(marker.from), this.offsetAt(marker.to))
     )
     this.view.dispatch({ effects: setMarkers.of(Decoration.set(decorations, true)) })
+  }
+
+  undo(): boolean {
+    return undo(this.view)
+  }
+
+  redo(): boolean {
+    return redo(this.view)
+  }
+
+  historyDepth(): { undo: number; redo: number } {
+    return { undo: undoDepth(this.view.state), redo: redoDepth(this.view.state) }
+  }
+
+  /** Syntax node names around the main cursor, innermost first. */
+  syntaxPath(): string[] {
+    const head = this.view.state.selection.main.head
+    const names: string[] = []
+    for (let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = syntaxTree(this.view.state).resolveInner(head, -1); node; node = node.parent) {
+      names.push(node.name)
+    }
+    return names
   }
 
   foldRange(from: TextPosition, to: TextPosition): void {
