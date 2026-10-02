@@ -1,7 +1,8 @@
 import { watch, type WatchStopHandle } from 'vue'
-import type { Extension } from '@codemirror/state'
+import { type Extension, Prec } from '@codemirror/state'
+import { keymap } from '@codemirror/view'
 import { Awareness } from 'y-protocols/awareness'
-import { yCollab } from 'y-codemirror.next'
+import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
 import { fetchCollaborationSession } from '../../helpers/pages-api'
@@ -98,7 +99,10 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     this.options.onBaseline({ updatedAt: session.baseUpdatedAt, sourceRevision: session.baseSourceRevision })
     Y.applyUpdate(this.document, sessionState(session), REMOTE_ORIGIN)
     this.undoManager = new Y.UndoManager(this.text)
-    this.extension = yCollab(this.text, this.awareness, { undoManager: this.undoManager })
+    this.extension = [
+      yCollab(this.text, this.awareness, { undoManager: this.undoManager }),
+      Prec.high(keymap.of(yUndoManagerKeymap))
+    ]
     // Registered after the manager so undo/redo depth is finalized before UI reads it.
     this.document.on('afterTransaction', this.handleHistoryChange)
     this.document.on('update', this.handleDocumentUpdate)

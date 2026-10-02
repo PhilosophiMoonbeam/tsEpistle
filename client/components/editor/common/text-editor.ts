@@ -6,7 +6,6 @@ import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
 import { Compartment, EditorSelection, EditorState, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
 import { crosshairCursor, Decoration, type DecorationSet, drawSelection, dropCursor, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers, rectangularSelection, WidgetType } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
-import { yUndoManagerKeymap } from 'y-codemirror.next'
 
 export type TextPosition = {
   line: number
@@ -236,7 +235,6 @@ export class TextEditor implements TextEditorHandle {
     return this.historyProvider
       ? [
           this.historyProvider.extension,
-          Prec.high(keymap.of(yUndoManagerKeymap)),
           keymap.of([...beforeHistory, ...afterHistory])
         ]
       : [history(), keymap.of([...beforeHistory, ...historyKeymap, ...afterHistory])]
