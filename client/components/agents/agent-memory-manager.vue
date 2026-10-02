@@ -1,17 +1,6 @@
 <template>
   <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading || Boolean(actionBusy)">
-    <AgentPanelHeader ref="memoryHeading" title="Agent memory" icon="mdi-brain" close-label="Close agent memory" :heading-id="headingId" :description-id="descriptionId" :busy="Boolean(actionBusy)" @close="requestClose">
-      <template #actions>
-        <v-btn
-          class="agent-memory__clear"
-          icon="mdi-delete-sweep-outline"
-          variant="text"
-          aria-label="Clear all memory"
-          title="Clear all memory"
-          :disabled="Boolean(clearMemoryDisabledReason) || Boolean(actionBusy) || networkBlocked"
-          @click="beginClear($event)"
-        />
-      </template>
+    <AgentPanelHeader ref="memoryHeading" title="Agent memory" icon="mdi-brain" close-label="Close agent memory" :heading-id="headingId" :description-id="descriptionId" :busy="Boolean(actionBusy)" :busy-reason="$t('common:agentWorkspace.waitForMemory')" @close="requestClose">
       <p class="agent-memory__intro">Preferences and facts carried into your conversations.</p>
       <span v-if="loaded" class="agent-memory__count" role="status" aria-live="polite" aria-atomic="true">{{ memoryCountLabel }}</span>
     </AgentPanelHeader>
@@ -29,7 +18,7 @@
       <v-alert v-if="error" class="agent-memory__error" type="error" variant="tonal" :closable="!stale" role="alert" @click:close="error = ''">
         <div class="agent-memory__error-content">
           <span>{{ error }}</span>
-          <v-btn v-if="!loading" variant="text" size="small" :disabled="networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="load()">Refresh memory</v-btn>
+          <v-btn v-if="!loading" variant="text" size="small" :disabled="networkBlocked" @click="load()">Refresh memory</v-btn>
         </div>
       </v-alert>
 
@@ -93,7 +82,7 @@
             <div class="agent-memory__editor-actions">
               <span class="agent-memory__shortcut">Esc to cancel · <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to save</span>
               <v-btn variant="text" :disabled="saving" @click="cancelEdit">Cancel</v-btn>
-              <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving || stale || loading || networkBlocked || !memoryRefreshResult.accepted || !memoryRefreshResult.current || Boolean(draftConflict)" :loading="saving" :title="networkBlocked ? networkRequiredMessage : undefined" @click="save">
+              <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving || stale || loading || networkBlocked || !memoryRefreshResult.accepted || !memoryRefreshResult.current || Boolean(draftConflict)" :loading="saving" @click="save">
                 {{ editing.id ? 'Save revision' : 'Save memory' }}
               </v-btn>
             </div>
@@ -147,6 +136,20 @@
           <v-icon icon="mdi-shield-lock-outline" size="18" aria-hidden="true" />
           <p><strong>Private to your account.</strong> Changes apply to future conversations only. Never save passwords, keys, or tokens.</p>
         </aside>
+        <!-- Destructive Clear sits at the end of the panel body, away from the header's Close. -->
+        <div v-if="memoryCount > 0" class="agent-memory__footer">
+          <v-btn
+            class="agent-memory__clear"
+            color="error"
+            variant="text"
+            size="small"
+            prepend-icon="mdi-delete-sweep-outline"
+            :aria-disabled="clearMemoryBlocked ? 'true' : undefined"
+            :aria-describedby="clearMemoryHelpVisible ? clearMemoryHelpId : undefined"
+            @click="beginClear($event)"
+          >{{ $t('common:agentMemory.clearAll') }}</v-btn>
+          <p v-if="clearMemoryHelpVisible" :id="clearMemoryHelpId" class="agent-memory__footer-help">{{ networkBlocked ? networkRequiredMessage : clearMemoryDisabledReason || $t('common:agentWorkspace.waitForMemory') }}</p>
+        </div>
       </template>
     </v-card-text>
 
@@ -167,7 +170,7 @@
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelRemove">Keep record</v-btn>
-        <v-btn color="error" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy) || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="remove">Remove memory</v-btn>
+        <v-btn color="error" variant="tonal" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy) || networkBlocked" @click="remove">Remove memory</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -185,7 +188,7 @@
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelClear">Keep memories</v-btn>
-        <v-btn color="error" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy) || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="clear">Clear memory</v-btn>
+        <v-btn color="error" variant="flat" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy) || networkBlocked" @click="clear">Clear memory</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -288,6 +291,10 @@ const clearMemoryDisabledReason = computed<string | undefined>(() => {
   return undefined
 })
 const canAddMemory = computed(() => addMemoryDisabledReason.value === undefined)
+/* The Clear control stays focusable while blocked; this visible line says why. */
+const clearMemoryBlocked = computed(() => Boolean(clearMemoryDisabledReason.value) || Boolean(actionBusy.value) || networkBlocked.value)
+const clearMemoryHelpVisible = computed(() => clearMemoryBlocked.value && memoryCount.value > 0)
+const clearMemoryHelpId = `${instanceId}-clear-help`
 const draftConflictMessage = computed(() => {
   const conflict = draftConflict.value
   if (!conflict) return ''
@@ -465,6 +472,7 @@ const beginRemove = (entry: AgentMemoryEntry, event: MouseEvent): void => {
   removing.value = entry
 }
 const beginClear = (event: Event): void => {
+  if (clearMemoryBlocked.value) return
   clearError.value = ''
   clearReviewCount.value = memoryCount.value
   destructiveRestoreTarget.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
@@ -665,7 +673,7 @@ onBeforeUnmount(() => {
 .agent-memory__section-count { margin-inline-start: .5rem; font-size: .72rem; font-variant-numeric: tabular-nums; opacity: .65; }
 .agent-memory__no-results { display: grid; gap: .65rem; justify-items: start; padding: 1.25rem .25rem; }
 .agent-memory__no-results p { margin: 0; font-size: .8rem; line-height: 1.5; opacity: .75; }
-.agent-memory__entry-meta { font-size: .68rem; line-height: 1.4; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent); }
+.agent-memory__entry-meta { font-size: .68rem; line-height: 1.4; color: var(--wiki-text-muted); }
 .agent-memory__body {
   flex: 1 1 auto;
   min-height: 0;
@@ -718,7 +726,7 @@ onBeforeUnmount(() => {
 .agent-memory__state,
 .agent-memory__empty p,
 .agent-memory__safety p {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
   line-height: 1.45;
 }
@@ -754,7 +762,7 @@ onBeforeUnmount(() => {
 
 .agent-memory__target legend {
   margin-bottom: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
   font-weight: 650;
 }
@@ -821,7 +829,7 @@ onBeforeUnmount(() => {
 .agent-memory__shortcut {
   font-size: .67rem;
   line-height: 1.5;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   margin-inline-end: auto;
 }
 
@@ -949,7 +957,24 @@ onBeforeUnmount(() => {
 
 .agent-memory__safety > .v-icon {
   flex: 0 0 auto;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
+}
+
+.agent-memory__footer {
+  display: grid;
+  justify-items: end;
+  gap: var(--wiki-space-1);
+  margin-top: var(--wiki-space-3);
+}
+
+.agent-memory__clear { letter-spacing: 0; text-transform: none; }
+.agent-memory__clear[aria-disabled='true'] { opacity: .6; }
+
+.agent-memory__footer-help {
+  margin: 0;
+  color: var(--wiki-text-muted);
+  font-size: .75rem;
+  text-align: end;
 }
 
 .agent-memory__dialog {

@@ -117,7 +117,7 @@ const canMove = computed(() => true)
 <style scoped>
 .agent-history-session-actions { align-items: center; display: flex; }
 .agent-history-session-actions__trigger {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   min-height: var(--wiki-control-height);
   min-width: var(--wiki-control-height);
 }

@@ -41,24 +41,44 @@
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="compact" tag="header">
         <div class="inline-agent__toolbar-main">
           <div class="inline-agent__mobile-navigation">
-            <v-btn
-              ref="historyTrigger"
-              class="inline-agent__history-toggle"
-              icon="mdi-history"
-              variant="text"
-              aria-label="History"
-              :aria-expanded="historyOpen"
-              aria-controls="agent-history-panel"
-              title="History"
-              :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"
-              @click="toggleHistory"
-            />
+            <v-tooltip location="bottom" :text="historyToggleBlocked ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.history')">
+              <template #activator="{ props: tooltipProps }">
+                <v-btn
+                  v-bind="tooltipProps"
+                  ref="historyTrigger"
+                  class="inline-agent__history-toggle"
+                  icon="mdi-history"
+                  variant="text"
+                  :aria-label="$t('common:agentWorkspace.history')"
+                  :aria-expanded="historyOpen"
+                  aria-controls="agent-history-panel"
+                  :aria-disabled="historyToggleBlocked ? 'true' : undefined"
+                  @click="toggleHistory"
+                />
+              </template>
+            </v-tooltip>
+            <v-tooltip location="bottom" :text="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.memory')">
+              <template #activator="{ props: tooltipProps }">
+                <v-btn
+                  v-bind="tooltipProps"
+                  ref="memoryTrigger"
+                  class="inline-agent__memory-toggle"
+                  icon="mdi-brain"
+                  variant="text"
+                  :aria-label="$t('common:agentWorkspace.memory')"
+                  :aria-expanded="memoryOpen"
+                  aria-controls="agent-memory-panel"
+                  :aria-disabled="memoryMutationBusy ? 'true' : undefined"
+                  @click="toggleMemory"
+                />
+              </template>
+            </v-tooltip>
           </div>
           <div class="inline-agent__identity">
             <div class="inline-agent__heading">
-              <h2 :id="workspaceTitleId" aria-label="Wiki Agent">Wiki Agent</h2>
+              <h2 :id="workspaceTitleId">Wiki Agent</h2>
               <div class="inline-agent__session-line">
-                <span class="inline-agent__session-title" :title="sessionTitle">
+                <span class="inline-agent__session-title">
                   {{ sessionTitle }}
                   <v-icon
                     v-if="isCurrentChatPinned"
@@ -66,7 +86,7 @@
                     icon="mdi-pin"
                     size="14"
                     role="img"
-                    aria-label="Pinned conversation"
+                    :aria-label="$t('common:agentWorkspace.pinned')"
                   />
                 </span>
 
@@ -75,26 +95,41 @@
           </div>
         </div>
 
-        <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace actions">
+        <div class="inline-agent__panel-actions" role="group" :aria-label="$t('common:agentWorkspace.actionsLabel')">
+          <v-tooltip location="bottom" :text="$t('common:agentWorkspace.search')">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="inline-agent__search-action"
+                icon="mdi-magnify"
+                variant="text"
+                :aria-label="$t('common:agentWorkspace.search')"
+                @click="emit('return-search')"
+              />
+            </template>
+          </v-tooltip>
           <v-menu v-model="panelMenuOpen" ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
             <template #activator="{ props: menuProps }">
-              <v-btn
-                v-bind="menuProps"
-                ref="panelMenuTrigger"
-                class="inline-agent__more-menu"
-                icon="mdi-dots-vertical"
-                variant="text"
-                aria-label="Settings"
-                title="Settings"
-                :aria-expanded="panelMenuOpen"
-              />
+              <v-tooltip location="bottom" :text="$t('common:agentWorkspace.moreActions')">
+                <template #activator="{ props: tooltipProps }">
+                  <v-btn
+                    v-bind="{ ...menuProps, ...tooltipProps }"
+                    ref="panelMenuTrigger"
+                    class="inline-agent__more-menu"
+                    icon="mdi-dots-vertical"
+                    variant="text"
+                    :aria-label="$t('common:agentWorkspace.moreActions')"
+                    :aria-expanded="panelMenuOpen"
+                  />
+                </template>
+              </v-tooltip>
             </template>
             <v-list density="compact">
               <v-list-item
-                class="inline-agent__panel-menu-item"
+                class="inline-agent__panel-menu-item inline-agent__panel-menu-item--compact"
                 link
                 prepend-icon="mdi-brain"
-                title="Agent memory"
+                :title="$t('common:agentWorkspace.memory')"
                 :aria-expanded="memoryOpen"
                 :disabled="memoryMutationBusy"
                 @click="toggleMemory"
@@ -103,7 +138,7 @@
                 class="inline-agent__panel-menu-item"
                 link
                 :prepend-icon="isCurrentChatPinned ? 'mdi-pin' : 'mdi-pin-outline'"
-                :title="isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'"
+                :title="isCurrentChatPinned ? $t('common:agentWorkspace.unpin') : $t('common:agentWorkspace.pin')"
                 :disabled="!canPinCurrentChat"
                 @click="setCurrentChatPinned(!isCurrentChatPinned)"
               />
@@ -115,24 +150,40 @@
                 class="inline-agent__panel-menu-item"
                 link
                 :prepend-icon="isTemporary ? 'mdi-timer-sand-complete' : 'mdi-timer-sand-empty'"
-                :title="isTemporary ? 'Keep conversation' : 'Temporary chat'"
+                :title="isTemporary ? $t('common:agentWorkspace.keepConversation') : $t('common:agentWorkspace.temporaryChat')"
                 :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
                 @click="isTemporary ? keepConversation() : startTemporaryChat()"
               />
             </v-list>
           </v-menu>
-          <v-btn
-            class="inline-agent__session-action inline-agent__new-session"
-            icon="mdi-plus-circle-outline"
-            variant="text"
-            :loading="creatingRetention === 'saved'"
-            aria-label="New chat"
-            title="New"
-            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
-            @click="newSession"
-          />
+          <v-tooltip location="bottom" :text="$t('common:agentWorkspace.newChat')">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="inline-agent__session-action inline-agent__new-session"
+                icon="mdi-plus-circle-outline"
+                variant="text"
+                :loading="creatingRetention === 'saved'"
+                :aria-label="$t('common:agentWorkspace.newChat')"
+                :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
+                @click="newSession"
+              />
+            </template>
+          </v-tooltip>
           <div class="inline-agent__actions-divider" aria-hidden="true" />
-          <v-btn class="inline-agent__close-action wiki-close-control" icon="mdi-close" variant="text" aria-label="Close chat panel" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : 'Close'" :disabled="memoryMutationBusy" @click="emit('close')" />
+          <v-tooltip location="bottom" :text="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.close')">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="inline-agent__close-action wiki-close-control"
+                icon="mdi-close"
+                variant="text"
+                :aria-label="$t('common:agentWorkspace.close')"
+                :aria-disabled="memoryMutationBusy ? 'true' : undefined"
+                @click="requestClose"
+              />
+            </template>
+          </v-tooltip>
         </div>
       </v-toolbar>
 
@@ -155,31 +206,25 @@
       >
         <div class="inline-agent__initialization-error-content">
           <span>{{ connectionRequiredMessage }}</span>
-          <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="retryAgentConnection">Retry connection</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="retryAgentConnection">{{ $t('common:agentWorkspace.retryConnection') }}</v-btn>
         </div>
       </v-alert>
 
       <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" :network-blocked="connectionBlocked" />
       <template v-else>
-        <div v-if="isTemporary" class="inline-agent__retention" aria-label="Temp chat" role="status">
+        <div v-if="isTemporary" class="inline-agent__retention" :aria-label="$t('common:agentWorkspace.temporaryChat')" role="status">
           <v-icon icon="mdi-timer-sand-complete" size="22" aria-hidden="true" />
           <div class="inline-agent__retention-copy">
-            <strong>Temp chat</strong>
+            <strong>{{ $t('common:agentWorkspace.temporaryChat') }}</strong>
             <p>Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
           </div>
         </div>
         <p v-else-if="sessionNotice" class="inline-agent__session-notice" role="status">{{ sessionNotice }}</p>
         <div class="inline-agent__body">
+          <!-- One status slot: the connection notice above outranks these, and
+               only the highest-priority problem below is shown at a time. -->
           <v-alert
-            v-if="!loading && !connectionBlocked && !providerAvailable"
-            class="inline-agent__alert"
-            variant="tonal"
-            icon="mdi-connection"
-          >
-            {{ providerUnavailableMessage }}
-          </v-alert>
-          <v-alert
-            v-if="!loading && initializationError"
+            v-if="!loading && !connectionBlocked && initializationError"
             class="inline-agent__alert inline-agent__initialization-error"
             type="error"
             variant="tonal"
@@ -187,11 +232,19 @@
           >
             <div class="inline-agent__initialization-error-content">
               <span>{{ initializationError }}</span>
-              <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :disabled="loading || connectionRetrying" @click="retryInitialization">Retry opening conversation</v-btn>
+              <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :disabled="loading || connectionRetrying" @click="retryInitialization">{{ $t('common:agentWorkspace.retryOpening') }}</v-btn>
             </div>
           </v-alert>
           <v-alert
-            v-if="error && (thread || !initializationError)"
+            v-else-if="!loading && !connectionBlocked && !providerAvailable"
+            class="inline-agent__alert"
+            variant="tonal"
+            icon="mdi-connection"
+          >
+            {{ providerUnavailableMessage }}
+          </v-alert>
+          <v-alert
+            v-else-if="error && !connectionBlocked && (thread || !initializationError)"
             class="inline-agent__alert"
             type="error"
             variant="tonal"
@@ -218,52 +271,38 @@
                 </span>
               </div>
 
-              <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
-                <h2 id="inline-agent-welcome-title">
+              <section v-if="thread && !hasConversation" class="inline-agent__welcome" :aria-label="$t('common:agentWorkspace.startConversation')">
+                <p class="inline-agent__welcome-title">
                   <span class="inline-agent__welcome-line">{{ welcomeGreeting.first }}</span>
                   <em class="inline-agent__welcome-line">{{ welcomeGreeting.second }}</em>
-                </h2>
+                </p>
                 <div
-                  ref="startersRow"
                   class="inline-agent__starters"
-                  :class="{ 'inline-agent__starters--marquee': startersMarqueeActive && startersMarqueePeriod > 0 }"
                   role="group"
-                  aria-label="Conversation starters"
-                  :tabindex="!canSubmit ? 0 : undefined"
-                  @pointerdown="onStartersPointerDown"
-                  @pointermove="onStartersPointerMove"
-                  @pointerup="onStartersPointerUp"
-                  @pointercancel="onStartersPointerCancel"
-                  @wheel.passive="onStartersWheel"
-                  @focusin="pauseStartersMarquee"
-                  @focusout="resumeStartersMarquee"
-                  @click.capture="onStartersClickCapture"
+                  :aria-label="$t('common:agentWorkspace.starters')"
+                  :aria-describedby="!canSubmit && submitUnavailableReason ? starterReasonId : undefined"
                 >
-                  <div ref="startersStrip" class="inline-agent__starters-strip">
-                    <v-btn
-                      v-for="(starter, starterIndex) in startersMarqueeList"
-                      :key="`${starter.prompt}#${starterIndex}`"
-                      class="inline-agent__starter"
-                      color="primary"
-                      variant="text"
-                      :disabled="!canSubmit || promptSubmissionPending"
-                      :title="!canSubmit ? submitUnavailableReason : undefined"
-                      :aria-hidden="starterIndex >= starters.length || undefined"
-                      :tabindex="starterIndex >= starters.length ? -1 : undefined"
-                      @click="sendPrompt(starter.prompt)"
-                    >
-                      <span class="inline-agent__starter-heading">
-                        <v-icon
-                          :icon="starter.icon"
-                          size="20"
-                          :class="`inline-agent__starter-icon--${starterIndex % starters.length}`"
-                          aria-hidden="true"
-                        />
-                        <strong>{{ starter.label }}</strong>
-                      </span>
-                      <span class="inline-agent__starter-copy"><small>{{ starter.description }}</small></span>
-                    </v-btn>
-                  </div>
+                  <v-btn
+                    v-for="(starter, starterIndex) in starters"
+                    :key="starter.prompt"
+                    class="inline-agent__starter"
+                    color="primary"
+                    variant="text"
+                    :aria-disabled="!canSubmit || promptSubmissionPending ? 'true' : undefined"
+                    @click="sendStarter(starter.prompt)"
+                  >
+                    <span class="inline-agent__starter-heading">
+                      <v-icon
+                        :icon="starter.icon"
+                        size="20"
+                        :class="`inline-agent__starter-icon--${starterIndex}`"
+                        aria-hidden="true"
+                      />
+                      <strong>{{ $t(starter.label) }}</strong>
+                    </span>
+                    <span class="inline-agent__starter-copy"><small>{{ $t(starter.description) }}</small></span>
+                  </v-btn>
+                  <p v-if="!canSubmit && submitUnavailableReason" :id="starterReasonId" class="inline-agent__starter-reason">{{ submitUnavailableReason }}</p>
                 </div>
               </section>
 
@@ -321,15 +360,14 @@
                     class="inline-agent__follow-jump"
                     color="primary"
                     variant="text"
-                    aria-label="Jump to latest response"
-                    :style="{ opacity: 0.8 * transcriptReadingProgress }"
+                    :aria-label="$t('common:agentWorkspace.jumpLatest')"
                     @click="scrollToLatest"
                   >
                     <span class="inline-agent__follow-jump-frame">
                       <span class="inline-agent__follow-jump-halo" aria-hidden="true" />
                       <span class="inline-agent__follow-jump-face">
                         <v-icon icon="mdi-arrow-down" size="16" aria-hidden="true" />
-                        <span>Latest</span>
+                        <span>{{ $t('common:agentWorkspace.latest') }}</span>
                       </span>
                     </span>
                   </v-btn>
@@ -338,7 +376,7 @@
                 <footer
                   class="inline-agent__composer"
                   :class="{ 'inline-agent__composer--scrolled': !transcriptFollowing, 'inline-agent__composer--focused': composerFocused }"
-                  :style="{ '--agent-composer-opacity': 1 - 0.8 * (composerFocused ? 0 : transcriptReadingProgress) }"
+                  :style="{ '--agent-composer-opacity': 1 - 0.15 * (composerFocused ? 0 : transcriptReadingProgress) }"
                   @focusin="handleComposerFocusIn"
                   @focusout="handleComposerFocusOut"
                   @keydown="handleComposerFocusIn"
@@ -384,6 +422,7 @@
                       :network-blocked="connectionBlocked"
                       :can-stop="Boolean(activeRun?.canCancel)"
                       :disabled="composerDisabled || mediaRefreshing"
+                      :draft-editable="composerDraftEditable"
                       :external-description-id="composerLockVisible ? 'agent-composer-lock-reason' : undefined"
                       :skills-enabled="skillsEnabled"
                       :goals-enabled="goalsEnabled"
@@ -408,6 +447,7 @@
                           :key="thread.session.id"
                           :draft="activeDraft"
                           :current-page="currentPage"
+                          :current-page-title="pageTitle"
                           :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || !workspaceReady"
                           :connection-blocked="connectionBlocked"
                           :connection-retrying="connectionRetrying"
@@ -473,20 +513,16 @@
       <v-card-title class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
         <h2 id="clear-unfiled-history-title" class="text-title-medium">
-          {{ clearUnfiledCommitted ? 'Unfiled conversations cleared' : 'Clear unfiled conversations?' }}
+          {{ clearUnfiledCommitted ? $t('common:agentWorkspace.clearRecentDone') : $t('common:agentWorkspace.clearRecentTitle') }}
         </h2>
       </v-card-title>
       <v-card-text class="px-5">
-        <p v-if="clearUnfiledCommitted">
-          Unfiled conversations were cleared, but a replacement conversation did not finish opening. Saved folders and their filed conversations remain unchanged. Retry only the conversation load below.
-        </p>
-        <p v-else>
-          Only conversations outside saved folders will be permanently removed. Saved folders and their filed conversations will remain. If the current conversation is unfiled, a new saved conversation will open. Your curated Agent memory stays intact.
-        </p>
+        <p v-if="clearUnfiledCommitted">{{ $t('common:agentWorkspace.clearRecentPartial') }}</p>
+        <p v-else>{{ $t('common:agentWorkspace.clearRecentBody') }}</p>
         <v-alert v-if="connectionBlocked" class="mt-4" density="compact" type="warning" variant="tonal" role="status">
           <div class="inline-agent__initialization-error-content">
-            <span>Connection required to change conversation history.</span>
-            <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="retryAgentConnection">Retry connection</v-btn>
+            <span>{{ $t('common:agentWorkspace.historyNeedsConnection') }}</span>
+            <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="retryAgentConnection">{{ $t('common:agentWorkspace.retryConnection') }}</v-btn>
           </div>
         </v-alert>
         <v-alert v-if="clearUnfiledError" class="mt-4" density="compact" type="error" variant="tonal" role="alert">
@@ -506,16 +542,17 @@
           :disabled="clearingUnfiledHistory || sessionMutationBusy || connectionBlocked"
           @click="recoverClearUnfiledHistory"
         >
-          Retry opening conversation
+          {{ $t('common:agentWorkspace.retryOpening') }}
         </v-btn>
         <v-btn
           v-else
           color="error"
+          variant="flat"
           :loading="clearingUnfiledHistory"
           :disabled="clearingUnfiledHistory || sessionMutationBusy || connectionBlocked"
           @click="clearUnfiledHistory"
         >
-          {{ clearUnfiledError ? 'Retry clear' : 'Clear unfiled' }}
+          {{ clearUnfiledError ? $t('common:agentWorkspace.retryClear') : $t('common:agentWorkspace.clearRecent') }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -579,9 +616,11 @@ const props = defineProps<{
   pageLocale: string
   pagePath: string
   pageUpdatedAt: string
+  pageTitle?: string
 }>()
 const emit = defineEmits<{
   (event: 'close'): void
+  (event: 'return-search'): void
 }>()
 const welcomeGreeting = welcomeGreetings[Math.floor(Math.random() * welcomeGreetings.length)] ?? welcomeGreetings[0]
 
@@ -593,6 +632,7 @@ const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean> }>('composer')
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
+const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
 const panelMenuTrigger = useTemplateRef<ComponentRoot | HTMLElement>('panelMenuTrigger')
 const historyPanel = useTemplateRef<HTMLElement>('historyPanel')
 const memoryPanel = useTemplateRef<HTMLElement>('memoryPanel')
@@ -673,244 +713,11 @@ let promptGeneration = 0
 let actionGeneration = 0
 const isComponentCurrent = (generation: number, ownerId: number): boolean =>
   !disposed && componentGeneration === generation && props.ownerId === ownerId
-const startersRow = useTemplateRef<HTMLElement>('startersRow')
-const startersStrip = useTemplateRef<HTMLElement>('startersStrip')
-// Suggested-prompts marquee: the starter chips drift continuously toward the
-// right, wrap seamlessly (exit the right edge, re-enter on the left), and the
-// user can drag or fling the row in either direction. A fling decelerates
-// exponentially, then velocity relaxes back to the resting rightward drift.
-const STARTERS_MARQUEE_SPEED = 26 // resting drift, px/s toward the right
-const STARTERS_MARQUEE_RELAX_MS = 900 // time constant for momentum decay + ramp back to drift
-const STARTERS_FLICK_MAX = 1600 // px/s clamp on fling velocity
-const STARTERS_DRAG_SUPPRESS_PX = 8 // drags past this swallow the trailing click
-const STARTERS_VELOCITY_WINDOW_MS = 140 // sampling window for fling velocity
-const startersMarqueeActive = ref(false)
-const startersMarqueePeriod = ref(0)
-const startersMarqueeState = {
-  pos: 0, // rightward displacement of the strip, kept within [0, period)
-  vel: 0, // px/s, positive = rightward
-  dragging: false,
-  paused: false,
-  suppressClick: false,
-  dragStartX: 0,
-  lastX: 0,
-  dragDistance: 0,
-  lastPointerDown: 0,
-  lastFrame: 0,
-  samples: [] as Array<{ t: number; x: number }>
+const starterReasonId = `${panelIdPrefix}-starter-reason`
+const sendStarter = (prompt: string): void => {
+  if (!canSubmit.value || promptSubmissionPending.value) return
+  void sendPrompt(prompt)
 }
-let startersMarqueeFrame: number | null = null
-let startersResizeObserver: ResizeObserver | null = null
-let startersMobileMedia: MediaQueryList | null = null
-let startersMotionMedia: MediaQueryList | null = null
-const startersMarqueeList = computed(() =>
-  startersMarqueeActive.value && startersMarqueePeriod.value > 0
-    ? [...starters.value, ...starters.value, ...starters.value]
-    : starters.value
-)
-
-const startersMarqueeWanted = (): boolean =>
-  startersRow.value !== null &&
-  startersStrip.value !== null &&
-  providerAvailable.value &&
-  (startersMobileMedia ??= window.matchMedia('(max-width: 639.98px)')).matches &&
-  !(startersMotionMedia ??= window.matchMedia('(prefers-reduced-motion: reduce)')).matches
-
-const measureStartersPeriod = (): number => {
-  const strip = startersStrip.value
-  if (strip === null) return 0
-  const chips = strip.querySelectorAll<HTMLElement>('.inline-agent__starter')
-  const setStart = Math.floor(chips.length / 3)
-  if (setStart < 1) return 0
-  const period = chips[setStart].getBoundingClientRect().left - chips[0].getBoundingClientRect().left
-  return period > 0 ? period : 0
-}
-
-const applyStartersTransform = (): void => {
-  const strip = startersStrip.value
-  if (strip === null) return
-  const period = startersMarqueePeriod.value
-  strip.style.transform = period > 0
-    ? `translate3d(${(startersMarqueeState.pos - period).toFixed(2)}px, 0, 0)`
-    : ''
-}
-
-const wrapStartersPos = (): void => {
-  const period = startersMarqueePeriod.value
-  if (period > 0) startersMarqueeState.pos = ((startersMarqueeState.pos % period) + period) % period
-}
-
-const stepStartersMarquee = (now: number): void => {
-  if (!startersMarqueeActive.value || startersStrip.value === null || document.hidden) return
-  if (startersMarqueePeriod.value <= 0) {
-    startersMarqueePeriod.value = measureStartersPeriod()
-    if (startersMarqueePeriod.value <= 0) return
-  }
-  const last = startersMarqueeState.lastFrame || now
-  startersMarqueeState.lastFrame = now
-  const dt = Math.min(Math.max(now - last, 0), 64)
-  if (!startersMarqueeState.dragging && !startersMarqueeState.paused) {
-    // Momentum decays exponentially, then velocity relaxes back up to the
-    // resting rightward drift with the same time constant.
-    startersMarqueeState.vel = STARTERS_MARQUEE_SPEED +
-      (startersMarqueeState.vel - STARTERS_MARQUEE_SPEED) * Math.exp(-dt / STARTERS_MARQUEE_RELAX_MS)
-    if (Math.abs(startersMarqueeState.vel - STARTERS_MARQUEE_SPEED) < 0.4) startersMarqueeState.vel = STARTERS_MARQUEE_SPEED
-    startersMarqueeState.pos += (startersMarqueeState.vel * dt) / 1000
-    wrapStartersPos()
-    applyStartersTransform()
-  }
-}
-
-const startersMarqueeLoop = (now: number): void => {
-  startersMarqueeFrame = null
-  stepStartersMarquee(now)
-  if (startersMarqueeActive.value && !disposed) startersMarqueeFrame = requestAnimationFrame(startersMarqueeLoop)
-}
-
-const startStartersMarquee = (): void => {
-  if (disposed || startersMarqueeActive.value || !startersMarqueeWanted()) return
-  startersMarqueeActive.value = true
-  startersMarqueeState.pos = 0
-  startersMarqueeState.vel = 0
-  startersMarqueeState.lastFrame = 0
-  startersMarqueeState.paused = false
-  startersMarqueePeriod.value = measureStartersPeriod()
-  const row = startersRow.value
-  if (row !== null && typeof ResizeObserver !== 'undefined') {
-    startersResizeObserver ??= new ResizeObserver(() => {
-      startersMarqueePeriod.value = measureStartersPeriod()
-      wrapStartersPos()
-      applyStartersTransform()
-    })
-    startersResizeObserver.observe(row)
-  }
-  startersMarqueeFrame = requestAnimationFrame(startersMarqueeLoop)
-}
-
-const stopStartersMarquee = (): void => {
-  if (!startersMarqueeActive.value && startersMarqueeFrame === null) {
-    startersResizeObserver?.disconnect()
-    startersResizeObserver = null
-    return
-  }
-  startersMarqueeActive.value = false
-  startersMarqueePeriod.value = 0
-  if (startersMarqueeFrame !== null) { cancelAnimationFrame(startersMarqueeFrame); startersMarqueeFrame = null }
-  startersResizeObserver?.disconnect()
-  startersResizeObserver = null
-  startersMarqueeState.pos = 0
-  startersMarqueeState.vel = 0
-  startersMarqueeState.dragging = false
-  startersMarqueeState.paused = false
-  startersMarqueeState.lastFrame = 0
-  startersMarqueeState.samples = []
-  const strip = startersStrip.value
-  if (strip !== null) strip.style.transform = ''
-}
-
-const syncStartersMarquee = (): void => {
-  if (startersMarqueeWanted()) startStartersMarquee()
-  else stopStartersMarquee()
-}
-
-const onStartersPointerDown = (event: PointerEvent): void => {
-  if (!startersMarqueeActive.value || startersMarqueePeriod.value <= 0 || !event.isPrimary) return
-  startersMarqueeState.dragging = true
-  startersMarqueeState.paused = false
-  startersMarqueeState.vel = 0
-  startersMarqueeState.dragStartX = event.clientX
-  startersMarqueeState.lastX = event.clientX
-  startersMarqueeState.dragDistance = 0
-  startersMarqueeState.suppressClick = false
-  startersMarqueeState.samples = [{ t: event.timeStamp, x: event.clientX }]
-  startersMarqueeState.lastPointerDown = Date.now()
-  try { startersRow.value?.setPointerCapture(event.pointerId) } catch { /* capture is best-effort */ }
-}
-
-const onStartersPointerMove = (event: PointerEvent): void => {
-  if (!startersMarqueeState.dragging || !event.isPrimary || startersStrip.value === null) return
-  startersMarqueeState.pos += event.clientX - startersMarqueeState.lastX
-  startersMarqueeState.lastX = event.clientX
-  startersMarqueeState.dragDistance = Math.max(startersMarqueeState.dragDistance, Math.abs(event.clientX - startersMarqueeState.dragStartX))
-  startersMarqueeState.samples.push({ t: event.timeStamp, x: event.clientX })
-  const cutoff = event.timeStamp - STARTERS_VELOCITY_WINDOW_MS
-  while (startersMarqueeState.samples.length > 2 && startersMarqueeState.samples[0].t < cutoff) startersMarqueeState.samples.shift()
-  wrapStartersPos()
-  applyStartersTransform()
-}
-
-const onStartersPointerUp = (event: PointerEvent): void => {
-  if (!startersMarqueeState.dragging) return
-  startersMarqueeState.dragging = false
-  startersMarqueeState.suppressClick = startersMarqueeState.dragDistance > STARTERS_DRAG_SUPPRESS_PX
-  const samples = startersMarqueeState.samples
-  let flick = 0
-  if (samples.length >= 2) {
-    const first = samples[0] as { t: number; x: number }
-    const last = samples[samples.length - 1] as { t: number; x: number }
-    const span = last.t - first.t
-    if (span >= 30) flick = ((last.x - first.x) / span) * 1000
-  }
-  startersMarqueeState.vel = Math.max(-STARTERS_FLICK_MAX, Math.min(STARTERS_FLICK_MAX, flick))
-  startersMarqueeState.samples = []
-  startersMarqueeState.lastFrame = 0
-}
-
-const onStartersPointerCancel = (): void => {
-  startersMarqueeState.dragging = false
-  startersMarqueeState.suppressClick = false
-  startersMarqueeState.vel = 0
-  startersMarqueeState.samples = []
-}
-
-/* Trackpad/other wheel input nudges the row with a flick-like impulse; the
-   shared decay then settles it back into the resting drift. */
-const onStartersWheel = (event: WheelEvent): void => {
-  if (!startersMarqueeActive.value || startersMarqueePeriod.value <= 0) return
-  /* Only horizontal wheel intent moves the row; vertical wheel keeps
-     scrolling the page normally. */
-  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : 0
-  if (!delta) return
-  startersMarqueeState.vel = Math.max(-STARTERS_FLICK_MAX, Math.min(STARTERS_FLICK_MAX, startersMarqueeState.vel + delta * 6))
-}
-
-/* Keep the focused chip in place while keyboard users read it. Pointer
-   focus (click/tap) must not pause the row: a focusin within a moment of a
-   pointerdown is pointer focus, anything later is keyboard focus. */
-const pauseStartersMarquee = (): void => {
-  if (!startersMarqueeActive.value || startersMarqueeState.dragging) return
-  if (Date.now() - startersMarqueeState.lastPointerDown < 600) return
-  startersMarqueeState.paused = true
-}
-
-const resumeStartersMarquee = (event: FocusEvent): void => {
-  if (!startersMarqueeState.paused) return
-  const row = startersRow.value
-  const next = event.relatedTarget
-  if (row instanceof HTMLElement && next instanceof Node && row.contains(next)) return
-  startersMarqueeState.paused = false
-}
-
-const onStartersClickCapture = (event: MouseEvent): void => {
-  if (!startersMarqueeState.suppressClick) return
-  startersMarqueeState.suppressClick = false
-  event.preventDefault()
-  event.stopPropagation()
-}
-
-watch(startersRow, row => {
-  if (row !== null) {
-    startersMobileMedia ??= window.matchMedia('(max-width: 639.98px)')
-    startersMotionMedia ??= window.matchMedia('(prefers-reduced-motion: reduce)')
-    startersMobileMedia.addEventListener('change', syncStartersMarquee)
-    startersMotionMedia.addEventListener('change', syncStartersMarquee)
-    syncStartersMarquee()
-  } else {
-    startersMobileMedia?.removeEventListener('change', syncStartersMarquee)
-    startersMotionMedia?.removeEventListener('change', syncStartersMarquee)
-    stopStartersMarquee()
-  }
-})
 
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
@@ -950,7 +757,6 @@ const refreshAfterMedia = async () => {
   try { await agents.refreshThread() } finally { mediaRefreshing.value = false }
 }
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
-watch(providerAvailable, syncStartersMarquee, { flush: 'post' })
 const workspaceReady = computed(() => agents.isWorkspaceReady())
 const serverConnectionUnavailable = computed(() =>
   pwaState.connectionState === 'offline' ||
@@ -985,6 +791,15 @@ const canSubmit = computed(() =>
 const composerDisabled = computed(() => connectionBlocked.value
   ? loading.value || sending.value || sessionMutationBusy.value
   : !canSubmit.value)
+/* While a reply streams, the user may draft the next message; only sending waits. */
+const composerDraftEditable = computed(() =>
+  Boolean(thread.value) &&
+  workspaceReady.value &&
+  !connectionBlocked.value &&
+  !loading.value &&
+  !mediaRefreshing.value &&
+  (sending.value || promptSubmissionPending.value || Boolean(activeRun.value))
+)
 const goalSubmitUnavailableReason = computed(() => !openGoal.value
   ? ''
   : openGoal.value.status === 'paused'
@@ -1043,7 +858,7 @@ const temporaryExpiry = computed(() => {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 })
-const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temp chat' : 'New chat'))
+const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temporary chat' : 'New chat'))
 
 const connectionLabel = computed(() => connectionBlocked.value
   ? 'Connection required'
@@ -1071,12 +886,13 @@ const connectionTone = computed<'ready' | 'error' | 'busy'>(() => connectionBloc
     : 'ready')
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
 const contextualGlass = computed(() => Boolean(currentPage.value && activeDraft.value.includeCurrentPage))
+/* Labels and descriptions are locale keys; prompts are model input and stay as written. */
 const starters = computed(() => [
   ...(contextualGlass.value
-    ? [{ label: 'Understand This Page', description: 'Key ideas, with sources', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }]
-    : [{ label: 'Explore the Wiki', description: 'Find a place to begin', prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.', icon: 'mdi-compass-outline' }]),
-  { label: 'Connect the Dots', description: 'Discover related knowledge', prompt: contextualGlass.value ? 'Find Wiki pages related to the current page and explain how they connect.' : 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.', icon: 'mdi-vector-link' },
-  { label: 'Catch Up', description: 'See what changed recently', prompt: 'Summarize the 10 most recently updated Wiki pages I can access. Give each page a brief summary with a source.', icon: 'mdi-history' }
+    ? [{ label: 'common:agentWorkspace.starterPage', description: 'common:agentWorkspace.starterPageHint', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }]
+    : [{ label: 'common:agentWorkspace.starterExplore', description: 'common:agentWorkspace.starterExploreHint', prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.', icon: 'mdi-compass-outline' }]),
+  { label: 'common:agentWorkspace.starterConnect', description: 'common:agentWorkspace.starterConnectHint', prompt: contextualGlass.value ? 'Find Wiki pages related to the current page and explain how they connect.' : 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.', icon: 'mdi-vector-link' },
+  { label: 'common:agentWorkspace.starterCatchUp', description: 'common:agentWorkspace.starterCatchUpHint', prompt: 'Summarize the 10 most recently updated Wiki pages I can access. Give each page a brief summary with a source.', icon: 'mdi-history' }
 ])
 
 const patchDraft = (patch: Partial<AgentDraft>): void => { if (thread.value) agents.updateDraft(thread.value.session.id, patch) }
@@ -1389,7 +1205,7 @@ const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLEl
   return component?.$el instanceof HTMLElement ? component.$el : null
 }
 const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
-  const direct = kind === 'history' ? componentElement(historyTrigger.value) : null
+  const direct = componentElement(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
   const panels = componentElement(panelMenuTrigger.value)
   const usePanelMenu = window.matchMedia(mobilePanelQuery).matches
   return (usePanelMenu ? [panels, direct] : [direct, panels]).find(isVisibleTrigger) ?? null
@@ -1414,8 +1230,13 @@ const updateMemoryOpen = (open: boolean): void => {
   if (open) memoryOpen.value = true
   else closeMemory()
 }
+const historyToggleBlocked = computed(() => memoryMutationBusy.value && memoryOpen.value && panelMode.value !== 'wide')
+const requestClose = (): void => {
+  if (memoryMutationBusy.value) return
+  emit('close')
+}
 const toggleHistory = (): void => {
-  if (memoryMutationBusy.value && memoryOpen.value && panelMode.value !== 'wide') return
+  if (historyToggleBlocked.value) return
   panelMenuOpen.value = false
   if (historyOpen.value) {
     closeHistory()
@@ -1498,14 +1319,14 @@ const clearUnfiledHistory = async (): Promise<void> => {
       clearUnfiledCommitted.value = true
       clearUnfiledError.value = error.value
         ? `${error.value} Saved folders and their filed conversations remain unchanged.`
-        : 'Unfiled conversations were cleared, but a replacement conversation could not be opened. Saved folders and their filed conversations remain unchanged.'
+        : 'Recent conversations were cleared, but a replacement conversation could not be opened. Saved folders and their filed conversations remain unchanged.'
       return
     }
     clearUnfiledHistoryOpen.value = false
   } catch (value) {
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     const detail = value instanceof Error ? value.message : 'Try again.'
-    clearUnfiledError.value = `Unfiled conversations could not be cleared. Saved folders and their filed conversations remain unchanged. ${detail}`
+    clearUnfiledError.value = `Recent conversations could not be cleared. Saved folders and their filed conversations remain unchanged. ${detail}`
   } finally {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
   }
@@ -1534,7 +1355,7 @@ const recoverClearUnfiledHistory = async (): Promise<void> => {
   } catch (value) {
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     const detail = value instanceof Error ? value.message : 'A replacement conversation could not be opened.'
-    clearUnfiledError.value = `Unfiled conversations were cleared, but a replacement conversation still could not be opened. Saved folders and their filed conversations remain unchanged. ${detail}`
+    clearUnfiledError.value = `Recent conversations were cleared, but a replacement conversation still could not be opened. Saved folders and their filed conversations remain unchanged. ${detail}`
   } finally {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
   }
@@ -1818,7 +1639,6 @@ onBeforeUnmount(() => {
   panelFocusScope?.deactivate({ restoreFocus: false })
   if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
   if (mutationLockMessageTimer !== null) { clearTimeout(mutationLockMessageTimer); mutationLockMessageTimer = null }
-  stopStartersMarquee()
   panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
   window.removeEventListener('resize', scheduleTranscriptReconcile)
   window.removeEventListener('pagehide', handlePageHide)
@@ -1916,8 +1736,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     background-color var(--wiki-motion-slow) var(--wiki-motion-ease),
     padding-inline-start var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
+/* Included page: the header blurs much harder than the conversation glass so
+   the page's navigation and text underneath are not readable through it. */
 .inline-agent--contextual .inline-agent__toolbar {
-  background: var(--wiki-chrome-surface) !important;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 64%, transparent) !important;
+  -webkit-backdrop-filter: blur(36px) saturate(160%);
+  backdrop-filter: blur(36px) saturate(160%);
 }
 /* Conversations panel open: the identity block slides flush against the panel. */
 .inline-agent--history .inline-agent__toolbar {
@@ -2017,17 +1841,29 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 /* History replaces the old Wiki Search shortcut in the upper-left corner and
    keeps the same icon-only footprint on every layout. */
-.inline-agent__history-toggle {
+/* Memory sits beside History so the two side panels open from one place. */
+.inline-agent__history-toggle,
+.inline-agent__memory-toggle {
   flex: 0 0 auto;
   min-width: var(--wiki-control-height);
   min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
-  --agent-history-hover-tint: #673ab7;
-  --agent-history-hover-surface: rgb(103 58 183 / 14%);
+  /* Palette-aware hover tint: the theme secondary color, mixed toward the text color for contrast. */
+  --agent-history-hover-tint: color-mix(in srgb, rgb(var(--v-theme-secondary)) 78%, rgb(var(--v-theme-on-surface)));
+  --agent-history-hover-surface: color-mix(in srgb, rgb(var(--v-theme-secondary)) 14%, transparent);
 }
 
-.v-theme--dark .inline-agent__history-toggle {
-  --agent-history-hover-tint: #b39ddb;
-  --agent-history-hover-surface: rgb(179 157 219 / 20%);
+.inline-agent__history-toggle[aria-disabled='true'],
+.inline-agent__memory-toggle[aria-disabled='true'],
+.inline-agent__close-action[aria-disabled='true'] {
+  opacity: .6;
+}
+
+/* Phones keep Memory in the More chat actions menu; wider layouts show the toggle. */
+@media (max-width: 639.98px) {
+  .inline-agent__memory-toggle { display: none !important; }
+}
+@media (min-width: 640px) {
+  .inline-agent__panel-menu-item--compact { display: none !important; }
 }
 
 .inline-agent__mobile-navigation {
@@ -2102,13 +1938,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
    stays untouched. Green for New chat, purple for History. The tint token
    switches to a brighter green on dark surfaces for contrast. */
 .inline-agent__panel-actions {
-  --agent-new-hover-tint: #15803d;
-  --agent-close-hover-tint: #dc2626;
-}
-
-.v-theme--dark .inline-agent__panel-actions {
-  --agent-new-hover-tint: #4ade80;
-  --agent-close-hover-tint: #f87171;
+  --agent-new-hover-tint: color-mix(in srgb, rgb(var(--v-theme-success)) 78%, rgb(var(--v-theme-on-surface)));
+  --agent-close-hover-tint: rgb(var(--v-theme-error));
 }
 
 /* Hover tints are guarded so a touch tap can't latch :hover (mobile
@@ -2121,12 +1952,14 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     color: var(--agent-new-hover-tint) !important;
   }
 
-  .inline-agent__history-toggle:not(.v-btn--disabled):hover {
+  .inline-agent__history-toggle:not([aria-disabled='true']):hover,
+  .inline-agent__memory-toggle:not([aria-disabled='true']):hover {
     color: var(--agent-history-hover-tint) !important;
     background-color: var(--agent-history-hover-surface) !important;
   }
 
-  .inline-agent__history-toggle:not(.v-btn--disabled):hover :deep(.v-icon) {
+  .inline-agent__history-toggle:not([aria-disabled='true']):hover :deep(.v-icon),
+  .inline-agent__memory-toggle:not([aria-disabled='true']):hover :deep(.v-icon) {
     color: var(--agent-history-hover-tint) !important;
   }
 }
@@ -2228,8 +2061,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
 
+/* Included page: the conversation is a lighter glass than the header, so the
+   page it is about stays visible underneath. Messages, the composer and the
+   side panels keep their own opaque surfaces for readability. */
 .inline-agent--contextual .inline-agent__body {
-  background: var(--wiki-chrome-surface);
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 36%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  backdrop-filter: blur(10px) saturate(150%);
 }
 
 @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
@@ -2327,7 +2165,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   align-items: center;
   gap: var(--wiki-space-3);
   margin: var(--wiki-space-6) auto;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .inline-agent__loading-mark {
@@ -2377,7 +2215,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   box-shadow: var(--wiki-shadow-md);
 }
 
+@keyframes agentFollowJumpIn {
+  from { opacity: 0; }
+}
+
 .inline-agent__follow-jump {
+  animation: agentFollowJumpIn var(--wiki-motion-fast) var(--wiki-motion-ease);
   box-sizing: border-box;
   min-width: 36px;
   min-height: 36px;
@@ -2386,7 +2229,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-radius: var(--wiki-control-radius);
   background: transparent !important;
   box-shadow: none;
-  transition: opacity 160ms var(--wiki-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inline-agent__follow-jump { animation: none; }
 }
 
 .inline-agent__follow-jump :deep(.v-btn__content) {
@@ -2449,22 +2295,36 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__welcome {
   position: relative;
-  display: flex;
+  display: grid;
   width: min(100%, var(--agent-conversation-width));
   min-height: 0;
   box-sizing: border-box;
   flex: 1 1 auto;
-  flex-direction: column;
-  justify-content: space-evenly;
+  /* Starters sit at the middle of the space between the greeting and the
+     composer, raised by a small bias toward the greeting. Their gap above
+     matches the bottom padding minus the bias; the extra top padding
+     (half the gap change) keeps the greeting exactly where an even layout
+     with the original gap placed it. */
+  --agent-welcome-pad-start: clamp(1.5rem, 4vh, 3.5rem);
+  --agent-welcome-pad-end: clamp(2rem, 8vh, 5rem);
+  --agent-starters-original-gap: clamp(1.25rem, 5vh, 3rem);
+  --agent-starters-bias: .75rem;
+  --agent-starters-gap: calc(var(--agent-welcome-pad-end) - var(--agent-starters-bias));
+  grid-template-rows: 1fr auto 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr);
   margin: 0 auto;
-  padding: clamp(1.5rem, 4vh, 3.5rem) 0 clamp(2rem, 8vh, 5rem);
+  padding:
+    calc(var(--agent-welcome-pad-start) + (var(--agent-starters-gap) - var(--agent-starters-original-gap)) / 2)
+    0
+    var(--agent-welcome-pad-end);
   text-align: center;
   transform: translateY(-2vh);
 }
 
 /* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
 
-.inline-agent__welcome h2 {
+.inline-agent__welcome-title {
+  grid-row: 2;
   position: relative;
   isolation: isolate;
   margin: 0;
@@ -2477,7 +2337,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   text-wrap: balance;
 }
 
-.inline-agent__welcome h2::before {
+.inline-agent__welcome-title::before {
   content: '';
   position: absolute;
   z-index: 0;
@@ -2496,7 +2356,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 @supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
   @media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
-    .inline-agent--contextual .inline-agent__welcome h2::before {
+    .inline-agent--contextual .inline-agent__welcome-title::before {
       opacity: 1;
     }
   }
@@ -2509,29 +2369,31 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @container inline-agent-transcript (max-width: 900px) {
-  .inline-agent__welcome h2::before { inset-inline: 0; }
+  .inline-agent__welcome-title::before { inset-inline: 0; }
 }
 
-.inline-agent__welcome h2 em {
+.inline-agent__welcome-title em {
   font-style: italic;
   font-weight: inherit;
   color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
 }
 
 .inline-agent__starters {
+  grid-row: 4;
   display: grid;
   width: min(84%, calc(var(--agent-conversation-width) - var(--wiki-space-8)));
-  margin: clamp(1.25rem, 5vh, 3rem) auto 0;
+  margin: var(--agent-starters-gap) auto 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: .65rem;
   justify-content: center;
 }
 
-/* The strip wraps the chips so the marquee can translate it as one unit.
-   Outside the marquee (desktop grid, reduced-motion scroll row) it dissolves
-   into its parent via display: contents. */
-.inline-agent__starters-strip {
-  display: contents;
+.inline-agent__starter-reason {
+  grid-column: 1 / -1;
+  margin: var(--wiki-space-1) 0 0;
+  color: var(--wiki-text-muted);
+  font-size: .8rem;
+  text-align: center;
 }
 
 .inline-agent__starter {
@@ -2549,9 +2411,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   transition: border-color .18s, background .18s;
 }
 
-.inline-agent__starter:hover {
+.inline-agent__starter:not([aria-disabled='true']):hover {
   border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
   background: var(--wiki-surface-sunken);
+}
+
+.inline-agent__starter[aria-disabled='true'] {
+  opacity: .6;
 }
 
 .inline-agent__starter :deep(.v-btn__content) {
@@ -2576,13 +2442,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   padding-inline: 1.25rem;
 }
 
-.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--0) { color: #6d9f9a; }
-.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--1) { color: #b18b63; }
-.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--2) { color: #8496b8; }
-
-.v-theme--dark .inline-agent__starter-heading > :deep(.inline-agent__starter-icon--0) { color: #a6d2ce; }
-.v-theme--dark .inline-agent__starter-heading > :deep(.inline-agent__starter-icon--1) { color: #e6c99f; }
-.v-theme--dark .inline-agent__starter-heading > :deep(.inline-agent__starter-icon--2) { color: #c2cde7; }
+/* Palette-aware icon tints: each starter mixes a theme color toward the text color for contrast. */
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--0) { color: color-mix(in srgb, rgb(var(--v-theme-success)) 70%, rgb(var(--v-theme-on-surface))); }
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--1) { color: color-mix(in srgb, rgb(var(--v-theme-warning)) 70%, rgb(var(--v-theme-on-surface))); }
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--2) { color: color-mix(in srgb, rgb(var(--v-theme-primary)) 70%, rgb(var(--v-theme-on-surface))); }
 
 .inline-agent__starter-heading strong {
   min-width: 0;
@@ -2606,9 +2469,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__starter-copy small {
   display: block;
   overflow-wrap: anywhere;
-  font-size: .73rem;
+  color: var(--wiki-text-muted);
+  font-size: .8rem;
   font-weight: 400;
-  opacity: .7;
 }
 
 .inline-agent__composer {
@@ -2678,7 +2541,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-radius-pill);
   background: var(--wiki-surface-raised);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
 }
@@ -2708,7 +2571,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-radius-pill);
   background: var(--wiki-surface-raised);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
   text-align: end;
@@ -2879,55 +2742,19 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 }
 
-/* Compact phones: keep the three starters on one row and let the row scroll
-   horizontally instead of clipping the last button under the composer. */
+/* Compact phones: the starters stay a static, centered column. */
 @media (max-width: 639.98px) {
   .inline-agent__starters {
-    display: flex;
+    width: 100%;
     gap: var(--wiki-space-2);
-    margin-top: var(--wiki-space-5);
-    padding: var(--wiki-space-1) var(--wiki-space-3) var(--wiki-space-2);
-    /* Native horizontal scroll remains the reduced-motion / pre-measure
-       fallback; the marquee state below takes over once the strip measures. */
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-    /* Center justification would split the overflow across both edges of the
-       scrollport, clipping the first starter where it cannot be scrolled to. */
-    justify-content: flex-start;
-  }
-  .inline-agent__starters::-webkit-scrollbar { display: none; }
-  .inline-agent__starters::after {
-    content: '';
-    display: block;
-    flex: 0 0 1px;
+    padding-inline: var(--wiki-space-3);
+    box-sizing: border-box;
   }
   .inline-agent__starter {
-    flex: 0 0 auto;
-    min-height: 3.5rem;
+    min-height: 3.25rem;
   }
   .inline-agent__starter-heading { padding-inline: .75rem; }
   .inline-agent__starter-copy { padding-inline: .75rem; }
-  .inline-agent__starter-copy small { white-space: nowrap; }
-
-  /* Marquee mode: the row is a seamless wrap-around strip driven by JS
-     (drift right + drag/fling), not a native scrollport. Vertical page
-     scrolling stays native; horizontal gestures belong to the marquee. */
-  .inline-agent__starters--marquee {
-    overflow: hidden;
-    touch-action: pan-y;
-    cursor: grab;
-  }
-  .inline-agent__starters--marquee:active {
-    cursor: grabbing;
-  }
-  .inline-agent__starters--marquee .inline-agent__starters-strip {
-    display: flex;
-    width: max-content;
-    gap: var(--wiki-space-2);
-    will-change: transform;
-  }
 }
 
 /* A docked panel can make a desktop conversation as narrow as a tablet. */
@@ -3077,11 +2904,15 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__welcome {
-    padding: var(--wiki-space-6) var(--wiki-space-2) var(--wiki-space-5);
+    --agent-welcome-pad-start: var(--wiki-space-6);
+    --agent-welcome-pad-end: var(--wiki-space-5);
+    --agent-starters-original-gap: var(--wiki-space-5);
+    --agent-starters-bias: .5rem;
+    padding-inline: var(--wiki-space-2);
   }
 
 
-  .inline-agent__welcome h2 { font-size: clamp(2rem, 8vw, 3rem); }
+  .inline-agent__welcome-title { font-size: clamp(2rem, 8vw, 3rem); }
 
 
   .inline-agent__composer {
@@ -3139,7 +2970,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
   .inline-agent__welcome {
     min-height: auto;
-    justify-content: flex-start;
+    grid-template-rows: 0 auto 0 auto 0;
     padding-block: var(--wiki-space-5);
     transform: none;
   }
@@ -3179,7 +3010,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__composer {
     opacity: 1;
   }
-  .inline-agent__welcome h2::before {
+  .inline-agent__welcome-title::before {
     display: none;
   }
   .inline-agent__card,
