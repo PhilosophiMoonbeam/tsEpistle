@@ -326,7 +326,6 @@
           v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-mobile-actions(
-                ref='mobileActions'
                 icon
                 v-bind='props'
                 :size='dense ? `small` : `default`'
@@ -1323,8 +1322,6 @@ export default defineComponent({
       }
     },
     async searchEscape(): Promise<void> {
-      // Agent's modal scope owns Escape and restores its own invoking control.
-      if (this.searchMode === 'ask') return
       this.searchClose()
       if (!this.$vuetify.display.smAndDown) return
       await this.$nextTick()
@@ -1349,11 +1346,8 @@ export default defineComponent({
           this.searchIsFocused = false
           await this.$nextTick()
         }
-        const activator = this.$refs.mobileActions
-        const element = activator instanceof HTMLElement
-          ? activator
-          : (activator as { $el?: unknown } | undefined)?.$el
-        if (element instanceof HTMLElement) element.focus({ preventScroll: true })
+        // VMenu's activator props own the ref; capture the rendered button.
+        document.querySelector<HTMLButtonElement>('.nav-header-mobile-actions')?.focus({ preventScroll: true })
       }
       this.searchMode = 'ask'
       void this.focusSearchField()
