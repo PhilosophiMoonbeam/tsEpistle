@@ -392,7 +392,12 @@
       "searchNoResult": "No pages matching your query.",
       "searchDidYouMean": "Did you mean...",
       "searchResultsCount": "Found {{total}} results",
-      "breadcrumb": "Breadcrumb"
+      "breadcrumb": "Breadcrumb",
+      "agent": "Wiki Agent",
+      "agentOpen": "Open Wiki Agent",
+      "searchOpen": "Open search",
+      "searchCloseLabel": "Close search",
+      "pageLoading": "Page loading"
     },
     "searchPanel": {
       "title": "Search the Wiki",
