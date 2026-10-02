@@ -378,7 +378,7 @@ test('public tag library supports local filtering, AND selection, and mobile res
   const resultsSearch = page.getByRole('textbox', { name: /search (within results|these pages)/i }).first()
   await expect(resultsSearch).toBeVisible()
   await resultsSearch.fill('does-not-exist')
-  const clearResultsSearch = page.locator('.tags-results .tags-state').getByRole('button', { name: 'Clear search', exact: true })
+  const clearResultsSearch = page.locator('.tags-results .async-state').getByRole('button', { name: 'Clear search', exact: true })
   await expect(clearResultsSearch).toBeVisible()
   await clearResultsSearch.click()
   await expect(resultsSearch).toHaveValue('')
