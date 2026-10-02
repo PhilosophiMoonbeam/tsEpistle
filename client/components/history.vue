@@ -230,6 +230,7 @@ import { decodeBase64Json } from '../helpers/base64'
 import { createHistoryDiffRenderer, type HistoryDiffRenderer } from '../helpers/history-diff-client'
 import type { HistoryDiffOutcome, HistoryDiffRequest } from '../helpers/history-diff'
 import { formatRevisionTime, friendlyEditorName, translatedParts, type RevisionTime, type TranslatedPart } from '../helpers/history-presentation'
+import { translate } from '../modules/localization.ts'
 
 const HISTORY_PAGE_SIZE = 25
 // Loaded revision contents kept for quick re-selection. The live version, the
@@ -296,7 +297,7 @@ export default {
     },
     title: {
       type: String,
-      default: translate('common:history.untitledPage')
+      default: () => translate('common:history.untitledPage')
     },
     visibility: {
       type: String,
@@ -332,7 +333,7 @@ export default {
     },
     authorName: {
       type: String,
-      default: translate('common:history.unknown')
+      default: () => translate('common:history.unknown')
     },
     authorId: {
       type: Number,
