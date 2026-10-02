@@ -17,12 +17,12 @@
 
 .v-field--variant-outlined {
   .v-field__outline {
-    color: var(--wiki-surface-border-strong, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent));
+    color: var(--wiki-control-edge, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 44%, transparent));
     --v-field-border-opacity: 1;
   }
 
   &.v-field--focused .v-field__outline {
-    color: rgb(var(--v-theme-primary));
+    color: var(--wiki-purpose-primary-ink);
   }
 }
 
@@ -81,7 +81,7 @@
     }
 
     :is(.v-field__outline, .v-field-label, .v-messages) {
-      color: rgb(var(--v-theme-error));
+      color: var(--wiki-error-ink);
       opacity: 1;
     }
   }
@@ -99,7 +99,7 @@
     }
 
     :is(.v-field__outline, .v-field-label, .v-messages) {
-      color: rgb(var(--v-theme-success));
+      color: var(--wiki-success-ink);
       opacity: 1;
     }
   }
