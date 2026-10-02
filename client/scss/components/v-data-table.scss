@@ -26,7 +26,7 @@
       --wiki-surface-sunken,
       color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, rgb(var(--v-theme-surface)))
     );
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+    color: var(--wiki-text-muted);
     font-size: var(--wiki-label-size, .6875rem);
     font-weight: 740;
     letter-spacing: .055em;
@@ -86,7 +86,7 @@
 
   > .v-table__wrapper > table > tbody > .v-data-table-rows-no-data > td {
     height: 8rem;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+    color: var(--wiki-text-muted);
     text-align: center;
   }
 
@@ -97,7 +97,7 @@
       --wiki-surface-sunken,
       color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)))
     );
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+    color: var(--wiki-text-muted);
   }
 
   > .v-table__wrapper > table > tbody > .is-clickable {
