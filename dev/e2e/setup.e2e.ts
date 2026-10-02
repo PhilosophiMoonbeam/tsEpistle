@@ -179,6 +179,22 @@ async function openEditorForCurrentPage(page: Page): Promise<void> {
 test.describe('critical post-install workflows', () => {
   test.describe.configure({ mode: 'serial', retries: 0 })
 
+  test('boots standalone setup in a fresh context without a locale API', async ({ page }) => {
+    const browserErrors: string[] = []
+    page.on('pageerror', error => browserErrors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error') browserErrors.push(message.text()) })
+    let localeRequests = 0
+    await page.route('**/_api/locales/**', route => {
+      localeRequests += 1
+      return route.abort()
+    })
+    await page.goto('/', { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('First-run setup', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Install tsEpistle' })).toBeVisible()
+    expect(localeRequests).toBe(0)
+    expect(browserErrors).toEqual([])
+  })
+
   test('installs tsEpistle with telemetry disabled and opens the login screen', async ({ page }) => {
     test.setTimeout(120_000)
 
