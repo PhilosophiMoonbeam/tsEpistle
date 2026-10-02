@@ -1298,14 +1298,16 @@ export default defineComponent({
       overflow: hidden;
     }
 
-    .cm-editor,
-    .cm-scroller {
-      background: rgb(var(--v-theme-background)) !important;
+    // CodeMirror paints selections in a z-index:-1 layer inside .cm-scroller.
+    // Only the editor root carries a background; the scroller and content stay
+    // transparent so nothing can cover the selection layer.
+    .cm-editor {
+      background: rgb(var(--v-theme-background));
     }
 
+    .cm-scroller,
     .cm-content {
-      // CodeMirror paints selections behind the editable content.
-      background: transparent !important;
+      background: transparent;
     }
 
     .cm-editor {
