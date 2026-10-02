@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-container(fluid)
+  v-container.profile-workspace(fluid)
     async-state(
       v-if='profileLoading'
       state='loading'
@@ -11,186 +11,279 @@
       state='error'
       :title='$t("profile:loadError", { defaultValue: "Profile could not be loaded" })'
       :message='profileError'
-      :retry-label='$t("common:actions.retry", { defaultValue: "Try again" })'
+      :retry-label='$t("common:page.tryAgain")'
       @retry='loadProfile'
     )
-    v-row(v-else-if='user')
-      v-col(cols='12')
-        .profile-header
-          .profile-header-avatar
-            v-avatar(v-if='picture.kind === `initials`', size='64', color='primary')
-              span.text-headline-small.text-on-primary.font-weight-bold {{ picture.initials }}
-            v-avatar(v-else-if='picture.kind === `image`', size='64')
+    template(v-else-if='user')
+      admin-hero(
+        :title='$t("profile:title")'
+        :description='$t("profile:subtitle")'
+        :eyebrow='$t("profile:hero.eyebrow", { defaultValue: "Account" })'
+        icon='mdi-account-circle-outline'
+        heading-id='profile-title'
+      )
+        template(#extra)
+          .profile-identity
+            v-avatar(v-if='picture.kind === `initials`', size='40', color='primary')
+              span.text-title-small.text-on-primary.font-weight-bold {{ picture.initials }}
+            v-avatar(v-else, size='40')
               v-img(:src='picture.url', alt='')
-            v-avatar(v-else, size='64', color='surface-variant')
-              v-icon(size='40') mdi-account
-          .profile-header-title
-            h1.text-headline-medium.font-weight-bold {{$t('profile:title')}}
-            .text-body-large.text-medium-emphasis {{$t('profile:subtitle')}}
-          v-spacer
-          v-btn(
-            color='primary'
-            variant="flat"
-            @click='saveProfile'
-            :loading='saveLoading'
-            :disabled='!profileReady'
-            size="large"
-            rounded='lg'
-            prepend-icon='mdi-check'
-          ) {{$t('common:actions.save')}}
-          //- v-btn.animated.fadeInDown.mr-0(variant='outlined', color='primary', disabled)
-          //-   v-icon(start) mdi-earth
-          //-   span {{$t('profile:viewPublicProfile')}}
-      v-col(lg='6' cols='12')
-        v-card
-          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
-            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:myInfo')}}
-          v-list(lines="two", density="compact")
-            v-list-item
-              template(v-slot:prepend)
-                v-avatar(size='32')
-                  v-icon mdi-account
-              v-list-item-title {{$t('profile:displayName')}}
-              v-list-item-subtitle {{ user.name }}
-              template(v-slot:append)
-                v-menu(
-                  v-model='editPop.name'
-                  :close-on-content-click='false'
-                  min-width='min(350px, calc(100vw - 24px))'
-                  location='start'
-                  )
-                  template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:displayName`)' @click='focusField(`iptDisplayName`)')
-                      v-icon(start) mdi-pencil
-                      span {{ $t('common:actions.edit') }}
-                  v-card
-                    v-text-field(
-                      ref='iptDisplayName'
-                      v-model='user.name'
-                      :label='$t(`profile:displayName`)'
-                      variant="solo"
-                      hide-details
-                      append-icon='mdi-check'
-                      @click:append='editPop.name = false'
-                      @keydown.enter='editPop.name = false'
-                      @keydown.esc='editPop.name = false'
-                    )
-            v-divider
-            v-list-item
-              template(v-slot:prepend)
-                v-avatar(size='32')
-                  v-icon mdi-at
-              v-list-item-title {{$t('profile:mentionHandle', { defaultValue: 'Mention handle' })}}
-              v-list-item-subtitle {{ user.handle ? `@${user.handle}` : $t('profile:mentionHandleEmpty', { defaultValue: 'Not set' }) }}
-              template(v-slot:append)
-                v-menu(
-                  v-model='editPop.handle'
-                  :close-on-content-click='false'
-                  min-width='min(350px, calc(100vw - 24px))'
-                  location='start'
-                  )
-                  template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:mentionHandle`, { defaultValue: `Mention handle` })' @click='focusField(`iptMentionHandle`)')
-                      v-icon(start) mdi-pencil
-                      span {{ $t('common:actions.edit') }}
-                  v-card
-                    v-text-field(
-                      ref='iptMentionHandle'
-                      v-model='user.handle'
-                      :label='$t(`profile:mentionHandle`, { defaultValue: `Mention handle` })'
-                      :hint='$t(`profile:mentionHandleHint`, { defaultValue: `3–32 lowercase letters, numbers, underscores or hyphens. Leave blank to disable mentions.` })'
-                      persistent-hint
-                      prefix='@'
-                      maxlength='32'
-                      autocomplete='off'
-                      variant="solo"
-                      append-icon='mdi-check'
-                      @click:append='editPop.handle = false'
-                      @keydown.enter='editPop.handle = false'
-                      @keydown.esc='editPop.handle = false'
-                    )
-            v-divider
-            v-list-item
-              template(v-slot:prepend)
-                v-avatar(size='32')
-                  v-icon mdi-map-marker
-              v-list-item-title {{$t('profile:location')}}
-              v-list-item-subtitle {{ user.location }}
-              template(v-slot:append)
-                v-menu(
-                  v-model='editPop.location'
-                  :close-on-content-click='false'
-                  min-width='min(350px, calc(100vw - 24px))'
-                  location='start'
-                  )
-                  template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:location`)' @click='focusField(`iptLocation`)')
-                      v-icon(start) mdi-pencil
-                      span {{ $t('common:actions.edit') }}
-                  v-card
-                    v-text-field(
-                      ref='iptLocation'
-                      v-model='user.location'
-                      :label='$t(`profile:location`)'
-                      variant="solo"
-                      hide-details
-                      append-icon='mdi-check'
-                      @click:append='editPop.location = false'
-                      @keydown.enter='editPop.location = false'
-                      @keydown.esc='editPop.location = false'
-                    )
-            v-divider
-            v-list-item
-              template(v-slot:prepend)
-                v-avatar(size='32')
-                  v-icon mdi-briefcase
-              v-list-item-title {{$t('profile:jobTitle')}}
-              v-list-item-subtitle {{ user.jobTitle }}
-              template(v-slot:append)
-                v-menu(
-                  v-model='editPop.jobTitle'
-                  :close-on-content-click='false'
-                  min-width='min(350px, calc(100vw - 24px))'
-                  location='start'
-                  )
-                  template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:jobTitle`)' @click='focusField(`iptJobTitle`)')
-                      v-icon(start) mdi-pencil
-                      span {{ $t('common:actions.edit') }}
-                  v-card
-                    v-text-field(
-                      ref='iptJobTitle'
-                      v-model='user.jobTitle'
-                      :label='$t(`profile:jobTitle`)'
-                      variant="solo"
-                      hide-details
-                      append-icon='mdi-check'
-                      @click:append='editPop.jobTitle = false'
-                      @keydown.enter='editPop.jobTitle = false'
-                      @keydown.esc='editPop.jobTitle = false'
-                    )
+            .profile-identity__copy
+              strong {{ savedDraft ? savedDraft.name : user.name }}
+              span {{ user.email }}
 
-        v-card.mt-3
-          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
-            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:auth.title')}}
-          v-card-text.pt-0
-            v-list-subheader.pl-0: span.text-label-large {{$t('profile:auth.provider')}}
-            v-toolbar.profile-auth-provider(
-              flat
-              density="compact"
+      .profile-layout
+        .profile-column
+          section.profile-section(aria-labelledby='profile-info-title')
+            header.profile-section__header
+              h2#profile-info-title.profile-section__title {{ $t('profile:myInfo') }}
+              p.profile-section__hint {{ $t('profile:myInfoHint', { defaultValue: 'Shown to other people on pages, mentions and Discussion.' }) }}
+            .profile-section__body.profile-fields
+              .profile-field(@keydown.esc.capture='revertField(`name`, $event)')
+                v-text-field(
+                  ref='field-name'
+                  v-model='user.name'
+                  :label='$t(`profile:displayName`)'
+                  :error-messages='issueMessage(`name`)'
+                  :readonly='saving'
+                  hide-details='auto'
+                  variant='outlined'
+                  density='comfortable'
+                  autocomplete='name'
+                  maxlength='255'
+                  prepend-inner-icon='mdi-account-outline'
+                )
+              .profile-field(@keydown.esc.capture='revertField(`handle`, $event)')
+                v-text-field(
+                  ref='field-handle'
+                  v-model='user.handle'
+                  :label='$t(`profile:mentionHandle`, { defaultValue: `Mention handle` })'
+                  :hint='$t(`profile:mentionHandleHint`, { defaultValue: `3–32 lowercase letters, numbers, underscores or hyphens. Leave blank to disable mentions.` })'
+                  :error-messages='issueMessage(`handle`)'
+                  :readonly='saving'
+                  persistent-hint
+                  prefix='@'
+                  maxlength='32'
+                  autocomplete='off'
+                  spellcheck='false'
+                  variant='outlined'
+                  density='comfortable'
+                )
+              .profile-field(@keydown.esc.capture='revertField(`location`, $event)')
+                v-text-field(
+                  v-model='user.location'
+                  :label='$t(`profile:location`)'
+                  :readonly='saving'
+                  variant='outlined'
+                  density='comfortable'
+                  hide-details='auto'
+                  prepend-inner-icon='mdi-map-marker-outline'
+                )
+              .profile-field(@keydown.esc.capture='revertField(`jobTitle`, $event)')
+                v-text-field(
+                  v-model='user.jobTitle'
+                  :label='$t(`profile:jobTitle`)'
+                  :readonly='saving'
+                  variant='outlined'
+                  density='comfortable'
+                  hide-details='auto'
+                  autocomplete='organization-title'
+                  prepend-inner-icon='mdi-briefcase-outline'
+                )
+
+          section.profile-section(aria-labelledby='profile-preferences-title')
+            header.profile-section__header
+              h2#profile-preferences-title.profile-section__title {{ $t('profile:preferences') }}
+              p.profile-section__hint {{ $t('profile:preferencesHint', { defaultValue: 'Changes preview at once. Save to keep them.' }) }}
+            .profile-section__body.profile-fields
+              .profile-field.profile-field--wide(@keydown.esc.capture='revertField(`timezone`, $event)')
+                v-autocomplete(
+                  v-model='user.timezone'
+                  v-model:menu='openMenus.timezone'
+                  :items='timezoneItems'
+                  :label='$t(`profile:timezone`)'
+                  :hint='$t(`profile:timezoneHint`, { defaultValue: `Type a city or region to filter.` })'
+                  :no-data-text='$t(`profile:timezoneNoMatch`, { defaultValue: `No matching time zone` })'
+                  :readonly='saving'
+                  persistent-hint
+                  auto-select-first
+                  variant='outlined'
+                  density='comfortable'
+                  prepend-inner-icon='mdi-map-clock-outline'
+                )
+              .profile-field(@keydown.esc.capture='revertField(`dateFormat`, $event)')
+                v-select(
+                  v-model='user.dateFormat'
+                  v-model:menu='openMenus.dateFormat'
+                  :items='dateFormats'
+                  :label='$t(`profile:dateFormat`)'
+                  :readonly='saving'
+                  variant='outlined'
+                  density='comfortable'
+                  hide-details
+                  prepend-inner-icon='mdi-calendar-month-outline'
+                )
+              .profile-field(@keydown.esc.capture='revertField(`timeFormat`, $event)')
+                v-select(
+                  v-model='user.timeFormat'
+                  v-model:menu='openMenus.timeFormat'
+                  :items='timeFormats'
+                  :label='$t(`profile:timeFormat`, { defaultValue: `Time format` })'
+                  :readonly='saving'
+                  variant='outlined'
+                  density='comfortable'
+                  hide-details
+                  prepend-inner-icon='mdi-clock-time-four-outline'
+                )
+              .profile-field(@keydown.esc.capture='revertField(`appearance`, $event)')
+                v-select(
+                  v-model='user.appearance'
+                  v-model:menu='openMenus.appearance'
+                  :items='appearances'
+                  :label='$t(`profile:appearance`)'
+                  :readonly='saving'
+                  variant='outlined'
+                  density='comfortable'
+                  hide-details
+                  prepend-inner-icon='mdi-palette-outline'
+                )
+
+          section.profile-section(aria-labelledby='profile-reading-title')
+            header.profile-section__header
+              h2#profile-reading-title.profile-section__title {{ $t('profile:readingPreferences', { defaultValue: 'Reading preferences' }) }}
+              p.profile-section__hint {{ $t('profile:readingPreferencesHint', { defaultValue: 'Apply to articles after you save.' }) }}
+            .profile-section__body
+              .profile-toggle-row(@keydown.esc.capture='revertField(`reduceMotion`, $event)')
+                v-switch(
+                  v-model='user.reduceMotion'
+                  :label='$t(`profile:reduceMotion`, { defaultValue: `Reduce motion` })'
+                  :hint='$t(`profile:reduceMotionHint`, { defaultValue: `Reduce decorative motion; device accessibility settings are always respected.` })'
+                  :readonly='saving'
+                  persistent-hint
+                  color='primary'
+                  inset
+                )
+              v-divider
+              .profile-toggle-row(@keydown.esc.capture='revertField(`underlineLinks`, $event)')
+                v-switch(
+                  v-model='user.underlineLinks'
+                  :label='$t(`profile:underlineLinks`, { defaultValue: `Underline article links` })'
+                  :hint='$t(`profile:underlineLinksHint`, { defaultValue: `Keep article links underlined for easier recognition.` })'
+                  :readonly='saving'
+                  persistent-hint
+                  color='primary'
+                  inset
+                )
+              v-divider
+              .profile-fields.profile-fields--spaced
+                .profile-field(@keydown.esc.capture='revertField(`contentTextSize`, $event)')
+                  v-select(
+                    v-model='user.contentTextSize'
+                    v-model:menu='openMenus.contentTextSize'
+                    :items='contentTextSizes'
+                    :label='$t(`profile:contentTextSize`, { defaultValue: `Article text size` })'
+                    :hint='$t(`profile:contentTextSizeHint`, { defaultValue: `Change prose size without scaling application controls or code.` })'
+                    :readonly='saving'
+                    persistent-hint
+                    variant='outlined'
+                    density='comfortable'
+                  )
+                .profile-field(@keydown.esc.capture='revertField(`communicationLocale`, $event)')
+                  v-select(
+                    v-model='communicationLocaleSelection'
+                    v-model:menu='openMenus.communicationLocale'
+                    :items='communicationLocaleOptions'
+                    :label='$t(`profile:communicationLocale`, { defaultValue: `Communication language` })'
+                    :hint='$t(`profile:communicationLocaleHint`, { defaultValue: `Choose an installed language for account messages, or use the site language.` })'
+                    :readonly='saving'
+                    persistent-hint
+                    variant='outlined'
+                    density='comfortable'
+                  )
+
+        .profile-column
+          section.profile-section(aria-labelledby='profile-avatar-title')
+            header.profile-section__header
+              h2#profile-avatar-title.profile-section__title {{ $t('profile:avatar.title', { defaultValue: 'Profile avatar' }) }}
+              p.profile-section__hint {{ $t('profile:avatar.saveHint', { defaultValue: 'Avatar changes save at once.' }) }}
+            .profile-section__body
+              .profile-avatar-editor
+                .profile-avatar-preview
+                  v-avatar(v-if='picture.kind === `initials`', size='88', color='primary')
+                    span.text-headline-medium.text-on-primary.font-weight-bold {{ picture.initials }}
+                  v-avatar(v-else, size='88')
+                    v-img(:src='picture.url', alt='')
+                .profile-avatar-actions
+                  input.profile-avatar-input(
+                    ref='avatarInput'
+                    type='file'
+                    accept='image/jpeg,image/png,image/webp'
+                    tabindex='-1'
+                    aria-hidden='true'
+                    :disabled='avatarLoading'
+                    @change='handleAvatarSelected'
+                  )
+                  .profile-avatar-buttons
+                    v-btn(
+                      ref='avatarUploadButton'
+                      type='button'
+                      variant='outlined'
+                      color='primary'
+                      :loading='avatarAction === `upload`'
+                      :disabled='avatarLoading'
+                      :aria-busy='avatarLoading'
+                      :aria-label='$t(`profile:avatar.upload`, { defaultValue: `Upload avatar` })'
+                      @click='openAvatarPicker'
+                    )
+                      v-icon(start) mdi-upload
+                      span {{$t('profile:avatar.upload', { defaultValue: 'Upload avatar' })}}
+                    v-btn(
+                      v-if='hasInternalAvatar'
+                      type='button'
+                      variant='text'
+                      color='error'
+                      :loading='avatarAction === `remove`'
+                      :disabled='avatarLoading'
+                      :aria-busy='avatarLoading'
+                      :aria-label='$t(`profile:avatar.remove`, { defaultValue: `Remove avatar` })'
+                      @click='removeAvatar'
+                    )
+                      v-icon(start) mdi-delete-outline
+                      span {{$t('profile:avatar.remove', { defaultValue: 'Remove avatar' })}}
+                  p.profile-muted.text-body-small {{ $t('profile:avatar.help', { defaultValue: 'PNG, JPEG, or WebP up to 1 MB. Provider avatars return after the next sign-in when removed.' }) }}
+                  v-alert(
+                    v-if='avatarError'
+                    type='error'
+                    variant='tonal'
+                    density='compact'
+                    role='alert'
+                  ) {{ avatarError }}
+                  v-alert(
+                    v-if='avatarSuccess'
+                    type='success'
+                    variant='tonal'
+                    density='compact'
+                    role='status'
+                  ) {{ avatarSuccess }}
+
+          section.profile-section(aria-labelledby='profile-auth-title')
+            header.profile-section__header
+              h2#profile-auth-title.profile-section__title {{ $t('profile:auth.title') }}
+            .profile-section__body
+              .profile-auth-provider
+                .profile-auth-provider__mark
+                  v-icon(aria-hidden='true') mdi-shield-lock-outline
+                .profile-auth-provider__copy
+                  span.profile-muted.text-label-large {{ $t('profile:auth.provider') }}
+                  span.profile-auth-provider__name.text-body-large {{ user.providerName }}
+              form#change-password-form.profile-password-form(
+                v-if='user.providerKey === `local`'
+                @submit.prevent='changePassword'
+                :aria-busy='changePassLoading'
+                aria-labelledby='profile-password-title'
               )
-              .profile-auth-provider__mark
-                v-icon(aria-hidden='true') mdi-shield-lock
-              .profile-auth-provider__name.text-body-large {{ user.providerName }}
-            //- v-divider.mt-3
-            //- v-list-subheader.pl-0: span.text-label-large Two-Factor Authentication (2FA)
-            //- .text-body-small.mb-2 2FA adds an extra layer of security by requiring a unique code generated on your smartphone when signing in.
-            //- v-btn.ml-0(color='purple-darken-4', disabled) Enable 2FA
-            //- v-btn.ml-0(color='purple-darken-4', variant='flat', disabled) Disable 2FA
-            template(v-if='user.providerKey === `local`')
-              form#change-password-form(@submit.prevent='changePassword' :aria-busy='changePassLoading')
-                v-divider.mt-3
-                v-list-subheader.pl-0: span.text-label-large {{$t('profile:auth.changePassword')}}
+                h3#profile-password-title.profile-subsection-title {{ $t('profile:auth.changePassword') }}
+                p.profile-muted.text-body-small {{ $t('profile:auth.changePasswordHint', { defaultValue: 'Saved on its own. Other profile changes are not affected.' }) }}
                 v-alert.mb-3(
                   v-if='passwordErrorSummary'
                   type='error'
@@ -200,40 +293,42 @@
                 v-text-field(
                   ref='iptCurrentPass'
                   v-model='currentPass'
-                  variant="outlined"
+                  variant='outlined'
+                  density='comfortable'
                   :label='$t(`profile:auth.currentPassword`)'
                   :type='hideCurrentPass ? "password" : "text"'
                   :error-messages='passwordErrors.current'
                   prepend-inner-icon='mdi-form-textbox-password'
                   autocomplete='current-password'
                   :disabled='changePassLoading'
-                  )
+                )
                   template(v-slot:append-inner)
                     v-btn(
                       icon
                       variant='text'
                       size='small'
                       type='button'
-                      :aria-label='(hideCurrentPass ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`profile:auth.currentPassword`)'
+                      :aria-label='passwordToggleLabel(hideCurrentPass, $t(`profile:auth.currentPassword`))'
                       :disabled='changePassLoading'
                       @click='hideCurrentPass = !hideCurrentPass'
                     )
-                      v-icon {{ hideCurrentPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
+                      v-icon(aria-hidden='true') {{ hideCurrentPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
                 v-text-field(
                   ref='iptNewPass'
                   v-model='newPass'
-                  variant="outlined"
+                  variant='outlined'
+                  density='comfortable'
                   :label='$t(`profile:auth.newPassword`)'
                   :type='hideNewPass ? "password" : "text"'
                   :error-messages='passwordErrors.password'
-                        :hint='passwordHint'
-                        persistent-hint
+                  :hint='passwordHint'
+                  persistent-hint
                   prepend-inner-icon='mdi-form-textbox-password'
                   autocomplete='new-password'
                   counter='255'
                   loading
                   :disabled='changePassLoading'
-                  )
+                )
                   template(v-slot:loader)
                     password-strength(v-model='newPass')
                   template(v-slot:append-inner)
@@ -242,369 +337,109 @@
                       variant='text'
                       size='small'
                       type='button'
-                      :aria-label='(hideNewPass ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`profile:auth.newPassword`)'
+                      :aria-label='passwordToggleLabel(hideNewPass, $t(`profile:auth.newPassword`))'
                       :disabled='changePassLoading'
                       @click='hideNewPass = !hideNewPass'
                     )
-                      v-icon {{ hideNewPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
+                      v-icon(aria-hidden='true') {{ hideNewPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
                 v-text-field(
                   ref='iptVerifyPass'
                   v-model='verifyPass'
-                  variant="outlined"
+                  variant='outlined'
+                  density='comfortable'
                   :label='$t(`profile:auth.verifyPassword`)'
                   :type='hideVerifyPass ? "password" : "text"'
                   :error-messages='passwordErrors.verifyPassword'
                   prepend-inner-icon='mdi-form-textbox-password'
                   autocomplete='new-password'
                   :disabled='changePassLoading'
-                  )
+                )
                   template(v-slot:append-inner)
                     v-btn(
                       icon
                       variant='text'
                       size='small'
                       type='button'
-                      :aria-label='(hideVerifyPass ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`profile:auth.verifyPassword`)'
+                      :aria-label='passwordToggleLabel(hideVerifyPass, $t(`profile:auth.verifyPassword`))'
                       :disabled='changePassLoading'
                       @click='hideVerifyPass = !hideVerifyPass'
                     )
-                      v-icon {{ hideVerifyPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
-          v-card-chin(v-if='user.providerKey === `local`')
-            v-spacer
-            v-btn.px-4(color="primary", variant="flat", :loading='changePassLoading', :disabled='changePassLoading', type='submit', form='change-password-form')
-              v-icon(start) mdi-progress-check
-              span {{$t('profile:auth.changePassword')}}
-      v-col(lg='6' cols='12')
-        v-card.mb-3
-          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
-            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:avatar.title', { defaultValue: 'Profile avatar' })}}
-          v-card-text
-            .profile-avatar-editor
-              .profile-avatar-preview
-                v-avatar(v-if='picture.kind === `initials`', size='96', color='primary')
-                  span.text-headline-medium.text-on-primary.font-weight-bold {{ picture.initials }}
-                v-avatar(v-else-if='picture.kind === `image`', size='96')
-                  v-img(:src='picture.url', alt='')
-                v-avatar(v-else, size='96', color='surface-variant')
-                  v-icon(size='56') mdi-account
-              .profile-avatar-actions
-                input.profile-avatar-input(
-                  ref='avatarInput'
-                  type='file'
-                  accept='image/jpeg,image/png,image/webp'
-                  :disabled='avatarLoading'
-                  @change='handleAvatarSelected'
-                )
-                v-btn(
-                  ref='avatarUploadButton'
-                  type='button'
-                  variant='outlined'
-                  color='primary'
-                  :loading='avatarAction === `upload`'
-                  :disabled='avatarLoading'
-                  :aria-busy='avatarLoading'
-                  :aria-label='$t(`profile:avatar.upload`, { defaultValue: `Upload avatar` })'
-                  @click='openAvatarPicker'
-                )
-                  v-icon(start) mdi-upload
-                  span {{$t('profile:avatar.upload', { defaultValue: 'Upload avatar' })}}
-                v-btn(
-                  type='button'
-                  variant='text'
-                  color='error'
-                  :loading='avatarAction === `remove`'
-                  :disabled='avatarLoading || !hasInternalAvatar'
-                  :aria-busy='avatarLoading'
-                  :aria-label='$t(`profile:avatar.remove`, { defaultValue: `Remove avatar` })'
-                  @click='removeAvatar'
-                )
-                  v-icon(start) mdi-delete-outline
-                  span {{$t('profile:avatar.remove', { defaultValue: 'Remove avatar' })}}
-                .text-body-small.text-medium-emphasis {{ $t('profile:avatar.help', { defaultValue: 'PNG, JPEG, or WebP up to 1 MB. Provider avatars return after the next sign-in when removed.' }) }}
-                v-alert(
-                  v-if='avatarError'
-                  type='error'
-                  variant='tonal'
-                  density='compact'
-                  role='alert'
-                ) {{ avatarError }}
-                v-alert(
-                  v-if='avatarSuccess'
-                  type='success'
-                  variant='tonal'
-                  density='compact'
-                  role='status'
-                ) {{ avatarSuccess }}
-        v-card
-          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
-            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:preferences')}}
-          v-list(lines="two", density="compact")
-            v-list-item
-              template(v-slot:prepend)
-                v-avatar(size='32')
-                  v-icon mdi-map-clock-outline
-              v-list-item-title {{$t('profile:timezone')}}
-              v-list-item-subtitle {{ user.timezone }}
-              template(v-slot:append)
-                v-menu(
-                  v-model='editPop.timezone'
-                  :close-on-content-click='false'
-                  min-width='min(350px, calc(100vw - 24px))'
-                  max-width='min(350px, calc(100vw - 24px))'
-                  location='start'
-                  )
-                  template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:timezone`)' @click='focusField(`iptTimezone`)')
-                      v-icon(start) mdi-pencil
-                      span {{ $t('common:actions.edit') }}
-                  v-card(flat)
-                    v-select(
-                      ref='iptTimezone'
-                      :items='timezones'
-                      v-model='user.timezone'
-                      :label='$t(`profile:timezone`)'
-                      variant="solo"
-                      flat
-                      density="compact"
-                      hide-details
-                      @keydown.enter='editPop.timezone = false'
-                      @keydown.esc='editPop.timezone = false'
-                      style='height: 38px;'
-                    )
-                    v-card-chin
-                      v-spacer
-                      v-btn(
-                        size="small"
-                        variant="text"
-                        color='primary'
-                        @click='editPop.timezone = false'
-                        )
-                        v-icon(start) mdi-check
-                        span {{$t('common:actions.ok')}}
-            v-divider
-            v-list-item
-              template(v-slot:prepend)
-                v-avatar(size='32')
-                  v-icon mdi-calendar-month-outline
-              v-list-item-title {{$t('profile:dateFormat')}}
-              v-list-item-subtitle {{ user.dateFormat && user.dateFormat.length > 0 ? user.dateFormat : $t('profile:localeDefault') }}
-              template(v-slot:append)
-                v-menu(
-                  v-model='editPop.dateFormat'
-                  :close-on-content-click='false'
-                  min-width='min(350px, calc(100vw - 24px))'
-                  max-width='min(350px, calc(100vw - 24px))'
-                  location='start'
-                  )
-                  template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:dateFormat`)' @click='focusField(`iptDateFormat`)')
-                      v-icon(start) mdi-pencil
-                      span {{ $t('common:actions.edit') }}
-                  v-card(flat)
-                    v-select(
-                      ref='iptDateFormat'
-                      :items='dateFormats'
-                      v-model='user.dateFormat'
-                      :label='$t(`profile:dateFormat`)'
-                      variant="solo"
-                      flat
-                      density="compact"
-                      hide-details
-                      @keydown.enter='editPop.dateFormat = false'
-                      @keydown.esc='editPop.dateFormat = false'
-                      style='height: 38px;'
-                    )
-                    v-card-chin
-                      v-spacer
-                      v-btn(
-                        size="small"
-                        variant="text"
-                        color='primary'
-                        @click='editPop.dateFormat = false'
-                        )
-                        v-icon(start) mdi-check
-                        span {{$t('common:actions.ok')}}
-            v-list-item
-              template(v-slot:prepend)
-                v-avatar(size='32')
-                  v-icon mdi-clock-time-four-outline
-              v-list-item-title {{$t('profile:timeFormat', { defaultValue: 'Time format' })}}
-              v-list-item-subtitle {{ currentTimeFormat }}
-              template(v-slot:append)
-                v-menu(
-                  v-model='editPop.timeFormat'
-                  :close-on-content-click='false'
-                  min-width='min(350px, calc(100vw - 24px))'
-                  max-width='min(350px, calc(100vw - 24px))'
-                  location='start'
-                  )
-                  template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:timeFormat`, { defaultValue: `Time format` })' @click='focusField(`iptTimeFormat`)')
-                      v-icon(start) mdi-pencil
-                      span {{ $t('common:actions.edit') }}
-                  v-card(flat)
-                    v-select(
-                      ref='iptTimeFormat'
-                      :items='timeFormats'
-                      v-model='user.timeFormat'
-                      :label='$t(`profile:timeFormat`, { defaultValue: `Time format` })'
-                      variant="solo"
-                      flat
-                      density="compact"
-                      hide-details
-                      @keydown.enter='editPop.timeFormat = false'
-                      @keydown.esc='editPop.timeFormat = false'
-                      style='height: 38px;'
-                    )
-                    v-card-chin
-                      v-spacer
-                      v-btn(
-                        size="small"
-                        variant="text"
-                        color='primary'
-                        @click='editPop.timeFormat = false'
-                        )
-                        v-icon(start) mdi-check
-                        span {{$t('common:actions.ok')}}
-            v-divider
-            v-list-item
-              template(v-slot:prepend)
-                v-avatar(size='32')
-                  v-icon mdi-palette
-              v-list-item-title {{$t('profile:appearance')}}
-              v-list-item-subtitle {{ currentAppearance }}
-              template(v-slot:append)
-                v-menu(
-                  v-model='editPop.appearance'
-                  :close-on-content-click='false'
-                  min-width='min(350px, calc(100vw - 24px))'
-                  max-width='min(350px, calc(100vw - 24px))'
-                  location='start'
-                  )
-                  template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:appearance`)' @click='focusField(`iptAppearance`)')
-                      v-icon(start) mdi-pencil
-                      span {{ $t('common:actions.edit') }}
-                  v-card(flat)
-                    v-select(
-                      ref='iptAppearance'
-                      :items='appearances'
-                      v-model='user.appearance'
-                      :label='$t(`profile:appearance`)'
-                      variant="solo"
-                      flat
-                      density="compact"
-                      hide-details
-                      @keydown.enter='editPop.appearance = false'
-                      @keydown.esc='editPop.appearance = false'
-                      style='height: 38px;'
-                    )
-                    v-card-chin
-                      v-spacer
-                      v-btn(
-                        size="small"
-                        variant="text"
-                        color='primary'
-                        @click='editPop.appearance = false'
-                        )
-                        v-icon(start) mdi-check
-                        span {{$t('common:actions.ok')}}
+                      v-icon(aria-hidden='true') {{ hideVerifyPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
+                .profile-password-form__actions
+                  v-btn(
+                    color='primary'
+                    variant='flat'
+                    type='submit'
+                    :loading='changePassLoading'
+                    :disabled='changePassLoading'
+                    prepend-icon='mdi-lock-reset'
+                  ) {{ $t('profile:auth.changePassword') }}
 
-        v-card.mt-3
-          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
-            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:readingPreferences', { defaultValue: 'Reading preferences' })}}
-          v-list(lines="two", density="compact")
-            v-list-item
-              v-list-item-title {{$t('profile:reduceMotion', { defaultValue: 'Reduce motion' })}}
-              v-list-item-subtitle {{$t('profile:reduceMotionHint', { defaultValue: 'Reduce decorative motion; device accessibility settings are always respected.' })}}
-              template(v-slot:append)
-                v-switch(
-                  v-model='user.reduceMotion'
-                  :disabled='presentationSaveLoading'
-                  color='primary'
-                  hide-details
-                  :aria-label='$t(`profile:reduceMotion`, { defaultValue: `Reduce motion` })'
-                )
-            v-divider
-            v-list-item
-              v-list-item-title {{$t('profile:underlineLinks', { defaultValue: 'Underline article links' })}}
-              v-list-item-subtitle {{$t('profile:underlineLinksHint', { defaultValue: 'Keep article links underlined for easier recognition.' })}}
-              template(v-slot:append)
-                v-switch(
-                  v-model='user.underlineLinks'
-                  :disabled='presentationSaveLoading'
-                  color='primary'
-                  hide-details
-                  :aria-label='$t(`profile:underlineLinks`, { defaultValue: `Underline article links` })'
-                )
-            v-divider
-            v-list-item
-              v-list-item-title {{$t('profile:contentTextSize', { defaultValue: 'Article text size' })}}
-              v-list-item-subtitle {{$t('profile:contentTextSizeHint', { defaultValue: 'Change prose size without scaling application controls or code.' })}}
-              template(v-slot:append)
-                v-select(
-                  v-model='user.contentTextSize'
-                  :items='contentTextSizes'
-                  :label='$t(`profile:contentTextSize`, { defaultValue: `Article text size` })'
-                  :disabled='presentationSaveLoading'
-                  variant='outlined'
-                  density='compact'
-                  hide-details
-                  style='min-width: 170px'
-                )
-            v-divider
-            v-list-item
-              v-list-item-title {{$t('profile:communicationLocale', { defaultValue: 'Communication language' })}}
-              v-list-item-subtitle {{$t('profile:communicationLocaleHint', { defaultValue: 'Choose an installed language for account messages, or use the site language.' })}}
-              template(v-slot:append)
-                v-select(
-                  v-model='communicationLocaleSelection'
-                  :items='communicationLocaleOptions'
-                  :label='$t(`profile:communicationLocale`, { defaultValue: `Communication language` })'
-                  :disabled='presentationSaveLoading'
-                  variant='outlined'
-                  density='compact'
-                  hide-details
-                  style='min-width: 200px'
-                )
-          v-card-actions
-            v-spacer
-            v-btn(
-              color='primary'
-              variant='flat'
-              :loading='presentationSaveLoading'
-              :disabled='!profileReady'
-              @click='savePresentationPreferences'
-            )
-              v-icon(start) mdi-check
-              span {{$t('profile:saveReadingPreferences', { defaultValue: 'Save reading preferences' })}}
-        v-card.mt-3
-          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
-            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:groups.title')}}
-          v-list(density="compact")
-            template(v-if='user.groups.length')
-              template(v-for='(grp, idx) of user.groups', :key='`grp-id-` + grp')
-                v-list-item
-                  template(v-slot:prepend)
-                    v-avatar(size='32')
-                      v-icon mdi-account-group
-                  v-list-item-title.text-body-medium {{grp}}
-                v-divider(v-if='idx < user.groups.length - 1')
-            v-list-item(v-else)
-              v-list-item-title.text-body-medium.text-medium-emphasis {{ $t('profile:groups.empty', { defaultValue: 'No groups assigned' }) }}
+          section.profile-section(aria-labelledby='profile-groups-title')
+            header.profile-section__header
+              h2#profile-groups-title.profile-section__title {{ $t('profile:groups.title') }}
+            .profile-section__body
+              ul.profile-groups(v-if='user.groups.length')
+                li(v-for='grp of user.groups', :key='`grp-id-` + grp')
+                  v-chip(label, variant='tonal', size='small', prepend-icon='mdi-account-group-outline') {{ grp }}
+              p.profile-muted.text-body-medium(v-else) {{ $t('profile:groups.empty', { defaultValue: 'No groups assigned' }) }}
 
-        v-card.mt-3
-          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
-            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:activity.title')}}
-          v-card-text.text-grey-darken-2
-            .text-body-small.text-grey {{$t('profile:activity.joinedOn')}}
-            .text-body-medium: strong {{ $helpers.formatMoment(user.createdAt, 'LLLL') }}
-            .text-body-small.text-grey.mt-3 {{$t('profile:activity.lastUpdatedOn')}}
-            .text-body-medium: strong {{ $helpers.formatMoment(user.updatedAt, 'LLLL') }}
-            .text-body-small.text-grey.mt-3 {{$t('profile:activity.lastLoginOn')}}
-            .text-body-medium: strong {{ $helpers.formatMoment(user.lastLoginAt, 'LLLL') }}
-            .text-body-small.text-grey.mt-3 {{$t('profile:activity.pagesCreated')}}
-            .text-body-medium: strong {{ user.pagesTotal }}
+          section.profile-section(aria-labelledby='profile-activity-title')
+            header.profile-section__header
+              h2#profile-activity-title.profile-section__title {{ $t('profile:activity.title') }}
+            dl.profile-section__body.profile-activity
+              div
+                dt {{ $t('profile:activity.joinedOn') }}
+                dd {{ $helpers.formatMoment(user.createdAt, 'LLLL') }}
+              div
+                dt {{ $t('profile:activity.lastUpdatedOn') }}
+                dd {{ $helpers.formatMoment(user.updatedAt, 'LLLL') }}
+              div
+                dt {{ $t('profile:activity.lastLoginOn') }}
+                dd {{ $helpers.formatMoment(user.lastLoginAt, 'LLLL') }}
+              div
+                dt {{ $t('profile:activity.pagesCreated') }}
+                dd {{ user.pagesTotal }}
+
+      .profile-save-dock(
+        role='region'
+        :aria-label='$t("profile:dock.label", { defaultValue: "Profile changes" })'
+        :class='{ "profile-save-dock--dirty": dirty }'
+      )
+        p.profile-save-dock__copy(role='status' aria-live='polite' aria-atomic='true')
+          v-icon(size='18' aria-hidden='true') {{ dirty ? 'mdi-circle-edit-outline' : 'mdi-check-circle-outline' }}
+          span#profile-save-state {{ dockMessage }}
+        .profile-save-dock__actions
+          v-btn(
+            v-if='dirty'
+            variant='text'
+            :disabled='saving'
+            prepend-icon='mdi-undo-variant'
+            @click='resetDraft'
+          ) {{ $t('profile:dock.reset', { defaultValue: 'Reset' }) }}
+          v-btn.profile-save-dock__save(
+            color='primary'
+            variant='flat'
+            prepend-icon='mdi-check'
+            :loading='saving'
+            :aria-disabled='canSave ? undefined : "true"'
+            aria-describedby='profile-save-state'
+            :class='{ "profile-save-dock__save--inactive": !canSave }'
+            @click='saveDraft'
+          ) {{ $t('profile:dock.save', { defaultValue: 'Save changes' }) }}
+
+    v-dialog(
+      v-model='discardOpen'
+      max-width='440'
+      aria-labelledby='profile-discard-title'
+    )
+      v-card.profile-discard-dialog
+        v-card-title#profile-discard-title(tag='h2') {{ $t('profile:discard.title', { defaultValue: 'Discard unsaved changes?' }) }}
+        v-card-text {{ discardMessage }}
+        v-card-actions
+          v-spacer
+          v-btn(variant='text' @click='cancelDiscard') {{ $t('profile:discard.keep', { defaultValue: 'Keep editing' }) }}
+          v-btn(color='error' variant='flat' @click='confirmDiscard') {{ $t('profile:discard.confirm', { defaultValue: 'Discard changes' }) }}
 </template>
 
 <script lang='ts'>
@@ -623,21 +458,27 @@ import {
   type Profile
 } from '../../helpers/users-api.ts'
 import { fetchLocales, type LocaleRow } from '../../helpers/locales-api.ts'
-import _ from 'lodash'
 import validateValues from '../../../shared/validation'
 import { resolveThemeName } from '../../helpers/theme.ts'
 import { applyUserPresentation } from '../../helpers/index.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store.ts'
+import {
+  changedProfileFields,
+  PROFILE_DETAIL_FIELDS,
+  PROFILE_PREFERENCE_FIELDS,
+  profileDraftIssues,
+  restoreProfileDraft,
+  restoreProfileField,
+  snapshotProfileDraft,
+  timezoneOptions,
+  type ProfileDraft,
+  type ProfileDraftField,
+  type ProfileDraftIssue,
+  type TimezoneOption
+} from './profile-draft.ts'
+import type { RouteLocationNormalized } from 'vue-router'
 
-type ProfileFieldRef =
-  | 'iptDisplayName'
-  | 'iptMentionHandle'
-  | 'iptLocation'
-  | 'iptJobTitle'
-  | 'iptTimezone'
-  | 'iptDateFormat'
-  | 'iptTimeFormat'
-  | 'iptAppearance'
+type MenuField = 'timezone' | 'dateFormat' | 'timeFormat' | 'appearance' | 'contentTextSize' | 'communicationLocale'
 
 function focusComponent (ref: unknown): void {
   if (!ref || typeof ref !== 'object') return
@@ -656,14 +497,17 @@ export default {
     AsyncState,
     PasswordStrength
   },
+  beforeRouteLeave (to: RouteLocationNormalized): boolean {
+    return this.canLeave(to)
+  },
   data() {
     return {
-      saveLoading: false,
-      presentationSaveLoading: false,
+      saving: false,
       changePassLoading: false,
       profileLoading: true,
       profileError: '',
       user: null as Profile | null,
+      savedDraft: null as ProfileDraft | null,
       installedCommunicationLocales: [] as LocaleRow[],
       avatarAction: '' as '' | 'upload' | 'remove',
       avatarError: '',
@@ -680,266 +524,17 @@ export default {
         password: [] as string[],
         verifyPassword: [] as string[]
       },
-      editPop: {
-        name: false,
-        handle: false,
-        location: false,
-        jobTitle: false,
+      openMenus: {
         timezone: false,
         dateFormat: false,
         timeFormat: false,
-        appearance: false
-      },
-      timezones: Object.freeze([
-        { title: '(GMT-11:00) Niue', value: 'Pacific/Niue' },
-        { title: '(GMT-11:00) Pago Pago', value: 'Pacific/Pago_Pago' },
-        { title: '(GMT-10:00) Hawaii Time', value: 'Pacific/Honolulu' },
-        { title: '(GMT-10:00) Rarotonga', value: 'Pacific/Rarotonga' },
-        { title: '(GMT-10:00) Tahiti', value: 'Pacific/Tahiti' },
-        { title: '(GMT-09:30) Marquesas', value: 'Pacific/Marquesas' },
-        { title: '(GMT-09:00) Alaska Time', value: 'America/Anchorage' },
-        { title: '(GMT-09:00) Gambier', value: 'Pacific/Gambier' },
-        { title: '(GMT-08:00) Pacific Time', value: 'America/Los_Angeles' },
-        { title: '(GMT-08:00) Pacific Time - Tijuana', value: 'America/Tijuana' },
-        { title: '(GMT-08:00) Pacific Time - Vancouver', value: 'America/Vancouver' },
-        { title: '(GMT-08:00) Pacific Time - Whitehorse', value: 'America/Whitehorse' },
-        { title: '(GMT-08:00) Pitcairn', value: 'Pacific/Pitcairn' },
-        { title: '(GMT-07:00) Mountain Time', value: 'America/Denver' },
-        { title: '(GMT-07:00) Mountain Time - Arizona', value: 'America/Phoenix' },
-        { title: '(GMT-07:00) Mountain Time - Chihuahua, Mazatlan', value: 'America/Mazatlan' },
-        { title: '(GMT-07:00) Mountain Time - Dawson Creek', value: 'America/Dawson_Creek' },
-        { title: '(GMT-07:00) Mountain Time - Edmonton', value: 'America/Edmonton' },
-        { title: '(GMT-07:00) Mountain Time - Hermosillo', value: 'America/Hermosillo' },
-        { title: '(GMT-07:00) Mountain Time - Yellowknife', value: 'America/Yellowknife' },
-        { title: '(GMT-06:00) Belize', value: 'America/Belize' },
-        { title: '(GMT-06:00) Central Time', value: 'America/Chicago' },
-        { title: '(GMT-06:00) Central Time - Mexico City', value: 'America/Mexico_City' },
-        { title: '(GMT-06:00) Central Time - Regina', value: 'America/Regina' },
-        { title: '(GMT-06:00) Central Time - Tegucigalpa', value: 'America/Tegucigalpa' },
-        { title: '(GMT-06:00) Central Time - Winnipeg', value: 'America/Winnipeg' },
-        { title: '(GMT-06:00) Costa Rica', value: 'America/Costa_Rica' },
-        { title: '(GMT-06:00) El Salvador', value: 'America/El_Salvador' },
-        { title: '(GMT-06:00) Galapagos', value: 'Pacific/Galapagos' },
-        { title: '(GMT-06:00) Guatemala', value: 'America/Guatemala' },
-        { title: '(GMT-06:00) Managua', value: 'America/Managua' },
-        { title: '(GMT-05:00) America Cancun', value: 'America/Cancun' },
-        { title: '(GMT-05:00) Bogota', value: 'America/Bogota' },
-        { title: '(GMT-05:00) Easter Island', value: 'Pacific/Easter' },
-        { title: '(GMT-05:00) Eastern Time', value: 'America/New_York' },
-        { title: '(GMT-05:00) Eastern Time - Iqaluit', value: 'America/Iqaluit' },
-        { title: '(GMT-05:00) Eastern Time - Toronto', value: 'America/Toronto' },
-        { title: '(GMT-05:00) Guayaquil', value: 'America/Guayaquil' },
-        { title: '(GMT-05:00) Havana', value: 'America/Havana' },
-        { title: '(GMT-05:00) Jamaica', value: 'America/Jamaica' },
-        { title: '(GMT-05:00) Lima', value: 'America/Lima' },
-        { title: '(GMT-05:00) Nassau', value: 'America/Nassau' },
-        { title: '(GMT-05:00) Panama', value: 'America/Panama' },
-        { title: '(GMT-05:00) Port-au-Prince', value: 'America/Port-au-Prince' },
-        { title: '(GMT-05:00) Rio Branco', value: 'America/Rio_Branco' },
-        { title: '(GMT-04:00) Atlantic Time - Halifax', value: 'America/Halifax' },
-        { title: '(GMT-04:00) Barbados', value: 'America/Barbados' },
-        { title: '(GMT-04:00) Bermuda', value: 'Atlantic/Bermuda' },
-        { title: '(GMT-04:00) Boa Vista', value: 'America/Boa_Vista' },
-        { title: '(GMT-04:00) Caracas', value: 'America/Caracas' },
-        { title: '(GMT-04:00) Curacao', value: 'America/Curacao' },
-        { title: '(GMT-04:00) Grand Turk', value: 'America/Grand_Turk' },
-        { title: '(GMT-04:00) Guyana', value: 'America/Guyana' },
-        { title: '(GMT-04:00) La Paz', value: 'America/La_Paz' },
-        { title: '(GMT-04:00) Manaus', value: 'America/Manaus' },
-        { title: '(GMT-04:00) Martinique', value: 'America/Martinique' },
-        { title: '(GMT-04:00) Port of Spain', value: 'America/Port_of_Spain' },
-        { title: '(GMT-04:00) Porto Velho', value: 'America/Porto_Velho' },
-        { title: '(GMT-04:00) Puerto Rico', value: 'America/Puerto_Rico' },
-        { title: '(GMT-04:00) Santo Domingo', value: 'America/Santo_Domingo' },
-        { title: '(GMT-04:00) Thule', value: 'America/Thule' },
-        { title: '(GMT-03:30) Newfoundland Time - St. Johns', value: 'America/St_Johns' },
-        { title: '(GMT-03:00) Araguaina', value: 'America/Araguaina' },
-        { title: '(GMT-03:00) Asuncion', value: 'America/Asuncion' },
-        { title: '(GMT-03:00) Belem', value: 'America/Belem' },
-        { title: '(GMT-03:00) Buenos Aires', value: 'America/Argentina/Buenos_Aires' },
-        { title: '(GMT-03:00) Campo Grande', value: 'America/Campo_Grande' },
-        { title: '(GMT-03:00) Cayenne', value: 'America/Cayenne' },
-        { title: '(GMT-03:00) Cuiaba', value: 'America/Cuiaba' },
-        { title: '(GMT-03:00) Fortaleza', value: 'America/Fortaleza' },
-        { title: '(GMT-03:00) Godthab', value: 'America/Godthab' },
-        { title: '(GMT-03:00) Maceio', value: 'America/Maceio' },
-        { title: '(GMT-03:00) Miquelon', value: 'America/Miquelon' },
-        { title: '(GMT-03:00) Montevideo', value: 'America/Montevideo' },
-        { title: '(GMT-03:00) Palmer', value: 'Antarctica/Palmer' },
-        { title: '(GMT-03:00) Paramaribo', value: 'America/Paramaribo' },
-        { title: '(GMT-03:00) Punta Arenas', value: 'America/Punta_Arenas' },
-        { title: '(GMT-03:00) Recife', value: 'America/Recife' },
-        { title: '(GMT-03:00) Rothera', value: 'Antarctica/Rothera' },
-        { title: '(GMT-03:00) Salvador', value: 'America/Bahia' },
-        { title: '(GMT-03:00) Santiago', value: 'America/Santiago' },
-        { title: '(GMT-03:00) Sao Paulo', value: 'America/Sao_Paulo' },
-        { title: '(GMT-03:00) Stanley', value: 'Atlantic/Stanley' },
-        { title: '(GMT-02:00) Noronha', value: 'America/Noronha' },
-        { title: '(GMT-02:00) South Georgia', value: 'Atlantic/South_Georgia' },
-        { title: '(GMT-01:00) Azores', value: 'Atlantic/Azores' },
-        { title: '(GMT-01:00) Cape Verde', value: 'Atlantic/Cape_Verde' },
-        { title: '(GMT-01:00) Scoresbysund', value: 'America/Scoresbysund' },
-        { title: '(GMT+00:00) Coordinated Universal Time', value: 'UTC' },
-        { title: '(GMT+00:00) Abidjan', value: 'Africa/Abidjan' },
-        { title: '(GMT+00:00) Accra', value: 'Africa/Accra' },
-        { title: '(GMT+00:00) Bissau', value: 'Africa/Bissau' },
-        { title: '(GMT+00:00) Canary Islands', value: 'Atlantic/Canary' },
-        { title: '(GMT+00:00) Casablanca', value: 'Africa/Casablanca' },
-        { title: '(GMT+00:00) Danmarkshavn', value: 'America/Danmarkshavn' },
-        { title: '(GMT+00:00) Dublin', value: 'Europe/Dublin' },
-        { title: '(GMT+00:00) El Aaiun', value: 'Africa/El_Aaiun' },
-        { title: '(GMT+00:00) Faeroe', value: 'Atlantic/Faroe' },
-        { title: '(GMT+00:00) GMT (no daylight saving)', value: 'Etc/GMT' },
-        { title: '(GMT+00:00) Lisbon', value: 'Europe/Lisbon' },
-        { title: '(GMT+00:00) London', value: 'Europe/London' },
-        { title: '(GMT+00:00) Monrovia', value: 'Africa/Monrovia' },
-        { title: '(GMT+00:00) Reykjavik', value: 'Atlantic/Reykjavik' },
-        { title: '(GMT+01:00) Algiers', value: 'Africa/Algiers' },
-        { title: '(GMT+01:00) Amsterdam', value: 'Europe/Amsterdam' },
-        { title: '(GMT+01:00) Andorra', value: 'Europe/Andorra' },
-        { title: '(GMT+01:00) Berlin', value: 'Europe/Berlin' },
-        { title: '(GMT+01:00) Brussels', value: 'Europe/Brussels' },
-        { title: '(GMT+01:00) Budapest', value: 'Europe/Budapest' },
-        { title: '(GMT+01:00) Central European Time - Belgrade', value: 'Europe/Belgrade' },
-        { title: '(GMT+01:00) Central European Time - Prague', value: 'Europe/Prague' },
-        { title: '(GMT+01:00) Ceuta', value: 'Africa/Ceuta' },
-        { title: '(GMT+01:00) Copenhagen', value: 'Europe/Copenhagen' },
-        { title: '(GMT+01:00) Gibraltar', value: 'Europe/Gibraltar' },
-        { title: '(GMT+01:00) Lagos', value: 'Africa/Lagos' },
-        { title: '(GMT+01:00) Luxembourg', value: 'Europe/Luxembourg' },
-        { title: '(GMT+01:00) Madrid', value: 'Europe/Madrid' },
-        { title: '(GMT+01:00) Malta', value: 'Europe/Malta' },
-        { title: '(GMT+01:00) Monaco', value: 'Europe/Monaco' },
-        { title: '(GMT+01:00) Ndjamena', value: 'Africa/Ndjamena' },
-        { title: '(GMT+01:00) Oslo', value: 'Europe/Oslo' },
-        { title: '(GMT+01:00) Paris', value: 'Europe/Paris' },
-        { title: '(GMT+01:00) Rome', value: 'Europe/Rome' },
-        { title: '(GMT+01:00) Stockholm', value: 'Europe/Stockholm' },
-        { title: '(GMT+01:00) Tirane', value: 'Europe/Tirane' },
-        { title: '(GMT+01:00) Tunis', value: 'Africa/Tunis' },
-        { title: '(GMT+01:00) Vienna', value: 'Europe/Vienna' },
-        { title: '(GMT+01:00) Warsaw', value: 'Europe/Warsaw' },
-        { title: '(GMT+01:00) Zurich', value: 'Europe/Zurich' },
-        { title: '(GMT+02:00) Amman', value: 'Asia/Amman' },
-        { title: '(GMT+02:00) Athens', value: 'Europe/Athens' },
-        { title: '(GMT+02:00) Beirut', value: 'Asia/Beirut' },
-        { title: '(GMT+02:00) Bucharest', value: 'Europe/Bucharest' },
-        { title: '(GMT+02:00) Cairo', value: 'Africa/Cairo' },
-        { title: '(GMT+02:00) Chisinau', value: 'Europe/Chisinau' },
-        { title: '(GMT+02:00) Damascus', value: 'Asia/Damascus' },
-        { title: '(GMT+02:00) Gaza', value: 'Asia/Gaza' },
-        { title: '(GMT+02:00) Helsinki', value: 'Europe/Helsinki' },
-        { title: '(GMT+02:00) Jerusalem', value: 'Asia/Jerusalem' },
-        { title: '(GMT+02:00) Johannesburg', value: 'Africa/Johannesburg' },
-        { title: '(GMT+02:00) Khartoum', value: 'Africa/Khartoum' },
-        { title: '(GMT+02:00) Kyiv', value: 'Europe/Kyiv' },
-        { title: '(GMT+02:00) Maputo', value: 'Africa/Maputo' },
-        { title: '(GMT+02:00) Moscow-01 - Kaliningrad', value: 'Europe/Kaliningrad' },
-        { title: '(GMT+02:00) Nicosia', value: 'Asia/Nicosia' },
-        { title: '(GMT+02:00) Riga', value: 'Europe/Riga' },
-        { title: '(GMT+02:00) Sofia', value: 'Europe/Sofia' },
-        { title: '(GMT+02:00) Tallinn', value: 'Europe/Tallinn' },
-        { title: '(GMT+02:00) Tripoli', value: 'Africa/Tripoli' },
-        { title: '(GMT+02:00) Vilnius', value: 'Europe/Vilnius' },
-        { title: '(GMT+02:00) Windhoek', value: 'Africa/Windhoek' },
-        { title: '(GMT+03:00) Baghdad', value: 'Asia/Baghdad' },
-        { title: '(GMT+03:00) Istanbul', value: 'Europe/Istanbul' },
-        { title: '(GMT+03:00) Minsk', value: 'Europe/Minsk' },
-        { title: '(GMT+03:00) Moscow+00 - Moscow', value: 'Europe/Moscow' },
-        { title: '(GMT+03:00) Nairobi', value: 'Africa/Nairobi' },
-        { title: '(GMT+03:00) Qatar', value: 'Asia/Qatar' },
-        { title: '(GMT+03:00) Riyadh', value: 'Asia/Riyadh' },
-        { title: '(GMT+03:00) Syowa', value: 'Antarctica/Syowa' },
-        { title: '(GMT+03:30) Tehran', value: 'Asia/Tehran' },
-        { title: '(GMT+04:00) Baku', value: 'Asia/Baku' },
-        { title: '(GMT+04:00) Dubai', value: 'Asia/Dubai' },
-        { title: '(GMT+04:00) Mahe', value: 'Indian/Mahe' },
-        { title: '(GMT+04:00) Mauritius', value: 'Indian/Mauritius' },
-        { title: '(GMT+04:00) Moscow+01 - Samara', value: 'Europe/Samara' },
-        { title: '(GMT+04:00) Reunion', value: 'Indian/Reunion' },
-        { title: '(GMT+04:00) Tbilisi', value: 'Asia/Tbilisi' },
-        { title: '(GMT+04:00) Yerevan', value: 'Asia/Yerevan' },
-        { title: '(GMT+04:30) Kabul', value: 'Asia/Kabul' },
-        { title: '(GMT+05:00) Aqtau', value: 'Asia/Aqtau' },
-        { title: '(GMT+05:00) Aqtobe', value: 'Asia/Aqtobe' },
-        { title: '(GMT+05:00) Ashgabat', value: 'Asia/Ashgabat' },
-        { title: '(GMT+05:00) Dushanbe', value: 'Asia/Dushanbe' },
-        { title: '(GMT+05:00) Karachi', value: 'Asia/Karachi' },
-        { title: '(GMT+05:00) Kerguelen', value: 'Indian/Kerguelen' },
-        { title: '(GMT+05:00) Maldives', value: 'Indian/Maldives' },
-        { title: '(GMT+05:00) Mawson', value: 'Antarctica/Mawson' },
-        { title: '(GMT+05:00) Moscow+02 - Yekaterinburg', value: 'Asia/Yekaterinburg' },
-        { title: '(GMT+05:00) Tashkent', value: 'Asia/Tashkent' },
-        { title: '(GMT+05:30) Colombo', value: 'Asia/Colombo' },
-        { title: '(GMT+05:30) India Standard Time', value: 'Asia/Kolkata' },
-        { title: '(GMT+05:45) Kathmandu', value: 'Asia/Kathmandu' },
-        { title: '(GMT+06:00) Almaty', value: 'Asia/Almaty' },
-        { title: '(GMT+06:00) Bishkek', value: 'Asia/Bishkek' },
-        { title: '(GMT+06:00) Chagos', value: 'Indian/Chagos' },
-        { title: '(GMT+06:00) Dhaka', value: 'Asia/Dhaka' },
-        { title: '(GMT+06:00) Moscow+03 - Omsk', value: 'Asia/Omsk' },
-        { title: '(GMT+06:00) Thimphu', value: 'Asia/Thimphu' },
-        { title: '(GMT+06:00) Vostok', value: 'Antarctica/Vostok' },
-        { title: '(GMT+06:30) Cocos', value: 'Indian/Cocos' },
-        { title: '(GMT+06:30) Rangoon', value: 'Asia/Yangon' },
-        { title: '(GMT+07:00) Bangkok', value: 'Asia/Bangkok' },
-        { title: '(GMT+07:00) Christmas', value: 'Indian/Christmas' },
-        { title: '(GMT+07:00) Davis', value: 'Antarctica/Davis' },
-        { title: '(GMT+07:00) Hanoi', value: 'Asia/Saigon' },
-        { title: '(GMT+07:00) Hovd', value: 'Asia/Hovd' },
-        { title: '(GMT+07:00) Jakarta', value: 'Asia/Jakarta' },
-        { title: '(GMT+07:00) Moscow+04 - Krasnoyarsk', value: 'Asia/Krasnoyarsk' },
-        { title: '(GMT+08:00) Brunei', value: 'Asia/Brunei' },
-        { title: '(GMT+08:00) China Time - Beijing', value: 'Asia/Shanghai' },
-        { title: '(GMT+08:00) Choibalsan', value: 'Asia/Choibalsan' },
-        { title: '(GMT+08:00) Hong Kong', value: 'Asia/Hong_Kong' },
-        { title: '(GMT+08:00) Kuala Lumpur', value: 'Asia/Kuala_Lumpur' },
-        { title: '(GMT+08:00) Macau', value: 'Asia/Macau' },
-        { title: '(GMT+08:00) Makassar', value: 'Asia/Makassar' },
-        { title: '(GMT+08:00) Manila', value: 'Asia/Manila' },
-        { title: '(GMT+08:00) Moscow+05 - Irkutsk', value: 'Asia/Irkutsk' },
-        { title: '(GMT+08:00) Singapore', value: 'Asia/Singapore' },
-        { title: '(GMT+08:00) Taipei', value: 'Asia/Taipei' },
-        { title: '(GMT+08:00) Ulaanbaatar', value: 'Asia/Ulaanbaatar' },
-        { title: '(GMT+08:00) Western Time - Perth', value: 'Australia/Perth' },
-        { title: '(GMT+08:30) Pyongyang', value: 'Asia/Pyongyang' },
-        { title: '(GMT+09:00) Dili', value: 'Asia/Dili' },
-        { title: '(GMT+09:00) Jayapura', value: 'Asia/Jayapura' },
-        { title: '(GMT+09:00) Moscow+06 - Yakutsk', value: 'Asia/Yakutsk' },
-        { title: '(GMT+09:00) Palau', value: 'Pacific/Palau' },
-        { title: '(GMT+09:00) Seoul', value: 'Asia/Seoul' },
-        { title: '(GMT+10:00) Eastern Time - Brisbane', value: 'Australia/Brisbane' },
-        { title: '(GMT+10:00) Guam', value: 'Pacific/Guam' },
-        { title: '(GMT+10:00) Moscow+07 - Vladivostok', value: 'Asia/Vladivostok' },
-        { title: '(GMT+10:00) Port Moresby', value: 'Pacific/Port_Moresby' },
-        { title: '(GMT+10:00) Truk', value: 'Pacific/Chuuk' },
-        { title: '(GMT+10:30) Central Time - Adelaide', value: 'Australia/Adelaide' },
-        { title: '(GMT+11:00) Casey', value: 'Antarctica/Casey' },
-        { title: '(GMT+11:00) Eastern Time - Hobart', value: 'Australia/Hobart' },
-        { title: '(GMT+11:00) Eastern Time - Melbourne, Sydney', value: 'Australia/Sydney' },
-        { title: '(GMT+11:00) Efate', value: 'Pacific/Efate' },
-        { title: '(GMT+11:00) Guadalcanal', value: 'Pacific/Guadalcanal' },
-        { title: '(GMT+11:00) Kosrae', value: 'Pacific/Kosrae' },
-        { title: '(GMT+11:00) Moscow+08 - Magadan', value: 'Asia/Magadan' },
-        { title: '(GMT+11:00) Norfolk', value: 'Pacific/Norfolk' },
-        { title: '(GMT+11:00) Noumea', value: 'Pacific/Noumea' },
-        { title: '(GMT+11:00) Ponape', value: 'Pacific/Pohnpei' },
-        { title: '(GMT+12:00) Funafuti', value: 'Pacific/Funafuti' },
-        { title: '(GMT+12:00) Kwajalein', value: 'Pacific/Kwajalein' },
-        { title: '(GMT+12:00) Majuro', value: 'Pacific/Majuro' },
-        { title: '(GMT+12:00) Moscow+09 - Petropavlovsk-Kamchatskiy', value: 'Asia/Kamchatka' },
-        { title: '(GMT+12:00) Nauru', value: 'Pacific/Nauru' },
-        { title: '(GMT+12:00) Tarawa', value: 'Pacific/Tarawa' },
-        { title: '(GMT+12:00) Wake', value: 'Pacific/Wake' },
-        { title: '(GMT+12:00) Wallis', value: 'Pacific/Wallis' },
-        { title: '(GMT+13:00) Auckland', value: 'Pacific/Auckland' },
-        { title: '(GMT+13:00) Enderbury', value: 'Pacific/Enderbury' },
-        { title: '(GMT+13:00) Fakaofo', value: 'Pacific/Fakaofo' },
-        { title: '(GMT+13:00) Fiji', value: 'Pacific/Fiji' },
-        { title: '(GMT+13:00) Tongatapu', value: 'Pacific/Tongatapu' },
-        { title: '(GMT+14:00) Apia', value: 'Pacific/Apia' },
-        { title: '(GMT+14:00) Kiritimati', value: 'Pacific/Kiritimati' }
-      ])
+        appearance: false,
+        contentTextSize: false,
+        communicationLocale: false
+      } as Record<MenuField, boolean>,
+      discardOpen: false,
+      pendingLeave: '' as string,
+      allowLeave: false
     }
   },
   computed: {
@@ -955,7 +550,7 @@ export default {
           url: (pictureUrl === 'internal') ? `/_userav/${userId}?v=${this.avatarRevision}` : pictureUrl
         }
       }
-      const label = this.user?.name || this.user?.email || wikiStore.user.name || wikiStore.user.email || 'User'
+      const label = this.savedDraft?.name || this.user?.email || wikiStore.user.name || wikiStore.user.email || 'User'
       const parts = label.trim().split(/\s+/)
       const initials = ((parts[0]?.charAt(0) || 'U') + (parts.length > 1 ? parts[parts.length - 1]?.charAt(0) || '' : '')).toUpperCase()
       return { kind: 'initials' as const, initials }
@@ -966,11 +561,45 @@ export default {
     avatarLoading () {
       return this.avatarAction !== ''
     },
-    profileReady () {
-      return this.user !== null
+    changedFields (): ProfileDraftField[] {
+      return this.user && this.savedDraft ? changedProfileFields(this.savedDraft, this.user) : []
+    },
+    dirty (): boolean {
+      return this.changedFields.length > 0
+    },
+    draftIssues (): Partial<Record<'name' | 'handle', ProfileDraftIssue>> {
+      return this.user ? profileDraftIssues(this.user) : {}
+    },
+    issueCount (): number {
+      return Object.keys(this.draftIssues).length
+    },
+    canSave (): boolean {
+      return this.dirty && this.issueCount === 0 && !this.saving
+    },
+    dockMessage (): string {
+      if (this.saving) return this.$t('profile:dock.saving', { defaultValue: 'Saving changes…' })
+      if (!this.dirty) return this.$t('profile:dock.clean', { defaultValue: 'No unsaved changes' })
+      if (this.issueCount > 0) {
+        return this.issueCount === 1
+          ? this.$t('profile:dock.fixOne', { defaultValue: 'Fix 1 field before saving' })
+          : this.$t('profile:dock.fixMany', { defaultValue: 'Fix {{count}} fields before saving', count: this.issueCount })
+      }
+      const count = this.changedFields.length
+      return count === 1
+        ? this.$t('profile:dock.unsavedOne', { defaultValue: '1 unsaved change' })
+        : this.$t('profile:dock.unsavedMany', { defaultValue: '{{count}} unsaved changes', count })
+    },
+    discardMessage (): string {
+      const count = this.changedFields.length
+      return count === 1
+        ? this.$t('profile:discard.messageOne', { defaultValue: 'You have 1 unsaved change. Theme and date previews return to your saved settings.' })
+        : this.$t('profile:discard.messageMany', { defaultValue: 'You have {{count}} unsaved changes. Theme and date previews return to your saved settings.', count })
     },
     passwordErrorSummary () {
       return this.passwordErrors.current[0] || this.passwordErrors.password[0] || this.passwordErrors.verifyPassword[0] || ''
+    },
+    timezoneItems (): TimezoneOption[] {
+      return timezoneOptions(this.savedDraft?.timezone ?? '')
     },
     dateFormats () {
       return [
@@ -989,9 +618,6 @@ export default {
         { title: this.$t('profile:time24h', { defaultValue: '24-hour' }), value: '24h' }
       ]
     },
-    currentTimeFormat () {
-      return _.get(_.find(this.timeFormats, ['value', this.user?.timeFormat]), 'title', this.$t('profile:timeLocaleDefault', { defaultValue: 'Use locale default' }))
-    },
     contentTextSizes () {
       return [
         { title: this.$t('profile:contentTextSizeDefault', { defaultValue: 'Default' }), value: 'default' },
@@ -1002,7 +628,7 @@ export default {
     communicationLocaleOptions () {
       return [
         {
-          title: this.$t('profile:communicationLocaleSiteDefault', { defaultValue: `Site language (${siteConfig.lang})` }),
+          title: this.$t('profile:communicationLocaleSiteDefault', { defaultValue: 'Site language ({{lang}})', lang: siteConfig.lang }),
           value: '__site_default__'
         },
         ...this.installedCommunicationLocales.map(locale => ({
@@ -1026,13 +652,11 @@ export default {
         { title: this.$t('profile:appearanceLight'), value: 'light' },
         { title: this.$t('profile:appearanceDark'), value: 'dark' }
       ]
-    },
-    currentAppearance () {
-      return _.get(_.find(this.appearances, ['value', this.user?.appearance]), 'title', false) || this.$t('profile:appearanceDefault')
-    },
+    }
   },
   watch: {
-    'user.appearance': function (newValue: string, _oldValue: string) {
+    // Theme and date/time changes preview at once; Reset, discard and unmount restore the saved values.
+    'user.appearance': function (newValue: string) {
       if (!this.user) return
       void this.$vuetify.theme.change(resolveThemeName(newValue, siteConfig.darkMode))
     },
@@ -1050,7 +674,13 @@ export default {
     }
   },
   mounted() {
+    window.addEventListener('beforeunload', this.beforeUnload)
     this.loadProfile()
+  },
+  beforeUnmount() {
+    window.removeEventListener('beforeunload', this.beforeUnload)
+    // Leaving with an unsaved preview must not keep the previewed theme or date format.
+    if (this.dirty && this.savedDraft) this.applySavedPresentation(this.savedDraft)
   },
   methods: {
     async loadProfile (): Promise<boolean> {
@@ -1061,12 +691,14 @@ export default {
         const fetchImpl = window.fetch.bind(window)
         const [profile, locales] = await Promise.all([fetchProfile(fetchImpl), fetchLocales(fetchImpl).catch((): LocaleRow[] => [])])
         this.installedCommunicationLocales = locales.filter(locale => locale.isInstalled)
+        this.savedDraft = snapshotProfileDraft(profile)
         this.user = profile
         if (wikiStore.user.id === profile.id) wikiStore.user.pictureUrl = profile.pictureUrl ?? ''
         applyUserPresentation(profile)
         return true
       } catch (err) {
         this.user = null
+        this.savedDraft = null
         this.profileError = getErrorMessage(err)
         wikiStore.showError(err)
         return false
@@ -1074,6 +706,68 @@ export default {
         this.profileLoading = false
         wikiStore.stopLoading('profile-refresh')
       }
+    },
+    issueMessage (field: 'name' | 'handle'): string[] {
+      const issue = this.draftIssues[field]
+      if (!issue) return []
+      if (issue === 'nameRequired') return [this.$t('profile:issues.nameRequired', { defaultValue: 'Enter a display name.' })]
+      if (issue === 'nameTooLong') return [this.$t('profile:issues.nameTooLong', { defaultValue: 'Use 255 characters or fewer.' })]
+      return [this.$t('profile:issues.handleInvalid', { defaultValue: 'Use 3–32 letters, numbers, underscores or hyphens.' })]
+    },
+    passwordToggleLabel (hidden: boolean, field: string): string {
+      const action = hidden
+        ? this.$t('auth:showPassword', { defaultValue: 'Show password' })
+        : this.$t('auth:hidePassword', { defaultValue: 'Hide password' })
+      return `${action}: ${field}`
+    },
+    /**
+     * Esc restores the saved value of the focused field. An open option list closes first.
+     */
+    revertField (field: ProfileDraftField, event: KeyboardEvent) {
+      if (!this.user || !this.savedDraft || this.saving) return
+      if (field in this.openMenus && this.openMenus[field as MenuField]) return
+      if (restoreProfileField(this.user, this.savedDraft, field)) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    },
+    applySavedPresentation (saved: ProfileDraft) {
+      void this.$vuetify.theme.change(resolveThemeName(saved.appearance, siteConfig.darkMode))
+      applyUserPresentation(saved)
+    },
+    resetDraft () {
+      if (!this.user || !this.savedDraft || this.saving) return
+      restoreProfileDraft(this.user, this.savedDraft)
+    },
+    canLeave (to: RouteLocationNormalized): boolean {
+      if (this.allowLeave || !this.dirty) return true
+      if (this.saving) return false
+      this.pendingLeave = to.fullPath
+      this.discardOpen = true
+      return false
+    },
+    cancelDiscard () {
+      this.discardOpen = false
+      this.pendingLeave = ''
+    },
+    confirmDiscard () {
+      const target = this.pendingLeave
+      this.discardOpen = false
+      this.pendingLeave = ''
+      this.resetDraft()
+      if (!target) return
+      this.allowLeave = true
+      void Promise.resolve(this.$router.push(target)).finally(() => {
+        this.allowLeave = false
+      })
+    },
+    beforeUnload (event: BeforeUnloadEvent) {
+      if (!this.dirty) return
+      event.preventDefault()
+      event.returnValue = ''
+    },
+    focusField (field: 'name' | 'handle') {
+      this.$nextTick(() => focusComponent(this.$refs[`field-${field}`]))
     },
     openAvatarPicker () {
       if (this.avatarLoading) return
@@ -1134,64 +828,75 @@ export default {
       }
     },
     /**
-     * Focus an input after delay
+     * Save every changed profile field from the dock. Details and reading preferences use
+     * separate endpoints; a partial failure keeps only the unsaved part dirty.
      */
-    focusField (ipt: ProfileFieldRef) {
-      this.$nextTick(() => {
-        _.delay(() => {
-          focusComponent(this.$refs[ipt])
-        }, 200)
-      })
-    },
-    async savePresentationPreferences () {
+    async saveDraft () {
       const profile = this.user
-      if (!profile || this.presentationSaveLoading) return
-      this.presentationSaveLoading = true
-      wikiStore.startLoading('profile-preferences-save')
-      try {
-        await updateProfilePreferences(window.fetch.bind(window), {
-          reduceMotion: profile.reduceMotion,
-          underlineLinks: profile.underlineLinks,
-          contentTextSize: profile.contentTextSize,
-          communicationLocale: profile.communicationLocale
-        })
-        await wikiStore.refreshAuth()
-        wikiStore.showNotification({
-          message: this.$t('profile:readingPreferencesSaved', { defaultValue: 'Reading preferences saved.' }),
-          style: 'success',
-          icon: 'check'
-        })
-      } catch (err) {
-        wikiStore.showError(err)
-      } finally {
-        wikiStore.stopLoading('profile-preferences-save')
-        this.presentationSaveLoading = false
+      const saved = this.savedDraft
+      if (!profile || !saved || this.saving || !this.dirty) return
+      if (this.issueCount > 0) {
+        this.focusField(this.draftIssues.name ? 'name' : 'handle')
+        return
       }
-    },
-    /**
-     * Save User Profile
-     */
-    async saveProfile () {
-      const profile = this.user
-      if (!profile || this.saveLoading) return
-      this.saveLoading = true
+      const draft = snapshotProfileDraft(profile)
+      const detailsChanged = PROFILE_DETAIL_FIELDS.some(field => draft[field] !== saved[field])
+      const preferencesChanged = PROFILE_PREFERENCE_FIELDS.some(field => draft[field] !== saved[field])
+      let committed: ProfileDraft = { ...saved }
+      this.saving = true
       wikiStore.startLoading('profile-save')
-
       try {
-        await updateProfile(window.fetch.bind(window), {
-          name: profile.name,
-          handle: profile.handle,
-          location: profile.location,
-          jobTitle: profile.jobTitle,
-          timezone: profile.timezone,
-          dateFormat: profile.dateFormat,
-          timeFormat: profile.timeFormat,
-          appearance: profile.appearance
-        })
-        profile.handle = profile.handle.trim().toLowerCase()
+        const fetchImpl = window.fetch.bind(window)
+        if (detailsChanged) {
+          await updateProfile(fetchImpl, {
+            name: draft.name,
+            handle: draft.handle,
+            location: draft.location,
+            jobTitle: draft.jobTitle,
+            timezone: draft.timezone,
+            dateFormat: draft.dateFormat,
+            timeFormat: draft.timeFormat,
+            appearance: draft.appearance
+          })
+          // Match the server's normalization so the saved snapshot compares equal.
+          const normalized = {
+            name: draft.name.trim(),
+            handle: draft.handle.trim().toLowerCase(),
+            location: draft.location.trim(),
+            jobTitle: draft.jobTitle.trim()
+          }
+          Object.assign(profile, normalized)
+          committed = {
+            ...committed,
+            ...normalized,
+            timezone: draft.timezone,
+            dateFormat: draft.dateFormat,
+            timeFormat: draft.timeFormat,
+            appearance: draft.appearance
+          }
+          this.savedDraft = committed
+        }
+        if (preferencesChanged) {
+          await updateProfilePreferences(fetchImpl, {
+            reduceMotion: draft.reduceMotion,
+            underlineLinks: draft.underlineLinks,
+            contentTextSize: draft.contentTextSize,
+            communicationLocale: draft.communicationLocale
+          })
+          committed = {
+            ...committed,
+            reduceMotion: draft.reduceMotion,
+            underlineLinks: draft.underlineLinks,
+            contentTextSize: draft.contentTextSize,
+            communicationLocale: draft.communicationLocale
+          }
+          this.savedDraft = committed
+        }
         await wikiStore.refreshAuth()
-        wikiStore.user.name = profile.name
-        wikiStore.user.appearance = profile.appearance
+        if (detailsChanged) {
+          wikiStore.user.name = profile.name
+          wikiStore.user.appearance = profile.appearance
+        }
         wikiStore.showNotification({
           message: this.$t('profile:save.success'),
           style: 'success',
@@ -1201,7 +906,7 @@ export default {
         wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('profile-save')
-        this.saveLoading = false
+        this.saving = false
       }
     },
     /**
@@ -1309,19 +1014,155 @@ export default {
 </script>
 
 <style lang='scss'>
-.profile-auth-provider {
-  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
-  background:
-    linear-gradient(110deg, color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent), transparent 60%),
-    color-mix(in srgb, var(--wiki-surface-raised) 92%, transparent);
-  color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+.profile-workspace {
+  --profile-radius: .65rem;
+  padding-bottom: var(--wiki-space-6);
+}
 
-  .v-toolbar__content {
-    gap: var(--wiki-space-3);
-    padding-inline: var(--wiki-space-3);
+.profile-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--wiki-space-3);
+
+  &__copy {
+    display: grid;
+    min-width: 0;
+    gap: .1rem;
+
+    > strong {
+      overflow: hidden;
+      color: rgb(var(--v-theme-on-surface));
+      font-size: .92rem;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    > span {
+      overflow: hidden;
+      color: var(--wiki-text-muted);
+      font-size: .82rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
+}
+
+.profile-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--wiki-space-5);
+}
+
+.profile-column {
+  display: grid;
+  min-width: 0;
+  gap: var(--wiki-space-5);
+}
+
+.profile-section {
+  min-width: 0;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--profile-radius);
+  background: var(--wiki-surface-raised);
+
+  &__header {
+    padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-3);
+    border-bottom: 1px solid var(--wiki-surface-border);
+  }
+
+  &__title {
+    margin: 0;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: 1rem;
+    font-weight: 680;
+    letter-spacing: -.01em;
+    line-height: 1.35;
+  }
+
+  &__hint {
+    margin: var(--wiki-space-1) 0 0;
+    color: var(--wiki-text-muted);
+    font-size: .82rem;
+    line-height: 1.5;
+  }
+
+  &__body {
+    padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-5);
+  }
+}
+
+.profile-subsection-title {
+  margin: var(--wiki-space-5) 0 var(--wiki-space-1);
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .92rem;
+  font-weight: 650;
+}
+
+.profile-muted {
+  margin: 0;
+  color: var(--wiki-text-muted);
+}
+
+.profile-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--wiki-space-4);
+
+  &--spaced {
+    padding-top: var(--wiki-space-4);
+  }
+}
+
+.profile-field {
+  min-width: 0;
+
+  // Long zone names stay readable instead of truncating in a half-width column.
+  &--wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.profile-toggle-row {
+  padding-block: var(--wiki-space-2);
+
+  .v-selection-control {
+    justify-content: space-between;
+    flex-direction: row-reverse;
+    gap: var(--wiki-space-3);
+  }
+
+  .v-label {
+    color: rgb(var(--v-theme-on-surface));
+    font-size: .92rem;
+    font-weight: 600;
+    opacity: 1;
+  }
+
+  // The default off track is a faint tint; give it a visible edge (WCAG 1.4.11).
+  .v-selection-control:not(.v-selection-control--dirty) .v-switch__track {
+    background-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, var(--wiki-surface-raised));
+    box-shadow: inset 0 0 0 1px var(--wiki-text-muted);
+    opacity: 1;
+  }
+
+  .v-messages {
+    color: var(--wiki-text-muted);
+    opacity: 1;
+  }
+}
+
+.profile-auth-provider {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  color: rgb(var(--v-theme-on-surface));
 
   &__mark {
     display: grid;
@@ -1329,29 +1170,42 @@ export default {
     height: calc(var(--wiki-control-height) - var(--wiki-space-2));
     flex: 0 0 auto;
     place-items: center;
-    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, var(--wiki-surface-border));
+    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent);
     border-radius: var(--wiki-control-radius);
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, transparent);
-    color: var(--wiki-accent-warm);
-    box-shadow: var(--wiki-shadow-inset);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, var(--wiki-surface-raised));
+    color: var(--wiki-accent-ink);
+  }
+
+  &__copy {
+    display: grid;
+    min-width: 0;
   }
 
   &__name {
-    min-width: 0;
+    overflow-wrap: anywhere;
   }
 }
 
-.profile-header-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
+.profile-password-form {
+  display: grid;
+  gap: var(--wiki-space-2);
+
+  > p {
+    margin-bottom: var(--wiki-space-2);
+  }
+
+  &__actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: var(--wiki-space-2);
+  }
 }
+
 .profile-avatar-editor {
   display: flex;
   align-items: center;
-  gap: var(--wiki-space-4);
   flex-wrap: wrap;
+  gap: var(--wiki-space-4);
 }
 
 .profile-avatar-preview {
@@ -1360,10 +1214,17 @@ export default {
 
 .profile-avatar-actions {
   display: flex;
+  min-width: 0;
+  flex: 1 1 14rem;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--wiki-space-2);
-  min-width: min(100%, 28rem);
+}
+
+.profile-avatar-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
 }
 
 .profile-avatar-input {
@@ -1374,9 +1235,120 @@ export default {
   pointer-events: none;
 }
 
-@media (max-width: 600px) {
-  .profile-avatar-actions {
-    min-width: 100%;
+.profile-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-activity {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--wiki-space-4);
+  margin: 0;
+
+  dt {
+    color: var(--wiki-text-muted);
+    font-size: .78rem;
+  }
+
+  dd {
+    margin: .15rem 0 0;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: .92rem;
+    font-weight: 600;
+  }
+}
+
+.profile-save-dock {
+  position: sticky;
+  bottom: calc(var(--wiki-footer-height) + .75rem);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem;
+  margin-top: var(--wiki-space-6);
+  padding: .8rem 1rem;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--profile-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-sm);
+
+  // Pinned to the viewport only while there is something to save, so a clean
+  // dock does not cover content on small screens.
+  &:not(&--dirty) {
+    position: static;
+    box-shadow: none;
+  }
+
+  &--dirty {
+    border-color: color-mix(in srgb, rgb(var(--v-theme-warning)) 55%, var(--wiki-surface-border));
+    box-shadow: var(--wiki-shadow-md);
+  }
+
+  &__copy {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin: 0;
+    color: var(--wiki-text-muted);
+    font-size: .85rem;
+  }
+
+  &--dirty &__copy {
+    color: rgb(var(--v-theme-on-surface));
+    font-weight: 600;
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+  }
+
+  // Kept focusable so the status line stays reachable; the click is blocked in code.
+  &__save--inactive {
+    opacity: .62;
+    cursor: not-allowed;
+  }
+}
+
+@media (max-width: 1100px) {
+  .profile-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 599px) {
+  .profile-section {
+    &__header {
+      padding: var(--wiki-space-3) var(--wiki-space-4) var(--wiki-space-2);
+    }
+
+    &__body {
+      padding: var(--wiki-space-3) var(--wiki-space-4) var(--wiki-space-4);
+    }
+  }
+
+  .profile-save-dock {
+    &__actions,
+    &__actions .v-btn {
+      flex: 1 1 auto;
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .profile-section,
+  .profile-save-dock,
+  .profile-auth-provider,
+  .profile-auth-provider__mark {
+    border-color: CanvasText;
   }
 }
 </style>
