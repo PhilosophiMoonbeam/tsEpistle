@@ -32,6 +32,9 @@
     >
       {{ retryLabel }}
     </v-btn>
+    <div v-if="$slots.actions" class="async-state__actions">
+      <slot name="actions" />
+    </div>
   </div>
 </template>
 
@@ -84,7 +87,8 @@ defineEmits<{
   min-width: 0;
 }
 
-.async-state__retry {
+.async-state__retry,
+.async-state__actions {
   flex: 0 0 auto;
 }
 

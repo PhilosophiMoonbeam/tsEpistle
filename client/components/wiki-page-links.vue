@@ -1,27 +1,27 @@
 <template lang="pug">
 section.wiki-page-links(:aria-busy="loading || loadingMore ? 'true' : undefined" aria-labelledby="wiki-page-links-title")
   .wiki-page-links__heading
-    h2#wiki-page-links-title Links
-    span.wiki-page-links__revision(v-if="!stale") Current page links
+    h2#wiki-page-links-title {{ $t('common:pageLinks.title') }}
+    span.wiki-page-links__revision(v-if="!stale") {{ $t('common:pageLinks.current') }}
 
-  .wiki-page-links__directions(role="group" aria-label="Page link direction")
+  .wiki-page-links__directions(role="group" :aria-label="$t('common:pageLinks.direction')")
     button.wiki-page-links__direction(
       type="button"
       :aria-pressed="direction === 'incoming' ? 'true' : 'false'"
       @click="setDirection('incoming')"
     )
-      span Incoming
-      small Pages linking here
+      span {{ $t('common:pageLinks.incoming') }}
+      small {{ $t('common:pageLinks.incomingHint') }}
     button.wiki-page-links__direction(
       type="button"
       :aria-pressed="direction === 'outgoing' ? 'true' : 'false'"
       @click="setDirection('outgoing')"
     )
-      span Outgoing
-      small Pages linked from here
+      span {{ $t('common:pageLinks.outgoing') }}
+      small {{ $t('common:pageLinks.outgoingHint') }}
 
   async-state(v-if="loading && items.length === 0 && !stale" state="loading" :title="loadingTitle")
-  async-state(v-else-if="error && items.length === 0 && !stale" state="error" title="Page links could not be loaded" :message="error" retry-label="Try again" @retry="refresh")
+  async-state(v-else-if="error && items.length === 0 && !stale" state="error" :title="$t('common:pageLinks.loadError')" :message="error" :retry-label="$t('common:page.tryAgain')" @retry="refresh")
 
   .wiki-page-links__stale(v-else-if="stale" role="status" aria-live="polite")
     p {{ staleMessage }}
@@ -34,7 +34,7 @@ section.wiki-page-links(:aria-busy="loading || loadingMore ? 'true' : undefined"
       :loading="loading"
       :disabled="loading || loadingMore"
       @click="requiresPageReload ? reloadPage() : refresh()"
-    ) {{ requiresPageReload ? 'Reload page' : 'Refresh links' }}
+    ) {{ requiresPageReload ? $t('common:pageLinks.reloadPage') : $t('common:pageLinks.refresh') }}
 
   div#wiki-page-links-results(v-else)
     async-state(v-if="items.length === 0 && !hasMore" state="empty" :title="emptyTitle" :message="emptyMessage" announce)
@@ -54,10 +54,11 @@ section.wiki-page-links(:aria-busy="loading || loadingMore ? 'true' : undefined"
         :loading="loadingMore"
         :disabled="loading || loadingMore || nextCursor === null"
         @click="loadMore"
-      ) {{ error ? 'Try loading more again' : 'Load more links' }}
+      ) {{ error ? $t('common:pageLinks.loadMoreRetry') : $t('common:pageLinks.loadMore') }}
 </template>
 
 <script setup lang="ts">
+import i18next from 'i18next'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import AsyncState from './common/async-state.vue'
 import { pageHref } from '../helpers/admin-pages.ts'
@@ -86,13 +87,12 @@ let contextSequence = 0
 let activeController: AbortController | null = null
 let disposed = false
 
+const t = (key: string): string => i18next.t(`common:pageLinks.${key}`)
 const incoming = computed(() => direction.value === 'incoming')
-const loadingTitle = computed(() => incoming.value ? 'Loading incoming links' : 'Loading outgoing links')
-const emptyTitle = computed(() => incoming.value ? 'No visible incoming links' : 'No visible outgoing links')
-const emptyMessage = computed(() => incoming.value
-  ? 'No readable, current pages link to this page.'
-  : 'This page has no readable, current outgoing links.')
-const listLabel = computed(() => incoming.value ? 'Pages linking to this page' : 'Pages linked from this page')
+const loadingTitle = computed(() => incoming.value ? t('loadingIncoming') : t('loadingOutgoing'))
+const emptyTitle = computed(() => incoming.value ? t('emptyIncoming') : t('emptyOutgoing'))
+const emptyMessage = computed(() => incoming.value ? t('emptyIncomingMessage') : t('emptyOutgoingMessage'))
+const listLabel = computed(() => incoming.value ? t('listIncoming') : t('listOutgoing'))
 
 
 
@@ -108,7 +108,7 @@ const markStale = (message: string, responseRevision?: string): void => {
   stale.value = true
   staleMessage.value = message
   requiresPageReload.value = responseRevision !== undefined && responseRevision !== props.sourceRevision
-  if (requiresPageReload.value) staleMessage.value = 'This page changed after it was opened. Reload the page to see links for its current revision.'
+  if (requiresPageReload.value) staleMessage.value = t('pageChanged')
 }
 
 
@@ -121,23 +121,23 @@ const acceptResponse = (
 ): void => {
   if (!currentContext(request.sequence, request.pageId, request.direction, request.revision)) return
   if (response.state === 'refresh') {
-    markStale('The current link graph is not ready for this page revision. Refresh to check again.', response.sourceRevision)
+    markStale(t('graphNotReady'), response.sourceRevision)
     return
   }
   if (response.sourceRevision !== request.revision) {
-    markStale('This page changed after it was opened. Reload the page to see links for its current revision.', response.sourceRevision)
+    markStale(t('pageChanged'), response.sourceRevision)
     return
   }
 
   if (request.cursor !== undefined) {
     if (seenCursors.has(request.cursor)) {
-      markStale('The page-link continuation is no longer safe to use. Refresh the links before continuing.')
+      markStale(t('continuationUnsafe'))
       return
     }
     seenCursors.add(request.cursor)
   }
   if (response.nextCursor !== null && seenCursors.has(response.nextCursor)) {
-    markStale('The page-link continuation is no longer safe to use. Refresh the links before continuing.')
+    markStale(t('continuationUnsafe'))
     return
   }
 
@@ -153,7 +153,7 @@ const acceptResponse = (
 const requestPage = async (cursor?: string): Promise<void> => {
   if (loading.value || loadingMore.value || stale.value) return
   if (!Number.isSafeInteger(props.pageId) || props.pageId < 1) {
-    error.value = 'Choose a valid page before loading links.'
+    error.value = t('invalidPage')
     return
   }
   const sequence = contextSequence
@@ -178,9 +178,9 @@ const requestPage = async (cursor?: string): Promise<void> => {
     acceptResponse(response, { sequence, pageId, direction: currentDirection, revision, ...(cursor === undefined ? {} : { cursor }) })
   } catch (cause) {
     if (controller.signal.aborted || requestSequenceValue !== requestSequence || !currentContext(sequence, pageId, currentDirection, revision)) return
-    error.value = cause instanceof Error ? cause.message : 'Page links could not be loaded.'
+    error.value = cause instanceof Error ? cause.message : t('loadError')
     if (cause instanceof PageLinksApiError && (cause.status === 409 || cause.code === 'INVALID_PAGE_LINK_CURSOR')) {
-      markStale('The current link graph or continuation changed while these links were loading. Refresh to check for the current view.')
+      markStale(t('changedWhileLoading'))
     }
   } finally {
     if (!disposed && requestSequenceValue === requestSequence) {
