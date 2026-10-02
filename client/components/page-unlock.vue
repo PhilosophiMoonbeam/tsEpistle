@@ -16,12 +16,12 @@
               )
               .page-unlock-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
             .page-unlock-brand-title
-              .page-unlock-eyebrow Secure page access
               .text-title-large {{ siteTitle }}
           .page-unlock-context
-            v-icon(color='primary', size='32') mdi-lock-outline
-            h1.text-headline-small Protected page
-          p.text-body-large.text-medium-emphasis.mb-6 Enter the page password to continue to {{ pageTitle }}.
+            v-icon(color='primary', size='32', aria-hidden='true') mdi-lock-outline
+            h1.text-headline-small {{ $t('common:pageUnlock.title') }}
+          p.page-unlock-page-title.text-title-medium.mb-1(v-if='pageTitle') {{ pageTitle }}
+          p.text-body-large.text-medium-emphasis.mb-6 {{ $t('common:pageUnlock.body') }}
           v-alert#page-unlock-error.mb-4(
             v-if='error'
             type='error'
@@ -29,12 +29,13 @@
             role='alert'
           ) {{ error }}
           template(v-if='validPageId')
-            form(:action='`/_unlock/${validPageId}`', method='post')
+            //- Native POST stays; the handler only blocks a second submit and shows progress.
+            form(:action='`/_unlock/${validPageId}`', method='post', :aria-busy='submitting ? `true` : undefined', @submit='handleSubmit')
               input(type='hidden', name='returnTo', :value='returnTo')
               v-text-field(
                 name='password'
                 :type='hidePassword ? "password" : "text"'
-                label='Page password'
+                :label='$t(`common:pageUnlock.password`)'
                 autocomplete='current-password'
                 autofocus
                 required
@@ -48,7 +49,8 @@
                     variant='text'
                     size='small'
                     type='button'
-                    :aria-label='hidePassword ? "Show password" : "Hide password"'
+                    :aria-label='$t(`common:pageUnlock.showPassword`)'
+                    :aria-pressed='hidePassword ? `false` : `true`'
                     @click='hidePassword = !hidePassword'
                   )
                     v-icon {{ hidePassword ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
@@ -57,14 +59,16 @@
                 color='primary'
                 size='large'
                 block
-              ) Unlock page
+                :loading='submitting'
+                :aria-disabled='submitting ? `true` : undefined'
+              ) {{ $t('common:pageUnlock.submit') }}
           template(v-else)
-            v-alert.mb-4(type='error', variant='tonal', role='alert') This protected page is unavailable.
+            v-alert.mb-4(type='error', variant='tonal', role='alert') {{ $t('common:pageUnlock.unavailable') }}
           v-btn.page-unlock-return(
             variant='text'
             color='primary'
             href='/'
-          ) Return home
+          ) {{ $t('common:pageUnlock.returnHome') }}
 </template>
 
 <script lang='ts'>
@@ -75,7 +79,8 @@ export default defineComponent({
   data() {
     return {
       failedLogoUrl: null as string | null,
-      hidePassword: true
+      hidePassword: true,
+      submitting: false
     }
   },
   computed: {
@@ -101,7 +106,7 @@ export default defineComponent({
     },
     pageTitle: {
       type: String,
-      default: 'this page'
+      default: ''
     },
     returnTo: {
       type: String,
@@ -112,7 +117,25 @@ export default defineComponent({
       default: ''
     }
   },
+  mounted () {
+    window.addEventListener('pageshow', this.resetSubmitting)
+  },
+  beforeUnmount () {
+    window.removeEventListener('pageshow', this.resetSubmitting)
+  },
   methods: {
+    handleSubmit (event: Event): void {
+      // One POST per attempt; a slow network must not send the password twice.
+      if (this.submitting) {
+        event.preventDefault()
+        return
+      }
+      this.submitting = true
+    },
+    resetSubmitting (): void {
+      // Back/forward cache restores the page with the old busy state.
+      this.submitting = false
+    },
     handleLogoError (event: Event): void {
       const image = event.currentTarget
       if (!(image instanceof HTMLImageElement)) return
@@ -226,6 +249,10 @@ export default defineComponent({
 
 .page-unlock-context h1 {
   margin: 0;
+}
+
+.page-unlock-page-title {
+  overflow-wrap: anywhere;
 }
 
 .page-unlock-return {

@@ -121,6 +121,18 @@ describe('View Source presentation', () => {
     const code = host.querySelector('pre > code')
     expect(code?.textContent).toBe(content)
     expect(code?.querySelector('safe')).toBeNull()
+    // One numbered row per source line; the trailing newline does not add an empty row.
+    expect(code?.querySelectorAll('.source-line')).toHaveLength(4)
+    expect(host.querySelector('button[aria-label="common:pageSource.backToPage"]')).toBeTruthy()
+
+    const wrapButton = host.querySelector<HTMLButtonElement>('button[aria-label="common:pageSource.wrapLines"]')
+    expect(wrapButton?.getAttribute('aria-pressed')).toBe('false')
+    wrapButton?.click()
+    await settle()
+    expect(wrapButton?.getAttribute('aria-pressed')).toBe('true')
+    expect(host.querySelector('pre')?.classList.contains('is-wrapped')).toBe(true)
+    expect(window.localStorage.getItem('wiki.source.wrapLines')).toBe('1')
+    window.localStorage.removeItem('wiki.source.wrapLines')
 
     const copyButton = host.querySelector<HTMLButtonElement>('button[aria-label="common:actions.copy"]')
     expect(copyButton).toBeTruthy()
