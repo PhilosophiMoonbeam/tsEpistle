@@ -99,19 +99,30 @@
   box-shadow: var(--wiki-shadow-xs);
 }
 
-// Keep unchecked admin controls legible against the near-white light surface.
+// Keep every unchecked switch legible on light and dark surfaces: the
+// default track is a faint surface-variant tint that disappears on
+// near-white cards. Off state follows Material 3: an outlined track and an
+// outline-colored thumb, both above the 3:1 non-text contrast minimum.
 // Checked semantic colors and Vuetify's disabled treatment remain untouched.
-.admin.v-theme--light .v-selection-control:not(.v-selection-control--dirty):not(.v-selection-control--disabled) {
+.v-switch .v-selection-control:not(.v-selection-control--dirty):not(.v-selection-control--disabled):not(.v-selection-control--error) {
+  --wiki-switch-off-outline: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, rgb(var(--v-theme-surface)));
+
   .v-switch__track {
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
-    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, rgb(var(--v-theme-surface)));
+    box-sizing: border-box;
+    border: 2px solid var(--wiki-switch-off-outline);
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, rgb(var(--v-theme-surface)));
     opacity: 1;
   }
 
   .v-switch__thumb {
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
+    background: var(--wiki-switch-off-outline);
+    color: rgb(var(--v-theme-surface));
   }
+}
 
+// Keep unchecked admin checkboxes and radios legible against the near-white
+// light surface.
+.admin.v-theme--light .v-selection-control:not(.v-selection-control--dirty):not(.v-selection-control--disabled) {
   .v-selection-control__input > .v-icon {
     color: var(--wiki-text-muted);
     opacity: 1;

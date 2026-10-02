@@ -1,7 +1,10 @@
 <template lang='pug'>
+  //- persistent keeps a stray scrim click from discarding edits; Esc still
+  //- closes it like Cancel (handleDialogKeydown).
   v-dialog(
     v-model='isShown'
     persistent
+    @keydown='handleDialogKeydown'
     scrollable
     width='1000'
     :fullscreen='$vuetify.display.smAndDown'
@@ -918,6 +921,17 @@ export default defineComponent({
       wikiStore.page.brandingAssignment = brandingAssignment
       wikiStore.page.brandingView = normalizeBrandingView(this.draft.brandingView, brandingAssignment)
       this.okfSnapshot = null
+    },
+    handleDialogKeydown (event: KeyboardEvent) {
+      // Vuetify only forwards Esc here when this dialog is the top overlay,
+      // so open menus, pickers and nested dialogs close first.
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
+      event.preventDefault()
+      if (this.brandingPickerShown) {
+        this.closeBrandingPicker()
+        return
+      }
+      this.cancel()
     },
     cancel () {
       if (this.brandingPickerShown) this.closeBrandingPicker()
