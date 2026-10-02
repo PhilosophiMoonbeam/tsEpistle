@@ -1,9 +1,9 @@
 <template lang="pug">
   v-container.admin-dashboard(fluid)
     admin-hero(
-      title='Workspace overview'
+      :title='$t(`admin:dashboard.title`)'
       description='Shared knowledge. Connected intelligence. A place to keep both in good order.'
-      icon='mdi-book-open-page-variant-outline'
+      icon='mdi-view-dashboard-variant-outline'
       :eyebrow='siteTitle'
     )
       template(#actions)
