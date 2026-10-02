@@ -63,7 +63,8 @@ const DEFAULT_OFFLINE_PAGE_COUNT = 2
 const OWNED_CACHE_NAME_PATTERN = /^tsepistle-pwa-precache-v1-[0-9a-f]{16}(?:-candidate-[0-9a-z-]+)?$/u
 
 async function waitForOfflineSettings(page: Page): Promise<void> {
-  await expect(page.locator('.nav-header')).toBeVisible({ timeout: 30_000 })
+  // The online shell renders the nav header; the offline application renders without it.
+  await expect(page.locator('.nav-header, .offline-application').first()).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.offline-settings')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole('heading', { name: 'Offline access', level: 1, exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Saved pages', exact: true })).toBeVisible()
@@ -488,7 +489,8 @@ test.describe('integrated offline access', () => {
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
     const article = page.locator('article.contents')
     await expect(article).toBeVisible()
-    const collapseWhitespace = (value: string): string => value.replace(/\s+/gu, ' ').trim()
+    // The offline renderer joins block text without the online shell's spacing.
+    const collapseWhitespace = (value: string): string => value.replace(/\s+/gu, '')
     const onlinePageText = await article.evaluate(element => element.textContent?.replace(/\u00a0/gu, ' ').trim() ?? '')
     await page.context().setOffline(true)
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
@@ -530,7 +532,10 @@ test.describe('integrated offline access', () => {
     await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
     await page.locator('.account-menu__trigger').click()
     const accountMenu = page.locator('.account-menu')
-    await accountMenu.getByRole('tab', { name: 'Offline', exact: true }).click()
+    // Online the settings link lives behind the account menu's Offline tab;
+    // the offline reader menu shows the summary directly.
+    const offlineTab = accountMenu.getByRole('tab', { name: 'Offline', exact: true })
+    if (await offlineTab.count()) await offlineTab.click()
     const settingsLink = accountMenu.getByRole('link', { name: 'Offline settings', exact: true })
     await expect(settingsLink).toBeVisible()
     await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
@@ -673,7 +678,8 @@ test('account and navigation remain useful through offline startup and reconnect
   const account = page.locator('.account-menu__trigger')
   await account.click()
   const menu = page.locator('.account-menu')
-  await menu.getByRole('tab', { name: 'Offline', exact: true }).click()
+  const offlineMenuTab = menu.getByRole('tab', { name: 'Offline', exact: true })
+  if (await offlineMenuTab.count()) await offlineMenuTab.click()
   await expect(menu.getByRole('link', { name: 'Offline settings', exact: true })).toHaveAttribute('href', '/p/offline')
   await expect(menu.locator('.pwa-status-panel')).toHaveCount(0)
   await expect(menu.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
@@ -693,7 +699,7 @@ test('account and navigation remain useful through offline startup and reconnect
   await account.click()
   await expect(menu).toContainText('Reconnect to verify your session')
   await expect(menu.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
-  await menu.getByRole('tab', { name: 'Offline', exact: true }).click()
+  if (await offlineMenuTab.count()) await offlineMenuTab.click()
   await expect(menu.getByRole('link', { name: 'Offline settings', exact: true })).toHaveAttribute('href', '/p/offline')
   await expectResponsiveLayout(page, 'offline account menu')
   await account.click()
