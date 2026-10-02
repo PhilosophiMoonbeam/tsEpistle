@@ -203,6 +203,29 @@ describe('common page routing', () => {
     expect(privateHistory.vary).toHaveBeenCalledWith('Cookie')
   })
 
+  it('never caches the account-specific missing-page view or Create screen', async () => {
+    const { view } = await handlers()
+    global.WIKI.models.pages.getPage.mockResolvedValue(undefined)
+    global.WIKI.auth.getEffectivePermissions.mockImplementation(req => ({
+      pages: { read: true, write: Boolean(req.user?.permissions?.includes('write:pages')), manage: false },
+      history: { read: true },
+      source: { read: true }
+    }))
+    for (const [user, template] of [
+      [{ id: 5, permissions: ['read:pages', 'write:pages'] }, 'new'],
+      [{ id: 6, permissions: ['read:pages'] }, 'notfound']
+    ]) {
+      const res = response()
+      await view({ ...request(user), path: '/en/guides/new-guide', originalUrl: '/en/guides/new-guide' }, res, vi.fn())
+      expect(res.status).toHaveBeenCalledWith(404)
+      expect(res.render).toHaveBeenCalledWith(template, template === 'new'
+        ? { path: 'guides/new-guide', locale: 'en' }
+        : { action: 'view' })
+      expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+      expect(res.vary).toHaveBeenCalledWith('Cookie')
+    }
+  })
+
   it('renders the by-ID inspection route only for system administrators', async () => {
     const { admin } = await handlers()
     const denied = response()

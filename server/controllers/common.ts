@@ -340,8 +340,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
   const renderMissingPage = async (req: Request, res: Response, pageArgs: ParsedPageArgs, action: string): Promise<void> => {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     const createHref = await missingPageCreateHref(req, pageArgs)
-    res.set('Cache-Control', 'private, no-store')
-    res.vary('Cookie')
+    protectedResponseHeaders(res)
     res.status(404).render('notfound', createHref === undefined ? { action } : { action, createHref })
   }
 
@@ -1196,6 +1195,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
           res.render('welcome', { locale: pageArgs.locale })
         } else {
           _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+          // Both outcomes depend on the requester, including the writer's Create screen.
+          protectedResponseHeaders(res)
           if (effectivePermissions.pages.write) {
             res.status(404).render('new', { path: pageArgs.path, locale: pageArgs.locale })
           } else {
