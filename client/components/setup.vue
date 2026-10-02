@@ -36,7 +36,7 @@
         section.setup-section(aria-labelledby='setup-admin-title')
           .setup-section-heading
             .setup-section-icon(aria-hidden='true')
-              v-icon(size='21') mdi-account-shield-outline
+              v-icon(size='21') mdi-shield-account-outline
             div
               h2#setup-admin-title Administrator account
               p Create the account that will manage this wiki.
