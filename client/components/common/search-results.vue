@@ -1,22 +1,17 @@
 <template lang="pug">
+  //- Search keeps focus in the header field, outside this dialog, so it relies on the
+  //- modal focus scope (inert, aria-hidden page) instead of aria-modal; Agent mode is modal.
   .search-results(
     v-if='isAgentOpen || searchIsFocused || normalizedSearch.length > 1'
     :class='{ "search-results--ask": isAgentOpen }'
     role='dialog'
     :aria-modal='isAgentOpen ? `true` : undefined'
-    :aria-labelledby='isAgentOpen ? `wiki-agent-title` : `wiki-search-title`'
+    :aria-label='isAgentOpen ? $t(`common:searchPanel.agentWorkspace`) : undefined'
+    :aria-labelledby='isAgentOpen ? undefined : `wiki-search-title`'
     :aria-busy='!isAgentOpen && searchIsLoading'
     @click='handleBackdropClick'
   )
     .search-results-container(:class='{ "search-results-container--ask": isAgentOpen }')
-      h1#wiki-agent-title.sr-only(v-if='isAgentOpen') Wiki Agent workspace
-      v-btn.search-results-close(
-          v-if='isAgentOpen'
-          icon='mdi-close'
-          variant='text'
-          :aria-label='$t(`common:header.searchClose`)'
-          @click.stop='closeSearch'
-        )
       InlineAgentChat(
         v-if='isAgentOpen'
         ref='inlineAgent'
@@ -31,6 +26,8 @@
         :page-locale='agentPageLocale'
         :page-path='agentPagePath'
         :page-updated-at='agentPageUpdatedAt'
+        :page-title='agentPageTitle'
+        @return-search='returnToSearch'
         @close='closeSearch'
       )
       WikiSourcePreview(
@@ -42,12 +39,11 @@
         @ask='askSource'
       )
       .search-results-search(v-if='!isAgentOpen' @click.stop)
-        .search-results-instructions.sr-only#wiki-search-instructions Use Arrow Up and Down to move through results, Enter to open a result, and Escape to close search.
+        //- The header field is the visible input; the panel title stays for assistive technology only.
+        h2#wiki-search-title.sr-only {{ $t('common:searchPanel.title') }}
+        .search-results-instructions.sr-only#wiki-search-instructions {{ $t('common:searchPanel.instructions') }}
         .search-results-scope
-          h1#wiki-search-title.search-results-heading
-            v-icon(icon='mdi-magnify' size='19' aria-hidden='true')
-            span Search the Wiki
-          .search-results-scope-actions(role='group' aria-label='Search scope')
+          .search-results-scope-actions(role='group' :aria-label='$t(`common:searchPanel.scopeLabel`)')
             v-btn(
               size='small'
               prepend-icon='mdi-earth'
@@ -55,40 +51,45 @@
               :color='!offlineSearchActive ? `primary` : undefined'
               :aria-pressed='!offlineSearchActive'
               @click='selectSearchScope(`wiki`)'
-            ) All Wiki
+            ) {{ $t('common:searchPanel.scopeWiki') }}
             v-btn(
               size='small'
-              prepend-icon='mdi-download-box-outline'
+              prepend-icon='mdi-cloud-check-outline'
               :variant='offlineSearchActive ? `tonal` : `text`'
               :color='offlineSearchActive ? `primary` : undefined'
               :aria-pressed='offlineSearchActive'
               @click='selectSearchScope(`downloaded`)'
-            ) Downloaded pages
-            v-btn(
-              v-if='currentPageLocale'
-              size='small'
-              prepend-icon='mdi-translate'
-              :variant='searchRestrictLocale ? `tonal` : `text`'
-              :color='searchRestrictLocale ? `primary` : undefined'
-              :aria-pressed='searchRestrictLocale'
-              :disabled='offlineSearchActive'
-              :title='offlineSearchActive ? `Wiki scope filters require a live server.` : undefined'
-              @click='searchRestrictLocale = !searchRestrictLocale'
-            ) {{ currentPageLocale.toLocaleUpperCase() }}
-            v-btn(
-              v-if='currentPagePath'
-              size='small'
-              prepend-icon='mdi-file-tree-outline'
-              :variant='searchRestrictPath ? `tonal` : `text`'
-              :color='searchRestrictPath ? `primary` : undefined'
-              :aria-pressed='searchRestrictPath'
-              :disabled='offlineSearchActive'
-              :title='offlineSearchActive ? `Wiki scope filters require a live server.` : undefined'
-              @click='searchRestrictPath = !searchRestrictPath'
-            ) This page tree
+            ) {{ $t('common:searchPanel.scopeDownloaded') }}
+            v-tooltip(v-if='currentPageLocale' location='bottom' :disabled='!offlineSearchActive')
+              template(v-slot:activator='{ props: tooltipProps }')
+                v-btn.search-results-scope-filter(
+                  v-bind='tooltipProps'
+                  size='small'
+                  prepend-icon='mdi-translate'
+                  :variant='searchRestrictLocale ? `tonal` : `text`'
+                  :color='searchRestrictLocale ? `primary` : undefined'
+                  :aria-pressed='searchRestrictLocale'
+                  :aria-disabled='offlineSearchActive ? `true` : undefined'
+                  :aria-label='$t(`common:searchPanel.scopeLocale`, { locale: currentPageLocale.toLocaleUpperCase() })'
+                  @click='toggleLocaleScope'
+                ) {{ currentPageLocale.toLocaleUpperCase() }}
+              span {{ $t('common:searchPanel.scopeNeedsServer') }}
+            v-tooltip(v-if='currentPagePath' location='bottom' :disabled='!offlineSearchActive')
+              template(v-slot:activator='{ props: tooltipProps }')
+                v-btn.search-results-scope-filter(
+                  v-bind='tooltipProps'
+                  size='small'
+                  prepend-icon='mdi-file-tree-outline'
+                  :variant='searchRestrictPath ? `tonal` : `text`'
+                  :color='searchRestrictPath ? `primary` : undefined'
+                  :aria-pressed='searchRestrictPath'
+                  :aria-disabled='offlineSearchActive ? `true` : undefined'
+                  @click='togglePathScope'
+                ) {{ $t('common:searchPanel.scopeTree') }}
+              span {{ $t('common:searchPanel.scopeNeedsServer') }}
         .search-results-content
           .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
-            .search-results-capability-note-title {{ serverUnavailable ? `Server unavailable · Downloaded pages only` : `Downloaded pages` }}
+            .search-results-capability-note-title {{ serverUnavailable ? $t('common:searchPanel.serverUnavailableTitle') : $t('common:searchPanel.scopeDownloaded') }}
             p {{ serverUnavailable ? offlineSearchUnavailableDescription : offlineSearchScopeDescription }}
             v-btn(
               v-if='serverUnavailable'
@@ -97,23 +98,23 @@
               prepend-icon='mdi-refresh'
               :loading='serverRetryPending'
               @click='retrySearch'
-            ) Retry connection
+            ) {{ $t('common:searchPanel.retryConnection') }}
           .search-results-help(v-if='normalizedSearch.length < 2')
-            .search-results-help-mark
+            .search-results-help-mark(aria-hidden='true')
               v-icon(icon='mdi-text-search' size='34')
-            h2 Search your knowledge base
-            p(v-if='offlineSearchActive') Type plain text to search downloaded page titles, descriptions, and content. Advanced syntax and path or tag filters require a live server.
-            p(v-else) Type at least two characters to find pages by title, content, path, or tag.
+            h3 {{ $t('common:searchPanel.helpTitle') }}
+            p(v-if='offlineSearchActive') {{ $t('common:searchPanel.helpOffline') }}
+            p(v-else) {{ $t('common:searchPanel.helpOnline') }}
             .search-results-syntax-tips(v-if='!offlineSearchActive')
               span.search-results-syntax-tip
                 kbd "exact phrase"
-                | exact match
+                | {{ $t('common:searchPanel.tipExact') }}
               span.search-results-syntax-tip
                 kbd -word
-                | exclude
+                | {{ $t('common:searchPanel.tipExclude') }}
               span.search-results-syntax-tip
                 kbd or
-                | either
+                | {{ $t('common:searchPanel.tipEither') }}
           .search-results-loader(v-else-if='searchIsLoading')
             async-state(
               state='loading'
@@ -123,30 +124,30 @@
           .search-results-none(v-else-if='searchError')
             async-state(
               state='error'
-              :title='offlineSearchActive ? `Downloaded search is temporarily unavailable` : `Search is temporarily unavailable`'
+              :title='offlineSearchActive ? $t(`common:searchPanel.errorTitleDownloaded`) : $t(`common:searchPanel.errorTitle`)'
               :message='searchError'
-              :retry-label='serverUnavailable ? `Retry connection` : `Try again`'
+              :retry-label='serverUnavailable ? $t(`common:searchPanel.retryConnection`) : $t(`common:searchPanel.tryAgain`)'
               @retry='retrySearch'
             )
           template(v-else)
             .search-results-summary(v-if='hasFreshResponse')
               div(role='status' aria-live='polite' aria-atomic='true')
-                .search-results-eyebrow {{ offlineSearchActive ? `Downloaded pages` : `Search results` }}
-                .search-results-count(v-if='offlineSearchActive') {{ offlineCorpusSummary }}
-                template(v-else-if='results.length')
-                  .search-results-count
-                    span {{ response.windowTruncated ? `At least ${response.totalHits} matches` : `${response.totalHits} ${response.totalHits === 1 ? 'match' : 'matches'}` }}
-                    span.search-results-window(v-if='response.results.length < response.totalHits')  · Showing the top {{ response.results.length }}
-              v-btn.search-results-ask(
-                v-if='canAsk || serverUnavailable'
-                color='primary'
-                variant='tonal'
-                prepend-icon='mdi-book-open-page-variant-outline'
-                :disabled='!canAsk'
-                :title='!canAsk ? askUnavailableReason : undefined'
-                @click='askCurrentQuery'
-                data-modal-focus-key='search-ask-query'
-              ) Ask about this
+                .search-results-eyebrow {{ offlineSearchActive ? $t('common:searchPanel.scopeDownloaded') : $t('common:searchPanel.resultsEyebrow') }}
+                .search-results-count(v-if='resultSummary')
+                  span {{ resultSummary }}
+                  span.search-results-window(v-if='resultSummaryHint')  · {{ resultSummaryHint }}
+              v-tooltip(v-if='canAsk || serverUnavailable' location='bottom' :disabled='canAsk')
+                template(v-slot:activator='{ props: tooltipProps }')
+                  v-btn.search-results-ask(
+                    v-bind='tooltipProps'
+                    color='primary'
+                    variant='tonal'
+                    prepend-icon='mdi-creation-outline'
+                    :aria-disabled='!canAsk ? `true` : undefined'
+                    @click='askCurrentQuery'
+                    data-modal-focus-key='search-ask-query'
+                  ) {{ $t('common:searchPanel.askAbout') }}
+                span {{ askUnavailableReason }}
             .search-results-none(v-if='hasFreshResponse && results.length < 1')
               async-state(
                 state='empty'
@@ -157,18 +158,19 @@
                 v-btn.search-results-empty-ask(
                   color='primary'
                   variant='tonal'
-                  prepend-icon='mdi-book-open-page-variant-outline'
-                  :disabled='!canAsk'
-                  :title='!canAsk ? askUnavailableReason : undefined'
+                  prepend-icon='mdi-creation-outline'
+                  :aria-disabled='!canAsk ? `true` : undefined'
+                  :aria-describedby='!canAsk ? `wiki-search-ask-reason` : undefined'
                   @click='askCurrentQuery'
                   data-modal-focus-key='search-ask-empty'
-                ) Ask Wiki about "{{ normalizedSearch }}"
+                ) {{ $t('common:searchPanel.askWikiAbout', { query: normalizedSearch }) }}
+              p.search-results-reason#wiki-search-ask-reason(v-if='!canAsk') {{ askUnavailableReason }}
             template(v-if='results.length > 0')
               v-list.search-results-items(
                 id='wiki-search-results'
                 role='grid'
                 :aria-busy='searchIsLoading'
-                aria-label='Search results'
+                :aria-label='$t(`common:searchPanel.resultsLabel`)'
               )
                 template(v-for='(item, idx) of results' :key='resultKey(item)')
                   .search-results-row(role='row')
@@ -181,13 +183,13 @@
                         @click='handleResultClick($event, item)'
                       )
                         template(v-slot:prepend)
-                          .search-results-item-mark
+                          .search-results-item-mark(aria-hidden='true')
                             v-icon(icon='mdi-file-document-outline' size='21')
                         v-list-item-title {{ item.title }}
                         v-list-item-subtitle {{ item.description }}
                         .search-results-match(v-if='matchSummary(item)') {{ matchSummary(item) }}
                         .search-results-path
-                          v-icon(icon='mdi-source-branch' size='14')
+                          v-icon(icon='mdi-source-branch' size='14' aria-hidden='true')
                           span {{ item.path }}
                         .search-results-tags(v-if='item.tags.length || item.matchedFields?.includes("graph")')
                           v-chip(
@@ -203,46 +205,39 @@
                             variant='tonal'
                             color='secondary'
                           )
-                            v-icon(start icon='mdi-graph-outline' size='12')
-                            | Linked page
+                            v-icon(start icon='mdi-graph-outline' size='12' aria-hidden='true')
+                            | {{ $t('common:searchPanel.linkedPage') }}
                         template(v-slot:append)
                           .search-results-item-meta
                             v-chip(v-if='item.visibility === "private"' size='x-small' label color='warning' variant='tonal')
-                              v-icon(start icon='mdi-lock-outline' size='12')
-                              | Private
+                              v-icon(start icon='mdi-lock-outline' size='12' aria-hidden='true')
+                              | {{ $t('common:searchPanel.private') }}
                             v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
-                            v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19')
+                            v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19' aria-hidden='true')
                     .search-results-preview-cell(role='gridcell')
-                      button.search-results-preview(
-                        type='button'
-                        :aria-label='`Preview ${item.title}`'
-                        :disabled='!serverCapabilitiesAvailable || !hasFreshResponse'
-                        :title='!serverCapabilitiesAvailable || !hasFreshResponse ? previewUnavailableReason : undefined'
-                        @click='openPreview(item)'
-                      )
-                        v-icon(icon='mdi-text-box-search-outline' size='18')
-                        span Preview
+                      v-tooltip(location='start' :disabled='previewAvailable')
+                        template(v-slot:activator='{ props: tooltipProps }')
+                          button.search-results-preview(
+                            v-bind='tooltipProps'
+                            type='button'
+                            :aria-label='$t(`common:searchPanel.previewLabel`, { title: item.title })'
+                            :aria-disabled='!previewAvailable ? `true` : undefined'
+                            @click='openPreview(item)'
+                          )
+                            v-icon(icon='mdi-text-box-search-outline' size='18' aria-hidden='true')
+                            span {{ $t('common:searchPanel.preview') }}
+                        span {{ previewUnavailableReason }}
                   v-divider(v-if='idx < results.length - 1' aria-hidden='true')
-              v-pagination.search-results-pagination(
-                v-if='paginationLength > 1'
-                v-model='pagination'
-                :length='paginationLength'
-                density='comfortable'
-                :total-visible='$vuetify.display.xs ? 3 : 7'
-                rounded
-              )
-            .search-results-continuation(v-if='offlineSearchActive ? offlineResultsTruncated : (response.nextCursor || moreError || response.windowTruncated)')
-              v-btn(v-if='!offlineSearchActive && response.nextCursor' variant='tonal' :loading='loadingMore' prepend-icon='mdi-chevron-down' @click='loadMoreResults') More results
-              p(v-if='offlineSearchActive && offlineResultsTruncated' role='status') Showing a bounded set of local matches. Narrow the query to search more precisely.
-              p(v-if='!offlineSearchActive && moreError' role='alert') {{ moreError }}
-              p(v-if='!offlineSearchActive && response.windowTruncated') Showing a bounded set of matches. Narrow the query or scope to find a more specific page.
+            .search-results-continuation(v-if='!offlineSearchActive && (response.nextCursor || moreError)')
+              v-btn(v-if='response.nextCursor' variant='tonal' :loading='loadingMore' prepend-icon='mdi-chevron-down' @click='loadMoreResults') {{ $t('common:searchPanel.moreResults') }}
+              p(v-if='moreError' role='alert') {{ moreError }}
             .search-results-suggestion-block(v-if='suggestions.length')
-              .search-results-eyebrow Suggested searches
+              .search-results-eyebrow {{ $t('common:searchPanel.suggested') }}
               v-list.search-results-suggestions(
                 id='wiki-search-suggestions'
                 role='listbox'
                 :aria-busy='searchIsLoading'
-                aria-label='Search suggestions'
+                :aria-label='$t(`common:searchPanel.suggestionsLabel`)'
                 density='compact'
               )
                 template(v-for='(term, idx) of suggestions' :key='occurrenceKey(suggestions, term, idx)')
@@ -259,11 +254,16 @@
         .search-results-keyboard-hint(
           v-if='!isAgentOpen && normalizedSearch.length >= 2'
           aria-hidden='true'
-          title='Keyboard shortcuts: navigate, open, close'
         )
-          kbd ↑↓
-          kbd ↵
-          kbd Esc
+          span
+            kbd ↑↓
+            | {{ $t('common:searchPanel.keyMove') }}
+          span
+            kbd ↵
+            | {{ $t('common:searchPanel.keyOpen') }}
+          span
+            kbd Esc
+            | {{ $t('common:searchPanel.keyClose') }}
 
 </template>
 <script lang='ts'>
@@ -411,8 +411,6 @@ export default defineComponent({
       searchRetryId: 0,
       cursor: -1,
       approvalId: '',
-      pagination: 1,
-      perPage: 10,
       searchTimer: null as number | null,
       searchError: '',
       searchRequestId: 0,
@@ -470,46 +468,65 @@ export default defineComponent({
     offlineSearchActive(): boolean {
       return this.searchScope === 'downloaded' || this.serverUnavailable
     },
-    offlineCorpusSummary(): string {
-      const count = this.offlineCorpusCount
-      if (count === null) return 'Bounded downloaded-page corpus'
-      return `Bounded corpus: ${count} downloaded ${count === 1 ? 'page' : 'pages'}`
-    },
     offlineSearchScopeDescription(): string {
       return this.offlinePrivateSearchEnabled
-        ? 'This search is bounded to public pages saved on this device and your unlocked private pages; it does not include server suggestions or graph matches.'
-        : 'This search is bounded to public pages saved on this device; it does not include server suggestions, graph matches, or private metadata.'
+        ? this.$t('common:searchPanel.savedScopePrivate')
+        : this.$t('common:searchPanel.savedScopePublic')
     },
     offlineSearchUnavailableDescription(): string {
-      return `Wiki search, Ask/Agent, and server preview need a live server. This bounded local search uses ${this.offlinePrivateSearchEnabled
-        ? 'public pages saved on this device and your unlocked private pages.'
-        : 'only public pages saved on this device.'}`
+      return this.offlinePrivateSearchEnabled
+        ? this.$t('common:searchPanel.serverUnavailablePrivate')
+        : this.$t('common:searchPanel.serverUnavailablePublic')
     },
     searchLoadingMessage(): string {
-      if (!this.offlineSearchActive) return 'Searching the pages you can access.'
-      if (this.offlineCorpusCount === null) return 'Searching the bounded downloaded-page corpus on this device.'
-      return `Searching ${this.offlineCorpusCount} downloaded ${this.offlineCorpusCount === 1 ? 'page' : 'pages'} on this device.`
+      if (!this.offlineSearchActive) return this.$t('common:searchPanel.loadingWiki')
+      if (this.offlineCorpusCount === null) return this.$t('common:searchPanel.loadingSaved')
+      return this.$t('common:searchPanel.loadingSavedCount', { count: this.offlineCorpusCount })
     },
     emptyResultsMessage(): string {
-      if (this.offlineSearchActive) return 'No downloaded pages match this query in the bounded local corpus.'
-      return this.canAsk ? 'Ask Wiki for a grounded answer, or try a different term or scope.' : 'Try a different term or broader scope.'
+      if (this.offlineSearchActive) return this.$t('common:searchPanel.emptySaved')
+      return this.canAsk ? this.$t('common:searchPanel.emptyAsk') : this.$t('common:searchPanel.empty')
+    },
+    /** One summary line for the single "More results" paging model; truncation is folded in here. */
+    resultSummary(): string {
+      if (!this.hasFreshResponse) return ''
+      if (this.offlineSearchActive) {
+        const count = this.offlineCorpusCount
+        if (count === null) return ''
+        return this.offlineResultsTruncated
+          ? this.$t('common:searchPanel.savedTop', { shown: this.response.results.length, count })
+          : this.$t('common:searchPanel.savedSearched', { count })
+      }
+      const total = this.response.totalHits
+      const shown = this.response.results.length
+      if (shown < 1) return ''
+      if (this.response.windowTruncated) return this.$t('common:searchPanel.topOfAtLeast', { shown, total })
+      if (shown < total) return this.$t('common:searchPanel.topOf', { shown, total })
+      return this.$t('common:searchPanel.matches', { count: total })
+    },
+    resultSummaryHint(): string {
+      if (!this.hasFreshResponse || this.response.results.length < 1) return ''
+      if (this.offlineSearchActive) return this.offlineResultsTruncated ? this.$t('common:searchPanel.narrowQuery') : ''
+      return this.response.windowTruncated ? this.$t('common:searchPanel.narrowScope') : ''
     },
     askUnavailableReason(): string {
-      if (this.serverUnavailable) return 'Ask and Agent require a live server. Retry connection to enable them.'
-      if (!this.authAuthorityReady) return 'Ask and Agent require a freshly verified signed-in session. Refresh your session, then try again.'
-      return 'Ask and Agent are available after the server connection is verified.'
+      if (this.serverUnavailable) return this.$t('common:searchPanel.askNeedsServer')
+      if (!this.authAuthorityReady) return this.$t('common:searchPanel.askNeedsSession')
+      return this.$t('common:searchPanel.askNeedsVerify')
+    },
+    previewAvailable(): boolean {
+      return this.serverCapabilitiesAvailable && this.hasFreshResponse
     },
     previewUnavailableReason(): string {
-      if (!this.serverCapabilitiesAvailable) return 'Server preview requires a verified live server. Retry connection to enable it.'
-      return 'Server preview is available only for the current verified search results.'
+      if (!this.serverCapabilitiesAvailable) return this.$t('common:searchPanel.previewNeedsServer')
+      return this.$t('common:searchPanel.previewNeedsFresh')
     },
     searchRestrictPath: {
       get(): boolean { return wikiStore.site.searchRestrictPath },
       set(value: boolean) { wikiStore.site.searchRestrictPath = value }
     },
     results(): SearchResultRow[] {
-      const currentIndex = (this.pagination - 1) * this.perPage
-      return this.response.results.slice(currentIndex, currentIndex + this.perPage)
+      return this.response.results
     },
     normalizedSearch(): string {
       return this.search.trim()
@@ -536,6 +553,7 @@ export default defineComponent({
     agentPageLocale(): string { return this.agentOpeningPage?.locale ?? '' },
     agentPagePath(): string { return this.agentOpeningPage?.path ?? '' },
     agentPageUpdatedAt(): string { return this.agentOpeningPage?.observedUpdatedAt ?? '' },
+    agentPageTitle(): string { return this.agentOpeningPage ? wikiStore.page.title : '' },
     currentPageId(): number { return wikiStore.page.id },
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },
@@ -564,9 +582,6 @@ export default defineComponent({
         this.results.length > 0 ? 'wiki-search-results' : '',
         this.suggestions.length > 0 ? 'wiki-search-suggestions' : ''
       ].filter(Boolean).join(' ')
-    },
-    paginationLength(): number {
-      return this.response.results.length > 0 ? Math.ceil(this.response.results.length / this.perPage) : 0
     }
   },
   watch: {
@@ -685,9 +700,17 @@ export default defineComponent({
   },
   methods: {
     matchSummary(item: PageSearchRow): string {
-      const labels = { title: 'title', tag: 'tags', path: 'page path', description: 'description', content: 'page text', graph: 'related links', knowledge: 'knowledge hints' }
+      const labels = {
+        title: 'common:searchPanel.matchTitle',
+        tag: 'common:searchPanel.matchTag',
+        path: 'common:searchPanel.matchPath',
+        description: 'common:searchPanel.matchDescription',
+        content: 'common:searchPanel.matchContent',
+        graph: 'common:searchPanel.matchGraph',
+        knowledge: 'common:searchPanel.matchKnowledge'
+      }
       const fields = [...new Set(item.matchedFields ?? [])].map(field => labels[field]).filter(Boolean)
-      return fields.length ? `Matches ${fields.slice(0, 3).join(' · ')}` : ''
+      return fields.length ? this.$t('common:searchPanel.matchedPrefix', { fields: fields.slice(0, 3).map(key => this.$t(key)).join(' · ') }) : ''
     },
     currentPageHint(): AgentCurrentPageHint | null {
       const id = this.currentPageId
@@ -881,7 +904,6 @@ export default defineComponent({
       this.response = emptySearchResponse()
       this.responseKey = ''
       this.cursor = -1
-      this.pagination = 1
       this.offlineCorpusCount = null
       this.offlineResultsTruncated = false
       this.offlineSearchCorpus = null
@@ -893,6 +915,29 @@ export default defineComponent({
       this.offlinePrivateSearchCorpusSessionGeneration = null
       this.offlinePrivateSearchEnabled = typeof currentOfflineReadingHandle === 'function' && Boolean(currentOfflineReadingHandle())
       this.search = ''
+    },
+    toggleLocaleScope(): void {
+      if (this.offlineSearchActive) return
+      this.searchRestrictLocale = !this.searchRestrictLocale
+    },
+    togglePathScope(): void {
+      if (this.offlineSearchActive) return
+      this.searchRestrictPath = !this.searchRestrictPath
+    },
+    /** Agent search button: leave the Agent for the page it opened over, then open search with the field focused. */
+    async returnToSearch(): Promise<void> {
+      this.captureAgentExcursion()
+      this.pendingAskRestoreTarget = null
+      const returnId = ++this.directPromptHandoffId
+      this.deactivateAgentModal(false)
+      this.searchMode = 'search'
+      this.searchIsFocused = true
+      await this.$nextTick()
+      if (returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return
+      this.deactivateAgentModal(false)
+      await this.$nextTick()
+      if (returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return
+      emitSearchFocus()
     },
     selectSearchScope(scope: SearchScope): void {
       this.searchScope = scope
@@ -916,7 +961,6 @@ export default defineComponent({
         this.searchError = ''
         this.responseKey = ''
         this.response = emptySearchResponse()
-        this.pagination = 1
         return
       }
       const requestKey = this.searchRequestKey
@@ -1042,7 +1086,7 @@ export default defineComponent({
       return JSON.stringify([value, occurrence])
     },
     resultOptionId(index: number): string {
-      return `wiki-search-result-${this.pagination}-${index}`
+      return `wiki-search-result-${index}`
     },
     pageHref(item: SearchResultRow): string {
       if (isDownloadedSearchRow(item)) {
@@ -1118,9 +1162,7 @@ export default defineComponent({
         ) return
         const known = new Set(this.response.results.map(item => this.resultKey(item)))
         const added = next.results.filter(item => !known.has(this.resultKey(item)))
-        const firstNewPage = Math.floor(this.response.results.length / this.perPage) + 1
         this.response = { ...next, results: [...this.response.results, ...added] }
-        if (added.length) this.pagination = firstNewPage
       } catch (value) {
         if (
           requestKey === this.searchRequestKey &&
@@ -1145,7 +1187,6 @@ export default defineComponent({
       this.responseKey = ''
       this.response = emptySearchResponse()
       this.cursor = -1
-      this.pagination = 1
       this.serverRetryPending = serverWasUnavailable
       this.searchIsLoading = query.length >= 2
 
@@ -1213,7 +1254,6 @@ export default defineComponent({
         this.moreError = ''
         this.response = response
         this.responseKey = requestKey
-        this.pagination = 1
       } catch (err) {
         if (
           requestId !== this.searchRequestId ||
@@ -1375,7 +1415,6 @@ export default defineComponent({
           totalHits: 0
         }
         this.responseKey = requestKey
-        this.pagination = 1
       } catch (error) {
         if (
           requestId !== this.searchRequestId ||
@@ -1412,10 +1451,13 @@ export default defineComponent({
 .search-results {
   --search-overlay-ink: rgb(var(--v-theme-on-background));
   --search-overlay-top-offset: var(--search-header-height, 52px);
+  // Lighter glass than the header: the page stays visible, softened, behind the results panel.
+  --search-overlay-glass: color-mix(in srgb, rgb(var(--v-theme-background)) 18%, transparent);
+  --search-overlay-blur: blur(4px) saturate(125%);
   animation: searchResultsReveal var(--wiki-motion-normal) var(--wiki-motion-ease-out);
-  background: var(--wiki-chrome-surface);
-  -webkit-backdrop-filter: var(--wiki-chrome-blur);
-  backdrop-filter: var(--wiki-chrome-blur);
+  background: var(--search-overlay-glass);
+  -webkit-backdrop-filter: var(--search-overlay-blur);
+  backdrop-filter: var(--search-overlay-blur);
   box-sizing: border-box;
   inset-inline: 0;
   inset-block-start: var(--search-overlay-top-offset);
@@ -1429,7 +1471,7 @@ export default defineComponent({
   z-index: 1006;
 
   @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
-    background: var(--wiki-surface-raised);
+    background: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, transparent);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -1468,40 +1510,29 @@ export default defineComponent({
     }
   }
 
-  &-close {
-    position: absolute !important;
-    inset-inline-end: var(--wiki-space-2);
-    top: var(--wiki-space-1);
-    border-radius: var(--wiki-radius-pill);
-    color: color-mix(in srgb, var(--search-overlay-ink) 78%, transparent);
-    transition:
-      background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-      color var(--wiki-motion-fast) var(--wiki-motion-ease);
-
-    &:hover,
-    &:active {
-      background-color: color-mix(in srgb, var(--search-overlay-ink) 9%, transparent);
-      color: var(--search-overlay-ink);
-      transform: none;
-    }
-
-    &:focus-visible {
-      outline: .125rem solid var(--wiki-focus-color);
-      outline-offset: var(--wiki-focus-offset);
-      box-shadow: var(--wiki-focus-ring);
-    }
-  }
-
-  &--ask &-close { top: var(--wiki-space-2); }
-
   &-keyboard-hint {
     display: flex;
-    gap: .5rem;
+    flex: 0 0 auto;
+    gap: var(--wiki-space-4);
     justify-content: flex-end;
     padding: .65rem 1rem;
-    color: color-mix(in srgb, var(--search-overlay-ink) 65%, transparent);
-    font-family: var(--wiki-font-mono);
-    font-size: .7rem;
+    border-top: 1px solid var(--wiki-surface-border);
+    color: var(--wiki-text-muted);
+    font-size: .75rem;
+
+    span {
+      align-items: center;
+      display: inline-flex;
+      gap: var(--wiki-space-1);
+    }
+
+    kbd {
+      font-family: var(--wiki-font-mono);
+      font-size: .7rem;
+      padding: 0 .3rem;
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-radius-xs);
+    }
   }
 
   &-search {
@@ -1523,9 +1554,9 @@ export default defineComponent({
     display: flex;
     flex: 0 0 auto;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: var(--wiki-space-5);
-    padding: var(--wiki-space-4) var(--wiki-space-5);
+    padding: var(--wiki-space-3) var(--wiki-space-5);
     border-bottom: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-hero-radius) var(--wiki-hero-radius) 0 0;
     background:
@@ -1533,30 +1564,25 @@ export default defineComponent({
       var(--wiki-surface-sunken);
   }
 
-  &-heading {
-    align-items: center;
-    display: flex;
-    gap: .55rem;
-    min-width: 0;
-    margin: 0;
-    color: var(--search-overlay-ink);
-    font-size: 1rem;
-    font-weight: 700;
-    letter-spacing: -.01em;
-    line-height: 1.2;
-  }
-
-  &-heading .v-icon {
-    flex: 0 0 auto;
-    color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
-  }
-
   &-scope-actions {
     align-items: center;
     display: flex;
     flex-wrap: wrap;
     gap: .35rem;
-    justify-content: flex-end;
+    justify-content: flex-start;
+  }
+
+  // Disabled-with-reason controls stay focusable so their tooltip can explain why.
+  &-scope-filter[aria-disabled='true'],
+  &-ask[aria-disabled='true'],
+  &-empty-ask[aria-disabled='true'] {
+    opacity: .6;
+  }
+
+  &-reason {
+    margin: var(--wiki-space-2) 0 0;
+    color: var(--wiki-text-muted);
+    font-size: .8rem;
   }
 
   &-eyebrow {
@@ -1595,7 +1621,7 @@ export default defineComponent({
     font-weight: 600;
   }
   &-window {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+    color: var(--wiki-text-muted);
     font-size: .78rem;
     font-weight: 450;
   }
@@ -1637,14 +1663,14 @@ export default defineComponent({
     width: 4rem;
   }
 
-  &-help h2 {
+  &-help h3 {
     font-size: clamp(1.35rem, 3vw, 1.7rem);
     letter-spacing: -.02em;
     margin: 1rem 0 .45rem;
   }
 
   &-help p {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+    color: var(--wiki-text-muted);
     line-height: 1.55;
     margin: 0;
     max-width: 32rem;
@@ -1660,7 +1686,7 @@ export default defineComponent({
 
   &-syntax-tip {
     align-items: center;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+    color: var(--wiki-text-muted);
     display: inline-flex;
     font-size: var(--wiki-type-micro, .75rem);
     gap: var(--wiki-space-1);
@@ -1722,7 +1748,8 @@ export default defineComponent({
   }
   &-item .v-list-item-subtitle {
     margin-top: var(--wiki-space-1);
-    opacity: .8;
+    color: var(--wiki-text-muted);
+    opacity: 1;
     overflow-wrap: anywhere;
     line-height: 1.4;
     white-space: normal;
@@ -1738,7 +1765,7 @@ export default defineComponent({
 
   &-path {
     align-items: center;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+    color: var(--wiki-text-muted);
     display: flex;
     font-size: .72rem;
     gap: .3rem;
@@ -1776,9 +1803,7 @@ export default defineComponent({
     gap: .3rem;
   }
 
-  &-item-chevron { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 44%, transparent); }
-
-  &-pagination { margin: .85rem 0 .2rem; }
+  &-item-chevron { color: var(--wiki-text-subtle); }
 
   &-suggestion-block {
     margin-top: var(--wiki-space-4);
@@ -1860,7 +1885,8 @@ export default defineComponent({
 
 @media (prefers-reduced-transparency: reduce) {
   .search-results:not(.search-results--ask) {
-    background: var(--wiki-surface-raised);
+    // Keep the page dimmed, not hidden, when transparency effects are reduced.
+    background: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, transparent);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -1886,7 +1912,7 @@ export default defineComponent({
 </style>
 
 <style scoped>
-.search-results-capability-note { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; padding: .8rem 1.25rem; border-bottom: 1px solid var(--wiki-surface-border); background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, transparent); color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent); font-size: .78rem; }
+.search-results-capability-note { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; padding: .8rem 1.25rem; border-bottom: 1px solid var(--wiki-surface-border); background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, transparent); color: var(--wiki-text-muted); font-size: .78rem; }
 .search-results-capability-note-title { color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); font-weight: 700; }
 .search-results-capability-note p { flex: 1 1 20rem; margin: 0; }
 .search-results-capability-note .v-btn { flex: 0 0 auto; }
@@ -1898,10 +1924,12 @@ export default defineComponent({
 .search-results-preview { position: absolute; inset-inline-end: 1rem; bottom: 1rem; display: flex; align-items: center; gap: .4rem; padding: .5rem .65rem; border-radius: .65rem; color: var(--wiki-accent-ink, rgb(var(--v-theme-on-surface))); font-size: .75rem; background: rgb(var(--v-theme-primary) / .08); }
 .search-results-preview:hover { background: rgb(var(--v-theme-primary) / .17); }
 .search-results-preview:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.search-results-preview[aria-disabled='true'] { opacity: .6; cursor: default; }
+.search-results-preview[aria-disabled='true']:hover { background: rgb(var(--v-theme-primary) / .08); }
 @media (max-width: 480px) { .search-results-row .search-results-item { padding-inline-end: 3.5rem; } .search-results-preview { inset-inline-end: .5rem; } .search-results-preview span { display: none; } }
 </style>
 
 <style scoped>
 .search-results-continuation { padding: 1rem; text-align: center; }
-.search-results-continuation p { font-size: .75rem; opacity: .7; margin: .6rem 0 0; }
+.search-results-continuation p { font-size: .8rem; color: var(--wiki-text-muted); margin: .6rem 0 0; }
 </style>
