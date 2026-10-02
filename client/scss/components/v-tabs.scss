@@ -1,7 +1,7 @@
 .v-tabs {
   --wiki-tab-edge: var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent));
 
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
 
   .v-tab {
     min-height: 2.75rem;

@@ -1,23 +1,21 @@
 <template lang="pug">
 section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined" aria-labelledby="wiki-page-ratings-title")
   header.wiki-page-ratings__heading
-    h2#wiki-page-ratings-title Page rating
+    h2#wiki-page-ratings-title {{ $t('common:pageRatings.title') }}
     p.wiki-page-ratings__aggregate(v-if="view && !stale") {{ summary }}
-    p.wiki-page-ratings__prompt(v-else-if="!isHuman") Sign in with a personal account to rate.
+    p.wiki-page-ratings__prompt(v-else-if="!isHuman") {{ $t('common:pageRatings.signInToRate') }}
 
   template(v-if="isHuman")
-    .wiki-page-ratings__loading(v-if="loading && !view" role="status" aria-live="polite")
-      v-progress-circular(color="primary" :size="18" :width="2" indeterminate aria-hidden="true")
-      span Loading page rating…
+    async-state.wiki-page-ratings__loading(v-if="loading && !view" state="loading" :title="$t('common:pageRatings.loading')")
 
     .wiki-page-ratings__load-error(v-else-if="!view && error && !stale")
       p.wiki-page-ratings__error(role="alert") {{ error }}
-      v-btn(type="button" size="small" variant="text" prepend-icon="mdi-refresh" @click="refresh") Try again
+      v-btn(type="button" size="small" variant="text" prepend-icon="mdi-refresh" @click="refresh") {{ $t('common:page.tryAgain') }}
 
     .wiki-page-ratings__stale(v-else-if="stale")
       p(role="status" aria-live="polite") {{ staleMessage }}
       p.wiki-page-ratings__error(v-if="error" role="alert") {{ error }}
-      v-btn(type="button" size="small" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || submitting" @click="refresh") Refresh rating
+      v-btn(type="button" size="small" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || submitting" @click="refresh") {{ $t('common:pageRatings.refresh') }}
 
     template(v-else-if="view")
       p.wiki-page-ratings__error(v-if="error" role="alert") {{ error }}
@@ -26,7 +24,7 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
         v-if="view.kind === 'thumbs'"
         :class="{ 'wiki-page-ratings__controls--voted': view.ownVote !== null }"
         role="group"
-        aria-label="Rate this page"
+        :aria-label="$t('common:pageRatings.rateThisPage')"
       )
         v-btn(
           class="wiki-page-ratings__choice"
@@ -38,7 +36,7 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           :disabled="!canVote"
           :loading="submitting && pendingVote === 1"
           :aria-pressed="view.ownVote === 1 ? 'true' : 'false'"
-          :aria-label="`Rate this page as helpful, ${view.distribution['1']} votes`"
+          :aria-label="$t('common:pageRatings.rateHelpful', { count: view.distribution['1'] })"
           @click="saveVote(1)"
         )
           v-icon(aria-hidden="true") {{ view.ownVote === 1 ? 'mdi-thumb-up' : 'mdi-thumb-up-outline' }}
@@ -52,31 +50,34 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           :disabled="!canVote"
           :loading="submitting && pendingVote === -1"
           :aria-pressed="view.ownVote === -1 ? 'true' : 'false'"
-          :aria-label="`Rate this page as not helpful, ${view.distribution['-1']} votes`"
+          :aria-label="$t('common:pageRatings.rateNotHelpful', { count: view.distribution['-1'] })"
           @click="saveVote(-1)"
         )
           v-icon(aria-hidden="true") {{ view.ownVote === -1 ? 'mdi-thumb-down' : 'mdi-thumb-down-outline' }}
-        v-btn(
-          v-if="view.ownVote !== null"
-          class="wiki-page-ratings__remove"
-          type="button"
-          size="small"
-          variant="outlined"
-          :disabled="!canVote"
-          :loading="submitting && pendingVote === null"
-          aria-label="Remove my rating"
-          @click="removeVote"
-        )
-          v-icon(aria-hidden="true") mdi-close-circle-outline
+        v-tooltip(v-if="view.ownVote !== null" location="bottom")
+          template(#activator="{ props: tooltipProps }")
+            v-btn(
+              v-bind="tooltipProps"
+              class="wiki-page-ratings__remove"
+              type="button"
+              size="small"
+              variant="outlined"
+              :disabled="!canVote"
+              :loading="submitting && pendingVote === null"
+              :aria-label="$t('common:pageRatings.removeMine')"
+              @click="removeVote"
+            )
+              v-icon(aria-hidden="true") mdi-close-circle-outline
+          span {{ $t('common:pageRatings.removeMine') }}
       .wiki-page-ratings__balance(
         v-if="view.kind === 'thumbs' && view.ownVote !== null && view.count > 0"
         role="img"
-        :aria-label="`${view.distribution['1']} helpful and ${view.distribution['-1']} not helpful votes`"
+        :aria-label="$t('common:pageRatings.balance', { helpful: view.distribution['1'], notHelpful: view.distribution['-1'] })"
       )
         .wiki-page-ratings__balance-positive(:style="{ flexGrow: view.distribution['1'] }" aria-hidden="true")
         .wiki-page-ratings__balance-negative(:style="{ flexGrow: view.distribution['-1'] }" aria-hidden="true")
 
-      .wiki-page-ratings__controls.wiki-page-ratings__controls--stars(v-if="view.kind === 'stars'" role="group" aria-label="Choose your star rating")
+      .wiki-page-ratings__controls.wiki-page-ratings__controls--stars(v-if="view.kind === 'stars'" role="group" :aria-label="$t('common:pageRatings.chooseStars')")
         v-btn(
           v-for="value in starValues"
           :key="value"
@@ -90,16 +91,16 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           :disabled="!canVote"
           :loading="submitting && pendingVote === value"
           :aria-pressed="view.ownVote === value ? 'true' : 'false'"
-          :aria-label="`Rate this page ${value} out of 5 stars`"
+          :aria-label="$t('common:pageRatings.rateStars', { count: value })"
           @click="saveVote(value)"
         )
           v-icon(aria-hidden="true") {{ view.ownVote !== null && value <= view.ownVote ? 'mdi-star' : 'mdi-star-outline' }}
 
       .wiki-page-ratings__personal(v-if="(view.kind === 'stars' && view.ownVote !== null) || submitting || loading || feedback")
-        p.wiki-page-ratings__own-vote(v-if="view.kind === 'stars' && view.ownVote !== null") Yours: {{ view.ownVote }}/5
+        p.wiki-page-ratings__own-vote(v-if="view.kind === 'stars' && view.ownVote !== null") {{ $t('common:pageRatings.yours', { value: view.ownVote }) }}
         span.wiki-page-ratings__feedback(v-if="submitting || loading || feedback" role="status" aria-live="polite" aria-atomic="true")
           v-progress-circular(v-if="submitting || loading" color="primary" :size="16" :width="2" indeterminate aria-hidden="true")
-          | {{ submitting ? 'Saving your rating…' : (loading ? 'Refreshing rating totals…' : feedback) }}
+          | {{ submitting ? $t('common:pageRatings.saving') : (loading ? $t('common:pageRatings.refreshing') : feedback) }}
         v-btn(
           v-if="view.kind === 'stars' && view.ownVote !== null"
           class="wiki-page-ratings__remove"
@@ -108,18 +109,21 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           variant="outlined"
           :disabled="!canVote"
           :loading="submitting && pendingVote === null"
-          aria-label="Remove my rating"
+          :aria-label="$t('common:pageRatings.removeMine')"
           @click="removeVote"
-        ) Remove
+        ) {{ $t('common:pageRatings.remove') }}
 </template>
 
 <script setup lang="ts">
+import i18next from 'i18next'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import AsyncState from './common/async-state.vue'
 import { fetchPageRating, PageRatingApiError, putPageRating, removePageRating } from '../helpers/page-ratings-api.ts'
 import type { PageRatingView, PageRatingVote } from '../../shared/page-ratings.ts'
 import { wikiStore } from '../store/index.ts'
 
 const props = defineProps<{ pageId: number }>()
+const t = (key: string, options?: Record<string, unknown>): string => i18next.t(`common:pageRatings.${key}`, options)
 const starValues = [1, 2, 3, 4, 5] as const
 const view = ref<PageRatingView | null>(null)
 const loading = ref(false)
@@ -147,9 +151,10 @@ const isHuman = computed(() =>
 const canVote = computed(() => isHuman.value && view.value !== null && !loading.value && !submitting.value && !stale.value)
 const summary = computed(() => {
   const rating = view.value
-  if (!rating || rating.count === 0) return 'No ratings yet'
-  if (rating.kind === 'thumbs') return `${rating.count} ${rating.count === 1 ? 'vote' : 'votes'}`
-  return `${rating.score === null ? '' : `${rating.score.toFixed(1)}/5 · `}${rating.count} ${rating.count === 1 ? 'rating' : 'ratings'}`
+  if (!rating || rating.count === 0) return t('none')
+  if (rating.kind === 'thumbs') return t('votes', { count: rating.count })
+  const count = t('ratings', { count: rating.count })
+  return rating.score === null ? count : `${t('score', { score: rating.score.toFixed(1) })} · ${count}`
 })
 
 const currentContext = (generation: number, pageId: number): boolean =>
@@ -172,23 +177,23 @@ const fetchCurrentRating = async (keepStaleOnFailure = false): Promise<void> => 
   }
 
   try {
-    const result = await fetchPageRating(window.fetch.bind(window), pageId, 'Page rating could not be loaded.', controller.signal)
+    const result = await fetchPageRating(window.fetch.bind(window), pageId, t('loadError'), controller.signal)
     if (disposed || sequence !== requestSequence || controller.signal.aborted || props.pageId !== pageId) return
     view.value = result
     stale.value = false
     if (keepStaleOnFailure) {
       staleMessage.value = ''
-      feedback.value = 'Current totals have been refreshed. Choose a rating again if you wish.'
+      feedback.value = t('totalsRefreshed')
     }
   } catch (cause) {
     if (disposed || sequence !== requestSequence || controller.signal.aborted || props.pageId !== pageId) return
-    error.value = cause instanceof Error ? cause.message : 'Page rating could not be loaded.'
+    error.value = cause instanceof Error ? cause.message : t('loadError')
     const conflict = cause instanceof PageRatingApiError && cause.status === 409
     const accessChanged = cause instanceof PageRatingApiError && (cause.status === 401 || cause.status === 403)
     stale.value = keepStaleOnFailure || conflict || accessChanged
-    if (conflict) staleMessage.value = 'The current rating could not be reconciled. Refresh before using these controls.'
-    else if (accessChanged) staleMessage.value = 'Your session or rating access changed. Refresh current rating data before voting.'
-    else if (keepStaleOnFailure) staleMessage.value = 'Current totals could not be refreshed. Try again before voting.'
+    if (conflict) staleMessage.value = t('conflict')
+    else if (accessChanged) staleMessage.value = t('accessChanged')
+    else if (keepStaleOnFailure) staleMessage.value = t('refreshFailed')
   } finally {
     if (!disposed && sequence === requestSequence) {
       loading.value = false
@@ -233,15 +238,15 @@ const saveVote = async (value: number): Promise<void> => {
     if (!currentContext(generation, pageId)) return
     view.value = result
     stale.value = false
-    feedback.value = 'Your rating was saved.'
+    feedback.value = t('saved')
   } catch (cause) {
     if (!currentContext(generation, pageId)) return
     if (cause instanceof PageRatingApiError && cause.status === 409) {
-      await refreshAfterMutationRejection(generation, pageId, 'The active rating mode changed. Refreshing current totals before another vote.')
+      await refreshAfterMutationRejection(generation, pageId, t('modeChanged'))
     } else if (cause instanceof PageRatingApiError && (cause.status === 401 || cause.status === 403)) {
-      await refreshAfterMutationRejection(generation, pageId, 'Your session or rating access changed. Refresh current totals before voting.')
+      await refreshAfterMutationRejection(generation, pageId, t('accessChangedTotals'))
     } else {
-      error.value = cause instanceof Error ? cause.message : 'Your rating could not be saved.'
+      error.value = cause instanceof Error ? cause.message : t('saveError')
     }
   } finally {
     if (currentContext(generation, pageId)) {
@@ -264,15 +269,15 @@ const removeVote = async (): Promise<void> => {
     if (!currentContext(generation, pageId)) return
     view.value = result
     stale.value = false
-    feedback.value = 'Your rating was removed.'
+    feedback.value = t('removed')
   } catch (cause) {
     if (!currentContext(generation, pageId)) return
     if (cause instanceof PageRatingApiError && cause.status === 409) {
-      await refreshAfterMutationRejection(generation, pageId, 'The active rating mode changed. Refreshing current totals before another vote.')
+      await refreshAfterMutationRejection(generation, pageId, t('modeChanged'))
     } else if (cause instanceof PageRatingApiError && (cause.status === 401 || cause.status === 403)) {
-      await refreshAfterMutationRejection(generation, pageId, 'Your session or rating access changed. Refresh current totals before voting.')
+      await refreshAfterMutationRejection(generation, pageId, t('accessChangedTotals'))
     } else {
-      error.value = cause instanceof Error ? cause.message : 'Your rating could not be removed.'
+      error.value = cause instanceof Error ? cause.message : t('removeError')
     }
   } finally {
     if (currentContext(generation, pageId)) {
@@ -356,24 +361,21 @@ onBeforeUnmount(() => {
 
 .wiki-page-ratings__aggregate {
   flex: 0 1 auto;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
+  color: var(--wiki-text-muted);
   font-variant-numeric: tabular-nums;
   text-align: end;
 }
 
 .wiki-page-ratings__prompt {
   flex: 1 1 100%;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
+  color: var(--wiki-text-muted);
 }
 
+/* Shared async-state, sized down for the narrow rail card. */
 .wiki-page-ratings__loading {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
-  font-size: .78rem;
-  line-height: 1.4;
+  min-height: 0;
+  padding: var(--wiki-space-3);
+  justify-content: flex-start;
 }
 
 .wiki-page-ratings__load-error {
@@ -507,7 +509,7 @@ onBeforeUnmount(() => {
   flex: 0 1 auto;
   min-width: 0;
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .78rem;
   line-height: 1.4;
   overflow-wrap: anywhere;

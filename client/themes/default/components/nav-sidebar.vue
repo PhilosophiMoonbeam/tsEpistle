@@ -522,7 +522,7 @@ export default defineComponent({
     overflow: hidden;
     border: 1px solid transparent;
     border-radius: var(--wiki-control-radius);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
+    color: var(--wiki-text-muted);
     opacity: 1;
     transition:
       border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
@@ -615,7 +615,7 @@ export default defineComponent({
   .nav-sidebar-ancestor {
     min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
     margin-block: 0;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+    color: var(--wiki-text-muted);
 
     .v-list-item-title {
       font-size: .8125rem;
@@ -638,7 +638,7 @@ export default defineComponent({
 
   .nav-sidebar-folder-chevron {
     flex: 0 0 auto;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+    color: var(--wiki-text-muted);
     opacity: .72;
   }
 
@@ -672,7 +672,7 @@ export default defineComponent({
     height: calc(var(--wiki-control-height) - var(--wiki-space-2));
     border: 1px solid transparent;
     border-radius: var(--wiki-control-radius);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+    color: var(--wiki-text-muted);
 
     &:hover {
       border-color: color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent);
@@ -684,7 +684,7 @@ export default defineComponent({
   .nav-sidebar-subheader {
     min-height: var(--wiki-space-8);
     padding-inline: var(--wiki-space-4);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 52%, transparent);
+    color: var(--wiki-text-muted);
     font-size: var(--wiki-label-size);
     font-weight: var(--wiki-label-weight);
     letter-spacing: .085em;
@@ -931,7 +931,7 @@ export default defineComponent({
   .nav-sidebar-mode {
     border-color: color-mix(in srgb, var(--wiki-surface-border-strong) 70%, transparent);
     background: color-mix(in srgb, var(--wiki-surface-raised) 50%, transparent);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
+    color: var(--wiki-text-muted);
 
     &:hover {
       border-color: color-mix(in srgb, var(--wiki-accent-spectral) 35%, var(--wiki-surface-border-strong));

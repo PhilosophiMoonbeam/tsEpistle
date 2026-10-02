@@ -476,7 +476,7 @@
             margin-inline-start: .5rem;
             padding-inline-start: .75rem;
             border-inline-start: 1px solid var(--wiki-surface-border, mc('grey', '300'));
-            color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+            color: var(--wiki-text-muted);
             font-style: normal;
             font-weight: 400;
           }
@@ -727,7 +727,7 @@
       padding: var(--wiki-space-2, .5rem) var(--wiki-space-4, 1rem);
       border-bottom: 1px solid var(--wiki-surface-border);
       background: var(--wiki-surface-raised);
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+      color: var(--wiki-text-muted);
       font-family: var(--wiki-font-mono);
       font-size: var(--wiki-label-size);
       font-weight: var(--wiki-label-weight);
@@ -792,7 +792,7 @@
       border-start-end-radius: calc(var(--wiki-panel-radius, 1rem) - 1px);
       border-end-start-radius: var(--wiki-radius-sm, .75rem);
       background: color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent);
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+      color: var(--wiki-text-muted);
       font-family: var(--wiki-font-mono);
       font-size: .75rem;
       font-weight: 600;
@@ -1120,7 +1120,7 @@
 
     figcaption {
       padding: var(--wiki-space-1, .25rem) var(--wiki-space-4, 1rem);
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+      color: var(--wiki-text-muted);
       font-size: .8125rem;
       line-height: 1.5;
       text-align: center;
@@ -1130,7 +1130,7 @@
   figcaption,
   .imageblock > .title {
     margin-block-start: var(--wiki-space-2, .5rem);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+    color: var(--wiki-text-muted);
     font-size: .8125rem;
     line-height: 1.5;
     text-align: center;
@@ -1149,13 +1149,49 @@
     box-shadow: var(--wiki-shadow-inset);
 
     > summary {
+      // Replace the native black triangle with a themed chevron that turns
+      // when the disclosure opens (and points the other way in RTL).
+      // Block (not flex) so text, links and emoji inside the summary keep
+      // their normal inline flow and spacing.
+      display: block;
       padding: calc(var(--wiki-space-3, .75rem) * .85) calc(var(--wiki-space-4, 1rem) * .85);
       color: rgb(var(--v-theme-on-surface));
       font-weight: 650;
+      list-style: none;
       cursor: pointer;
+
+      &::-webkit-details-marker {
+        display: none;
+      }
+
+      &::marker {
+        content: '';
+      }
+
+      &::before {
+        display: inline-block;
+        width: .5em;
+        height: .5em;
+        margin-inline: .15em .6em;
+        vertical-align: .08em;
+        border-block-start: .14em solid currentColor;
+        border-inline-end: .14em solid currentColor;
+        color: var(--wiki-accent-ink, currentColor);
+        content: '';
+        transform: rotate(45deg);
+        transition: transform var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, ease);
+      }
+
+      &:dir(rtl)::before {
+        transform: rotate(-45deg);
+      }
 
       &:hover {
         background: color-mix(in srgb, var(--wiki-accent-warm) 7%, transparent);
+
+        &::before {
+          color: var(--wiki-accent-warm, currentColor);
+        }
       }
 
       &:focus {
@@ -1170,7 +1206,9 @@
 
       > h1, > h2, > h3, > h4, > h5, > h6 {
         display: inline-block;
-        width: 95%;
+        width: calc(100% - 1.5em);
+        margin-block: 0;
+        vertical-align: middle;
 
         &:first-child {
           margin-block-start: 0;
@@ -1189,6 +1227,14 @@
     &[open] {
       padding: var(--wiki-space-4, 1rem);
 
+      > summary::before {
+        transform: rotate(135deg);
+      }
+
+      > summary:dir(rtl)::before {
+        transform: rotate(-135deg);
+      }
+
       > summary {
         margin: calc(var(--wiki-space-4, 1rem) * -1) calc(var(--wiki-space-4, 1rem) * -1) var(--wiki-space-4, 1rem);
         border-bottom: 1px solid var(--wiki-surface-border);
@@ -1206,7 +1252,7 @@
     margin-block-start: var(--wiki-space-12, 3rem);
     padding-block-start: var(--wiki-space-4, 1rem);
     border-block-start: 1px solid var(--wiki-surface-border);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+    color: var(--wiki-text-muted);
     font-size: .875rem;
 
     hr.footnotes-sep {
@@ -1348,14 +1394,14 @@
 
   .content-extension-gallery__caption {
     padding: .5rem .25rem 0;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+    color: var(--wiki-text-muted);
     font-size: .9375rem;
     text-align: center;
   }
 
   .content-extension-index__status {
     margin: 0;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+    color: var(--wiki-text-muted);
   }
 
   .content-extension-index__link {
@@ -1411,7 +1457,7 @@
 
   .content-extension-index__description {
     margin-top: .2rem;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+    color: var(--wiki-text-muted);
     font-size: .9rem;
   }
 
@@ -1435,7 +1481,7 @@
     border: 0;
     border-inline-end: 1px solid var(--wiki-surface-border);
     background: transparent;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+    color: var(--wiki-text-muted);
     font: inherit;
     font-size: .875rem;
     font-weight: 650;
@@ -1495,7 +1541,7 @@
   }
 
   .content-extension-spoiler__hint {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+    color: var(--wiki-text-muted);
     font-size: .85rem;
   }
 
@@ -1542,7 +1588,7 @@
 
     dt {
       margin-top: 0;
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+      color: var(--wiki-text-muted);
       font-weight: 600;
     }
 
@@ -1597,7 +1643,7 @@
   .content-extension-media__caption,
   .content-extension-diagram__caption {
     margin-top: .5rem;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+    color: var(--wiki-text-muted);
     font-size: .9rem;
   }
 
@@ -1909,7 +1955,8 @@
   // ---------------------------------
 
   @media (prefers-reduced-motion: reduce) {
-    * {
+    *,
+    details > summary::before {
       scroll-behavior: auto !important;
       transition-duration: .001ms !important;
       animation-duration: .001ms !important;
@@ -1978,7 +2025,8 @@ html[data-reader-motion='reduced'] .wiki-page {
 
   &__caption {
     max-width: 70ch;
-    color: mc('grey', '200');
+    // The gallery dialog is always a dark scrim, independent of the theme.
+    color: rgb(255 255 255 / 86%);
     text-align: center;
   }
 
@@ -2060,32 +2108,12 @@ html[data-reader-motion='reduced'] .wiki-page {
 // COMMENTS
 // ---------------------------------
 
+// Discussion panel chrome lives in page.vue; only the thread surface is set
+// here, from theme tokens so custom palettes and dark mode follow.
 .comments {
-  &-container {
-    border-radius: 7px;
-  }
-
-  &-header {
-    color: #FFF;
-    padding: 8px 20px;
-    font-size: 16px;
-    font-weight: 500;
-    background-color: mc('blue-grey', '500');
-    border-radius: 7px 7px 0 0;
-
-    @at-root .v-theme--dark & {
-      background-color: lighten(mc('blue-grey', '900'), 5%);
-    }
-  }
-
   &-main {
-    background-color: mc('blue-grey', '50');
-    border-radius: 0 0 7px 7px;
     padding: 20px;
-
-    @at-root .v-theme--dark & {
-      background-color: darken(mc('grey', '900'), 5%);
-    }
+    background-color: var(--wiki-surface-sunken);
   }
 }
 
@@ -2115,7 +2143,7 @@ html[data-reader-motion='reduced'] .wiki-page {
     margin-left: 0 !important;
 
     > .v-toolbar {
-      border: 1px solid mc('grey', '300') !important;
+      border: 1px solid currentColor !important;
       border-radius: 7px !important;
 
       & + .v-divider {
