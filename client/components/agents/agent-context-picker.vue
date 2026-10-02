@@ -83,7 +83,7 @@
                   icon="mdi-check"
                   variant="text"
                   color="success"
-                  :aria-label="selectedRows.length ? $t('common:agentContextPicker.addSelectedSource', { selectedRowsCount: selectedRows.length, selectedRows: selectedRows.length === 1 ? '' : 's', interpolation: { escapeValue: false } }) : $t('common:agentContextPicker.noPagesSelectedYet')"
+                  :aria-label="selectedRows.length ? $t('common:agentContextPicker.addSelectedSource', { count: selectedRows.length, interpolation: { escapeValue: false } }) : $t('common:agentContextPicker.noPagesSelectedYet')"
                   :loading="addingSources"
                   :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked"
                   type="button"

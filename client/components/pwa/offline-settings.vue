@@ -616,7 +616,7 @@ onBeforeUnmount(() => {
           </div>
           <p v-if="removeNotice" class="offline-settings__notice" role="status">{{ removeNotice }}</p>
           <p v-if="clearNotice" class="offline-settings__notice" role="status">{{ clearNotice }}</p>
-          <p v-if="storageEstimate?.lockedDraftCount" class="text-medium-emphasis">{{ $t('common:offlineSettings.localDraftProtectedReconnect', { lockedDraftCount: storageEstimate.lockedDraftCount, tValue: $t('common:offlineSettings.sCount', { count: storageEstimate.lockedDraftCount }), interpolation: { escapeValue: false } }) }}</p>
+          <p v-if="storageEstimate?.lockedDraftCount" class="text-medium-emphasis">{{ $t('common:offlineSettings.localDraftProtectedReconnect', { count: storageEstimate.lockedDraftCount, interpolation: { escapeValue: false } }) }}</p>
         </v-card>
       </aside>
     </div>
