@@ -3,10 +3,12 @@ import { OfflineGenerationFencedError, OfflinePolicyRevisionFencedError, Offline
 import { encryptOfflinePrivateRecord, generateOfflineReadingPairId, type OfflinePrivateRecordSelectors } from './offline-crypto.ts'
 import { isCurrentOfflineReadingHandle, type OfflineReadingHandleV1 } from './offline-session.ts'
 import {
+  offlineIneligibleReason,
   OfflinePrivateSearchDocumentV1Schema,
   OfflineSnapshotSelectorSchema,
   OFFLINE_AUTOMATIC_PAGE_LIMIT,
   OfflineSyncDiagnosticsSchema,
+  type OfflineIneligibleReason,
   type OfflinePagePolicyRecord,
   type OfflinePageSnapshotV1,
   type OfflinePolicySnapshot,
@@ -191,6 +193,10 @@ const isAuthoritativeIneligibility = (error: unknown): boolean => {
   const status = errorStatus(error)
   return status === 403 || status === 404 || status === 410 || status === 422
 }
+
+/** The server's refusal reason code from a snapshot request, validated against the shared list. */
+const refusalReason = (error: unknown): OfflineIneligibleReason | null =>
+  error && typeof error === 'object' ? offlineIneligibleReason(Reflect.get(error, 'offlineReason')) : null
 
 const errorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
@@ -1049,7 +1055,8 @@ export class OfflineSyncCoordinator {
                     ? await this.awaitCurrent(
                         this.options.storage.markPrivatePageIneligible(privateHandle, candidate.selector, {
                           expectedSessionGeneration: generation,
-                          expectedPolicyRevision: revision
+                          expectedPolicyRevision: revision,
+                          reason: refusalReason(error)
                         }),
                         context,
                         true
@@ -1057,7 +1064,8 @@ export class OfflineSyncCoordinator {
                     : await this.awaitCurrent(
                         this.options.storage.markPageIneligible(candidate.selector, {
                           expectedSessionGeneration: generation,
-                          expectedPolicyRevision: revision
+                          expectedPolicyRevision: revision,
+                          reason: refusalReason(error)
                         }),
                         context,
                         true

@@ -1,3 +1,5 @@
+import type { OfflineIneligibleReason } from '../../shared/offline.ts'
+
 export type OfflineSavedPageState = 'saved' | 'expiring' | 'sync-pending' | 'stale'
 export type OfflinePageAccessState = 'setup-required' | 'locked'
 export const offlinePrivateAccessStatus = (state: OfflinePageAccessState): string =>
@@ -73,6 +75,8 @@ export interface OfflinePageControlInput {
   /** The server refused a copy of a page the reader did not pick. */
   readonly quietIneligibility: boolean
   readonly localReason: OfflineLocalIneligibility
+  /** The reason code the server sent with its last refusal, if any. */
+  readonly serverReason?: OfflineIneligibleReason | null
   /** The server connection is verified. */
   readonly connected: boolean
   /** Another offline change for this page is still running. */
@@ -105,6 +109,20 @@ const LOCAL_REASONS: Record<Exclude<OfflineLocalIneligibility, ''>, [string, str
   unpublished: ['reasonUnpublished', 'Unpublished pages cannot be saved offline.'],
   protected: ['reasonProtected', 'Password-protected pages cannot be saved offline.'],
   editor: ['reasonEditor', 'Pages from this editor cannot be saved offline.']
+}
+
+const SERVER_REASONS: Record<OfflineIneligibleReason, [string, string]> = {
+  unpublished: ['reasonUnpublished', 'Unpublished pages cannot be saved offline.'],
+  'render-pending': ['reasonRenderPending', 'The wiki has not rendered the latest version of this page yet.'],
+  editor: ['reasonEditor', 'Pages from this editor cannot be saved offline.'],
+  'custom-content': ['reasonCustomContent', 'Pages with scripts or custom content cannot be saved offline.'],
+  'too-large': ['reasonTooLarge', 'This page is too large to save offline.']
+}
+
+/** One localized sentence for a server refusal reason, or '' when the server sent none. */
+export const offlineServerReasonDetail = (reason: OfflineIneligibleReason | null | undefined, t: OfflineTranslate): string => {
+  const entry = reason ? SERVER_REASONS[reason] : undefined
+  return entry ? tr(t, entry[0], entry[1]) : ''
 }
 
 /** Short source text for a saved page. Tag names stay hidden on locked private paths. */
@@ -181,8 +199,14 @@ export const offlinePageControl = (input: OfflinePageControlInput, t: OfflineTra
   if (input.state === 'ineligible') {
     if (input.excluded && !holdsCopy)
       return result('off', 'neutral', 'mdi-cloud-download-outline', 'save', tr(t, 'excludedTitle', 'Not saved offline'), tr(t, 'excludedDetail', 'You removed this page, so it is not saved automatically. Select to save it.'))
+    // A known server reason replaces the general refusal sentence.
+    const reason = offlineServerReasonDetail(input.serverReason, t)
     if (holdsCopy)
-      return result('ineligible', 'muted', 'mdi-cloud-off-outline', 'remove', tr(t, 'ineligibleTitle', 'Cannot save offline'), tr(t, 'deniedSelectedDetail', 'The wiki does not allow an offline copy of this page. Select to remove it from your saved pages.'))
+      return result('ineligible', 'muted', 'mdi-cloud-off-outline', 'remove', tr(t, 'ineligibleTitle', 'Cannot save offline'), reason
+        ? `${reason} ${tr(t, 'deniedRemoveAction', 'Select to remove it from your saved pages.')}`
+        : tr(t, 'deniedSelectedDetail', 'The wiki does not allow an offline copy of this page. Select to remove it from your saved pages.'))
+    if (reason)
+      return result('ineligible', 'muted', 'mdi-cloud-off-outline', 'save', tr(t, 'ineligibleTitle', 'Cannot save offline'), `${reason} ${tr(t, 'deniedRetryAction', 'Select to try again.')}`)
     return result('ineligible', 'muted', 'mdi-cloud-off-outline', 'save', tr(t, 'ineligibleTitle', 'Cannot save offline'), input.quietIneligibility
       ? tr(t, 'deniedDetail', 'The wiki does not allow an offline copy of this page now. Select to try again.')
       : tr(t, 'deniedPrivateDetail', 'This page is not available offline for your account. Select to try again.'))

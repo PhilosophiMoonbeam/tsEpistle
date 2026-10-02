@@ -132,6 +132,19 @@ describe('offline page toggle', () => {
     expect(denied.detail).toContain('does not allow an offline copy')
   })
 
+  it('names the server refusal reason when the last sync stored one', () => {
+    const renderPending = offlinePageControl({ ...base, state: 'ineligible', serverReason: 'render-pending' }, t)
+    expect(renderPending).toMatchObject({ state: 'ineligible', tone: 'muted', action: 'save', blocked: false })
+    expect(renderPending.detail).toBe('The wiki has not rendered the latest version of this page yet. Select to try again.')
+    const held = offlinePageControl({ ...base, state: 'ineligible', selected: true, manual: true, serverReason: 'custom-content' }, t)
+    expect(held).toMatchObject({ action: 'remove', pressed: true })
+    expect(held.detail).toBe('Pages with scripts or custom content cannot be saved offline. Select to remove it from your saved pages.')
+    expect(offlinePageControl({ ...base, state: 'ineligible', serverReason: 'too-large' }, t).detail).toContain('too large')
+    // Without a reason the general sentence stays; an excluded page still explains the exclusion.
+    expect(offlinePageControl({ ...base, state: 'ineligible', serverReason: null }, t).detail).toContain('not available offline for your account')
+    expect(offlinePageControl({ ...base, state: 'ineligible', excluded: true, serverReason: 'editor' }, t).detail).toContain('You removed this page')
+  })
+
   it('blocks a second change while one runs and shows the failure detail', () => {
     const busy = offlinePageControl({ ...saved, busy: true }, t)
     expect(busy).toMatchObject({ action: 'remove', blocked: true, detail: 'Wait for the current offline change to finish.' })
