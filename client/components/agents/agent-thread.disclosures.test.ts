@@ -101,6 +101,8 @@ const renderDuplicateSources = async (): Promise<string> => {
         thread,
         threadPresentation,
         threadProjection,
+        artifactPlacement: { byMessage: new Map(), unplaced: [] },
+        artifactTimeLabel: () => '',
         decidingApprovalId: null,
         canSubmit: true,
         sourceDomId,
@@ -114,7 +116,7 @@ const renderDuplicateSources = async (): Promise<string> => {
   )
   const emptyStub = defineComponent({ render: () => null })
   const app = createSSRApp(component)
-  for (const name of ['AgentAnswerActions', 'WikiSourcePreview', 'AgentMarkdown', 'AgentTaskProgress', 'AgentToolCard', 'v-avatar', 'v-btn', 'v-icon']) {
+  for (const name of ['AgentAnswerActions', 'AgentArtifactGrid', 'WikiSourcePreview', 'AgentMarkdown', 'AgentTaskProgress', 'AgentToolCard', 'v-avatar', 'v-btn', 'v-icon']) {
     app.component(name, emptyStub)
   }
   return renderToString(app)

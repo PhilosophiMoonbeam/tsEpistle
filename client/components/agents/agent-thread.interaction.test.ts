@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { compileTemplate, parse } from '@vue/compiler-sfc'
+import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { RenderFunction } from 'vue'
 import type {
@@ -12,7 +12,7 @@ import type {
   AgentThreadState,
   AgentToolCallView
 } from '../../../shared/agents/contracts.ts'
-import { agentLiveAnnouncement, buildAgentThreadPresentation } from './agent-thread-presentation.ts'
+import { agentLiveAnnouncement, buildAgentThreadPresentation, placeAgentArtifacts } from './agent-thread-presentation.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { wikiSourceSelectorFromHref } from '../../../shared/wiki-source.ts'
 import { resolveUserPicture, type UserPicture } from '../../helpers/user-picture.ts'
@@ -38,6 +38,20 @@ const compiledTemplate = compileTemplate({
 })
 const renderAgentThread = new Function('Vue', compiledTemplate.code)(Vue) as RenderFunction
 
+// Render the real screenshot grid child so placement and alt text are checked end to end.
+Bun.plugin({
+  name: 'agent-thread-real-artifact-grid',
+  setup(builder) {
+    builder.onLoad({ filter: /agent-artifact-grid\.vue$/ }, async ({ path: filename }) => {
+      const parsed = parse(await Bun.file(filename).text(), { filename })
+      if (parsed.errors.length) throw parsed.errors[0]
+      const script = compileScript(parsed.descriptor, { id: 'agent-thread-real-artifact-grid', genDefaultAs: '__component', inlineTemplate: true })
+      return { loader: 'ts', contents: `${script.content}\nexport default __component;` }
+    })
+  }
+})
+const AgentArtifactGrid = (await import('./agent-artifact-grid.vue')).default
+
 const scriptWithoutImports = parsedSfc.descriptor.scriptSetup.content.replace(/import[\s\S]*?from\s+['"][^'"]+['"]\s*/g, '')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scriptWithoutImports)
 const evaluateAgentThread = new Function(
@@ -50,8 +64,9 @@ const evaluateAgentThread = new Function(
   'agentLiveAnnouncement',
   'buildAgentThreadPresentation',
   'agentMediaContentUrl',
+  'placeAgentArtifacts',
   `${executableScript}
-return { emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, sourceDomId, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
+return { artifactPlacement, artifactTimeLabel, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, sourceDomId, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const NullStub = Vue.defineComponent({
@@ -245,7 +260,8 @@ const mountThread = async (
         wikiSourceSelectorFromHref,
         agentLiveAnnouncement,
         buildAgentThreadPresentation,
-        agentMediaContentUrl
+        agentMediaContentUrl,
+        placeAgentArtifacts
       )
     },
     render: renderAgentThread
@@ -268,6 +284,7 @@ const mountThread = async (
   app.component('ControlBorderBeam', BeamStub)
   app.component('v-btn', ButtonStub)
   app.component('WikiSourcePreview', PreviewStub)
+  app.component('AgentArtifactGrid', AgentArtifactGrid)
   app.mount(host)
   await settle()
   const unmount = (): void => {
@@ -488,6 +505,33 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(mounted.host.querySelector('.artifact-card')).not.toBeNull()
   })
 
+  it('shows each screenshot under the response that captured it, with a readable time in its alt text', async () => {
+    const screenshot = (id: string, createdAt: string): AgentArtifactView => ({
+      id, kind: 'browser-screenshot', mimeType: 'image/png', byteLength: 128, width: 640, height: 480, createdAt, expiresAt: null, available: true
+    })
+    const mounted = await mountThread(makeThread('session-artifact-placement', {
+      messages: [
+        makeMessage({ id: 'assistant-early', runId: 'run-1', ordinal: 1, status: 'complete', content: 'First answer.', createdAt: '2026-09-03T10:00:00.000Z' }),
+        makeMessage({ id: 'assistant-late', runId: 'run-2', ordinal: 2, status: 'complete', content: 'Second answer.', createdAt: '2026-09-03T10:05:00.000Z' })
+      ],
+      artifacts: [
+        screenshot('artifact-before', '2026-09-03T09:00:00.000Z'),
+        screenshot('artifact-early', '2026-09-03T10:01:00.000Z'),
+        screenshot('artifact-late', '2026-09-03T10:06:00.000Z')
+      ]
+    }))
+    const messages = Array.from(mounted.host.querySelectorAll<HTMLElement>('article.agent-message'))
+    const sources = (root: Element | null | undefined): string[] =>
+      Array.from(root?.querySelectorAll('.artifact-card img') ?? []).map(image => image.getAttribute('src') ?? '')
+    expect(sources(messages[0])).toEqual(['/_api/agents/artifacts/artifact-early/content'])
+    expect(sources(messages[1])).toEqual(['/_api/agents/artifacts/artifact-late/content'])
+    const trailing = mounted.host.querySelector('.agent-thread > .artifact-grid')
+    expect(sources(trailing)).toEqual(['/_api/agents/artifacts/artifact-before/content'])
+    const alt = messages[0]?.querySelector('.artifact-card img')?.getAttribute('alt') ?? ''
+    expect(alt.startsWith('Browser screenshot, ')).toBe(true)
+    expect(alt).not.toContain('2026-09-03T')
+  })
+
   it('renders detached attachments as muted chips without a download link and keeps unavailable media messaging', async () => {
     const mounted = await mountThread(
       makeThread('session-detached', {
@@ -533,18 +577,19 @@ describe('AgentThread live status and interaction behavior', () => {
     buttonWithText('Re-attach')?.click()
     await settle()
     expect(mounted.emittedReattachments).toEqual([])
-    expect(buttonWithText('Confirm re-attach?')).toBeTruthy()
+    expect(figure.querySelector('.agent-message__media-confirm')?.textContent).toContain('Add this file to the next message again?')
+    expect(buttonWithText('Re-attach')).toBeTruthy()
     expect(buttonWithText('Cancel')).toBeTruthy()
 
     buttonWithText('Cancel')?.click()
     await settle()
     expect(mounted.emittedReattachments).toEqual([])
     expect(buttonWithText('Re-attach')).toBeTruthy()
-    expect(buttonWithText('Confirm re-attach?')).toBeUndefined()
+    expect(figure.querySelector('.agent-message__media-confirm')).toBeNull()
 
     buttonWithText('Re-attach')?.click()
     await settle()
-    buttonWithText('Confirm re-attach?')?.click()
+    buttonWithText('Re-attach')?.click()
     await settle()
     expect(mounted.emittedReattachments).toEqual([[media]])
     expect(buttonWithText('Re-attach')).toBeTruthy()
