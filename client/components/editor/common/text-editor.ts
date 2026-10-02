@@ -89,8 +89,13 @@ const markerField = StateField.define<DecorationSet>({
   provide: field => EditorView.decorations.from(field)
 })
 
+const EDITOR_SELECTION_TINT = 'color-mix(in srgb, rgb(var(--v-theme-primary)) 75%, rgb(var(--v-theme-on-surface)))'
+export const EDITOR_SELECTION = `var(--wiki-editor-selection, color-mix(in srgb, ${EDITOR_SELECTION_TINT} 42%, transparent))`
+export const EDITOR_SELECTION_INACTIVE = `var(--wiki-editor-selection-inactive, color-mix(in srgb, ${EDITOR_SELECTION_TINT} 28%, transparent))`
+
 const textEditorTheme = EditorView.theme({
   '&': {
+    isolation: 'isolate',
     height: '100%',
     backgroundColor: 'rgb(var(--v-theme-surface))',
     color: 'rgb(var(--v-theme-on-surface))',
@@ -105,11 +110,17 @@ const textEditorTheme = EditorView.theme({
     color: 'rgba(var(--v-theme-on-surface), .54)',
     borderRight: '1px solid rgba(var(--v-theme-on-surface), .12)'
   },
-  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .06)' },
-  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, & > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
-    backgroundColor: 'rgba(var(--v-theme-primary), .24)'
+  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .04)' },
+  // One selection token for focused, unfocused and native selections. The tint
+  // mixes the palette primary with on-surface ink so pale or custom palettes
+  // still separate the selection from the editor background.
+  '& > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    backgroundColor: EDITOR_SELECTION_INACTIVE
   },
-  '::selection': { backgroundColor: 'rgba(var(--v-theme-primary), .24)' },
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    backgroundColor: EDITOR_SELECTION
+  },
+  '::selection': { backgroundColor: EDITOR_SELECTION },
   '.cm-buttonmarker': {
     backgroundColor: 'rgba(var(--v-theme-primary), .18)',
     border: '1px solid rgba(var(--v-theme-primary), .7)',

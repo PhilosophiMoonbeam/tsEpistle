@@ -824,7 +824,9 @@ describe('modern editor shell interaction contract', () => {
       /&-editor\s*\{[\s\S]*background:\s*rgb\(var\(--v-theme-background\)\);[\s\S]*flex:\s*1 1 0;[\s\S]*min-width:\s*0;[\s\S]*overflow:\s*hidden;/
     )
     expect(markdownStyle).toMatch(/&-preview\s*\{[\s\S]*background:\s*rgb\(var\(--v-theme-background\)\);[\s\S]*flex:\s*1 1 0;[\s\S]*min-width:\s*0;/)
-    expect(markdownStyle).toContain('background: rgb(var(--v-theme-background)) !important;')
+    // CodeMirror's selection layer sits behind content inside .cm-scroller; nothing in that stack may be opaque.
+    expect(markdownStyle).not.toMatch(/\.cm-scroller\s*\{[^}]*background:\s*rgb/)
+    expect(markdownStyle).toMatch(/\.cm-scroller,\s*\.cm-content\s*\{\s*background:\s*transparent;/)
     expect(markdownStyle).toMatch(/&-preview-enter-active,[\s\S]*max-width:\s*50%;[\s\S]*width:\s*100%;/)
     expect(markdownStyle).toMatch(
       /&-sysbar\s*\{[\s\S]*position:\s*static !important;[\s\S]*background:\s*var\(--wiki-surface-raised\) !important;[\s\S]*border-top:\s*1px solid var\(--wiki-surface-border\);/

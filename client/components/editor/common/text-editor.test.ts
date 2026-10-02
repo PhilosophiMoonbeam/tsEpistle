@@ -1,6 +1,6 @@
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
-import { TextEditor } from './text-editor.ts'
+import { EDITOR_SELECTION, EDITOR_SELECTION_INACTIVE, TextEditor } from './text-editor.ts'
 
 const editors: TextEditor[] = []
 
@@ -75,5 +75,22 @@ describe('TextEditor', () => {
 
     expect(editor.wordOffsetsAt(from + 2)).toEqual({ from, to: from + 'café'.length })
     expect(editor.wordOffsetsAt(value.indexOf(','))).toBeNull()
+  })
+
+  it('paints one visible selection token for focused and unfocused editors', () => {
+    const { parent } = createEditor({ value: 'first second' })
+    const css = [
+      ...Array.from(document.querySelectorAll('style'), style => style.textContent ?? ''),
+      ...(document.adoptedStyleSheets ?? []).flatMap(sheet => Array.from(sheet.cssRules, rule => rule.cssText))
+    ].join('\n')
+    const editorClasses = Array.from(parent.querySelector('.cm-editor')?.classList ?? [])
+
+    expect(EDITOR_SELECTION).toContain('--wiki-editor-selection')
+    expect(EDITOR_SELECTION_INACTIVE).toContain('--wiki-editor-selection-inactive')
+    expect(editorClasses.length).toBeGreaterThan(1)
+    expect(css).toContain(`.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground`)
+    expect(css).toContain(EDITOR_SELECTION_INACTIVE.slice(0, 40))
+    expect(css).toContain(EDITOR_SELECTION.slice(0, 32))
+    expect(css).not.toContain('rgba(var(--v-theme-primary), .24)')
   })
 })
