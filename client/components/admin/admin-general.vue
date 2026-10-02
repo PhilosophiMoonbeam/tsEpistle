@@ -618,6 +618,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { confirmDiscard } from "../common/confirm-dialog.ts";
 import { wikiStore } from "@/store/index.ts";
 import AsyncState from "@/components/common/async-state.vue";
 import SiteBanner from "../common/site-banner.vue";
@@ -819,14 +820,14 @@ export default {
     window.clearInterval(this.clockTimer);
     window.removeEventListener("beforeunload", this.beforeUnload);
   },
-  beforeRouteLeave(): boolean {
+  beforeRouteLeave(): Promise<boolean> {
     return this.canLeave();
   },
-  beforeRouteUpdate(to, from): boolean {
+  async beforeRouteUpdate(to, from): Promise<boolean> {
     return (
       !this.busy &&
       !this.initializing &&
-      (to.path === from.path || this.canLeave())
+      (to.path === from.path || (await this.canLeave()))
     );
   },
   methods: {
@@ -866,7 +867,7 @@ export default {
     },
     async reload() {
       if (this.busy || this.initializing) return;
-      if (this.dirty && !window.confirm("Discard unsaved workspace changes?"))
+      if (this.dirty && !(await confirmDiscard("Discard unsaved workspace changes?")))
         return;
       await this.load();
     },
@@ -1028,9 +1029,9 @@ export default {
     async reloadReview() {
       if (
         this.busy ||
-        !window.confirm(
+        !(await confirmDiscard(
           "Discard this review and load saved workspace settings?",
-        )
+        ))
       )
         return;
       this.reviewing = false;
@@ -1054,12 +1055,12 @@ export default {
         this.initializing = false;
       }
     },
-    canLeave(): boolean {
+    async canLeave(): Promise<boolean> {
       return (
         !this.busy &&
         !this.initializing &&
         ((!this.dirty && !(this.reviewing && this.reason)) ||
-          window.confirm("Discard unsaved workspace changes?"))
+          (await confirmDiscard("Discard unsaved workspace changes?")))
       );
     },
     beforeUnload(event: BeforeUnloadEvent) {

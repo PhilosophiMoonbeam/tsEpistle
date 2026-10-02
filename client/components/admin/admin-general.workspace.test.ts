@@ -2,6 +2,11 @@ import fs from 'node:fs'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { generalPolicyDefaults, generalFieldLabels, validateGeneralPolicy, generalChangedFields, externalSourceUrl } from '../../../shared/general-policy.ts'
 import { siteBannerState } from '../../../shared/site-banner.ts'
+// The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
+const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
+  confirmDiscard: async (title: string) => host.confirm(title),
+  requestConfirmation: async ({ title }: { title: string }) => host.confirm(title)
+})
 const script = fs.readFileSync('client/components/admin/admin-general.vue', 'utf8').match(/<script lang="ts">([\s\S]*?)<\/script>/)![1]!
 const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import[\s\S]*?from ['"][^'"]+['"];?\s*$/gm, '').replace('export default', 'const component ='))
 const snapshot = { policy: { ...structuredClone(generalPolicyDefaults), title: 'Saved workspace', host: 'https://wiki.example.com' }, fingerprint: 'review-one', history: [], runtime: { state: 'applied', observedAt: '2026-09-06T00:00:00Z' } }
@@ -9,6 +14,7 @@ function arrange(overrides = {}) {
   const transport = { fetchGeneralWorkspace: vi.fn().mockResolvedValue(structuredClone(snapshot)), saveGeneralWorkspace: vi.fn().mockResolvedValue({ activation: 'applied' }), retryGeneralRuntime: vi.fn().mockResolvedValue({ activation: 'applied' }), ...overrides }
   const window = { confirm: vi.fn().mockReturnValue(true), scrollTo: vi.fn() }, wikiStore = { site: {} }
   const deps = { AsyncState: {}, SiteBanner: {}, GeneralLogoManager: {}, wikiStore, generalFieldLabels, validateGeneralPolicy, generalChangedFields, externalSourceUrl, siteBannerState, renderFooterMarkdown: (value: string) => value, getErrorMessage: (e: Error) => e.message, window, ...transport }
+  Object.assign(deps, confirmStubs(window))
   const component = new Function(...Object.keys(deps), compiled + ';return component')(...Object.values(deps))
   const state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() }, $t: (value: string) => value }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
@@ -24,7 +30,7 @@ describe('General reviewed workspace', () => {
     let release: (value: unknown) => void = () => {}
     const { state, transport, component } = arrange({ saveGeneralWorkspace: vi.fn(() => new Promise(resolve => { release = resolve })) })
     await state.load(); state.draft.title = 'Reviewed name'; state.review(); state.reason = 'Make the workspace recognizable'; const pending = state.confirm(); state.draft.title = 'Later mutation'
-    expect(transport.saveGeneralWorkspace.mock.calls[0]?.[0].title).toBe('Reviewed name'); expect(state.canLeave()).toBe(false); expect(component.beforeRouteUpdate.call(state,{path:'/general'},{path:'/general'})).toBe(false); release({ activation: 'applied' }); await pending
+    expect(transport.saveGeneralWorkspace.mock.calls[0]?.[0].title).toBe('Reviewed name'); await expect(state.canLeave()).resolves.toBe(false); await expect(component.beforeRouteUpdate.call(state,{path:'/general'},{path:'/general'})).resolves.toBe(false); release({ activation: 'applied' }); await pending
   })
   it('retains reasons on conflicts and requires explicit reload before a repeat save', async () => {
     const { state, transport, window } = arrange(); await state.load(); state.draft.title = 'Draft'; state.review(); state.reason = 'Describe the change'; transport.saveGeneralWorkspace.mockRejectedValue(Object.assign(new Error('Settings changed'),{status:409})); await state.confirm(); await state.confirm(); expect(transport.saveGeneralWorkspace).toHaveBeenCalledOnce(); expect(state.reason).toBe('Describe the change'); expect(state.stale).toBe(true); window.confirm.mockReturnValue(false); await state.reloadReview(); expect(state.reviewing).toBe(true); window.confirm.mockReturnValue(true); await state.reloadReview(); expect(state.dirty).toBe(false)
@@ -38,6 +44,6 @@ describe('General reviewed workspace', () => {
   })
   it('suppresses outdated reads and protects drafts from route changes', async () => {
     let release: (value: unknown) => void = () => {}
-    const {state,window}=arrange({fetchGeneralWorkspace:vi.fn().mockImplementationOnce(()=>new Promise(resolve=>{release=resolve})).mockResolvedValue({...snapshot,fingerprint:'new'})}); const first=state.load(); await state.load(); release(snapshot); await first; expect(state.saved.fingerprint).toBe('new'); state.draft.title='Draft'; window.confirm.mockReturnValue(false); expect(state.canLeave()).toBe(false); await state.reload(); expect(state.draft.title).toBe('Draft')
+    const {state,window}=arrange({fetchGeneralWorkspace:vi.fn().mockImplementationOnce(()=>new Promise(resolve=>{release=resolve})).mockResolvedValue({...snapshot,fingerprint:'new'})}); const first=state.load(); await state.load(); release(snapshot); await first; expect(state.saved.fingerprint).toBe('new'); state.draft.title='Draft'; window.confirm.mockReturnValue(false); await expect(state.canLeave()).resolves.toBe(false); await state.reload(); expect(state.draft.title).toBe('Draft')
   })
 })

@@ -7,6 +7,11 @@ import {
   securityChangedFields,
   securityEndsSessions
 } from '../../../shared/security-policy.ts'
+// The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
+const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
+  confirmDiscard: async (title: string) => host.confirm(title),
+  requestConfirmation: async ({ title }: { title: string }) => host.confirm(title)
+})
 const script = fs.readFileSync('client/components/admin/admin-security.vue', 'utf8').match(/<script lang="ts">([\s\S]*?)<\/script>/)![1]!
 const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   script.replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '').replace('export default', 'const component =')
@@ -45,6 +50,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
     window,
     ...transport
   }
+  Object.assign(dependencies, confirmStubs(window))
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
   const state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
@@ -81,8 +87,8 @@ describe('Security workspace review and recovery', () => {
     const pending = state.confirm()
     state.draft.uploadMaxFileSize = 100
     expect(transport.saveSecurityWorkspace.mock.calls[0]?.[0].uploadMaxFileSize).toBe(0)
-    expect(component.beforeRouteUpdate.call(state, { path: '/security' }, { path: '/security' })).toBe(false)
-    expect(state.canLeave()).toBe(false)
+    await expect(component.beforeRouteUpdate.call(state, { path: '/security' }, { path: '/security' })).resolves.toBe(false)
+    await expect(state.canLeave()).resolves.toBe(false)
     release({ sessionsEnded: 0, currentSessionEnded: false, activation: 'applied' })
     await pending
   })
@@ -154,7 +160,7 @@ describe('Security workspace review and recovery', () => {
     transport.saveSecurityWorkspace.mockResolvedValue({ sessionsEnded: 4, currentSessionEnded: true, activation: 'applied' })
     await state.confirm()
     expect(window.location.assign).toHaveBeenCalledWith('/login?all=1')
-    expect(state.canLeave()).toBe(true)
+    await expect(state.canLeave()).resolves.toBe(true)
   })
   it('ignores outdated reads, protects unsaved navigation and scopes asset selection to this workspace', async () => {
     let release: (value: unknown) => void = () => {}
@@ -180,7 +186,7 @@ describe('Security workspace review and recovery', () => {
     expect(state.draft.authLoginBgUrl).toBe('/uploads/background.svg')
     expect(state.saved.policy.authLoginBgUrl).toBe('')
     window.confirm.mockReturnValue(false)
-    expect(state.canLeave()).toBe(false)
+    await expect(state.canLeave()).resolves.toBe(false)
     state.handleBackgroundSelection({ path: '/unrelated' })
     expect(state.draft.authLoginBgUrl).toBe('/uploads/background.svg')
   })
