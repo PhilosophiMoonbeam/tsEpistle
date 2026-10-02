@@ -24,3 +24,20 @@ export const resolvePageBrandingStyle = (value: PageBrandingView | null, failedI
     '--page-branding-alpha': dark ? '0.24' : '0.28'
   }
 }
+
+const comparablePath = (value: string): string | null => {
+  try {
+    const base = typeof window === 'undefined' ? 'http://wiki.invalid' : window.location.origin
+    const url = new URL(value, base)
+    return `${url.origin}${decodeURIComponent(url.pathname)}`
+  } catch {
+    return null
+  }
+}
+
+/** True when a page branding image is the same file as the site logo (query strings ignored). */
+export const brandingDuplicatesSiteLogo = (brandingUrl: string | null | undefined, siteLogoUrl: string | null | undefined): boolean => {
+  if (!brandingUrl || !siteLogoUrl) return false
+  const branding = comparablePath(brandingUrl)
+  return branding !== null && branding === comparablePath(siteLogoUrl)
+}
