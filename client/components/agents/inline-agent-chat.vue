@@ -13,7 +13,7 @@
       ref="panelScrim"
       type="button"
       tabindex="-1"
-      aria-label="Close Agent side panel"
+      :aria-label="$t('common:inlineAgentChat.closeAgentSidePanel')"
       @click="closePanels"
     />
 
@@ -76,7 +76,7 @@
           </div>
           <div class="inline-agent__identity">
             <div class="inline-agent__heading">
-              <h2 :id="workspaceTitleId">Wiki Agent</h2>
+              <h2 :id="workspaceTitleId">{{ $t('common:inlineAgentChat.wikiAgent') }}</h2>
               <div class="inline-agent__session-line">
                 <span class="inline-agent__session-title">
                   {{ sessionTitle }}
@@ -193,7 +193,7 @@
         class="inline-agent__progress"
         indeterminate
         color="primary"
-        aria-label="Opening conversation"
+        :aria-label="$t('common:inlineAgentChat.openingConversation')"
       />
 
       <!-- An approval review has no conversation body, so its connection
@@ -219,7 +219,7 @@
           <v-icon icon="mdi-timer-sand-complete" size="22" aria-hidden="true" />
           <div class="inline-agent__retention-copy">
             <strong>{{ $t('common:agentWorkspace.temporaryChat') }}</strong>
-            <p>Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
+            <p>{{ $t('common:inlineAgentChat.hiddenHistory') }}<span v-if="temporaryExpiry"> {{ $t('common:inlineAgentChat.expires', { temporaryExpiry, interpolation: { escapeValue: false } }) }}</span>{{ $t('common:inlineAgentChat.personalMemoryStillApplies') }}</p>
           </div>
         </div>
         <p v-else-if="sessionNotice" class="inline-agent__session-notice" role="status">{{ sessionNotice }}</p>
@@ -274,7 +274,7 @@
               class="inline-agent__transcript"
               tabindex="0"
               role="region"
-              aria-label="Conversation transcript"
+              :aria-label="$t('common:inlineAgentChat.conversationTranscript')"
               @scroll.passive="handleTranscriptScroll"
               @pointerdown="handleTranscriptEngagement"
               @focusin="handleTranscriptEngagement"
@@ -282,8 +282,8 @@
               <div v-if="loading && !thread" class="inline-agent__loading" role="status">
                 <span class="inline-agent__loading-mark" aria-hidden="true" />
                 <span>
-                  <strong>Opening conversation</strong>
-                  <small>Recovering your latest working context</small>
+                  <strong>{{ $t('common:inlineAgentChat.openingConversation') }}</strong>
+                  <small>{{ $t('common:inlineAgentChat.recoveringLatestWorkingContext') }}</small>
                 </span>
               </div>
 
@@ -335,7 +335,7 @@
                 @suggest="preparePrompt"
                 @edit-image="composer?.editImage($event)"
                 @reattach="media => void composer?.reattachMedia(media)"
-                @ask-source="source => preparePrompt(`Help me understand “${source.title}”.`, source)"
+                @ask-source="source => preparePrompt($t('common:inlineAgentChat.helpMeUnderstand', { title: source.title, interpolation: { escapeValue: false } }), source)"
                 @decision="handleDecision"
               />
               <div class="inline-agent__conversation-dock">
@@ -360,7 +360,7 @@
                 <nav
                   v-if="approvalJumpVisible || followJumpVisible"
                   class="inline-agent__jump-dock"
-                  aria-label="Conversation navigation"
+                  :aria-label="$t('common:inlineAgentChat.conversationNavigation')"
                 >
                   <v-btn
                     v-if="approvalJumpVisible"
@@ -370,7 +370,7 @@
                     prepend-icon="mdi-shield-alert-outline"
                     append-icon="mdi-arrow-down"
                     @click="jumpToApproval"
-                  >Approval required</v-btn>
+                  >{{ $t('common:inlineAgentChat.approvalRequired') }}</v-btn>
                   <v-btn
                     v-else
                     class="inline-agent__follow-jump"
@@ -410,7 +410,7 @@
                     </p>
                     <p v-if="pinStorageAvailable === false" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
                       <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
-                      <span>Pinning is available for this tab, but browser storage is unavailable; it will not survive a reload.</span>
+                      <span>{{ $t('common:inlineAgentChat.pinningAvailableTabBut') }}</span>
                     </p>
                     <p v-if="agents.contextTransferNotice" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
                       <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
@@ -548,7 +548,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="clearingUnfiledHistory || sessionMutationBusy" @click="closeClearUnfiledHistory">
-          {{ clearUnfiledCommitted ? 'Close' : 'Cancel' }}
+          {{ clearUnfiledCommitted ? $t('common:actions.close') : $t('common:actions.cancel') }}
         </v-btn>
         <v-btn
           v-if="clearUnfiledCommitted"
@@ -596,28 +596,31 @@ import { emptyAgentDraft, type AgentDraft, type AgentSearchScope } from '../../h
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const welcomeGreetings = [
-  { first: 'Pipeline looks healthy.', second: 'Budget feels nervous.' },
-  { first: 'Calendar looks spacious.', second: 'Meetings feel endless.' },
-  { first: 'Forecast brings sunshine.', second: 'Spreadsheet brings rain.' },
-  { first: 'Sales notes align.', second: 'Calendars disagree.' },
-  { first: 'Clients seem charmed.', second: 'Contracts seem haunted.' },
-  { first: 'Reports look cheerful.', second: 'Footnotes know better.' },
-  { first: 'Targets wear ties.', second: 'Budgets wear frowns.' },
-  { first: 'Inbox feels lighter.', second: 'That feels suspicious.' },
-  { first: 'Strategy feels solid.', second: 'Tactics need coffee.' },
-  { first: 'Good news pending.', second: 'Legal wants edits.' },
-  { first: 'Sales keeps momentum.', second: 'Finance has concerns.' },
-  { first: 'Revenue stays social.', second: 'Expenses stay bashful.' },
-  { first: 'Paperwork feels brave.', second: 'Signatures feel shy.' },
-  { first: 'Meeting notes bloom.', second: 'Action items migrate.' },
-  { first: 'Fresh leads arrived.', second: 'Old tabs celebrated.' },
-  { first: 'Roadmap looks brave.', second: 'Deadline looks braver.' },
-  { first: 'Client call pending.', second: 'Small talk loading.' },
-  { first: 'Briefing starts soon.', second: 'Coffee starts sooner.' },
-  { first: 'Pipeline nearly sings.', second: 'Budget nearly agrees.' },
-  { first: 'Revenue seems cheerful.', second: 'Expense reports giggle.' }
+  { first: t('common:inlineAgentChat.pipelineLooksHealthy'), second: t('common:inlineAgentChat.budgetFeelsNervous') },
+  { first: t('common:inlineAgentChat.calendarLooksSpacious'), second: t('common:inlineAgentChat.meetingsFeelEndless') },
+  { first: t('common:inlineAgentChat.forecastBringsSunshine'), second: t('common:inlineAgentChat.spreadsheetBringsRain') },
+  { first: t('common:inlineAgentChat.salesNotesAlign'), second: t('common:inlineAgentChat.calendarsDisagree') },
+  { first: t('common:inlineAgentChat.clientsSeemCharmed'), second: t('common:inlineAgentChat.contractsSeemHaunted') },
+  { first: t('common:inlineAgentChat.reportsLookCheerful'), second: t('common:inlineAgentChat.footnotesKnowBetter') },
+  { first: t('common:inlineAgentChat.targetsWearTies'), second: t('common:inlineAgentChat.budgetsWearFrowns') },
+  { first: t('common:inlineAgentChat.inboxFeelsLighter'), second: t('common:inlineAgentChat.feelsSuspicious') },
+  { first: t('common:inlineAgentChat.strategyFeelsSolid'), second: t('common:inlineAgentChat.tacticsNeedCoffee') },
+  { first: t('common:inlineAgentChat.goodNewsPending'), second: t('common:inlineAgentChat.legalWantsEdits') },
+  { first: t('common:inlineAgentChat.salesKeepsMomentum'), second: t('common:inlineAgentChat.financeHasConcerns') },
+  { first: t('common:inlineAgentChat.revenueStaysSocial'), second: t('common:inlineAgentChat.expensesStayBashful') },
+  { first: t('common:inlineAgentChat.paperworkFeelsBrave'), second: t('common:inlineAgentChat.signaturesFeelShy') },
+  { first: t('common:inlineAgentChat.meetingNotesBloom'), second: t('common:inlineAgentChat.actionItemsMigrate') },
+  { first: t('common:inlineAgentChat.freshLeadsArrived'), second: t('common:inlineAgentChat.oldTabsCelebrated') },
+  { first: t('common:inlineAgentChat.roadmapLooksBrave'), second: t('common:inlineAgentChat.deadlineLooksBraver') },
+  { first: t('common:inlineAgentChat.clientCallPending'), second: t('common:inlineAgentChat.smallTalkLoading') },
+  { first: t('common:inlineAgentChat.briefingStartsSoon'), second: t('common:inlineAgentChat.coffeeStartsSooner') },
+  { first: t('common:inlineAgentChat.pipelineNearlySings'), second: t('common:inlineAgentChat.budgetNearlyAgrees') },
+  { first: t('common:inlineAgentChat.revenueSeemsCheerful'), second: t('common:inlineAgentChat.expenseReportsGiggle') }
 ] as const
 
 const props = defineProps<{
@@ -737,7 +740,7 @@ const sendStarter = (prompt: string): void => {
 
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
-const mobilePanelQuery = '(max-width: 639.98px)'
+const mobilePanelQuery = t('common:inlineAgentChat.maxWidth63998px')
 
 const pageHintFromProps = (): AgentCurrentPageHint | null => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
@@ -784,14 +787,14 @@ const connectionBlocked = computed(() =>
   (networkPaused.value && !workspaceDisposed.value && !loading.value)
 )
 const connectionRequiredMessage = computed(() => {
-  if (pwaState.connectionState === 'server-unavailable') return 'Connection required. The server is unavailable right now.'
-  if (pwaState.connectionState === 'offline') return 'Connection required. You appear to be offline.'
-  if (networkPaused.value || waitingForConnection.value) return 'Connection required. Reconnect to continue this conversation.'
-  return 'Connection required to open or message Wiki Agent.'
+  if (pwaState.connectionState === 'server-unavailable') return t('common:inlineAgentChat.connectionRequiredServerUnavailable')
+  if (pwaState.connectionState === 'offline') return t('common:inlineAgentChat.connectionRequiredYouAppear')
+  if (networkPaused.value || waitingForConnection.value) return t('common:inlineAgentChat.connectionRequiredReconnectContinue')
+  return t('common:inlineAgentChat.connectionRequiredOpenMessage')
 })
 const providerUnavailableMessage = computed(() => props.providerEnabled
-  ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
-  : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')
+  ? t('common:inlineAgentChat.noEnabledProviderProfile')
+  : t('common:inlineAgentChat.agentInferenceCurrentlyDisabled'))
 const canSubmit = computed(() =>
   providerAvailable.value &&
   workspaceReady.value &&
@@ -819,8 +822,8 @@ const composerDraftEditable = computed(() =>
 const goalSubmitUnavailableReason = computed(() => !openGoal.value
   ? ''
   : openGoal.value.status === 'paused'
-    ? 'Resume or cancel the current goal before sending a message'
-    : 'Finish or cancel the current goal before sending a message')
+    ? t('common:inlineAgentChat.resumeCancelCurrentGoal')
+    : t('common:inlineAgentChat.finishCancelCurrentGoal'))
 /* The session-mutation lock message is delayed briefly: a quick mutation
    (Web search toggle, temporary toggle) resolves within the delay and never
    flashes "Wait for the current conversation update to finish". Longer
@@ -850,17 +853,17 @@ const submitUnavailableReason = computed(() => connectionBlocked.value
   : !providerAvailable.value
     ? providerUnavailableMessage.value
     : !workspaceReady.value
-      ? 'Reauthorizing the conversation'
+      ? t('common:inlineAgentChat.reauthorizingConversation')
       : loading.value
-        ? 'Opening conversation'
+        ? t('common:inlineAgentChat.openingConversation')
         : initializationError.value
-          ? 'The requested conversation could not be opened'
+          ? t('common:inlineAgentChat.requestedConversationCouldNot')
           : sending.value
-            ? 'Sending your message'
+            ? t('common:inlineAgentChat.sendingMessage')
             : sessionMutationBusy.value
-              ? 'Wait for the current conversation update to finish'
+              ? t('common:inlineAgentChat.waitCurrentConversationUpdate')
               : activeRun.value
-                ? 'Wait for the current response to finish'
+                ? t('common:inlineAgentChat.waitCurrentResponseFinish')
                 : openGoal.value
                   ? goalSubmitUnavailableReason.value
                   : '')
@@ -874,27 +877,27 @@ const temporaryExpiry = computed(() => {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 })
-const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temporary chat' : 'New chat'))
+const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? t('common:inlineAgentChat.temporaryChat') : t('common:inlineAgentChat.newChat')))
 
 const connectionLabel = computed(() => connectionBlocked.value
-  ? 'Connection required'
+  ? t('common:inlineAgentChat.connectionRequired')
   : loading.value
-    ? 'Opening'
+    ? t('common:inlineAgentChat.opening')
     : connection.value === 'reconnecting'
-      ? 'Reconnecting'
+      ? t('common:inlineAgentChat.reconnecting')
       : !providerAvailable.value
-        ? 'Unavailable'
+        ? t('common:inlineAgentChat.unavailable')
         : Boolean(initializationError.value)
-          ? 'Try again'
+          ? t('common:inlineAgentChat.tryAgain')
           : Boolean(error.value)
-            ? 'Try again'
+            ? t('common:inlineAgentChat.tryAgain')
             : activeRun.value?.status === 'awaiting_approval'
-              ? 'Review needed'
+              ? t('common:inlineAgentChat.reviewNeeded')
               : sending.value
-                ? 'Sending'
+                ? t('common:inlineAgentChat.sending')
                 : activeRun.value
-                  ? 'Working'
-                  : 'Ready')
+                  ? t('common:inlineAgentChat.working')
+                  : t('common:inlineAgentChat.ready'))
 const connectionTone = computed<'ready' | 'error' | 'busy'>(() => connectionBlocked.value || !providerAvailable.value || Boolean(error.value) || Boolean(initializationError.value)
   ? 'error'
   : loading.value || connection.value === 'reconnecting' || sending.value || Boolean(activeRun.value)
@@ -905,10 +908,10 @@ const contextualGlass = computed(() => Boolean(currentPage.value && activeDraft.
 /* Labels and descriptions are locale keys; prompts are model input and stay as written. */
 const starters = computed(() => [
   ...(contextualGlass.value
-    ? [{ label: 'common:agentWorkspace.starterPage', description: 'common:agentWorkspace.starterPageHint', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }]
-    : [{ label: 'common:agentWorkspace.starterExplore', description: 'common:agentWorkspace.starterExploreHint', prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.', icon: 'mdi-compass-outline' }]),
-  { label: 'common:agentWorkspace.starterConnect', description: 'common:agentWorkspace.starterConnectHint', prompt: contextualGlass.value ? 'Find Wiki pages related to the current page and explain how they connect.' : 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.', icon: 'mdi-vector-link' },
-  { label: 'common:agentWorkspace.starterCatchUp', description: 'common:agentWorkspace.starterCatchUpHint', prompt: 'Summarize the 10 most recently updated Wiki pages I can access. Give each page a brief summary with a source.', icon: 'mdi-history' }
+    ? [{ label: 'common:agentWorkspace.starterPage', description: 'common:agentWorkspace.starterPageHint', prompt: t('common:inlineAgentChat.summarizeCurrentWikiPage'), icon: 'mdi-text-box-search-outline' }]
+    : [{ label: 'common:agentWorkspace.starterExplore', description: 'common:agentWorkspace.starterExploreHint', prompt: t('common:inlineAgentChat.giveMeOverviewMain'), icon: 'mdi-compass-outline' }]),
+  { label: 'common:agentWorkspace.starterConnect', description: 'common:agentWorkspace.starterConnectHint', prompt: contextualGlass.value ? t('common:inlineAgentChat.findWikiPagesRelated') : t('common:inlineAgentChat.helpMeExploreConnections'), icon: 'mdi-vector-link' },
+  { label: 'common:agentWorkspace.starterCatchUp', description: 'common:agentWorkspace.starterCatchUpHint', prompt: t('common:inlineAgentChat.summarize10MostRecently'), icon: 'mdi-history' }
 ])
 
 const patchDraft = (patch: Partial<AgentDraft>): void => { if (thread.value) agents.updateDraft(thread.value.session.id, patch) }
@@ -936,7 +939,7 @@ const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentS
   if (source) {
     const sources = agents.drafts[sessionId]?.sources ?? []
     if (!sources.some(item => item.id === source.id)) {
-      if (sources.length >= 8) { agents.error = 'Eight sources are already attached. Remove one before adding another.'; return }
+      if (sources.length >= 8) { agents.error = t('common:inlineAgentChat.eightSourcesAlreadyAttached'); return }
       agents.updateDraft(sessionId, { sources: [...sources, source] })
     }
   }
@@ -950,7 +953,7 @@ const initializationFailureMessage = (value: unknown): string =>
     ? value.message
     : typeof value === 'string' && value
       ? value
-      : 'The conversation could not be opened.'
+      : t('common:inlineAgentChat.conversationCouldNotOpened')
 type InitializationRequest = {
   readonly allowCreate?: boolean
   readonly bypassConnectionGate?: boolean
@@ -1006,7 +1009,7 @@ const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean
           offlineComposerDraft.value = ''
         }
       } else {
-        initializationError.value = error.value || 'The conversation could not be opened. Retry to try again.'
+        initializationError.value = error.value || t('common:inlineAgentChat.conversationCouldNotOpened2')
       }
       return initialized
     },
@@ -1099,7 +1102,7 @@ const sendPrompt = async (
     return success
   } catch (value) {
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
-    agents.error = value instanceof Error ? value.message : 'The message could not be sent.'
+    agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.messageCouldNotSent')
     completion?.(false)
     return false
   } finally {
@@ -1175,10 +1178,10 @@ const keepConversation = async (): Promise<void> => {
   try {
     const kept = await agents.setSessionRetention(sessionId, 'saved')
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation || !kept || thread.value?.session.id !== sessionId) return
-    setSessionNotice(hasConversation.value ? 'Conversation kept in history.' : 'Conversation kept. It will appear in history after your first message.')
+    setSessionNotice(hasConversation.value ? t('common:inlineAgentChat.conversationKeptHistory') : t('common:inlineAgentChat.conversationKeptWillAppear'))
   } catch (value) {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation)
-      agents.error = value instanceof Error ? value.message : 'The conversation could not be kept.'
+      agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.conversationCouldNotKept')
   } finally {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) keepingConversation.value = false
   }
@@ -1202,8 +1205,8 @@ const createSession = async (retention: 'saved' | 'temporary'): Promise<void> =>
     }
   } catch (value) {
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
-    const kind = retention === 'temporary' ? 'temporary conversation' : 'new saved conversation'
-    agents.error = value instanceof Error ? value.message : `A ${kind} could not be created.`
+    const kind = retention === 'temporary' ? t('common:inlineAgentChat.temporaryConversation') : t('common:inlineAgentChat.newSavedConversation')
+    agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.couldNotCreated', { kind, interpolation: { escapeValue: false } })
   } finally {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) creatingRetention.value = null
   }
@@ -1334,15 +1337,15 @@ const clearUnfiledHistory = async (): Promise<void> => {
     if (clearingCurrentSession && originalSessionId && !thread.value) {
       clearUnfiledCommitted.value = true
       clearUnfiledError.value = error.value
-        ? `${error.value} Saved folders and their filed conversations remain unchanged.`
-        : 'Recent conversations were cleared, but a replacement conversation could not be opened. Saved folders and their filed conversations remain unchanged.'
+        ? t('common:inlineAgentChat.savedFoldersTheirFiled', { value: error.value, interpolation: { escapeValue: false } })
+        : t('common:inlineAgentChat.recentConversationsWereCleared')
       return
     }
     clearUnfiledHistoryOpen.value = false
   } catch (value) {
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
-    const detail = value instanceof Error ? value.message : 'Try again.'
-    clearUnfiledError.value = `Recent conversations could not be cleared. Saved folders and their filed conversations remain unchanged. ${detail}`
+    const detail = value instanceof Error ? value.message : t('common:inlineAgentChat.tryAgain2')
+    clearUnfiledError.value = t('common:inlineAgentChat.recentConversationsCouldNot', { detail, interpolation: { escapeValue: false } })
   } finally {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
   }
@@ -1357,12 +1360,12 @@ const recoverClearUnfiledHistory = async (): Promise<void> => {
     const refreshed = await agents.reloadSessions()
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     if (!refreshed.accepted || !refreshed.current) {
-      const detail = refreshed.error instanceof Error ? refreshed.error.message : 'History could not be refreshed.'
+      const detail = refreshed.error instanceof Error ? refreshed.error.message : t('common:inlineAgentChat.historyCouldNotRefreshed')
       throw new Error(detail)
     }
     if (!thread.value) {
       const candidate = agents.sessions.find(session => !session.deletedAt)
-      if (!candidate || !await agents.openSession(candidate.id)) throw new Error('No replacement conversation is available yet. Retry.')
+      if (!candidate || !await agents.openSession(candidate.id)) throw new Error(t('common:inlineAgentChat.noReplacementConversationAvailable'))
       if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     }
     clearUnfiledHistoryOpen.value = false
@@ -1370,8 +1373,8 @@ const recoverClearUnfiledHistory = async (): Promise<void> => {
     clearUnfiledCommitted.value = false
   } catch (value) {
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
-    const detail = value instanceof Error ? value.message : 'A replacement conversation could not be opened.'
-    clearUnfiledError.value = `Recent conversations were cleared, but a replacement conversation still could not be opened. Saved folders and their filed conversations remain unchanged. ${detail}`
+    const detail = value instanceof Error ? value.message : t('common:inlineAgentChat.replacementConversationCouldNot')
+    clearUnfiledError.value = t('common:inlineAgentChat.recentConversationsWereCleared2', { detail, interpolation: { escapeValue: false } })
   } finally {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
   }
