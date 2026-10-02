@@ -1024,30 +1024,38 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
-    // Keeps the workspace title readable on narrow screens: the stacked
-    // two-line variant prefers a balanced word split, and any line that still
-    // cannot fit is scaled down (stateless ratio, so it cannot oscillate).
+    // Keeps the workspace title whole on narrow screens. The stacked variant
+    // starts from a balanced two-word-group split and lets each group wrap
+    // (balanced) onto more lines. If a word or the line count still does not
+    // fit the header, the text steps down in size. Each run starts again at
+    // full size, so the result depends only on the available space and cannot
+    // oscillate. At the smallest step an over-long word breaks instead of
+    // being cut off.
     applyNavHeaderTitleFit (): void {
       if (typeof window === 'undefined' || typeof document === 'undefined') return
       const box = this.$refs.navHeaderTitleStacked as HTMLElement | undefined
       if (!box) return
-      const available = box.clientWidth
-      if (available <= 0 || box.getBoundingClientRect().width <= 0) {
+      if (box.clientWidth <= 0 || box.getBoundingClientRect().width <= 0) {
         // Hidden on this breakpoint (the single desktop line owns wide screens).
         this.navHeaderTitleFitScale = 1
         return
       }
       const lines = Array.from(box.querySelectorAll<HTMLElement>('.nav-header-title-line'))
-      const widest = lines.reduce((max, line) => Math.max(max, line.scrollWidth), 0)
-      if (widest <= 0) return
-      // Stateless ratio: derive the unscaled natural width first so repeated
-      // measurements cannot feed back into themselves and oscillate.
-      const natural = widest / Math.max(this.navHeaderTitleFitScale, 0.05)
-      const ratio = available / natural
-      const next = ratio >= 1
-        ? 1
-        : Math.max(0.55, Math.floor(ratio * 0.98 * 1000) / 1000)
-      this.navHeaderTitleFitScale = Math.round(next * 1000) / 1000
+      const fits = (): boolean =>
+        box.scrollHeight <= box.clientHeight + 1 && lines.every(line => line.scrollWidth <= line.clientWidth + 1)
+      const steps = [1, 0.92, 0.84, 0.76, 0.7]
+      let next = steps[steps.length - 1]!
+      box.classList.add('is-measuring')
+      for (const scale of steps) {
+        box.style.setProperty('--nav-header-title-fit', scale.toFixed(3))
+        if (fits()) {
+          next = scale
+          break
+        }
+      }
+      box.classList.remove('is-measuring')
+      box.style.setProperty('--nav-header-title-fit', next.toFixed(3))
+      this.navHeaderTitleFitScale = next
     },
     handleLogoError (event: Event): void {
       const image = event.currentTarget
@@ -1639,16 +1647,20 @@ export default defineComponent({
     letter-spacing: -.018em;
     line-height: var(--wiki-leading-heading);
 
+    // Wide screens: one line when it fits, otherwise balanced lines.
     .nav-header-title-single {
       display: block;
       overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: break-word;
+      text-wrap: balance;
+      white-space: normal;
+      line-height: 1.15;
     }
 
-    // Small-screen stacked workspace title: multi-word names split onto two
-    // balanced lines; single-word names (and lines that still overflow) shrink
-    // via --nav-header-title-fit, measured by applyNavHeaderTitleFit().
+    // Small-screen stacked workspace title: multi-word names start from two
+    // balanced word groups, and each group may wrap (balanced) again. A title
+    // that still does not fit shrinks in steps via --nav-header-title-fit,
+    // measured by applyNavHeaderTitleFit(). Nothing is cut off with an ellipsis.
     .nav-header-title-stacked {
       display: none;
       flex-direction: column;
@@ -1657,6 +1669,7 @@ export default defineComponent({
       gap: 0;
       min-width: 0;
       max-width: 100%;
+      max-height: 3rem;
       overflow: hidden;
       font-size: calc(.8125rem * var(--nav-header-title-fit, 1));
       letter-spacing: -.012em;
@@ -1668,8 +1681,15 @@ export default defineComponent({
       display: block;
       max-width: 100%;
       overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: break-word;
+      text-wrap: balance;
+      white-space: normal;
+    }
+
+    // While measuring, long words overflow instead of breaking, so the fit
+    // can prefer a smaller size over a word split mid-way.
+    .nav-header-title-stacked.is-measuring .nav-header-title-line {
+      overflow-wrap: normal;
     }
   }
 
@@ -2445,10 +2465,18 @@ export default defineComponent({
       padding-inline: var(--wiki-space-3) var(--wiki-space-1);
     }
 
+    // Square 44px targets with a small gap leave the workspace title room
+    // to show whole at a readable size.
     .nav-header-actions {
       flex: 1 1 auto;
+      gap: var(--wiki-space-1);
       min-width: 0;
       padding-inline: var(--wiki-space-1) var(--wiki-space-2);
+
+      > .v-btn.v-btn--icon {
+        width: 44px;
+        min-width: 44px;
+      }
     }
 
     .nav-header-title {
