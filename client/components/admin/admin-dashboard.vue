@@ -2,39 +2,39 @@
   v-container.admin-dashboard(fluid)
     admin-hero(
       :title='$t(`admin:dashboard.title`)'
-      description='Shared knowledge. Connected intelligence. A place to keep both in good order.'
+      :description='$t(`admin:dashboard.description`)'
       icon='mdi-view-dashboard-variant-outline'
       :eyebrow='siteTitle'
     )
       template(#actions)
-        v-btn(href='/' variant='flat' color='primary' prepend-icon='mdi-arrow-top-right') Open wiki
+        v-btn(href='/' variant='flat' color='primary' prepend-icon='mdi-home-outline') {{ $t(`admin:dashboard.openWiki`) }}
 
-    .dashboard-inventory(v-if='dashboardStats.length' aria-label='Workspace inventory' :aria-busy='summaryLoading')
+    .dashboard-inventory(v-if='dashboardStats.length' :aria-label='$t(`admin:dashboard.inventory`)' :aria-busy='summaryLoading')
       router-link.admin-stat(v-for='stat in dashboardStats' :key='stat.key' :to='stat.to' :aria-label='stat.ariaLabel')
         .admin-stat__top
           v-icon(size='19') {{ stat.icon }}
           span {{ stat.label }}
-          v-icon.admin-stat__arrow(size='16') mdi-arrow-top-right
+          v-icon.admin-stat__arrow(size='16' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
         strong.admin-stat__value
           template(v-if='summaryLoading || summaryError') —
           animated-number(v-else :value='Number(stat.value) || 0' :duration='600' :format-value='formatInteger')
         span.admin-stat__hint {{ stat.hint }}
     v-alert.mt-3(v-if='summaryError' type='warning' variant='tonal' density='compact')
-      span Workspace inventory is unavailable.
-      v-btn.ms-2(variant='text' size='small' @click='refreshSummary') Retry
+      span {{ $t(`admin:dashboard.inventoryUnavailable`) }}
+      v-btn.ms-2(variant='text' size='small' @click='refreshSummary') {{ $t(`admin:dashboard.retry`) }}
 
     section.dashboard-connections(v-if='connections.length' aria-labelledby='dashboard-connections-title')
       .dashboard-section-heading
         div
-          .dashboard-section-heading__eyebrow Knowledge in motion
-          h2#dashboard-connections-title Discovery & intelligence
+          .dashboard-section-heading__eyebrow {{ $t(`admin:dashboard.connectionsEyebrow`) }}
+          h2#dashboard-connections-title {{ $t(`admin:dashboard.connectionsTitle`) }}
         .dashboard-section-heading__rule
       .dashboard-connections__grid
         router-link.dashboard-connection(v-for='item in connections' :key='item.key' :to='item.to')
           .dashboard-connection__top
             v-icon(size='24') {{ item.icon }}
             span.dashboard-connection__kind {{ item.kind }}
-            v-icon(size='18') mdi-arrow-top-right
+            v-icon(size='18' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
           h3 {{ item.title }}
           p {{ item.description }}
           span.dashboard-connection__link {{ item.action }}
@@ -42,8 +42,8 @@
 
     .dashboard-section-heading(v-if='canViewRecentPages || canViewLastLogins')
       div
-        .dashboard-section-heading__eyebrow Workspace pulse
-        h2 Recent activity
+        .dashboard-section-heading__eyebrow {{ $t(`admin:dashboard.activityEyebrow`) }}
+        h2 {{ $t(`admin:dashboard.activityTitle`) }}
       .dashboard-section-heading__rule
     v-row.dashboard-activity-grid(v-if='canViewRecentPages || canViewLastLogins')
       v-col(cols='12' :lg='canViewLastLogins ? 7 : 12' v-if='canViewRecentPages')
@@ -54,11 +54,11 @@
                 v-icon(size='21') mdi-file-clock-outline
               div
                 h2 {{ $t('admin:dashboard.recentPages') }}
-                p Recently updated content.
-            v-btn(to='/pages' variant='text' size='small' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') View all
-          async-state(v-if='recentPagesLoading' state='loading' title='Loading recent pages' message='Fetching recently updated content.')
-          async-state(v-else-if='recentPagesError' state='error' title='Recent pages could not be loaded' :message='recentPagesError' retry-label='Try again' @retry='loadRecentPages')
-          async-state(v-else-if='recentPages.length === 0' state='empty' title='No recent pages' message='Updated pages will appear here.')
+                p {{ $t(`admin:dashboard.recentPagesHint`) }}
+            v-btn(to='/pages' variant='text' size='small' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') {{ $t(`admin:dashboard.viewAll`) }}
+          async-state(v-if='recentPagesLoading' state='loading' :title='$t(`admin:dashboard.recentPagesLoading`)' :message='$t(`admin:dashboard.recentPagesLoadingHint`)')
+          async-state(v-else-if='recentPagesError' state='error' :title='$t(`admin:dashboard.recentPagesError`)' :message='recentPagesError' :retry-label='$t(`admin:dashboard.tryAgain`)' @retry='loadRecentPages')
+          async-state(v-else-if='recentPages.length === 0' state='empty' :title='$t(`admin:dashboard.recentPagesEmpty`)' :message='$t(`admin:dashboard.recentPagesEmptyHint`)')
           v-list.dashboard-mobile-list(v-else-if='$vuetify.display.smAndDown' lines='three')
             v-list-item(v-for='page in recentPages' :key='page.id' rounded='lg')
               template(v-slot:prepend)
@@ -87,11 +87,11 @@
                 v-icon(size='21') mdi-account-clock-outline
               div
                 h2 {{ $t('admin:dashboard.lastLogins') }}
-                p Recent access to the workspace.
-            v-btn(to='/users' variant='text' size='small' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') View all
-          async-state(v-if='lastLoginsLoading' state='loading' title='Loading recent logins' message='Fetching recent workspace access.')
-          async-state(v-else-if='lastLoginsError' state='error' title='Recent logins could not be loaded' :message='lastLoginsError' retry-label='Try again' @retry='loadLastLogins')
-          async-state(v-else-if='lastLogins.length === 0' state='empty' title='No recent logins' message='Recent access will appear here.')
+                p {{ $t(`admin:dashboard.lastLoginsHint`) }}
+            v-btn(to='/users' variant='text' size='small' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') {{ $t(`admin:dashboard.viewAll`) }}
+          async-state(v-if='lastLoginsLoading' state='loading' :title='$t(`admin:dashboard.lastLoginsLoading`)' :message='$t(`admin:dashboard.lastLoginsLoadingHint`)')
+          async-state(v-else-if='lastLoginsError' state='error' :title='$t(`admin:dashboard.lastLoginsError`)' :message='lastLoginsError' :retry-label='$t(`admin:dashboard.tryAgain`)' @retry='loadLastLogins')
+          async-state(v-else-if='lastLogins.length === 0' state='empty' :title='$t(`admin:dashboard.lastLoginsEmpty`)' :message='$t(`admin:dashboard.lastLoginsEmptyHint`)')
           v-list.dashboard-mobile-list(v-else-if='$vuetify.display.smAndDown' lines='two')
             v-list-item(v-for='user in lastLogins' :key='user.id' rounded='lg')
               template(v-slot:prepend)
@@ -109,7 +109,7 @@
 
     .dashboard-footnote
       span tsEpistle {{ info.product.version }}
-      span Built for people and agents.
+      span {{ $t(`admin:dashboard.footnote`) }}
 </template>
 
 <script lang="ts">
@@ -122,16 +122,6 @@ import { fetchRecentPages, type RecentPageRow } from '../../helpers/pages-api'
 import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
-const RECENT_PAGES_HEADERS = markRaw([
-  { title: 'Title', value: 'title' },
-  { title: 'Path', value: 'path' },
-  { title: 'Last Updated', value: 'updatedAt', width: 250 }
-])
-
-const LAST_LOGINS_HEADERS = markRaw([
-  { title: 'User', value: 'name' },
-  { title: 'Last Login', value: 'lastLoginAt', width: 250 }
-])
 const integerFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })
 const formatInteger = (value: number): string => integerFormatter.format(Math.round(value))
 
@@ -154,16 +144,27 @@ export default {
       recentPagesError: '',
       recentPagesRequestId: 0,
       recentPagesAbortController: null as AbortController | null,
-      recentPagesHeaders: RECENT_PAGES_HEADERS,
       lastLogins: [] as LastLoginRow[],
       lastLoginsLoading: false,
       lastLoginsError: '',
       lastLoginsRequestId: 0,
-      lastLoginsAbortController: null as AbortController | null,
-      lastLoginsHeaders: LAST_LOGINS_HEADERS
+      lastLoginsAbortController: null as AbortController | null
     }
   },
   computed: {
+    recentPagesHeaders() {
+      return [
+        { title: this.$t('admin:dashboard.columnTitle'), value: 'title' },
+        { title: this.$t('admin:dashboard.columnPath'), value: 'path' },
+        { title: this.$t('admin:dashboard.columnUpdated'), value: 'updatedAt', width: 250 }
+      ]
+    },
+    lastLoginsHeaders() {
+      return [
+        { title: this.$t('admin:dashboard.columnUser'), value: 'name' },
+        { title: this.$t('admin:dashboard.columnLastLogin'), value: 'lastLoginAt', width: 250 }
+      ]
+    },
     canViewRecentPages() {
       return this.hasPermission(['manage:system', 'write:pages', 'manage:pages', 'delete:pages'])
     },
@@ -185,7 +186,7 @@ export default {
           key: 'pages',
           label: this.$t('admin:dashboard.pages'),
           value: this.info.pagesTotal,
-          hint: 'Pages in the workspace',
+          hint: this.$t('admin:dashboard.pagesHint'),
           icon: 'mdi-file-document-multiple-outline',
           to: '/pages',
           permission: ['manage:system', 'write:pages', 'manage:pages', 'delete:pages']
@@ -194,7 +195,7 @@ export default {
           key: 'tags',
           label: this.$t('admin:tags.title'),
           value: this.info.tagsTotal,
-          hint: 'Topics connecting knowledge',
+          hint: this.$t('admin:dashboard.tagsHint'),
           icon: 'mdi-tag-multiple-outline',
           to: '/tags',
           permission: 'manage:system'
@@ -203,7 +204,7 @@ export default {
           key: 'users',
           label: this.$t('admin:dashboard.users'),
           value: this.info.usersTotal,
-          hint: 'Workspace accounts',
+          hint: this.$t('admin:dashboard.usersHint'),
           icon: 'mdi-account-multiple-outline',
           to: '/users',
           permission: ['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users']
@@ -212,7 +213,7 @@ export default {
           key: 'groups',
           label: this.$t('admin:dashboard.groups'),
           value: this.info.groupsTotal,
-          hint: 'Roles and permission sets',
+          hint: this.$t('admin:dashboard.groupsHint'),
           icon: 'mdi-account-key-outline',
           to: '/groups',
           permission: ['manage:system', 'manage:groups', 'write:groups']
@@ -221,40 +222,40 @@ export default {
         .filter((stat) => this.hasPermission(stat.permission))
         .map((stat) => ({
           ...stat,
-          ariaLabel: `${this.summaryLoading ? 'Loading' : this.summaryError ? 'Unavailable' : stat.value} ${stat.label}. ${stat.hint}.`
+          ariaLabel: `${this.summaryLoading ? this.$t('admin:dashboard.loading') : this.summaryError ? this.$t('admin:dashboard.unavailable') : stat.value} ${stat.label}. ${stat.hint}.`
         }))
     },
     connections() {
       return [
         {
           key: 'search',
-          title: 'Make knowledge discoverable',
-          kind: 'Search',
-          description: 'Choose your search engine and maintain the index that helps readers find answers.',
+          title: this.$t('admin:dashboard.searchTitle'),
+          kind: this.$t('admin:dashboard.searchKind'),
+          description: this.$t('admin:dashboard.searchDescription'),
           icon: 'mdi-text-search-variant',
-          action: 'Configure search',
+          action: this.$t('admin:dashboard.searchAction'),
           to: '/search',
           permission: 'manage:system'
         },
         {
           key: 'agents',
-          title: 'Give your wiki an agent',
-          kind: 'Wiki Agent',
+          title: this.$t('admin:dashboard.agentsTitle'),
+          kind: this.$t('admin:dashboard.agentsKind'),
           description: siteConfig.agentsEnabled
-            ? 'Manage models, approved skills and the boundaries of your built-in assistant.'
-            : 'Explore agent administration and the deployment settings needed to enable it.',
+            ? this.$t('admin:dashboard.agentsDescriptionEnabled')
+            : this.$t('admin:dashboard.agentsDescriptionDisabled'),
           icon: 'mdi-creation-outline',
-          action: 'Manage agents',
+          action: this.$t('admin:dashboard.agentsAction'),
           to: '/agents',
           permission: 'manage:system'
         },
         {
           key: 'api',
-          title: 'Connect your ecosystem',
-          kind: 'API & MCP',
-          description: 'Manage integration keys and connect external tools to your shared knowledge.',
+          title: this.$t('admin:dashboard.apiTitle'),
+          kind: this.$t('admin:dashboard.apiKind'),
+          description: this.$t('admin:dashboard.apiDescription'),
           icon: 'mdi-connection',
-          action: 'Explore integrations',
+          action: this.$t('admin:dashboard.apiAction'),
           to: '/api',
           permission: ['manage:system', 'manage:api']
         }
