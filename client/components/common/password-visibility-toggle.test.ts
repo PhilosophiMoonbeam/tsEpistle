@@ -108,7 +108,7 @@ describe('password visibility toggle names', () => {
       const source = fs.readFileSync(path.join(process.cwd(), file), 'utf8')
       for (const usage of source.matchAll(/<password-visibility-toggle\b[^>]*>|(?<![.\w-])password-visibility-toggle\((?:[^()]|\([^()]*\))*\)/g)) {
         const text = usage[0]
-        const bound = text.match(/:field=["']\$t\([`'"]([^`'"]+)[`'"]\)["']/)
+        const bound = text.match(/:field=["']\$t\([`'"]([^`'"]+)[`'"]/)
         const literal = text.match(/(?<![:\w])field=["']([^"']+)["']/)
         const value = bound ? resolve(bound[1]!) : literal?.[1]
         expect(typeof value).toBe('string')
