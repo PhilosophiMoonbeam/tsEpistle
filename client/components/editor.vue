@@ -2736,7 +2736,51 @@ export default defineComponent({
   display: inline-block;
 }
 
+// Formatting tools in the Markdown and visual editors share one neutral look.
+// The accent marks only state (pressed/active), hover and focus, so colour
+// carries meaning instead of decorating every tool.
+.editor-tool-group {
+  align-items: center;
+  display: flex;
+  gap: 3px;
+}
+
+.editor-tool.v-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--wiki-text-muted);
+
+  &:hover {
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 7%, transparent);
+    color: rgb(var(--v-theme-on-surface));
+  }
+
+  &:focus-visible {
+    outline: .125rem solid var(--wiki-focus-color);
+    outline-offset: .0625rem;
+  }
+
+  &[aria-pressed='true'],
+  &.is-active {
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, transparent);
+    border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 45%, transparent);
+    color: var(--wiki-accent-ink);
+  }
+
+  &[aria-disabled='true'] {
+    background: transparent;
+    color: var(--wiki-text-subtle);
+    cursor: not-allowed;
+  }
+}
+
 @media (forced-colors: active) {
+  .editor-tool.v-btn[aria-pressed='true'],
+  .editor-tool.v-btn.is-active {
+    border-color: Highlight;
+    outline: 1px solid Highlight;
+  }
+
   .editor .nav-header,
   .editor-mobile-actions,
   .editor-mobile-menu {

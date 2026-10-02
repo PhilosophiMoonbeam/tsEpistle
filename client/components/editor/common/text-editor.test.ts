@@ -1,3 +1,5 @@
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import { EDITOR_SELECTION, EDITOR_SELECTION_INACTIVE, TextEditor } from './text-editor.ts'
@@ -92,5 +94,25 @@ describe('TextEditor', () => {
     expect(css).toContain(EDITOR_SELECTION_INACTIVE.slice(0, 40))
     expect(css).toContain(EDITOR_SELECTION.slice(0, 32))
     expect(css).not.toContain('rgba(var(--v-theme-primary), .24)')
+  })
+  it('reports the Markdown syntax path and undo depth for toolbar state', () => {
+    const value = '- **bold** text'
+    const { editor, parent } = createEditor({ value, language: markdown({ base: markdownLanguage }) })
+    const view = EditorView.findFromDOM(parent.querySelector<HTMLElement>('.cm-editor')!)!
+    ensureSyntaxTree(view.state, view.state.doc.length, 1000)
+
+    editor.setSelection({ line: 0, ch: value.indexOf('bold') + 1 })
+    expect(editor.syntaxPath()).toEqual(expect.arrayContaining(['StrongEmphasis', 'ListItem', 'BulletList']))
+    editor.setSelection({ line: 0, ch: value.length })
+    expect(editor.syntaxPath()).not.toContain('StrongEmphasis')
+
+    expect(editor.historyDepth()).toEqual({ undo: 0, redo: 0 })
+    editor.replaceRange('!', { line: 0, ch: value.length })
+    expect(editor.historyDepth().undo).toBe(1)
+    expect(editor.undo()).toBe(true)
+    expect(editor.getValue()).toBe(value)
+    expect(editor.historyDepth()).toEqual({ undo: 0, redo: 1 })
+    expect(editor.redo()).toBe(true)
+    expect(editor.getValue()).toBe(`${value}!`)
   })
 })
