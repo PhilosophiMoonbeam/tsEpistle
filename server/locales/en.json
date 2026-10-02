@@ -335,7 +335,13 @@
       "strong": "Strong",
       "average": "Average",
       "veryWeak": "Very Weak",
-      "veryStrong": "Very Strong"
+      "veryStrong": "Very Strong",
+      "show": "Show {{field}}",
+      "hide": "Hide {{field}}"
+    },
+    "confirm": {
+      "discard": "Discard",
+      "keepEditing": "Keep editing"
     },
     "pageSelector": {
       "pages": "Pages",
@@ -470,7 +476,14 @@
     "orLoginUsingStrategy": "or login using...",
     "forgotPasswordLoading": "Requesting password reset...",
     "forgotPasswordSuccess": "Check your emails for password reset instructions!",
-    "forgotPasswordSubtitle": "Enter your email address to receive the instructions to reset your password:"
+    "forgotPasswordSubtitle": "Enter your email address to receive the instructions to reset your password:",
+    "signIn": "Sign in",
+    "tfaRecovery": {
+      "cancel": "Cancel sign-in",
+      "lostDevice": "Lost your device? Ask an administrator to reset two-factor authentication.",
+      "invalidCode": "Enter the 6-digit security code.",
+      "setupApps": "Use any authenticator app that supports time-based codes (TOTP)."
+    }
   },
   "admin": {
     "agents": {
@@ -1085,6 +1098,20 @@
       "selectPageButton": "Select Page...",
       "sourceLocaleHint": "The locale from which navigation items will be copied from.",
       "copyFromLocaleInfoText": "Select the locale from which items will be copied from. Items will be appended to the current list of items in the active locale."
+    },
+    "shell": {
+      "title": "Administration",
+      "openNavigation": "Open administration navigation",
+      "closeNavigation": "Close administration navigation",
+      "findSetting": "Find a setting",
+      "findSettingLabel": "Find an administration setting",
+      "sections": "Administration sections",
+      "settings": "Settings",
+      "noResults": "No settings found",
+      "noResultsHint": "Try a topic such as search, members or MCP.",
+      "clearSearch": "Clear search",
+      "backToWiki": "Back to wiki",
+      "breadcrumb": "Breadcrumb"
     }
   },
   "editor": {

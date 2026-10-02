@@ -186,7 +186,7 @@ test.describe('critical post-install workflows', () => {
     const siteUrl = new URL(page.url()).origin
     await page.getByLabel('Administrator Email').fill(adminEmail)
     await page.getByLabel('Password', { exact: true }).fill(adminPassword)
-    await page.getByLabel('Confirm Password', { exact: true }).fill(adminPassword)
+    await page.getByLabel('Confirm password', { exact: true }).fill(adminPassword)
     await page.getByLabel('Site URL').fill(siteUrl)
     const telemetry = page.getByRole('checkbox', { name: 'Allow anonymous telemetry' })
     await telemetry.uncheck()
