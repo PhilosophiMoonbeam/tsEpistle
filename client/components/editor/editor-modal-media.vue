@@ -76,7 +76,7 @@
                   :key='props.item.id'
                   :class='{ "is-stale": !isAssetActionable(props.item.id) }'
                   :tabindex='isAssetActionable(props.item.id) ? 0 : -1'
-                  :aria-selected='currentFileId === props.item.id'
+                  :aria-current='currentFileId === props.item.id ? `true` : undefined'
                   :aria-disabled='!isAssetActionable(props.item.id)'
                   :aria-label='assetAriaLabel(props.item)'
                   @keydown.enter.space.prevent='isAssetActionable(props.item.id) && selectAsset(props.item.id)'
