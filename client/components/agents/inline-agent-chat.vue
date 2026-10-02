@@ -2,7 +2,7 @@
   <section
     ref="inlineAgentRoot"
     class="inline-agent"
-    :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen, 'inline-agent--contextual': contextualGlass }"
+    :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen, 'inline-agent--contextual': contextualGlass && !approvalId }"
     :data-panel-mode="panelMode"
     :aria-labelledby="workspaceTitleId"
     :aria-busy="loading || Boolean(creatingRetention) || connectionRetrying || sessionMutationBusy"
@@ -196,8 +196,11 @@
         aria-label="Opening conversation"
       />
 
+      <!-- An approval review has no conversation body, so its connection
+           notice sits above it; the conversation shows it inside the body
+           glass so the page behind is never visible unblurred. -->
       <v-alert
-        v-if="connectionBlocked"
+        v-if="connectionBlocked && approvalId"
         class="inline-agent__alert inline-agent__connection-alert"
         type="warning"
         variant="tonal"
@@ -221,10 +224,23 @@
         </div>
         <p v-else-if="sessionNotice" class="inline-agent__session-notice" role="status">{{ sessionNotice }}</p>
         <div class="inline-agent__body">
-          <!-- One status slot: the connection notice above outranks these, and
-               only the highest-priority problem below is shown at a time. -->
+          <!-- One status slot: the connection notice outranks the others, and
+               only the highest-priority problem is shown at a time. -->
           <v-alert
-            v-if="!loading && !connectionBlocked && initializationError"
+            v-if="connectionBlocked"
+            class="inline-agent__alert inline-agent__connection-alert"
+            type="warning"
+            variant="tonal"
+            role="status"
+            icon="mdi-cloud-off-outline"
+          >
+            <div class="inline-agent__initialization-error-content">
+              <span>{{ connectionRequiredMessage }}</span>
+              <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="retryAgentConnection">{{ $t('common:agentWorkspace.retryConnection') }}</v-btn>
+            </div>
+          </v-alert>
+          <v-alert
+            v-else-if="!loading && initializationError"
             class="inline-agent__alert inline-agent__initialization-error"
             type="error"
             variant="tonal"
@@ -236,7 +252,7 @@
             </div>
           </v-alert>
           <v-alert
-            v-else-if="!loading && !connectionBlocked && !providerAvailable"
+            v-else-if="!loading && !providerAvailable"
             class="inline-agent__alert"
             variant="tonal"
             icon="mdi-connection"
@@ -244,7 +260,7 @@
             {{ providerUnavailableMessage }}
           </v-alert>
           <v-alert
-            v-else-if="error && !connectionBlocked && (thread || !initializationError)"
+            v-else-if="error && (thread || !initializationError)"
             class="inline-agent__alert"
             type="error"
             variant="tonal"
@@ -271,7 +287,7 @@
                 </span>
               </div>
 
-              <section v-if="thread && !hasConversation" class="inline-agent__welcome" :aria-label="$t('common:agentWorkspace.startConversation')">
+              <section v-if="!hasConversation && (thread || (!loading && connectionBlocked))" class="inline-agent__welcome" :aria-label="$t('common:agentWorkspace.startConversation')">
                 <p class="inline-agent__welcome-title">
                   <span class="inline-agent__welcome-line">{{ welcomeGreeting.first }}</span>
                   <em class="inline-agent__welcome-line">{{ welcomeGreeting.second }}</em>
@@ -2098,9 +2114,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 
+/* A column so the composer dock can claim the leftover space above it: it
+   stays at the bottom whether the transcript is empty, blocked or full. */
 .inline-agent__transcript {
+  display: flex;
   min-height: 0;
   flex: 1 1 auto;
+  flex-direction: column;
   padding: var(--wiki-space-3) var(--wiki-space-1) var(--wiki-space-6);
   overflow-y: auto;
   outline: none;
@@ -2117,7 +2137,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   width: 100%;
   box-sizing: border-box;
   flex-direction: column;
-  margin: var(--wiki-space-3) auto 0;
+  margin: auto auto 0;
+  padding-block-start: var(--wiki-space-3);
   pointer-events: none;
 }
 .inline-agent__conversation-dock > .inline-agent__goal-dock,
@@ -2154,10 +2175,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   margin-inline: auto;
 }
 
-.inline-agent__transcript:has(> .inline-agent__welcome) {
-  display: flex;
-  flex-direction: column;
-}
 
 
 .inline-agent__loading {
