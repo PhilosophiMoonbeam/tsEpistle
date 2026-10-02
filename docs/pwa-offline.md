@@ -249,6 +249,8 @@ The page tools surface shows **Save offline copy** with a disabled or explanator
 
 In the reader, the icon-only offline action sits with the other page utilities above Page Contents on desktop and mobile rather than in the page title/description header. The nearby Focus reader icon has a tooltip. The offline retry action remains conditional, and the live status continues to describe the current saved-copy state without relying on the button icon alone.
 
+Cached reader date presentation survives an unavailable identity check. A newly authenticated identity refreshes it from that reader's verified preferences; confirmed anonymous identity clears the cached presentation. Connectivity hints alone do not establish identity or erase readable cached dates.
+
 ### 8.1 Foreground snapshot synchronization
 
 An app-owned foreground coordinator owns offline snapshot reconciliation. It coalesces startup, online, foreground, manual-download, automatic-policy, and tag-subscription triggers, and runs only while the page is visible and the network is reachable. Each pass captures the session generation and policy revision; generation/revision fences reject stale writes and request a fresh pass. The service worker remains shell/cache-only and never replays snapshot mutations in the background.

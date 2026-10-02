@@ -1758,6 +1758,54 @@ test.describe('responsive UI quality matrix', () => {
     await expectResponsiveLayout(page, 'Restored GraphQL query')
   })
 
+  test('keeps long workspace titles readable with phone Agent actions available', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Phone title geometry is owned by Chromium mobile.')
+    await authenticateAsAdmin(page)
+    const workspaceTitle = 'Contract Design Team Workspace'
+    await page.route('**/en/home?qa-title-fit=*', async route => {
+      const response = await route.fetch()
+      const html = await response.text()
+      const body = html.replace(
+        /(var\s+siteConfig\s*=\s*\{\s*"title"\s*:\s*)"(?:[^"\\]|\\.)*"/,
+        (_, prefix: string) => prefix + JSON.stringify(workspaceTitle)
+      )
+      if (body === html) throw new Error('Workspace-title bootstrap fixture could not be installed')
+      await route.fulfill({ status: response.status(), contentType: 'text/html; charset=utf-8', body })
+    })
+
+    for (const width of [320, 375]) {
+      await page.setViewportSize({ width, height: 812 })
+      await openAuthenticatedPage(page, `/en/home?qa-title-fit=${width}`, '.nav-header')
+      await page.evaluate(() => document.fonts.ready)
+      const title = page.locator('.nav-header-title-stacked')
+      await expectLocatorWithinViewport(title, 'Complete phone workspace title')
+      await expect.poll(() => title.evaluate(box => {
+        const lines = [...box.querySelectorAll<HTMLElement>('.nav-header-title-line')]
+        return {
+          title: lines.map(line => line.textContent).join(' '),
+          fits: box.scrollHeight <= box.clientHeight + 1 &&
+            lines.every(line => line.scrollWidth <= line.clientWidth + 1 && line.scrollHeight <= line.clientHeight + 1)
+        }
+      })).toEqual({ title: workspaceTitle, fits: true })
+      const overflow = page.locator('.nav-header-mobile-actions')
+      const search = page.getByRole('button', { name: 'Open search', exact: true })
+      for (const control of [overflow, search]) {
+        const bounds = await control.boundingBox()
+        if (!bounds) throw new Error('Phone header action has no geometry')
+        expect(bounds.width, 'Phone action target width').toBeGreaterThanOrEqual(44)
+        expect(bounds.height, 'Phone action target height').toBeGreaterThanOrEqual(44)
+      }
+      await overflow.click()
+      const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+      await expect(entrance).toBeVisible()
+      await expect(page.getByRole('link', { name: 'Browse by Tags', exact: true })).toHaveAttribute('href', '/t')
+      await entrance.focus()
+      await entrance.press('Escape')
+      await expect(overflow).toBeFocused()
+      await expectResponsiveLayout(page, `Phone workspace title at ${width}px`)
+    }
+  })
+
   test('keeps Agent Chat readable and operable', async ({ page }) => {
     await openAuthenticatedPage(page, '/', '.page-header-section')
     const originalPageUrl = page.url()
@@ -1767,82 +1815,76 @@ test.describe('responsive UI quality matrix', () => {
     expect(originalArticleId, 'The invoking article has an identity to preserve').not.toBeNull()
     expect(await page.locator('article.contents').first().evaluate(element => document.getElementById(element.id) === element), 'The invoking article identity resolves to the original reader').toBe(true)
 
-    const entrance = page.locator('.nav-header-agent')
-    await expectLocatorWithinViewport(entrance, 'Wiki Agent entrance')
-    await expect(entrance.locator('.v-icon')).toBeVisible()
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
     if (!viewport) return
-
-    const browse = page.locator('.nav-header-browse:visible').first()
-    await expectLocatorWithinViewport(browse, 'Browse by Tags link')
-    await expect(browse).toHaveAttribute('href', '/t')
-    await expect(browse).toHaveAttribute('aria-label', 'Browse by Tags')
-    await expect(browse.locator('.nav-header-browse-label')).toHaveCount(0)
-    await expect(browse).not.toContainText('Browse by Tags')
-
     const searchControl =
       viewport.width < 960 ? page.locator('.nav-header-search-toggle:visible').first() : page.locator('.nav-header-search-control input:visible').first()
     await expect(searchControl).toBeVisible()
-    const actionOrder = await page.locator('.nav-header').evaluate(header => {
-      const isVisible = (element: HTMLElement): boolean => {
-        const style = window.getComputedStyle(element)
-        const bounds = element.getBoundingClientRect()
-        return style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0
-      }
-      return Array.from(
-        header.querySelectorAll<HTMLElement>('.nav-header-search-control input, .nav-header-search-toggle, .nav-header-agent, .nav-header-browse')
-      )
-        .filter(isVisible)
-        .map(element => {
-          if (element.matches('.nav-header-agent')) return 'agent'
-          if (element.matches('.nav-header-browse')) return 'browse'
-          return 'search'
-        })
-    })
-    expect(actionOrder, 'Keyboard order follows the visible header controls').toEqual(
-      viewport.width < 960 ? ['agent', 'search', 'browse'] : ['browse', 'search', 'agent']
-    )
-    if (viewport.width >= 960) {
-      const field = await page.locator('.nav-header-command .nav-header-search-control').boundingBox()
-      expect(field).not.toBeNull()
-      expect(Math.abs(field!.x + field!.width / 2 - viewport.width / 2), 'Search is centered in the viewport').toBeLessThanOrEqual(1)
-    }
 
-    const [searchBounds, agentBounds, browseBounds] = await Promise.all([searchControl.boundingBox(), entrance.boundingBox(), browse.boundingBox()])
-    expect(searchBounds).not.toBeNull()
-    expect(agentBounds).not.toBeNull()
-    expect(browseBounds).not.toBeNull()
-    if (browseBounds) {
-      expect(Math.abs(browseBounds.width - browseBounds.height), 'Browse tag link remains square').toBeLessThanOrEqual(1)
-    }
-    if (searchBounds && agentBounds && browseBounds) {
-      const actionBounds = [
-        { name: 'Agent', bounds: agentBounds },
-        { name: 'search', bounds: searchBounds },
-        { name: 'Browse', bounds: browseBounds }
-      ]
-      for (let firstIndex = 0; firstIndex < actionBounds.length; firstIndex += 1) {
-        for (let secondIndex = firstIndex + 1; secondIndex < actionBounds.length; secondIndex += 1) {
-          const first = actionBounds[firstIndex]!.bounds
-          const second = actionBounds[secondIndex]!.bounds
-          const overlaps =
-            first.x < second.x + second.width && second.x < first.x + first.width && first.y < second.y + second.height && second.y < first.y + first.height
-          expect(overlaps, `${actionBounds[firstIndex]!.name} and ${actionBounds[secondIndex]!.name} must not overlap`).toBe(false)
+    if (viewport.width < 600) {
+      const overflow = page.locator('.nav-header-mobile-actions')
+      await expectLocatorWithinViewport(overflow, 'Compact header actions')
+      await searchControl.focus()
+      await searchControl.press('Tab')
+      await expect(overflow).toBeFocused()
+      await overflow.press('Enter')
+      const browse = page.getByRole('link', { name: 'Browse by Tags', exact: true })
+      await expectLocatorWithinViewport(browse, 'Browse by Tags menu link')
+      await expect(browse).toHaveAttribute('href', '/t')
+      const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+      await entrance.focus()
+      await entrance.press('Enter')
+      const openedAgent = page.getByRole('region', { name: 'Wiki Agent' })
+      await expect(openedAgent).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(openedAgent).toBeHidden()
+      await expect(overflow).toBeFocused()
+    } else {
+
+      const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+      await expectLocatorWithinViewport(entrance, 'Wiki Agent entrance')
+      const browse = page.getByRole('link', { name: 'Browse by Tags', exact: true })
+      await expectLocatorWithinViewport(browse, 'Browse by Tags link')
+      await expect(browse).toHaveAttribute('href', '/t')
+      if (viewport.width >= 960) {
+        const field = await page.locator('.nav-header-command .nav-header-search-control').boundingBox()
+        expect(field).not.toBeNull()
+        expect(Math.abs(field!.x + field!.width / 2 - viewport.width / 2), 'Search is centered in the viewport').toBeLessThanOrEqual(1)
+      }
+
+      const [searchBounds, agentBounds, browseBounds] = await Promise.all([searchControl.boundingBox(), entrance.boundingBox(), browse.boundingBox()])
+      expect(searchBounds).not.toBeNull()
+      expect(agentBounds).not.toBeNull()
+      expect(browseBounds).not.toBeNull()
+      if (searchBounds && agentBounds && browseBounds) {
+        const actionBounds = [
+          { name: 'Agent', bounds: agentBounds },
+          { name: 'search', bounds: searchBounds },
+          { name: 'Browse', bounds: browseBounds }
+        ]
+        for (let firstIndex = 0; firstIndex < actionBounds.length; firstIndex += 1) {
+          for (let secondIndex = firstIndex + 1; secondIndex < actionBounds.length; secondIndex += 1) {
+            const first = actionBounds[firstIndex]!.bounds
+            const second = actionBounds[secondIndex]!.bounds
+            const overlaps =
+              first.x < second.x + second.width && second.x < first.x + first.width && first.y < second.y + second.height && second.y < first.y + first.height
+            expect(overlaps, `${actionBounds[firstIndex]!.name} and ${actionBounds[secondIndex]!.name} must not overlap`).toBe(false)
+          }
         }
       }
-    }
 
-    await searchControl.focus()
-    await expect(searchControl).toBeFocused()
-    await searchControl.press('Shift+Tab')
-    const beforeSearch = viewport.width < 960 ? entrance : browse
-    const afterSearch = viewport.width < 960 ? browse : entrance
-    await expect(beforeSearch).toBeFocused()
-    await beforeSearch.press('Tab')
-    await expect(searchControl).toBeFocused()
-    await searchControl.press('Tab')
-    await expect(afterSearch).toBeFocused()
+      await searchControl.focus()
+      await expect(searchControl).toBeFocused()
+      await searchControl.press('Shift+Tab')
+      const beforeSearch = viewport.width < 960 ? entrance : browse
+      const afterSearch = viewport.width < 960 ? browse : entrance
+      await expect(beforeSearch).toBeFocused()
+      await beforeSearch.press('Tab')
+      await expect(searchControl).toBeFocused()
+      await searchControl.press('Tab')
+      await expect(afterSearch).toBeFocused()
+    }
     await expect
       .poll(() =>
         page.locator('.nav-header').evaluate(
