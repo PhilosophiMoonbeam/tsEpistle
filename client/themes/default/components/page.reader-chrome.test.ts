@@ -216,7 +216,7 @@ if (!script) throw new Error('page.vue script block was not found')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   script.replace(/^import[\s\S]*?from\s+["'][^"']+["']\s*$/gm, '').replace('export default defineComponent({', 'const pageComponent = defineComponent({') + '\nreturn pageComponent'
 )
-const wikiStore = { user: { authenticated: true, id: 7, permissions: [] as string[] }, site: { logoUrl: '/_site-logo/abc/logo.png' } }
+const wikiStore = { user: { authenticated: true, id: 7, permissions: [] as string[] }, site: { logoUrl: '/_site-logo/abc/logo.png' }, authRefreshOutcome: 'authenticated' as string | null }
 type Rules = {
   computed: Record<string, (this: Record<string, unknown>) => unknown>
   methods: Record<string, (this: Record<string, unknown>, ...args: unknown[]) => unknown>
@@ -299,6 +299,34 @@ describe('page reader chrome rules', () => {
       { id: 5, label: 'Grace (@grace)', source: 'discussion' },
       { id: 9, label: 'User #9', source: 'manual' }
     ])
+  })
+
+  it('names the browser time zone on Updated only when the account could not load and no zone is saved', () => {
+    const vmFor = (known: boolean) => {
+      const vm: Record<string, unknown> = {
+        updatedAt: '2026-01-02T03:04:05.000Z',
+        $t: (_key: string, options: { time: string; zone: string }) => `${options.time} (${options.zone})`,
+        $helpers: { formatMoment: () => 'Today at 3:04 AM', timeZoneKnown: () => known, timeZoneLabel: () => 'UTC' }
+      }
+      vm.withUpdatedZone = (time: string) => page.methods.withUpdatedZone!.call(vm, time)
+      return vm
+    }
+    try {
+      for (const [outcome, known, expected] of [
+        ['unavailable', false, 'Today at 3:04 AM (UTC)'],
+        ['unavailable', true, 'Today at 3:04 AM'],
+        ['authenticated', false, 'Today at 3:04 AM'],
+        ['anonymous', false, 'Today at 3:04 AM'],
+        [null, false, 'Today at 3:04 AM']
+      ] as const) {
+        wikiStore.authRefreshOutcome = outcome
+        const vm = vmFor(known)
+        vm.labelUpdatedZone = call('labelUpdatedZone', vm)
+        expect(call('formattedUpdatedAt', vm)).toBe(expected)
+      }
+    } finally {
+      wikiStore.authRefreshOutcome = 'authenticated'
+    }
   })
 
   it('labels the signed-in reviewer as You in the approval history', () => {

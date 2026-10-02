@@ -112,7 +112,10 @@ const syncTime = computed(() => {
   const lastSuccessAt = diagnostics.value?.lastSuccessAt
   if (!lastSuccessAt || Number.isNaN(Date.parse(lastSuccessAt))) return ''
   const formatted = helpers.formatMoment(lastSuccessAt, 'calendar')
-  return typeof formatted === 'string' ? formatted : ''
+  if (typeof formatted !== 'string') return ''
+  // As on the page: without the account or a saved zone, name the browser zone.
+  if (wikiStore.authRefreshOutcome !== 'unavailable' || helpers.timeZoneKnown()) return formatted
+  return `${formatted} (${helpers.timeZoneLabel(lastSuccessAt)})`
 })
 const pageCountLabel = (t: OfflineTranslate): string =>
   pageCount.value === 1

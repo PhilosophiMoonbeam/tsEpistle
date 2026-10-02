@@ -1929,15 +1929,20 @@ export default defineComponent({
       if (this.tocQuery?.trim()) return filterOutlineTree(this.tocTree, this.tocQuery)
       return this.tocTree
     },
+    // Signed-in readers whose account could not load and who have no saved
+    // time zone see the browser zone; name it so the time is not misread.
+    labelUpdatedZone (): boolean {
+      return wikiStore.authRefreshOutcome === 'unavailable' && !this.$helpers.timeZoneKnown()
+    },
     formattedUpdatedAt (): string {
       if (!this.updatedAt) return ''
       const formatted = this.$helpers.formatMoment(this.updatedAt, 'calendar')
-      return typeof formatted === 'string' ? formatted : String(formatted ?? '')
+      return this.withUpdatedZone(typeof formatted === 'string' ? formatted : String(formatted ?? ''))
     },
     accessibleUpdatedAt (): string {
       if (!this.updatedAt) return ''
       const formatted = this.$helpers.formatMoment(this.updatedAt, 'LLLL')
-      return typeof formatted === 'string' ? formatted : String(formatted ?? '')
+      return this.withUpdatedZone(typeof formatted === 'string' ? formatted : String(formatted ?? ''))
     },
     hasAuthor (): boolean {
       return this.lastEditorVisible && Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
@@ -3573,6 +3578,10 @@ export default defineComponent({
     approvalActorLabel (actorId: number): string {
       if (wikiStore.user.authenticated && actorId === wikiStore.user.id) return this.$t('common:page.reviewerYou')
       return this.$t('common:page.reviewerById', { id: actorId })
+    },
+    withUpdatedZone (time: string): string {
+      if (!time || !this.labelUpdatedZone) return time
+      return this.$t('common:dateTime.withZone', { time, zone: this.$helpers.timeZoneLabel(this.updatedAt ?? undefined), defaultValue: '{{time}} ({{zone}})', interpolation: { escapeValue: false } })
     },
     approvalTransitionDate (value: string | number): string {
       const formatted = this.$helpers.formatMoment(value, 'calendar')
