@@ -332,7 +332,7 @@ onBeforeUnmount(disconnect)
   white-space: nowrap;
 }
 .logging-trail-output strong {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   font-weight: 650;
   text-transform: uppercase;
 }

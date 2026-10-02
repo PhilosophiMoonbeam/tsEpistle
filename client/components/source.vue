@@ -227,7 +227,7 @@ export default defineComponent({
 }
 
 .source-eyebrow {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   font-size: .66rem;
   font-weight: 760;
   letter-spacing: .12em;

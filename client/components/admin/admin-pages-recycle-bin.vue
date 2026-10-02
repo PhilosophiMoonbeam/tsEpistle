@@ -386,7 +386,7 @@ export default defineComponent({
 .recovery-intro h2 { margin: .65rem 0 .8rem; font: 500 clamp(1.8rem, 3vw, 2.8rem)/1.08 var(--font-family-serif, Georgia, serif); letter-spacing: -.035em; }
 .recovery-intro > div > p { max-width: 48rem; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.65; }
 .recovery-limit { display: grid; grid-template-columns: 2rem 1fr; gap: .75rem; align-items: start; padding: 1.05rem 1.2rem; border-inline-start: 3px solid rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), .06); }
-.recovery-limit .v-icon { color: rgb(var(--v-theme-primary)); }
+.recovery-limit .v-icon { color: var(--wiki-primary-ink); }
 .recovery-limit p { margin: 0; font-size: .88rem; line-height: 1.55; }
 .recovery-limit strong { display: inline-block; margin-bottom: .25rem; }
 .recovery-grid { display: grid; grid-template-columns: minmax(19rem, .78fr) minmax(0, 1.4fr); gap: 1.1rem; align-items: start; }
@@ -399,7 +399,7 @@ export default defineComponent({
 .recovery-record:hover { background: rgba(var(--v-theme-primary), .035); }
 .recovery-record:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 1px; }
 .recovery-record.is-selected { border-color: rgba(var(--v-theme-primary), .36); background: rgba(var(--v-theme-primary), .075); }
-.record-mark { display: grid; width: 2rem; height: 2rem; place-items: center; border-radius: 7px; background: rgba(var(--v-theme-primary), .09); color: rgb(var(--v-theme-primary)); }
+.record-mark { display: grid; width: 2rem; height: 2rem; place-items: center; border-radius: 7px; background: rgba(var(--v-theme-primary), .09); color: var(--wiki-primary-ink); }
 .record-copy { display: grid; min-width: 0; gap: .27rem; }
 .record-copy strong { overflow: hidden; font-size: .93rem; text-overflow: ellipsis; white-space: nowrap; }
 .record-location, .record-meta { overflow-wrap: anywhere; color: rgb(var(--v-theme-on-surface-variant)); font-size: .75rem; }
@@ -410,7 +410,7 @@ export default defineComponent({
 .recovery-empty strong { color: rgb(var(--v-theme-on-surface)); }
 .recovery-empty span { max-width: 25rem; font-size: .86rem; line-height: 1.55; }
 .recovery-empty--selection { min-height: 19rem; }
-.recovery-empty--selection .v-icon { margin-bottom: .3rem; color: rgb(var(--v-theme-primary)); }
+.recovery-empty--selection .v-icon { margin-bottom: .3rem; color: var(--wiki-primary-ink); }
 .recovery-footnote { margin: 0; padding: .9rem 1.15rem 1.05rem; color: rgb(var(--v-theme-on-surface-variant)); font-size: .74rem; line-height: 1.5; }
 .recovery-inspector { padding-bottom: 1rem; }
 .recovery-warning { margin: 1rem 1.2rem 0; }
@@ -428,7 +428,7 @@ export default defineComponent({
 .plan-fields { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(8rem, .65fr); gap: .8rem; }
 .plan-fields > :last-child:nth-child(3) { grid-column: 1 / -1; }
 .recovery-draft-note { display: flex; gap: .5rem; align-items: center; margin: 1rem 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: .8rem; line-height: 1.5; }
-.recovery-draft-note .v-icon { flex: 0 0 auto; color: rgb(var(--v-theme-primary)); }
+.recovery-draft-note .v-icon { flex: 0 0 auto; color: var(--wiki-primary-ink); }
 .recovery-confirm ul { margin: 1rem 0 0; padding-inline-start: 1.25rem; line-height: 1.65; }
 .recovery-confirm li + li { margin-top: .35rem; }
 .recovery-result-link { display: inline-block; margin-inline-start: .75rem; color: inherit; font-weight: 700; }

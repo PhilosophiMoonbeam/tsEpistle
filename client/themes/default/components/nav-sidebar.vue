@@ -609,7 +609,7 @@ export default defineComponent({
 
   .nav-sidebar-page .v-icon,
   .nav-sidebar-current-page .v-icon {
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-primary-ink);
   }
 
   .nav-sidebar-ancestor {

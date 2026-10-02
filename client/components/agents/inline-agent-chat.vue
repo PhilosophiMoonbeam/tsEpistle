@@ -1798,7 +1798,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__eyebrow {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-primary-ink);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .1em;
@@ -1990,7 +1990,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__pin-indicator {
   flex: 0 0 auto;
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-primary-ink);
 }
 
 .inline-agent__more-menu {
@@ -2474,7 +2474,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 /* Palette-aware icon tints: each starter mixes a theme color toward the text color for contrast. */
 .inline-agent__starter-heading > :deep(.inline-agent__starter-icon--0) { color: color-mix(in srgb, rgb(var(--v-theme-success)) 70%, rgb(var(--v-theme-on-surface))); }
 .inline-agent__starter-heading > :deep(.inline-agent__starter-icon--1) { color: color-mix(in srgb, rgb(var(--v-theme-warning)) 70%, rgb(var(--v-theme-on-surface))); }
-.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--2) { color: color-mix(in srgb, rgb(var(--v-theme-primary)) 70%, rgb(var(--v-theme-on-surface))); }
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--2) { color: color-mix(in srgb, var(--wiki-primary-ink) 70%, rgb(var(--v-theme-on-surface))); }
 
 .inline-agent__starter-heading strong {
   min-width: 0;
@@ -2583,7 +2583,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__page-context .v-icon {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-primary-ink);
 }
 
 .inline-agent__page-context strong {

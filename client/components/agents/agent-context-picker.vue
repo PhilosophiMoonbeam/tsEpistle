@@ -613,7 +613,7 @@ onBeforeUnmount(() => {
   font-size: var(--wiki-label-size);
   line-height: 1.25;
 }
-.agent-context__page-chip > .v-icon:first-child { flex: 0 0 auto; color: var(--wiki-accent-warm); }
+.agent-context__page-chip > .v-icon:first-child { flex: 0 0 auto; color: var(--wiki-primary-ink); }
 .agent-context__page-chip--excluded {
   border-style: dashed;
   color: var(--wiki-text-muted);
@@ -630,7 +630,7 @@ onBeforeUnmount(() => {
 .agent-context__page-chip[aria-disabled='true'] { cursor: default; opacity: .6; }
 .agent-context__page-state {
   flex: 0 0 auto;
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
 }
 .agent-context__page-chip--excluded .agent-context__page-state {
   color: var(--wiki-text-muted);
