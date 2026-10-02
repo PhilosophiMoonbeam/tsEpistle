@@ -2088,7 +2088,30 @@ test.describe('responsive UI quality matrix', () => {
       const source = sources.find(item => item.id === id)
       return source ? route.fulfill({ json: source }) : route.fulfill({ status: 404, json: { error: 'Fixture source not found' } })
     })
-    const fixture = await installEnabledAgentFixture(page, { mode: 'latest', skillsEnabled: true, goalsEnabled: true })
+    const earlierImageId = '00000000-0000-4000-8000-000000000191'
+    const earlierImageBody = '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="420"><rect width="180" height="420" fill="#557783"/></svg>'
+    const fixture = await installEnabledAgentFixture(page, {
+      mode: 'latest',
+      skillsEnabled: true,
+      goalsEnabled: true,
+      firstMessageMedia: [{
+        id: earlierImageId,
+        kind: 'attachment',
+        filename: 'Earlier release evidence.svg',
+        mimeType: 'image/svg+xml',
+        byteLength: Buffer.byteLength(earlierImageBody),
+        available: true,
+        detached: false
+      }]
+    })
+    let releaseEarlierImage!: () => void
+    let earlierImageRequested = false
+    const earlierImageGate = new Promise<void>(resolve => { releaseEarlierImage = resolve })
+    await page.route(`**/_api/agents/media/${earlierImageId}/content`, async route => {
+      earlierImageRequested = true
+      await earlierImageGate
+      await route.fulfill({ contentType: 'image/svg+xml', body: earlierImageBody })
+    })
     let releaseResponse: (() => void) | null = null
     try {
       await page.goto('/', { waitUntil: 'domcontentloaded' })
@@ -2201,6 +2224,45 @@ test.describe('responsive UI quality matrix', () => {
       }
       await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(400)
       await expect.poll(distanceFromBottom, { message: 'A newly completed assistant response is brought into view' }).toBeLessThanOrEqual(25)
+      // Use the normal AgentThread attachment and an actual delayed image decode:
+      // growing media above the viewport must not displace the message being read.
+      await transcript.focus()
+      await transcript.evaluate(element => element.scrollTo({ top: 0, behavior: 'auto' }))
+      await expect.poll(() => earlierImageRequested).toBe(true)
+      const earlierImage = agent.getByRole('img', { name: 'Earlier release evidence.svg', exact: true })
+      expect(await earlierImage.evaluate(element => (element as HTMLImageElement).naturalHeight)).toBe(0)
+      const readingMessage = agent.locator('.agent-message--assistant').first().locator('p').filter({
+        hasText: /^Verification checkpoint 3:/
+      })
+      await readingMessage.evaluate(element => {
+        const container = element.closest<HTMLElement>('.inline-agent__transcript')
+        if (!container) throw new Error('The reading message has no transcript scrollport')
+        container.scrollTo({
+          top: container.scrollTop + element.getBoundingClientRect().top - container.getBoundingClientRect().top - 32,
+          behavior: 'auto'
+        })
+      })
+      await expect(latest).toBeVisible()
+      const beforeImageReadingBounds = await readingMessage.boundingBox()
+      const beforeImageBounds = await earlierImage.boundingBox()
+      const beforeImageTranscriptBounds = await transcript.boundingBox()
+      if (!beforeImageReadingBounds || !beforeImageBounds || !beforeImageTranscriptBounds) throw new Error('The delayed image and reading message need native browser geometry')
+      expect(beforeImageReadingBounds.y).toBeGreaterThanOrEqual(beforeImageTranscriptBounds.y)
+      expect(beforeImageBounds.y + beforeImageBounds.height, 'The delayed attachment is above the currently read message').toBeLessThan(beforeImageTranscriptBounds.y)
+      const beforeImageScrollHeight = await transcript.evaluate(element => element.scrollHeight)
+      releaseEarlierImage()
+      await earlierImage.evaluate(async element => {
+        await (element as HTMLImageElement).decode()
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      })
+      expect(await earlierImage.evaluate(element => (element as HTMLImageElement).naturalHeight)).toBe(420)
+      expect(await transcript.evaluate(element => element.scrollHeight) - beforeImageScrollHeight, 'The delayed image causes genuine transcript growth').toBeGreaterThan(300)
+      const afterImageReadingBounds = await readingMessage.boundingBox()
+      if (!afterImageReadingBounds) throw new Error('The read message disappeared after image loading')
+      expect(Math.abs(afterImageReadingBounds.y - beforeImageReadingBounds.y), 'Native anchoring preserves the read message on desktop and phone').toBeLessThanOrEqual(1)
+      await expect(latest).toBeVisible()
+      await latest.click()
+      await expect.poll(distanceFromBottom, { message: 'Latest still resumes following after delayed earlier media' }).toBeLessThanOrEqual(25)
       await readAtDistance(400)
       await expect(latest).toBeVisible()
       await expect(face).toHaveText('Latest')
@@ -2296,6 +2358,7 @@ test.describe('responsive UI quality matrix', () => {
       fixture.assertNoUnexpectedRequests()
     } finally {
       releaseResponse?.()
+      releaseEarlierImage()
       await fixture.dispose()
     }
   })

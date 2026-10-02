@@ -97,7 +97,7 @@ describe('history comparison renderer', () => {
     expect(createWorker).not.toHaveBeenCalled()
   })
 
-  it('stops a worker that does not answer in time and starts a new one for the next request', async () => {
+  it.each([false, true])('stops a timed-out worker and retries in a new one (warmed: %s)', async (warmed) => {
     const created: Array<ReturnType<typeof createFakeWorker>> = []
     const timers = manualTimers()
     const renderer = createHistoryDiffRenderer({
@@ -110,12 +110,16 @@ describe('history comparison renderer', () => {
       clearTimer: timers.clearTimer
     })
 
-    const warm = renderer.render(request({ key: 'warm' }))
-    const first = created[0]!
-    first.answer(0, { status: 'empty' })
-    await warm
+    if (warmed) {
+      const warm = renderer.render(request({ key: 'warm' }))
+      created[0]!.answer(0, { status: 'empty' })
+      await warm
+    }
 
     const slow = renderer.render(request())
+    const first = created[0]!
+    const slowIndex = warmed ? 1 : 0
+    expect(first.posted).toHaveLength(slowIndex + 1)
     timers.fire()
     expect(await slow).toEqual({ status: 'timeout' })
     expect(first.terminate).toHaveBeenCalledTimes(1)
@@ -125,8 +129,17 @@ describe('history comparison renderer', () => {
     expect(created).toHaveLength(2)
     const second = created[1]!
     expect(second.posted).toHaveLength(1)
+    expect(second.posted[0]!.request).toEqual(request())
+    // A result from the terminated worker cannot finish or cache the retry.
+    first.answer(slowIndex, { status: 'ready', html: 'stale' })
+    expect(renderer.peek(request())).toBeUndefined()
+    expect(second.terminate).not.toHaveBeenCalled()
     second.answer(0, { status: 'ready', html: 'ok' })
     expect(await retry).toEqual({ status: 'ready', html: 'ok' })
+    expect(renderer.peek(request())).toEqual({ status: 'ready', html: 'ok' })
+    first.answer(slowIndex, { status: 'ready', html: 'late stale' })
+    expect(renderer.peek(request())).toEqual({ status: 'ready', html: 'ok' })
+    renderer.dispose()
   })
 
   it('falls back to the page thread when the worker cannot load', async () => {

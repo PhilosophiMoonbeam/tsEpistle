@@ -341,9 +341,11 @@ test.describe('critical post-install workflows', () => {
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await expectLightFromFirstFrame()
 
+    const finalWhoami = page.waitForResponse(response => new URL(response.url()).pathname === '/_api/users/whoami')
     await openClientPage(page, '/en/home', '.page-header-section')
     await expectLightFromFirstFrame()
-    // Let the delayed whoami handler finish before removing it; unroute would otherwise settle it twice.
+    // Response ordering prevents unrouteAll from retiring the still-delayed handler.
+    await finalWhoami
     await page.unrouteAll({ behavior: 'wait' })
     await page.getByRole('button', { name: 'Account' }).click()
     await page.locator('.v-overlay--active').getByRole('tab', { name: 'Appearance', exact: true }).click()

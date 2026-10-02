@@ -1248,7 +1248,7 @@ const renderPageMermaidDiagrams = async (
         })
         if (!safeSvg || !current()) return
         safeSvg.setAttribute('role', 'img')
-        safeSvg.setAttribute('aria-label', 'common:page.mermaidDiagram')
+        safeSvg.setAttribute('aria-label', t('common:page.mermaidDiagram'))
         diagram.replaceChildren(safeSvg)
         diagram.dataset.pageMermaidState = 'rendered'
       } catch {

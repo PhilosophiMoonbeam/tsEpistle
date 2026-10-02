@@ -19,6 +19,7 @@ import {
   type CollaborationConflictReason,
   type CollaborationSession
 } from '../../../shared/collaboration'
+import type { TextEditorHistory } from './common/text-editor'
 
 const REMOTE_ORIGIN = Symbol('collaboration-remote')
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_500, 5_000, 10_000] as const
@@ -55,11 +56,11 @@ interface MarkdownCollaborationOptions {
   fetchImpl: typeof window.fetch
   onStatus: (status: CollaborationStatus) => void
   onBaseline: (baseline: { updatedAt: string; sourceRevision: string }) => void
+  onHistoryChange?: () => void
 }
 
-export interface MarkdownCollaboration {
+export interface MarkdownCollaboration extends TextEditorHistory {
   readonly content: string
-  readonly extension: Extension
   readonly generation: number
   readonly pendingUpdateCount: number
   readonly pendingUpdateBytes: number
@@ -83,6 +84,8 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
   private session: CollaborationSession | null = null
   private stopPwaWatch: WatchStopHandle | null = null
   private participants = 1
+  private readonly undoManager: Y.UndoManager
+  private lastHistoryDepth = { undo: 0, redo: 0 }
   readonly generation: number
 
   readonly extension: Extension
@@ -94,7 +97,10 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     this.generation = session.generation
     this.options.onBaseline({ updatedAt: session.baseUpdatedAt, sourceRevision: session.baseSourceRevision })
     Y.applyUpdate(this.document, sessionState(session), REMOTE_ORIGIN)
-    this.extension = yCollab(this.text, this.awareness)
+    this.undoManager = new Y.UndoManager(this.text)
+    this.extension = yCollab(this.text, this.awareness, { undoManager: this.undoManager })
+    // Registered after the manager so undo/redo depth is finalized before UI reads it.
+    this.document.on('afterTransaction', this.handleHistoryChange)
     this.document.on('update', this.handleDocumentUpdate)
     this.pausedForConnectivity = isConnectivityBlocked()
     this.session = session
@@ -129,6 +135,25 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
 
   get pendingUpdateBytes(): number {
     return this.pendingBytes
+  }
+
+  undo(): boolean {
+    return this.undoManager.undo() != null
+  }
+
+  redo(): boolean {
+    return this.undoManager.redo() != null
+  }
+
+  historyDepth(): { undo: number; redo: number } {
+    return { undo: this.undoManager.undoStack.length, redo: this.undoManager.redoStack.length }
+  }
+
+  private readonly handleHistoryChange = (): void => {
+    const depth = this.historyDepth()
+    if (depth.undo === this.lastHistoryDepth.undo && depth.redo === this.lastHistoryDepth.redo) return
+    this.lastHistoryDepth = depth
+    this.options.onHistoryChange?.()
   }
 
   private compactPending(): void {
@@ -370,6 +395,8 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     clearTimeout(this.reconnectTimer ?? undefined)
     this.reconnectTimer = null
     this.document.off('update', this.handleDocumentUpdate)
+    this.document.off('afterTransaction', this.handleHistoryChange)
+    this.undoManager.destroy()
     this.socket?.close(1000, 'Editor closed')
     this.socket = null
     this.pending.length = 0

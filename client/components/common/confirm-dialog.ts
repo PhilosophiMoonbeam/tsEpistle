@@ -15,7 +15,11 @@ export type ConfirmRequest = {
   tone?: ConfirmTone
 }
 
-export type PendingConfirmation = ConfirmRequest & { id: number }
+export type PendingConfirmation = ConfirmRequest & {
+  id: number
+  /** Connected invoking control, kept out of the public request API. */
+  returnFocusTo: HTMLElement | null
+}
 
 type QueueEntry = PendingConfirmation & { resolve: (confirmed: boolean) => void }
 
@@ -45,9 +49,17 @@ export const requestConfirmation = (request: ConfirmRequest): Promise<boolean> =
     const text = request.message ? `${request.title}\n\n${request.message}` : request.title
     return Promise.resolve(typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(text) : false)
   }
-  return new Promise<boolean>(resolve => {
-    state.queue = [...state.queue, { ...request, id: ++sequence, resolve }]
-  })
+  const { promise, resolve } = Promise.withResolvers<boolean>()
+  const active = typeof document !== 'undefined' ? document.activeElement : null
+  const opener = active && typeof HTMLElement !== 'undefined' && active instanceof HTMLElement &&
+    active.isConnected && active !== active.ownerDocument.body ? active : null
+  // A request queued from within the current confirmation must return to its
+  // original opener, not content that disappears when that request settles.
+  const insideConfirmation = opener?.closest('.confirm-dialog') ||
+    opener?.closest('.v-overlay__content')?.querySelector('.confirm-dialog')
+  const returnFocusTo = insideConfirmation ? state.queue[0]?.returnFocusTo ?? null : opener
+  state.queue = [...state.queue, { ...request, id: ++sequence, returnFocusTo, resolve }]
+  return promise
 }
 
 /** Discard-draft confirmation with the shared destructive wording. */

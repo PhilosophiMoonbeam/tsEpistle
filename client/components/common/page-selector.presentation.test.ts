@@ -243,6 +243,13 @@ describe('Browse page selector presentation', () => {
       eligible: true,
       changes: [{ before: '[Release notes](/en/docs/current)', after: '[Release notes](/en/docs/archive)' }]
     }
+    const sameTitleItem = {
+      ...item,
+      id: 23,
+      locale: 'fr',
+      path: 'guides/referrer',
+      sourceRevision: '12'
+    }
     const selfLink = {
       id: 10,
       title: 'Moved page',
@@ -258,7 +265,7 @@ describe('Browse page selector presentation', () => {
       requests.push({ pageId, input })
       return {
         schemaVersion: 1,
-        items: input.selectedPageIds === undefined ? [selfLink, item] : [item, selfLink],
+        items: input.selectedPageIds === undefined ? [selfLink, item, sameTitleItem] : [item, sameTitleItem, selfLink],
         nextCursor: null,
         coverageNotice: 'Only currently source-readable candidates are listed.',
         ...(input.selectedPageIds === undefined ? {} : { reviewToken: 'signed-review-token' })
@@ -268,7 +275,7 @@ describe('Browse page selector presentation', () => {
       message: 'Page has been moved.' as const,
       pageId: 10,
       sourceRevision: '6',
-      updated: [{ id: 21, sourceRevision: '8' }],
+      updated: [{ id: 21, sourceRevision: '8' }, { id: 23, sourceRevision: '13' }],
       projections: 'pending' as const
     }
     let submittedMove: {
@@ -327,10 +334,12 @@ describe('Browse page selector presentation', () => {
       destinationPath: 'docs/archive',
       expectedSourceRevision: '5'
     })
-    const candidate = host.querySelector<HTMLInputElement>('.page-selector__candidate input[aria-label^="Select Referrer page"]')
-    expect(candidate).not.toBeNull()
-    candidate!.checked = true
-    candidate!.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    const candidates = host.querySelectorAll<HTMLInputElement>('.page-selector__candidate input[aria-label^="Select Referrer page"]')
+    expect(candidates).toHaveLength(2)
+    for (const candidate of candidates) {
+      candidate.checked = true
+      candidate.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    }
     await settle()
     const referrerCard = Array.from(host.querySelectorAll('.page-selector__candidate'))
       .find(card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Referrer page')
@@ -343,12 +352,23 @@ describe('Browse page selector presentation', () => {
     expect(selfLinkCard?.querySelector('input[type="checkbox"]')).toBeNull()
 
     await clickButton('Review selected changes')
-    expect(requests[1]?.input.selectedPageIds).toEqual([21])
+    expect(requests[1]?.input.selectedPageIds).toEqual([21, 23])
     const confirmation = host.querySelector('section.page-selector__link-review')
     const confirmationHeading = confirmation?.querySelector('h3')
     expect(confirmationHeading?.id).toBeTruthy()
     expect(confirmation?.getAttribute('aria-labelledby')).toBe(confirmationHeading?.id)
+    const confirmationCards = Array.from(confirmation?.querySelectorAll('.page-selector__candidate') ?? [])
+    expect(confirmationCards.map(card => ({
+      title: card.querySelector('.page-selector__candidate-title')?.textContent,
+      location: card.querySelector('.page-selector__candidate-location')?.textContent
+    }))).toEqual([
+      { title: 'Referrer page', location: 'en / docs/referrer · revision 7' },
+      { title: 'Referrer page', location: 'fr / guides/referrer · revision 12' },
+      { title: 'Moved page', location: 'en / docs/current · revision 5' }
+    ])
     expect(Array.from(confirmation?.querySelectorAll('.page-selector__diff code') ?? [], code => code.textContent)).toEqual([
+      '[Release notes](/en/docs/current)',
+      '[Release notes](/en/docs/archive)',
       '[Release notes](/en/docs/current)',
       '[Release notes](/en/docs/archive)',
       '[Current](/en/docs/current)',

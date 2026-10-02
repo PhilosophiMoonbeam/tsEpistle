@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
+import i18next from 'i18next'
+import { localizationPlugin } from '../../modules/localization.ts'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { document, resetBody } from '../../test/browser-dom.mts'
 
@@ -33,18 +35,24 @@ afterEach(() => {
   resetBody()
 })
 
-const mount = async (options: { translate?: boolean; disabled?: boolean } = {}) => {
-  const visible = Vue.ref(false)
+const mount = async (options: {
+  translate?: ((key: string, options?: Record<string, unknown>) => string) | null
+  localization?: boolean
+  fields?: string[]
+  disabled?: boolean
+} = {}) => {
+  const fields = options.fields ?? ['password']
+  const visibility = fields.map(() => Vue.ref(false))
   app = Vue.createApp({
     setup: () => () =>
-      Vue.h(Toggle, {
-        visible: visible.value,
-        field: 'password',
+      Vue.h('div', fields.map((field, index) => Vue.h(Toggle, {
+        visible: visibility[index]!.value,
+        field,
         disabled: options.disabled ?? false,
         'onUpdate:visible': (value: boolean) => {
-          visible.value = value
+          visibility[index]!.value = value
         }
-      })
+      })))
   })
   app.component('v-btn', Vue.defineComponent({
     inheritAttrs: false,
@@ -52,14 +60,17 @@ const mount = async (options: { translate?: boolean; disabled?: boolean } = {}) 
     setup: (props, { attrs, slots }) => () => Vue.h('button', { ...attrs, disabled: props.disabled || undefined }, slots.default?.())
   }))
   app.component('v-icon', Vue.defineComponent({ props: ['icon'], setup: props => () => Vue.h('i', { 'data-icon': props.icon }) }))
-  app.config.globalProperties.$t = options.translate
-    ? (key: string, opts: { field: string }) => (key === 'common:password.show' ? `Passwort anzeigen: ${opts.field}` : key)
-    : translateEnglish
+  if (options.localization) {
+    app.use(localizationPlugin)
+  } else if (options.translate !== null) {
+    app.config.globalProperties.$t = options.translate ?? translateEnglish
+  }
   const host = document.createElement('div')
   document.body.append(host)
   app.mount(host)
   await Vue.nextTick()
-  return { button: host.querySelector('button')!, visible }
+  const buttons = [...host.querySelectorAll('button')]
+  return { button: buttons[0]!, buttons, visible: visibility[0]!, visibility }
 }
 
 describe('password visibility toggle', () => {
@@ -85,12 +96,82 @@ describe('password visibility toggle', () => {
     expect(button.getAttribute('aria-pressed')).toBe('false')
   })
 
-  test('uses the translated label when i18n is available and stays inert while disabled', async () => {
-    const { button } = await mount({ translate: true, disabled: true })
+  test('uses initialized localized resources and stays inert while disabled', async () => {
+    const engine = i18next.createInstance()
+    await engine.init({
+      lng: 'de',
+      fallbackLng: false,
+      ns: ['common'],
+      defaultNS: 'common',
+      resources: { de: { common: { password: { show: '{{field}} anzeigen' } } } },
+      initAsync: false
+    })
+    const { button } = await mount({
+      translate: (key, options) => engine.t(key, options) as string,
+      fields: ['Passwort & Bestätigung'],
+      disabled: true
+    })
 
-    expect(button.getAttribute('aria-label')).toBe('Passwort anzeigen: password')
+    expect(button.getAttribute('aria-label')).toBe('Passwort & Bestätigung anzeigen')
     expect(button.disabled).toBe(true)
+    button.click()
+    await Vue.nextTick()
+    expect(button.getAttribute('aria-pressed')).toBe('false')
   })
+
+  test('preserves an active localized toggle resource when the password key is unavailable', async () => {
+    const engine = i18next.createInstance()
+    await engine.init({
+      lng: 'de',
+      fallbackLng: false,
+      ns: ['common'],
+      defaultNS: 'common',
+      resources: { de: { common: { passwordVisibilityToggle: { show: '{{field}} anzeigen' } } } },
+      initAsync: false
+    })
+    const { button } = await mount({
+      translate: (key, options) => engine.t(key, options) as string,
+      fields: ['Passwort & Bestätigung']
+    })
+
+    expect(button.getAttribute('aria-label')).toBe('Passwort & Bestätigung anzeigen')
+    button.click()
+    await Vue.nextTick()
+    expect(button.getAttribute('aria-label')).toBe('Passwort & Bestätigung anzeigen')
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  for (const localization of [false, true]) {
+    test(`keeps setup fields distinguishable ${localization ? 'before the installed localization plugin initializes' : 'without a translation helper'}`, async () => {
+      const initialized = i18next.isInitialized
+      i18next.isInitialized = false
+      try {
+        const { buttons, visibility } = await mount({
+          localization,
+          translate: null,
+          fields: ['administrator password', 'password confirmation']
+        })
+        expect(buttons.map(button => button.getAttribute('aria-label'))).toEqual([
+          'Show administrator password',
+          'Show password confirmation'
+        ])
+
+        buttons[1]!.focus()
+        buttons[1]!.click()
+        await Vue.nextTick()
+
+        expect(document.activeElement).toBe(buttons[1]!)
+        expect(visibility.map(value => value.value)).toEqual([false, true])
+        expect(buttons.map(button => button.getAttribute('aria-pressed'))).toEqual(['false', 'true'])
+        expect(buttons.map(button => button.getAttribute('aria-label'))).toEqual([
+          'Show administrator password',
+          'Show password confirmation'
+        ])
+      } finally {
+        i18next.isInitialized = initialized
+      }
+    })
+  }
 })
 
 describe('password visibility toggle names', () => {

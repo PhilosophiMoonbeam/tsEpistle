@@ -259,6 +259,35 @@ test.describe('release accessibility profiles', () => {
     }
   })
 
+  test('canceling a dirty administration Reload returns keyboard focus and retains the draft', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    await openAuthenticatedPage(page, '/a/general', '.general-workspace')
+    const name = page.getByRole('textbox', { name: 'Workspace name', exact: true })
+    await expect(name).toBeEnabled()
+    const savedName = await name.inputValue()
+    const draftName = `${savedName.slice(0, 35)} focus draft`
+    await name.fill(draftName)
+    const reload = page.getByRole('button', { name: 'Reload', exact: true })
+    const confirmation = page.getByRole('dialog', { name: 'Discard unsaved workspace changes?', exact: true })
+
+    for (const cancellation of ['Keep editing', 'Escape'] as const) {
+      expect(await tabToControl(page, reload, 100), 'Reload is reachable with the keyboard').toBe(true)
+      await reload.press('Enter')
+      await expect(confirmation).toBeVisible()
+      const keepEditing = confirmation.getByRole('button', { name: 'Keep editing', exact: true })
+      expect(await tabToControl(page, keepEditing), 'The safe confirmation action is keyboard reachable').toBe(true)
+      await keepEditing.press(cancellation === 'Escape' ? 'Escape' : 'Enter')
+      await expect(confirmation).not.toBeVisible()
+      // The native Vuetify leave transition must complete before restoring the
+      // actual opener; dialog removal alone previously left focus on BODY.
+      await expect(reload).toBeFocused()
+      await expect(name).toHaveValue(draftName)
+      await expect(page).toHaveURL('/a/general')
+    }
+    await page.getByRole('button', { name: 'Reset draft', exact: true }).click()
+    await expect(name).toHaveValue(savedName)
+  })
+
   test('paints inline and ordinary/titled Prism copy acknowledgment without moving the reader', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     test.setTimeout(60_000)

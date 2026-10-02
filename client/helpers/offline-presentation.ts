@@ -44,7 +44,8 @@ const DATES_KEY = 'tsepistle.offline.dates.v1'
 /**
  * The signed-in reader's time zone and date/time format, so dates keep that
  * zone when the server cannot be reached. Only these three validated values
- * are stored. A confirmed sign-out removes them.
+ * are stored. Both shells update them after authenticated verification and
+ * remove them only after a confirmed anonymous outcome, including reconnects.
  */
 export function rememberReaderDates(presentation: Partial<UserPresentationDefaults>): void {
   if (!isUserTimezone(presentation.timezone)) {

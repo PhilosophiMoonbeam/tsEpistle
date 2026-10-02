@@ -1,9 +1,10 @@
 import type { Page, Response, Route } from '@playwright/test'
-import type { AgentProviderProfileView, AgentProposalView, AgentThreadState } from '../../shared/agents/contracts.ts'
+import type { AgentMediaView, AgentProviderProfileView, AgentProposalView, AgentThreadState } from '../../shared/agents/contracts.ts'
 export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin'
 
 export interface AgentFixtureOptions {
   readonly media?: AgentProviderProfileView['media']
+  readonly firstMessageMedia?: readonly AgentMediaView[]
   readonly mode?: AgentFixtureMode
   readonly archivePartialFailure?: boolean
   readonly seedMemory?: boolean
@@ -51,6 +52,7 @@ type AgentMessage = {
   createdAt: string
   updatedAt: string
   knowledgeContext?: { scope: { kind: 'all' }; sources: never[] }
+  media?: readonly AgentMediaView[]
 }
 type AgentTool = {
   id: string
@@ -311,6 +313,7 @@ type FixtureState = {
   archivePartialFailure: boolean
   seedMemory: boolean
   distinctSessionIds: boolean
+  firstMessageMedia: readonly AgentMediaView[]
   runIndex: number
   sessionCreates: number
   sessionVersion: number
@@ -375,7 +378,8 @@ const setActiveThread = (state: FixtureState, prompt: string): string => {
     citations: [],
     createdAt: NOW,
     updatedAt: NOW,
-    knowledgeContext: { scope: { kind: 'all' }, sources: [] }
+    knowledgeContext: { scope: { kind: 'all' }, sources: [] },
+    ...(state.thread.messages.length === 0 && state.firstMessageMedia.length ? { media: copy(state.firstMessageMedia) } : {})
   })
   state.thread.messages.push({
     id: assistantId,
@@ -490,6 +494,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     archivePartialFailure: options.archivePartialFailure ?? false,
     seedMemory: options.seedMemory ?? true,
     distinctSessionIds: options.distinctSessionIds ?? false,
+    firstMessageMedia: options.firstMessageMedia ?? [],
     runIndex: 0,
     sessionCreates: 0,
     sessionVersion: 1,

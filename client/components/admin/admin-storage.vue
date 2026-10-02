@@ -661,7 +661,7 @@
           <v-text-field
             v-if="reviewState.confirmation"
             v-model="confirmation"
-            :label="$t('admin:storage.type', { confirmation: reviewState.confirmation, interpolation: { escapeValue: false } })"
+            :label="$t('admin:storage.type', { confirmation: reviewState.confirmation, defaultValue: `Type ${reviewState.confirmation}`, interpolation: { escapeValue: false } })"
             variant="outlined"
             autocomplete="off"
             :disabled="busy"
@@ -1126,7 +1126,7 @@ function reviewActivation() {
     title: t('admin:storage.applySavedStorageSettings'),
     effect:
       t('admin:storage.stopPreviousTargetsInitialize'),
-    confirmation: t('admin:storage.applyStorageSettings'),
+    confirmation: 'APPLY STORAGE SETTINGS',
     body: { targetKey: null, handler: 'activate', fingerprint: saved.value.fingerprint }
   })
 }
@@ -1146,7 +1146,7 @@ function reviewDecision(operation: StorageOperationView, kind: 'cancel' | 'resol
     kind,
     title: kind === 'cancel' ? t('admin:storage.cancelBeforeExecution') : t('admin:storage.resolveUncertainOperation'),
     effect: operation.effect,
-    confirmation: kind === 'cancel' ? t('admin:storage.cancelOperation') : t('admin:storage.priorWorkerStopped'),
+    confirmation: kind === 'cancel' ? 'CANCEL OPERATION' : 'PRIOR WORKER STOPPED',
     body: { fingerprint: saved.value.fingerprint },
     id: operation.id
   })

@@ -1041,8 +1041,11 @@ export default defineComponent({
         return
       }
       const lines = Array.from(box.querySelectorAll<HTMLElement>('.nav-header-title-line'))
+      // Flex-shrunk, overflow-hidden lines can clip even when the box fits.
       const fits = (): boolean =>
-        box.scrollHeight <= box.clientHeight + 1 && lines.every(line => line.scrollWidth <= line.clientWidth + 1)
+        box.scrollHeight <= box.clientHeight + 1 && lines.every(line =>
+          line.scrollWidth <= line.clientWidth + 1 && line.scrollHeight <= line.clientHeight + 1
+        )
       const steps = [1, 0.92, 0.84, 0.76, 0.7]
       let next = steps[steps.length - 1]!
       box.classList.add('is-measuring')

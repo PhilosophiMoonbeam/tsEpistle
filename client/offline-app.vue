@@ -16,6 +16,8 @@ import { pwaState, retryServerConnection } from './helpers/pwa.ts'
 import { wikiStore } from './store/index.ts'
 import type { OfflineSnapshotRecord } from '../shared/offline.ts'
 import { useTranslate } from './helpers/use-translate.ts'
+import { applyUserPresentation } from './helpers/index.ts'
+import { forgetReaderDates, rememberReaderDates } from './helpers/offline-presentation.ts'
 
 const t = useTranslate()
 
@@ -66,6 +68,22 @@ const connectionMessage = computed(() => pwaState.connectionState === 'online'
   : pwaState.connectionState === 'checking' ? t('common:offlineApp.checkingConnectionSavedPages')
   : pwaState.connectionState === 'server-unavailable' ? t('common:offlineApp.serverUnavailableSavedPages')
   : t('common:offlineApp.youreOfflineSavedPages'))
+
+// Only published auth outcomes may replace the cached reader dates. Pending
+// verification and temporary user resets at an account boundary are not logout.
+watch(
+  () => [wikiStore.authRefreshOutcome, wikiStore.user.authenticated, wikiStore.user.timezone, wikiStore.user.dateFormat, wikiStore.user.timeFormat],
+  () => {
+    if (wikiStore.authRefreshOutcome === 'authenticated' && wikiStore.user.authenticated) {
+      applyUserPresentation(wikiStore.user)
+      rememberReaderDates(wikiStore.user)
+    } else if (wikiStore.authRefreshOutcome === 'anonymous') {
+      forgetReaderDates()
+      applyUserPresentation({ timezone: '', dateFormat: '', timeFormat: 'locale' })
+    }
+  },
+  { immediate: true, flush: 'sync' }
+)
 
 async function openStorage(): Promise<void> {
   storageState.value = 'checking'
