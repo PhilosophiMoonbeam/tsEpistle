@@ -895,15 +895,15 @@ export default {
           banner.title || this.$t('admin:general.noTitle'),
           banner.content || this.$t('admin:general.noMessage'),
           this.$t('admin:general.tone', { tone: (banner.tone || "warning"), interpolation: { escapeValue: false } }),
-          this.$t('admin:general.starts', { startsAt: (banner.startsAt || "Immediately"), interpolation: { escapeValue: false } }),
-          this.$t('admin:general.ends', { endsAt: (banner.endsAt || "Until disabled"), interpolation: { escapeValue: false } }),
+          this.$t('admin:general.starts', { startsAt: (banner.startsAt || this.$t('admin:general.immediately')), interpolation: { escapeValue: false } }),
+          this.$t('admin:general.ends', { endsAt: (banner.endsAt || this.$t('admin:general.untilDisabled')), interpolation: { escapeValue: false } }),
         ].join("\n");
       }
       if (field === "userDefaults") {
         const defaults = value as GeneralPolicy["userDefaults"];
         return [
           this.$t('admin:general.timeZone', { timezone: defaults.timezone, interpolation: { escapeValue: false } }),
-          this.$t('admin:general.dateFormat', { dateFormat: (defaults.dateFormat || "Locale default"), interpolation: { escapeValue: false } }),
+          this.$t('admin:general.dateFormat', { dateFormat: (defaults.dateFormat || this.$t('admin:general.localeDefault')), interpolation: { escapeValue: false } }),
           this.$t('admin:general.timeFormat', { timeFormat: defaults.timeFormat, interpolation: { escapeValue: false } }),
         ].join("\n");
       }
