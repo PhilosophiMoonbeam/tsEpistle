@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
 import boot from './modules/boot.ts'
+import { localizationPlugin } from './modules/localization.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
 
 const Setup = createAsyncComponent(() => import('./components/setup.vue'))
@@ -56,6 +57,7 @@ boot.onDOMReady(() => {
   const app = createApp({})
   app.component('Setup', Setup)
   app.use(vuetify)
+  app.use(localizationPlugin)
   window.WIKI = app
   app.mount('#root')
 })
