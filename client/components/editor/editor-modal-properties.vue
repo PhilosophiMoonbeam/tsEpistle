@@ -62,15 +62,15 @@
               )
             section.editor-properties-branding(aria-labelledby='editor-properties-branding-title')
               .editor-properties-branding-heading
-                .text-label-small#editor-properties-branding-title Page identity
+                .text-label-small#editor-properties-branding-title {{ $t(`editor:editorModalProperties.pageIdentity`) }}
                 v-spacer
-                .text-label-small.text-medium-emphasis Optional
+                .text-label-small.text-medium-emphasis {{ $t(`editor:editorModalProperties.optional`) }}
               .editor-properties-branding-preview
                 .editor-properties-branding-preview-copy
-                  .text-label-small Header preview
-                  .text-title-small {{ title || 'Untitled page' }}
+                  .text-label-small {{ $t(`editor:editorModalProperties.headerPreview`) }}
+                  .text-title-small {{ title || $t(`editor:editorModalProperties.untitledPage`) }}
                   .text-body-small(v-if='description') {{ description }}
-                  .text-body-small.text-medium-emphasis(v-else) No short description
+                  .text-body-small.text-medium-emphasis(v-else) {{ $t(`editor:editorModalProperties.noShortDescription`) }}
                 page-branding-mark(:branding='draft.brandingView')
               .editor-properties-branding-actions
                 v-btn(
@@ -80,7 +80,7 @@
                   @click='openBrandingPicker'
                 )
                   v-icon(start) mdi-image-multiple-outline
-                  span {{ draft.brandingAssignment ? 'Replace' : 'Select' }}
+                  span {{ draft.brandingAssignment ? $t(`editor:editorModalProperties.replace`) : $t(`common:actions.select`) }}
                 v-btn(
                   v-if='draft.brandingAssignment'
                   variant='text'
@@ -88,15 +88,15 @@
                   @click='removeBranding'
                 )
                   v-icon(start) mdi-image-remove-outline
-                  span Remove
+                  span {{ $t(`editor:editorModalProperties.remove`) }}
               .editor-properties-branding-status(
                 aria-live='polite'
                 :role='brandingError ? `alert` : `status`'
               )
                 span(v-if='brandingError') {{ brandingError }}
-                span(v-else-if='draft.brandingAssignment && !draft.brandingView') Assigned image is unavailable. You can replace or remove it.
-                span(v-else-if='draft.brandingAssignment') Page identity image selected.
-                span(v-else) No page identity image selected.
+                span(v-else-if='draft.brandingAssignment && !draft.brandingView') {{ $t(`editor:editorModalProperties.assignedImageUnavailableYou`) }}
+                span(v-else-if='draft.brandingAssignment') {{ $t(`editor:editorModalProperties.pageIdentityImageSelected`) }}
+                span(v-else) {{ $t(`editor:editorModalProperties.noPageIdentityImage`) }}
             section.editor-properties-visibility(aria-labelledby='editor-properties-visibility-title')
               .text-label-small#editor-properties-visibility-title {{ $t('editor:props.visibility') }}
               .editor-properties-visibility-summary(role='status', aria-live='polite')
@@ -129,28 +129,28 @@
               inset
             )
             section.editor-properties-page-features(aria-labelledby='editor-properties-page-features-title')
-              .text-label-small#editor-properties-page-features-title Reader features
+              .text-label-small#editor-properties-page-features-title {{ $t(`editor:editorModalProperties.readerFeatures`) }}
               v-switch(
-                label='Show links'
+                :label='$t(`editor:editorModalProperties.showLinks`)'
                 v-model='draft.pageFeatures.linksVisible'
                 color='primary'
-                hint='Show the page’s link section to readers.'
+                :hint='$t(`editor:editorModalProperties.showPagesLinkSection`)'
                 persistent-hint
                 inset
               )
               v-switch(
-                label='Allow ratings'
+                :label='$t(`editor:editorModalProperties.allowRatings`)'
                 v-model='draft.pageFeatures.ratingsAllowed'
                 color='primary'
-                hint='Allow readers to rate this page.'
+                :hint='$t(`editor:editorModalProperties.allowReadersRatePage`)'
                 persistent-hint
                 inset
               )
               v-switch(
-                label='Show last editor'
+                :label='$t(`editor:editorModalProperties.showLastEditor`)'
                 v-model='draft.pageFeatures.lastEditorVisible'
                 color='primary'
-                hint='Show who last edited this page to readers.'
+                :hint='$t(`editor:editorModalProperties.showWhoLastEdited`)'
                 persistent-hint
                 inset
               )
@@ -214,19 +214,19 @@
                   template(v-slot:prepend)
                     v-icon(:icon='item === candidateTag ? `mdi-plus` : `mdi-tag-outline`', size='18')
                   template(v-slot:title)
-                    span(v-if='item === candidateTag') Add “{{ item }}” to page
+                    span(v-if='item === candidateTag') {{ $t(`editor:editorModalProperties.addPage`, { item, interpolation: { escapeValue: false } }) }}
                     span(v-else) {{ item }}
                   template(v-slot:subtitle v-if='item === candidateTag')
-                    | New names are created when the page is saved.
+                    | {{ $t(`editor:editorModalProperties.newNamesCreatedWhen`) }}
               template(v-slot:chip='{ props, item }')
                 v-chip(
                   v-bind='props'
                   closable
                   size='small'
-                  :close-label='`Remove tag ${item}`'
+                  :close-label='$t(`editor:editorModalProperties.removeTag`, { item, interpolation: { escapeValue: false } })'
                 ) {{ item }}
               template(v-slot:no-data)
-                v-list-item(title='Type to search for suggestions or enter a name.')
+                v-list-item(:title='$t(`editor:editorModalProperties.typeSearchSuggestionsEnter`)')
               template(v-slot:menu-footer)
                 v-btn.editor-properties-tag-retry(
                   v-if='tagSearchError'
@@ -235,17 +235,17 @@
                   size='small'
                   variant='text'
                   prepend-icon='mdi-refresh'
-                  aria-label='Retry tag suggestions'
+                  :aria-label='$t(`editor:editorModalProperties.retryTagSuggestions`)'
                   @click='retryTagSearch'
-                ) Retry
+                ) {{ $t(`editor:editorModalProperties.retry`) }}
             .editor-properties-tags-persistence-hint
-              | Choose an existing suggestion or enter a name. New names are created when the page is saved.
+              | {{ $t(`editor:editorModalProperties.chooseExistingSuggestionEnter`) }}
             .editor-properties-tag-search-state(
               v-if='tagSearchLoading'
               role='status'
               aria-live='polite'
               aria-atomic='true'
-            ) Finding matching tag suggestions…
+            ) {{ $t(`editor:editorModalProperties.findingMatchingTagSuggestions`) }}
             v-alert.editor-properties-tag-search-error(
               v-else-if='tagSearchError'
               type='error'
@@ -258,13 +258,13 @@
               role='status'
               aria-live='polite'
               aria-atomic='true'
-            ) Already selected.
+            ) {{ $t(`editor:editorModalProperties.alreadySelected`) }}
             .editor-properties-tag-search-state(
               v-else-if='tagSearchNoResults'
               role='status'
               aria-live='polite'
               aria-atomic='true'
-            ) No matching suggestions. You can still add this name to the page.
+            ) {{ $t(`editor:editorModalProperties.noMatchingSuggestionsYou`) }}
             .editor-properties-tag-status(
               v-if='tagStatus'
               role='status'
@@ -414,7 +414,7 @@
               .d-flex.align-center
                 span {{translationError}}
                 v-spacer
-                v-btn(variant='text', size='small', @click='loadTranslations') Retry
+                v-btn(variant='text', size='small', @click='loadTranslations') {{ $t(`editor:editorModalProperties.retry`) }}
         v-tabs-window-item(:value='5', transition='fade-transition', reverse-transition='fade-transition')
           editor-okf-panel
       v-divider
@@ -489,8 +489,8 @@ type DatePickerValue = unknown
 type OkfState = typeof wikiStore.page.okf
 
 const PATH_RULES = Object.freeze([
-  (value: string) => !!value || 'This field is required.',
-  (value: string) => filenamePattern.test(value) || 'Invalid path. Please ensure it does not contain special characters, or begin/end in a slash or hashtag string.'
+  (value: string) => !!value || 'editor:editorModalProperties.fieldRequired',
+  (value: string) => filenamePattern.test(value) || 'editor:editorModalProperties.invalidPathPleaseEnsure'
 ])
 
 type PagePropertiesDraft = {
@@ -594,7 +594,7 @@ export default defineComponent({
       tagSearchRequest: 0,
       translationsRequest: 0,
       editorDisposed: false,
-      pathRules: PATH_RULES,
+      pathRules: PATH_RULES.map(rule => (value: string) => { const message = rule(value); return typeof message === 'string' ? this.$t(message) : message }),
       draft: createPropertiesDraft(),
       okfSnapshot: null as OkfState | null,
       returnFocus: null as HTMLElement | null,
@@ -647,9 +647,9 @@ export default defineComponent({
           const added = normalized.find(tag => !previous.includes(tag))
           const removed = previous.find(tag => !normalized.includes(tag))
           this.tagStatus = added
-            ? `Added ${added} to this page.`
+            ? this.$t('editor:editorModalProperties.addedPage', { added, interpolation: { escapeValue: false } })
             : removed
-              ? `Removed ${removed} from this page.`
+              ? this.$t('editor:editorModalProperties.removedPage', { removed, interpolation: { escapeValue: false } })
               : ''
         }
       }
@@ -963,7 +963,7 @@ export default defineComponent({
       const assignment = normalizeBrandingAssignment(payload.assignment)
       const view = normalizeBrandingView(payload.view, assignment)
       if (assignment === null || view === null) {
-        this.brandingError = 'Choose a supported image before continuing.'
+        this.brandingError = this.$t('editor:editorModalProperties.chooseSupportedImageBefore')
         return
       }
       this.draft.brandingAssignment = assignment
@@ -986,7 +986,7 @@ export default defineComponent({
         this.translations = markRaw(translations)
       } catch (err) {
         if (this.editorDisposed || request !== this.translationsRequest) return
-        this.translationError = 'Unable to load translations. Try again.'
+        this.translationError = this.$t('editor:editorModalProperties.unableLoadTranslationsTry')
         wikiStore.showError(err)
       } finally {
         if (!this.editorDisposed && request === this.translationsRequest) {
@@ -1083,7 +1083,7 @@ export default defineComponent({
           !(retryRoot instanceof HTMLElement) ||
           !retryRoot.isConnected ||
           retryRoot.getClientRects().length === 0 ||
-          retryRoot.matches(':disabled, [inert], [aria-hidden="true"]')
+          retryRoot.matches(this.$t('editor:editorModalProperties.disabledInertAriaHidden'))
         ) return false
         retryRoot.focus({ preventScroll: true })
         return true
@@ -1124,7 +1124,7 @@ export default defineComponent({
       } catch {
         if (this.editorDisposed || request !== this.tagSearchRequest || !this.modelValue) return
         this.newTagSuggestions = []
-        this.tagSearchError = `Unable to load suggestions for “${normalizedQuery}”. You can still add this name to the page.`
+        this.tagSearchError = this.$t('editor:editorModalProperties.unableLoadSuggestionsYou', { normalizedQuery, interpolation: { escapeValue: false } })
         this.tagSearchFailedQuery = normalizedQuery
       } finally {
         if (!this.editorDisposed && request === this.tagSearchRequest) {
@@ -1135,7 +1135,7 @@ export default defineComponent({
     loadEditor(ref: HTMLElement, mode: 'js' | 'css') {
       const cm = new TextEditor({
         parent: ref,
-        ariaLabel: mode === 'js' ? 'Page JavaScript' : 'Page CSS',
+        ariaLabel: mode === 'js' ? this.$t('editor:editorModalProperties.pageJavascript') : this.$t('editor:editorModalProperties.pageCss'),
         dark: this.$vuetify.theme.current.dark,
         value: mode === 'js' ? this.scriptJs : this.scriptCss,
         language: mode === 'js' ? javascript() : css(),

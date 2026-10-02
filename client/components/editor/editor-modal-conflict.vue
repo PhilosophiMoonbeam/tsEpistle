@@ -6,7 +6,7 @@
           v-icon.mr-3(color='primary') mdi-merge
           .text-body-large#editor-conflict-title {{$t('editor:conflict.title')}}
           v-spacer
-          v-progress-circular(v-if='isLoading', indeterminate, size='20', width='2', color='primary', aria-label='Loading latest version')
+          v-progress-circular(v-if='isLoading', indeterminate, size='20', width='2', color='primary', :aria-label='$t(`editor:editorModalConflict.loadingLatestVersion`)')
           v-btn(variant="outlined", @click='requestClose')
             v-icon(start) mdi-close
             span {{$t('common:actions.cancel')}}
@@ -17,22 +17,22 @@
         v-alert.ma-6(type='error', variant='tonal', role='alert') {{loadError}}
         .editor-modal-conflict-actions
           v-btn(variant='text', @click='requestClose') {{$t('common:actions.cancel')}}
-          v-btn(color='primary', @click='loadConflict') Retry
+          v-btn(color='primary', @click='loadConflict') {{ $t(`editor:editorModalConflict.retry`) }}
       template(v-else)
         .editor-modal-conflict-legend
           .editor-modal-conflict-legend-current
             v-icon.mr-2 mdi-pencil-outline
-            span Current draft (editable)
+            span {{ $t(`editor:editorModalConflict.currentDraftEditable`) }}
           .editor-modal-conflict-legend-remote
             v-icon.mr-2 mdi-source-branch
-            span Remote original (read-only inserted chunks)
+            span {{ $t(`editor:editorModalConflict.remoteOriginalReadOnly`) }}
         .editor-modal-conflict-meta
           .editor-modal-conflict-meta-local
-            strong Current draft
+            strong {{ $t(`editor:editorModalConflict.currentDraft`) }}
             span {{title}}
             span {{description}}
           .editor-modal-conflict-meta-remote
-            strong Remote version
+            strong {{ $t(`editor:editorModalConflict.remoteVersion`) }}
             span {{latest.title}}
             span {{latest.description}}
             span {{latest.authorName}} · {{ $helpers.formatMoment(latest.updatedAt, 'from') }}
@@ -86,13 +86,13 @@
             v-card
               .dialog-header.is-short.is-red
                 v-icon.mr-3(color='white', aria-hidden='true') mdi-alert
-                span#editor-conflict-discard-title Discard merge edits?
+                span#editor-conflict-discard-title {{ $t(`editor:editorModalConflict.discardMergeEdits`) }}
               v-card-text.pa-4#editor-conflict-discard-description
-                | Your editable merge has changed. Closing now will discard those edits.
+                | {{ $t(`editor:editorModalConflict.editableMergeHasChanged`) }}
               v-card-chin
                 v-spacer
-                v-btn(variant='outlined', @click='keepEditing') Keep editing
-                v-btn(color='red', @click='discardMergeEdits') Discard merge edits
+                v-btn(variant='outlined', @click='keepEditing') {{ $t(`editor:editorModalConflict.keepEditing`) }}
+                v-btn(color='red', @click='discardMergeEdits') {{ $t(`editor:editorModalConflict.discardMergeEdits2`) }}
 </template>
 <script lang='ts'>
 import { defineComponent, markRaw } from 'vue'
@@ -245,9 +245,9 @@ export default defineComponent({
       }
       if (!resp) {
         if (this.requestController === requestController) this.requestController = null
-        this.loadError = 'Failed to fetch the latest version. Retry to try again, or cancel to keep editing locally.'
+        this.loadError = this.$t('editor:editorModalConflict.failedFetchLatestVersion')
         showNotification(wikiStore, {
-          message: 'Failed to fetch latest version.',
+          message: this.$t('editor:editorModalConflict.failedFetchLatestVersion2'),
           style: 'warning',
           icon: 'warning'
         })
@@ -269,7 +269,7 @@ export default defineComponent({
       const container = this.$refs.cm
       if (!(container instanceof HTMLElement)) {
         if (this.requestController === requestController) this.requestController = null
-        this.loadError = 'The conflict editor could not be initialized.'
+        this.loadError = this.$t('editor:editorModalConflict.conflictEditorCouldNot')
         return
       }
       const initialMergeValue = wikiStore.editor.content
@@ -277,7 +277,7 @@ export default defineComponent({
       this.mergeValue = initialMergeValue
       this.cm = markRaw(new TextEditor({
         parent: container,
-        ariaLabel: 'Editable merge result',
+        ariaLabel: this.$t('editor:editorModalConflict.editableMergeResult'),
         dark: this.$vuetify.theme.current.dark,
         value: initialMergeValue,
         language,
