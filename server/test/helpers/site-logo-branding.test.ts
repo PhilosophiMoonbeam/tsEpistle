@@ -58,6 +58,7 @@ const particleObject = (width: number, height: number, count: number, variant: n
 interface Bundle {
   readonly revisionId: string
   readonly pipelineVersion: number
+  readonly sourceHash: string
   readonly logoHash: string
   readonly iconHashes: readonly string[] | null
   readonly faviconIcoHash: string | null
@@ -100,7 +101,7 @@ const expectedBranding = (bundle: Bundle): ActiveBranding => {
           medianStroke: bundle.medianStroke,
           ...(bundle.auraColor === null ? {} : { auraColor: bundle.auraColor })
         }
-  return { logoUrl, logoEffect, logoIcons }
+  return { logoUrl, logoEffect, logoIcons, logoSourceSha256: bundle.sourceHash }
 }
 
 describe('resolved site-logo branding', () => {
@@ -125,6 +126,8 @@ describe('resolved site-logo branding', () => {
       table.uuid('id').primary()
       table.string('status').notNullable()
       table.integer('pipelineVersion').notNullable()
+      table.string('sourceKind').notNullable().defaultTo('source')
+      table.string('sourceHash', 64).nullable()
       table.string('logoPngKind').nullable()
       table.string('logoPngHash', 64).nullable()
       table.string('iconPngKind').nullable()
@@ -186,6 +189,7 @@ describe('resolved site-logo branding', () => {
     const bundle: Bundle = {
       revisionId: input.revisionId,
       pipelineVersion,
+      sourceHash: digest(Buffer.from(`source-${input.variant}`)),
       logoHash: digest(logoBytes),
       iconHashes: hasIcons ? iconBytes.map(digest) : null,
       faviconIcoHash: hasIcons ? digest(faviconIco) : null,
@@ -246,6 +250,8 @@ describe('resolved site-logo branding', () => {
       id: bundle.revisionId,
       status: 'ready',
       pipelineVersion: bundle.pipelineVersion,
+      sourceKind: 'source',
+      sourceHash: bundle.sourceHash,
       logoPngKind: 'logo-png',
       logoPngHash: bundle.logoHash,
       iconPngKind: hasIcons ? 'icon-png' : null,
@@ -282,9 +288,20 @@ describe('resolved site-logo branding', () => {
     ]
 
     for (const logoUrl of unmanagedLogoUrls) {
-      expect(await resolveActiveBranding(db, logoUrl)).toEqual({ logoUrl, logoEffect: null, logoIcons: null })
+      expect(await resolveActiveBranding(db, logoUrl)).toEqual({ logoUrl, logoEffect: null, logoIcons: null, logoSourceSha256: null })
     }
   })
+  it('exposes the logo source identity only for a well-formed source hash', async () => {
+    const active = await insertReadyBundle({ revisionId: '00000000-0000-4000-8000-0000000000b1', variant: 11, width: 640, height: 320, count: 2, medianStroke: 4 })
+    await db('siteLogoState').where({ id: 1 }).update({ activeRevisionId: active.revisionId, desiredRevisionId: active.revisionId })
+    expect((await resolveActiveBranding(db, '')).logoSourceSha256).toBe(active.sourceHash)
+
+    await db('siteLogoRevisions').where({ id: active.revisionId }).update({ sourceHash: 'not-a-hash' })
+    const malformed = await resolveActiveBranding(db, '')
+    expect(malformed.logoUrl).toBe(`/_site-logo/${active.logoHash}/logo.png`)
+    expect(malformed.logoSourceSha256).toBeNull()
+  })
+
   it.each([1, 2, 3, 4, 5])('exposes supported pipeline v%s in the active descriptor', async pipelineVersion => {
     const active = await insertReadyBundle({
       revisionId: `00000000-0000-4000-8000-00000000000${pipelineVersion}`,
@@ -312,7 +329,7 @@ describe('resolved site-logo branding', () => {
     })
     await db('siteLogoState').where({ id: 1 }).update({ activeRevisionId: active.revisionId, desiredRevisionId: active.revisionId })
 
-    expect(await resolveActiveBranding(db, '/assets/legacy.svg')).toEqual({ logoUrl: '/assets/legacy.svg', logoEffect: null, logoIcons: null })
+    expect(await resolveActiveBranding(db, '/assets/legacy.svg')).toEqual({ logoUrl: '/assets/legacy.svg', logoEffect: null, logoIcons: null, logoSourceSha256: null })
   })
 
   it('publishes a v6 ordinary logo and complete icon bundle without requiring an effect', async () => {
@@ -422,7 +439,7 @@ describe('resolved site-logo branding', () => {
       .where({ kind: 'logo-png', sha256: active.logoHash })
       .update({ bytes: Buffer.alloc(4 + Buffer.byteLength(`logo-${8}`), 0x42) })
     branding = await resolveActiveBranding(db, `/_site-logo/${active.logoHash}/logo.png`)
-    expect(branding).toEqual({ logoUrl: '', logoEffect: null, logoIcons: null })
+    expect(branding).toEqual({ logoUrl: '', logoEffect: null, logoIcons: null, logoSourceSha256: null })
   })
 
   it('keeps the complete active A branding while replacement B is pending, processing, or ordinarily failed', async () => {

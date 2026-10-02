@@ -4,6 +4,7 @@ import * as Vue from 'vue'
 import { describe, expect, it, vi } from '../../../../server/test/bun-test.mts'
 import { manualReviewerId } from '../../../helpers/approval-reviewer-search.ts'
 import { brandingDuplicatesSiteLogo } from '../../../helpers/page-branding.ts'
+import { UTILITY_TOOLTIP_GAP, UTILITY_TOOLTIP_MAX_WIDTH } from '../../../helpers/utility-tooltip-placement.ts'
 import { keyTranslator, renderTemplate } from '../../../test/render-template.mts'
 
 // Reader chrome: rail utilities, outline heading, state indicators and the
@@ -17,6 +18,7 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   $slots: {},
   $vuetify: { locale: { isRtl: false }, display: { smAndDown: false, mdAndUp: true, width: 1440 }, theme: { current: { dark: false } } },
   mergeProps: Vue.mergeProps,
+  utilityTooltipProps: (key: string) => ({ id: `page-tool-tip-${key}` }),
   printView: false,
   navMode: 'NONE',
   readerFocus: false,
@@ -115,13 +117,35 @@ describe('page reader chrome template', () => {
     expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
   })
 
-  it('opens every utility tooltip below the whole card with a capped width, so none covers the title or the metadata', async () => {
-    const { document } = await renderTemplate(PAGE, baseState({ isAuthenticated: true, utilityTooltipTarget: '#page-desktop-rail .page-tools-card' }))
+  it('gives every utility tooltip its own id and the shared, measured placement anchored to the whole card', async () => {
+    const placeUtilityTooltip = vi.fn()
+    const vm = {
+      utilityTooltipTarget: '#page-desktop-rail .page-tools-card',
+      utilityTooltip: { location: 'top left', offset: [6, -40], measuring: true },
+      placeUtilityTooltip
+    }
+    const props = page.methods.utilityTooltipProps!.call(vm, 'share') as Record<string, unknown>
+    expect(props).toMatchObject({
+      id: 'page-tool-tip-share',
+      target: '#page-desktop-rail .page-tools-card',
+      location: 'top left',
+      offset: [6, -40],
+      maxWidth: 320,
+      contentClass: 'page-tool-tip page-tool-tip--measuring'
+    })
+    ;(props['onUpdate:modelValue'] as (open: boolean) => void)(true)
+    expect(placeUtilityTooltip).toHaveBeenCalledWith(true, 'share')
+
+    const { document } = await renderTemplate(PAGE, baseState({
+      isAuthenticated: true,
+      utilityTooltipProps: (key: string) => page.methods.utilityTooltipProps!.call(vm, key)
+    }))
     const tooltips = Array.from(document.querySelectorAll('.page-tools-card__utilities [data-stub="v-tooltip"]'))
     expect(tooltips.length).toBeGreaterThan(2)
-    expect(tooltips.map(tooltip => tooltip.getAttribute('location'))).toEqual(tooltips.map(() => 'bottom'))
+    const ids = tooltips.map(tooltip => tooltip.getAttribute('id'))
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.every(id => id?.startsWith('page-tool-tip-'))).toBe(true)
     expect(tooltips.map(tooltip => tooltip.getAttribute('target'))).toEqual(tooltips.map(() => '#page-desktop-rail .page-tools-card'))
-    expect(tooltips.map(tooltip => tooltip.getAttribute('max-width'))).toEqual(tooltips.map(() => '280'))
   })
 
   it('renders an author placeholder in the middle of a translated sentence without moving the name', async () => {
@@ -229,11 +253,13 @@ const page = new Function(
   'defineComponent', 'h', 'markRaw', 'mergeProps', 'useGoTo', 'i18next',
   'AsyncState', 'PageBrandingMark', 'SiteBanner', 'NavSidebar',
   'wikiStore', 'manualReviewerId', 'brandingDuplicatesSiteLogo', 'Prism', 'ClipboardJS',
+  'UTILITY_TOOLTIP_GAP', 'UTILITY_TOOLTIP_MAX_WIDTH',
   executableScript
 )(
   (options: unknown) => options, () => ({}), <Value>(value: Value) => value, Vue.mergeProps, () => () => {}, { t: (key: string) => key },
   stubComponent, stubComponent, stubComponent, stubComponent,
-  wikiStore, manualReviewerId, brandingDuplicatesSiteLogo, { plugins: { toolbar: { registerButton: () => {} } } }, class ClipboardJS {}
+  wikiStore, manualReviewerId, brandingDuplicatesSiteLogo, { plugins: { toolbar: { registerButton: () => {} } } }, class ClipboardJS {},
+  UTILITY_TOOLTIP_GAP, UTILITY_TOOLTIP_MAX_WIDTH
 ) as Rules
 
 const call = (name: string, vm: Record<string, unknown>) => page.computed[name]!.call(vm)
@@ -345,6 +371,22 @@ describe('page reader chrome rules', () => {
   it('labels the signed-in reviewer as You in the approval history', () => {
     const vm = { $t: keyTranslator }
     expect(page.methods.approvalActorLabel!.call(vm, 7)).toBe('common:page.reviewerYou')
+    expect(page.methods.approvalActorLabel!.call(vm, 7, 'Ada Lovelace')).toBe('common:page.reviewerYou')
     expect(page.methods.approvalActorLabel!.call(vm, 3)).toBe('common:page.reviewerById(id=3)')
+  })
+
+  it('names other approval actors from the API and falls back to the user ID', () => {
+    const transitions = [
+      { id: 'a', fromStatus: null, toStatus: 'submitted', actorId: 3, actorName: '  Grace Hopper ', comment: null, createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'b', fromStatus: 'submitted', toStatus: 'changes-requested', actorId: 4, actorName: null, comment: 'x', createdAt: '2026-01-02T00:00:00Z' }
+    ]
+    const vm: Record<string, unknown> = { $t: keyTranslator, pageApproval: { transitions } }
+    vm.approvalActorNames = call('approvalActorNames', vm)
+    const label = (id: number, name?: unknown) => page.methods.approvalActorLabel!.call(vm, id, name)
+    expect(label(3, 'Grace Hopper')).toBe('Grace Hopper')
+    expect(label(4, null)).toBe('common:page.reviewerById(id=4)')
+    expect(label(5, '   ')).toBe('common:page.reviewerById(id=5)')
+    // A selected reviewer without a name argument reuses the name from the history.
+    expect(label(3)).toBe('Grace Hopper')
   })
 })

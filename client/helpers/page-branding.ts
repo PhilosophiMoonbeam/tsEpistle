@@ -35,9 +35,29 @@ const comparablePath = (value: string): string | null => {
   }
 }
 
-/** True when a page branding image is the same file as the site logo (query strings ignored). */
-export const brandingDuplicatesSiteLogo = (brandingUrl: string | null | undefined, siteLogoUrl: string | null | undefined): boolean => {
-  if (!brandingUrl || !siteLogoUrl) return false
-  const branding = comparablePath(brandingUrl)
-  return branding !== null && branding === comparablePath(siteLogoUrl)
+const SHA256_PATTERN = /^[0-9a-f]{64}$/
+
+export interface SiteLogoIdentity {
+  logoUrl?: string | null
+  /** SHA-256 of the site logo's uploaded source bytes (the processed logo URL uses a different hash). */
+  logoSourceSha256?: string | null
 }
+
+/**
+ * True when a page branding image is the site logo: the same uploaded source bytes,
+ * or the same file path (query strings ignored).
+ */
+export const brandingDuplicatesSiteLogo = (
+  branding: Pick<PageBrandingView, 'imageUrl' | 'sourceSha256'> | null | undefined,
+  site: SiteLogoIdentity | null | undefined
+): boolean => {
+  if (!branding || !site) return false
+  const siteSha = site.logoSourceSha256
+  if (typeof siteSha === 'string' && SHA256_PATTERN.test(siteSha) && siteSha === branding.sourceSha256) return true
+  if (!branding.imageUrl || !site.logoUrl) return false
+  const brandingPath = comparablePath(branding.imageUrl)
+  return brandingPath !== null && brandingPath === comparablePath(site.logoUrl)
+}
+
+/** Accepts only a well-formed source digest from server-rendered site config. */
+export const normalizeSiteLogoSourceSha256 = (value: unknown): string | null => (typeof value === 'string' && SHA256_PATTERN.test(value) ? value : null)

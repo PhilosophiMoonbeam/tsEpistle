@@ -346,6 +346,19 @@ const canViewRequest = (
   return canReadPage(requester, page, authority) && (id === request.submitterId || id === request.assigneeId || reviewerEligible(requester, page, authority))
 }
 
+// Display names only (never email): callers must already be authorized to see the transitions.
+const loadApprovalActorNames = async (transitions: readonly Record<string, unknown>[]): Promise<Map<number, string>> => {
+  const ids = [...new Set(transitions.map(transition => Number(transition.actorId)).filter(id => Number.isSafeInteger(id) && id > 0))]
+  if (ids.length === 0) return new Map()
+  const rows = await wiki.models.knex<{ id: number; name: string | null }>('users').whereIn('id', ids).select('id', 'name')
+  const names = new Map<number, string>()
+  for (const row of rows) {
+    const name = typeof row.name === 'string' ? row.name.trim() : ''
+    if (name) names.set(Number(row.id), name)
+  }
+  return names
+}
+
 export const getPageApproval = async (input: { requester: PagePrincipal; pageId: number; sessionId: string }): Promise<Record<string, unknown> | null> => {
   actorId(input.requester)
   const page = await wiki.models.pages.getPageFromDb(input.pageId)
@@ -356,7 +369,8 @@ export const getPageApproval = async (input: { requester: PagePrincipal; pageId:
   }
   const request = await wiki.models.knex<ApprovalRequestRow>('pageApprovalRequests').where({ pageId: input.pageId }).orderBy('createdAt', 'desc').first()
   if (!request || !canViewRequest(input.requester, request, page, authority)) return null
-  const transitions = await wiki.models.knex('pageApprovalTransitions').where({ requestId: request.id }).orderBy('createdAt', 'asc')
+  const transitions = await wiki.models.knex<Record<string, unknown>>('pageApprovalTransitions').where({ requestId: request.id }).orderBy('createdAt', 'asc')
+  const actorNames = await loadApprovalActorNames(transitions)
   return {
     ...request,
     stale: staleRevision(request, page),
@@ -364,7 +378,7 @@ export const getPageApproval = async (input: { requester: PagePrincipal; pageId:
       reviewerEligible(input.requester, page, authority) &&
       (request.assigneeId === null || request.assigneeId === principalId(input.requester) || managesSystem(input.requester)),
     canSubmitter: request.submitterId === principalId(input.requester),
-    transitions
+    transitions: transitions.map(transition => ({ ...transition, actorName: actorNames.get(Number(transition.actorId)) ?? null }))
   }
 }
 
