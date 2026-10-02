@@ -55,8 +55,7 @@
                 v-bind='props'
                 icon
                 href='/t'
-                :disabled='!transportVerified'
-                :title='!transportVerified ? navigationUnavailableReason : undefined'
+                :aria-disabled='!transportVerified ? `true` : undefined'
                 data-search-modal-action
                 variant='outlined'
                 :aria-current='mode === `tags` ? `page` : undefined'
@@ -64,7 +63,7 @@
                 @click='guardHeaderNavigation'
               )
                 v-icon(size='18') mdi-tag-outline
-            span {{$t('common:header.browseTags')}}
+            span {{ transportVerified ? $t('common:header.browseTags') : navigationUnavailableReason }}
 
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
@@ -122,13 +121,12 @@
                   v-bind='props'
                   icon
                   rounded='lg'
-                  :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  :aria-disabled='!onlineActionReady ? `true` : undefined'
                   @click='pageEdit'
                   :aria-label='$t(`common:header.edit`)'
                 )
                   v-icon(icon='mdi-pencil')
-              span Edit Page
+              span {{ onlineActionReady ? $t('common:accountMenu.editPage', { defaultValue: 'Edit page' }) : onlineActionUnavailableReason }}
           v-tooltip(location='bottom')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-agent(
@@ -164,15 +162,14 @@
                 v-bind='props'
                 icon
                 href='/t'
-                :disabled='!transportVerified'
-                :title='!transportVerified ? navigationUnavailableReason : undefined'
+                :aria-disabled='!transportVerified ? `true` : undefined'
                 data-search-modal-action
                 :aria-current='mode === `tags` ? `page` : undefined'
                 :aria-label='$t(`common:header.browseTags`)'
                 @click='guardHeaderNavigation'
               )
                 v-icon mdi-tag-outline
-            span {{$t('common:header.browseTags')}}
+            span {{ transportVerified ? $t('common:header.browseTags') : navigationUnavailableReason }}
           .nav-header-slot-actions(v-if='($vuetify.display.mdAndUp || mobileActions) && $slots.actions')
             slot(name='actions')
           //- Divider between the authoring cluster (Agent / Edit) and the
@@ -204,7 +201,6 @@
                     role='button'
                     link
                     :disabled='!readerActionReady'
-                    :title='!readerActionReady ? onlineActionUnavailableReason : undefined'
                     :aria-current='lc.code === locale ? `true` : undefined'
                     @click='changeLocale(lc)'
                   )
@@ -232,7 +228,6 @@
                   role='button'
                   link
                   :disabled='!readerActionReady'
-                  :title='!readerActionReady ? onlineActionUnavailableReason : undefined'
                   @click='pageView'
                   v-if='mode !== `view`'
                 )
@@ -242,7 +237,6 @@
                   role='button'
                   link
                   :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                   @click='pageHistory'
                   v-if='mode !== `history` && hasReadHistoryPermission'
                 )
@@ -252,7 +246,6 @@
                   role='button'
                   link
                   :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                   @click='pageSource'
                   v-if='mode !== `source` && hasReadSourcePermission'
                 )
@@ -262,7 +255,6 @@
                   role='button'
                   link
                   :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                   @click='pageConvert'
                   v-if='hasWritePagesPermission'
                 )
@@ -272,7 +264,6 @@
                   role='button'
                   link
                   :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                   @click='pageDuplicate'
                   v-if='hasWritePagesPermission'
                 )
@@ -282,7 +273,6 @@
                   role='button'
                   link
                   :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                   @click='pageMove'
                   v-if='hasManagePagesPermission'
                 )
@@ -292,7 +282,6 @@
                   role='button'
                   link
                   :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                   @click='pageDelete'
                   v-if='hasDeletePagesPermission'
                 )
@@ -309,7 +298,6 @@
                   rounded='lg'
                   v-bind='props'
                   :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                   @click='pageNew'
                   :aria-label='$t(`common:header.newPage`)'
                 )
@@ -326,7 +314,6 @@
                   rounded='lg'
                   v-bind='props'
                   :disabled='!onlineActionReady'
-                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                   @click='openAdmin'
                   :aria-label='$t(`common:header.admin`)'
                 )
@@ -350,7 +337,6 @@
                 link
                 v-if='path && mode !== `view`'
                 :disabled='!readerActionReady'
-                :title='!readerActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-file-document-outline'
                 @click='pageView'
               )
@@ -360,7 +346,6 @@
                 link
                 v-if='path && hasWritePagesPermission && mode !== `edit`'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-file-document-edit-outline'
                 @click='pageEdit'
               )
@@ -370,7 +355,6 @@
                 link
                 v-if='path && hasReadHistoryPermission && mode !== `history`'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-history'
                 @click='pageHistory'
               )
@@ -380,7 +364,6 @@
                 link
                 v-if='path && hasReadSourcePermission && mode !== `source`'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-code-tags'
                 @click='pageSource'
               )
@@ -390,7 +373,6 @@
                 link
                 v-if='path && hasWritePagesPermission'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-lightning-bolt'
                 @click='pageConvert'
               )
@@ -399,7 +381,6 @@
                 link
                 v-if='path && hasWritePagesPermission'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-content-duplicate'
                 @click='pageDuplicate'
               )
@@ -409,7 +390,6 @@
                 link
                 v-if='path && hasManagePagesPermission'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-content-save-move-outline'
                 @click='pageMove'
               )
@@ -419,7 +399,6 @@
                 link
                 v-if='path && hasDeletePagesPermission'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-trash-can-outline'
                 @click='pageDelete'
               )
@@ -430,7 +409,6 @@
                 link
                 v-if='hasNewPagePermission && path && mode !== `edit`'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-text-box-plus-outline'
                 @click='pageNew'
               )
@@ -438,7 +416,6 @@
               v-list-item(
                 v-if='isAuthenticated && isAdmin && mode !== `admin`'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-cog'
                 @click='openAdmin'
               )
@@ -446,7 +423,6 @@
               v-list-item(
                 v-if='isAuthenticated && isAdmin && mode === `admin`'
                 :disabled='!onlineActionReady'
-                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
                 prepend-icon='mdi-exit-to-app'
                 @click='exitAdmin'
               )
@@ -460,7 +436,6 @@
                   v-for='lc of locales'
                   :key='`mobile-locale-${lc.code}`'
                   :disabled='!readerActionReady'
-                  :title='!readerActionReady ? onlineActionUnavailableReason : undefined'
                   :aria-current='lc.code === locale ? `true` : undefined'
                   prepend-icon='mdi-web'
                   @click='changeLocale(lc)'
@@ -478,14 +453,13 @@
                     :class='$vuetify.locale.isRtl ? `ml-0` : ``'
                     rounded='lg'
                     :aria-label='accountButtonLabel'
-                    :aria-description='connectionPresentation.label'
-                    :title='connectionPresentation.label'
+                    :aria-description='connectionLabel'
                   )
                     template(v-if='isAuthenticated')
-                      v-avatar(v-if='picture.kind === `initials`', :size='32', color='primary')
-                        span.account-menu__initials {{ picture.initials }}
-                      v-avatar(v-else-if='picture.kind === `image`', :size='32')
-                        v-img(:src='picture.url', alt='')
+                      v-avatar(v-if='avatar.kind === `initials`', :size='32', color='primary')
+                        span.account-menu__initials {{ avatar.initials }}
+                      v-avatar(v-else-if='avatar.kind === `image`', :size='32')
+                        v-img(:src='avatar.url', alt='', @error='avatarFailed(avatar.url)')
                       v-icon(v-else) mdi-account-circle
                     v-icon(v-else) mdi-account-circle
                     span.account-menu__notification-indicator(
@@ -495,59 +469,95 @@
                     )
                     span.account-menu__connectivity-indicator(
                       :class='`account-menu__connectivity-indicator--${connectionPresentation.tone}`'
-                      :title='connectionPresentation.label'
+                      :data-connection='connectionPresentation.key'
                       data-connectivity-indicator
                       aria-hidden='true'
                     )
                       v-icon(:icon='connectionPresentation.icon', size='13')
-                span {{accountButtonLabel}}
+                span {{ accountButtonLabel }} · {{ connectionLabel }}
             v-list.nav-header-menu.account-menu(:aria-label='accountMenuLabel')
               template(v-if='isAuthenticated')
                 v-list-item.account-menu__profile.py-3.bg-surface-variant(
                   :href='onlineActionReady ? `/p` : undefined'
-                  :aria-label='onlineActionReady ? `Open profile for ${name}` : `Last verified account: ${name}`'
+                  :aria-label='onlineActionReady ? $t(`common:accountMenu.openProfile`, { name, defaultValue: `Open profile for {{name}}`, interpolation: { escapeValue: false } }) : $t(`common:accountMenu.lastVerifiedAccount`, { name, defaultValue: `Last verified account: {{name}}`, interpolation: { escapeValue: false } })'
                 )
                   template(v-slot:prepend)
-                    v-avatar
-                      v-avatar.bg-primary(v-if='picture.kind === `initials`', :size='40')
-                        span.text-on-primary.text-body-large {{picture.initials}}
-                      v-avatar(v-else-if='picture.kind === `image`', :size='40')
-                        v-img(:src='picture.url', alt='')
+                    v-avatar.bg-primary(v-if='avatar.kind === `initials`', :size='40')
+                      span.text-on-primary.text-body-large {{ avatar.initials }}
+                    v-avatar(v-else-if='avatar.kind === `image`', :size='40')
+                      v-img(:src='avatar.url', alt='', @error='avatarFailed(avatar.url)')
+                    v-avatar.account-menu__avatar-fallback(v-else, :size='40')
+                      v-icon(aria-hidden='true') mdi-account
                   v-list-item-title
-                    span.account-menu__profile-label {{ onlineActionReady ? `Profile` : `Account` }}
+                    span.account-menu__profile-label {{ onlineActionReady ? $t('common:header.profile') : $t('common:header.account') }}
                     | {{name}}
-                  v-list-item-subtitle {{ onlineActionReady ? email : `Last verified account · Reconnect for account actions` }}
+                  v-list-item-subtitle {{ onlineActionReady ? email : $t('common:accountMenu.lastVerifiedDetail', { defaultValue: 'Last verified account · Reconnect for account actions' }) }}
                 v-divider
-                .account-menu__tabs(role='group', aria-label='Account menu sections')
-                  v-btn.account-menu__tab(
+                .account-menu__tabs(
+                  role='tablist'
+                  :aria-label='$t(`common:accountMenu.sections`, { defaultValue: `Account menu sections` })'
+                  @keydown='accountMenuTabKeydown'
+                )
+                  button.account-menu__tab(
                     v-for='tab in accountMenuTabs'
                     :key='tab.id'
-                    size='small'
-                    variant='text'
+                    :id='`account-menu-tab-${tab.id}`'
+                    type='button'
+                    role='tab'
                     :class='{ "account-menu__tab--active": accountMenuTab === tab.id }'
-                    :aria-pressed='accountMenuTab === tab.id'
+                    :aria-selected='accountMenuTab === tab.id ? `true` : `false`'
+                    :aria-controls='`account-menu-panel-${tab.id}`'
+                    :tabindex='accountMenuTab === tab.id ? 0 : -1'
+                    :data-tab='tab.id'
                     @click='accountMenuTab = tab.id'
-                  ) {{ tab.label }}
+                  )
+                    span {{ tab.label }}
+                    span.account-menu__tab-badge(v-if='tab.badge', aria-hidden='true') {{ tab.badge }}
+                    span.account-menu__sr-only(v-if='tab.badgeLabel') , {{ tab.badgeLabel }}
                 .account-menu__panels
-                  .account-menu__panel(v-show='accountMenuTab === `notifications`')
-                    AccountNotifications.account-menu__notifications(v-if='onlineActionReady && !siteNotifications.identityStale')
-                  .account-menu__panel(v-show='accountMenuTab === `appearance`')
-                    section.account-menu__preferences(role='region', aria-label='Appearance settings')
+                  .account-menu__panel(
+                    v-for='tab in accountMenuTabs'
+                    :key='tab.id'
+                    v-show='accountMenuTab === tab.id'
+                    :id='`account-menu-panel-${tab.id}`'
+                    role='tabpanel'
+                    :aria-labelledby='`account-menu-tab-${tab.id}`'
+                    tabindex='0'
+                  )
+                    template(v-if='tab.id === `notifications`')
+                      AccountNotifications.account-menu__notifications(
+                        v-if='onlineActionReady && !siteNotifications.identityStale'
+                        :section='approvalsTabVisible ? `changes` : `all`'
+                      )
+                      p.account-menu__panel-note(v-else) {{ onlineActionUnavailableReason }}
+                    template(v-else-if='tab.id === `approvals`')
+                      AccountNotifications.account-menu__approvals(
+                        v-if='onlineActionReady && !siteNotifications.identityStale'
+                        section='approvals'
+                      )
+                      p.account-menu__panel-note(v-else) {{ onlineActionUnavailableReason }}
+                    section.account-menu__preferences(
+                      v-else-if='tab.id === `appearance`'
+                      role='region'
+                      :aria-label='$t(`common:accountMenu.appearanceSettings`, { defaultValue: `Appearance settings` })'
+                    )
                       appearance-selector
-                  .account-menu__panel(v-show='accountMenuTab === `offline`')
-                    account-offline-summary
+                    account-offline-summary(v-else-if='tab.id === `offline`')
                 v-divider
                 form.account-menu__session(action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
-                  v-list-item(tag='button', type='submit', link, :disabled='logoutPending || !onlineActionReady', :title='!onlineActionReady ? `Reconnect to sign out` : undefined')
+                  v-list-item(
+                    tag='button'
+                    type='submit'
+                    link
+                    :aria-disabled='logoutPending || !onlineActionReady ? `true` : undefined'
+                    :class='{ "account-menu__session--blocked": logoutPending || !onlineActionReady }'
+                  )
                     template(v-slot:append): v-icon(color='error') mdi-logout
-                    v-list-item-title.text-error {{ logoutPending ? `Signing out…` : $t('common:header.logout') }}
+                    v-list-item-title.text-error {{ logoutPending ? $t('common:accountMenu.signingOut', { defaultValue: 'Signing out…' }) : $t('common:header.logout') }}
+                    v-list-item-subtitle(v-if='!onlineActionReady && !logoutPending') {{ $t('common:accountMenu.reconnectToSignOut', { defaultValue: 'Reconnect to sign out.' }) }}
               template(v-else)
-                v-list-item.account-menu__offline(href='/p/offline', aria-label='Connection and offline access')
-                  template(v-slot:prepend)
-                    v-icon(:icon='connectionPresentation.icon', :color='connectionPresentation.tone')
-                  v-list-item-title Offline access
-                  v-list-item-subtitle {{ connectionPresentation.label }} · Saved pages and device settings
-                  template(v-slot:append): v-icon(size='18', aria-hidden='true') mdi-chevron-right
+                .account-menu__offline
+                  account-offline-summary
                 v-divider
                 template(v-if='verifiedAnonymous')
                   v-list-item(
@@ -555,10 +565,10 @@
                     link
                     href='/login'
                     data-no-wiki-navigation
-                    aria-label='Sign in'
+                    :aria-label='$t(`common:accountMenu.signIn`, { defaultValue: `Sign in` })'
                   )
                     template(v-slot:prepend): v-icon(color='primary') mdi-login
-                    v-list-item-title Sign in
+                    v-list-item-title {{ $t('common:accountMenu.signIn', { defaultValue: 'Sign in' }) }}
                 v-list-item.account-menu__unverified(v-else, role='status')
                   template(v-slot:prepend): v-icon mdi-account-clock-outline
                   v-list-item-title {{ accountVerificationTitle }}
@@ -620,8 +630,12 @@ import { emitSearchEnter, emitSearchExit, emitSearchMove, onSearchFocus, offSear
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import type { UserPicture } from '../../helpers/user-picture.ts'
 import * as pwa from '../../helpers/pwa.ts'
+import { translateConnection } from '../../helpers/offline-sync-status.ts'
 
 type PageLocation = { path: string, locale: string }
+type AccountMenuTabId = 'notifications' | 'approvals' | 'appearance' | 'offline'
+type AccountMenuTab = { id: AccountMenuTabId, label: string, badge?: string, badgeLabel?: string }
+const APPROVAL_PERMISSION_NAMES = new Set(['write:pages', 'manage:pages', 'manage:system'])
 type SiteLocale = { code: string, name: string }
 type PageMoveSelection = PageLocation & {
   sourcePageId?: number
@@ -682,7 +696,8 @@ export default defineComponent({
       isDevMode: false,
       failedLogoUrl: null as string | null,
       pageActionsAreOpen: false,
-      accountMenuTab: 'notifications' as 'notifications' | 'appearance' | 'offline',
+      accountMenuTab: 'notifications' as AccountMenuTabId,
+      failedAvatarUrl: null as string | null,
       pageActionsFocusFrame: null as number | null,
       notificationIdentityRecovery: null as Promise<void> | null,
       notificationIdentityRecoveryGeneration: 0,
@@ -816,14 +831,37 @@ export default defineComponent({
       return account
     },
     accountMenuLabel(): string {
-      return 'Account menu'
+      return this.$t('common:accountMenu.label', { defaultValue: 'Account menu' })
     },
-    accountMenuTabs(): { id: 'notifications' | 'appearance' | 'offline', label: string }[] {
-      return [
-        { id: 'notifications', label: 'Notifications' },
-        { id: 'appearance', label: 'Appearance' },
-        { id: 'offline', label: 'Offline' }
+    connectionLabel(): string {
+      return translateConnection(this.connectionPresentation, (key, options) => this.$t(key, options))
+    },
+    approvalsTabVisible(): boolean {
+      return this.isAuthenticated && (
+        this.permissions.some(permission => APPROVAL_PERMISSION_NAMES.has(permission)) ||
+        this.siteNotifications.approvals.length > 0
+      )
+    },
+    accountMenuTabs(): AccountMenuTab[] {
+      const tabs: AccountMenuTab[] = [
+        { id: 'notifications', label: this.$t('common:accountMenu.tabNotifications', { defaultValue: 'Notifications' }) }
       ]
+      if (this.approvalsTabVisible) {
+        const count = this.siteNotifications.approvals.length
+        const more = this.siteNotifications.approvalsNextCursor !== null
+        const badge = count > 0 ? `${count}${more ? '+' : ''}` : undefined
+        tabs.push({
+          id: 'approvals',
+          label: this.$t('common:accountMenu.tabApprovals', { defaultValue: 'Approvals' }),
+          badge,
+          badgeLabel: badge ? this.$t('common:accountMenu.approvalsCount', { count: badge, defaultValue: '{{count}} active' }) : undefined
+        })
+      }
+      tabs.push(
+        { id: 'appearance', label: this.$t('common:accountMenu.tabAppearance', { defaultValue: 'Appearance' }) },
+        { id: 'offline', label: this.$t('common:accountMenu.tabOffline', { defaultValue: 'Offline' }) }
+      )
+      return tabs
     },
     permissions(): string[] { return wikiStore.user.permissions },
     searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
@@ -841,6 +879,14 @@ export default defineComponent({
     searchInputIcon(): string { return this.searchMode === 'ask' ? 'mdi-auto-fix' : 'mdi-magnify' },
     picture (): UserPicture {
       return resolveUserPicture(wikiStore.user)
+    },
+    avatar (): UserPicture | { kind: 'icon' } {
+      const picture = this.picture
+      if (picture.kind === 'image' && picture.url !== this.failedAvatarUrl) return picture
+      // A failed image falls back to initials; no name falls back to a person icon.
+      const fallback = picture.kind === 'initials' ? picture : resolveUserPicture({ ...wikiStore.user, pictureUrl: '' })
+      const initials = fallback.kind === 'initials' ? fallback.initials : ''
+      return initials ? { kind: 'initials', initials } : { kind: 'icon' }
     },
     isAdmin (): boolean {
       return this.permissions.some(permission => ADMIN_PERMISSION_NAMES.has(permission))
@@ -871,6 +917,9 @@ export default defineComponent({
     }
   },
   watch: {
+    approvalsTabVisible(visible: boolean): void {
+      if (!visible && this.accountMenuTab === 'approvals') this.accountMenuTab = 'notifications'
+    },
     title(): void {
       void this.$nextTick().then(() => this.applyNavHeaderTitleFit())
     },
@@ -1006,6 +1055,32 @@ export default defineComponent({
       const source = image.getAttribute('data-logo-source')
       if (!source || source !== this.logoUrl) return
       if (this.failedLogoUrl === source) this.failedLogoUrl = null
+    },
+    avatarFailed (url: string): void {
+      this.failedAvatarUrl = url
+    },
+    accountMenuTabKeydown (event: KeyboardEvent): void {
+      const tabs = this.accountMenuTabs
+      const index = tabs.findIndex(tab => tab.id === this.accountMenuTab)
+      if (index < 0 || tabs.length === 0) return
+      const forward = this.$vuetify.locale.isRtl ? 'ArrowLeft' : 'ArrowRight'
+      const backward = this.$vuetify.locale.isRtl ? 'ArrowRight' : 'ArrowLeft'
+      let next = index
+      if (event.key === forward) next = (index + 1) % tabs.length
+      else if (event.key === backward) next = (index - 1 + tabs.length) % tabs.length
+      else if (event.key === 'Home') next = 0
+      else if (event.key === 'End') next = tabs.length - 1
+      else return
+      // The surrounding v-list also handles arrows, Home, and End.
+      event.preventDefault()
+      event.stopPropagation()
+      const tab = tabs[next]
+      if (!tab) return
+      this.accountMenuTab = tab.id
+      void this.$nextTick(() => {
+        const root = this.$el instanceof Element ? this.$el.ownerDocument : document
+        root.getElementById(`account-menu-tab-${tab.id}`)?.focus()
+      })
     },
     clearAgentChatPinOnLogout (event: SubmitEvent): void {
       event.preventDefault()
@@ -2021,7 +2096,7 @@ export default defineComponent({
 .account-menu__notification-indicator--unknown {
   width: .6rem;
   height: .6rem;
-  border: 1.5px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  border: 1.5px solid var(--wiki-text-muted);
   background: transparent;
   box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
 }
@@ -2029,7 +2104,7 @@ export default defineComponent({
 .account-menu__profile-label {
   display: block;
   margin-block-end: .1rem;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .6875rem;
   font-weight: 700;
   letter-spacing: .07em;
@@ -2044,25 +2119,90 @@ export default defineComponent({
 
 .account-menu__tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
   gap: var(--wiki-space-1);
   padding: var(--wiki-space-1) var(--wiki-space-2);
 }
 
 .account-menu__tab {
+  display: inline-flex;
   min-width: 0;
-  text-transform: none;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: .3rem;
+  padding: 0 var(--wiki-space-1);
+  border: 0;
+  border-radius: var(--wiki-control-radius, 8px);
+  background: transparent;
+  color: var(--wiki-text-muted);
+  font: inherit;
+  font-size: .8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease), color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
-  .v-btn__content {
+  > span:first-child {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  &:hover {
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 6%, transparent);
+    color: rgb(var(--v-theme-on-surface));
+  }
+
 }
 
-.account-menu__tab--active {
+.account-menu__tab--active,
+.account-menu__tab--active:hover {
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, transparent);
   color: rgb(var(--v-theme-primary));
+  font-weight: 750;
+}
+
+.account-menu__tab-badge {
+  min-width: 1.25rem;
+  padding: 0 .3rem;
+  border-radius: 999px;
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+  font-size: .6875rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-menu__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.account-menu__panel-note {
+  margin: 0;
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+}
+
+.account-menu__avatar-fallback {
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
+  color: var(--wiki-text-muted);
+}
+
+.account-menu__session--blocked {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-menu__tab { transition: none; }
 }
 
 .account-menu__panels {
