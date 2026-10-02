@@ -1,6 +1,6 @@
 <template lang='pug'>
   .editor-asciidoc(ref='root')
-    v-toolbar.editor-asciidoc-toolbar(density="compact", color='primary', flat, style='overflow-x: hidden;', role='toolbar', aria-label='Formatting tools')
+    v-toolbar.editor-asciidoc-toolbar(density="compact", color='primary', flat, style='overflow-x: hidden;', role='toolbar', :aria-label='$t(`editor:editorAsciidoc.formattingTools`)')
       template(v-if='isModalShown')
         v-spacer
         v-btn(variant="text", @click='closeAllModal')
@@ -19,13 +19,13 @@
           span {{$t('editor:markup.italic')}}
         v-menu(:open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', aria-label='Heading level').mx-0
+            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.headingLevel`)').mx-0
               v-icon mdi-format-header-pound
           v-list.py-0
             template(v-for='(n, idx) in 6', :key='idx')
               v-list-item(@click='setHeaderLine(n)')
                 template(v-slot:append)
-                  v-icon(:size='24 - (idx - 1) * 2') mdi-format-header-{{n}}
+                  v-icon(:size='24 - (idx - 1) * 2') {{ $t(`editor:editorAsciidoc.mdiFormatHeader`, { n, interpolation: { escapeValue: false } }) }}
                 v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-divider(v-if='idx < 5')
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
@@ -40,7 +40,7 @@
           span {{$t('editor:markup.superscript')}}
         v-menu(v-if='$vuetify.display.mdAndUp', open-on-hover)
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', aria-label='Block formatting').mx-0
+            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.blockFormatting`)').mx-0
               v-icon mdi-alpha-t-box-outline
           v-list.py-0
             v-list-item(@click='insertBeforeEachLine({ content: `> `})')
@@ -51,12 +51,12 @@
             v-list-item(@click='insertBeforeEachLine({ content: `NOTE: `})')
               template(v-slot:append)
                 v-icon(color='blue') mdi-alpha-n-box-outline
-              v-list-item-title {{'Note blockquote'}}
+              v-list-item-title {{$t(`editor:editorAsciidoc.noteBlockquote`)}}
             v-divider
             v-list-item(@click='insertBeforeEachLine({ content: `TIP: `})')
               template(v-slot:append)
                 v-icon(color='success') mdi-alpha-t-box-outline
-              v-list-item-title {{'Tip blockquote'}}
+              v-list-item-title {{$t(`editor:editorAsciidoc.tipBlockquote`)}}
             v-divider
             v-list-item(@click='insertBeforeEachLine({ content: `WARNING: `})')
               template(v-slot:append)
@@ -66,12 +66,12 @@
             v-list-item(@click='insertBeforeEachLine({ content: `CAUTION: `})')
               template(v-slot:append)
                 v-icon(color='purple') mdi-alpha-c-box-outline
-              v-list-item-title {{'Caution blockquote'}}
+              v-list-item-title {{$t(`editor:editorAsciidoc.cautionBlockquote`)}}
             v-divider
             v-list-item(@click='insertBeforeEachLine({ content: `IMPORTANT: `})')
               template(v-slot:append)
                 v-icon(color='error') mdi-alpha-i-box-outline
-              v-list-item-title {{'Important blockquote'}}
+              v-list-item-title {{$t(`editor:editorAsciidoc.importantBlockquote`)}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="bottom", color='primary')
@@ -87,19 +87,19 @@
                 icon
                 rounded='0'
                 v-bind='props'
-                :aria-label='previewShown ? `Show editor` : `Show preview`'
+                :aria-label='previewShown ? $t(`editor:editorAsciidoc.showEditor`) : $t(`editor:editorAsciidoc.showPreview`)'
                 :aria-pressed='previewShown'
                 @click='togglePreview'
               )
                 v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
-            span {{ previewShown ? 'Show editor' : $t('editor:markup.togglePreviewPane') }}
+            span {{ previewShown ? $t(`editor:editorAsciidoc.showEditor`) : $t('editor:markup.togglePreviewPane') }}
           v-menu(location="left", min-width='260')
             template(v-slot:activator='{ props }')
               v-btn.mx-0(
                 icon
                 rounded='0'
                 v-bind='props'
-                aria-label='More formatting tools'
+                :aria-label='$t(`editor:editorAsciidoc.moreFormattingTools`)'
               )
                 v-icon mdi-dots-horizontal
             v-list(nav)
@@ -160,7 +160,7 @@
           .editor-asciidoc-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer', :aria-busy='previewLoading', :lang='locale', :dir='contentDirection')
             v-alert(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
               span {{previewError}}
-              v-btn.ml-2(size='small', variant='text', @click='retryPreview') Retry
+              v-btn.ml-2(size='small', variant='text', @click='retryPreview') {{ $t(`editor:editorAsciidoc.retry`) }}
             div(ref='editorPreview', v-html='previewHTML')
 
     v-system-bar.editor-status-bar.editor-asciidoc-sysbar(absolute)
@@ -169,9 +169,9 @@
         v-tooltip(activator='parent', location='top') /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
-        .text-body-small AsciiDoc
+        .text-body-small {{ $t(`editor:editorAsciidoc.asciidoc`) }}
         v-spacer
-        .text-body-small Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}
+        .text-body-small {{ $t(`editor:editorAsciidoc.lnCol`, { line: cursorPos.line + 1, ch: cursorPos.ch + 1, interpolation: { escapeValue: false } }) }}
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
 </template>
 
@@ -330,7 +330,7 @@ export default defineComponent({
       this.activeModal = ''
     },
     editor(): TextEditorHandle {
-      if (!this.cm) throw new Error('CodeMirror editor is not initialized')
+      if (!this.cm) throw new Error(this.$t('editor:editorAsciidoc.codemirrorEditorNotInitialized'))
       return this.cm
     },
     async processContent(newContent: string) {
@@ -351,9 +351,9 @@ export default defineComponent({
         })
         if (requestId !== this.previewRequestId || !this.previewShown) return
         const $ = cheerio.load(html, { decodeEntities: true })
-        $('pre.highlight > code.language-diagram').each((_index: number, element: Element) => {
+        $(this.$t('editor:editorAsciidoc.preHighlightCodeLanguage')).each((_index: number, element: Element) => {
           const diagramContent = decodeBase64Text($(element).html() ?? '')
-          $(element).parent().replaceWith(`<pre class="diagram">${diagramContent}</pre>`)
+          $(element).parent().replaceWith(this.$t('editor:editorAsciidoc.preClassDiagramPre', { diagramContent, interpolation: { escapeValue: false } }))
         })
         this.previewHTML = DOMPurify.sanitize($.html(), {
           ADD_TAGS: ['foreignObject'],
@@ -362,7 +362,7 @@ export default defineComponent({
         this.previewDirty = false
       } catch (err) {
         if (requestId === this.previewRequestId && this.previewShown) {
-          this.previewError = err instanceof Error ? err.message : 'Preview could not be rendered.'
+          this.previewError = err instanceof Error ? err.message : this.$t('editor:editorAsciidoc.previewCouldNotRendered')
         }
       } finally {
         if (requestId === this.previewRequestId) this.previewLoading = false
@@ -449,7 +449,7 @@ export default defineComponent({
               kind: 'diagram',
               from: { line: start, ch: 3 },
               to: { line: start, ch: 10 },
-              text: 'Edit Diagram',
+              text: this.$t('editor:editorAsciidoc.editDiagram'),
               action: () => {
                 editor.setSelection({ line: start, ch: 0 }, { line, ch: 3 })
                 try {
@@ -457,7 +457,7 @@ export default defineComponent({
                   this.toggleModal('editorModalDrawio')
                 } catch {
                   wikiStore.showNotification({
-                    message: 'Failed to process diagram data.',
+                    message: this.$t('editor:editorAsciidoc.failedProcessDiagramData'),
                     style: 'warning',
                     icon: 'warning'
                   })
@@ -476,7 +476,7 @@ export default defineComponent({
     wikiStore.editor.editorKey = 'asciidoc'
 
     if (this.mode === 'create') {
-      wikiStore.editor.content = '== header\n\ncontent'
+      wikiStore.editor.content = this.$t('editor:editorAsciidoc.headerContent')
     }
 
     this.debouncedProcessContent = _.debounce((newContent: string) => {
@@ -484,11 +484,11 @@ export default defineComponent({
     }, 600)
     const container = this.$refs.cm
     if (!(container instanceof HTMLElement)) {
-      throw new Error('AsciiDoc editor host is unavailable')
+      throw new Error(this.$t('editor:editorAsciidoc.asciidocEditorHostUnavailable'))
     }
     const cm = new TextEditor({
       parent: container,
-      ariaLabel: 'AsciiDoc source',
+      ariaLabel: this.$t('editor:editorAsciidoc.asciidocSource'),
       dark: this.$vuetify.theme.current.dark,
       value: wikiStore.editor.content,
       direction: 'ltr',

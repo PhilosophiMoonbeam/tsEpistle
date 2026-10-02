@@ -4,41 +4,41 @@
       <header class="personal-skills__header">
         <span class="personal-skills__mark" aria-hidden="true"><v-icon icon="mdi-account-star-outline" size="23" /></span>
         <div class="personal-skills__heading">
-          <div class="personal-skills__eyebrow">Personal customization</div>
-          <h2 id="personal-skills-title">My skill library</h2>
-          <p>Curate instructions for your own Agent experience without changing organization policy.</p>
+          <div class="personal-skills__eyebrow">{{ $t('common:agentPersonalSkills.personalCustomization') }}</div>
+          <h2 id="personal-skills-title">{{ $t('common:agentPersonalSkills.mySkillLibrary') }}</h2>
+          <p>{{ $t('common:agentPersonalSkills.curateInstructionsOwnAgent') }}</p>
         </div>
         <div class="personal-skills__header-state">
-          <v-chip size="small" variant="tonal" prepend-icon="mdi-account-lock-outline">Owner only</v-chip>
-          <v-chip v-if="loaded" size="small" variant="outlined">{{ skills.length }} skill{{ skills.length === 1 ? '' : 's' }}</v-chip>
+          <v-chip size="small" variant="tonal" prepend-icon="mdi-account-lock-outline">{{ $t('common:agentPersonalSkills.ownerOnly') }}</v-chip>
+          <v-chip v-if="loaded" size="small" variant="outlined">{{ $t('common:agentPersonalSkills.skill', { count: skills.length, interpolation: { escapeValue: false } }) }}</v-chip>
         </div>
-        <v-btn icon="mdi-close" variant="text" aria-label="Close personal skills" :disabled="saving" @click="requestClose" />
+        <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:agentPersonalSkills.closePersonalSkills')" :disabled="saving" @click="requestClose" />
       </header>
 
       <div class="personal-skills__boundary">
         <v-icon icon="mdi-shield-outline" size="19" />
-        <span><strong>Personal layer</strong> Your skills are untrusted reference material. They can guide the Agent, but cannot grant permissions or override organization safeguards.</span>
+        <span><strong>{{ $t('common:agentPersonalSkills.personalLayer') }}</strong> {{ $t('common:agentPersonalSkills.skillsUntrustedReferenceMaterial') }}</span>
       </div>
 
       <v-card-text class="personal-skills__body">
         <v-alert v-if="networkBlocked" class="mb-4" type="warning" variant="tonal" density="compact" role="status">
-          <span>Connection required to load or change personal skills.</span>
-          <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="emit('retry-connection')">Retry connection</v-btn>
+          <span>{{ $t('common:agentPersonalSkills.connectionRequiredLoadChange') }}</span>
+          <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="emit('retry-connection')">{{ $t('common:agentPersonalSkills.retryConnection') }}</v-btn>
         </v-alert>
         <div class="personal-skills__layout">
           <aside class="personal-inventory" aria-labelledby="personal-inventory-title">
             <div class="personal-inventory__header">
               <div>
-                <div class="personal-skills__eyebrow">Your inventory</div>
-                <h3 id="personal-inventory-title">Installed skills</h3>
+                <div class="personal-skills__eyebrow">{{ $t('common:agentPersonalSkills.inventory') }}</div>
+                <h3 id="personal-inventory-title">{{ $t('common:agentPersonalSkills.installedSkills') }}</h3>
               </div>
-              <v-btn color="primary" prepend-icon="mdi-plus" size="small" :disabled="loading || saving || networkBlocked" @click="requestNew">New skill</v-btn>
+              <v-btn color="primary" prepend-icon="mdi-plus" size="small" :disabled="loading || saving || networkBlocked" @click="requestNew">{{ $t('common:agentPersonalSkills.newSkill') }}</v-btn>
             </div>
 
             <v-text-field
               v-model="search"
               class="personal-inventory__search"
-              label="Search personal skills"
+              :label="$t('common:agentPersonalSkills.searchPersonalSkills')"
               prepend-inner-icon="mdi-magnify"
               clearable
               hide-details
@@ -47,27 +47,27 @@
 
             <v-alert v-if="refreshError && !loaded" class="personal-inventory__error" type="error" variant="tonal" density="compact">
               {{ refreshError }}
-                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || networkBlocked" @click="load()">Retry</v-btn></template>
+                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || networkBlocked" @click="load()">{{ $t('common:agentPersonalSkills.retry') }}</v-btn></template>
             </v-alert>
 
-            <div v-if="loading && !loaded" class="personal-inventory__loading" aria-label="Loading personal skills" aria-busy="true">
+            <div v-if="loading && !loaded" class="personal-inventory__loading" :aria-label="$t('common:agentPersonalSkills.loadingPersonalSkills')" aria-busy="true">
               <v-skeleton-loader v-for="index in 4" :key="index" type="list-item-avatar-two-line" />
             </div>
 
             <template v-else-if="loaded">
               <v-alert v-if="refreshError" class="personal-inventory__error" type="warning" variant="tonal" density="compact">
                 {{ refreshError }}
-                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || networkBlocked" @click="requestRefresh">Retry</v-btn></template>
+                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || networkBlocked" @click="requestRefresh">{{ $t('common:agentPersonalSkills.retry') }}</v-btn></template>
               </v-alert>
-              <div class="personal-inventory__summary" aria-live="polite">{{ filteredSkills.length }} of {{ skills.length }} shown</div>
-              <v-list v-if="filteredSkills.length" class="personal-inventory__list" density="compact" nav aria-label="Personal skills">
+              <div class="personal-inventory__summary" aria-live="polite">{{ $t('common:agentPersonalSkills.shown', { filteredSkillsCount: filteredSkills.length, skillsCount: skills.length, interpolation: { escapeValue: false } }) }}</div>
+              <v-list v-if="filteredSkills.length" class="personal-inventory__list" density="compact" nav :aria-label="$t('common:agentPersonalSkills.personalSkills')">
                 <v-list-item
                   v-for="skill in filteredSkills"
                   :key="skill.id"
                   class="personal-skill-item"
                   :active="editingId === skill.id"
                   :aria-current="editingId === skill.id ? 'true' : undefined"
-                  :aria-label="`Edit personal skill ${skill.name}`"
+                  :aria-label="$t('common:agentPersonalSkills.editPersonalSkill', { name: skill.name, interpolation: { escapeValue: false } })"
                   :disabled="saving || loading || networkBlocked"
                   rounded="lg"
                   @click="requestEdit(skill)"
@@ -76,12 +76,12 @@
                     <span class="personal-skill-item__icon"><v-icon icon="mdi-file-document-outline" size="18" /></span>
                   </template>
                   <v-list-item-title>{{ skill.name }}</v-list-item-title>
-                  <v-list-item-subtitle>{{ skill.description || 'No description in frontmatter' }}</v-list-item-subtitle>
+                  <v-list-item-subtitle>{{ skill.description || $t('common:agentPersonalSkills.noDescriptionFrontmatter') }}</v-list-item-subtitle>
                   <template #append>
                     <span class="personal-skill-item__append">
-                      <span class="personal-skill-item__mode" :title="skill.isAgentDiscoverable ? 'Available to the Agent automatically' : 'Only available by explicit invocation'">
+                      <span class="personal-skill-item__mode" :title="skill.isAgentDiscoverable ? $t('common:agentPersonalSkills.availableAgentAutomatically') : $t('common:agentPersonalSkills.onlyAvailableExplicitInvocation')">
                         <v-icon :icon="skill.isAgentDiscoverable ? 'mdi-radar' : 'mdi-hand-back-right-outline'" size="16" />
-                        {{ skill.isAgentDiscoverable ? 'Auto' : 'On request' }}
+                        {{ skill.isAgentDiscoverable ? $t('common:agentPersonalSkills.auto') : $t('common:agentPersonalSkills.request') }}
                       </span>
                       <v-icon icon="mdi-pencil-outline" size="16" aria-hidden="true" />
                     </span>
@@ -91,16 +91,16 @@
 
               <div v-else-if="skills.length" class="personal-inventory__empty">
                 <v-icon icon="mdi-text-search" size="24" />
-                <strong>No matching personal skills</strong>
-                <span>Try another name or description.</span>
-                <v-btn size="small" variant="text" @click="search = ''">Clear search</v-btn>
+                <strong>{{ $t('common:agentPersonalSkills.noMatchingPersonalSkills') }}</strong>
+                <span>{{ $t('common:agentPersonalSkills.tryAnotherNameDescription') }}</span>
+                <v-btn size="small" variant="text" @click="search = ''">{{ $t('common:agentPersonalSkills.clearSearch') }}</v-btn>
               </div>
 
               <div v-else class="personal-inventory__empty">
                 <v-icon icon="mdi-file-document-plus-outline" size="28" />
-                <strong>Your personal layer is empty</strong>
-                <span>Create a SKILL.md document for a repeatable workflow or preference.</span>
-                <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" :disabled="networkBlocked" @click="requestNew">Create first skill</v-btn>
+                <strong>{{ $t('common:agentPersonalSkills.personalLayerEmpty') }}</strong>
+                <span>{{ $t('common:agentPersonalSkills.createSkillMdDocument') }}</span>
+                <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" :disabled="networkBlocked" @click="requestNew">{{ $t('common:agentPersonalSkills.createFirstSkill') }}</v-btn>
               </div>
             </template>
           </aside>
@@ -108,47 +108,47 @@
           <main v-if="loaded" ref="editorRoot" class="personal-editor" tabindex="-1" aria-labelledby="personal-editor-title">
             <div class="personal-editor__header">
               <div>
-                <div class="personal-skills__eyebrow">{{ editingId ? 'Installed personal skill' : 'New personal skill' }}</div>
-                <h3 id="personal-editor-title">{{ editingId ? name : 'Create a personal skill' }}</h3>
-                <p>{{ editingId ? 'Edit the current personal revision and how the Agent discovers it.' : 'Write reusable instructions scoped only to your account.' }}</p>
+                <div class="personal-skills__eyebrow">{{ editingId ? $t('common:agentPersonalSkills.installedPersonalSkill') : $t('common:agentPersonalSkills.newPersonalSkill') }}</div>
+                <h3 id="personal-editor-title">{{ editingId ? name : $t('common:agentPersonalSkills.createPersonalSkill') }}</h3>
+                <p>{{ editingId ? $t('common:agentPersonalSkills.editCurrentPersonalRevision') : $t('common:agentPersonalSkills.writeReusableInstructionsScoped') }}</p>
               </div>
               <div class="personal-editor__header-actions">
-                <v-chip v-if="isDirty" color="warning" size="small" variant="tonal" prepend-icon="mdi-circle-edit-outline">Unsaved</v-chip>
-                <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="saving || loading || networkBlocked || !readAccepted" @click="beginRemove(selectedSkill, $event)">Remove skill</v-btn>
+                <v-chip v-if="isDirty" color="warning" size="small" variant="tonal" prepend-icon="mdi-circle-edit-outline">{{ $t('common:agentPersonalSkills.unsaved') }}</v-chip>
+                <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="saving || loading || networkBlocked || !readAccepted" @click="beginRemove(selectedSkill, $event)">{{ $t('common:agentPersonalSkills.removeSkill') }}</v-btn>
               </div>
             </div>
 
             <v-alert v-if="error" class="personal-editor__error" type="error" variant="tonal" closable @click:close="error = ''">{{ error }}</v-alert>
-            <v-progress-linear v-if="loading" indeterminate aria-label="Refreshing personal skills" />
+            <v-progress-linear v-if="loading" indeterminate :aria-label="$t('common:agentPersonalSkills.refreshingPersonalSkills')" />
 
             <v-form id="personal-skill-form" class="personal-editor__form" @submit.prevent="save">
               <section class="personal-editor-section" aria-labelledby="personal-skill-details-title">
                 <div class="personal-editor-section__heading">
                   <span><v-icon icon="mdi-card-account-details-outline" size="19" /></span>
-                  <div><h4 id="personal-skill-details-title">Details & enablement</h4><p>Name the skill and decide whether the Agent may discover it automatically.</p></div>
+                  <div><h4 id="personal-skill-details-title">{{ $t('common:agentPersonalSkills.detailsEnablement') }}</h4><p>{{ $t('common:agentPersonalSkills.nameSkillDecideWhether') }}</p></div>
                 </div>
                 <div class="personal-editor-section__fields">
-                  <v-text-field ref="nameInput" v-model.trim="name" :rules="nameRules" label="Skill name" :disabled="Boolean(editingId) || saving || loading" hint="Lowercase letters, numbers, and single hyphens; the name cannot be changed later." persistent-hint maxlength="64" autocomplete="off" />
+                  <v-text-field ref="nameInput" v-model.trim="name" :rules="nameRules" :label="$t('common:agentPersonalSkills.skillName')" :disabled="Boolean(editingId) || saving || loading" :hint="$t('common:agentPersonalSkills.lowercaseLettersNumbersSingle')" persistent-hint maxlength="64" autocomplete="off" />
                   <div class="personal-discovery">
-                    <v-switch v-model="isAgentDiscoverable" label="Load automatically when relevant" color="primary" inset hide-details :disabled="saving || loading" :aria-describedby="discoveryHelpId" />
-                    <p :id="discoveryHelpId">{{ isAgentDiscoverable ? 'The Agent may select this skill when its description matches your request.' : 'Available only when you invoke it with / or the Skills menu.' }}</p>
+                    <v-switch v-model="isAgentDiscoverable" :label="$t('common:agentPersonalSkills.loadAutomaticallyWhenRelevant')" color="primary" inset hide-details :disabled="saving || loading" :aria-describedby="discoveryHelpId" />
+                    <p :id="discoveryHelpId">{{ isAgentDiscoverable ? $t('common:agentPersonalSkills.agentMaySelectSkill') : $t('common:agentPersonalSkills.availableOnlyWhenYou') }}</p>
                   </div>
                 </div>
 
                 <dl v-if="selectedSkill" class="personal-provenance">
-                  <div><dt>Scope</dt><dd>Personal · owner only</dd></div>
-                  <div><dt>Last revised</dt><dd>{{ formatUpdated(selectedSkill.updatedAt) }}</dd></div>
-                  <div><dt>Content fingerprint</dt><dd><code :title="selectedSkill.contentHash">{{ shortHash(selectedSkill.contentHash) }}</code></dd></div>
+                  <div><dt>{{ $t('common:agentPersonalSkills.scope') }}</dt><dd>{{ $t('common:agentPersonalSkills.personalOwnerOnly') }}</dd></div>
+                  <div><dt>{{ $t('common:agentPersonalSkills.lastRevised') }}</dt><dd>{{ formatUpdated(selectedSkill.updatedAt) }}</dd></div>
+                  <div><dt>{{ $t('common:agentPersonalSkills.contentFingerprint') }}</dt><dd><code :title="selectedSkill.contentHash">{{ shortHash(selectedSkill.contentHash) }}</code></dd></div>
                 </dl>
               </section>
 
               <section class="personal-editor-section personal-editor-section--code" aria-labelledby="personal-skill-code-title">
                 <div class="personal-editor-section__heading">
                   <span><v-icon icon="mdi-code-tags" size="19" /></span>
-                  <div><h4 id="personal-skill-code-title">SKILL.md source</h4><p>YAML frontmatter declares provenance; the Markdown body contains the instructions.</p></div>
-                  <v-chip size="x-small" variant="outlined">Plain text · 64 KiB</v-chip>
+                  <div><h4 id="personal-skill-code-title">{{ $t('common:agentPersonalSkills.skillMdSource') }}</h4><p>{{ $t('common:agentPersonalSkills.yamlFrontmatterDeclaresProvenance') }}</p></div>
+                  <v-chip size="x-small" variant="outlined">{{ $t('common:agentPersonalSkills.plainText64Kib') }}</v-chip>
                 </div>
-                <v-textarea ref="markdownInput" v-model="skillMarkdown" label="Exact personal skill source" hint="Frontmatter must include this exact name and a description. Remote resources, active content, and likely secrets are rejected." persistent-hint rows="18" max-rows="30" counter="65536" maxlength="65536" class="personal-editor__code" :disabled="saving || loading" spellcheck="false" :rules="markdownRules" />
+                <v-textarea ref="markdownInput" v-model="skillMarkdown" :label="$t('common:agentPersonalSkills.exactPersonalSkillSource')" :hint="$t('common:agentPersonalSkills.frontmatterMustIncludeExact')" persistent-hint rows="18" max-rows="30" counter="65536" maxlength="65536" class="personal-editor__code" :disabled="saving || loading" spellcheck="false" :rules="markdownRules" />
               </section>
             </v-form>
           </main>
@@ -156,31 +156,31 @@
       </v-card-text>
 
       <v-card-actions class="personal-skills__actions">
-        <div class="personal-skills__trust-note"><v-icon icon="mdi-account-lock-outline" size="18" /><span>Personal skills affect only your account. Organization policy always takes precedence.</span></div>
+        <div class="personal-skills__trust-note"><v-icon icon="mdi-account-lock-outline" size="18" /><span>{{ $t('common:agentPersonalSkills.personalSkillsAffectOnly') }}</span></div>
         <v-spacer />
-        <v-btn :disabled="saving" @click="requestClose">Close</v-btn>
-        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !readAccepted || !formValid || loading || saving || networkBlocked" form="personal-skill-form">{{ editingId ? 'Save revision' : 'Create skill' }}</v-btn>
+        <v-btn :disabled="saving" @click="requestClose">{{ $t('common:actions.close') }}</v-btn>
+        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !readAccepted || !formValid || loading || saving || networkBlocked" form="personal-skill-form">{{ editingId ? $t('common:agentPersonalSkills.saveRevision') : $t('common:agentPersonalSkills.createSkill') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 
   <v-dialog content-class="agent-owned-overlay" :model-value="removing !== null" max-width="32rem" aria-labelledby="personal-remove-title" :persistent="saving" @update:model-value="value => { if (!value && !saving) cancelRemove() }">
     <v-card ref="removeDialogCard" class="personal-confirmation">
-      <div class="personal-confirmation__header personal-confirmation__header--danger"><span><v-icon icon="mdi-delete-alert-outline" size="21" /></span><div><div class="personal-skills__eyebrow">Destructive action</div><h2 id="personal-remove-title">Remove personal skill?</h2></div></div>
+      <div class="personal-confirmation__header personal-confirmation__header--danger"><span><v-icon icon="mdi-delete-alert-outline" size="21" /></span><div><div class="personal-skills__eyebrow">{{ $t('common:agentPersonalSkills.destructiveAction') }}</div><h2 id="personal-remove-title">{{ $t('common:agentPersonalSkills.removePersonalSkill') }}</h2></div></div>
       <v-card-text>
-        <v-alert class="mb-4" type="warning" variant="tonal" icon="mdi-history">Existing run history remains intact.</v-alert>
+        <v-alert class="mb-4" type="warning" variant="tonal" icon="mdi-history">{{ $t('common:agentPersonalSkills.existingRunHistoryRemains') }}</v-alert>
         <v-alert v-if="removeError" class="mb-4" type="error" variant="tonal">{{ removeError }}</v-alert>
-        <p><strong>{{ removing?.name }}</strong> will be removed from your personal library and can no longer be loaded automatically or invoked.</p>
+        <p><strong>{{ removing?.name }}</strong> {{ $t('common:agentPersonalSkills.willRemovedPersonalLibrary') }}</p>
       </v-card-text>
-      <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="cancelRemove">Cancel</v-btn><v-btn color="error" prepend-icon="mdi-delete-outline" :loading="saving" :disabled="saving || networkBlocked || !readAccepted" @click="remove">Remove skill</v-btn></v-card-actions>
+      <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="cancelRemove">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="error" prepend-icon="mdi-delete-outline" :loading="saving" :disabled="saving || networkBlocked || !readAccepted" @click="remove">{{ $t('common:agentPersonalSkills.removeSkill') }}</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
   <v-dialog content-class="agent-owned-overlay" v-model="discardOpen" max-width="28rem" aria-labelledby="personal-discard-title">
     <v-card ref="discardDialogCard" class="personal-confirmation">
-      <div class="personal-confirmation__header"><span><v-icon icon="mdi-file-alert-outline" size="21" /></span><div><div class="personal-skills__eyebrow">Unsaved draft</div><h2 id="personal-discard-title">Discard changes?</h2></div></div>
-      <v-card-text>Your current personal skill revision has changes that have not been saved.</v-card-text>
-      <v-card-actions><v-spacer /><v-btn @click="discardOpen = false">Continue editing</v-btn><v-btn color="error" variant="tonal" @click="confirmDiscard">Discard changes</v-btn></v-card-actions>
+      <div class="personal-confirmation__header"><span><v-icon icon="mdi-file-alert-outline" size="21" /></span><div><div class="personal-skills__eyebrow">{{ $t('common:agentPersonalSkills.unsavedDraft') }}</div><h2 id="personal-discard-title">{{ $t('common:agentPersonalSkills.discardChanges') }}</h2></div></div>
+      <v-card-text>{{ $t('common:agentPersonalSkills.currentPersonalSkillRevision') }}</v-card-text>
+      <v-card-actions><v-spacer /><v-btn @click="discardOpen = false">{{ $t('common:agentPersonalSkills.continueEditing') }}</v-btn><v-btn color="error" variant="tonal" @click="confirmDiscard">{{ $t('common:agentPersonalSkills.discardChanges2') }}</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 </template>
@@ -195,6 +195,9 @@ import {
   type PersonalAgentSkill
 } from '../../helpers/agents-api.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const props = defineProps<{
   csrfToken: string
@@ -256,8 +259,8 @@ const filteredSkills = computed(() => {
     .sort((left, right) => compareNames(left.name, right.name))
 })
 const isDirty = computed(() => name.value !== baseline.value.name || skillMarkdown.value !== baseline.value.skillMarkdown || isAgentDiscoverable.value !== baseline.value.isAgentDiscoverable)
-const nameRule = (value: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.trim()) || 'Use lowercase letters, numbers, and single hyphens.'
-const markdownRule = (value: string) => value.length <= 65536 || 'SKILL.md must be 65,536 characters or fewer.'
+const nameRule = (value: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.trim()) || t('common:agentPersonalSkills.useLowercaseLettersNumbers')
+const markdownRule = (value: string) => value.length <= 65536 || t('common:agentPersonalSkills.skillMdMust65')
 const formValid = computed(() => Boolean(name.value.trim() && skillMarkdown.value.trim()) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name.value.trim()) && skillMarkdown.value.length <= 65536)
 const nameRules = [nameRule]
 const markdownRules = [markdownRule]
@@ -266,7 +269,8 @@ const updatedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medi
 const formatUpdated = (value: string): string => updatedAtFormatter.format(new Date(value))
 const shortHash = (value: string): string => value.slice(0, 12)
 
-const templateFor = (skillName: string): string => `---\nname: ${skillName}\ndescription: Explain when the agent should use this skill.\n---\n# Instructions\n\nDescribe the steps, constraints, and expected output.\n`
+const templateFor = (skillName: string): string => `${t('common:agentPersonalSkills.nameDescriptionExplainWhen', { skillName, interpolation: { escapeValue: false } })}
+`
 
 const setBaseline = (): void => { baseline.value = { name: name.value, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value } }
 const applyNew = (): void => {
@@ -338,8 +342,8 @@ const load = async (selectedId?: string, committedMessage?: string): Promise<boo
   } catch (caught) {
     if (!isCurrent(authority, ownerId, csrfToken) || generation !== loadGeneration || loadController !== controller || controller.signal.aborted) return false
     readAccepted.value = false
-    const reason = caught instanceof Error ? caught.message : loaded.value ? 'Personal skills could not be refreshed.' : 'Personal skills could not be loaded.'
-    refreshError.value = loaded.value ? `${committedMessage ? `${committedMessage} ` : ''}Showing last-loaded personal skills. ${reason}` : reason
+    const reason = caught instanceof Error ? caught.message : loaded.value ? t('common:agentPersonalSkills.personalSkillsCouldNot') : t('common:agentPersonalSkills.personalSkillsCouldNot2')
+    refreshError.value = loaded.value ? t('common:agentPersonalSkills.showingLastLoadedPersonal', { prefix: committedMessage ? `${committedMessage} ` : '', reason, interpolation: { escapeValue: false } }) : reason
     return false
   } finally {
     if (isCurrent(authority, ownerId, csrfToken) && generation === loadGeneration && loadController === controller) {
@@ -368,10 +372,10 @@ const save = async (): Promise<void> => {
     skills.value = [...skills.value.filter(skill => skill.id !== saved.id), saved]
     applyEdit(saved)
     emit('changed')
-    await load(saved.id, 'Skill was saved.')
+    await load(saved.id, t('common:agentPersonalSkills.skillWasSaved'))
   } catch (caught) {
     if (!isCurrent(authority, ownerId, csrfToken) || operationGeneration !== operation) return
-    error.value = caught instanceof Error ? caught.message : 'Personal skill could not be saved.'
+    error.value = caught instanceof Error ? caught.message : t('common:agentPersonalSkills.personalSkillCouldNot')
     readAccepted.value = false
   } finally {
     if (isCurrent(authority, ownerId, csrfToken) && operationGeneration === operation) saving.value = false
@@ -406,10 +410,10 @@ const remove = async (): Promise<void> => {
     destructiveRestoreTarget.value = editorRoot.value
     removing.value = null
     emit('changed')
-    await load(undefined, 'Skill was removed.')
+    await load(undefined, t('common:agentPersonalSkills.skillWasRemoved'))
   } catch (caught) {
     if (!isCurrent(authority, ownerId, csrfToken) || operationGeneration !== operation) return
-    removeError.value = caught instanceof Error ? caught.message : 'Personal skill could not be removed.'
+    removeError.value = caught instanceof Error ? caught.message : t('common:agentPersonalSkills.personalSkillCouldNot2')
     readAccepted.value = false
   } finally {
     if (isCurrent(authority, ownerId, csrfToken) && operationGeneration === operation) saving.value = false

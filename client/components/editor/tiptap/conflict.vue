@@ -16,7 +16,7 @@
           aria-live='polite'
           )
           v-progress-circular.mr-3(indeterminate, color='indigo', size='24', aria-hidden='true')
-          span.text-body-medium Loading latest version…
+          span.text-body-medium {{ $t(`editor:conflict.loadingLatestVersion`) }}
         v-alert(
           v-else-if='loadState === `error`'
           ref='loadErrorAlert'
@@ -31,7 +31,7 @@
             color='error'
             size='small'
             @click='loadLatestVersion'
-            ) Retry
+            ) {{ $t(`editor:conflict.retry`) }}
         template(v-else-if='loadState === `success`')
           i18next.text-body-medium(tag='div', path='editor:conflict.infoGeneric')
             strong(place='authorName') {{latest.authorName}}
@@ -160,7 +160,7 @@ export default defineComponent({
       if (requestGeneration !== this.requestGeneration) return
       this.requestController = null
       if (!resp) {
-        this.loadError = 'Failed to fetch latest version.'
+        this.loadError = this.$t('editor:conflict.failedFetchLatestVersion')
         this.loadState = 'error'
         await this.$nextTick()
         if (requestGeneration === this.requestGeneration && this.loadState === 'error') {

@@ -99,7 +99,7 @@ const mountSidebar = ({ localStorage = storage(null), items = [], navMode = 'MIX
   connectionState = 'online', connection = Vue.reactive({ connectionState, mode: 'feature' }),
   checkConnection = vi.fn(async () => true), transport, realDirectory = false } = {}) => {
   const component = createComponent({ localStorage, connection, checkConnection, transport })
-  const sidebar = { ...component.data(), items, navMode, expandParentByDefault, $t: key => key }
+  const sidebar = { ...component.data.call({ $t: key => key }), items, navMode, expandParentByDefault, $t: key => key }
   for (const [name, method] of Object.entries(component.methods)) sidebar[name] = method.bind(sidebar)
   for (const [name, getter] of Object.entries(component.computed)) {
     Object.defineProperty(sidebar, name, { get: () => getter.call(sidebar) })

@@ -12,6 +12,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 type Status = 'neutral' | 'active' | 'positive' | 'intermediary' | 'negative'
 
@@ -43,11 +46,11 @@ const statusLabel = computed(() => {
   if (label) return label
 
   switch (status.value) {
-    case 'active': return 'Active'
-    case 'positive': return 'Positive'
-    case 'intermediary': return 'Pending'
+    case 'active': return t('common:statusIndicator.active')
+    case 'positive': return t('common:statusIndicator.positive')
+    case 'intermediary': return t('common:statusIndicator.pending')
     case 'negative': return 'Error'
-    default: return 'Status unavailable'
+    default: return t('common:statusIndicator.statusUnavailable')
   }
 })
 </script>

@@ -6,14 +6,14 @@
           <h3>{{ field.title }}</h3>
           <span>{{
             configuredSecrets.includes(field.key)
-              ? 'Credential stored'
-              : 'No credential stored'
+              ? $t('admin:authFields.credentialStored')
+              : $t('admin:authFields.noCredentialStored')
           }}</span>
         </div>
         <v-select
           :model-value="modelValue.secrets[field.key]?.action || 'keep'"
           :items="secretActions"
-          :label="field.title + ' action'"
+          :label="$t('admin:authFields.action', { title: field.title, interpolation: { escapeValue: false } })"
           variant="outlined"
           :disabled="disabled"
           @update:model-value="secretAction(field.key, $event)"
@@ -24,7 +24,7 @@
             field.multiline
           "
           :model-value="secretValue(field.key)"
-          :label="'Replacement ' + field.title"
+          :label="$t('admin:authFields.replacement', { title: field.title, interpolation: { escapeValue: false } })"
           autocomplete="off"
           rows="4"
           variant="outlined"
@@ -34,7 +34,7 @@
           v-credential-autofill
           v-else-if="modelValue.secrets[field.key]?.action === 'replace'"
           :model-value="secretValue(field.key)"
-          :label="'Replacement ' + field.title"
+          :label="$t('admin:authFields.replacement', { title: field.title, interpolation: { escapeValue: false } })"
           type="password"
           autocomplete="new-password"
           variant="outlined"
@@ -44,7 +44,7 @@
         <p class="identity-note">
           {{
             field.hint ||
-            'Stored credentials cannot be revealed. Keep the current value, replace it, or explicitly clear it.'
+            $t('admin:authFields.storedCredentialsCannotRevealed')
           }}
         </p></template
       >
@@ -136,9 +136,9 @@ export default {
   data() {
     return {
       secretActions: [
-        { title: 'Keep current value', value: 'keep' },
-        { title: 'Replace credential', value: 'replace' },
-        { title: 'Clear stored credential', value: 'clear' }
+        { title: this.$t('admin:authFields.keepCurrentValue'), value: 'keep' },
+        { title: this.$t('admin:authFields.replaceCredential'), value: 'replace' },
+        { title: this.$t('admin:authFields.clearStoredCredential'), value: 'clear' }
       ]
     }
   },

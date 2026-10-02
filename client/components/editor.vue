@@ -60,7 +60,7 @@
           v-icon(:start='$vuetify.display.lgAndUp') mdi-check
           span.text-medium-emphasis(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
           span(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
-          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ saveActionLabel }} · Ctrl+S
+          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t(`editor:editor.ctrlS`, { saveActionLabel, interpolation: { escapeValue: false } }) }}
         v-btn.editor-save-close-action(
           v-if='$vuetify.display.mdAndUp'
           variant='tonal'
@@ -312,6 +312,7 @@ import _ from 'lodash'
 import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage, type PageDetails, type PageWriteInput } from '../helpers/pages-api'
 import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import { wikiStore } from '@/store/index.ts'
+import { translate } from '../modules/localization.ts'
 import { notifyReloadSafetyChanged, pwaState, setReloadSafetyProvider } from '../helpers/pwa.ts'
 import { Base64 } from 'js-base64'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -531,7 +532,7 @@ export default defineComponent({
     },
     title: {
       type: String,
-      default: 'Untitled Page'
+      default: () => translate('editor:editor.untitledPage')
     },
     description: {
       type: String,
@@ -1259,7 +1260,7 @@ export default defineComponent({
         if (code === 'generation-fenced' || code === 'policy-revision-fenced') return
         const detail = getErrorMessage(error)
         wikiStore.showNotification({
-          message: detail ? `Offline page metadata could not be recorded: ${detail}` : 'Offline page metadata could not be recorded.',
+          message: detail ? this.$t('editor:editor.offlinePageMetadataCould', { detail, interpolation: { escapeValue: false } }) : this.$t('editor:editor.offlinePageMetadataCould2'),
           style: 'warning',
           icon: 'warning'
         })
@@ -1267,13 +1268,13 @@ export default defineComponent({
     },
     offlineMutationBlockMessage(): string {
       if (this.offlineDraftStatus === 'locked') {
-        return this.offlineDraftError || 'Offline draft recovery is locked. Verify this account online, then reload the editor before saving.'
+        return this.offlineDraftError || this.$t('editor:editor.offlineDraftRecoveryLocked')
       }
       if (this.offlineDraftStatus === 'unavailable') {
-        return 'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.'
+        return this.$t('editor:editor.publishingUnavailableBecausePage')
       }
-      if (!this.offlineDraftCoordinator) return 'Offline draft recovery is unavailable. Reload the editor before saving.'
-      return 'Offline editor recovery is not ready. Reload the editor before saving.'
+      if (!this.offlineDraftCoordinator) return this.$t('editor:editor.offlineDraftRecoveryUnavailable')
+      return this.$t('editor:editor.offlineEditorRecoveryNot')
     },
     notifyOfflineMutationBlocked(): string {
       const message = this.offlineMutationBlockMessage()
@@ -1298,7 +1299,7 @@ export default defineComponent({
     },
     assertCurrentActorSession(expectedAuthenticated: boolean, expectedAccountId: number, expectedOfflineIdentityEpoch: number, expectedLifecycleGeneration?: number): void {
       if (!this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, expectedLifecycleGeneration)) {
-        throw new Error('Your account session changed while saving. Retry with the current account.')
+        throw new Error(this.$t('editor:editor.accountSessionChangedWhile'))
       }
     },
     getReloadSafetyFacts() {
@@ -1366,7 +1367,7 @@ export default defineComponent({
     },
     captureEditorState(): EditorAdapterCapture {
       const adapter = this.editorAdapter
-      if (adapter && !this.editorAdapterSafety.ready) throw new Error('The editor is still initializing. Retry in a moment.')
+      if (adapter && !this.editorAdapterSafety.ready) throw new Error(this.$t('editor:editor.editorStillInitializingRetry'))
       const captured = adapter?.capture() ?? {
         text: wikiStore.editor.content,
         editVersion: this.editorAdapterSafety.editVersion
@@ -1530,7 +1531,7 @@ export default defineComponent({
           this.offlineReconcilePrompt = { recordId, kind: 'create', revision: null }
           return
         }
-        const page = await fetchPage(window.fetch.bind(window), candidate.payload.pageId, 'The authoritative page could not be checked.')
+        const page = await fetchPage(window.fetch.bind(window), candidate.payload.pageId, this.$t('editor:editor.authoritativePageCouldNot'))
         if (
           this.lifecycleGeneration !== lifecycleGeneration ||
           this.offlineDraftCoordinator !== coordinator ||
@@ -1636,7 +1637,7 @@ export default defineComponent({
       wikiStore.page.pageFeatures = normalizePageFeatures(undefined)
       wikiStore.page.brandingView = null
       this.offlineDraftStatus = 'locked'
-      this.offlineDraftError = 'Your offline editor session was locked. Unsaved plaintext was cleared. Verify this account online, then reload the editor to recover any encrypted draft.'
+      this.offlineDraftError = this.$t('editor:editor.offlineEditorSessionWas')
       wikiStore.page.okfLoading = false
       this.savedState = {
         content: '',
@@ -1666,7 +1667,7 @@ export default defineComponent({
       this.offlineSubmissionCandidates = []
       this.offlineReconcilePrompt = null
       this.offlineDraftStatus = 'locked'
-      this.offlineDraftError = 'Your offline editor session was locked. Unsaved plaintext was cleared.'
+      this.offlineDraftError = this.$t('editor:editor.offlineEditorSessionWas2')
       this.offlineDraftBusy = false
       this.dialogUnsaved = false
       this.discardError = ''
@@ -1922,14 +1923,14 @@ export default defineComponent({
         if (this.serverSaveDisabled && coordinator?.isAuthenticatedUser() === true) {
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           if (!(await coordinator.captureThrough(capture.editVersion))) {
-            throw new Error('Your changes could not be saved on this device.')
+            throw new Error(this.$t('editor:editor.changesCouldNotSaved'))
           }
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           if (coordinator.hasCommittedCurrentValues) {
             this.editorAdapter?.markPersisted?.(capture.editVersion)
           }
           wikiStore.showNotification({
-            message: 'Saved on this device. Reconnect to review and publish.',
+            message: this.$t('editor:editor.savedDeviceReconnectReview'),
             style: 'success',
             icon: 'check'
           })
@@ -1941,7 +1942,7 @@ export default defineComponent({
         const authOutcome = await wikiStore.waitForAuthRefresh()
         this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
         if (capturedAuthenticated !== this.isAuthenticated || capturedAccountId !== this.accountId) {
-          throw new Error('Your account session changed while saving. Retry with the current account.')
+          throw new Error(this.$t('editor:editor.accountSessionChangedWhile'))
         }
 
         const verifiedForNetwork = !capturedAuthenticated || (
@@ -1951,18 +1952,18 @@ export default defineComponent({
           wikiStore.offlineIdentityReady
         )
         if (!verifiedForNetwork) {
-          throw new Error('Your account session could not establish a safe local draft boundary. Retry while online.')
+          throw new Error(this.$t('editor:editor.accountSessionCouldNot'))
         }
         if (saveMode !== (this.mode === 'create' ? 'create' : 'update')) {
-          throw new Error('The editor changed pages while saving. Retry the save.')
+          throw new Error(this.$t('editor:editor.editorChangedPagesWhile'))
         }
         if (capturedAuthenticated && this.serverSaveDisabled) {
-          throw new Error('Server publishing is unavailable while disconnected.')
+          throw new Error(this.$t('editor:editor.serverPublishingUnavailableWhile'))
         }
 
         if (saveMode === 'update') {
           const expectedSourceRevision = capture.identity.baseSourceRevision
-          if (!expectedSourceRevision) throw new Error('The page revision is unavailable. Reload before saving.')
+          if (!expectedSourceRevision) throw new Error(this.$t('editor:editor.pageRevisionUnavailableReload'))
           if (!overwrite) {
             this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
             const conflict = await checkPageConflict(
@@ -2020,16 +2021,16 @@ export default defineComponent({
               this.offlineConnectionState === 'online' &&
               this.serverSaveDisabled !== true
             ) {
-              receiptPreparationWarning = 'Local recovery receipt could not be committed; this online save is not available for offline recovery.'
+              receiptPreparationWarning = this.$t('editor:editor.localRecoveryReceiptCould')
             } else if (receiptPreparationError instanceof Error) {
               throw receiptPreparationError
             } else {
-              throw new Error('The page was not submitted because the encrypted draft receipt could not be committed.')
+              throw new Error(this.$t('editor:editor.pageWasNotSubmitted'))
             }
           }
         }
         if (capturedAuthenticated && this.serverSaveDisabled) {
-          throw new Error('Server publishing is unavailable while disconnected.')
+          throw new Error(this.$t('editor:editor.serverPublishingUnavailableWhile'))
         }
         if (saveMode === 'create') {
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
@@ -2098,7 +2099,7 @@ export default defineComponent({
               })
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           if (!completion) {
-            throw new Error('The page was saved, but local submission finalization needs attention.')
+            throw new Error(this.$t('editor:editor.pageWasSavedBut'))
           }
         }
         if (authoritativePageId !== null && postWriteError === null) {
@@ -2123,7 +2124,7 @@ export default defineComponent({
         const saveMessage = receiptPreparationWarning
           ? `${saveMode === 'create' ? this.$t('editor:save.createSuccess') : this.$t('editor:save.updateSuccess')}; ${receiptPreparationWarning}`
           : postWriteError
-            ? `Page saved, but ${postWriteError}`
+            ? this.$t('editor:editor.pageSavedBut', { postWriteError, interpolation: { escapeValue: false } })
             : (saveMode === 'create' ? this.$t('editor:save.createSuccess') : this.$t('editor:save.updateSuccess'))
         wikiStore.showNotification({
           message: saveMessage,
@@ -2169,7 +2170,7 @@ export default defineComponent({
         return true
       } catch (error) {
         if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) {
-          const staleError = new Error('Your account session changed while saving. Retry with the current account.')
+          const staleError = new Error(this.$t('editor:editor.accountSessionChangedWhile'))
           if (rethrow) throw staleError
           return false
         }
@@ -2196,7 +2197,7 @@ export default defineComponent({
           if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) return false
         }
         if (status === 403 || status === 404) {
-          const unavailableMessage = 'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.'
+          const unavailableMessage = this.$t('editor:editor.publishingUnavailableBecausePage')
           let attemptedUnavailableCapture = false
           let capturedUnavailableDraft = false
           if (!prepared && coordinator?.isAuthenticatedUser() === true) {
@@ -2215,7 +2216,7 @@ export default defineComponent({
           message = capturedUnavailableDraft
             ? unavailableMessage
             : attemptedUnavailableCapture
-              ? 'Publishing is unavailable because the page may have been deleted or access may have been denied, but the local draft could not be retained.'
+              ? this.$t('editor:editor.publishingUnavailableBecausePage2')
               : unavailableMessage
         }
         if (status === 409) {
@@ -2314,7 +2315,7 @@ export default defineComponent({
         }
         if (coordinator?.isAuthenticatedUser() === true) {
           if (!(await coordinator.discardCurrentDraft())) {
-            throw new Error(this.offlineDraftError || 'The local draft could not be discarded.')
+            throw new Error(this.offlineDraftError || this.$t('editor:editor.localDraftCouldNot'))
           }
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
         }
@@ -2398,7 +2399,7 @@ export default defineComponent({
       let brandingAssignment: PageBrandingAssignment | null = null
       if (rawBrandingAssignment !== null) {
         const brandingResult = PageBrandingAssignmentSchema.safeParse(rawBrandingAssignment)
-        if (!brandingResult.success) throw new Error('Page branding assignment is invalid.')
+        if (!brandingResult.success) throw new Error(this.$t('editor:editor.pageBrandingAssignmentInvalid'))
         brandingAssignment = _.cloneDeep(brandingResult.data)
       }
       const brandingChanged = !_.isEqual(this.savedState.brandingAssignment, brandingAssignment)

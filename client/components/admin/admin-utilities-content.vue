@@ -1,38 +1,38 @@
 <template lang="pug">
 v-card
-  v-card-title Content maintenance
-  v-card-subtitle Repair derived content, move eligible locale records, or delete old history through reviewed receipts.
+  v-card-title {{ $t(`admin:utilitiesContent.contentMaintenance`) }}
+  v-card-subtitle {{ $t(`admin:utilitiesContent.repairDerivedContentMove`) }}
   v-card-text
     v-row
       v-col(cols='12' md='6')
         v-sheet.pa-4.rounded.border.h-100
-          h2.text-title-medium Rebuild page tree
-          p.text-body-medium.mt-2 Recreate the inferred folder tree from current page paths. It does not edit page content.
-          v-btn.mt-4(variant='outlined' color='primary' :disabled='busy' @click='openReview(`content-rebuild-tree`)') Review tree rebuild
+          h2.text-title-medium {{ $t(`admin:utilitiesContent.rebuildPageTree`) }}
+          p.text-body-medium.mt-2 {{ $t(`admin:utilitiesContent.recreateInferredFolderTree`) }}
+          v-btn.mt-4(variant='outlined' color='primary' :disabled='busy' @click='openReview(`content-rebuild-tree`)') {{ $t(`admin:utilitiesContent.reviewTreeRebuild`) }}
       v-col(cols='12' md='6')
         v-sheet.pa-4.rounded.border.h-100
-          h2.text-title-medium Rerender all pages
-          p.text-body-medium.mt-2 Rebuild rendered output page by page. This can take time; the receipt shows persisted progress if the browser closes.
-          v-btn.mt-4(variant='outlined' color='primary' :disabled='busy' @click='openReview(`content-rerender`)') Review full rerender
+          h2.text-title-medium {{ $t(`admin:utilitiesContent.rerenderAllPages`) }}
+          p.text-body-medium.mt-2 {{ $t(`admin:utilitiesContent.rebuildRenderedOutputPage`) }}
+          v-btn.mt-4(variant='outlined' color='primary' :disabled='busy' @click='openReview(`content-rerender`)') {{ $t(`admin:utilitiesContent.reviewFullRerender`) }}
     v-divider.my-6
     v-row
       v-col(cols='12' md='6')
         v-sheet.pa-4.rounded.border.h-100
-          h2.text-title-medium Migrate pages to a locale
-          p.text-body-medium.mt-2 Move eligible pages without overwriting an existing target page. This action cannot be reversed automatically.
-          v-alert.mt-3(v-if='!locales.length' color='warning' variant='tonal' density='compact') No current locales are available for migration. Reload Utilities after locale configuration is restored.
+          h2.text-title-medium {{ $t(`admin:utilitiesContent.migratePagesLocale`) }}
+          p.text-body-medium.mt-2 {{ $t(`admin:utilitiesContent.moveEligiblePagesWithout`) }}
+          v-alert.mt-3(v-if='!locales.length' color='warning' variant='tonal' density='compact') {{ $t(`admin:utilitiesContent.noCurrentLocalesAvailable`) }}
           v-row.mt-1
             v-col(cols='12' sm='6')
-              v-select(v-model='sourceLocale' :items='locales' item-title='name' item-value='code' label='Source locale' variant='outlined' hide-details :disabled='busy || !locales.length')
+              v-select(v-model='sourceLocale' :items='locales' item-title='name' item-value='code' :label='$t(`admin:utilitiesContent.sourceLocale`)' variant='outlined' hide-details :disabled='busy || !locales.length')
             v-col(cols='12' sm='6')
-              v-select(v-model='targetLocale' :items='locales' item-title='name' item-value='code' label='Target locale' variant='outlined' hide-details :disabled='busy || !locales.length')
-          v-btn.mt-4(variant='outlined' color='warning' :disabled='busy || !canMigrate' @click='openReview(`content-migrate-locale`)') Review locale migration
+              v-select(v-model='targetLocale' :items='locales' item-title='name' item-value='code' :label='$t(`admin:utilitiesContent.targetLocale`)' variant='outlined' hide-details :disabled='busy || !locales.length')
+          v-btn.mt-4(variant='outlined' color='warning' :disabled='busy || !canMigrate' @click='openReview(`content-migrate-locale`)') {{ $t(`admin:utilitiesContent.reviewLocaleMigration`) }}
       v-col(cols='12' md='6')
         v-sheet.pa-4.rounded.border.h-100
-          h2.text-title-medium Purge page history
-          p.text-body-medium.mt-2 Permanently remove database history older than the selected retention period. Storage-module history is not changed.
-          v-select.mt-3(v-model='olderThan' :items='historyPeriods' item-title='title' item-value='value' label='Delete history older than' variant='outlined' hide-details :disabled='busy')
-          v-btn.mt-4(variant='outlined' color='error' :disabled='busy' @click='openReview(`content-purge-history`)') Review history purge
+          h2.text-title-medium {{ $t(`admin:utilitiesContent.purgePageHistory`) }}
+          p.text-body-medium.mt-2 {{ $t(`admin:utilitiesContent.permanentlyRemoveDatabaseHistory`) }}
+          v-select.mt-3(v-model='olderThan' :items='historyPeriods' item-title='title' item-value='value' :label='$t(`admin:utilitiesContent.deleteHistoryOlderThan`)' variant='outlined' hide-details :disabled='busy')
+          v-btn.mt-4(variant='outlined' color='error' :disabled='busy' @click='openReview(`content-purge-history`)') {{ $t(`admin:utilitiesContent.reviewHistoryPurge`) }}
   utility-review(
     v-model:open='review.open'
     :title='review.title'
@@ -57,6 +57,7 @@ import {
   type UtilityOperationKind
 } from '../../../shared/utilities-workspace.ts'
 import UtilityReview from './admin-utilities-review.vue'
+import type { Translate } from '../../helpers/use-translate.ts'
 
 type ContentKind = Extract<UtilityOperationKind, 'content-rebuild-tree' | 'content-rerender' | 'content-migrate-locale' | 'content-purge-history'>
 type ReviewSnapshot = {
@@ -69,16 +70,16 @@ type ReviewSnapshot = {
 }
 
 const historyPeriodTitles: Record<string, string> = {
-  P1D: '1 day',
-  P1M: '1 month',
-  P3M: '3 months',
-  P6M: '6 months',
-  P1Y: '1 year',
-  P2Y: '2 years',
-  P3Y: '3 years',
-  P5Y: '5 years'
+  P1D: 'admin:utilitiesContent.n1Day',
+  P1M: 'admin:utilitiesContent.n1Month',
+  P3M: 'admin:utilitiesContent.n3Months',
+  P6M: 'admin:utilitiesContent.n6Months',
+  P1Y: 'admin:utilitiesContent.n1Year',
+  P2Y: 'admin:utilitiesContent.n2Years',
+  P3Y: 'admin:utilitiesContent.n3Years',
+  P5Y: 'admin:utilitiesContent.n5Years'
 }
-const historyPeriodTitle = (value: string): string => historyPeriodTitles[value] ?? value
+const historyPeriodTitle = (t: Translate, value: string): string => (historyPeriodTitles[value] ? t(historyPeriodTitles[value]) : value)
 
 export default defineComponent({
   components: { UtilityReview },
@@ -109,7 +110,7 @@ export default defineComponent({
       return this.workspace.locales
     },
     historyPeriods() {
-      return UtilityHistoryRetentionPeriods.map((value) => ({ value, title: historyPeriodTitle(value) }))
+      return UtilityHistoryRetentionPeriods.map((value) => ({ value, title: historyPeriodTitle(this.$t, value) }))
     },
     canMigrate(): boolean {
       return (
@@ -156,30 +157,30 @@ export default defineComponent({
       ) as Record<string, string>
       const detail: Record<ContentKind, Omit<ReviewSnapshot, 'kind' | 'confirmation' | 'payload'>> = {
         'content-rebuild-tree': {
-          title: 'Review page-tree rebuild',
-          effect: 'This regenerates the inferred page tree from current paths. It does not edit source content.',
-          parameters: [{ label: 'Maintenance operation', value: 'Rebuild page tree from current page paths' }]
+          title: this.$t('admin:utilitiesContent.reviewPageTreeRebuild'),
+          effect: this.$t('admin:utilitiesContent.regeneratesInferredPageTree'),
+          parameters: [{ label: this.$t('admin:utilitiesContent.maintenanceOperation'), value: this.$t('admin:utilitiesContent.rebuildPageTreeCurrent') }]
         },
         'content-rerender': {
-          title: 'Review full rerender',
+          title: this.$t('admin:utilitiesContent.reviewFullRerender'),
           effect:
-            'This rebuilds rendered output for every current page. It can be interrupted; refresh the receipt rather than restarting an unconfirmed run.',
-          parameters: [{ label: 'Maintenance operation', value: 'Rerender every current page' }]
+            this.$t('admin:utilitiesContent.rebuildsRenderedOutputEvery'),
+          parameters: [{ label: this.$t('admin:utilitiesContent.maintenanceOperation'), value: this.$t('admin:utilitiesContent.rerenderEveryCurrentPage') }]
         },
         'content-migrate-locale': {
-          title: 'Review locale migration',
-          effect: `This moves eligible pages from ${this.localeTitle(this.sourceLocale)} to ${this.localeTitle(this.targetLocale)}. Existing target pages are not overwritten.`,
+          title: this.$t('admin:utilitiesContent.reviewLocaleMigration'),
+          effect: this.$t('admin:utilitiesContent.movesEligiblePagesExisting', { sourceLocale: this.localeTitle(this.sourceLocale), targetLocale: this.localeTitle(this.targetLocale), interpolation: { escapeValue: false } }),
           parameters: [
-            { label: 'Source locale', value: this.localeTitle(this.sourceLocale) },
-            { label: 'Target locale', value: this.localeTitle(this.targetLocale) }
+            { label: this.$t('admin:utilitiesContent.sourceLocale'), value: this.localeTitle(this.sourceLocale) },
+            { label: this.$t('admin:utilitiesContent.targetLocale'), value: this.localeTitle(this.targetLocale) }
           ]
         },
         'content-purge-history': {
-          title: 'Review history purge',
-          effect: `This permanently deletes database page history older than ${historyPeriodTitle(this.olderThan)}.`,
+          title: this.$t('admin:utilitiesContent.reviewHistoryPurge'),
+          effect: this.$t('admin:utilitiesContent.permanentlyDeletesDatabasePage', { olderThan: historyPeriodTitle(this.$t, this.olderThan), interpolation: { escapeValue: false } }),
           parameters: [
-            { label: 'Delete history older than', value: historyPeriodTitle(this.olderThan) },
-            { label: 'Storage-module history', value: 'Unchanged' }
+            { label: this.$t('admin:utilitiesContent.deleteHistoryOlderThan'), value: historyPeriodTitle(this.$t, this.olderThan) },
+            { label: this.$t('admin:utilitiesContent.storageModuleHistory'), value: this.$t('admin:utilitiesContent.unchanged') }
           ]
         }
       }

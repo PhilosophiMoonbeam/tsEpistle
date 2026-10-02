@@ -2,8 +2,8 @@
   <v-container fluid class="navigation-workspace">
     <admin-hero
       icon="mdi-compass-outline"
-      title="Navigation"
-      description="Give every reader a clear way into your knowledge."
+      :title="$t('admin:navigation.title')"
+      :description="$t('admin:navigation.giveEveryReaderClear')"
       ><template #actions
         ><v-btn
           variant="text"
@@ -11,25 +11,25 @@
           :loading="loading"
           :disabled="busy || initializing"
           @click="reload"
-          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved navigation</v-tooltip></v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:navigation.reloadSavedNavigation') }}</v-tooltip></v-btn
         ><v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset"
-          >Reset draft</v-btn
+          >{{ $t('admin:navigation.resetDraft') }}</v-btn
         ><v-btn
           color="primary"
           variant="flat"
           :disabled="locked || !dirty"
           @click="review"
-          >Review changes</v-btn
+          >{{ $t('admin:navigation.reviewChanges') }}</v-btn
         ></template
       ></admin-hero
     >
     <p v-if="!saved && loading" class="navigation-empty" role="status">
-      Loading navigation, locales and audiences…
+      {{ $t('admin:navigation.loadingNavigationLocalesAudiences') }}
     </p>
     <v-alert v-if="loadError" type="error" variant="tonal"
       >{{ loadError
       }}<v-btn variant="text" :disabled="busy" @click="reload"
-        >Reload saved settings</v-btn
+        >{{ $t('admin:navigation.reloadSavedSettings') }}</v-btn
       ></v-alert
     >
     <v-alert
@@ -43,15 +43,15 @@
       <div class="navigation-status">
         <span
           ><i :class="{ 'is-draft': dirty }" />{{
-            dirty ? "Unsaved navigation draft" : "Showing saved navigation"
+            dirty ? $t('admin:navigation.unsavedNavigationDraft') : $t('admin:navigation.showingSavedNavigation')
           }}</span
         ><span>{{
           saved.runtime.state === "applied"
-            ? "Runtime configuration current"
-            : "Runtime activation needs attention"
+            ? $t('admin:navigation.runtimeConfigurationCurrent')
+            : $t('admin:navigation.runtimeActivationNeedsAttention2')
         }}</span>
       </div>
-      <nav class="navigation-tabs" aria-label="Navigation sections">
+      <nav class="navigation-tabs" :aria-label="$t('admin:navigation.navigationSections')">
         <button
           v-for="tab in sections"
           :key="tab.key"
@@ -68,22 +68,17 @@
           <template v-if="section === 'structure'">
             <div class="navigation-heading">
               <span class="navigation-kicker"
-                >01 / A useful wayfinding system</span
+                >{{ $t('admin:navigation.n01UsefulWayfindingSystem') }}</span
               >
-              <h2>Arrange the essentials</h2>
+              <h2>{{ $t('admin:navigation.arrangeEssentials') }}</h2>
               <p>
-                Build a purposeful menu for each language. Group related links,
-                establish a reading order and keep audiences in view.
+                {{ $t('admin:navigation.buildPurposefulMenuEach') }}
               </p>
             </div>
             <v-alert v-if="!customMode" type="info" variant="tonal" class="mb-5"
-              >{{
-                draft.mode === "NONE"
-                  ? "The sidebar is hidden."
-                  : "The sidebar currently shows the page directory."
-              }}
-              Custom menus remain editable here. Choose a custom-menu display
-              mode to show them.</v-alert
+              >{{ $t('admin:navigation.customMenusRemainEditable', { mode: draft.mode === "NONE"
+                  ? $t('admin:navigation.sidebarHidden')
+                  : $t('admin:navigation.sidebarCurrentlyShowsPage'), interpolation: { escapeValue: false } }) }}</v-alert
             >
             <div class="navigation-toolbar">
               <v-select
@@ -91,7 +86,7 @@
                 :items="localeOptions"
                 item-title="title"
                 item-value="code"
-                label="Menu locale"
+                :label="$t('admin:navigation.menuLocale')"
                 variant="outlined"
                 density="compact"
                 hide-details
@@ -101,7 +96,7 @@
                 prepend-icon="mdi-content-copy"
                 :disabled="locked || !copyOptions.length"
                 @click="openCopy"
-                >Copy from locale</v-btn
+                >{{ $t('admin:navigation.copyLocale') }}</v-btn
               ><v-btn
                 variant="text"
                 class="navigation-preview-jump"
@@ -111,23 +106,22 @@
                     block: 'start',
                   })
                 "
-                >Preview this menu</v-btn
+                >{{ $t('admin:navigation.previewMenu') }}</v-btn
               >
             </div>
             <p v-if="!currentLocaleEnabled" class="navigation-note mb-5">
-              This locale is retained for editing but is not enabled for
-              readers. Manage language availability in
-              <router-link to="/locale">Locale</router-link>.
+              {{ $t('admin:navigation.localeRetainedEditingBut') }}
+              <router-link to="/locale">{{ $t('admin:navigation.locale') }}</router-link>.
             </p>
             <div class="navigation-builder">
-              <section class="navigation-structure" aria-label="Menu structure">
+              <section class="navigation-structure" :aria-label="$t('admin:navigation.menuStructure')">
                 <div class="navigation-section-title">
-                  <h3>Menu order</h3>
+                  <h3>{{ $t('admin:navigation.menuOrder') }}</h3>
                   <span>{{ currentItems.length }} / {{ maxItems }}</span>
                 </div>
                 <div class="navigation-home">
-                  <v-icon icon="mdi-home-outline" size="18" /><span>Home</span
-                  ><small>Built in</small>
+                  <v-icon icon="mdi-home-outline" size="18" /><span>{{ $t('admin:navigation.navType.home') }}</span
+                  ><small>{{ $t('admin:navigation.built') }}</small>
                 </div>
                 <navigation-outline
                   :items="currentItems"
@@ -138,10 +132,9 @@
                 />
                 <div v-if="!currentItems.length" class="navigation-empty">
                   <v-icon icon="mdi-sign-direction" size="28" />
-                  <h3>A starting point</h3>
+                  <h3>{{ $t('admin:navigation.startingPoint') }}</h3>
                   <p>
-                    Add a page link, then organize related destinations with
-                    headings.
+                    {{ $t('admin:navigation.addPageLinkThen') }}
                   </p>
                 </div>
                 <div class="navigation-add">
@@ -150,50 +143,48 @@
                     prepend-icon="mdi-plus"
                     :disabled="locked || currentItems.length >= maxItems"
                     @click="addItem('link')"
-                    >Add link</v-btn
+                    >{{ $t('admin:navigation.addLink') }}</v-btn
                   ><v-menu
                     ><template #activator="{ props }"
                       ><v-btn
                         v-bind="props"
                         variant="text"
                         icon="mdi-dots-horizontal"
-                        aria-label="Add a heading or divider"
+                        :aria-label="$t('admin:navigation.addHeadingDivider')"
                         :disabled="
                           locked || currentItems.length >= maxItems
                         " /></template
                     ><v-list
                       ><v-list-item
-                        title="Add heading"
+                        :title="$t('admin:navigation.addHeading')"
                         prepend-icon="mdi-format-title"
                         @click="addItem('header')" /><v-list-item
-                        title="Add divider"
+                        :title="$t('admin:navigation.addDivider')"
                         prepend-icon="mdi-minus"
                         @click="addItem('divider')" /></v-list
                   ></v-menu>
                 </div>
                 <p class="navigation-note">
-                  Drag a handle, or focus it and press Space to reorder with the
-                  arrow keys.
+                  {{ $t('admin:navigation.dragHandleFocusPress') }}
                 </p>
               </section>
               <section
                 class="navigation-item-editor"
-                aria-label="Selected menu item"
+                :aria-label="$t('admin:navigation.selectedMenuItem')"
               >
                 <template v-if="selected"
                   ><div class="navigation-section-title">
                     <h3>
                       {{
                         selected.kind === "link"
-                          ? "Link details"
+                          ? $t('admin:navigation.linkDetails')
                           : selected.kind === "header"
-                            ? "Section heading"
-                            : "Divider"
+                            ? $t('admin:navigation.sectionHeading')
+                            : $t('admin:navigation.divider')
                       }}
                     </h3>
                     <span
-                      >{{ selectedIndex + 1 }} of
-                      {{ currentItems.length }}</span
+                      >{{ $t('admin:navigation.of', { value: selectedIndex + 1, currentItemsCount: currentItems.length, interpolation: { escapeValue: false } }) }}</span
                     >
                   </div>
                   <div class="navigation-item-position">
@@ -203,7 +194,7 @@
                       prepend-icon="mdi-arrow-up"
                       :disabled="locked || selectedIndex === 0"
                       @click="moveItem(-1)"
-                      >Move up</v-btn
+                      >{{ $t('admin:navigation.moveUp') }}</v-btn
                     ><v-btn
                       size="small"
                       variant="text"
@@ -212,13 +203,13 @@
                         locked || selectedIndex === currentItems.length - 1
                       "
                       @click="moveItem(1)"
-                      >Move down</v-btn
+                      >{{ $t('admin:navigation.moveDown') }}</v-btn
                     >
                   </div>
                   <v-text-field
                     v-if="selected.kind !== 'divider'"
                     v-model="selected.label"
-                    label="Menu label"
+                    :label="$t('admin:navigation.menuLabel')"
                     maxlength="255"
                     counter="255"
                     variant="outlined"
@@ -227,10 +218,10 @@
                   <template v-if="selected.kind === 'link'"
                     ><v-text-field
                       v-model="selected.icon"
-                      label="Icon"
+                      :label="$t('admin:navigation.icon')"
                       variant="outlined"
                       :disabled="locked"
-                      hint="An mdi- icon name, or a Font Awesome class from your Theme icon library."
+                      :hint="$t('admin:navigation.mdiIconNameFont')"
                       persistent-hint
                       ><template #append-inner
                         ><v-icon
@@ -239,7 +230,7 @@
                     ><v-select
                       v-model="selected.targetType"
                       :items="targetOptions"
-                      label="Destination type"
+                      :label="$t('admin:navigation.destinationType')"
                       variant="outlined"
                       :disabled="locked"
                       class="mt-5"
@@ -247,20 +238,20 @@
                       v-model="selected.target"
                       :label="
                         selected.targetType === 'page'
-                          ? 'Page path'
-                          : 'External address'
+                          ? $t('admin:navigation.pagePath')
+                          : $t('admin:navigation.externalAddress')
                       "
                       variant="outlined"
                       :disabled="locked"
                       :error-messages="
                         selected.target && !destination
-                          ? ['Enter a valid destination for this link type.']
+                          ? [$t('admin:navigation.enterValidDestinationLink')]
                           : []
                       "
                       :hint="
                         selected.targetType === 'page'
-                          ? 'A workspace path, such as /en/guide. Anchors and query strings are supported.'
-                          : 'HTTP(S), mailto: or tel:. External destinations are not fetched by this editor.'
+                          ? $t('admin:navigation.workspacePathSuchEn')
+                          : $t('admin:navigation.httpSMailtoTel')
                       "
                       persistent-hint
                     /><v-btn
@@ -270,30 +261,29 @@
                       prepend-icon="mdi-file-search-outline"
                       :disabled="locked"
                       @click="selectPageOpen = true"
-                      >Choose a page</v-btn
+                      >{{ $t('admin:navigation.choosePage') }}</v-btn
                     >
                     <p v-if="destination" class="navigation-destination">
-                      <span>Destination</span><code>{{ destination }}</code>
+                      <span>{{ $t('admin:navigation.destination') }}</span><code>{{ destination }}</code>
                     </p></template
                   >
                   <p
                     v-else-if="selected.kind === 'divider'"
                     class="navigation-note"
                   >
-                    Separate related groups of links. Redundant separators are
-                    omitted from the reader’s menu.
+                    {{ $t('admin:navigation.separateRelatedGroupsLinks') }}
                   </p>
                   <div class="navigation-setting-group">
-                    <h3>Audience</h3>
+                    <h3>{{ $t('admin:navigation.audience') }}</h3>
                     <v-radio-group
                       v-model="selected.visibilityMode"
                       :disabled="locked"
                       hide-details
-                      label="Who sees this item?"
+                      :label="$t('admin:navigation.whoSeesItem')"
                       ><v-radio
-                        label="Everyone who can open the workspace"
+                        :label="$t('admin:navigation.everyoneWhoCanOpen')"
                         value="all" /><v-radio
-                        label="Members of selected groups"
+                        :label="$t('admin:navigation.membersSelectedGroups')"
                         value="restricted" /></v-radio-group
                     ><v-select
                       v-if="selected.visibilityMode === 'restricted'"
@@ -301,7 +291,7 @@
                       :items="saved.groups"
                       item-title="name"
                       item-value="id"
-                      label="Audience groups"
+                      :label="$t('admin:navigation.audienceGroups')"
                       variant="outlined"
                       multiple
                       chips
@@ -316,12 +306,10 @@
                       "
                       class="navigation-note mt-3"
                     >
-                      No group is selected. This item will be hidden from every
-                      audience.
+                      {{ $t('admin:navigation.noGroupSelectedItem') }}
                     </p>
                     <p class="navigation-note mt-4">
-                      Menu visibility does not grant access to a page. Page
-                      permissions and publication rules still apply.
+                      {{ $t('admin:navigation.menuVisibilityDoesNot') }}
                     </p>
                   </div>
                   <div class="navigation-item-actions">
@@ -330,22 +318,21 @@
                       prepend-icon="mdi-content-copy"
                       :disabled="locked || currentItems.length >= maxItems"
                       @click="duplicateItem"
-                      >Duplicate item</v-btn
+                      >{{ $t('admin:navigation.duplicateItem') }}</v-btn
                     ><v-btn
                       variant="text"
                       prepend-icon="mdi-delete-outline"
                       :disabled="locked"
                       @click="removeItem"
-                      >Remove item</v-btn
+                      >{{ $t('admin:navigation.removeItem') }}</v-btn
                     >
                   </div>
                 </template>
                 <div v-else class="navigation-empty">
                   <v-icon icon="mdi-cursor-default-click-outline" size="28" />
-                  <h3>Choose an item</h3>
+                  <h3>{{ $t('admin:navigation.chooseItem') }}</h3>
                   <p>
-                    Select a link, heading or divider to refine its destination
-                    and audience.
+                    {{ $t('admin:navigation.selectLinkHeadingDivider') }}
                   </p>
                 </div>
               </section>
@@ -354,16 +341,15 @@
           <template v-else-if="section === 'display'">
             <div class="navigation-heading">
               <span class="navigation-kicker"
-                >02 / Paths into the workspace</span
+                >{{ $t('admin:navigation.n02PathsIntoWorkspace') }}</span
               >
-              <h2>Choose how readers explore</h2>
+              <h2>{{ $t('admin:navigation.chooseHowReadersExplore') }}</h2>
               <p>
-                Balance a curated menu with the page directory. Switching
-                display mode keeps every locale’s custom structure.
+                {{ $t('admin:navigation.balanceCuratedMenuPage') }}
               </p>
             </div>
             <fieldset class="navigation-mode-grid" :disabled="locked">
-              <legend class="navigation-sr-only">Sidebar display mode</legend>
+              <legend class="navigation-sr-only">{{ $t('admin:navigation.sidebarDisplayMode') }}</legend>
               <label
                 v-for="option in modeOptions"
                 :key="option.value"
@@ -380,28 +366,26 @@
               >
             </fieldset>
             <div class="navigation-setting-group">
-              <h3>Where Browse begins</h3>
+              <h3>{{ $t('admin:navigation.whereBrowseBegins') }}</h3>
               <v-switch
                 v-model="draft.expandParent"
                 inset
                 :disabled="locked"
-                label="Open the current page’s parent directory"
+                :label="$t('admin:navigation.openCurrentPagesParent')"
                 color="primary"
                 hide-details
               />
               <p class="navigation-note mt-3">
-                When off, Browse starts at the site root. This setting applies
-                to Page directory and Menu + directory modes.
+                {{ $t('admin:navigation.whenOffBrowseStarts') }}
               </p>
             </div>
             <div class="navigation-setting-group">
               <div class="navigation-section-title">
-                <h3>Locale coverage</h3>
-                <router-link to="/locale">Manage languages ↗</router-link>
+                <h3>{{ $t('admin:navigation.localeCoverage') }}</h3>
+                <router-link to="/locale">{{ $t('admin:navigation.manageLanguages') }}</router-link>
               </div>
               <p class="navigation-note mb-5">
-                Each language has its own menu. Copying a structure preserves
-                the original labels and destinations until you edit them.
+                {{ $t('admin:navigation.eachLanguageHasOwn') }}
               </p>
               <div
                 v-for="locale in localeOptions"
@@ -414,29 +398,26 @@
                     >{{ locale.code }} ·
                     {{
                       locale.enabled
-                        ? "Enabled for readers"
-                        : "Not enabled for readers"
+                        ? $t('admin:navigation.enabledReaders')
+                        : $t('admin:navigation.notEnabledReaders')
                     }}</small
                   >
                 </div>
                 <span
-                  >{{
-                    draft.tree.find((tree) => tree.locale === locale.code)
-                      ?.items.length || 0
-                  }}
-                  items</span
+                  >{{ $t('admin:navigation.items', { tree: draft.tree.find((tree) => tree.locale === locale.code)
+                      ?.items.length || 0, interpolation: { escapeValue: false } }) }}</span
                 ><v-btn
                   size="small"
                   variant="text"
                   :disabled="locked"
                   @click="editLocale(locale.code)"
-                  >Edit menu</v-btn
+                  >{{ $t('admin:navigation.editMenu') }}</v-btn
                 ><v-btn
                   v-if="draft.tree.some((tree) => tree.locale === locale.code)"
                   icon="mdi-delete-outline"
                   size="small"
                   variant="text"
-                  :aria-label="'Remove menu for ' + locale.name"
+                  :aria-label="$t('admin:navigation.removeMenu2', { name: locale.name, interpolation: { escapeValue: false } })"
                   :disabled="locked"
                   @click="removeLocale(locale.code)"
                 />
@@ -445,15 +426,14 @@
           </template>
           <template v-else
             ><div class="navigation-heading">
-              <span class="navigation-kicker">03 / Publication record</span>
-              <h2>A considered path forward</h2>
+              <span class="navigation-kicker">{{ $t('admin:navigation.n03PublicationRecord') }}</span>
+              <h2>{{ $t('admin:navigation.consideredPathForward') }}</h2>
               <p>
-                The latest 50 navigation publications, with the administrator’s
-                reason and affected language structures.
+                {{ $t('admin:navigation.latest50NavigationPublications') }}
               </p>
             </div>
             <p v-if="!saved.history.length" class="navigation-empty">
-              No navigation changes have been recorded yet.
+              {{ $t('admin:navigation.noNavigationChangesHave') }}
             </p>
             <article
               v-for="event in saved.history"
@@ -465,21 +445,21 @@
               <p>{{ event.fields.map(fieldLabel).join(" · ") }}</p>
               <small>{{
                 event.actorId === null
-                  ? "API administrator"
-                  : "Administrator #" + event.actorId
+                  ? $t('admin:navigation.apiAdministrator')
+                  : $t('admin:navigation.administrator', { actorId: event.actorId, interpolation: { escapeValue: false } })
               }}</small>
             </article></template
           >
         </section>
         <aside ref="previewPanel" class="navigation-preview-panel">
           <div class="navigation-preview-heading">
-            <span class="navigation-kicker">Audience preview</span
+            <span class="navigation-kicker">{{ $t('admin:navigation.audiencePreview') }}</span
             ><strong>{{ currentLocale }} / {{ modeName(draft.mode) }}</strong>
           </div>
           <v-select
             v-model="previewAudience"
             :items="audienceOptions"
-            label="Preview as"
+            :label="$t('admin:navigation.preview')"
             variant="outlined"
             density="compact"
             hide-details
@@ -489,7 +469,7 @@
             :items="saved.groups"
             item-title="name"
             item-value="id"
-            label="Preview groups"
+            :label="$t('admin:navigation.previewGroups')"
             variant="outlined"
             multiple
             chips
@@ -503,23 +483,18 @@
             :locale="currentLocale"
           />
           <p v-if="customMode" class="navigation-note">
-            {{ visibleItems.filter((item) => item.kind === "link").length }} of
-            {{ currentItems.filter((item) => item.kind === "link").length }}
-            custom links visible to this audience. Empty headings and redundant
-            separators are omitted.
+            {{ $t('admin:navigation.customLinksVisibleAudience', { visibleItems: visibleItems.filter((item) => item.kind === "link").length, currentItems: currentItems.filter((item) => item.kind === "link").length, interpolation: { escapeValue: false } }) }}
           </p>
           <p v-else class="navigation-note">
-            Custom links are retained but are not shown in this display mode.
+            {{ $t('admin:navigation.customLinksRetainedBut') }}
           </p>
           <p class="navigation-note mt-3">
-            This previews menu visibility, not page access. Destinations remain
-            subject to their own permissions.
+            {{ $t('admin:navigation.previewsMenuVisibilityNot') }}
           </p>
           <div class="navigation-setting-group">
-            <h3>Publication</h3>
+            <h3>{{ $t('admin:navigation.publication') }}</h3>
             <p class="navigation-note">
-              Readers receive the saved menu on their next page load. Unsaved
-              changes stay in this editor.
+              {{ $t('admin:navigation.readersReceiveSavedMenu') }}
             </p>
             <v-btn
               v-if="saved.runtime.state !== 'applied'"
@@ -528,22 +503,21 @@
               :loading="initializing"
               :disabled="locked || dirty"
               @click="initialize"
-              >Retry runtime activation</v-btn
+              >{{ $t('admin:navigation.retryRuntimeActivation') }}</v-btn
             >
           </div>
         </aside>
       </div>
       <div v-if="dirty" class="navigation-savebar">
         <span
-          >Navigation draft · {{ changedFields.length }} changed
-          {{ changedFields.length === 1 ? "area" : "areas" }}</span
-        ><v-btn variant="text" :disabled="locked" @click="reset">Reset</v-btn
+          >{{ $t('admin:navigation.navigationDraftChanged', { changedFieldsCount: changedFields.length, changedFields: changedFields.length === 1 ? "area" : "areas", interpolation: { escapeValue: false } }) }}</span
+        ><v-btn variant="text" :disabled="locked" @click="reset">{{ $t('admin:navigation.reset') }}</v-btn
         ><v-btn
           color="primary"
           variant="flat"
           :disabled="locked"
           @click="review"
-          >Review changes</v-btn
+          >{{ $t('admin:navigation.reviewChanges') }}</v-btn
         >
       </div>
     </template>
@@ -556,54 +530,49 @@
       :locale="currentLocale"
     />
     <v-dialog v-model="copyOpen" max-width="580"
-      ><v-card title="Copy a locale menu"
+      ><v-card :title="$t('admin:navigation.copyLocaleMenu')"
         ><v-card-text
           ><p class="mb-5">
-            Copy into {{ currentLocale }}. Labels, destinations and audience
-            groups retain their source values. Changes stay in this draft until
-            you publish.
+            {{ $t('admin:navigation.copyIntoLabelsDestinations', { currentLocale, interpolation: { escapeValue: false } }) }}
           </p>
           <v-select
             v-model="copySource"
             :items="copyOptions"
             item-title="title"
             item-value="code"
-            label="Source locale"
+            :label="$t('admin:navigation.sourceLocale2')"
             variant="outlined"
-          /><v-radio-group v-model="copyMode" label="How to copy"
-            ><v-radio label="Append to this menu" value="append" /><v-radio
-              label="Replace this menu"
+          /><v-radio-group v-model="copyMode" :label="$t('admin:navigation.howCopy')"
+            ><v-radio :label="$t('admin:navigation.appendMenu')" value="append" /><v-radio
+              :label="$t('admin:navigation.replaceMenu')"
               value="replace"
           /></v-radio-group>
           <p>
-            {{ copyCount }} source items · {{ currentItems.length }} current
-            items
+            {{ $t('admin:navigation.sourceItemsCurrentItems', { copyCount, currentItemsCount: currentItems.length, interpolation: { escapeValue: false } }) }}
           </p>
           <v-alert
             v-if="copyMode === 'replace'"
             type="info"
             variant="tonal"
             class="mt-4"
-            >The current draft menu for {{ currentLocale }} will be replaced.
-            Reset the draft to recover the saved menu.</v-alert
+            >{{ $t('admin:navigation.currentDraftMenuWill', { currentLocale, interpolation: { escapeValue: false } }) }}</v-alert
           ></v-card-text
         ><v-card-actions
-          ><v-btn @click="copyOpen = false">Cancel</v-btn><v-spacer /><v-btn
+          ><v-btn @click="copyOpen = false">{{ $t('common:actions.cancel') }}</v-btn><v-spacer /><v-btn
             variant="flat"
             color="primary"
             :disabled="locked || !copyCount || copyTotal > maxItems"
             @click="copyLocale"
-            >Copy {{ copyCount }} items</v-btn
+            >{{ $t('admin:navigation.copyItems', { copyCount, interpolation: { escapeValue: false } }) }}</v-btn
           ></v-card-actions
         ></v-card
       ></v-dialog
     >
     <v-dialog v-model="reviewing" :persistent="busy" max-width="950"
-      ><v-card v-if="saved && reviewed" title="Publish navigation changes"
+      ><v-card v-if="saved && reviewed" :title="$t('admin:navigation.publishNavigationChanges')"
         ><v-card-text
           ><p class="mb-5">
-            Review the complete affected structures. Item order, destinations
-            and audiences below are the exact draft being published.
+            {{ $t('admin:navigation.reviewCompleteAffectedStructures') }}
           </p>
           <details
             v-for="field in reviewFields"
@@ -614,24 +583,24 @@
             <summary>{{ fieldLabel(field) }}</summary>
             <div>
               <section>
-                <strong>Saved</strong>
+                <strong>{{ $t('admin:navigation.saved') }}</strong>
                 <pre tabindex="0">{{ reviewValue(saved.policy, field) }}</pre>
               </section>
               <section>
-                <strong>Publishing</strong>
+                <strong>{{ $t('admin:navigation.publishing') }}</strong>
                 <pre tabindex="0">{{ reviewValue(reviewed, field) }}</pre>
               </section>
             </div>
           </details>
           <v-textarea
             v-model="reason"
-            label="Reason for this change"
+            :label="$t('admin:navigation.reasonChange')"
             variant="outlined"
             rows="2"
             maxlength="1000"
             :disabled="busy || stale"
             class="mt-5"
-            hint="3–1,000 characters. Recorded with this publication."
+            :hint="$t('admin:navigation.n31000Characters')"
             persistent-hint
           /><v-alert
             v-if="saveError"
@@ -642,19 +611,19 @@
           ></v-card-text
         ><v-card-actions
           ><v-btn :disabled="busy" @click="reviewing = false"
-            >Back to draft</v-btn
+            >{{ $t('admin:navigation.backDraft') }}</v-btn
           ><v-spacer /><v-btn
             v-if="stale"
             :disabled="busy"
             @click="reloadReview"
-            >Reload saved settings</v-btn
+            >{{ $t('admin:navigation.reloadSavedSettings') }}</v-btn
           ><v-btn
             color="primary"
             variant="flat"
             :loading="busy"
             :disabled="locked || reason.trim().length < 3"
             @click="confirm"
-            >Publish navigation</v-btn
+            >{{ $t('admin:navigation.publishNavigation') }}</v-btn
           ></v-card-actions
         ></v-card
       ></v-dialog
@@ -694,11 +663,14 @@ import {
   saveNavigationWorkspace,
   retryNavigationRuntime,
 } from "../../helpers/navigation-workspace-api.ts";
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const errorMessage = (error: unknown) =>
   error instanceof Error
     ? error.message
-    : "Navigation administration is unavailable.";
+    : t('admin:navigation.navigationAdministrationUnavailable');
 const route = useRoute(),
   router = useRouter(),
   previewPanel = useTemplateRef<HTMLElement>("previewPanel");
@@ -725,44 +697,44 @@ const copySource = ref(""),
   previewAudience = ref("visitor"),
   previewGroups = ref<number[]>([]);
 const sections = [
-  { key: "structure", title: "Menu structure" },
-  { key: "display", title: "Display & locales" },
-  { key: "activity", title: "Activity" },
+  { key: "structure", title: t('admin:navigation.menuStructure') },
+  { key: "display", title: t('admin:navigation.displayLocales') },
+  { key: "activity", title: t('admin:navigation.activity') },
 ];
 const modeOptions = [
   {
     value: "MIXED",
-    title: "Menu + directory",
+    title: t('admin:navigation.menuDirectory'),
     icon: "mdi-view-split-vertical",
-    description: "Curated links, with Browse alongside.",
+    description: t('admin:navigation.curatedLinksBrowseAlongside'),
   },
   {
     value: "STATIC",
-    title: "Custom menu",
+    title: t('admin:navigation.customMenu'),
     icon: "mdi-format-list-bulleted",
-    description: "A focused set of hand-picked destinations.",
+    description: t('admin:navigation.focusedSetHandPicked'),
   },
   {
     value: "TREE",
-    title: "Page directory",
+    title: t('admin:navigation.pageDirectory'),
     icon: "mdi-file-tree-outline",
-    description: "Explore the hierarchy of accessible pages.",
+    description: t('admin:navigation.exploreHierarchyAccessiblePages'),
   },
   {
     value: "NONE",
-    title: "Hidden sidebar",
+    title: t('admin:navigation.hiddenSidebar'),
     icon: "mdi-dock-left",
-    description: "Leave more room for the page itself.",
+    description: t('admin:navigation.leaveMoreRoomPage'),
   },
 ];
 const targetOptions = [
-  { title: "Wiki page", value: "page" },
-  { title: "External link", value: "external" },
-  { title: "External link in a new tab", value: "externalblank" },
+  { title: t('admin:navigation.wikiPage'), value: "page" },
+  { title: t('admin:navigation.externalLink'), value: "external" },
+  { title: t('admin:navigation.externalLinkNewTab'), value: "externalblank" },
 ];
 const audienceOptions = [
-  { title: "Visitor / guest account", value: "visitor" },
-  { title: "Selected groups", value: "groups" },
+  { title: t('admin:navigation.visitorGuestAccount'), value: "visitor" },
+  { title: t('admin:navigation.selectedGroups'), value: "groups" },
 ];
 const section = computed(
   () =>
@@ -900,7 +872,7 @@ async function reload() {
   if (busy.value || initializing.value) return;
   if (
     dirty.value &&
-    !(await confirmDiscard("Discard unsaved navigation changes?"))
+    !(await confirmDiscard(t('admin:navigation.discardUnsavedNavigationChanges')))
   )
     return;
   if (busy.value || initializing.value) return;
@@ -933,7 +905,7 @@ function addItem(kind: NavigationItem["kind"]) {
     id: crypto.randomUUID(),
     kind,
     label:
-      kind === "link" ? "New link" : kind === "header" ? "New section" : "",
+      kind === "link" ? t('admin:navigation.newLink') : kind === "header" ? t('admin:navigation.newSection') : "",
     icon: kind === "link" ? "mdi-link-variant" : "",
     targetType: "page",
     target: "",
@@ -956,8 +928,8 @@ async function removeItem() {
   if (locked.value || !selected.value) return;
   const targetId = selectedId.value;
   const confirmed = await requestConfirmation({
-    title: `Remove ${selected.value.label || "this divider"} from the draft?`,
-    confirmLabel: "Remove",
+    title: t('admin:navigation.removeDraft', { label: selected.value.label || "this divider", interpolation: { escapeValue: false } }),
+    confirmLabel: t('admin:navigation.remove'),
     tone: "destructive",
   });
   if (!confirmed || locked.value || selectedId.value !== targetId) return;
@@ -987,9 +959,9 @@ function editLocale(code: string) {
 async function removeLocale(code: string) {
   if (locked.value || !draft.value) return;
   const confirmed = await requestConfirmation({
-    title: `Remove the custom menu for ${code} from this draft?`,
-    message: "The language itself remains installed.",
-    confirmLabel: "Remove menu",
+    title: t('admin:navigation.removeCustomMenuDraft', { code, interpolation: { escapeValue: false } }),
+    message: t('admin:navigation.languageItselfRemainsInstalled'),
+    confirmLabel: t('admin:navigation.removeMenu'),
     tone: "destructive",
   });
   if (!confirmed || locked.value || !draft.value) return;
@@ -1073,8 +1045,8 @@ async function confirm() {
     reason.value = "";
     attention.value = result.activation !== "applied";
     notice.value = attention.value
-      ? "Navigation saved. Runtime activation needs attention."
-      : "Navigation published. Readers see the new menu on their next page load.";
+      ? t('admin:navigation.navigationSavedRuntimeActivation')
+      : t('admin:navigation.navigationPublishedReadersSee');
     busy.value = false;
     stale.value = true;
     await load();
@@ -1087,11 +1059,11 @@ async function confirm() {
       saveError.value =
         errorMessage(error) +
         (!status
-          ? " The outcome is unconfirmed. Reload before publishing again."
+          ? ` ${t('admin:navigation.outcomeUnconfirmedReloadBefore')}`
           : "");
       if (stale.value) {
         notice.value =
-          "Reload saved settings before another review. Your draft is retained.";
+          t('admin:navigation.reloadSavedSettingsBefore');
         attention.value = true;
       }
     }
@@ -1102,7 +1074,7 @@ async function confirm() {
 async function reloadReview() {
   if (
     busy.value ||
-    !(await confirmDiscard("Discard this review and load saved navigation?")) ||
+    !(await confirmDiscard(t('admin:navigation.discardReviewLoadSaved'))) ||
     busy.value
   )
     return;
@@ -1116,8 +1088,8 @@ async function initialize() {
     const result = await retryNavigationRuntime(saved.value.fingerprint);
     notice.value =
       result.activation === "applied"
-        ? "Runtime navigation configuration applied."
-        : "Runtime activation needs attention. Review server diagnostics.";
+        ? t('admin:navigation.runtimeNavigationConfigurationApplied')
+        : t('admin:navigation.runtimeActivationNeedsAttention');
     attention.value = result.activation !== "applied";
     await load();
   } catch (error) {
@@ -1131,21 +1103,21 @@ const modeName = (value: string) =>
   modeOptions.find((mode) => mode.value === value)?.title || value;
 const fieldLabel = (field: string) =>
   field === "mode"
-    ? "Sidebar display"
+    ? t('admin:navigation.sidebarDisplay')
     : field === "expandParent"
-      ? "Browse starting point"
-      : "Menu for " + field.replace("locale:", "");
+      ? t('admin:navigation.browseStartingPoint')
+      : t('admin:navigation.menu', { field: field.replace("locale:", ""), interpolation: { escapeValue: false } });
 const reviewValue = (policy: NavigationPolicy, field: string) =>
   field === "mode"
     ? modeName(policy.mode)
     : field === "expandParent"
       ? policy.expandParent
-        ? "Current page’s parent"
-        : "Site root"
+        ? t('admin:navigation.currentPagesParent')
+        : t('admin:navigation.siteRoot')
       : JSON.stringify(
           policy.tree.find(
             (tree) => tree.locale === field.replace("locale:", ""),
-          )?.items ?? "No custom menu",
+          )?.items ?? t('admin:navigation.noCustomMenu'),
           null,
           2,
         );
@@ -1158,7 +1130,7 @@ const canLeave = async () =>
   !busy.value &&
   !initializing.value &&
   ((!dirty.value && !(reviewing.value && reason.value)) ||
-    (await confirmDiscard("Discard unsaved navigation changes?")));
+    (await confirmDiscard(t('admin:navigation.discardUnsavedNavigationChanges'))));
 function beforeUnload(event: BeforeUnloadEvent) {
   if (
     busy.value ||

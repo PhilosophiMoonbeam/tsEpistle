@@ -2,20 +2,19 @@
   <section class="logging-trail-panel" aria-labelledby="logging-trail-title">
     <div class="logging-trail-head">
       <div>
-        <h3 id="logging-trail-title">Live diagnostic trail</h3>
-        <p>Records are streamed only while this panel is open. They may contain operational context; copy or share them carefully.</p>
+        <h3 id="logging-trail-title">{{ $t('admin:loggingConsole.liveDiagnosticTrail') }}</h3>
+        <p>{{ $t('admin:loggingConsole.recordsStreamedOnlyWhile') }}</p>
       </div>
       <v-chip size="small" variant="tonal" :color="statusColor" role="status" aria-live="polite">{{ statusLabel }}</v-chip>
     </div>
     <v-alert type="warning" variant="tonal" class="mb-4">
-      This is an ephemeral troubleshooting view, not a delivery receipt. Common credential patterns are redacted and messages are truncated, but
-      sensitive operational context can remain.
+      {{ $t('admin:loggingConsole.ephemeralTroubleshootingViewNot') }}
     </v-alert>
     <div class="logging-trail-toolbar">
       <v-select
         v-model="filters"
         :items="levelOptions"
-        label="Show levels"
+        :label="$t('admin:loggingConsole.showLevels')"
         variant="outlined"
         density="compact"
         multiple
@@ -24,18 +23,17 @@
         :disabled="!active"
       />
       <div class="logging-trail-actions">
-        <v-btn size="small" variant="outlined" :disabled="!active" @click="paused = !paused">{{ paused ? 'Resume' : 'Pause' }}</v-btn>
-        <v-btn size="small" variant="text" :disabled="lines.length === 0" @click="clear">Clear</v-btn>
-        <v-btn size="small" variant="text" :disabled="!active" @click="reconnect">Reconnect</v-btn>
+        <v-btn size="small" variant="outlined" :disabled="!active" @click="paused = !paused">{{ paused ? $t('admin:loggingConsole.resume') : $t('admin:loggingConsole.pause') }}</v-btn>
+        <v-btn size="small" variant="text" :disabled="lines.length === 0" @click="clear">{{ $t('common:actions.clear') }}</v-btn>
+        <v-btn size="small" variant="text" :disabled="!active" @click="reconnect">{{ $t('admin:loggingConsole.reconnect') }}</v-btn>
       </div>
     </div>
     <p v-if="paused" class="logging-trail-note">
-      Paused locally.
-      {{ dropped ? `${dropped} records were not added while paused.` : 'The connection remains open, but new records are not added.' }}
+      {{ $t('admin:loggingConsole.pausedLocally', { value: dropped ? $t('admin:loggingConsole.recordsWereNotAdded', { dropped, interpolation: { escapeValue: false } }) : $t('admin:loggingConsole.connectionRemainsOpenBut'), interpolation: { escapeValue: false } }) }}
     </p>
     <p v-else-if="limitReached" class="logging-trail-note">
       {{
-        limitMessage || `This connection reached its ${limits.maxConnectionEvents.toLocaleString()}-event safety limit. Reconnect for a fresh view.`
+        limitMessage || $t('admin:loggingConsole.connectionReachedEventSafety', { maxConnectionEvents: limits.maxConnectionEvents.toLocaleString(), interpolation: { escapeValue: false } })
       }}
     </p>
     <div
@@ -59,24 +57,26 @@
     </div>
     <div v-else class="logging-trail-empty">
       <v-icon>mdi-pulse</v-icon>
-      <h4>{{ active ? 'Waiting for a record' : 'Live trail paused' }}</h4>
+      <h4>{{ active ? $t('admin:loggingConsole.waitingRecord') : $t('admin:loggingConsole.liveTrailPaused') }}</h4>
       <p>
         {{
           active
-            ? 'This process has not emitted a visible record for the selected levels.'
-            : 'Open the Live trail section to start a privileged stream.'
+            ? $t('admin:loggingConsole.processHasNotEmitted')
+            : $t('admin:loggingConsole.openLiveTrailSection')
         }}
       </p>
     </div>
     <p class="logging-trail-retention">
-      This browser retains at most {{ limits.maxLines }} records or {{ byteLimit }}. Clearing affects only this browser. The server does not retain a
-      trail.
+      {{ $t('admin:loggingConsole.browserRetainsMostRecords', { maxLines: limits.maxLines, byteLimit, interpolation: { escapeValue: false } }) }}
     </p>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, triggerRef, useTemplateRef, watch } from 'vue'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 interface LiveTrailLimits {
   enabled: true
@@ -112,23 +112,23 @@ const levelOptions = ['error', 'warn', 'info', 'verbose', 'debug', 'silly']
 const encoder = new TextEncoder()
 const timeFormatter = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 const visibleLines = computed(() => lines.value.filter((line) => filters.value.includes(line.level)))
-const byteLimit = computed(() => `${Math.round(props.limits.maxBytes / 1024)} KiB`)
+const byteLimit = computed(() => t('admin:loggingConsole.kib', { round: Math.round(props.limits.maxBytes / 1024), interpolation: { escapeValue: false } }))
 const statusLabel = computed(() => {
   switch (connection.value) {
     case 'connecting':
-      return 'Connecting'
+      return t('admin:loggingConsole.connecting')
     case 'live':
-      return paused.value ? 'Paused' : 'Live'
+      return paused.value ? t('admin:loggingConsole.paused') : t('admin:loggingConsole.live')
     case 'reconnecting':
-      return 'Reconnecting'
+      return t('admin:loggingConsole.reconnecting')
     case 'limited':
-      return 'Connection limit reached'
+      return t('admin:loggingConsole.connectionLimitReached')
     case 'revoked':
-      return 'Access changed'
+      return t('admin:loggingConsole.accessChanged')
     case 'error':
-      return 'Unavailable'
+      return t('admin:loggingConsole.unavailable')
     default:
-      return 'Closed'
+      return t('admin:loggingConsole.closed')
   }
 })
 // A closed console uses the neutral chip (theme on-surface), not a palette grey.
@@ -186,7 +186,7 @@ const receive = (raw: string) => {
     const level = typeof value.level === 'string' && levelOptions.includes(value.level) ? value.level : 'info'
     append(timestamp, level, value.output)
   } catch {
-    append(new Date().toISOString(), 'info', 'The live trail sent a malformed record that was not displayed.')
+    append(new Date().toISOString(), 'info', t('admin:loggingConsole.liveTrailSentMalformed'))
   }
 }
 const connect = () => {
@@ -208,7 +208,7 @@ const connect = () => {
     if (generation !== current || source !== next) return
     limitReached.value = true
     connection.value = 'limited'
-    limitMessage.value = `This connection reached its ${props.limits.maxConnectionEvents.toLocaleString()}-event safety limit. Reconnect for a fresh view.`
+    limitMessage.value = t('admin:loggingConsole.connectionReachedEventSafety', { maxConnectionEvents: props.limits.maxConnectionEvents.toLocaleString(), interpolation: { escapeValue: false } })
     next.close()
     source = null
   })
@@ -222,7 +222,7 @@ const connect = () => {
     if (generation !== current || source !== next) return
     limitReached.value = true
     connection.value = 'limited'
-    limitMessage.value = 'This connection ended because it could not keep up with incoming records. Reconnect for a fresh view.'
+    limitMessage.value = t('admin:loggingConsole.connectionEndedBecauseCould')
     next.close()
     source = null
   })

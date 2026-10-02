@@ -510,7 +510,7 @@ export default {
           url: (pictureUrl === 'internal') ? `/_userav/${userId}?v=${this.avatarRevision}` : pictureUrl
         }
       }
-      const label = this.savedDraft?.name || this.user?.email || wikiStore.user.name || wikiStore.user.email || 'User'
+      const label = this.savedDraft?.name || this.user?.email || wikiStore.user.name || wikiStore.user.email || this.$t('common:profile.user')
       const parts = label.trim().split(/\s+/)
       const initials = ((parts[0]?.charAt(0) || 'U') + (parts.length > 1 ? parts[parts.length - 1]?.charAt(0) || '' : '')).toUpperCase()
       return { kind: 'initials' as const, initials }

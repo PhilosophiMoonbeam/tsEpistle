@@ -1,6 +1,6 @@
 .analytics-workspace {
   --analytics-line: rgba(var(--v-theme-on-surface), 0.16);
-  --analytics-muted: rgba(var(--v-theme-on-surface), 0.72);
+  --analytics-muted: var(--wiki-text-muted);
   --analytics-wash: rgba(var(--v-theme-on-surface), 0.035);
   color: rgb(var(--v-theme-on-surface));
   padding: 24px 32px 72px;

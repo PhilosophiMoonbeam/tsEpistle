@@ -27,19 +27,19 @@
 
     <div class="async-component-state__copy">
       <div :id="titleId" class="text-body-medium font-weight-medium">
-        {{ error ? 'This section could not be loaded' : 'Loading this section' }}
+        {{ error ? $t('common:asyncComponentState.sectionCouldNotLoaded') : $t('common:asyncComponentState.loadingSection') }}
       </div>
       <div :id="messageId" class="text-body-small text-medium-emphasis">
-        {{ error ? 'Try loading it again, or reload the page if the problem continues.' : 'It will be ready in a moment.' }}
+        {{ error ? $t('common:asyncComponentState.tryLoadingAgainReload') : $t('common:asyncComponentState.willReadyMoment') }}
       </div>
     </div>
 
     <div v-if="error" class="async-component-state__actions">
       <v-btn color="primary" size="small" variant="flat" @click="$emit('retry')">
-        Try again
+        {{ $t('common:asyncComponentState.tryAgain') }}
       </v-btn>
       <v-btn size="small" variant="text" @click="reloadPage">
-        Reload page
+        {{ $t('common:asyncComponentState.reloadPage') }}
       </v-btn>
     </div>
   </section>

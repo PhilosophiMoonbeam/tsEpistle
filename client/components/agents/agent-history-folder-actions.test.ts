@@ -8,6 +8,8 @@ import type { AgentConversationFolderView } from '../../../shared/agents/contrac
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 resetBody()
 // Load Vue/Vuetify after the shared DOM globals; runtime-dom captures its document at module initialization.
 const VueRuntime = await import('vue')
@@ -113,6 +115,7 @@ const mountMoveMenu = async (session: AgentSessionSummary, folders: AgentConvers
     setup: () => () => VueRuntime.h(SessionActions, { session, folders, onMove: move, 'onNew-folder': newFolder })
   })
   app.use(createVuetify({ components: vuetifyComponents, defaults: { VMenu: { transition: false } } }))
+  app.config.globalProperties.$t = translateEnglish
   app.mount(host)
   let mounted = true
   const unmount = () => {

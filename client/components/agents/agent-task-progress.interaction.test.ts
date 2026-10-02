@@ -9,6 +9,8 @@ import type { Component } from 'vue'
 
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 resetBody()
 
 
@@ -35,6 +37,12 @@ const bundledSfc = await Bun.build({
   format: 'cjs',
   plugins: [
     {
+      name: 'alias-at',
+      setup(build) {
+        build.onResolve({ filter: /^@\// }, args => ({ path: path.join(process.cwd(), 'client', args.path.slice(2)) }))
+      }
+    },
+    {
       name: 'agent-task-progress-sfc',
       setup(build) {
         build.onResolve({ filter: /^virtual:agent-task-progress\.vue$/ }, args => ({
@@ -42,7 +50,7 @@ const bundledSfc = await Bun.build({
           path: args.path
         }))
         build.onLoad({ filter: /.*/, namespace: 'agent-task-progress-sfc' }, () => ({
-          contents: compiledSfc.content,
+          contents: compiledSfc.content.replace("from '../../helpers/use-translate.ts'", "from '@/helpers/use-translate.ts'"),
           loader: 'ts'
         }))
       }
@@ -121,6 +129,7 @@ const mountTasks = async (initialTasks: readonly AgentTaskView[]): Promise<Mount
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp(root)
+  app.config.globalProperties.$t = translateEnglish
   app.use(createVuetify({ components: { VIcon } }))
   app.mount(host)
 

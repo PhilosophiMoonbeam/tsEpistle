@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.
 import { browserWindow, document, resetBody, setLocation } from '../test/browser-dom.mts'
 import { focusRouteHeading } from './common/route-heading-focus.ts'
 
+import { translateEnglish } from '../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 const filename = path.join(process.cwd(), 'client/components/admin.vue')
 const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
 if (errors.length || !descriptor.template || !descriptor.script) throw new Error(`Cannot parse admin.vue: ${errors}`)

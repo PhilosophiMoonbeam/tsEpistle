@@ -4,21 +4,21 @@ v-dialog(:model-value='open' max-width='620' :fullscreen='$vuetify.display.smAnd
     v-card-title#utility-review-title.text-wrap {{ title }}
     v-card-text
       .text-body-medium {{ effect }}
-      dl.utility-review-parameters.mt-5(v-if='parameters.length' aria-label='Reviewed parameters')
+      dl.utility-review-parameters.mt-5(v-if='parameters.length' :aria-label='$t(`admin:utilitiesReview.reviewedParameters`)')
         template(v-for='parameter in parameters' :key='parameter.label')
           dt {{ parameter.label }}
           dd {{ parameter.value }}
       v-alert.mt-4(v-if='uncertainReceipt' color='warning' variant='tonal' icon='mdi-alert-outline' role='alert')
-        .text-body-medium A previous outcome is uncertain.
+        .text-body-medium {{ $t(`admin:utilitiesReview.previousOutcomeUncertain`) }}
         .text-body-small.mt-1 {{ uncertainReceipt.summary }}
-        .text-body-small.mt-1 Receipt ID: #[code {{ uncertainReceipt.id }}]
-        v-checkbox.mt-2(v-model='acknowledged' label='I inspected this receipt and understand it will not be replayed.' hide-details :disabled='busy')
+        .text-body-small.mt-1 {{ $t(`admin:utilitiesReview.receiptId`) }} #[code {{ uncertainReceipt.id }}]
+        v-checkbox.mt-2(v-model='acknowledged' :label='$t(`admin:utilitiesReview.iInspectedReceiptUnderstand`)' hide-details :disabled='busy')
       v-alert.mt-4(v-if='submissionError' color='error' variant='tonal' role='alert') {{ submissionError }}
       v-textarea.mt-5(
         ref='reasonInput'
         v-model='reason'
-        label='Administrative reason'
-        hint='Recorded with the receipt. Do not include passwords, access tokens, private keys, connection strings, or server paths.'
+        :label='$t(`admin:utilitiesReview.administrativeReason`)'
+        :hint='$t(`admin:utilitiesReview.recordedReceiptDoNot`)'
         persistent-hint
         :counter='1000'
         maxlength='1000'
@@ -28,20 +28,20 @@ v-dialog(:model-value='open' max-width='620' :fullscreen='$vuetify.display.smAnd
       )
       v-text-field.mt-4(
         v-model='confirmation'
-        :label='`Type ${confirmText} to confirm`'
-        :hint='`Exact confirmation: ${confirmText}`'
+        :label='$t(`admin:utilitiesReview.typeConfirm`, { confirmText, interpolation: { escapeValue: false } })'
+        :hint='$t(`admin:utilitiesReview.exactConfirmation`, { confirmText, interpolation: { escapeValue: false } })'
         persistent-hint
         :disabled='busy'
         variant='outlined'
         @keyup.enter='confirm'
       )
     v-card-actions
-      v-btn(variant='text' @click='close') {{ busy ? 'Close review — request continues' : 'Cancel' }}
+      v-btn(variant='text' @click='close') {{ busy ? $t(`admin:utilitiesReview.closeReviewRequestContinues`) : $t(`common:actions.cancel`) }}
       v-spacer
       v-btn(color='primary' variant='flat' :loading='busy' :disabled='!ready' @click='confirm')
         template(#loader)
-          v-progress-circular(indeterminate aria-label='Recording reviewed Utilities request')
-        | Record and start
+          v-progress-circular(indeterminate :aria-label='$t(`admin:utilitiesReview.recordingReviewedUtilitiesRequest`)')
+        | {{ $t(`admin:utilitiesReview.recordStart`) }}
 </template>
 
 <script lang="ts">
@@ -69,9 +69,9 @@ export default defineComponent({
       return !this.reason || length === 0
         ? ''
         : length < 3
-          ? 'Enter a reason of at least 3 characters.'
+          ? this.$t('admin:utilitiesReview.enterReasonLeast3')
           : length > 1000
-            ? 'Keep the reason to 1000 characters or fewer.'
+            ? this.$t('admin:utilitiesReview.keepReason1000Characters')
             : ''
     },
     ready(): boolean {
@@ -134,7 +134,7 @@ export default defineComponent({
 
 <style lang="scss">
 .utility-review-card .v-counter {
-  color: rgba(var(--v-theme-on-surface), 0.78);
+  color: var(--wiki-text-muted);
   opacity: 1;
 }
 </style>

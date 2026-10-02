@@ -1,38 +1,38 @@
 <template>
   <v-container fluid class="system-workspace">
-    <admin-hero title="System" description="Understand what is running. Find the evidence behind its state." icon="mdi-monitor-dashboard">
+    <admin-hero :title="$t('admin:system.system')" :description="$t('admin:system.understandWhatRunningFind')" icon="mdi-monitor-dashboard">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="loading" :aria-busy="loading" @click="load">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload system information</v-tooltip></v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="loading" :aria-busy="loading" @click="load">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:system.reloadSystemInformation') }}</v-tooltip></v-btn>
         <v-btn color="primary" prepend-icon="mdi-file-document-outline" :disabled="!snapshot" @click="selectSection('diagnostics')">
-          Support report
+          {{ $t('admin:system.supportReport') }}
         </v-btn>
       </template>
     </admin-hero>
     <async-state
       v-if="loading && !snapshot"
       state="loading"
-      title="Observing this system"
-      message="Reading the running process, database, migrations and background work."
+      :title="$t('admin:system.observingSystem')"
+      :message="$t('admin:system.readingRunningProcessDatabase')"
     />
     <async-state
       v-else-if="error && !snapshot"
       state="error"
-      title="System observations are unavailable"
+      :title="$t('admin:system.systemObservationsUnavailable')"
       :message="error"
-      retry-label="Try again"
+      :retry-label="$t('admin:system.tryAgain')"
       @retry="load"
     />
-    <v-alert v-else-if="error" type="warning" variant="tonal" class="mb-5">{{ error }} The previous observation is still shown below.</v-alert>
+    <v-alert v-else-if="error" type="warning" variant="tonal" class="mb-5">{{ $t('admin:system.previousObservationStillShown', { error, interpolation: { escapeValue: false } }) }}</v-alert>
     <v-alert v-if="notice" type="success" variant="tonal" class="mb-5" role="status">{{ notice }}</v-alert>
     <template v-if="snapshot">
       <div class="system-observed" aria-live="polite">
         <span>
           <i :class="{ 'is-stale': Boolean(error) }" />
-          {{ loading ? 'Collecting a fresh observation…' : error ? 'Previous observation' : 'Observed system state' }}
+          {{ loading ? $t('admin:system.collectingFreshObservation') : error ? $t('admin:system.previousObservation') : $t('admin:system.observedSystemState') }}
         </span>
         <time :datetime="snapshot.observedAt">{{ dateTime(snapshot.observedAt) }}</time>
       </div>
-      <nav class="system-tabs" aria-label="System sections">
+      <nav class="system-tabs" :aria-label="$t('admin:system.systemSections')">
         <button
           v-for="tab in sections"
           :key="tab.key"
@@ -47,13 +47,13 @@
         <section class="system-main">
           <template v-if="section === 'overview'">
             <div class="system-heading">
-              <span class="system-kicker">01 / The running workspace</span>
+              <span class="system-kicker">{{ $t('admin:system.n01RunningWorkspace') }}</span>
               <h2>
-                A clear view
+                {{ $t('admin:system.clearView') }}
                 <br />
-                of your wiki
+                {{ $t('admin:system.wiki') }}
               </h2>
-              <p>A local process view, a current database observation and concrete signals for the next decision.</p>
+              <p>{{ $t('admin:system.localProcessViewCurrent') }}</p>
             </div>
             <div class="system-release">
               <div>
@@ -65,12 +65,12 @@
                 </a>
               </div>
               <div>
-                <span>Process uptime</span>
+                <span>{{ $t('admin:system.processUptime') }}</span>
                 <strong>{{ duration(snapshot.runtime.uptimeSeconds) }}</strong>
-                <small>Since this process started</small>
+                <small>{{ $t('admin:system.sinceProcessStarted') }}</small>
               </div>
             </div>
-            <h3 class="system-section-title">Operational signals</h3>
+            <h3 class="system-section-title">{{ $t('admin:system.operationalSignals') }}</h3>
             <div class="system-signals">
               <article v-for="signal in signals" :key="signal.title">
                 <v-icon
@@ -81,36 +81,35 @@
                   <h4>{{ signal.title }}</h4>
                   <p>{{ signal.detail }}</p>
                 </div>
-                <v-btn v-if="signal.section" size="small" variant="text" @click="selectSection(signal.section)">Inspect</v-btn>
+                <v-btn v-if="signal.section" size="small" variant="text" @click="selectSection(signal.section)">{{ $t('admin:system.inspect') }}</v-btn>
               </article>
             </div>
             <div class="system-callout">
               <v-icon icon="mdi-information-outline" />
               <p>
-                These observations describe this application and its database. A successful check does not verify the public proxy, an external
-                provider or delivery to a recipient.
+                {{ $t('admin:system.theseObservationsDescribeApplication') }}
               </p>
             </div>
           </template>
           <template v-else-if="section === 'runtime'">
             <div class="system-heading">
-              <span class="system-kicker">02 / Process &amp; deployment</span>
-              <h2>Know the boundaries</h2>
-              <p>Separate the process you are observing from its operating system and the infrastructure around it.</p>
+              <span class="system-kicker">{{ $t('admin:system.n02ProcessDeployment') }}</span>
+              <h2>{{ $t('admin:system.knowBoundaries') }}</h2>
+              <p>{{ $t('admin:system.separateProcessYouObserving') }}</p>
             </div>
             <div class="system-metrics">
               <div>
-                <span>Process resident memory</span>
+                <span>{{ $t('admin:system.processResidentMemory') }}</span>
                 <strong>{{ bytes(snapshot.runtime.processRssBytes) }}</strong>
-                <small>RSS at observation time</small>
+                <small>{{ $t('admin:system.rssObservationTime') }}</small>
               </div>
               <div>
-                <span>JavaScript heap in use</span>
+                <span>{{ $t('admin:system.javascriptHeapUse') }}</span>
                 <strong>{{ bytes(snapshot.runtime.heapUsedBytes) }}</strong>
-                <small>{{ bytes(snapshot.runtime.heapTotalBytes) }} heap allocated</small>
+                <small>{{ $t('admin:system.heapAllocated', { heapTotalBytes: bytes(snapshot.runtime.heapTotalBytes), interpolation: { escapeValue: false } }) }}</small>
               </div>
             </div>
-            <h3 class="system-section-title">Execution environment</h3>
+            <h3 class="system-section-title">{{ $t('admin:system.executionEnvironment') }}</h3>
             <dl class="system-facts">
               <template v-for="fact in runtimeFacts" :key="fact.label">
                 <dt>{{ fact.label }}</dt>
@@ -120,39 +119,37 @@
             <div class="system-callout">
               <v-icon icon="mdi-memory" />
               <p>
-                OS-visible memory and logical CPU counts can describe the host. They are not container limits or current CPU utilization. Available
-                parallelism is the runtime's scheduling estimate.
+                {{ $t('admin:system.osVisibleMemoryLogical') }}
               </p>
             </div>
-            <h3 class="system-section-title">Application listeners</h3>
+            <h3 class="system-section-title">{{ $t('admin:system.applicationListeners') }}</h3>
             <dl class="system-facts">
-              <dt>HTTP</dt>
+              <dt>{{ $t('admin:system.http') }}</dt>
               <dd>{{ listener(snapshot.runtime.httpPort) }}</dd>
-              <dt>HTTPS</dt>
+              <dt>{{ $t('admin:system.https') }}</dt>
               <dd>{{ listener(snapshot.runtime.httpsPort) }}</dd>
-              <dt>Configured public origin</dt>
-              <dd class="system-mono">{{ snapshot.runtime.publicOrigin || 'No valid HTTP(S) origin' }}</dd>
+              <dt>{{ $t('admin:system.configuredPublicOrigin') }}</dt>
+              <dd class="system-mono">{{ snapshot.runtime.publicOrigin || $t('admin:system.noValidHttpS') }}</dd>
             </dl>
             <p class="system-note">
-              An external proxy can terminate HTTPS while the application listens on HTTP. Listener observations do not establish whether that proxy
-              is reachable or its certificate is valid.
+              {{ $t('admin:system.externalProxyCanTerminate') }}
             </p>
-            <v-btn to="/a/ssl" variant="outlined" append-icon="mdi-arrow-right">HTTPS &amp; certificates</v-btn>
+            <v-btn to="/a/ssl" variant="outlined" append-icon="mdi-arrow-right">{{ $t('admin:system.httpsCertificates') }}</v-btn>
             <section class="system-metrics-reference" aria-labelledby="system-metrics-title">
               <div class="system-section-head">
-                <h3 id="system-metrics-title">Prometheus metrics</h3>
+                <h3 id="system-metrics-title">{{ $t('admin:system.prometheusMetrics') }}</h3>
                 <span class="system-state" :class="{ 'system-warning': metricsEnabled !== true }" role="status">{{ metricsStatusLabel }}</span>
               </div>
               <p class="system-note">
-                Metrics enablement comes from this process. Scrape access requires an authenticated session with manage:system; the current-origin URL contains no credentials. The preview is an on-demand same-origin request shown as plain text.
+                {{ $t('admin:system.metricsEnablementComesProcess') }}
               </p>
               <p v-if="metricsStateError" class="system-warning" role="status">{{ metricsStateError }}</p>
               <dl class="system-facts">
-                <dt>Current-origin URL</dt>
+                <dt>{{ $t('admin:system.currentOriginUrl') }}</dt>
                 <dd><code>{{ metricsUrl }}</code></dd>
               </dl>
               <div class="system-actions">
-                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyMetricsUrl">Copy endpoint URL</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyMetricsUrl">{{ $t('admin:system.copyEndpointUrl') }}</v-btn>
                 <v-btn
                   variant="outlined"
                   prepend-icon="mdi-text-box-search-outline"
@@ -160,40 +157,40 @@
                   :aria-busy="metricsPreviewLoading"
                   @click="previewMetrics"
                 >
-                  {{ metricsPreview !== null ? 'Refresh text preview' : 'Preview scrape text' }}
+                  {{ metricsPreview !== null ? $t('admin:system.refreshTextPreview') : $t('admin:system.previewScrapeText') }}
                 </v-btn>
-                <v-btn v-if="metricsPreview !== null || metricsPreviewError" variant="text" @click="clearMetricsPreview">Hide preview</v-btn>
+                <v-btn v-if="metricsPreview !== null || metricsPreviewError" variant="text" @click="clearMetricsPreview">{{ $t('admin:system.hidePreview') }}</v-btn>
               </div>
               <p v-if="metricsCopyError" class="system-warning" role="alert">{{ metricsCopyError }}</p>
               <p v-if="metricsPreviewError" class="system-warning" role="alert">{{ metricsPreviewError }}</p>
-              <p v-if="metricsPreviewLoading" role="status">Requesting a same-origin plain-text preview…</p>
+              <p v-if="metricsPreviewLoading" role="status">{{ $t('admin:system.requestingSameOriginPlain') }}</p>
               <div v-if="metricsPreview !== null">
-                <h4>Scrape output · plain text</h4>
-                <pre class="system-report" tabindex="0" aria-label="Prometheus metrics preview in plain text">{{ metricsPreview }}</pre>
+                <h4>{{ $t('admin:system.scrapeOutputPlainText') }}</h4>
+                <pre class="system-report" tabindex="0" :aria-label="$t('admin:system.prometheusMetricsPreviewPlain')">{{ metricsPreview }}</pre>
               </div>
             </section>
-            <h3 class="system-section-title">Connected processes</h3>
+            <h3 class="system-section-title">{{ $t('admin:system.connectedProcesses') }}</h3>
             <div v-if="snapshot.database.connectedProcesses.status === 'unavailable'" class="system-empty">
               <v-icon icon="mdi-database-alert-outline" size="32" />
-              <h4>Connected-process stats unavailable</h4>
-              <p>PostgreSQL activity visibility is restricted or this point-in-time census failed. The other system observations remain available.</p>
+              <h4>{{ $t('admin:system.connectedProcessStatsUnavailable') }}</h4>
+              <p>{{ $t('admin:system.postgresqlActivityVisibilityRestricted') }}</p>
             </div>
             <div v-else-if="!snapshot.database.connectedProcesses.processes.length" class="system-empty">
               <v-icon icon="mdi-database-off-outline" size="32" />
-              <h4>No tagged open connections observed</h4>
-              <p>No open PostgreSQL connections with the current versioned application tag were visible at this observation.</p>
+              <h4>{{ $t('admin:system.noTaggedOpenConnections') }}</h4>
+              <p>{{ $t('admin:system.noOpenPostgresqlConnections') }}</p>
             </div>
-            <div v-else class="system-table-wrap" role="region" aria-label="Connected process observations" tabindex="0">
+            <div v-else class="system-table-wrap" role="region" :aria-label="$t('admin:system.connectedProcessObservations')" tabindex="0">
               <table>
-                <caption class="sr-only">Currently open PostgreSQL connections grouped by opaque process identity.</caption>
+                <caption class="sr-only">{{ $t('admin:system.currentlyOpenPostgresqlConnections') }}</caption>
                 <thead>
                   <tr>
-                    <th scope="col">Opaque identity</th>
-                    <th scope="col">Pool</th>
-                    <th scope="col">Listener</th>
-                    <th scope="col">Worker</th>
-                    <th scope="col">Unclassified</th>
-                    <th scope="col">Earliest open backend</th>
+                    <th scope="col">{{ $t('admin:system.opaqueIdentity') }}</th>
+                    <th scope="col">{{ $t('admin:system.pool') }}</th>
+                    <th scope="col">{{ $t('admin:system.listener') }}</th>
+                    <th scope="col">{{ $t('admin:system.worker') }}</th>
+                    <th scope="col">{{ $t('admin:system.unclassified') }}</th>
+                    <th scope="col">{{ $t('admin:system.earliestOpenBackend') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -209,55 +206,54 @@
               </table>
             </div>
             <p class="system-note">
-              This is a point-in-time connected-process observation from currently open tagged PostgreSQL connections. Up to 100 identities are shown. It is
-              not a health check, cluster membership list, uptime or last-seen history; processes without open tagged database connections are omitted.
+              {{ $t('admin:system.pointTimeConnectedProcess') }}
             </p>
           </template>
           <template v-else-if="section === 'background'">
             <div class="system-heading">
-              <span class="system-kicker">03 / Work behind the scenes</span>
-              <h2>See what is moving</h2>
-              <p>Scheduled invocations belong to this process. Durable work is shared through PostgreSQL and can outlive it.</p>
+              <span class="system-kicker">{{ $t('admin:system.n03WorkBehindScenes') }}</span>
+              <h2>{{ $t('admin:system.seeWhatMoving') }}</h2>
+              <p>{{ $t('admin:system.scheduledInvocationsBelongProcess') }}</p>
             </div>
-            <h3 class="system-section-title">Process scheduler</h3>
+            <h3 class="system-section-title">{{ $t('admin:system.processScheduler') }}</h3>
             <div v-if="!snapshot.scheduler.jobs.length" class="system-empty">
               <v-icon icon="mdi-calendar-blank-outline" size="32" />
-              <h4>No scheduler observations</h4>
+              <h4>{{ $t('admin:system.noSchedulerObservations') }}</h4>
               <p>
                 {{
                   snapshot.scheduler.started
-                    ? 'No active or recently completed tasks were observed.'
-                    : 'The scheduler has not started in this process.'
+                    ? $t('admin:system.noActiveRecentlyCompleted')
+                    : $t('admin:system.schedulerHasNotStarted')
                 }}
               </p>
             </div>
-            <div v-else class="system-table-wrap" role="region" aria-label="Scheduled task observations" tabindex="0">
+            <div v-else class="system-table-wrap" role="region" :aria-label="$t('admin:system.scheduledTaskObservations')" tabindex="0">
               <table>
                 <caption class="sr-only">
-                  Active tasks, tasks skipped for offline mode, and up to fifty recent completed or stopped tasks in this process.
+                  {{ $t('admin:system.activeTasksTasksSkipped') }}
                 </caption>
                 <thead>
                   <tr>
-                    <th scope="col">Task</th>
-                    <th scope="col">Now</th>
-                    <th scope="col">Last result</th>
-                    <th scope="col">Next / last run</th>
+                    <th scope="col">{{ $t('admin:system.task') }}</th>
+                    <th scope="col">{{ $t('admin:system.now') }}</th>
+                    <th scope="col">{{ $t('admin:system.lastResult') }}</th>
+                    <th scope="col">{{ $t('admin:system.nextLastRun') }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="job in snapshot.scheduler.jobs" :key="job.id">
                     <th scope="row">
                       <span>{{ job.name }}</span>
-                      <small>{{ job.worker ? 'Child process' : 'In process' }} · {{ job.repeat ? 'Repeating' : 'Once' }}</small>
+                      <small>{{ job.worker ? $t('admin:system.childProcess') : $t('admin:system.process') }} · {{ job.repeat ? $t('admin:system.repeating') : $t('admin:system.once') }}</small>
                     </th>
                     <td>
                       <span class="system-state">{{ job.state }}</span>
                     </td>
                     <td>
-                      <span :class="{ 'system-warning': job.lastOutcome === 'failed' }">{{ job.lastOutcome || 'Not observed' }}</span>
+                      <span :class="{ 'system-warning': job.lastOutcome === 'failed' }">{{ job.lastOutcome || $t('admin:system.notObserved') }}</span>
                       <small>
-                        {{ job.runs }} runs · {{ job.failures }} failures
-                        <span v-if="job.lastDurationMs !== null">· {{ job.lastDurationMs }} ms last run</span>
+                        {{ $t('admin:system.runsFailures', { runs: job.runs, failures: job.failures, interpolation: { escapeValue: false } }) }}
+                        <span v-if="job.lastDurationMs !== null">{{ $t('admin:system.msLastRun', { lastDurationMs: job.lastDurationMs, interpolation: { escapeValue: false } }) }}</span>
                       </small>
                     </td>
                     <td>
@@ -265,12 +261,12 @@
                       <small>
                         {{
                           job.nextRunAt
-                            ? 'Next invocation'
+                            ? $t('admin:system.nextInvocation')
                             : job.lastStartedAt
-                              ? 'Last started'
+                              ? $t('admin:system.lastStarted')
                               : job.state === 'skipped'
-                                ? 'Skipped in offline mode'
-                                : 'No invocation recorded'
+                                ? $t('admin:system.skippedOfflineMode')
+                                : $t('admin:system.noInvocationRecorded')
                         }}
                       </small>
                     </td>
@@ -279,10 +275,9 @@
               </table>
             </div>
             <p class="system-note">
-              Process observations reset on restart. Repeating tasks schedule their next invocation after the previous one finishes. A successful
-              scheduler invocation can still leave failed durable jobs below.
+              {{ $t('admin:system.processObservationsResetRestart') }}
             </p>
-            <h3 class="system-section-title">Durable queue</h3>
+            <h3 class="system-section-title">{{ $t('admin:system.durableQueue') }}</h3>
             <div class="system-queue-counts">
               <div v-for="(value, state) in snapshot.queue.counts" :key="state">
                 <strong>{{ number(value) }}</strong>
@@ -290,18 +285,17 @@
               </div>
             </div>
             <p class="system-note">
-              {{ number(snapshot.queue.due) }} pending jobs are due. Terminal records are normally retained for 30 days after completion; totals
-              describe retained jobs, not all-time activity.
+              {{ $t('admin:system.pendingJobsDueTerminal', { due: number(snapshot.queue.due), interpolation: { escapeValue: false } }) }}
             </p>
             <div class="system-section-head">
               <h3>
-                Needs attention
+                {{ $t('admin:system.needsAttention') }}
                 <span>{{ number(snapshot.queue.totalAttention) }}</span>
               </h3>
               <v-text-field
                 v-if="snapshot.queue.attention.length"
                 v-model="jobQuery"
-                label="Find an attention record"
+                :label="$t('admin:system.findAttentionRecord')"
                 prepend-inner-icon="mdi-magnify"
                 variant="outlined"
                 density="compact"
@@ -310,20 +304,19 @@
               />
             </div>
             <p class="system-note">
-              Failed jobs, expired running leases and pending/running job versions unsupported by this process. Showing the latest
-              {{ snapshot.queue.attention.length }} of {{ number(snapshot.queue.totalAttention) }} records; categories may overlap.
+              {{ $t('admin:system.failedJobsExpiredRunning', { attentionCount: snapshot.queue.attention.length, totalAttention: number(snapshot.queue.totalAttention), interpolation: { escapeValue: false } }) }}
             </p>
             <div v-if="!attentionRows.length" class="system-empty">
               <v-icon :icon="jobQuery ? 'mdi-filter-outline' : 'mdi-check-circle-outline'" size="32" />
-              <h4>{{ jobQuery ? 'No matching attention records' : 'No retained jobs need attention' }}</h4>
+              <h4>{{ jobQuery ? $t('admin:system.noMatchingAttentionRecords') : $t('admin:system.noRetainedJobsNeed') }}</h4>
               <p>
                 {{
                   jobQuery
-                    ? 'Search applies to the latest records shown here.'
-                    : 'No failed jobs, expired leases or unsupported pending/running versions were observed.'
+                    ? $t('admin:system.searchAppliesLatestRecords')
+                    : $t('admin:system.noFailedJobsExpired')
                 }}
               </p>
-              <v-btn v-if="jobQuery" variant="text" @click="jobQuery = ''">Clear search</v-btn>
+              <v-btn v-if="jobQuery" variant="text" @click="jobQuery = ''">{{ $t('admin:system.clearSearch') }}</v-btn>
             </div>
             <div v-else class="system-attention">
               <article v-for="job in attentionRows" :key="job.id">
@@ -334,36 +327,35 @@
                   </h4>
                   <span class="system-state">{{ reasonLabel(job.reason) }}</span>
                 </div>
-                <p>{{ job.attempts }} / {{ job.maxAttempts }} attempts · {{ job.state }} · updated {{ dateTime(job.updatedAt) }}</p>
+                <p>{{ $t('admin:system.attemptsUpdated', { attempts: job.attempts, maxAttempts: job.maxAttempts, state: job.state, updatedAt: dateTime(job.updatedAt), interpolation: { escapeValue: false } }) }}</p>
                 <code>{{ job.id }}</code>
                 <p class="system-note">{{ reasonHelp(job.reason) }}</p>
                 <v-btn v-if="systemJobDestination(job.type)" :to="systemJobDestination(job.type)!.path" variant="text" append-icon="mdi-arrow-right">
-                  Open {{ systemJobDestination(job.type)!.title }}
+                  {{ $t('admin:system.open', { type: systemJobDestination(job.type)!.title, interpolation: { escapeValue: false } }) }}
                 </v-btn>
               </article>
             </div>
           </template>
           <template v-else>
             <div class="system-heading">
-              <span class="system-kicker">04 / Evidence you can share</span>
-              <h2>A useful support report</h2>
-              <p>Inspect a point-in-time report before downloading or copying it. Sharing remains your choice.</p>
+              <span class="system-kicker">{{ $t('admin:system.n04EvidenceYouCan') }}</span>
+              <h2>{{ $t('admin:system.usefulSupportReport') }}</h2>
+              <p>{{ $t('admin:system.inspectPointTimeReport') }}</p>
             </div>
             <div class="system-section-head">
-              <h3>Database &amp; schema</h3>
+              <h3>{{ $t('admin:system.databaseSchema') }}</h3>
               <span>{{ snapshot.database.version }}</span>
             </div>
             <p class="system-note">
-              The version query completed in {{ snapshot.database.latencyMs }} ms after authorization. Migration names are compared with this build's
-              migration inventory; this is not a schema integrity or backup verification.
+              {{ $t('admin:system.versionQueryCompletedMs', { latencyMs: snapshot.database.latencyMs, interpolation: { escapeValue: false } }) }}
             </p>
             <div class="system-migration-summary">
-              <span>{{ snapshot.database.migrations.applied.length }} applied</span>
-              <span>{{ snapshot.database.migrations.pending.length }} pending</span>
-              <span>{{ snapshot.database.migrations.unknown.length }} absent from build</span>
+              <span>{{ $t('admin:system.applied', { appliedCount: snapshot.database.migrations.applied.length, interpolation: { escapeValue: false } }) }}</span>
+              <span>{{ $t('admin:system.pending', { pendingCount: snapshot.database.migrations.pending.length, interpolation: { escapeValue: false } }) }}</span>
+              <span>{{ $t('admin:system.absentBuild', { unknownCount: snapshot.database.migrations.unknown.length, interpolation: { escapeValue: false } }) }}</span>
             </div>
             <details class="system-details">
-              <summary>Inspect migration inventory</summary>
+              <summary>{{ $t('admin:system.inspectMigrationInventory') }}</summary>
               <div v-for="group in migrationGroups" :key="group.title">
                 <h4>{{ group.title }}</h4>
                 <ul v-if="group.items.length">
@@ -371,76 +363,74 @@
                     <code>{{ name }}</code>
                   </li>
                 </ul>
-                <p v-else>None</p>
+                <p v-else>{{ $t('admin:system.none') }}</p>
               </div>
             </details>
             <div class="system-report-controls">
-              <h3>Report contents</h3>
+              <h3>{{ $t('admin:system.reportContents') }}</h3>
               <p>
-                Includes build identity, process measurements, database version/migrations, connected-process role totals and queue totals. Durable job
-                identifiers, payloads and raw failures are omitted.
+                {{ $t('admin:system.includesBuildIdentityProcess') }}
               </p>
               <v-checkbox
                 v-model="includeDeployment"
-                label="Include deployment identifiers"
-                hint="Adds the instance ID, hostname, filesystem paths, public origin, database host and opaque connected-process identities."
+                :label="$t('admin:system.includeDeploymentIdentifiers')"
+                :hint="$t('admin:system.addsInstanceIdHostname')"
                 persistent-hint
                 density="compact"
               />
               <div class="system-actions">
-                <v-btn color="primary" prepend-icon="mdi-download" @click="downloadReport">Download JSON</v-btn>
-                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyReport">Copy report</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-download" @click="downloadReport">{{ $t('admin:system.downloadJson') }}</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyReport">{{ $t('admin:system.copyReport') }}</v-btn>
               </div>
               <p v-if="copyError" class="system-warning" role="alert">{{ copyError }}</p>
             </div>
             <details class="system-details" :open="includeDeployment">
-              <summary>Inspect exact report</summary>
-              <pre class="system-report" tabindex="0" aria-label="Exact support report">{{ reportText }}</pre>
+              <summary>{{ $t('admin:system.inspectExactReport') }}</summary>
+              <pre class="system-report" tabindex="0" :aria-label="$t('admin:system.exactSupportReport')">{{ reportText }}</pre>
             </details>
             <p class="system-note">
-              The report uses the observation timestamp above. Refresh to collect a new snapshot. No report is uploaded or stored by this screen.
+              {{ $t('admin:system.reportUsesObservationTimestamp') }}
             </p>
           </template>
         </section>
         <aside class="system-aside">
-          <span class="system-kicker">At this observation</span>
+          <span class="system-kicker">{{ $t('admin:system.observation') }}</span>
           <dl>
-            <dt>Database</dt>
-            <dd>Responded</dd>
-            <dt>Process scheduler</dt>
-            <dd>{{ snapshot.scheduler.started ? 'Started' : 'Not started' }}</dd>
-            <dt>Offline mode</dt>
-            <dd>{{ snapshot.runtime.offline ? 'Enabled' : 'Disabled' }}</dd>
-            <dt>Pending work</dt>
+            <dt>{{ $t('admin:system.database') }}</dt>
+            <dd>{{ $t('admin:system.responded') }}</dd>
+            <dt>{{ $t('admin:system.processScheduler') }}</dt>
+            <dd>{{ snapshot.scheduler.started ? $t('admin:system.started') : $t('admin:system.notStarted') }}</dd>
+            <dt>{{ $t('admin:system.offlineMode') }}</dt>
+            <dd>{{ snapshot.runtime.offline ? $t('admin:system.enabled') : $t('admin:system.disabled') }}</dd>
+            <dt>{{ $t('admin:system.pendingWork') }}</dt>
             <dd>{{ number(snapshot.queue.counts.pending) }}</dd>
-            <dt>Attention records</dt>
+            <dt>{{ $t('admin:system.attentionRecords') }}</dt>
             <dd>{{ number(snapshot.queue.totalAttention) }}</dd>
-            <dt>Connected processes</dt>
-            <dd>{{ snapshot.database.connectedProcesses.status === 'observed' ? number(snapshot.database.connectedProcesses.processes.length) : 'Unavailable' }}</dd>
+            <dt>{{ $t('admin:system.connectedProcesses') }}</dt>
+            <dd>{{ snapshot.database.connectedProcesses.status === 'observed' ? number(snapshot.database.connectedProcesses.processes.length) : $t('admin:system.unavailable') }}</dd>
           </dl>
           <div>
-            <h3>Connected process view</h3>
-            <p>Measurements stay fixed until you refresh. This point-in-time view groups currently open tagged database connections; it does not establish process health, cluster membership, uptime or last-seen history.</p>
+            <h3>{{ $t('admin:system.connectedProcessView') }}</h3>
+            <p>{{ $t('admin:system.measurementsStayFixedUntil') }}</p>
           </div>
           <div>
-            <h3>Deployment ownership</h3>
+            <h3>{{ $t('admin:system.deploymentOwnership') }}</h3>
             <p>
-              Build {{ snapshot.product.revision.slice(0, 8) }} is an independent fork of {{ snapshot.product.upstreamBase }}. Updates use your
-              deployment workflow; no fork-owned update provider is configured.
+              {{ $t('admin:system.buildIndependentForkUpdates', { revision: snapshot.product.revision.slice(0, 8), upstreamBase: snapshot.product.upstreamBase, interpolation: { escapeValue: false } }) }}
             </p>
           </div>
           <div>
-            <h3>Related operations</h3>
+            <h3>{{ $t('admin:system.relatedOperations') }}</h3>
             <router-link to="/a/storage">
-              Storage &amp; recovery
+              {{ $t('admin:system.storageRecovery') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>
             <router-link to="/a/logging">
-              Logging
+              {{ $t('admin:system.logging') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>
             <router-link to="/a/utilities">
-              Maintenance utilities
+              {{ $t('admin:system.maintenanceUtilities') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>
           </div>
@@ -457,11 +447,14 @@ import AsyncState from '../common/async-state.vue'
 import { fetchSystemWorkspace } from '../../helpers/system-workspace-api.ts'
 import { fetchSystemMetricsPreview, fetchSystemMetricsState } from '../../helpers/system-api.ts'
 import { systemJobDestination, systemSupportReport, type SystemWorkspace } from '../../../shared/system-workspace.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const sections = [
-  { key: 'overview', title: 'Overview' },
-  { key: 'runtime', title: 'Runtime' },
-  { key: 'background', title: 'Background work' },
-  { key: 'diagnostics', title: 'Diagnostics' }
+  { key: 'overview', title: t('admin:system.overview') },
+  { key: 'runtime', title: t('admin:system.runtime') },
+  { key: 'background', title: t('admin:system.backgroundWork') },
+  { key: 'diagnostics', title: t('admin:system.diagnostics') }
 ] as const
 type Section = (typeof sections)[number]['key']
 const route = useRoute(),
@@ -485,7 +478,7 @@ const section = computed<Section>(() => sections.find((tab) => tab.key === route
 const selectSection = (key: Section) => router.replace({ query: { ...route.query, section: key === 'overview' ? undefined : key } })
 const metricsUrl = computed(() => new URL('/metrics', window.location.origin).href)
 const metricsStatusLabel = computed(() =>
-  metricsEnabled.value === null ? 'Status unavailable' : metricsEnabled.value ? 'Enabled' : 'Disabled'
+  metricsEnabled.value === null ? t('admin:system.statusUnavailable') : metricsEnabled.value ? t('admin:system.enabled') : t('admin:system.disabled')
 )
 const dateTime = (value: string) => new Date(value).toLocaleString()
 const number = (value: number) => value.toLocaleString()
@@ -500,48 +493,48 @@ const duration = (seconds: number) => {
     minutes = Math.floor(seconds / 60) % 60
   return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m ${Math.floor(seconds) % 60}s`
 }
-const listener = (value: number | null) => (value === null ? 'No TCP listener observed' : `Listening on port ${value}`)
+const listener = (value: number | null) => (value === null ? t('admin:system.noTcpListenerObserved') : t('admin:system.listeningPort', { value, interpolation: { escapeValue: false } }))
 const attentionRows = computed(
   () =>
     snapshot.value?.queue.attention.filter((job) =>
       `${job.id} ${job.type} ${job.state} ${reasonLabel(job.reason)}`.toLowerCase().includes(jobQuery.value.trim().toLowerCase())
     ) ?? []
 )
-const reasonLabel = (reason: string) => ({ failed: 'Failed', 'expired-lease': 'Expired lease', unsupported: 'Unsupported version' })[reason] || reason
+const reasonLabel = (reason: string) => ({ failed: t('admin:system.failed'), 'expired-lease': t('admin:system.expiredLease'), unsupported: t('admin:system.unsupportedVersion') })[reason] || reason
 const reasonHelp = (reason: string) =>
   reason === 'failed'
-    ? 'Review the owning workflow before retrying. This overview never replays side effects.'
+    ? t('admin:system.reviewOwningWorkflowBefore')
     : reason === 'expired-lease'
-      ? 'The lease deadline has passed. A compatible worker may reclaim the job if attempts remain; an expired lease is not proof that an external action did not occur.'
-      : 'This process has no handler for this type and version. Check the deployed revision and the workflow that created the job.'
+      ? t('admin:system.leaseDeadlineHasPassed')
+      : t('admin:system.processHasNoHandler')
 const signals = computed(() => {
   const w = snapshot.value
   if (!w) return []
   return [
     {
-      title: 'PostgreSQL responded',
-      detail: `A fresh version query completed in ${w.database.latencyMs} ms.`,
+      title: t('admin:system.postgresqlResponded'),
+      detail: t('admin:system.freshVersionQueryCompleted', { latencyMs: w.database.latencyMs, interpolation: { escapeValue: false } }),
       attention: false,
       section: 'diagnostics' as Section
     },
     {
       title:
         w.database.migrations.pending.length || w.database.migrations.unknown.length
-          ? 'Migration inventory needs review'
-          : 'Migration inventory matches',
-      detail: `${w.database.migrations.applied.length} applied · ${w.database.migrations.pending.length} pending · ${w.database.migrations.unknown.length} absent from this build`,
+          ? t('admin:system.migrationInventoryNeedsReview')
+          : t('admin:system.migrationInventoryMatches'),
+      detail: t('admin:system.appliedPendingAbsentBuild', { appliedCount: w.database.migrations.applied.length, pendingCount: w.database.migrations.pending.length, unknownCount: w.database.migrations.unknown.length, interpolation: { escapeValue: false } }),
       attention: Boolean(w.database.migrations.pending.length || w.database.migrations.unknown.length),
       section: 'diagnostics' as Section
     },
     {
-      title: w.scheduler.started ? 'Process scheduler started' : 'Process scheduler is not started',
-      detail: `${w.scheduler.jobs.filter((j) => j.state === 'running').length} running now · ${w.scheduler.jobs.filter((j) => j.lastOutcome === 'failed').length} tasks with a failed last invocation`,
+      title: w.scheduler.started ? t('admin:system.processSchedulerStarted') : t('admin:system.processSchedulerNotStarted'),
+      detail: t('admin:system.runningNowTasksFailed', { jobs: w.scheduler.jobs.filter((j) => j.state === 'running').length, jobs2: w.scheduler.jobs.filter((j) => j.lastOutcome === 'failed').length, interpolation: { escapeValue: false } }),
       attention: !w.scheduler.started || w.scheduler.jobs.some((j) => j.lastOutcome === 'failed'),
       section: 'background' as Section
     },
     {
-      title: w.queue.totalAttention ? 'Durable work needs attention' : 'No durable attention records',
-      detail: `${w.queue.counts.failed} failed · ${w.queue.expiredLeases} expired leases · ${w.queue.unsupported} unsupported pending/running versions`,
+      title: w.queue.totalAttention ? t('admin:system.durableWorkNeedsAttention') : t('admin:system.noDurableAttentionRecords'),
+      detail: t('admin:system.failedExpiredLeasesUnsupported', { failed: w.queue.counts.failed, expiredLeases: w.queue.expiredLeases, unsupported: w.queue.unsupported, interpolation: { escapeValue: false } }),
       attention: w.queue.totalAttention > 0,
       section: 'background' as Section
     }
@@ -551,26 +544,26 @@ const runtimeFacts = computed(() => {
   const r = snapshot.value?.runtime
   if (!r) return []
   return [
-    { label: 'Runtime', value: `Bun ${r.bunVersion}` },
-    { label: 'Platform', value: `${r.platform} · ${r.architecture}${r.container ? ' · Docker marker present' : ''}` },
-    { label: 'Kernel', value: r.kernel, mono: true },
-    { label: 'Logical CPUs visible to OS', value: String(r.logicalCpuCount) },
-    { label: 'Available parallelism', value: r.availableParallelism === null ? 'Unavailable' : String(r.availableParallelism) },
-    { label: 'Memory visible to OS', value: bytes(r.systemMemoryBytes) },
-    { label: 'Instance ID', value: r.instanceId, mono: true },
-    { label: 'Hostname', value: r.hostname, mono: true },
-    { label: 'Working directory', value: r.workingDirectory, mono: true },
-    { label: 'Configuration source', value: r.configFile, mono: true },
-    { label: 'Database host', value: snapshot.value!.database.host, mono: true }
+    { label: t('admin:system.runtime'), value: t('admin:system.bun', { bunVersion: r.bunVersion, interpolation: { escapeValue: false } }) },
+    { label: t('admin:system.platform'), value: `${r.platform} · ${r.architecture}${r.container ? ` ${t('admin:system.dockerMarkerPresent')}` : ''}` },
+    { label: t('admin:system.kernel'), value: r.kernel, mono: true },
+    { label: t('admin:system.logicalCpusVisibleOs'), value: String(r.logicalCpuCount) },
+    { label: t('admin:system.availableParallelism'), value: r.availableParallelism === null ? t('admin:system.unavailable') : String(r.availableParallelism) },
+    { label: t('admin:system.memoryVisibleOs'), value: bytes(r.systemMemoryBytes) },
+    { label: t('admin:system.instanceId'), value: r.instanceId, mono: true },
+    { label: t('admin:system.hostname'), value: r.hostname, mono: true },
+    { label: t('admin:system.workingDirectory2'), value: r.workingDirectory, mono: true },
+    { label: t('admin:system.configurationSource'), value: r.configFile, mono: true },
+    { label: t('admin:system.databaseHost'), value: snapshot.value!.database.host, mono: true }
   ]
 })
 const migrationGroups = computed(() => {
   const m = snapshot.value?.database.migrations
   return m
     ? [
-        { title: 'Pending in this build', items: m.pending },
-        { title: 'Applied but absent from this build', items: m.unknown },
-        { title: 'Applied migrations', items: m.applied }
+        { title: t('admin:system.pendingBuild'), items: m.pending },
+        { title: t('admin:system.appliedButAbsentBuild'), items: m.unknown },
+        { title: t('admin:system.appliedMigrations'), items: m.applied }
       ]
     : []
 })
@@ -599,10 +592,10 @@ async function load() {
       const metrics = await fetchSystemMetricsState(window.fetch.bind(window), current.signal)
       if (!current.signal.aborted) metricsEnabled.value = metrics.enabled
     } catch (e) {
-      if (!current.signal.aborted) metricsStateError.value = e instanceof Error ? e.message : 'Metrics status is unavailable.'
+      if (!current.signal.aborted) metricsStateError.value = e instanceof Error ? e.message : t('admin:system.metricsStatusUnavailable')
     }
   } catch (e) {
-    if (!current.signal.aborted) error.value = e instanceof Error ? e.message : 'System observations could not be collected.'
+    if (!current.signal.aborted) error.value = e instanceof Error ? e.message : t('admin:system.systemObservationsCouldNot')
   } finally {
     if (controller === current) {
       loading.value = false
@@ -614,9 +607,9 @@ async function copyMetricsUrl() {
   metricsCopyError.value = ''
   try {
     await navigator.clipboard.writeText(metricsUrl.value)
-    notice.value = 'Metrics endpoint URL copied.'
+    notice.value = t('admin:system.metricsEndpointUrlCopied')
   } catch {
-    metricsCopyError.value = 'Clipboard access is unavailable. Select the endpoint URL above to copy it.'
+    metricsCopyError.value = t('admin:system.clipboardAccessUnavailableSelect')
   }
 }
 async function previewMetrics() {
@@ -632,7 +625,7 @@ async function previewMetrics() {
     if (!current.signal.aborted) metricsPreview.value = output
   } catch (e) {
     if (!current.signal.aborted)
-      metricsPreviewError.value = e instanceof Error ? e.message : 'The /metrics preview could not be retrieved.'
+      metricsPreviewError.value = e instanceof Error ? e.message : t('admin:system.metricsPreviewCouldNot')
   } finally {
     if (metricsPreviewController === current) {
       metricsPreviewLoading.value = false
@@ -654,15 +647,15 @@ function downloadReport() {
   link.download = `tsepistle-system-${snapshot.value!.observedAt.replace(/[:.]/g, '-')}.json`
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
-  notice.value = 'Support report downloaded.'
+  notice.value = t('admin:system.supportReportDownloaded')
 }
 async function copyReport() {
   copyError.value = ''
   try {
     await navigator.clipboard.writeText(reportText.value)
-    notice.value = 'Support report copied.'
+    notice.value = t('admin:system.supportReportCopied')
   } catch {
-    copyError.value = 'Clipboard access is unavailable. Download the JSON report or select its text in the preview.'
+    copyError.value = t('admin:system.clipboardAccessUnavailableDownload')
   }
 }
 onMounted(load)
@@ -753,7 +746,7 @@ onBeforeUnmount(() => {
       font-size: 1rem;
       line-height: 1.8;
       max-width: 65ch;
-      color: rgba(var(--v-theme-on-surface), 0.78);
+      color: var(--wiki-text-muted);
     }
   }
   .system-release {
@@ -807,7 +800,7 @@ onBeforeUnmount(() => {
       font-size: 0.82rem;
       line-height: 1.7;
       margin: 0.35rem 0 0;
-      color: rgba(var(--v-theme-on-surface), 0.74);
+      color: var(--wiki-text-muted);
     }
   }
   .system-positive {
@@ -862,7 +855,7 @@ onBeforeUnmount(() => {
       border-bottom: 1px solid var(--system-line);
     }
     dt {
-      color: rgba(var(--v-theme-on-surface), 0.7);
+      color: var(--wiki-text-muted);
       padding-right: 1rem;
     }
     dd {
@@ -877,7 +870,7 @@ onBeforeUnmount(() => {
   .system-note {
     font-size: 0.78rem;
     line-height: 1.75;
-    color: rgba(var(--v-theme-on-surface), 0.73);
+    color: var(--wiki-text-muted);
     margin: 1rem 0;
   }
   .system-table-wrap {
@@ -914,7 +907,7 @@ onBeforeUnmount(() => {
     small {
       display: block;
       font-size: 0.69rem;
-      color: rgba(var(--v-theme-on-surface), 0.7);
+      color: var(--wiki-text-muted);
       font-weight: 400;
       margin-top: 0.2rem;
     }
@@ -960,7 +953,7 @@ onBeforeUnmount(() => {
       font-size: 1rem;
       span {
         margin-left: 0.5rem;
-        color: rgba(var(--v-theme-on-surface), 0.6);
+        color: var(--wiki-text-muted);
       }
     }
     h4 {
@@ -1090,7 +1083,7 @@ onBeforeUnmount(() => {
       margin: 1.4rem 0;
     }
     dt {
-      color: rgba(var(--v-theme-on-surface), 0.73);
+      color: var(--wiki-text-muted);
     }
     dd {
       margin: 0;
@@ -1108,7 +1101,7 @@ onBeforeUnmount(() => {
     p {
       font-size: 0.77rem;
       line-height: 1.8;
-      color: rgba(var(--v-theme-on-surface), 0.73);
+      color: var(--wiki-text-muted);
     }
     a {
       display: flex;

@@ -1,36 +1,35 @@
 <template>
   <article class="storage-receipt">
-    <div class="storage-section-head"><span class="storage-kicker">Operation receipt</span><v-btn
+    <div class="storage-section-head"><span class="storage-kicker">{{ $t('admin:storageOperationReceipt.operationReceipt') }}</span><v-btn
         variant="text"
         size="small"
         prepend-icon="mdi-download"
         @click="emit('download')"
-      >Download receipt</v-btn></div>
+      >{{ $t('admin:storageOperationReceipt.downloadReceipt') }}</v-btn></div>
     <h3>{{ operation.title }}</h3>
     <p>{{ operation.effect }}</p>
     <dl class="storage-facts">
-      <dt>Outcome</dt>
+      <dt>{{ $t('admin:storageOperationReceipt.outcome') }}</dt>
       <dd>{{ operationLabel(operation.state) }}</dd>
-      <dt>Requested by</dt>
+      <dt>{{ $t('admin:storageOperationReceipt.requested') }}</dt>
       <dd>{{ actor(operation.actorId) }}</dd>
-      <dt>Reason</dt>
+      <dt>{{ $t('admin:storageOperationReceipt.reason') }}</dt>
       <dd>{{ operation.reason }}</dd>
-      <dt>Queued</dt>
+      <dt>{{ $t('admin:storageOperationReceipt.queued') }}</dt>
       <dd>{{ dateTime(operation.createdAt) }}</dd>
-      <dt>Started</dt>
+      <dt>{{ $t('admin:storageOperationReceipt.started') }}</dt>
       <dd>{{ dateTime(operation.startedAt) }}</dd>
-      <dt>Finished</dt>
+      <dt>{{ $t('admin:storageOperationReceipt.finished') }}</dt>
       <dd>{{ dateTime(operation.completedAt) }}</dd>
-      <dt>Configuration revision</dt>
-      <dd class="storage-mono">{{ operation.configurationRevision || 'Initial configuration' }}</dd>
+      <dt>{{ $t('admin:storageOperationReceipt.configurationRevision') }}</dt>
+      <dd class="storage-mono">{{ operation.configurationRevision || $t('admin:storageOperationReceipt.initialConfiguration') }}</dd>
     </dl>
     <v-alert
       v-if="operation.state === 'interrupted'"
       variant="tonal"
       type="warning"
       class="my-5"
-    >The worker no longer has a current lease or its completion was not recorded. Some effects may already have occurred. Verify the destination
-      and confirm the prior worker has stopped before resolving this record.</v-alert>
+    >{{ $t('admin:storageOperationReceipt.workerNoLongerHas') }}</v-alert>
     <p
       v-if="operation.result"
       class="storage-result-message"
@@ -38,13 +37,12 @@
     <div
       v-if="operation.result?.counts"
       class="storage-result-counts"
-    ><span><strong>{{ operation.result.counts.total }}</strong> reported
-        items</span><span><strong>{{ operation.result.counts.succeeded }}</strong>
-        succeeded</span><span><strong>{{ operation.result.counts.failed }}</strong> failed or conflicted</span></div>
+    ><span><strong>{{ operation.result.counts.total }}</strong> {{ $t('admin:storageOperationReceipt.reportedItems') }}</span><span><strong>{{ operation.result.counts.succeeded }}</strong>
+        {{ $t('admin:storageOperationReceipt.succeeded') }}</span><span><strong>{{ operation.result.counts.failed }}</strong> {{ $t('admin:storageOperationReceipt.failedConflicted') }}</span></div>
     <p
       v-else-if="operation.result && operation.handler !== 'activate'"
       class="storage-note"
-    >This operation did not report item totals. A completed receipt does not establish how many files exist at the destination.</p>
+    >{{ $t('admin:storageOperationReceipt.operationDidNotReport') }}</p>
     <div
       v-if="operation.result?.counts"
       class="storage-formats"
@@ -59,7 +57,7 @@
       <li
         v-for="target in operation.result.targets"
         :key="target.key"
-      ><strong>{{ targetTitle(target.key) }}</strong><span>{{ target.paused ? 'Paused offline' : target.active ? 'Initialized' : 'Initialization failed' }}</span>
+      ><strong>{{ targetTitle(target.key) }}</strong><span>{{ target.paused ? $t('admin:storageOperationReceipt.pausedOffline') : target.active ? $t('admin:storageOperationReceipt.initialized') : $t('admin:storageOperationReceipt.initializationFailed') }}</span>
       </li>
     </ul>
     <details
@@ -67,8 +65,8 @@
       :key="index"
       class="storage-item-result"
     >
-      <summary><span>{{ item.path || 'Unnamed item' }}</span><span>{{ item.outcome }}</span></summary>
-      <p>{{ item.kind }} · {{ item.format ? formatLabel(item.format) : 'No document format' }}</p>
+      <summary><span>{{ item.path || $t('admin:storageOperationReceipt.unnamedItem') }}</span><span>{{ item.outcome }}</span></summary>
+      <p>{{ item.kind }} · {{ item.format ? formatLabel(item.format) : $t('admin:storageOperationReceipt.noDocumentFormat') }}</p>
       <p v-if="item.message">{{ item.message }}</p>
       <ul v-if="item.diagnostics.length">
         <li
@@ -80,12 +78,12 @@
     <p
       v-if="operation.result?.counts && operation.result.counts.total > operation.result.items.length"
       class="storage-note"
-    >The receipt retains the first {{ operation.result.items.length }} item details; totals cover all reported items.</p>
+    >{{ $t('admin:storageOperationReceipt.receiptRetainsFirstItem', { itemsCount: operation.result.items.length, interpolation: { escapeValue: false } }) }}</p>
     <div
       v-if="operation.resolution"
       class="storage-resolution"
     >
-      <h4>{{ operation.state === 'cancelled' ? 'Cancellation' : 'Recovery decision' }}</h4>
+      <h4>{{ operation.state === 'cancelled' ? $t('admin:storageOperationReceipt.cancellation') : $t('admin:storageOperationReceipt.recoveryDecision') }}</h4>
       <p>{{ operation.resolution.reason }}</p><small>{{ actor(operation.resolution.actorId) }} ·
         {{ dateTime(operation.resolution.createdAt) }}</small>
     </div>
@@ -94,16 +92,16 @@
         variant="outlined"
         :disabled="locked"
         @click="emit('decision',{operation,kind:'cancel'})"
-      >Cancel before execution</v-btn><v-btn
+      >{{ $t('admin:storageOperationReceipt.cancelBeforeExecution') }}</v-btn><v-btn
         v-if="operation.canResolve"
         variant="outlined"
         :disabled="locked"
         @click="emit('decision',{operation,kind:'resolve'})"
-      >Review recovery decision</v-btn>
+      >{{ $t('admin:storageOperationReceipt.reviewRecoveryDecision') }}</v-btn>
       <p
         v-if="operation.state === 'running'"
         class="storage-note"
-      >Running provider work cannot be forcibly cancelled from this page.</p>
+      >{{ $t('admin:storageOperationReceipt.runningProviderWorkCannot') }}</p>
     </div>
   </article>
 </template>

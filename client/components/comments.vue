@@ -405,7 +405,7 @@ export default defineComponent({
     },
     // Keeps the author in its own <strong> wherever the locale puts {{name}}.
     replyingTo(): { before: string; after: string } {
-      const marker = '\u2063NAME\u2063'
+      const marker = this.$t('common:comments.name')
       const sentence = String(this.$t('common:comments.replyingTo', { name: marker, interpolation: { escapeValue: false } }))
       const index = sentence.indexOf(marker)
       if (index < 0) return { before: `${sentence} `, after: '' }
@@ -739,7 +739,7 @@ export default defineComponent({
           target.focus({ preventScroll: true })
         } else if (this.reportedUnavailableAnchor !== anchor) {
           this.reportedUnavailableAnchor = anchor
-          showNotification(wikiStore, { style: 'warning', message: 'This comment cannot be opened.', icon: 'alert' })
+          showNotification(wikiStore, { style: 'warning', message: this.$t('common:comments.commentCannotOpened'), icon: 'alert' })
         }
       })
     },
@@ -918,7 +918,7 @@ export default defineComponent({
         this.clearComposerIfUnchanged(snapshot)
         wikiStore.showNotification({
           style: 'success',
-          message: 'Your comment was found after the connection was restored.',
+          message: this.$t('common:comments.commentWasFoundAfter'),
           icon: 'check'
         })
         return
@@ -926,7 +926,7 @@ export default defineComponent({
       this.uncertainCreate = true
       wikiStore.showNotification({
         style: 'warning',
-        message: 'The comment request outcome is unknown. Comments were refreshed and the request was not sent again. Review the thread before trying again.',
+        message: this.$t('common:comments.commentRequestOutcomeUnknown'),
         icon: 'alert'
       })
     },

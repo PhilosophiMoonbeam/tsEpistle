@@ -1,20 +1,20 @@
 <template lang="pug">
 v-card
-  v-card-title Authentication cleanup
-  v-card-subtitle Reviewed actions that change sign-in capability. Each action is recorded before it starts.
+  v-card-title {{ $t(`admin:utilitiesAuth.authenticationCleanup`) }}
+  v-card-subtitle {{ $t(`admin:utilitiesAuth.reviewedActionsChangeSign`) }}
   v-card-text
     v-row
       v-col(cols='12' md='6')
         v-sheet.pa-4.rounded.border.h-100
-          h2.text-title-medium Regenerate certificates
-          p.text-body-medium.mt-2 Replace the keys used to sign authentication tokens. This ends browser sessions, revokes stored API credentials and preserves the existing encryption root.
-          v-alert.mt-3(color='error' variant='tonal' density='compact') This action ends your session after its receipt is recorded. You will be sent to sign in again, then returned to this receipt.
-          v-btn.mt-4(color='error' variant='outlined' :disabled='busy' @click='openReview(`auth-certificates`)') Review certificate regeneration
+          h2.text-title-medium {{ $t(`admin:utilitiesAuth.regenerateCertificates`) }}
+          p.text-body-medium.mt-2 {{ $t(`admin:utilitiesAuth.replaceKeysUsedSign`) }}
+          v-alert.mt-3(color='error' variant='tonal' density='compact') {{ $t(`admin:utilitiesAuth.actionEndsSessionAfter`) }}
+          v-btn.mt-4(color='error' variant='outlined' :disabled='busy' @click='openReview(`auth-certificates`)') {{ $t(`admin:utilitiesAuth.reviewCertificateRegeneration`) }}
       v-col(cols='12' md='6')
         v-sheet.pa-4.rounded.border.h-100
-          h2.text-title-medium Reset guest access
-          p.text-body-medium.mt-2 Restore the reserved Guest identity and assign it to the existing Guests group. That group’s current permissions and page-rule policy are not reset.
-          v-btn.mt-4(color='warning' variant='outlined' :disabled='busy' @click='openReview(`auth-guest-reset`)') Review guest reset
+          h2.text-title-medium {{ $t(`admin:utilitiesAuth.resetGuestAccess`) }}
+          p.text-body-medium.mt-2 {{ $t(`admin:utilitiesAuth.restoreReservedGuestIdentity`) }}
+          v-btn.mt-4(color='warning' variant='outlined' :disabled='busy' @click='openReview(`auth-guest-reset`)') {{ $t(`admin:utilitiesAuth.reviewGuestReset`) }}
   utility-review(
     v-model:open='review.open'
     :title='review.title'
@@ -77,27 +77,27 @@ export default defineComponent({
         kind === 'auth-certificates'
           ? {
               kind,
-              title: 'Review certificate regeneration',
+              title: this.$t('admin:utilitiesAuth.reviewCertificateRegeneration'),
               effect:
-                'This replaces authentication signing keys, ends browser sessions and revokes stored API credentials. The encryption root is preserved and the request cannot be undone.',
+                this.$t('admin:utilitiesAuth.replacesAuthenticationSigningKeys'),
               confirmation: utilityOperationConfirmation(kind),
               parameters: [
-                { label: 'Credential action', value: 'Replace authentication signing certificates' },
-                { label: 'Browser sessions', value: 'End every signed-in browser session' },
-                { label: 'Stored API credentials', value: 'Revoke every stored API credential' },
-                { label: 'Encryption root', value: 'Preserved' }
+                { label: this.$t('admin:utilitiesAuth.credentialAction'), value: this.$t('admin:utilitiesAuth.replaceAuthenticationSigningCertificates') },
+                { label: this.$t('admin:utilitiesAuth.browserSessions'), value: this.$t('admin:utilitiesAuth.endEverySignedBrowser') },
+                { label: this.$t('admin:utilitiesAuth.storedApiCredentials'), value: this.$t('admin:utilitiesAuth.revokeEveryStoredApi') },
+                { label: this.$t('admin:utilitiesAuth.encryptionRoot'), value: this.$t('admin:utilitiesAuth.preserved') }
               ],
               payload: {}
             }
           : {
               kind,
-              title: 'Review guest reset',
+              title: this.$t('admin:utilitiesAuth.reviewGuestReset'),
               effect:
-                'This restores the reserved Guest identity and assigns it to the existing Guests group. The group’s current permissions and page-rule policy are not reset.',
+                this.$t('admin:utilitiesAuth.restoresReservedGuestIdentity'),
               confirmation: utilityOperationConfirmation(kind),
               parameters: [
-                { label: 'Guest identity', value: 'Restore and assign to the existing Guests group' },
-                { label: 'Guests group policy', value: 'Preserve current permissions and page rules' }
+                { label: this.$t('admin:utilitiesAuth.guestIdentity'), value: this.$t('admin:utilitiesAuth.restoreAssignExistingGuests') },
+                { label: this.$t('admin:utilitiesAuth.guestsGroupPolicy'), value: this.$t('admin:utilitiesAuth.preserveCurrentPermissionsPage') }
               ],
               payload: {}
             }

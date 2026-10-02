@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import { DISCUSSION_SECRET_MASK, discussionEnumOptions, discussionIssues, discussionProviderTitle, discussionSettings } from '../../../shared/discussion-policy.ts'
+import { translateEnglish } from '../../test/english-translate.mts'
 const source = fs.readFileSync('client/components/admin/admin-comments.vue', 'utf8'), script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1]
 const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .+$/gm, '').replace('export default', 'const component ='))
 const provider = { key: 'default', title: 'Default', isEnabled: true, isAvailable: true, external: false, description: '', website: '', config: { akismet: '********', minDelay: 30 }, props: { akismet: { type: 'string', sensitive: true }, minDelay: { type: 'number' } } }
@@ -8,7 +9,7 @@ function arrange(overrides = {}) {
   const transport = { fetchDiscussionWorkspace: vi.fn().mockResolvedValue(structuredClone(snapshot)), saveDiscussionWorkspace: vi.fn(), fetchDiscussionInventory: vi.fn().mockResolvedValue({ items: [], total: 0 }), inspectDiscussion: vi.fn(), moderateDiscussion: vi.fn(), fetchClosedDiscussions: vi.fn().mockResolvedValue({ items: [], total: 0 }), fetchPageDiscussionPolicy: vi.fn(), savePageDiscussionPolicy: vi.fn(), fetchPageList: vi.fn().mockResolvedValue([]), ...overrides }
   const dependencies = { AsyncState: {}, DISCUSSION_SECRET_MASK, discussionEnumOptions, discussionIssues, discussionProviderTitle, discussionSettings, getErrorMessage: error => error.message, ...transport }
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
-  const state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
+  const state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = method.bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => getter.call(state) })
   return { state, component, transport }

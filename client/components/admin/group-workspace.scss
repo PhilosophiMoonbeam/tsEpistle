@@ -1,6 +1,6 @@
 .group-directory, .group-workspace {
   --group-line: rgba(var(--v-theme-on-surface), .14);
-  --group-muted: rgba(var(--v-theme-on-surface), .72);
+  --group-muted: var(--wiki-text-muted);
   --group-paper: rgb(var(--v-theme-surface));
   color: rgb(var(--v-theme-on-surface));
   .group-kicker { display: block; font-size: .69rem; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; color: var(--group-muted); margin-bottom: .5rem; }
@@ -71,4 +71,4 @@
 .group-activity-heading { display: flex; gap: 1rem; justify-content: space-between; align-items: baseline; margin-bottom: .35rem; h3 { font-size: 1rem; font-weight: 600; } time { color: var(--group-muted); font-size: .75rem; } }
 @media (max-width: 600px) { .group-workspace-status { flex-wrap: wrap; } .group-activity-heading { flex-direction: column; gap: .4rem; } .group-review-people li { flex-wrap: wrap; } }
 
-.group-dialog .group-note { color: rgba(var(--v-theme-on-surface), .72); font-size: .85rem; line-height: 1.7; }
+.group-dialog .group-note { color: var(--wiki-text-muted); font-size: .85rem; line-height: 1.7; }

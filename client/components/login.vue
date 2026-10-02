@@ -599,7 +599,7 @@ export default defineComponent({
     async copyTfaSecret () {
       this.tfaCopyStatus = ''
       try {
-        if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable')
+        if (!navigator.clipboard?.writeText) throw new Error(this.$t('common:login.clipboardApiUnavailable'))
         await navigator.clipboard.writeText(this.tfaSecret)
         this.tfaCopyStatus = this.$t('auth:tfaSetupKeyCopied')
       } catch {

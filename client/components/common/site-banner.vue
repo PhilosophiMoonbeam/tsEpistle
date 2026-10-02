@@ -5,7 +5,7 @@
     :class="`site-banner--${banner.tone || 'warning'}`"
     role="note"
     :aria-labelledby="banner.title ? bannerTitleId : undefined"
-    :aria-label="banner.title ? undefined : 'Site notice'"
+    :aria-label="banner.title ? undefined : $t('common:siteBanner.siteNotice')"
   >
     <v-icon class="site-banner__icon" aria-hidden="true">{{ banner.tone === 'info' ? 'mdi-information-outline' : banner.tone === 'critical' ? 'mdi-alert-octagon-outline' : 'mdi-alert-decagram-outline' }}</v-icon>
     <div class="site-banner__body">
