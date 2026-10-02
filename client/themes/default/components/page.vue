@@ -4319,11 +4319,11 @@ export default defineComponent({
   transition: color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
   // One color per meaning. The glyph also changes, so color is never the only cue.
-  &--saved { color: var(--wiki-accent-warm) !important; }
-  &--warning { color: rgb(var(--v-theme-warning)) !important; }
-  &--error { color: rgb(var(--v-theme-error)) !important; }
+  &--saved { color: var(--wiki-primary-ink) !important; }
+  &--warning { color: var(--wiki-warning-ink) !important; }
+  &--error { color: var(--wiki-error-ink) !important; }
   &--muted { color: var(--wiki-text-muted) !important; }
-  &--action { color: rgb(var(--v-theme-info)) !important; }
+  &--action { color: var(--wiki-info-ink) !important; }
 
   &--blocked {
     cursor: default;
@@ -4833,7 +4833,7 @@ export default defineComponent({
         transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
 
       .v-icon {
-        color: var(--wiki-accent-warm);
+        color: var(--wiki-primary-ink);
       }
 
       &:hover {
@@ -5472,7 +5472,7 @@ export default defineComponent({
 
   &__utilities .v-btn[aria-pressed='true']:not(.page-offline-control),
   &__utilities .page-watch-control--watching {
-    color: rgb(var(--v-theme-primary));
+    color: var(--wiki-primary-ink);
   }
 
   &__divider {
@@ -5668,7 +5668,7 @@ export default defineComponent({
   border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent);
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-primary-ink);
 }
 
 .comments-title {

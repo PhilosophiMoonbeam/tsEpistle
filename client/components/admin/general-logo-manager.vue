@@ -736,7 +736,7 @@ export default {
 .logo-drop-target:focus-visible { box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), .22); }
 .logo-drop-target--disabled { cursor: wait; opacity: .58; transform: none; }
 .logo-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
-.logo-drop-icon { flex: 0 0 auto; color: rgb(var(--v-theme-primary)); }
+.logo-drop-icon { flex: 0 0 auto; color: var(--wiki-primary-ink); }
 .logo-drop-copy { min-width: 0; }
 .logo-picker-help { margin: .65rem 0 0; line-height: 1.5; }
 .logo-message { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem .5rem; margin-top: .75rem; font-size: .875rem; }

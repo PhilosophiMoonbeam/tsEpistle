@@ -2729,7 +2729,7 @@ export default defineComponent({
     color: rgb(var(--v-theme-on-surface));
 
     &:first-child {
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-primary-ink);
     }
 
     &.editor-mobile-save.is-clean {

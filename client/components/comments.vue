@@ -1228,7 +1228,7 @@ export default defineComponent({
   padding: .08em .34em;
   border-radius: var(--wiki-radius-xs);
   background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-primary-ink);
   font-weight: 650;
 }
 
@@ -1326,7 +1326,7 @@ export default defineComponent({
     .v-btn {
       min-width: var(--wiki-control-height);
       min-height: var(--wiki-control-height);
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-primary-ink);
     }
   }
 
@@ -1357,7 +1357,7 @@ export default defineComponent({
     }
 
     a {
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-primary-ink);
       text-underline-offset: var(--wiki-space-1);
     }
 

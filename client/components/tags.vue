@@ -1209,7 +1209,7 @@ export default {
 .tags-follow-item.wiki-tag-color.tags-follow-item--followed {
   border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 45%, var(--wiki-surface-border));
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, var(--wiki-surface-raised));
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
 }
 
 .tags-follow-item--followed .tags-follow-item-icon.wiki-tag-color {

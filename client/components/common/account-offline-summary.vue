@@ -300,10 +300,10 @@ async function openStorage (): Promise<void> {
   margin: 0;
 }
 
-.account-offline-summary__tone--success { color: rgb(var(--v-theme-success)); }
-.account-offline-summary__tone--warning { color: rgb(var(--v-theme-warning)); }
-.account-offline-summary__tone--error { color: rgb(var(--v-theme-error)); }
-.account-offline-summary__tone--saved { color: var(--wiki-accent-warm); }
+.account-offline-summary__tone--success { color: var(--wiki-success-ink); }
+.account-offline-summary__tone--warning { color: var(--wiki-warning-ink); }
+.account-offline-summary__tone--error { color: var(--wiki-error-ink); }
+.account-offline-summary__tone--saved { color: var(--wiki-primary-ink); }
 .account-offline-summary__tone--muted { color: var(--wiki-text-muted); }
 
 .account-offline-summary__actions {

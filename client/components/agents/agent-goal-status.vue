@@ -721,7 +721,7 @@ const progressLabel = computed(() => {
 .agent-goal__issue-state { color: var(--wiki-text-muted); display: block; font-size: .65rem; margin-top: var(--wiki-space-1); }
 .agent-goal__pending {
   align-items: center;
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   display: flex;
   font-size: .72rem;
   gap: var(--wiki-space-2);

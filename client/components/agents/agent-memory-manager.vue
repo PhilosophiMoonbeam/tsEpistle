@@ -734,7 +734,7 @@ onBeforeUnmount(() => {
 .agent-memory__refresh {
   gap: var(--wiki-space-2);
   margin-bottom: var(--wiki-space-3);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-primary-ink);
   font-size: .75rem;
 }
 
@@ -943,7 +943,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-memory__empty > .v-icon {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-primary-ink);
 }
 
 .agent-memory__safety {

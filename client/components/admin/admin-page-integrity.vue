@@ -303,7 +303,7 @@ export default defineComponent({
 
 .integrity-kicker {
   margin: 0 0 0.3rem;
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -341,7 +341,7 @@ export default defineComponent({
 }
 
 .integrity-count--watermark strong {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
 }
 
 .storage-targets {
