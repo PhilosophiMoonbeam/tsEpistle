@@ -419,6 +419,12 @@
   min-height: calc(100dvh - var(--v-layout-top, var(--wiki-chrome-height)));
 }
 
+@media (max-width: 599.98px) {
+  .notfound-app .notfound-content {
+    min-height: calc(100dvh - var(--v-layout-top, var(--wiki-chrome-height)));
+  }
+}
+
 .notfound-content,
 .unauthorized-content,
 .newpage-content {
