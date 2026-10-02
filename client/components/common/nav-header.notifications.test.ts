@@ -115,7 +115,8 @@ const testTranslations: Record<string, string> = {
 }
 
 const translate = (key: string, params?: Record<string, unknown>): string => {
-  return Object.entries(params ?? {}).reduce((translated, [name, value]) => translated.split(`{{${name}}}`).join(String(value)), testTranslations[key] ?? key)
+  const template = testTranslations[key] ?? (typeof params?.defaultValue === 'string' ? params.defaultValue : key)
+  return Object.entries(params ?? {}).reduce((translated, [name, value]) => translated.split(`{{${name}}}`).join(String(value)), template)
 }
 
 const notificationOverflowProperties = /(?:max-height|overflow-y|overscroll-behavior)\s*:/
@@ -293,6 +294,9 @@ const bundle = await Bun.build({
         build.onResolve({ filter: /^\.\.\/\.\.\/helpers\/user-picture\.ts$/ }, () => ({
           path: path.resolve(path.dirname(componentPath), '../../helpers/user-picture.ts')
         }))
+        build.onResolve({ filter: /^\.\.\/\.\.\/helpers\/offline-sync-status\.ts$/ }, () => ({
+          path: path.resolve(path.dirname(componentPath), '../../helpers/offline-sync-status.ts')
+        }))
         build.onResolve({ filter: /^.*$/ }, args => ({ path: args.path, namespace: 'header-notifications-stub' }))
         build.onLoad({ filter: /.*/, namespace: 'header-notifications-stub' }, args => {
           if (args.path === '@/store/index.ts') {
@@ -309,7 +313,7 @@ const bundle = await Bun.build({
           if (args.path.endsWith('/helpers/pwa.ts')) {
             return {
               contents:
-                'export const pwaState = globalThis.__headerConnection; export const pwaConnectionPresentation = () => ({ label: "Connected", tone: "success", icon: "mdi-check-network-outline" })',
+                'export const pwaState = globalThis.__headerConnection; export const pwaConnectionPresentation = () => ({ key: "connected", label: "Connected", tone: "success", icon: "mdi-check-network-outline" })',
               loader: 'js'
             }
           }
@@ -629,7 +633,10 @@ describe('account menu containment', () => {
     expect(profileLink?.closest('.account-menu')).toBe(accountMenu)
     expect(offlineManage?.closest('.account-menu')).toBe(accountMenu)
     expect(mounted.host.querySelector('.account-menu__tabs')).not.toBeNull()
+    const tablist = mounted.host.querySelector<HTMLElement>('.account-menu__tabs')!
+    expect(tablist.getAttribute('role')).toBe('tablist')
     const panels = [...mounted.host.querySelectorAll<HTMLElement>('.account-menu__panel')]
+    expect(panels.every(panel => panel.getAttribute('role') === 'tabpanel')).toBe(true)
     const sections = [
       { label: 'Appearance', content: '.account-menu__preferences' },
       { label: 'Offline', content: '.account-offline-summary' },
@@ -637,17 +644,36 @@ describe('account menu containment', () => {
     ]
     for (const section of sections) {
       const tabs = [...mounted.host.querySelectorAll<HTMLElement>('.account-menu__tab')]
+      expect(tabs.map(candidate => candidate.textContent?.trim())).toEqual(['Notifications', 'Appearance', 'Offline'])
       const tab = tabs.find(candidate => candidate.textContent?.trim() === section.label)!
       tab.click()
       await settle()
-      expect(tab.getAttribute('aria-pressed')).toBe('true')
-      expect(tabs.filter(candidate => candidate.getAttribute('aria-pressed') === 'true')).toEqual([tab])
-      const selectedPanel = mounted.host.querySelector(section.content)?.closest('.account-menu__panel')
+      expect(tab.getAttribute('role')).toBe('tab')
+      expect(tab.getAttribute('aria-selected')).toBe('true')
+      expect(tab.getAttribute('tabindex')).toBe('0')
+      expect(tabs.filter(candidate => candidate.getAttribute('aria-selected') === 'true')).toEqual([tab])
+      expect(tabs.filter(candidate => candidate.getAttribute('tabindex') === '0')).toEqual([tab])
+      const selectedPanel = mounted.host.querySelector(section.content)?.closest<HTMLElement>('.account-menu__panel')
       expect(selectedPanel).not.toBeNull()
+      expect(tab.getAttribute('aria-controls')).toBe(selectedPanel!.id)
+      expect(selectedPanel!.getAttribute('aria-labelledby')).toBe(tab.id)
       for (const panel of panels) {
         expect(panel.style.display === 'none').toBe(panel !== selectedPanel)
       }
     }
+    // Arrow keys move selection and focus between tabs; Home and End jump to the ends.
+    const keyTo = async (key: string): Promise<string | undefined> => {
+      const active = mounted.host.querySelector<HTMLElement>('.account-menu__tab[aria-selected="true"]')!
+      active.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+      await settle()
+      return mounted.host.querySelector<HTMLElement>('.account-menu__tab[aria-selected="true"]')?.textContent?.trim()
+    }
+    expect(await keyTo('ArrowRight')).toBe('Appearance')
+    expect(browserWindow.document.activeElement?.textContent?.trim()).toBe('Appearance')
+    expect(await keyTo('End')).toBe('Offline')
+    expect(await keyTo('ArrowRight')).toBe('Notifications')
+    expect(await keyTo('ArrowLeft')).toBe('Offline')
+    expect(await keyTo('Home')).toBe('Notifications')
     expect(mounted.host.querySelector('.account-offline-summary')).not.toBeNull()
     expect(mounted.host.querySelector('.pwa-status-panel')).toBeNull()
     expect(notifications?.closest('.account-menu')).toBe(accountMenu)
@@ -676,8 +702,8 @@ describe('account menu containment', () => {
     expect(offlinePanels).toHaveLength(1)
     expect(accountMenu?.getAttribute('aria-label')).toBe('Account menu')
     expect(offlinePanel?.closest('.account-menu')).toBe(accountMenu)
-    expect(offlinePanel?.getAttribute('href')).toBe('/p/offline')
-    expect(offlinePanel?.getAttribute('aria-label')).toBe('Connection and offline access')
+    expect(offlinePanel?.querySelector('.account-offline-summary__manage')?.getAttribute('href')).toBe('/p/offline')
+    expect(mounted.host.querySelector('.account-menu__tabs')).toBeNull()
     expect(mounted.host.querySelector('.pwa-status-panel')).toBeNull()
     expect(signIn?.closest('.account-menu')).toBe(accountMenu)
     expect(mounted.host.querySelector('[aria-label^="Open profile for "]')).toBeNull()
@@ -689,6 +715,38 @@ describe('account menu containment', () => {
     expect(mounted.host.querySelector('.nav-header-app-status-trigger')).toBeNull()
     expect(accountMenu?.closest('.menu-stub__content')).not.toBeNull()
     expect(accountMenu?.closest('.menu-stub__activator')).toBeNull()
+  })
+
+  it('adds an Approvals tab with a count for reviewers and falls back to an icon avatar without a name', async () => {
+    wikiStore.user = { ...user(1), permissions: ['write:pages'] }
+    siteNotifications.approvals = [{ id: 'a1' }, { id: 'a2' }]
+    siteNotifications.approvalsNextCursor = 'next'
+    try {
+      const mounted = await mountHeader()
+      const tabs = [...mounted.host.querySelectorAll<HTMLElement>('.account-menu__tab')]
+      expect(tabs.map(tab => tab.dataset.tab)).toEqual(['notifications', 'approvals', 'appearance', 'offline'])
+      const approvals = tabs[1]!
+      expect(approvals.querySelector('.account-menu__tab-badge')?.textContent).toBe('2+')
+      approvals.click()
+      await settle()
+      const panel = mounted.host.querySelector<HTMLElement>('#account-menu-panel-approvals')!
+      expect(panel.style.display).not.toBe('none')
+      expect(panel.querySelector('[section="approvals"]')).not.toBeNull()
+      // The Notifications tab then lists page changes only.
+      expect(mounted.host.querySelector('#account-menu-panel-notifications [section="changes"]')).not.toBeNull()
+
+      wikiStore.user = { ...user(1), name: '', permissions: [] }
+      siteNotifications.approvals = []
+      await settle()
+      expect(mounted.host.querySelector('.account-menu__tab[data-tab="approvals"]')).toBeNull()
+      expect(mounted.host.querySelector('.account-menu__tab[aria-selected="true"]')?.getAttribute('data-tab')).toBe('notifications')
+      const trigger = mounted.host.querySelector<HTMLElement>('.account-menu__trigger')!
+      expect(trigger.querySelector('.account-menu__initials')).toBeNull()
+      expect(trigger.textContent).toContain('mdi-account-circle')
+    } finally {
+      siteNotifications.approvals = []
+      siteNotifications.approvalsNextCursor = null
+    }
   })
 })
 
@@ -727,7 +785,7 @@ describe('account continuity without a verified connection', () => {
     expect(host.textContent).toContain('Account not verified')
     expect(host.textContent).toContain('Reconnect to verify your session')
     expect(host.querySelector('[aria-label="Sign in"]')).toBeNull()
-    expect(host.querySelector('.account-menu__offline')?.getAttribute('href')).toBe('/p/offline')
+    expect(host.querySelector('.account-menu__offline .account-offline-summary__manage')?.getAttribute('href')).toBe('/p/offline')
 
     Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
     wikiStore.authRefreshPending = true
@@ -772,7 +830,9 @@ describe('account continuity without a verified connection', () => {
     expect(host.querySelector('.account-menu__notifications')).toBeNull()
     expect(host.querySelector('[aria-label="Sign in"]')).toBeNull()
     const form = host.querySelector('form[action="/logout"]')
-    expect(form?.querySelector('[type="submit"]')?.hasAttribute('disabled')).toBe(true)
+    // Sign-out stays focusable and explains why it is paused; submit is blocked in code.
+    expect(form?.querySelector('[type="submit"]')?.getAttribute('aria-disabled')).toBe('true')
+    expect(form?.textContent).toContain('Reconnect to sign out.')
     const before = calls.filter(call => call.kind === 'reset').length
     form?.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
     await settle()
