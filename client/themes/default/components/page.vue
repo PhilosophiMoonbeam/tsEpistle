@@ -221,7 +221,7 @@
               //- the top bar, the page title or the Updated/author line, and
               //- their width is capped so long reasons wrap.
               .page-tools-card__utilities(v-if='!printView')
-                v-menu(:location='isTocMobile ? $t(`common:page.topEnd`) : `bottom`', min-width='300')
+                v-menu(:location='isTocMobile ? 'top end' : `bottom`', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                       template(v-slot:activator='{ props: tooltipProps }')
@@ -262,7 +262,7 @@
                       v-icon mdi-bell-outline
                   span {{$t('common:page.watchPage')}}
                   span.page-tool-blocked-reason(v-if='pageWatchBlockedReason') {{ pageWatchBlockedReason }}
-                v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? $t(`common:page.topEnd`) : `bottom`', :close-on-content-click='false', min-width='260')
+                v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? 'top end' : `bottom`', :close-on-content-click='false', min-width='260')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                       template(v-slot:activator='{ props: tooltipProps }')
@@ -860,6 +860,7 @@ import boot from '../../../modules/boot.ts'
 import { useSiteNotificationsStore } from '../../../store/site-notifications.ts'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
 import { translate } from '../../../modules/localization.ts'
+import type { Translate } from '@/helpers/use-translate.ts'
 
 /* global siteLangs */
 
@@ -1183,15 +1184,16 @@ const pageMermaidSource = (host: HTMLElement): string | null => {
   return host.querySelector<HTMLElement>('.content-extension-diagram__source code')?.textContent ?? null
 }
 
-const showPageMermaidLimitNotice = (container: HTMLElement): void => {
+const showPageMermaidLimitNotice = (t: Translate, container: HTMLElement): void => {
   if (container.querySelector(`.${PAGE_MERMAID_LIMIT_NOTICE_CLASS}`)) return
   const notice = container.ownerDocument.createElement('p')
   notice.className = PAGE_MERMAID_LIMIT_NOTICE_CLASS
-  notice.textContent = this.$t(PAGE_MERMAID_LIMIT_NOTICE_MESSAGE)
+  notice.textContent = t(PAGE_MERMAID_LIMIT_NOTICE_MESSAGE)
   container.append(notice)
 }
 
 const renderPageMermaidDiagrams = async (
+  t: Translate,
   container: HTMLElement,
   theme: 'default' | 'dark',
   signal: AbortSignal,
@@ -1205,7 +1207,7 @@ const renderPageMermaidDiagrams = async (
     return source !== null && !mermaidHosts.has(host)
   })
   for (const host of excessHosts) host.setAttribute('aria-busy', 'false')
-  if (excessHosts.length > 0) showPageMermaidLimitNotice(container)
+  if (excessHosts.length > 0) showPageMermaidLimitNotice(t, container)
   const jobs = diagrams.flatMap(diagram => {
     const source = pageMermaidSource(diagram) ?? ''
     const state = diagram.dataset.pageMermaidState
@@ -1246,7 +1248,7 @@ const renderPageMermaidDiagrams = async (
           const status = container.ownerDocument.createElement('p')
           status.className = PAGE_MERMAID_ERROR_CLASS
           status.setAttribute('role', 'alert')
-          status.textContent = this.$t(PAGE_MERMAID_ERROR_MESSAGE)
+          status.textContent = t(PAGE_MERMAID_ERROR_MESSAGE)
           diagram.prepend(status)
         }
         diagram.dataset.pageMermaidState = 'failed'
@@ -3149,6 +3151,7 @@ export default defineComponent({
       setupCodeCopyShimmer(container)
       setupInlineCodeCopy(container)
       void renderPageMermaidDiagrams(
+        this.$t,
         container,
         this.$vuetify.theme.current.dark ? 'dark' : 'default',
         mermaidController.signal,
