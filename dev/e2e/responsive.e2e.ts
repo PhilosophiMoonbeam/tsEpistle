@@ -1806,6 +1806,30 @@ test.describe('responsive UI quality matrix', () => {
     }
   })
 
+  test('restores the phone overflow opener after enabled Agent Escape from Search', async ({ page }) => {
+    test.skip((page.viewportSize()?.width ?? 1280) >= 600, 'Phone overflow handoff requires the xs breakpoint.')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'focus' })
+    try {
+      await page.setViewportSize({ width: 375, height: 812 })
+      await openAuthenticatedPage(page, '/', '.nav-header')
+      await openSearch(page)
+      await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeVisible()
+      const overflow = page.locator('.nav-header-mobile-actions')
+      await overflow.click()
+      await page.getByRole('button', { name: 'Open Wiki Agent', exact: true }).click()
+      const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
+      await expect(agent).toBeVisible()
+      await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeEnabled()
+      await expect(page.locator('.v-menu.v-overlay--active')).toHaveCount(0)
+      await agent.getByRole('button', { name: 'History', exact: true }).focus()
+      await page.keyboard.press('Escape')
+      await expect(agent).toBeHidden()
+      await expect(overflow).toBeFocused()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
   test('keeps Agent Chat readable and operable', async ({ page }) => {
     await openAuthenticatedPage(page, '/', '.page-header-section')
     const originalPageUrl = page.url()

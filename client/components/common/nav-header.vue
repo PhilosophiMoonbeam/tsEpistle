@@ -1323,6 +1323,8 @@ export default defineComponent({
       }
     },
     async searchEscape(): Promise<void> {
+      // Agent's modal scope owns Escape and restores its own invoking control.
+      if (this.searchMode === 'ask') return
       this.searchClose()
       if (!this.$vuetify.display.smAndDown) return
       await this.$nextTick()
