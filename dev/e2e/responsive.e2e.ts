@@ -2152,12 +2152,12 @@ test.describe('responsive UI quality matrix', () => {
       // Remove the chips after testing placement so the small viewport can focus on reading behavior.
       for (const source of sources) await agent.getByRole('button', { name: `Remove source ${source.title}`, exact: true }).click()
       await expect(agent.locator('.agent-context__sources')).toHaveCount(0)
+      const transcript = agent.locator('.inline-agent__transcript')
       await composer.fill('Show enough release evidence to inspect the latest response navigation.')
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
       await expect(agent.locator('.agent-message--assistant').last()).toContainText(
         'The final checkpoint keeps the newest response at the end of the conversation.'
       )
-      const transcript = agent.locator('.inline-agent__transcript')
       const footer = agent.locator('.inline-agent__composer')
       const latest = agent.getByRole('button', { name: 'Jump to latest response', exact: true })
       const face = latest.locator('.inline-agent__follow-jump-face')
@@ -2253,14 +2253,17 @@ test.describe('responsive UI quality matrix', () => {
       await expect.poll(distanceFromBottom, { message: 'Submitting a message immediately returns to the newest messages' }).toBeLessThanOrEqual(25)
       await readAtDistance(400)
       await expect.poll(() => opacity(footer)).toBeCloseTo(0.85, 2)
+      const earlierScrollTop = await transcript.evaluate(element => element.scrollTop)
       releaseResponse()
       releaseResponse = null
       await expect(agent.locator('.agent-message--assistant').last()).toContainText(
         'The final checkpoint keeps the newest response at the end of the conversation.'
       )
-      await expect
-        .poll(distanceFromBottom, { message: 'The arriving completed response returns to the newest messages even after reading earlier content' })
-        .toBeLessThanOrEqual(25)
+      await expect.poll(() => transcript.evaluate(element => element.scrollTop), {
+        message: 'The arriving response leaves the reader at the same earlier message'
+      }).toBeCloseTo(earlierScrollTop, 0)
+      await expect.poll(distanceFromBottom).toBeGreaterThan(400)
+      await expect(latest).toBeVisible()
       await readAtDistance(400)
       await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'active', reducedMotion: 'reduce' })
       await expect(latest).toBeVisible()
