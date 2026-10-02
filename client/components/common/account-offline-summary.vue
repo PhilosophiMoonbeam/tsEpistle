@@ -81,6 +81,7 @@ import {
 } from '../../helpers/offline-session.ts'
 import { offlineSyncPresentation, translateConnection, type OfflineTranslate } from '../../helpers/offline-sync-status.ts'
 import { promptPwaInstall, pwaConnectionPresentation, pwaState } from '../../helpers/pwa.ts'
+import { helpers } from '../../helpers/index.ts'
 import { wikiStore } from '../../store/index.ts'
 import type { OfflineSnapshotRecord, OfflineSyncDiagnostics } from '../../../shared/offline.ts'
 
@@ -105,12 +106,13 @@ const connected = computed(() => pwaState.connection === 'online' && pwaState.se
 const connectionLabel = (t: OfflineTranslate): string => translateConnection(connection.value, t)
 const syncState = computed(() => offlineSyncPresentation(diagnostics.value, syncing.value))
 const syncLabel = (t: OfflineTranslate): string => syncState.value.label(t)
+// Same formatter as the page's "Updated" line, so the time follows the
+// user's chosen time zone and date/time format, not the browser's.
 const syncTime = computed(() => {
-  const d = diagnostics.value
-  if (!d || !d.lastSuccessAt) return ''
-  const when = new Date(d.lastSuccessAt)
-  if (Number.isNaN(when.valueOf())) return ''
-  return when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  const lastSuccessAt = diagnostics.value?.lastSuccessAt
+  if (!lastSuccessAt || Number.isNaN(Date.parse(lastSuccessAt))) return ''
+  const formatted = helpers.formatMoment(lastSuccessAt, 'calendar')
+  return typeof formatted === 'string' ? formatted : ''
 })
 const pageCountLabel = (t: OfflineTranslate): string =>
   pageCount.value === 1

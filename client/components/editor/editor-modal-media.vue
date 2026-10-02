@@ -134,7 +134,7 @@
                         //-   v-list-item(@click='', disabled)
                         //-     template(v-slot:prepend)
                         //-       v-avatar(size='24')
-                        //-         v-icon(color='purple') mdi-flash-circle
+                        //-         v-icon(color='purple') mdi-lightning-bolt-circle
                         //-     v-list-item-title {{$t('common:actions.optimize')}}
                         v-list-item(
                           v-if='!isBranding && isResizableAsset(props.item)'

@@ -53,7 +53,7 @@
             :aria-pressed="selectedKey === recordKey(item)"
             @click="selectRecord(item)"
           >
-            <span class="record-mark" aria-hidden="true"><v-icon :icon="item.restoreMode === 'quarantine' ? 'mdi-alert-lock-outline' : 'mdi-file-restore-outline'" /></span>
+            <span class="record-mark" aria-hidden="true"><v-icon :icon="item.restoreMode === 'quarantine' ? 'mdi-lock-alert-outline' : 'mdi-file-restore-outline'" /></span>
             <span class="record-copy">
               <strong>{{ item.title || 'Untitled page' }}</strong>
               <span class="record-location">{{ item.localeCode }} / {{ item.path }}</span>

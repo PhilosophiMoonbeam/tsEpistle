@@ -71,6 +71,8 @@ describe('profile route loading ownership', () => {
     const stubbedWindow = globalThis.window as unknown as { confirm: ReturnType<typeof vi.fn>; location: { reload: ReturnType<typeof vi.fn> } }
     expect(stubbedWindow.confirm).toHaveBeenCalledWith('This section could not be loaded.\n\nReload the page to try again.')
     expect(stubbedWindow.location.reload).not.toHaveBeenCalled()
+    // The reload question is the only surface; no toast repeats it.
+    expect(wikiStore.notification.isActive).toBe(false)
 
     afterEachHandlers[0]!(secondNavigation)
     expect(wikiStore.loadingCounts.profile).toBeUndefined()

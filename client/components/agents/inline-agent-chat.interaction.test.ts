@@ -1387,6 +1387,31 @@ describe('Inline Agent conversation starters', () => {
     await settle()
     expect(lockState.agentCalls.send).not.toHaveBeenCalled()
   })
+  it('keeps a blocked, unopened workspace inside the body glass with starters above a bottom-docked composer', async () => {
+    const lockState = loadGoalLockState(null)
+    ;(lockState.thread as ValueRef<unknown>).value = null
+    ;(lockState.networkPaused as ValueRef<boolean>).value = true
+    const mounted = mountInlineAgent(lockState)
+    await settle()
+    // The notice lives in the blurred conversation body, never in the
+    // transparent card gap between the header and the body.
+    const notices = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__connection-alert'))
+    expect(notices).toHaveLength(1)
+    expect(notices[0]?.parentElement?.classList.contains('inline-agent__body')).toBe(true)
+    expect(notices[0]?.textContent).toContain('Connection required')
+    expect(notices[0]?.textContent).toContain('Retry connection')
+    const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+    const order = Array.from(transcript?.children ?? []).map(child => child.className)
+    expect(order[0]).toContain('inline-agent__welcome')
+    expect(order.at(-1)).toContain('inline-agent__conversation-dock')
+    const starters = Array.from(mounted.root.querySelectorAll<HTMLButtonElement>('.inline-agent__starter'))
+    expect(starters).toHaveLength(3)
+    expect(starters.every(starter => starter.getAttribute('aria-disabled') === 'true')).toBe(true)
+    expect(mounted.root.querySelector('.inline-agent__starter-reason')?.textContent).toContain('Connection required')
+    starters[0]?.click()
+    await settle()
+    expect(lockState.agentCalls.send).not.toHaveBeenCalled()
+  })
 })
 
 describe('Inline Agent header actions', () => {
