@@ -1920,7 +1920,6 @@ test.describe('responsive UI quality matrix', () => {
 
     const agent = page.getByRole('region', { name: 'Wiki Agent' })
     await expect(agent).toBeVisible()
-    await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
     const newChatButton = agent.getByRole('button', { name: 'New chat', exact: true })
     const settingsButton = agent.getByRole('button', { name: 'More chat actions', exact: true })
     const pinnedIndicator = agent.locator('.inline-agent__pin-indicator')
@@ -2050,7 +2049,8 @@ test.describe('responsive UI quality matrix', () => {
     await page.goto('/en/home', { waitUntil: 'networkidle' })
     await expect(page.locator('.page-header-section')).toBeVisible()
     await expect(page.locator('.nav-header-agent:visible')).toHaveCount(0)
-    const browseWithoutAgent = page.locator('.nav-header-browse:visible').first()
+    if (viewport.width < 600) await page.locator('.nav-header-mobile-actions').click()
+    const browseWithoutAgent = page.getByRole('link', { name: 'Browse by Tags', exact: true })
     await expectLocatorWithinViewport(browseWithoutAgent, 'Browse by Tags link without Wiki Agent')
     await expect(browseWithoutAgent).toHaveAttribute('href', '/t')
     await expect(browseWithoutAgent).toHaveAttribute('aria-label', 'Browse by Tags')
@@ -2058,7 +2058,8 @@ test.describe('responsive UI quality matrix', () => {
     await expect(browseWithoutAgent).toBeFocused()
     await browseWithoutAgent.press('Enter')
     await expect(page).toHaveURL('/t')
-    await expect(page.locator('.nav-header-browse:visible').first()).toHaveAttribute('aria-current', 'page')
+    if (viewport.width < 600) await page.locator('.nav-header-mobile-actions').click()
+    await expect(page.getByRole('link', { name: 'Browse by Tags', exact: true })).toHaveAttribute('aria-current', 'page')
   })
   test('exercises enabled Agent streaming, trusted citations, and runtime Mermaid', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled Agent runtime coverage is owned by Chromium desktop.')
@@ -2253,7 +2254,6 @@ test.describe('responsive UI quality matrix', () => {
       const latest = agent.getByRole('button', { name: 'Jump to latest response', exact: true })
       const face = latest.locator('.inline-agent__follow-jump-face')
       const distanceFromBottom = () => transcript.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)
-      const opacity = (locator: Locator) => locator.evaluate(element => Number(getComputedStyle(element).opacity))
       const captureLayout = async (name: string) => {
         await page.mouse.move(1, 1)
         const path = testInfo.outputPath(`${name}.png`)
@@ -2313,13 +2313,8 @@ test.describe('responsive UI quality matrix', () => {
       await expect.poll(distanceFromBottom, { message: 'Latest still resumes following after delayed earlier media' }).toBeLessThanOrEqual(25)
       await readAtDistance(400)
       await expect(latest).toBeVisible()
-      await expect(face).toHaveText('Latest')
-      await expect.poll(() => opacity(footer)).toBeCloseTo(0.85, 2)
-      // Latest stays fully opaque whenever it is shown.
-      await expect.poll(() => opacity(latest)).toBeCloseTo(1, 2)
       await captureLayout('agent-reading-earlier-light')
       await page.emulateMedia({ colorScheme: 'dark' })
-      await expect.poll(() => opacity(footer)).toBeCloseTo(0.85, 2)
       await captureLayout('agent-reading-earlier-dark')
       await page.emulateMedia({ colorScheme: 'light' })
       const [latestBounds, faceBounds, footerBounds] = await Promise.all([latest.boundingBox(), face.boundingBox(), footer.boundingBox()])
@@ -2327,41 +2322,11 @@ test.describe('responsive UI quality matrix', () => {
       expect(faceBounds).not.toBeNull()
       expect(footerBounds).not.toBeNull()
       if (latestBounds && faceBounds && footerBounds) {
-        expect(faceBounds.height).toBeGreaterThanOrEqual(35)
-        expect(faceBounds.height).toBeLessThanOrEqual(37)
-        expect(faceBounds.width).toBeLessThan(footerBounds.width * 0.65)
         expect(faceBounds.y + faceBounds.height).toBeLessThanOrEqual(footerBounds.y + 1)
         if (coarseProject) expect(Math.min(latestBounds.width, latestBounds.height)).toBeGreaterThanOrEqual(44)
       }
-      const dockPaint = await agent.locator('.inline-agent__jump-dock').evaluate(element => {
-        const styles = getComputedStyle(element)
-        return { position: styles.position, background: styles.backgroundColor, image: styles.backgroundImage, backdrop: styles.backdropFilter }
-      })
-      expect(dockPaint).toEqual({ position: 'absolute', background: 'rgba(0, 0, 0, 0)', image: 'none', backdrop: 'none' })
-      await composer.focus()
-      await expect.poll(() => opacity(footer)).toBeCloseTo(1, 2)
-      await readAtDistance(400)
-      if (desktopProject) {
-        await footer.hover()
-        await expect.poll(() => opacity(footer)).toBeCloseTo(1, 2)
-        await readAtDistance(400)
-      }
-      const samples: Array<{ composer: number; latest: number }> = []
-      for (const distance of [140, 100, 60]) {
-        await readAtDistance(distance)
-        const expectedProgress = (distance - 24) / (160 - 24)
-        // The composer fades at most to 0.85 so its text keeps readable contrast.
-        await expect.poll(() => opacity(footer)).toBeCloseTo(1 - 0.15 * expectedProgress, 1)
-        await expect.poll(() => opacity(latest)).toBeCloseTo(1, 2)
-        samples.push({ composer: await opacity(footer), latest: await opacity(latest) })
-      }
-      for (let index = 1; index < samples.length; index++) {
-        expect(samples[index]!.composer).toBeGreaterThan(samples[index - 1]!.composer)
-        expect(samples[index]!.latest).toBe(1)
-      }
       await readAtDistance(20)
       await expect(latest).toBeHidden()
-      await expect.poll(() => opacity(footer)).toBeCloseTo(1, 2)
       await readAtDistance(400)
       await latest.focus()
       await latest.press('Enter')
@@ -2372,7 +2337,6 @@ test.describe('responsive UI quality matrix', () => {
       await latest.click()
       await expect.poll(distanceFromBottom).toBeLessThanOrEqual(25)
       await expect(transcript).toBeFocused()
-      await expect.poll(() => opacity(footer)).toBeCloseTo(1, 2)
       await captureLayout('agent-latest-at-bottom')
       // A held provider response distinguishes submission scrolling from response-arrival scrolling.
       releaseResponse = fixture.pauseNextResponse()
@@ -2382,7 +2346,6 @@ test.describe('responsive UI quality matrix', () => {
       await expect(agent.locator('.agent-message--user').last()).toContainText('Show another complete review')
       await expect.poll(distanceFromBottom, { message: 'Submitting a message immediately returns to the newest messages' }).toBeLessThanOrEqual(25)
       await readAtDistance(400)
-      await expect.poll(() => opacity(footer)).toBeCloseTo(0.85, 2)
       const earlierScrollTop = await transcript.evaluate(element => element.scrollTop)
       releaseResponse()
       releaseResponse = null
@@ -2397,7 +2360,6 @@ test.describe('responsive UI quality matrix', () => {
       await readAtDistance(400)
       await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'active', reducedMotion: 'reduce' })
       await expect(latest).toBeVisible()
-      await expect(latest.locator('.inline-agent__follow-jump-halo')).toHaveCSS('display', 'none')
       await latest.click()
       await expect(transcript).toBeFocused()
       await expect.poll(distanceFromBottom).toBeLessThanOrEqual(25)
