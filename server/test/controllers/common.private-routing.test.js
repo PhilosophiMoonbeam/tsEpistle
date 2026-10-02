@@ -176,6 +176,8 @@ describe('common page routing', () => {
     await history(missing('/h/en/guides/new-guide', writer), writerHistory)
     expect(writerHistory.status).toHaveBeenCalledWith(404)
     expect(writerHistory.render).toHaveBeenCalledWith('notfound', { action: 'history', createHref: '/e/en/guides/new-guide' })
+    expect(writerHistory.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(writerHistory.vary).toHaveBeenCalledWith('Cookie')
     expect(global.WIKI.auth.getEffectivePermissions).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({ path: 'guides/new-guide', locale: 'en', tags: [] }),
@@ -191,10 +193,14 @@ describe('common page routing', () => {
     expect(readerHistory.status).toHaveBeenCalledWith(404)
     expect(readerHistory.render).toHaveBeenCalledWith('notfound', { action: 'history' })
     expect(readerHistory.render.mock.calls[0][1]).not.toHaveProperty('createHref')
+    expect(readerHistory.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(readerHistory.vary).toHaveBeenCalledWith('Cookie')
 
     const privateHistory = response()
     await history(missing('/h/_private/en/notes', writer), privateHistory)
     expect(privateHistory.render.mock.calls[0][1]).toEqual({ action: 'history' })
+    expect(privateHistory.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(privateHistory.vary).toHaveBeenCalledWith('Cookie')
   })
 
   it('renders the by-ID inspection route only for system administrators', async () => {

@@ -10,7 +10,7 @@ import {
   OfflinePageSnapshotV1Schema
 } from '../../shared/offline.ts'
 import type { PageRuleAuthority } from './group-access.ts'
-import { canReadPage, type PagePrincipal, type PageVisibilityRecord, pageAuthorizationContext, pageRoute } from './page-access.ts'
+import { canReadPage, canWritePage, type PagePrincipal, type PageVisibilityRecord, pageAuthorizationContext, pageRoute } from './page-access.ts'
 
 const { JSDOM } = jsdomModule
 const domWindow = new JSDOM('').window
@@ -494,10 +494,7 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
   const accessPage: PageVisibilityRecord = { path, locale: localeCode, localeCode, visibility, ownerId: pageOwnerId, tags }
   if (pageAuthorizationContext(accessPage) === null || !canReadPage(input.requester, accessPage, input.authority))
     invalid(input.audience === 'public' ? 'The page is not publicly readable' : 'The page is not readable')
-  // Every refusal from here on concerns a page the requester can read, so it may carry a reason.
-  if (renderedSourceRevision === null || renderedSourceRevision !== sourceRevision)
-    refuse('The page render is not current for its source revision', 'render-pending')
-  const render = typeof renderValue === 'string' ? renderValue : refuse('The page has no rendered projection', 'render-pending')
+  // Publication precedes render checks: a reader must not learn whether a draft has rendered.
   const capturedAt =
     input.capturedAt === undefined
       ? new Date()
@@ -511,8 +508,13 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
     normalizedBoolean(page.isPublished) !== true ||
     (publicationStart !== null && publicationStart.valueOf() > capturedAt.valueOf()) ||
     (publicationEnd !== null && publicationEnd.valueOf() < capturedAt.valueOf())
-  )
-    refuse('The page is not currently published', 'unpublished')
+  ) {
+    if (canWritePage(input.requester, accessPage, input.authority)) refuse('The page is not currently published', 'unpublished')
+    throw new OfflinePageProjectionError()
+  }
+  if (renderedSourceRevision === null || renderedSourceRevision !== sourceRevision)
+    refuse('The page render is not current for its source revision', 'render-pending')
+  const render = typeof renderValue === 'string' ? renderValue : refuse('The page has no rendered projection', 'render-pending')
   if (editorKey !== 'markdown' && editorKey !== 'visual-markdown' && editorKey !== 'asciidoc') refuse('The page editor is not supported offline', 'editor')
   if ((editorKey === 'markdown' || editorKey === 'visual-markdown') && contentType !== 'markdown')
     refuse('The page content type is not supported offline', 'editor')
