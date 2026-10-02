@@ -32,7 +32,11 @@ export async function mountOfflineApp(appearance: string): Promise<void> {
   const vuetify = createAppVuetify(appearance)
   app.use(pinia).use(vuetify).use(helpersPlugin)
   app.config.globalProperties.$i18n = i18next
-  app.config.globalProperties.$t = (key, options) => (typeof options?.defaultValue === 'string' ? options.defaultValue : fallbackLocalizationLabel(key))
+  app.config.globalProperties.$t = (key, options) => {
+    const text = typeof options?.defaultValue === 'string' ? options.defaultValue : fallbackLocalizationLabel(key)
+    // Bundled defaults use i18next placeholders such as {{count}}.
+    return options ? text.replace(/\{\{\s*(\w+)\s*\}\}/gu, (match, name: string) => (name in options ? String(options[name]) : match)) : text
+  }
   app.component('NavHeader', NavHeader)
   app.component('SearchResults', SearchResults)
   app.component('PageSelector', PageSelector)

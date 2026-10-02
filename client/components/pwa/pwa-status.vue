@@ -1,31 +1,32 @@
 <template lang='pug'>
 section.pwa-status-panel(
   role='region'
-  :aria-label='panelLabel'
+  :aria-label='$t(`common:offline.status.panelLabel`, { status: connectionLabel($t), defaultValue: `Connection and offline access: {{status}}`, interpolation: { escapeValue: false } })'
 )
   .pwa-status-panel__body
     .pwa-status-panel__heading
       div
-        p.pwa-status-panel__eyebrow This device
-        h2 Connection and offline access
+        p.pwa-status-panel__eyebrow {{ $t('common:offline.status.eyebrow', { defaultValue: 'This device' }) }}
+        h2 {{ $t('common:offline.status.title', { defaultValue: 'Connection and offline access' }) }}
       v-icon(:icon='connectionPresentation.icon', :color='connectionPresentation.tone', size='22', aria-hidden='true')
 
+    //- The only live region in the panel; the notes below are plain text.
     .pwa-status-panel__summary(role='status', aria-live='polite', aria-atomic='true')
       span.pwa-status-panel__summary-dot(:class='`pwa-status-panel__summary-dot--${connectionPresentation.tone}`', aria-hidden='true')
       div
-        strong {{ summaryLabel }}
-        p {{ summaryDescription }}
+        strong {{ connectionLabel($t) }}
+        p {{ msg($t, summaryDescription) }}
 
     dl.pwa-status-panel__facts
       div
-        dt Browser connection
-        dd(:class='`pwa-status-panel__value--${networkHintTone}`') {{ networkHintLabel }}
+        dt {{ $t('common:offline.status.browserConnection', { defaultValue: 'Browser connection' }) }}
+        dd(:class='`pwa-status-panel__value--${networkHintTone}`') {{ msg($t, networkHint) }}
       div
-        dt Server
-        dd(:class='`pwa-status-panel__value--${serverStatusTone}`') {{ serverStatusLabel }}
+        dt {{ $t('common:offline.status.server', { defaultValue: 'Server' }) }}
+        dd(:class='`pwa-status-panel__value--${serverStatusTone}`') {{ msg($t, serverStatus) }}
       div
-        dt Offline access
-        dd {{ offlineShellLabel }}
+        dt {{ $t('common:offline.status.offlineAccess', { defaultValue: 'Offline access' }) }}
+        dd {{ msg($t, offlineShell) }}
 
     v-alert.pwa-status-panel__alert(
       v-if='pwaState.error && pwaState.error !== pwaState.updateError'
@@ -41,7 +42,7 @@ section.pwa-status-panel(
       density='compact'
       role='alert'
     )
-      strong Update error.
+      strong {{ $t('common:offline.status.updateError', { defaultValue: 'Update error.' }) }}
       |  {{ pwaState.updateError }}
     v-alert.pwa-status-panel__alert(
       v-if='pwaState.installError'
@@ -50,7 +51,7 @@ section.pwa-status-panel(
       density='compact'
       role='alert'
     )
-      strong Install error.
+      strong {{ $t('common:offline.status.installError', { defaultValue: 'Install error.' }) }}
       |  {{ pwaState.installError }}
 
     .pwa-status-panel__actions
@@ -60,7 +61,7 @@ section.pwa-status-panel(
         :loading='isRetrying'
         :disabled='isRetrying'
         @click='retryConnection'
-      ) {{ isRetrying ? `Checking…` : `Check connection` }}
+      ) {{ isRetrying ? $t('common:offline.status.checking', { defaultValue: 'Checking…' }) : $t('common:offline.status.checkConnection', { defaultValue: 'Check connection' }) }}
       v-btn(
         v-if='startupRefreshDeferred || (pwaState.updateReady && (pwaState.preparation === `deferred` || pwaState.preparation === `error`))'
         color='primary'
@@ -69,30 +70,19 @@ section.pwa-status-panel(
         :loading='isUpdating'
         :disabled='isUpdating || pwaState.reloadSafe === false'
         @click='applyUpdate'
-      ) {{ isUpdating ? (startupRefreshDeferred ? `Checking…` : `Retrying…`) : (startupRefreshDeferred ? `Check and refresh app` : `Retry app update`) }}
+      ) {{ msg($t, updateActionLabel) }}
 
-    p.pwa-status-panel__note(v-if='startupRefreshDeferred', role='status')
-      | The startup update check was deferred. This page will not reload automatically. {{ pwaState.reloadSafe === false ? 'Refresh is unavailable until all open pages are safe.' : 'Choose Check and refresh when you’re ready.' }}
-    p.pwa-status-panel__note(v-else-if='pwaState.reloadNeeded', role='status')
-      | The app has updated. This page will reload when your current work is safe.
-    p.pwa-status-panel__note(v-else-if='pwaState.updateReady && pwaState.reloadSafe === false', role='status')
-      | Update ready. It will apply automatically after your current work is safe.
-    p.pwa-status-panel__note(v-else-if='pwaState.updateReady && pwaState.preparation === `deferred`', role='status')
-      | The update is waiting for all open pages to respond safely. Return to or close older tabs, then retry if needed.
-    p.pwa-status-panel__note(v-else-if='pwaState.updateReady', role='status')
-      | The app update is being prepared automatically and may reload this page when all open pages are safe.
-    p.pwa-status-panel__note(v-else-if='pwaState.updateState === `checking` || pwaState.updateState === `activating`', role='status')
-      | Checking the app update without interrupting this page.
+    p.pwa-status-panel__note(v-if='updateNote') {{ msg($t, updateNote) }}
 
     section.pwa-status-panel__install(
       v-if='showInstallSection'
       aria-labelledby='pwa-status-install-title'
     )
-      h3#pwa-status-install-title Install tsEpistle
-      p(v-if='pwaState.isStandalone') You’re using tsEpistle in its own window.
-      p(v-else-if='installCompleted') Installed. Open tsEpistle from your apps or home screen.
+      h3#pwa-status-install-title {{ siteText($t, 'installTitle') }}
+      p(v-if='pwaState.isStandalone') {{ siteText($t, 'standalone') }}
+      p(v-else-if='installCompleted') {{ siteText($t, 'installed') }}
       template(v-else-if='canInstall')
-        p Add tsEpistle to your apps or home screen for easy access.
+        p {{ siteText($t, 'installHint') }}
         v-btn(
           color='primary'
           variant='tonal'
@@ -100,31 +90,53 @@ section.pwa-status-panel(
           :loading='isInstalling'
           :disabled='isInstalling'
           @click='installApplication'
-        ) {{ isInstalling ? `Opening…` : `Install tsEpistle` }}
-      p(v-else-if='manualInstallGuidance')
-        | Open Share or your browser menu and choose Add to Home Screen, if available.
-      p(v-else) Your browser does not offer installation right now. You can keep using tsEpistle here.
+        ) {{ isInstalling ? $t('common:offline.status.opening', { defaultValue: 'Opening…' }) : siteText($t, 'installAction') }}
+      p(v-else-if='manualInstallGuidance') {{ $t('common:offline.status.manualInstall', { defaultValue: 'Open Share or your browser menu and choose Add to Home Screen, if available.' }) }}
+      p(v-else) {{ siteText($t, 'installUnavailable') }}
 
+    //- Same-site links use a chevron; an external-link arrow would suggest a new tab.
     .pwa-status-panel__links(v-if='showLinks')
       a.pwa-status-panel__library(href='/p/offline')
         v-icon(icon='mdi-tune-variant', size='18', aria-hidden='true')
-        span Offline preferences
-        v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
+        span {{ $t('common:offline.summary.settingsLink', { defaultValue: 'Offline settings' }) }}
+        v-icon.pwa-status-panel__chevron(icon='mdi-chevron-right', size='18', aria-hidden='true')
       a.pwa-status-panel__library(href='/p/offline#downloaded-pages-title')
-        v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
-        span Saved pages
-        v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
+        v-icon(icon='mdi-cloud-check-outline', size='18', aria-hidden='true')
+        span {{ $t('common:offline.summary.savedPagesLink', { defaultValue: 'Saved pages' }) }}
+        v-icon.pwa-status-panel__chevron(icon='mdi-chevron-right', size='18', aria-hidden='true')
 </template>
 
 <script setup lang='ts'>
 import { computed, ref } from 'vue'
 import { pwaConnectionPresentation, pwaState, promptPwaInstall, requestPwaUpdate, retryServerConnection, startupRefreshDeferred } from '../../helpers/pwa'
+import { translateConnection } from '../../helpers/offline-sync-status.ts'
+import { wikiStore } from '../../store/index.ts'
 
 const { showLinks = true } = defineProps<{ showLinks?: boolean }>()
+
+/** A locale key under `common:offline.status` and its English default. */
+type StatusMessage = readonly [key: string, text: string]
+type Translate = (key: string, options?: Record<string, unknown>) => string
+
+const msg = (t: Translate, message: StatusMessage): string => t(`common:offline.status.${message[0]}`, { defaultValue: message[1] })
 
 const isRetrying = ref(false)
 const isInstalling = ref(false)
 const isUpdating = ref(false)
+
+const siteTitle = computed(() => wikiStore.site.title?.trim() || (typeof siteConfig === 'undefined' ? '' : siteConfig.title?.trim() ?? '') || 'this wiki')
+
+// Defaults stay in script: a `{{site}}` placeholder inside a template mustache would end the interpolation.
+const SITE_TEXT = {
+  installTitle: 'Install {{site}}',
+  standalone: 'You are using {{site}} in its own window.',
+  installed: 'Installed. Open {{site}} from your apps or home screen.',
+  installHint: 'Add {{site}} to your apps or home screen.',
+  installAction: 'Install {{site}}',
+  installUnavailable: 'Your browser does not offer installation right now. You can keep using {{site}} here.'
+} as const
+const siteText = (t: Translate, key: keyof typeof SITE_TEXT): string =>
+  t(`common:offline.status.${key}`, { site: siteTitle.value, defaultValue: SITE_TEXT[key], interpolation: { escapeValue: false } })
 
 const installCompleted = computed(() => pwaState.appInstalled === true || pwaState.installed === true || pwaState.installAvailability === 'installed')
 
@@ -143,6 +155,7 @@ const manualInstallGuidance = computed(() => {
 const showInstallSection = true
 
 const connectionPresentation = computed(() => pwaConnectionPresentation(pwaState))
+const connectionLabel = (t: Translate): string => translateConnection(connectionPresentation.value, t)
 
 const networkHintTone = computed<'success' | 'warning' | 'error'>(() => {
   if (pwaState.onlineHint === true) return 'warning'
@@ -150,12 +163,12 @@ const networkHintTone = computed<'success' | 'warning' | 'error'>(() => {
   return 'warning'
 })
 
-const serverStatusLabel = computed(() => {
-  if (pwaState.connection === 'checking') return 'Checking…'
-  if (pwaState.serverHealthy === true) return 'Available'
-  if (pwaState.serverReachable === true) return 'Responded, but unavailable'
-  if (pwaState.serverReachable === false) return 'Unavailable'
-  return 'Not checked'
+const serverStatus = computed<StatusMessage>(() => {
+  if (pwaState.connection === 'checking') return ['checking', 'Checking…']
+  if (pwaState.serverHealthy === true) return ['serverAvailable', 'Available']
+  if (pwaState.serverReachable === true) return ['serverDegraded', 'Responded, but unavailable']
+  if (pwaState.serverReachable === false) return ['serverUnavailable', 'Unavailable']
+  return ['serverNotChecked', 'Not checked']
 })
 
 const serverStatusTone = computed<'success' | 'warning' | 'error'>(() => {
@@ -164,31 +177,48 @@ const serverStatusTone = computed<'success' | 'warning' | 'error'>(() => {
   return 'warning'
 })
 
-const offlineShellLabel = computed(() => {
-  if (pwaState.offlineReady) return pwaState.controlled ? 'Ready' : 'Ready for your next visit'
-  if (pwaState.registrationState === 'unsupported') return 'Not supported by this browser'
-  if (pwaState.registrationState === 'error') return 'Could not set up offline access'
-  return 'Not ready yet'
+const offlineShell = computed<StatusMessage>(() => {
+  if (pwaState.offlineReady) return pwaState.controlled ? ['shellReady', 'Ready'] : ['shellNextVisit', 'Ready for your next visit']
+  if (pwaState.registrationState === 'unsupported') return ['shellUnsupported', 'Not supported by this browser']
+  if (pwaState.registrationState === 'error') return ['shellError', 'Could not set up offline access']
+  return ['shellNotReady', 'Not ready yet']
 })
 
-const summaryDescription = computed(() => {
-  if (pwaState.connection === 'checking') return 'Checking whether tsEpistle is available.'
-  if (pwaState.connection === 'offline') return 'You’re offline. Keep reading saved pages; syncing will resume when you reconnect.'
-  if (pwaState.connection === 'server-unavailable') return 'The server is temporarily unavailable. Your saved pages remain available here.'
+const summaryDescription = computed<StatusMessage>(() => {
+  if (pwaState.connection === 'checking') return ['summaryChecking', 'Checking whether the server is available.']
+  if (pwaState.connection === 'offline') return ['summaryOffline', 'You are offline. Keep reading saved pages. Sync resumes when you reconnect.']
+  if (pwaState.connection === 'server-unavailable') return ['summaryServerUnavailable', 'The server is temporarily unavailable. Your saved pages remain available here.']
   if (pwaState.connection === 'online' && pwaState.serverReachable === true && pwaState.serverHealthy === true) {
-    return 'The server is available. You can browse and sync saved pages.'
+    return ['summaryConnected', 'The server is available. You can browse and sync saved pages.']
   }
-  return 'Check the connection to see whether the server is available.'
+  return ['summaryNotVerified', 'Check the connection to see whether the server is available.']
 })
 
-const panelLabel = computed(() => `Connection and offline access: ${connectionPresentation.value.label}`)
-const networkHintLabel = computed(() => {
-  if (pwaState.onlineHint === true) return 'Reports a connection'
-  if (pwaState.onlineHint === false) return 'Reports no connection'
-  return 'Unknown'
+const networkHint = computed<StatusMessage>(() => {
+  if (pwaState.onlineHint === true) return ['networkConnected', 'Reports a connection']
+  if (pwaState.onlineHint === false) return ['networkDisconnected', 'Reports no connection']
+  return ['networkUnknown', 'Unknown']
 })
 
-const summaryLabel = computed(() => connectionPresentation.value.label)
+const updateActionLabel = computed<StatusMessage>(() => {
+  if (isUpdating.value) return startupRefreshDeferred.value ? ['checking', 'Checking…'] : ['updateRetrying', 'Retrying…']
+  return startupRefreshDeferred.value ? ['updateCheckAndRefresh', 'Check and refresh app'] : ['updateRetry', 'Retry app update']
+})
+
+/** One short note about the app update; it is not a live region. */
+const updateNote = computed<StatusMessage | null>(() => {
+  if (startupRefreshDeferred.value) {
+    return pwaState.reloadSafe === false
+      ? ['noteDeferredUnsafe', 'The update check was deferred. This page will not reload by itself. Refresh is paused until all open pages are safe.']
+      : ['noteDeferred', 'The update check was deferred. This page will not reload by itself. Select Check and refresh when you are ready.']
+  }
+  if (pwaState.reloadNeeded) return ['noteReloadNeeded', 'The app has updated. This page reloads when your current work is safe.']
+  if (pwaState.updateReady && pwaState.reloadSafe === false) return ['noteWaitingForWork', 'Update ready. It applies after your current work is safe.']
+  if (pwaState.updateReady && pwaState.preparation === 'deferred') return ['noteWaitingForTabs', 'The update is waiting for all open pages to respond. Return to or close older tabs, then retry if needed.']
+  if (pwaState.updateReady) return ['notePreparing', 'The app update is being prepared. This page may reload when all open pages are safe.']
+  if (pwaState.updateState === 'checking' || pwaState.updateState === 'activating') return ['noteChecking', 'Checking for an app update without interrupting this page.']
+  return null
+})
 
 const retryConnection = async (): Promise<void> => {
   if (isRetrying.value) return
@@ -254,7 +284,7 @@ const applyUpdate = async (): Promise<void> => {
 }
 .pwa-status-panel__eyebrow {
   margin: 0 0 var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .6875rem;
   font-weight: 700;
   letter-spacing: .09em;
@@ -300,7 +330,7 @@ const applyUpdate = async (): Promise<void> => {
 .pwa-status-panel__note,
 .pwa-status-panel__install p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
   line-height: 1.45;
 }
@@ -319,7 +349,7 @@ const applyUpdate = async (): Promise<void> => {
 }
 
 .pwa-status-panel__facts dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
 }
 
@@ -390,6 +420,10 @@ const applyUpdate = async (): Promise<void> => {
 }
 
 .pwa-status-panel__library span { flex: 1 1 auto; min-width: 0; }
+
+.pwa-status-panel__chevron { color: var(--wiki-text-muted); }
+
+[dir='rtl'] .pwa-status-panel__chevron { transform: scaleX(-1); }
 
 .pwa-status-panel__library:hover,
 .pwa-status-panel__library:focus-visible {
