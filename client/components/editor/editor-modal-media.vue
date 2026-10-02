@@ -6,7 +6,7 @@
           v-card-text.editor-media-panel-content
             header.editor-media-header
               h2.editor-media-heading#editor-media-title {{ $t('editor:assets.title') }}
-              v-btn.editor-media-icon-button(ref='refreshButton', variant="text", icon, aria-label='Refresh assets', @click='refresh')
+              v-btn.editor-media-icon-button(ref='refreshButton', variant="text", icon, :aria-label='$t(`editor:editorModalMedia.refreshAssets`)', @click='refresh')
                 v-icon mdi-refresh
               v-dialog(
                 v-model='newFolderDialog'
@@ -16,7 +16,7 @@
                 aria-labelledby='editor-media-new-folder-title'
               )
                 template(v-slot:activator='{ props }')
-                  v-btn.editor-media-new-folder.radius-7(variant="tonal", color='primary', :icon='$vuetify.display.xs', :class='{ "editor-media-icon-button": $vuetify.display.xs }', aria-label='Create folder', v-bind='props')
+                  v-btn.editor-media-new-folder.radius-7(variant="tonal", color='primary', :icon='$vuetify.display.xs', :class='{ "editor-media-icon-button": $vuetify.display.xs }', :aria-label='$t(`editor:editorModalMedia.createFolder`)', v-bind='props')
                     v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
                     span.d-none.d-md-inline {{$t('editor:assets.newFolder')}}
                 v-card(:aria-busy='newFolderLoading')
@@ -39,27 +39,27 @@
                     v-spacer
                     v-btn(variant="text", :disabled='newFolderLoading', @click='newFolderDialog = false') {{$t('common:actions.cancel')}}
                     v-btn.px-3(color='primary', @click='createFolder', :disabled='newFolderLoading || !isFolderNameValid', :loading='newFolderLoading') {{$t('common:actions.create')}}
-            .editor-media-path(aria-label='Current folder')
+            .editor-media-path(:aria-label='$t(`editor:editorModalMedia.currentFolder`)')
               template(v-if='folderTree.length > 0')
                 .text-body-medium
                   span.mr-1 /
                   template(v-for='folder of folderTree', :key='folder.id')
                     span {{folder.name}}
                     span.mx-1 /
-              .text-body-medium(v-else) / #[em root]
+              .text-body-medium(v-else) / #[em {{ $t(`editor:editorModalMedia.root`) }}]
             .editor-media-folders(v-if='folders.length > 0 || currentFolderId > 0')
-              v-btn.editor-media-icon-button(variant="outlined", icon, aria-label='Open parent folder', @click='upFolder()', :disabled='currentFolderId === 0')
+              v-btn.editor-media-icon-button(variant="outlined", icon, :aria-label='$t(`editor:editorModalMedia.openParentFolder`)', @click='upFolder()', :disabled='currentFolderId === 0')
                 v-icon mdi-folder-upload
               v-btn.editor-media-folder(v-for='folder of folders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
                 v-icon(start) mdi-folder
                 span.text-body-small {{ folder.name }}
             v-alert.editor-media-branding-notice.mb-3(v-if='isBranding', type='info', variant='tonal', density='compact')
-              .text-body-small Page branding accepts static PNG, JPEG, and WebP images up to 5 MB. Animated, vector, and other file types cannot be used.
+              .text-body-small {{ $t(`editor:editorModalMedia.pageBrandingAcceptsStatic`) }}
             v-alert.mb-3(v-if='mediaLoadError', type='error', variant='tonal', role='alert')
               .d-flex.align-center
                 span {{mediaLoadError}}
                 v-spacer
-                v-btn(variant='text', size='small', @click='refresh') Retry
+                v-btn(variant='text', size='small', @click='refresh') {{ $t(`editor:editorModalMedia.retry`) }}
             v-data-table.editor-media-table(
               :headers='headers'
               :items='displayedAssets'
@@ -112,7 +112,7 @@
                       @update:model-value='setActionMenu(props.item.id, $event)'
                     )
                       template(v-slot:activator='{ props: menuProps }')
-                        v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='lg', size="small", :disabled='!isAssetActionable(props.item.id)', :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
+                        v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='lg', size="small", :disabled='!isAssetActionable(props.item.id)', :aria-label='$t(`editor:editorModalMedia.assetActions`, { filename: props.item.filename, interpolation: { escapeValue: false } })', :data-editor-media-asset-actions='props.item.id')
                           v-icon mdi-dots-horizontal
                       v-list(nav)
                         //- v-list-item(@click='', disabled)
@@ -142,7 +142,7 @@
                           prepend-icon='mdi-image-size-select-large'
                           @click='openResizeDialog(props.item.id)'
                         )
-                          v-list-item-title Save resized copy
+                          v-list-item-title {{ $t(`editor:editorModalMedia.saveResizedCopy`) }}
                         v-list-item(:disabled='!isAssetActionable(props.item.id)', @click='openRenameDialog(props.item.id)')
                           template(v-slot:prepend)
                             v-avatar(size="24")
@@ -158,7 +158,7 @@
               template(v-slot:no-data)
                 v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined") {{$t('editor:assets.folderEmpty')}}
             v-alert.mt-3(v-if='isBranding && currentFileId !== null && brandingLoading', type='info', variant='tonal', density='compact')
-              .text-body-small Validating the selected image…
+              .text-body-small {{ $t(`editor:editorModalMedia.validatingSelectedImage`) }}
             v-alert.mt-3(v-else-if='isBranding && brandingLoadError', type='warning', variant='tonal', density='compact', role='alert')
               .text-body-small {{brandingLoadError}}
             .text-center.py-2(v-if='pageTotal > 1')
@@ -174,17 +174,17 @@
                   span {{$t('common:actions.insert')}}
                 v-btn.radius-7(v-else, color='primary', @click='confirmSelection', :disabled='!canConfirmSelection', :loading='brandingLoading')
                   v-icon(start) mdi-image-check-outline
-                  span Use image
+                  span {{ $t(`editor:editorModalMedia.useImage`) }}
 
       aside.editor-media-sidebar
         v-card.editor-media-panel.radius-7
-          v-alert.mb-0(v-if='isPrivatePage', type='info', variant="outlined", density="compact") Assets are site-wide and cannot be uploaded as private page content.
+          v-alert.mb-0(v-if='isPrivatePage', type='info', variant="outlined", density="compact") {{ $t(`editor:editorModalMedia.assetsSiteWideCannot`) }}
           v-card-text.editor-media-panel-content(v-if='!isPrivatePage')
             header.editor-media-header.editor-media-upload-header
               h2.editor-media-heading
                 v-icon(aria-hidden='true') mdi-cloud-upload-outline
                 span {{$t('editor:assets.uploadAssets')}}
-              v-btn.editor-media-browse.radius-7(variant="tonal", color='primary', aria-label='Browse files', @click='browse')
+              v-btn.editor-media-browse.radius-7(variant="tonal", color='primary', :aria-label='$t(`editor:editorModalMedia.browseFiles`)', @click='browse')
                 v-icon(start) mdi-plus-box-multiple
                 span {{$t('common:actions.browse')}}
             file-pond.mt-3(
@@ -227,7 +227,7 @@
               variant="outlined"
               single-line
               color='primary'
-              placeholder='None'
+              :placeholder='$t(`editor:editorModalMedia.none`)'
             )
             v-btn.mt-2(
               v-if='isResizableAsset(currentAsset)'
@@ -236,7 +236,7 @@
               color='primary'
               prepend-icon='mdi-image-size-select-large'
               @click='openResizeDialog(currentAsset?.id ?? 0)'
-            ) Save resized copy
+            ) {{ $t(`editor:editorModalMedia.saveResizedCopy`) }}
 
     //- RENAME OR MOVE DIALOG
 
@@ -313,12 +313,12 @@
       v-card(:aria-busy='resizeLoading')
         .dialog-header.is-short.is-orange
           v-icon.mr-2(color='primary', aria-hidden='true') mdi-image-size-select-large
-          span#editor-media-resize-title Resize image — save as new asset
+          span#editor-media-resize-title {{ $t(`editor:editorModalMedia.resizeImageSaveNew`) }}
         v-card-text.pt-5
-          .text-body-medium Create a new asset from {{resizeSourceName}}. The original asset and its page references will not change.
+          .text-body-medium {{ $t(`editor:editorModalMedia.createNewAssetOriginal`, { resizeSourceName, interpolation: { escapeValue: false } }) }}
           v-text-field.mt-4(
             v-model='resizeDestinationName'
-            label='New asset filename'
+            :label='$t(`editor:editorModalMedia.newAssetFilename`)'
             variant='outlined'
             maxlength='255'
             :disabled='resizeLoading'
@@ -328,14 +328,14 @@
             :items='resizeFolderItems'
             item-title='title'
             item-value='value'
-            label='Destination folder'
+            :label='$t(`editor:editorModalMedia.destinationFolder`)'
             variant='outlined'
             :disabled='resizeLoading'
           )
           .editor-media-resize-dimensions
             v-text-field(
               v-model.number='resizeWidth'
-              label='Maximum width (pixels)'
+              :label='$t(`editor:editorModalMedia.maximumWidthPixels`)'
               type='number'
               min='1'
               max='8192'
@@ -345,7 +345,7 @@
             )
             v-text-field(
               v-model.number='resizeHeight'
-              label='Maximum height (pixels)'
+              :label='$t(`editor:editorModalMedia.maximumHeightPixels`)'
               type='number'
               min='1'
               max='8192'
@@ -355,7 +355,7 @@
             )
           v-checkbox(
             v-model='resizeDistortionUnlocked'
-            label='Unlock aspect ratio (stretch/distort the image)'
+            :label='$t(`editor:editorModalMedia.unlockAspectRatioStretch`)'
             color='primary'
             density='compact'
             hide-details
@@ -366,12 +366,12 @@
             :items='resizeFormats'
             item-title='title'
             item-value='value'
-            label='Output format'
+            :label='$t(`editor:editorModalMedia.outputFormat`)'
             variant='outlined'
             :disabled='resizeLoading'
             @update:model-value='onResizeFormatChanged'
           )
-          .text-body-small.text-medium-emphasis.mb-1 Quality: {{resizeQuality}} / 100
+          .text-body-small.text-medium-emphasis.mb-1 {{ $t(`editor:editorModalMedia.quality100`, { resizeQuality, interpolation: { escapeValue: false } }) }}
           v-slider(
             v-model='resizeQuality'
             min='1'
@@ -386,15 +386,15 @@
             :items='resizeAnimationPolicies'
             item-title='title'
             item-value='value'
-            label='Animation policy'
+            :label='$t(`editor:editorModalMedia.animationPolicy`)'
             variant='outlined'
             :disabled='resizeLoading'
           )
           v-alert.mt-2(type='info', variant='tonal', density='compact')
             .text-body-small {{resizePreview}}
-            .text-body-small Animated input is preserved only as GIF. To convert an animated image to another format, explicitly choose First frame.
+            .text-body-small {{ $t(`editor:editorModalMedia.animatedInputPreservedOnly`) }}
           v-alert.mt-2(type='warning', variant='tonal', density='compact')
-            .text-body-small This operation creates a new asset. It never replaces the original or updates existing page references.
+            .text-body-small {{ $t(`editor:editorModalMedia.operationCreatesNewAsset`) }}
           v-alert.mt-2(
             v-if='resizeReceipt'
             type='success'
@@ -403,8 +403,8 @@
             role='status'
             aria-live='polite'
           )
-            .text-body-small New asset ID {{resizeReceipt.assetId}}: {{resizeReceipt.destinationPath}}
-            .text-caption {{resizeReceipt.width}} × {{resizeReceipt.height}} px · {{resizeReceipt.format.toUpperCase()}} · {{prettyBytes(resizeReceipt.fileSize)}}
+            .text-body-small {{ $t(`editor:editorModalMedia.newAssetId`, { assetId: resizeReceipt.assetId, destinationPath: resizeReceipt.destinationPath, interpolation: { escapeValue: false } }) }}
+            .text-caption {{ $t(`editor:editorModalMedia.px2`, { width: resizeReceipt.width, height: resizeReceipt.height, format: resizeReceipt.format.toUpperCase(), fileSize: prettyBytes(resizeReceipt.fileSize), interpolation: { escapeValue: false } }) }}
           v-alert.mt-2(v-if='resizeError', type='error', variant='tonal', density='compact', role='alert')
             .text-body-small {{resizeError}}
         v-card-chin
@@ -415,7 +415,7 @@
             @click='resizeSelectedAsset'
             :loading='resizeLoading'
             :disabled='resizeLoading || !isResizeValid || Boolean(resizeReceipt)'
-          ) Save copy
+          ) {{ $t(`editor:editorModalMedia.saveCopy`) }}
     //- DELETE DIALOG
 
     v-dialog(
@@ -527,7 +527,7 @@ async function requestImageResize(
   })
   const payload: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    throw new Error(isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'Image resize failed.')
+    throw new Error(isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'editor:editorModalMedia.imageResizeFailed')
   }
   if (
     !isRecord(payload) ||
@@ -658,9 +658,9 @@ export default defineComponent({
       files: [] as FilePondFile[],
       assets: markRaw([] as Asset[]),
       pagination: 1,
-      imageAlignments: IMAGE_ALIGNMENTS,
+      imageAlignments: IMAGE_ALIGNMENTS.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.alignment_${item.value || 'none'}`) })),
       mediaSortBy: MEDIA_SORT_BY,
-      renameAssetRules: RENAME_ASSET_RULES,
+      renameAssetRules: RENAME_ASSET_RULES.map(rule => (value: unknown) => { const message = rule(value); return typeof message === 'string' ? this.$t(message) : message }),
       imageAlignment: '',
       loading: false,
       newFolderDialog: false,
@@ -689,8 +689,8 @@ export default defineComponent({
       resizeAnimationPolicy: 'preserve' as ResizeAnimationPolicy,
       resizeReceipt: null as ResizeImageReceipt | null,
       resizeError: '',
-      resizeFormats: RESIZE_FORMAT_ITEMS,
-      resizeAnimationPolicies: RESIZE_ANIMATION_POLICIES,
+      resizeFormats: RESIZE_FORMAT_ITEMS.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.format_${item.value}`) })),
+      resizeAnimationPolicies: RESIZE_ANIMATION_POLICIES.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.animationPolicy_${item.value}`) })),
       mediaLoadError: '',
       staleAssetIds: [] as number[],
       failedThumbnailIds: [] as number[],
@@ -804,11 +804,11 @@ export default defineComponent({
       )
     },
     resizePreview(): string {
-      const dimensions = `${this.resizeWidth} × ${this.resizeHeight} px`
+      const dimensions = this.$t('editor:editorModalMedia.px', { resizeWidth: this.resizeWidth, resizeHeight: this.resizeHeight, interpolation: { escapeValue: false } })
       const format = RESIZE_FORMATS[this.resizeFormat]
       return this.resizeDistortionUnlocked
-        ? `Output: exactly ${dimensions} as ${format}; aspect ratio unlocked.`
-        : `Output: ${format} fitted within ${dimensions} while preserving source proportions.`
+        ? this.$t('editor:editorModalMedia.outputExactlyAspectRatio', { dimensions, format, interpolation: { escapeValue: false } })
+        : this.$t('editor:editorModalMedia.outputFittedWithinWhile', { format, dimensions, interpolation: { escapeValue: false } })
     },
     isRenameValid (): boolean {
       const current = this.currentAsset
@@ -1071,7 +1071,7 @@ export default defineComponent({
         )
           return
         this.brandingView = null
-        this.brandingLoadError = 'This image cannot be used for page branding. Choose a static PNG, JPEG, or WebP image up to 5 MB.'
+        this.brandingLoadError = this.$t('editor:editorModalMedia.imageCannotUsedPage')
       } finally {
         if (this.brandingAbortController === abortController) {
           this.brandingAbortController = null
@@ -1085,8 +1085,8 @@ export default defineComponent({
       return id !== null && !this.staleAssetIds.includes(id)
     },
     assetAriaLabel (asset: Asset): string {
-      if (!this.isAssetActionable(asset.id)) return `${asset.filename}, unavailable until assets reload`
-      return this.currentFileId === asset.id ? `${asset.filename}, selected` : `Select ${asset.filename}`
+      if (!this.isAssetActionable(asset.id)) return this.$t('editor:editorModalMedia.unavailableUntilAssetsReload', { filename: asset.filename, interpolation: { escapeValue: false } })
+      return this.currentFileId === asset.id ? this.$t('editor:editorModalMedia.selected', { filename: asset.filename, interpolation: { escapeValue: false } }) : this.$t('editor:editorModalMedia.select', { filename: asset.filename, interpolation: { escapeValue: false } })
     },
     markAssetStale (assetId: number) {
       if (!this.staleAssetIds.includes(assetId)) this.staleAssetIds.push(assetId)
@@ -1099,7 +1099,7 @@ export default defineComponent({
       const view = PageBrandingViewSchema.safeParse(this.brandingView)
       if (!assignment.success || !view.success || view.data.assetId !== assignment.data.assetId) {
         this.brandingView = null
-        this.brandingLoadError = 'Select a supported image before continuing.'
+        this.brandingLoadError = this.$t('editor:editorModalMedia.selectSupportedImageBefore')
         return
       }
       this.$emit('branding-selected', {
@@ -1116,7 +1116,7 @@ export default defineComponent({
     },
     prettyBytes(num: number) {
       if (typeof num !== 'number' || Number.isNaN(num)) {
-        throw new TypeError('Expected a number')
+        throw new TypeError(this.$t('editor:editorModalMedia.expectedNumber'))
       }
 
       const exponent = Math.min(Math.floor(Math.log(Math.abs(num)) / LOG_1000), BYTE_UNITS.length - 1)
@@ -1169,7 +1169,7 @@ export default defineComponent({
       if (this.isBranding) return
       if (!this.isAssetActionable(this.currentFileId)) return
       const asset = _.find(this.assets, ['id', this.currentFileId])
-      if (!asset) throw new Error('No asset selected for insertion.')
+      if (!asset) throw new Error(this.$t('editor:editorModalMedia.noAssetSelectedInsertion'))
       emitEditorInsert({
         kind: asset.kind,
         path: this.assetPath(asset),
@@ -1183,7 +1183,7 @@ export default defineComponent({
     },
     async upload () {
       if (this.isPrivatePage) {
-        throw new Error('Assets are site-wide and cannot be uploaded as private page content.')
+        throw new Error(this.$t('editor:editorModalMedia.assetsSiteWideCannot'))
       }
       // A second click while files are processing must not queue another upload.
       if (this.uploading) return
@@ -1322,7 +1322,7 @@ export default defineComponent({
       this.rememberMediaDialogFocus(id)
       this.actionMenuAssetId = null
       this.currentFileId = id
-      if (!this.currentAsset) throw new Error('No asset selected for relocation.')
+      if (!this.currentAsset) throw new Error(this.$t('editor:editorModalMedia.noAssetSelectedRelocation'))
       this.relocationMode = mode
       this.renameAssetName = this.currentAsset.filename
       this.relocationFolderId = this.currentAsset.folderId ?? this.currentFolderId
@@ -1340,7 +1340,7 @@ export default defineComponent({
       this.rememberMediaDialogFocus(id)
       this.actionMenuAssetId = null
       this.currentFileId = id
-      if (!this.currentAsset) throw new Error('No asset selected for deletion.')
+      if (!this.currentAsset) throw new Error(this.$t('editor:editorModalMedia.noAssetSelectedDeletion'))
       this.deleteDialog = true
     },
     async resizeSelectedAsset() {
@@ -1365,15 +1365,15 @@ export default defineComponent({
         this.resizeReceipt = receipt
         const refreshed = await this.loadMedia()
         if (this.disposed) return
-        if (!refreshed) this.resizeError = 'The new asset was created, but the asset list could not be refreshed.'
+        if (!refreshed) this.resizeError = this.$t('editor:editorModalMedia.newAssetWasCreated')
         wikiStore.showNotification({
-          message: `Saved ${receipt.destinationPath} as new asset #${receipt.assetId}; the original was not changed.`,
+          message: this.$t('editor:editorModalMedia.savedNewAssetOriginal', { destinationPath: receipt.destinationPath, assetId: receipt.assetId, interpolation: { escapeValue: false } }),
           style: 'success',
           icon: 'check'
         })
       } catch (error: unknown) {
         if (this.disposed) return
-        this.resizeError = error instanceof Error ? error.message : 'Image resize failed.'
+        this.resizeError = error instanceof Error ? this.$t(error.message) : this.$t('editor:editorModalMedia.imageResizeFailed')
         wikiStore.showError(error)
       } finally {
         if (!this.disposed) this.resizeLoading = false
@@ -1402,7 +1402,7 @@ export default defineComponent({
         await new Promise<void>(resolve => window.setTimeout(resolve, 500))
         if (this.disposed) return current
         const next = await fetchAssetRelocationStatus(window.fetch.bind(window), current.statusUrl)
-        if (next.id !== receipt.id || next.assetId !== receipt.assetId) throw new Error('Asset relocation status did not match the requested receipt.')
+        if (next.id !== receipt.id || next.assetId !== receipt.assetId) throw new Error(this.$t('editor:editorModalMedia.assetRelocationStatusDid'))
         current = next
       }
       return current
@@ -1543,7 +1543,7 @@ export default defineComponent({
         return true
       } catch (err) {
         if (this.disposed || request !== this.mediaRequest) return false
-        this.mediaLoadError = 'Unable to load assets. Try again.'
+        this.mediaLoadError = this.$t('editor:editorModalMedia.unableLoadAssetsTry')
         wikiStore.showError(err)
         return false
       } finally {

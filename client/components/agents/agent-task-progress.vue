@@ -11,7 +11,7 @@
         <v-icon :icon="planIcon" size="19" />
       </span>
       <span class="agent-tasks__heading">
-        <span class="agent-tasks__eyebrow">Research operations</span>
+        <span class="agent-tasks__eyebrow">{{ $t('common:agentTaskProgress.researchOperations') }}</span>
         <strong>{{ planTitle }}</strong>
         <small>{{ progressLabel }}</small>
       </span>
@@ -26,7 +26,7 @@
       aria-valuemin="0"
       :aria-valuemax="tasks.length"
       :aria-valuetext="progressLabel"
-      aria-label="Research operation progress"
+      :aria-label="$t('common:agentTaskProgress.researchOperationProgress')"
     >
       <span
         v-if="successfulCount"
@@ -75,43 +75,43 @@
 
           <details class="agent-task-record">
             <summary>
-              <span>Operation record</span>
-              <small>Input, output, and timing</small>
+              <span>{{ $t('common:agentTaskProgress.operationRecord') }}</span>
+              <small>{{ $t('common:agentTaskProgress.inputOutputTiming') }}</small>
             </summary>
             <dl class="agent-task-record__facts">
-              <dt>Input</dt>
+              <dt>{{ $t('common:agentTaskProgress.input') }}</dt>
               <dd class="agent-task-record__payload">{{ task.question }}</dd>
 
               <template v-if="task.sourceScope.length">
-                <dt>Scope</dt>
+                <dt>{{ $t('common:agentTaskProgress.scope') }}</dt>
                 <dd class="agent-task-record__scopes">
                   <span v-for="(scope, index) in task.sourceScope" :key="`${index}:${scope}`" :title="scope">{{ scope }}</span>
                 </dd>
               </template>
 
-              <dt>Output</dt>
+              <dt>{{ $t('common:agentTaskProgress.output') }}</dt>
               <dd>{{ outputLabel(task) }}</dd>
 
-              <dt>Created</dt>
+              <dt>{{ $t('common:agentTaskProgress.created') }}</dt>
               <dd><time :datetime="task.createdAt">{{ formatTimestamp(task.createdAt) }}</time></dd>
 
               <template v-if="task.startedAt">
-                <dt>Started</dt>
+                <dt>{{ $t('common:agentTaskProgress.started') }}</dt>
                 <dd><time :datetime="task.startedAt">{{ formatTimestamp(task.startedAt) }}</time></dd>
               </template>
 
               <template v-if="task.completedAt">
-                <dt>Finished</dt>
+                <dt>{{ $t('common:agentTaskProgress.finished') }}</dt>
                 <dd><time :datetime="task.completedAt">{{ formatTimestamp(task.completedAt) }}</time></dd>
               </template>
 
               <template v-if="task.errorCode">
-                <dt>Error code</dt>
+                <dt>{{ $t('common:agentTaskProgress.errorCode') }}</dt>
                 <dd><code>{{ task.errorCode }}</code></dd>
               </template>
 
               <template v-if="task.errorMessage">
-                <dt>Error detail</dt>
+                <dt>{{ $t('common:agentTaskProgress.errorDetail') }}</dt>
                 <dd class="agent-task-record__payload agent-task-record__payload--error">{{ task.errorMessage }}</dd>
               </template>
             </dl>
@@ -123,8 +123,8 @@
     <div v-else class="agent-tasks__empty">
       <v-icon icon="mdi-clipboard-text-outline" size="21" aria-hidden="true" />
       <span>
-        <strong>No research operations</strong>
-        <small>Tasks will appear here when the Agent creates a research plan.</small>
+        <strong>{{ $t('common:agentTaskProgress.noResearchOperations') }}</strong>
+        <small>{{ $t('common:agentTaskProgress.tasksWillAppearHere') }}</small>
       </span>
     </div>
   </details>
@@ -133,6 +133,9 @@
 <script setup lang="ts">
 import { computed, onWatcherCleanup, ref, watchEffect } from 'vue'
 import type { AgentTaskKind, AgentTaskView } from '../../../shared/agents/contracts.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const { tasks = [] } = defineProps<{ tasks: readonly AgentTaskView[] }>()
 type DisplayTaskStatus = AgentTaskView['status'] | 'partial'
@@ -193,30 +196,30 @@ const planState = computed<PlanState>(() => {
   return attentionCount.value ? 'attention' : 'success'
 })
 const planIcon = computed(() => planIcons[planState.value])
-const planTitle = computed(() => allTerminal.value ? 'Research plan resolved' : 'Research plan')
+const planTitle = computed(() => allTerminal.value ? t('common:agentTaskProgress.researchPlanResolved') : t('common:agentTaskProgress.researchPlan'))
 const progressLabel = computed(() => {
-  if (!tasks.length) return 'No tasks recorded'
+  if (!tasks.length) return t('common:agentTaskProgress.noTasksRecorded')
   if (allTerminal.value) {
-    return `${successfulCount.value} successful${attentionCount.value ? ` · ${attentionCount.value} need attention` : ''}`
+    return t('common:agentTaskProgress.successful', { value: successfulCount.value, attentionCount: attentionCount.value ? ` · ${attentionCount.value} need attention` : '', interpolation: { escapeValue: false } })
   }
   const parts = []
-  if (runningCount.value) parts.push(`${runningCount.value} running`)
-  if (queuedCount.value) parts.push(`${queuedCount.value} queued`)
-  if (terminalCount.value) parts.push(`${terminalCount.value} resolved`)
+  if (runningCount.value) parts.push(t('common:agentTaskProgress.running', { value: runningCount.value, interpolation: { escapeValue: false } }))
+  if (queuedCount.value) parts.push(t('common:agentTaskProgress.queued', { value: queuedCount.value, interpolation: { escapeValue: false } }))
+  if (terminalCount.value) parts.push(t('common:agentTaskProgress.resolved', { value: terminalCount.value, interpolation: { escapeValue: false } }))
   return parts.join(' · ')
 })
 const liveSummary = computed(() => attentionCount.value
-  ? `${progressLabel.value}. Some research operations need attention.`
+  ? t('common:agentTaskProgress.someResearchOperationsNeed', { value: progressLabel.value, interpolation: { escapeValue: false } })
   : progressLabel.value)
 
 const statusLabels: Readonly<Record<DisplayTaskStatus, string>> = {
-  pending: 'Pending',
-  running: 'Running',
-  blocked: 'Blocked',
-  completed: 'Successful',
-  partial: 'Partial',
-  failed: 'Failed',
-  cancelled: 'Cancelled'
+  pending: t('common:agentTaskProgress.pending'),
+  running: t('common:agentTaskProgress.running2'),
+  blocked: t('common:agentTaskProgress.blocked'),
+  completed: t('common:agentTaskProgress.successful2'),
+  partial: t('common:agentTaskProgress.partial'),
+  failed: t('common:agentTaskProgress.failed'),
+  cancelled: t('common:agentTaskProgress.cancelled')
 }
 const statusIcons: Readonly<Record<DisplayTaskStatus, string>> = {
   pending: 'mdi-clock-outline',
@@ -228,34 +231,34 @@ const statusIcons: Readonly<Record<DisplayTaskStatus, string>> = {
   cancelled: 'mdi-stop-circle-outline'
 }
 const kindLabels: Readonly<Record<AgentTaskKind, string>> = {
-  source_scout: 'Source review',
-  fact_check: 'Fact check',
-  conflict_check: 'Conflict check'
+  source_scout: t('common:agentTaskProgress.sourceReview'),
+  fact_check: t('common:agentTaskProgress.factCheck'),
+  conflict_check: t('common:agentTaskProgress.conflictCheck')
 }
 const outcomeLabels: Readonly<Record<NonNullable<AgentTaskView['outcome']>, string>> = {
-  completed: 'Evidence requirement satisfied',
-  blocked: 'Insufficient evidence',
-  partial: 'Partial evidence returned',
-  failed: 'No reliable output'
+  completed: t('common:agentTaskProgress.evidenceRequirementSatisfied'),
+  blocked: t('common:agentTaskProgress.insufficientEvidence'),
+  partial: t('common:agentTaskProgress.partialEvidenceReturned'),
+  failed: t('common:agentTaskProgress.noReliableOutput')
 }
 const statusLabel = (status: DisplayTaskStatus): string => statusLabels[status]
 const statusIcon = (status: DisplayTaskStatus): string => statusIcons[status]
 const kindLabel = (kind: AgentTaskKind): string => kindLabels[kind]
-const evidenceLabel = (task: AgentTaskView): string => `${task.evidenceCount}/${task.requiredEvidenceCount} ${task.requiredEvidenceCount === 1 ? 'source' : 'sources'}`
-const attemptLabel = (task: AgentTaskView): string => task.attempt > 1 ? `Attempt ${task.attempt} · retried ${task.attempt - 1}` : 'Attempt 1'
+const evidenceLabel = (task: AgentTaskView): string => `${task.evidenceCount}/${t('common:agentTaskProgress.sourcesCount', { count: task.requiredEvidenceCount })}`
+const attemptLabel = (task: AgentTaskView): string => task.attempt > 1 ? t('common:agentTaskProgress.attemptRetried', { attempt: task.attempt, attempt2: task.attempt - 1, interpolation: { escapeValue: false } }) : t('common:agentTaskProgress.attempt1')
 const outputLabel = (task: AgentTaskView): string => task.outcome
   ? `${outcomeLabels[task.outcome]} · ${evidenceLabel(task)}`
   : task.status === 'running'
-    ? `Collecting evidence · ${evidenceLabel(task)}`
-    : `No output yet · ${evidenceLabel(task)}`
+    ? t('common:agentTaskProgress.collectingEvidence', { task: evidenceLabel(task), interpolation: { escapeValue: false } })
+    : t('common:agentTaskProgress.noOutputYet', { task: evidenceLabel(task), interpolation: { escapeValue: false } })
 const terminalNote = (task: AgentTaskView): string => {
-  if (statusFor(task) === 'partial') return `Only ${task.evidenceCount} of ${task.requiredEvidenceCount} required ${task.requiredEvidenceCount === 1 ? 'source was' : 'sources were'} found.`
-  if (task.errorCode === 'SUBAGENT_TIMEOUT') return 'The research deadline was reached. A later run may retry this operation.'
-  if (task.errorCode === 'AGENT_CHILD_BUDGET_EXCEEDED') return 'The research budget was reached before the evidence requirement.'
-  if (task.errorCode === 'ORCHESTRATION_DISABLED') return 'Specialist research was disabled before this task ran.'
-  if (task.status === 'blocked') return 'Available Wiki evidence was insufficient for a reliable result.'
-  if (task.status === 'cancelled') return 'Research stopped with the parent response.'
-  return 'This research operation could not be completed. Open the record for the exact error.'
+  if (statusFor(task) === 'partial') return t('common:agentTaskProgress.onlyRequiredFound', { evidenceCount: task.evidenceCount, requiredEvidenceCount: task.requiredEvidenceCount, requiredEvidenceCount2: task.requiredEvidenceCount === 1 ? 'source was' : 'sources were', interpolation: { escapeValue: false } })
+  if (task.errorCode === 'SUBAGENT_TIMEOUT') return t('common:agentTaskProgress.researchDeadlineWasReached')
+  if (task.errorCode === 'AGENT_CHILD_BUDGET_EXCEEDED') return t('common:agentTaskProgress.researchBudgetWasReached')
+  if (task.errorCode === 'ORCHESTRATION_DISABLED') return t('common:agentTaskProgress.specialistResearchWasDisabled')
+  if (task.status === 'blocked') return t('common:agentTaskProgress.availableWikiEvidenceWas')
+  if (task.status === 'cancelled') return t('common:agentTaskProgress.researchStoppedParentResponse')
+  return t('common:agentTaskProgress.researchOperationCouldNot')
 }
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const formatTimestamp = (value: string): string => dateFormatter.format(new Date(value))
@@ -263,18 +266,18 @@ const formatDuration = (start: string, end: string | null): string => {
   void tick.value
   const milliseconds = Math.max(0, (end ? new Date(end).valueOf() : Date.now()) - new Date(start).valueOf())
   const seconds = Math.floor(milliseconds / 1000)
-  if (seconds < 1) return 'under 1 sec'
-  if (seconds < 60) return `${seconds} sec`
+  if (seconds < 1) return t('common:agentTaskProgress.under1Sec')
+  if (seconds < 60) return t('common:agentTaskProgress.sec', { seconds, interpolation: { escapeValue: false } })
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} min`
+  if (minutes < 60) return t('common:agentTaskProgress.min', { minutes, interpolation: { escapeValue: false } })
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  return `${hours} hr${remainingMinutes ? ` ${remainingMinutes} min` : ''}`
+  return t('common:agentTaskProgress.hr', { hours, value: remainingMinutes ? ` ${remainingMinutes} min` : '', interpolation: { escapeValue: false } })
 }
 const durationLabel = (task: AgentTaskView): string => {
-  if (task.status === 'pending') return `Queued ${formatDuration(task.createdAt, null)}`
+  if (task.status === 'pending') return t('common:agentTaskProgress.queued2', { null: formatDuration(task.createdAt, null), interpolation: { escapeValue: false } })
   const duration = formatDuration(task.startedAt ?? task.createdAt, task.completedAt)
-  return task.status === 'running' ? `Running ${duration}` : `Duration ${duration}`
+  return task.status === 'running' ? t('common:agentTaskProgress.running3', { duration, interpolation: { escapeValue: false } }) : t('common:agentTaskProgress.duration', { duration, interpolation: { escapeValue: false } })
 }
 
 watchEffect(() => {

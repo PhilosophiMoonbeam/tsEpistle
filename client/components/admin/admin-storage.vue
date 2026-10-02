@@ -1212,7 +1212,8 @@ function downloadRecoveryPlan() {
   if (!saved.value) return
   download(
     'workspace-recovery-checklist.md',
-    `# Workspace recovery checklist\n\nObserved: ${saved.value.observedAt}\n\nThis is a plan, not a backup or verification report.\n\n1. Record the deployed application version and configuration requirements.\n2. Capture a consistent database backup and required persistent files. Retain configuration and decryption secrets separately and securely.\n3. Restore into an isolated instance with remote storage disabled.\n4. Verify accounts, permissions, private and shared pages, assets and agent memory.\n5. Rebuild derived indexes as needed, then deliberately reconnect storage targets.\n\n## Current target observations\n\n${saved.value.targets.map(target => `- ${target.title}: ${target.isEnabled ? 'enabled' : 'disabled'}; ${modeLabel(target.mode)}; ${runtimeLabel(target.key)}.`).join('\n')}\n\nContent exports omit private pages, accounts, settings and database history. Folder archives capture current files, not the database or configuration, and are not transactional snapshots. External backup integrity has not been verified.\n`,
+    `${t('admin:storage.workspaceRecoveryChecklistObserved', { observedAt: saved.value.observedAt, targets: saved.value.targets.map(target => `- ${target.title}: ${target.isEnabled ? 'enabled' : 'disabled'}; ${modeLabel(target.mode)}; ${runtimeLabel(target.key)}.`).join('\n'), interpolation: { escapeValue: false } })}
+`,
     'text/markdown'
   )
 }

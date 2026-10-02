@@ -14,6 +14,9 @@ import {
 } from '../../helpers/offline-session.ts'
 import { pwaState } from '../../helpers/pwa.ts'
 import type { OfflineSnapshotRecord } from '../../../shared/offline.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 type VisibleRecord = OfflineSnapshotRecord & { readonly audience: 'public' | 'private' }
 
@@ -25,9 +28,9 @@ const loading = ref(true)
 const error = ref('')
 const clock = ref(Date.now())
 const pages = computed(() => offlineNavigationEntries(records.value, window.location.origin, clock.value))
-const connectionLabel = computed(() => pwaState.connectionState === 'online' ? 'Saved on this device'
-  : pwaState.connectionState === 'checking' ? 'Checking connection'
-  : pwaState.connectionState === 'server-unavailable' ? 'Server unavailable' : 'You’re offline')
+const connectionLabel = computed(() => pwaState.connectionState === 'online' ? t('common:offlineNavigation.savedDevice')
+  : pwaState.connectionState === 'checking' ? t('common:offlineNavigation.checkingConnection')
+  : pwaState.connectionState === 'server-unavailable' ? t('common:offlineNavigation.serverUnavailable') : t('common:offlineNavigation.youreOffline'))
 let storage: OfflineStorage | null = null
 let disposed = false
 let sequence = 0
@@ -100,7 +103,7 @@ async function loadPages(): Promise<void> {
   } catch {
     if (disposed || token !== sequence || !readingIsCurrent(reading.handle, reading.epoch)) return
     records.value = publicRecords.value
-    error.value = 'Saved pages could not be read from this device.'
+    error.value = t('common:offlineNavigation.savedPagesCouldNot')
   } finally {
     if (!disposed && token === sequence && readingIsCurrent(reading.handle, reading.epoch)) loading.value = false
   }
@@ -120,7 +123,7 @@ async function openStorage(): Promise<void> {
     if (disposed || token !== sequence) return
     records.value = publicRecords.value
     loading.value = false
-    error.value = 'Saved pages could not be read from this device.'
+    error.value = t('common:offlineNavigation.savedPagesCouldNot')
   }
 }
 function navigate(event: MouseEvent | KeyboardEvent, page?: (typeof pages.value)[number]): void {
@@ -160,32 +163,32 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <nav class="offline-navigation" aria-label="Browse saved pages">
+  <nav class="offline-navigation" :aria-label="$t('common:offlineNavigation.browseSavedPages')">
     <div class="offline-navigation__heading">
-      <h2>Browse</h2>
-      <span v-if="!loading && !error" class="offline-navigation__count" aria-label="Saved page count">{{ pages.length }}</span>
+      <h2>{{ $t('common:offlineNavigation.browse') }}</h2>
+      <span v-if="!loading && !error" class="offline-navigation__count" :aria-label="$t('common:offlineNavigation.savedPageCount')">{{ pages.length }}</span>
     </div>
     <div class="nav-sidebar-offline" role="status">
       <v-icon size="18" aria-hidden="true">mdi-book-open-page-variant-outline</v-icon>
-      <p><strong>{{ connectionLabel }}</strong><span>Only pages saved on this device are listed.</span></p>
+      <p><strong>{{ connectionLabel }}</strong><span>{{ $t('common:offlineNavigation.onlyPagesSavedDevice') }}</span></p>
     </div>
-    <p v-if="loading" class="offline-navigation__message" role="status">Opening saved pages…</p>
+    <p v-if="loading" class="offline-navigation__message" role="status">{{ $t('common:offlineNavigation.openingSavedPages') }}</p>
     <div v-else-if="error" class="offline-navigation__message" role="status">
       <p>{{ error }}</p>
-      <v-btn size="small" variant="text" @click="openStorage">Try again</v-btn>
+      <v-btn size="small" variant="text" @click="openStorage">{{ $t('common:offlineNavigation.tryAgain') }}</v-btn>
     </div>
-    <p v-else-if="!pages.length" class="offline-navigation__message">No saved pages yet. Save pages while connected to browse them here.</p>
+    <p v-else-if="!pages.length" class="offline-navigation__message">{{ $t('common:offlineNavigation.noSavedPagesYet') }}</p>
     <v-list v-else class="offline-navigation__pages" nav density="compact">
       <v-list-item v-for="page in pages" :key="page.key" :href="page.href" data-no-wiki-navigation
         :active="props.activePath === page.href" :aria-current="props.activePath === page.href ? 'page' : undefined" @click="navigate($event, page)">
         <template #prepend><v-icon size="20">mdi-file-document-outline</v-icon></template>
         <v-list-item-title>{{ page.title }}</v-list-item-title>
-        <v-list-item-subtitle>{{ page.locale }}<span v-if="page.audience === 'private'"> · Private</span></v-list-item-subtitle>
+        <v-list-item-subtitle>{{ page.locale }}<span v-if="page.audience === 'private'"> {{ $t('common:offlineNavigation.private') }}</span></v-list-item-subtitle>
       </v-list-item>
     </v-list>
     <v-divider class="mx-3" />
     <v-list nav density="compact">
-      <v-list-item href="/p/offline" data-no-wiki-navigation prepend-icon="mdi-cloud-sync-outline" title="Offline access"
+      <v-list-item href="/p/offline" data-no-wiki-navigation prepend-icon="mdi-cloud-sync-outline" :title="$t('common:offlineNavigation.offlineAccess')"
         :active="props.activePath === '/p/offline'" @click="navigate" />
     </v-list>
   </nav>

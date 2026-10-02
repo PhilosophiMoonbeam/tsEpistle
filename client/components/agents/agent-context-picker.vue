@@ -1,12 +1,12 @@
 <template>
-  <div class="agent-context" aria-label="Sources and search scope">
-    <div class="agent-context__scope" role="group" aria-label="Conversation source controls">
+  <div class="agent-context" :aria-label="$t('common:agentContextPicker.sourcesSearchScope')">
+    <div class="agent-context__scope" role="group" :aria-label="$t('common:agentContextPicker.conversationSourceControls')">
       <v-menu content-class="agent-owned-overlay" location="top start">
-        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" class="agent-context__control agent-context__scope-control" :disabled="disabled || connectionBlocked" variant="text" rounded="pill" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" aria-label="Choose Agent search scope" type="button">{{ scopeLabel }}</v-btn></template>
-        <v-list density="compact" aria-label="Agent search scope">
-          <v-list-item title="All Wiki" subtitle="Search every page you can access" prepend-icon="mdi-earth" :active="draft.scope.kind === 'all'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'all' })" />
-          <v-list-item v-if="currentPage" title="This page tree" :subtitle="currentPage.path" prepend-icon="mdi-file-tree-outline" :active="draft.scope.kind === 'section'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'section', locale: currentPage.locale, path: currentPage.path })" />
-          <v-list-item title="Selected pages" subtitle="Search within the sources attached here" prepend-icon="mdi-file-multiple-outline" :disabled="disabled || connectionBlocked || !draft.sources.length" :active="draft.scope.kind === 'selected'" @click="setScope({ kind: 'selected' })" />
+        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" class="agent-context__control agent-context__scope-control" :disabled="disabled || connectionBlocked" variant="text" rounded="pill" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" :aria-label="$t('common:agentContextPicker.chooseAgentSearchScope')" type="button">{{ scopeLabel }}</v-btn></template>
+        <v-list density="compact" :aria-label="$t('common:agentContextPicker.agentSearchScope')">
+          <v-list-item :title="$t('common:agentContextPicker.allWiki')" :subtitle="$t('common:agentContextPicker.searchEveryPageYou')" prepend-icon="mdi-earth" :active="draft.scope.kind === 'all'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'all' })" />
+          <v-list-item v-if="currentPage" :title="$t('common:agentContextPicker.pageTree')" :subtitle="currentPage.path" prepend-icon="mdi-file-tree-outline" :active="draft.scope.kind === 'section'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'section', locale: currentPage.locale, path: currentPage.path })" />
+          <v-list-item :title="$t('common:agentContextPicker.selectedPages')" :subtitle="$t('common:agentContextPicker.searchWithinSourcesAttached')" prepend-icon="mdi-file-multiple-outline" :disabled="disabled || connectionBlocked || !draft.sources.length" :active="draft.scope.kind === 'selected'" @click="setScope({ kind: 'selected' })" />
         </v-list>
       </v-menu>
       <v-btn
@@ -18,9 +18,9 @@
         prepend-icon="mdi-plus"
         :disabled="disabled || connectionBlocked"
         type="button"
-        aria-label="Add sources"
+        :aria-label="$t('common:agentContextPicker.addSources')"
         @click="openSources"
-      ><span aria-hidden="true">Sources</span></v-btn>
+      ><span aria-hidden="true">{{ $t('common:agentContextPicker.sources') }}</span></v-btn>
     </div>
     <!-- One compact source chip for the current page. The chip itself means the
          page is included, so no separate Included badge is rendered. -->
@@ -51,10 +51,10 @@
         </button>
       </template>
     </v-tooltip>
-    <div v-if="draft.sources.length" class="agent-context__sources" aria-label="Pages attached to the next message">
-      <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :disabled="disabled || connectionBlocked" :close-label="`Remove source ${source.title}`" :aria-label="`Preview attached source ${source.title}`" variant="outlined" prepend-icon="mdi-file-document-outline" @click.stop="previewSelector = { id: source.id }" @click:close.stop="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
+    <div v-if="draft.sources.length" class="agent-context__sources" :aria-label="$t('common:agentContextPicker.pagesAttachedNextMessage')">
+      <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :disabled="disabled || connectionBlocked" :close-label="$t('common:agentContextPicker.removeSource', { title: source.title, interpolation: { escapeValue: false } })" :aria-label="$t('common:agentContextPicker.previewAttachedSource', { title: source.title, interpolation: { escapeValue: false } })" variant="outlined" prepend-icon="mdi-file-document-outline" @click.stop="previewSelector = { id: source.id }" @click:close.stop="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
     </div>
-    <p v-if="draft.sources.length === 8" class="agent-context__limit" role="status">Eight sources attached. Remove one to add another.</p>
+    <p v-if="draft.sources.length === 8" class="agent-context__limit" role="status">{{ $t('common:agentContextPicker.eightSourcesAttachedRemove') }}</p>
     <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" @close="previewSelector = null" />
 
     <v-dialog
@@ -72,7 +72,7 @@
         <header class="agent-context__dialog-header">
           <span class="agent-context__dialog-mark" aria-hidden="true"><v-icon icon="mdi-file-multiple-outline" size="22" /></span>
           <div>
-            <h2 :id="`${sourceDialogId}-title`">Add sources</h2>
+            <h2 :id="`${sourceDialogId}-title`">{{ $t('common:agentContextPicker.addSources') }}</h2>
           </div>
           <div class="agent-context__dialog-corner">
             <v-tooltip location="bottom" content-class="agent-owned-overlay">
@@ -83,14 +83,14 @@
                   icon="mdi-check"
                   variant="text"
                   color="success"
-                  :aria-label="selectedRows.length ? `Add ${selectedRows.length} selected source${selectedRows.length === 1 ? '' : 's'}` : 'No pages selected yet'"
+                  :aria-label="selectedRows.length ? $t('common:agentContextPicker.addSelectedSource', { selectedRowsCount: selectedRows.length, selectedRows: selectedRows.length === 1 ? '' : 's', interpolation: { escapeValue: false } }) : $t('common:agentContextPicker.noPagesSelectedYet')"
                   :loading="addingSources"
                   :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked"
                   type="button"
                   @click="addSources"
                 />
               </template>
-              <span>Add selected pages</span>
+              <span>{{ $t('common:agentContextPicker.addSelectedPages') }}</span>
             </v-tooltip>
             <v-tooltip location="bottom" content-class="agent-owned-overlay">
               <template #activator="{ props: closeTip }">
@@ -99,28 +99,28 @@
                   class="agent-context__dialog-close"
                   icon="mdi-close"
                   variant="text"
-                  aria-label="Cancel adding sources"
+                  :aria-label="$t('common:agentContextPicker.cancelAddingSources')"
                   type="button"
                   @click="cancelSources"
                 />
               </template>
-              <span>Cancel</span>
+              <span>{{ $t('common:actions.cancel') }}</span>
             </v-tooltip>
           </div>
         </header>
         <v-card-text class="agent-context__dialog-body">
-          <p :id="`${sourceDialogId}-description`" class="agent-context__dialog-guidance">Select up to eight pages. Ticked picks stay while you keep searching.</p>
+          <p :id="`${sourceDialogId}-description`" class="agent-context__dialog-guidance">{{ $t('common:agentContextPicker.selectUpEightPages') }}</p>
           <v-alert v-if="connectionBlocked" class="agent-context__connection-alert" type="warning" variant="tonal" density="compact" role="status">
-            <span>Connection required to search or attach sources.</span>
-            <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" type="button" @click="emit('retry-connection')">Retry connection</v-btn>
+            <span>{{ $t('common:agentContextPicker.connectionRequiredSearchAttach') }}</span>
+            <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" type="button" @click="emit('retry-connection')">{{ $t('common:agentContextPicker.retryConnection') }}</v-btn>
           </v-alert>
           <v-text-field
             ref="sourceSearchInput"
             v-model="sourceQuery"
             class="agent-context__search"
             variant="outlined"
-            placeholder="Search pages (select up to 8)"
-            aria-label="Search pages"
+            :placeholder="$t('common:agentContextPicker.searchPagesSelectUp')"
+            :aria-label="$t('common:agentContextPicker.searchPages')"
             prepend-inner-icon="mdi-magnify"
             clearable
             hide-details="auto"
@@ -128,7 +128,7 @@
             :disabled="addingSources || disabled || connectionBlocked"
             @keydown.enter.prevent="queueSourceSearch(true)"
           />
-          <p class="agent-context__search-scope" role="note"><v-icon icon="mdi-earth" size="15" aria-hidden="true" /> Attachments are discovered across All Wiki; your existing Agent scope remains {{ scopeLabel }}.</p>
+          <p class="agent-context__search-scope" role="note"><v-icon icon="mdi-earth" size="15" aria-hidden="true" /> {{ $t('common:agentContextPicker.attachmentsDiscoveredAcrossAll', { scopeLabel, interpolation: { escapeValue: false } }) }}</p>
           <p class="agent-context__status" role="status" aria-live="polite" aria-atomic="true">{{ sourceStatus }}</p>
           <v-alert v-if="searchError || attachmentError" class="agent-context__error" type="error" variant="tonal" density="compact" role="alert">
             {{ attachmentError || searchError }}
@@ -136,20 +136,20 @@
 
           <section v-if="selectedRows.length" class="agent-context__pending" aria-labelledby="agent-sources-pending-title">
             <div class="agent-context__pending-heading">
-              <h3 id="agent-sources-pending-title">Pending additions</h3>
-              <span>{{ selectedRows.length }} of 8</span>
+              <h3 id="agent-sources-pending-title">{{ $t('common:agentContextPicker.pendingAdditions') }}</h3>
+              <span>{{ $t('common:agentContextPicker.n8', { selectedRowsCount: selectedRows.length, interpolation: { escapeValue: false } }) }}</span>
             </div>
             <div class="agent-context__pending-list">
-              <v-chip v-for="row in selectedRows" :key="rowIdentity(row)" closable size="small" variant="tonal" :disabled="addingSources || disabled || connectionBlocked" :close-label="`Remove ${row.title} from pending sources`" @click:close="removePending(row)">
+              <v-chip v-for="row in selectedRows" :key="rowIdentity(row)" closable size="small" variant="tonal" :disabled="addingSources || disabled || connectionBlocked" :close-label="$t('common:agentContextPicker.removePendingSources', { title: row.title, interpolation: { escapeValue: false } })" @click:close="removePending(row)">
                 <span class="agent-context__pending-label">{{ row.title }}<small>{{ row.locale }} · {{ row.path }}</small></span>
               </v-chip>
             </div>
           </section>
 
-          <div class="agent-context__results" aria-label="Page search results">
-            <div v-if="searchLoading" class="agent-context__results-state" role="status"><v-progress-circular indeterminate size="20" width="2" aria-hidden="true" /> Searching pages…</div>
-            <div v-else-if="!sourceQuery.trim() || sourceQuery.trim().length < 2" class="agent-context__results-state">Enter at least two characters to search pages.</div>
-            <div v-else-if="!sourceResult.results.length" class="agent-context__results-state">No accessible pages matched this search.</div>
+          <div class="agent-context__results" :aria-label="$t('common:agentContextPicker.pageSearchResults')">
+            <div v-if="searchLoading" class="agent-context__results-state" role="status"><v-progress-circular indeterminate size="20" width="2" aria-hidden="true" /> {{ $t('common:agentContextPicker.searchingPages') }}</div>
+            <div v-else-if="!sourceQuery.trim() || sourceQuery.trim().length < 2" class="agent-context__results-state">{{ $t('common:agentContextPicker.enterLeastTwoCharacters') }}</div>
+            <div v-else-if="!sourceResult.results.length" class="agent-context__results-state">{{ $t('common:agentContextPicker.noAccessiblePagesMatched') }}</div>
             <ul v-else class="agent-context__result-list">
               <li v-for="row in sourceResult.results" :key="rowIdentity(row)" class="agent-context__result">
                 <label class="agent-context__result-label" :class="{ 'agent-context__result-label--disabled': !canToggle(row) }" :title="toggleReason(row)">
@@ -164,16 +164,16 @@
                   <span class="agent-context__checkbox" aria-hidden="true" />
                   <span class="agent-context__result-copy">
                     <strong>{{ row.title }}</strong>
-                    <small :id="rowDomId(row)">{{ row.locale }} · {{ row.path }}<span v-if="row.visibility === 'private'"> · Private</span></small>
-                    <span v-if="isAttached(row)" class="agent-context__result-state-label">Attached</span>
-                    <span v-else-if="isPending(row)" class="agent-context__result-state-label">Pending</span>
-                    <span v-else-if="atCapacity" class="agent-context__result-state-label">Eight-source limit reached</span>
+                    <small :id="rowDomId(row)">{{ row.locale }} · {{ row.path }}<span v-if="row.visibility === 'private'"> {{ $t('common:agentContextPicker.private') }}</span></small>
+                    <span v-if="isAttached(row)" class="agent-context__result-state-label">{{ $t('common:agentContextPicker.attached') }}</span>
+                    <span v-else-if="isPending(row)" class="agent-context__result-state-label">{{ $t('common:agentContextPicker.pending') }}</span>
+                    <span v-else-if="atCapacity" class="agent-context__result-state-label">{{ $t('common:agentContextPicker.eightSourceLimitReached') }}</span>
                   </span>
                 </label>
               </li>
             </ul>
           </div>
-          <p v-if="sourceResult.windowTruncated" class="agent-context__window-note" role="status">Showing a bounded result window{{ sourceResult.windowLimit ? ` of ${sourceResult.windowLimit}` : '' }}. Refine the search to find other pages.</p>
+          <p v-if="sourceResult.windowTruncated" class="agent-context__window-note" role="status">{{ $t('common:agentContextPicker.showingBoundedResultWindow', { windowLimit: sourceResult.windowLimit ? ` ${$t('common:agentContextPicker.of', { windowLimit: sourceResult.windowLimit, interpolation: { escapeValue: false } })}` : '', interpolation: { escapeValue: false } }) }}</p>
           <p v-if="moreError" class="agent-context__more-error" role="alert">{{ moreError }}</p>
           <v-btn
             v-if="sourceResult.nextCursor"
@@ -183,7 +183,7 @@
             :disabled="loadingMore || addingSources || disabled || connectionBlocked"
             type="button"
             @click="loadMoreSources"
-          >More results</v-btn>
+          >{{ $t('common:agentContextPicker.moreResults') }}</v-btn>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -199,6 +199,9 @@ import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import WikiSourcePreview from '../common/wiki-source-preview.vue'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const emptySearchResult = (): PageSearchResult => ({ results: [], suggestions: [], totalHits: 0, nextCursor: null })
 const sourceDialogId = useId()
 
@@ -244,16 +247,16 @@ const toggleCurrentPage = (): void => {
   emit('change', { includeCurrentPage: !props.draft.includeCurrentPage })
 }
 
-const scopeLabel = computed(() => props.draft.scope.kind === 'selected' ? 'Selected pages' : props.draft.scope.kind === 'section' ? `Within ${props.draft.scope.path}` : props.draft.scope.kind === 'locale' ? `${props.draft.scope.locale.toUpperCase()} pages` : 'All Wiki')
+const scopeLabel = computed(() => props.draft.scope.kind === 'selected' ? t('common:agentContextPicker.selectedPages') : props.draft.scope.kind === 'section' ? t('common:agentContextPicker.within', { path: props.draft.scope.path, interpolation: { escapeValue: false } }) : props.draft.scope.kind === 'locale' ? t('common:agentContextPicker.pages', { locale: props.draft.scope.locale.toUpperCase(), interpolation: { escapeValue: false } }) : t('common:agentContextPicker.allWiki'))
 const attachedIds = computed(() => new Set(props.draft.sources.map(source => source.id)))
 const atCapacity = computed(() => props.draft.sources.length + selectedRows.value.length >= 8)
 const sourceStatus = computed(() => {
-  if (addingSources.value) return `Adding ${selectedRows.value.length} source${selectedRows.value.length === 1 ? '' : 's'}…`
-  if (searchLoading.value) return 'Searching pages…'
-  if (loadingMore.value) return `Loading more results… ${sourceResult.value.results.length} shown`
-  if (selectedRows.value.length) return `${selectedRows.value.length} source${selectedRows.value.length === 1 ? '' : 's'} pending. ${sourceResult.value.results.length} result${sourceResult.value.results.length === 1 ? '' : 's'} shown.`
-  if (sourceQuery.value.trim().length >= 2) return `${sourceResult.value.results.length} result${sourceResult.value.results.length === 1 ? '' : 's'} shown.`
-  return 'No sources selected.'
+  if (addingSources.value) return t('common:agentContextPicker.addingSource', { valueCount: selectedRows.value.length, selectedRows: selectedRows.value.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
+  if (searchLoading.value) return t('common:agentContextPicker.searchingPages')
+  if (loadingMore.value) return t('common:agentContextPicker.loadingMoreResultsShown', { resultsCount: sourceResult.value.results.length, interpolation: { escapeValue: false } })
+  if (selectedRows.value.length) return t('common:agentContextPicker.sourcePendingResultShown', { valueCount: selectedRows.value.length, selectedRows: selectedRows.value.length === 1 ? '' : 's', resultsCount: sourceResult.value.results.length, results: sourceResult.value.results.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
+  if (sourceQuery.value.trim().length >= 2) return t('common:agentContextPicker.resultShown', { resultsCount: sourceResult.value.results.length, results: sourceResult.value.results.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
+  return t('common:agentContextPicker.noSourcesSelected')
 })
 
 const normalizeSourceId = (value: string | number): number | null => {
@@ -284,15 +287,15 @@ const isPending = (row: PageSearchRow): boolean => {
   return id !== null && selectedRows.value.some(selected => rowId(selected) === id)
 }
 const toggleReason = (row: PageSearchRow): string => {
-  if (isAttached(row)) return 'Already attached to this conversation'
-  if (isPending(row)) return 'Selected; uncheck to remove from pending additions'
-  if (rowId(row) === null) return 'This result has an invalid page identity'
-  if (atCapacity.value) return 'Eight sources is the maximum; remove a pending or attached source first'
+  if (isAttached(row)) return t('common:agentContextPicker.alreadyAttachedConversation')
+  if (isPending(row)) return t('common:agentContextPicker.selectedUncheckRemovePending')
+  if (rowId(row) === null) return t('common:agentContextPicker.resultHasInvalidPage')
+  if (atCapacity.value) return t('common:agentContextPicker.eightSourcesMaximumRemove')
   return ''
 }
 const canToggle = (row: PageSearchRow): boolean => !addingSources.value && !interactionBlocked.value && !isAttached(row) && (isPending(row) || (!atCapacity.value && rowId(row) !== null))
 const rowAriaLabel = (row: PageSearchRow): string => {
-  const state = isAttached(row) ? 'Attached' : isPending(row) ? 'Pending addition' : atCapacity.value ? 'Unavailable, eight-source limit reached' : ''
+  const state = isAttached(row) ? t('common:agentContextPicker.attached') : isPending(row) ? t('common:agentContextPicker.pendingAddition') : atCapacity.value ? t('common:agentContextPicker.unavailableEightSourceLimit') : ''
   return `${row.title}, ${row.locale}, ${row.path}${state ? `, ${state}` : ''}`
 }
 const setScope = (scope: AgentSearchScope): void => {
@@ -417,7 +420,7 @@ const runSearch = async (query: string, generation: number): Promise<void> => {
     sourceResult.value = { ...response, results: dedupeRows(response.results) }
   } catch (value) {
     if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
-    searchError.value = value instanceof Error ? value.message : 'Page search could not be completed.'
+    searchError.value = value instanceof Error ? value.message : t('common:agentContextPicker.pageSearchCouldNot')
   } finally {
     if (searchController === controller) searchController = null
     if (generation === requestGeneration) searchLoading.value = false
@@ -449,7 +452,7 @@ const loadMoreSources = async (): Promise<void> => {
     sourceResult.value = { ...next, results: [...existingResults, ...added] }
   } catch (value) {
     if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
-    moreError.value = value instanceof Error ? value.message : 'More results could not be loaded. Try again.'
+    moreError.value = value instanceof Error ? value.message : t('common:agentContextPicker.moreResultsCouldNot')
   } finally {
     if (moreController === controller) moreController = null
     if (generation === requestGeneration) loadingMore.value = false
@@ -468,7 +471,7 @@ const toggleSource = (row: PageSearchRow, event: Event): void => {
   if (checked) {
     if (isPending(row)) return
     if (props.draft.sources.length + selectedRows.value.length >= 8) {
-      attachmentError.value = 'Eight sources is the maximum. Remove one before selecting another.'
+      attachmentError.value = t('common:agentContextPicker.eightSourcesMaximumRemove2')
       return
     }
     selectedRows.value = [...selectedRows.value, row]
@@ -478,7 +481,7 @@ const toggleSource = (row: PageSearchRow, event: Event): void => {
   attachmentError.value = ''
 }
 const transactionError = (row: PageSearchRow, value: unknown): Error => {
-  const message = value instanceof Error && value.message ? value.message : 'This source could not be loaded.'
+  const message = value instanceof Error && value.message ? value.message : t('common:agentContextPicker.sourceCouldNotLoaded')
   return new Error(`${row.title}: ${message}`)
 }
 const addSources = async (): Promise<void> => {
@@ -493,10 +496,10 @@ const addSources = async (): Promise<void> => {
   try {
     const hydrated = await Promise.all(pending.map(async row => {
       const id = rowId(row)
-      if (id === null) throw transactionError(row, new Error('The page identity is invalid.'))
+      if (id === null) throw transactionError(row, new Error(t('common:agentContextPicker.pageIdentityInvalid')))
       try {
         const source = await fetchWikiSource({ id }, query, controller.signal)
-        if (source.id !== id) throw new Error('The returned page identity did not match the selected page.')
+        if (source.id !== id) throw new Error(t('common:agentContextPicker.returnedPageIdentityDid'))
         return source
       } catch (value) {
         if (controller.signal.aborted) throw value
@@ -508,7 +511,7 @@ const addSources = async (): Promise<void> => {
     const currentIds = new Set(currentSources.map(source => source.id))
     const additions = hydrated.filter(source => !currentIds.has(source.id))
     if (currentSources.length + additions.length > 8) {
-      throw new Error('The conversation already has eight attached sources. Remove one and try again.')
+      throw new Error(t('common:agentContextPicker.conversationAlreadyHasEight'))
     }
     const mergedSources: WikiSource[] = [...currentSources, ...additions]
     const context = AgentKnowledgeContextSchema.safeParse({
@@ -522,14 +525,14 @@ const addSources = async (): Promise<void> => {
         sourceRevision: source.sourceRevision
       }))
     })
-    if (!context.success) throw new Error(context.error.issues[0]?.message || 'The selected sources do not fit the Agent context limits.')
+    if (!context.success) throw new Error(context.error.issues[0]?.message || t('common:agentContextPicker.selectedSourcesDoNot'))
     if (disposed || controller.signal.aborted || resolveController !== controller || interactionBlocked.value || !sourcesOpen.value) return
     emit('change', { sources: mergedSources })
     successfulClose.value = true
     sourcesOpen.value = false
   } catch (value) {
     if (disposed || controller.signal.aborted || resolveController !== controller || interactionBlocked.value || !sourcesOpen.value) return
-    attachmentError.value = value instanceof Error ? value.message : 'The selected sources could not be added. Deselect the failing page and try again.'
+    attachmentError.value = value instanceof Error ? value.message : t('common:agentContextPicker.selectedSourcesCouldNot')
   } finally {
     if (resolveController === controller) {
       resolveController = null
