@@ -1,7 +1,7 @@
 import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 import { wikiStore } from './store/index.ts'
-import { loadingStart, loadingStop, showNotification } from './helpers/root-ui-store'
+import { loadingStart, loadingStop } from './helpers/root-ui-store'
 import { requestConfirmation } from './components/common/confirm-dialog.ts'
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
@@ -89,13 +89,8 @@ router.onError((_error, to) => {
   if (isProfile) stopProfileRouteLoading(to)
   if (routeLoadRecoveryShown) return
   routeLoadRecoveryShown = true
-  const message = 'This section could not be loaded. Reload the page to try again.'
-  showNotification(wikiStore, {
-    message,
-    style: 'error',
-    icon: 'refresh'
-  })
-  // The shell's themed confirm host asks; without a host the service falls back to the native prompt.
+  // One surface only: the shell's themed confirm host offers Reload; without a
+  // host the service falls back to the native prompt. No duplicate toast.
   void requestConfirmation({
     title: 'This section could not be loaded.',
     message: 'Reload the page to try again.',

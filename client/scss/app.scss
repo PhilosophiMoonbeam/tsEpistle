@@ -133,6 +133,21 @@
   background: rgb(var(--v-theme-on-surface));
 }
 
+// Vuetify moves focus to the dialog container when a dialog opens. The
+// container is not a control, so it shows the soft shared ring around the
+// rounded card instead of the heavy square control outline.
+.v-dialog > .v-overlay__content:focus-visible {
+  border-radius: var(--wiki-panel-radius);
+  outline: none;
+  box-shadow: var(--wiki-focus-ring);
+}
+
+@media (forced-colors: active) {
+  .v-dialog > .v-overlay__content:focus-visible {
+    outline: .125rem solid Highlight;
+  }
+}
+
 .v-overlay__content > :where(.v-list, .v-sheet):not(.v-card),
 .v-menu > .v-overlay__content > :where(.v-list, .v-sheet) {
   border: 1px solid var(--wiki-surface-border);
