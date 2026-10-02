@@ -373,22 +373,11 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-
-    <v-dialog :model-value="discardOpen" max-width="470" aria-labelledby="logging-discard-title" @update:model-value="updateDiscardOpen">
-      <v-card>
-        <v-card-title id="logging-discard-title">Discard logging draft?</v-card-title>
-        <v-card-text>Your unsaved destination, console and secret-action changes will be lost.</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="cancelDiscard">Keep editing</v-btn>
-          <v-btn color="error" variant="flat" @click="confirmDiscard">Discard draft</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </v-container>
 </template>
 
 <script setup lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AsyncState from '@/components/common/async-state.vue'
@@ -430,18 +419,15 @@ const error = ref('')
 const notice = ref('')
 const stale = ref(false)
 const reviewOpen = ref(false)
-const discardOpen = ref(false)
 const reason = ref('')
 const reasonError = ref('')
-const pendingDiscard = ref<(() => void) | null>(null)
-const leavePath = ref<string | null>(null)
 let loadSequence = 0
 
 const section = computed(() =>
   sections.some((item) => item.key === route.query.section) ? (route.query.section as (typeof sections)[number]['key']) : 'destinations'
 )
 const busy = computed(() => loading.value || saving.value || applying.value)
-const dialogOpen = computed(() => reviewOpen.value || discardOpen.value)
+const dialogOpen = computed(() => reviewOpen.value)
 const destinationFor = (key: string) => saved.value?.destinations.find((destination) => destination.key === key)
 const filteredDestinations = computed(() => {
   const query = catalogueQuery.value.trim().toLocaleLowerCase()
@@ -615,35 +601,14 @@ const reload = () =>
   askDiscard(() => {
     void load()
   })
-const askDiscard = (next: () => void) => {
+const askDiscard = async (next: () => void) => {
   if (!dirty.value) {
     next()
     return
   }
-  pendingDiscard.value = next
-  discardOpen.value = true
-}
-const cancelDiscard = () => {
-  pendingDiscard.value = null
-  leavePath.value = null
-  discardOpen.value = false
-}
-const updateDiscardOpen = (open: boolean) => {
-  if (open) {
-    discardOpen.value = true
-    return
-  }
-  cancelDiscard()
-}
-const confirmDiscard = () => {
-  const next = pendingDiscard.value
-  const path = leavePath.value
-  pendingDiscard.value = null
-  leavePath.value = null
-  discardOpen.value = false
+  if (!(await confirmDiscard('Discard logging draft?', 'Your unsaved destination, console and secret-action changes will be lost.', 'Discard draft'))) return
   reset()
-  next?.()
-  if (path) void router.push(path)
+  next()
 }
 const selectSection = (key: (typeof sections)[number]['key']) => {
   void router.replace({ query: { ...route.query, section: key } })
@@ -711,12 +676,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   loadSequence += 1
 })
-onBeforeRouteLeave((to) => {
+onBeforeRouteLeave(async () => {
   if (!dirty.value) return true
-  pendingDiscard.value = null
-  leavePath.value = to.fullPath
-  discardOpen.value = true
-  return false
+  return confirmDiscard('Discard logging draft?', 'Your unsaved destination, console and secret-action changes will be lost.', 'Discard draft')
 })
 </script>
 
