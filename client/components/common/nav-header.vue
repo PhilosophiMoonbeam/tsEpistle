@@ -2540,12 +2540,9 @@ export default defineComponent({
 
 
     .nav-header-inner .v-btn {
-      min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));
-      height: calc(var(--wiki-control-height) - var(--wiki-space-1)) !important;
-    }
-    .nav-header-inner .nav-header-browse {
-      width: calc(var(--wiki-control-height) - var(--wiki-space-1));
-      min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+      min-width: 44px;
+      min-height: 44px;
+      height: 44px !important;
     }
 
     .navHeaderLoading {
