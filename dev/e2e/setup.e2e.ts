@@ -94,10 +94,13 @@ async function getMarkdownSourceData(page: Page): Promise<string> {
   })
 }
 
+// The dirty Save action names its keyboard shortcut.
+const dirtySaveButtonName = /^Save \((Ctrl\+S|⌘S)\)$/
+
 async function expectWelcomePage(page: Page) {
   await expect(page).toHaveURL('/')
   await expect(page).toHaveTitle('Welcome | tsEpistle')
-  await expect(page.locator('.onboarding-brand-title:visible')).toHaveText('tsEpistle')
+  await expect(page.locator('.welcome .auth-shell__eyebrow:visible')).toHaveText('tsEpistle')
   await expect(page.getByText('Welcome to your wiki!', { exact: true })).toBeVisible()
   await expect(page.getByText("Let's get started and create the home page.", { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Create Home Page' })).toBeVisible()
@@ -179,7 +182,7 @@ test.describe('critical post-install workflows', () => {
   test('installs tsEpistle with telemetry disabled and opens the login screen', async ({ page }) => {
     test.setTimeout(120_000)
 
-    await openClientPage(page, '/', '.setup-main')
+    await openClientPage(page, '/', '.setup .auth-shell__card')
     await expect(page.getByText('First-run setup', { exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'tsEpistle', exact: true })).toBeVisible()
 
@@ -234,7 +237,7 @@ test.describe('critical post-install workflows', () => {
     await expect(properties).toBeVisible()
     await properties.getByRole('textbox', { name: 'Title', exact: true }).fill('Home')
     await properties.getByRole('textbox', { name: 'Short Description', exact: true }).fill('Welcome home')
-    await properties.getByRole('button', { name: 'OK', exact: true }).click()
+    await properties.getByRole('button', { name: 'Apply', exact: true }).click()
 
     const editor = page.locator('.cm-content')
     await expect(editor).toBeVisible({ timeout: 30_000 })
@@ -265,7 +268,7 @@ test.describe('critical post-install workflows', () => {
     await page.emulateMedia({ colorScheme: 'dark' })
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
     await page.getByRole('button', { name: 'Account' }).click()
-    await page.locator('.v-overlay--active').getByRole('button', { name: 'Appearance', exact: true }).click()
+    await page.locator('.v-overlay--active').getByRole('tab', { name: 'Appearance', exact: true }).click()
     const appearanceSelector = page.locator('.v-overlay--active').getByRole('region', { name: 'Appearance settings' })
     const appearanceToggle = appearanceSelector.getByRole('button')
     await expect(appearanceToggle).toHaveAttribute('aria-pressed', 'false')
@@ -289,7 +292,10 @@ test.describe('critical post-install workflows', () => {
       const { promise, resolve } = Promise.withResolvers<void>()
       setTimeout(resolve, 1200)
       await promise
-      await route.continue()
+      // A navigation while the request is held cancels it and Playwright settles the route itself.
+      await route.continue().catch(error => {
+        if (!/already handled/i.test(String(error))) throw error
+      })
     })
     await page.addInitScript(() => {
       const modes: string[] = []
@@ -321,9 +327,10 @@ test.describe('critical post-install workflows', () => {
 
     await openClientPage(page, '/en/home', '.page-header-section')
     await expectLightFromFirstFrame()
-    await page.unroute('**/_api/users/whoami')
+    // Let the delayed whoami handler finish before removing it; unroute would otherwise settle it twice.
+    await page.unrouteAll({ behavior: 'wait' })
     await page.getByRole('button', { name: 'Account' }).click()
-    await page.locator('.v-overlay--active').getByRole('button', { name: 'Appearance', exact: true }).click()
+    await page.locator('.v-overlay--active').getByRole('tab', { name: 'Appearance', exact: true }).click()
     const restoredAppearanceToggle = page.locator('.v-overlay--active').getByRole('region', { name: 'Appearance settings' }).getByRole('button')
     await expect(restoredAppearanceToggle).toHaveAttribute('aria-pressed', 'true')
     await restoredAppearanceToggle.click()
@@ -345,7 +352,7 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('button', { name: /^Visual Markdown Rich text with Markdown output/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual Markdown Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Canonical Markdown from Tiptap')
-    await page.getByRole('button', { name: 'OK' }).click()
+    await page.getByRole('button', { name: 'Apply', exact: true }).click()
 
     const editor = page.locator('.editor-tiptap .ProseMirror')
     await expect(editor).toBeVisible()
@@ -400,7 +407,7 @@ test.describe('critical post-install workflows', () => {
 
     await setVisualEditorData(page, `${await getVisualEditorData(page)}\n\nUnsaved draft.`)
     await expect(editor).toContainText('Unsaved draft.')
-    await expect(page.locator('#root').getByRole('button', { name: 'Save', exact: true })).toBeVisible()
+    await expect(page.locator('#root').getByRole('button', { name: dirtySaveButtonName })).toBeVisible()
 
     await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Discard Changes' })).toBeVisible()
@@ -443,7 +450,7 @@ test.describe('critical post-install workflows', () => {
     await expect(editorChooser).not.toBeVisible()
     await page.getByRole('textbox', { name: 'Title' }).fill('Content Extensions Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Gallery and index browser workflow')
-    await page.getByRole('button', { name: 'OK' }).click()
+    await page.getByRole('button', { name: 'Apply', exact: true }).click()
 
     const editor = page.locator('.cm-content')
     await expect(editor).toBeVisible({ timeout: 30_000 })
@@ -613,7 +620,7 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('button', { name: /^Visual HTML Rich text with HTML output/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual HTML Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('HTML from Tiptap')
-    await page.getByRole('button', { name: 'OK' }).click()
+    await page.getByRole('button', { name: 'Apply', exact: true }).click()
 
     const editor = page.locator('.editor-tiptap .ProseMirror')
     await expect(editor).toBeVisible()
@@ -659,7 +666,7 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Extended Markdown Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Extended visual syntax')
-    await page.getByRole('button', { name: 'OK' }).click()
+    await page.getByRole('button', { name: 'Apply', exact: true }).click()
 
     const source = '## Callout\n\n> Preserved source\n{.is-info}'
     const editor = page.locator('.cm-content')
@@ -758,7 +765,7 @@ test.describe('critical post-install workflows', () => {
     const editor = page.locator('.cm-content')
     await expect(editor).toBeVisible({ timeout: 30_000 })
     await editor.fill('# Browser Workflow Updated\n\nEdited and rendered through the modern editor.')
-    await page.locator('#root').getByRole('button', { name: 'Save', exact: true }).click()
+    await page.locator('#root').getByRole('button', { name: dirtySaveButtonName }).click()
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
     await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
 
@@ -936,7 +943,7 @@ test.describe('critical post-install workflows', () => {
     await expect(page.getByRole('textbox', { name: 'Publish starting on...' })).toBeVisible()
     await expect(page.getByRole('textbox', { name: 'Publish ending on...' })).toBeVisible()
     await expectNoHorizontalOverflow(page)
-    await page.getByRole('button', { name: 'OK' }).click()
+    await page.getByRole('button', { name: 'Apply', exact: true }).click()
 
     await page.getByRole('button', { name: 'More editor actions', exact: true }).click()
     await page.getByText('Close', { exact: true }).click()
@@ -1008,11 +1015,11 @@ test.describe('critical post-install workflows', () => {
     await page.locator('.v-overlay--active').getByRole('button', { name: 'History', exact: true }).click()
     await expect(page).toHaveURL('/h/en/home')
 
-    const revisionActions = page.getByRole('button', { name: /^More actions for revision / })
+    const revisionActions = page.getByRole('button', { name: /^More actions for Revision \d+$/ })
     await expect(revisionActions.first()).toBeVisible()
     await revisionActions.first().click()
-    await page.locator('.v-overlay--active').getByText('Restore', { exact: true }).click()
-    await page.locator('.v-dialog').getByRole('button', { name: 'Restore' }).click()
+    await page.locator('.v-overlay--active').getByText('Restore this revision', { exact: true }).click()
+    await page.getByRole('dialog', { name: 'Restore this revision?' }).getByRole('button', { name: 'Restore', exact: true }).click()
 
     await expect(page).toHaveURL('/en/home', { timeout: 30_000 })
     await expect(page.getByRole('heading', { name: 'Browser Workflow' })).toBeVisible()
@@ -1043,7 +1050,7 @@ test.describe('critical post-install workflows', () => {
     await mediaDialog.getByRole('button', { name: 'Insert', exact: true }).click()
 
     expect(await getMarkdownSourceData(page)).toContain('[browser-upload.txt](')
-    await page.locator('#root').getByRole('button', { name: 'Save', exact: true }).click()
+    await page.locator('#root').getByRole('button', { name: dirtySaveButtonName }).click()
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
     await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('link', { name: 'browser-upload.txt' })).toBeVisible()
@@ -1139,7 +1146,8 @@ test.describe('critical post-install workflows', () => {
     await expect(homeResult).toBeVisible()
     await homeResult.click()
     await expect(page).toHaveURL('/en/home')
-    await expect(page.getByRole('heading', { name: 'Browser Workflow', exact: true })).toBeVisible()
+    // Rendered headings start with their "¶" section link.
+    await expect(page.getByRole('heading', { name: /^(¶\s*)?Browser Workflow$/ })).toBeVisible()
   })
 
   test('requires and recovers from two-factor authentication', async ({ page }) => {
@@ -1229,10 +1237,10 @@ test.describe('critical post-install workflows', () => {
       const protectedPage = await anonymousContext.newPage()
       await protectedPage.goto('/en/visual-html-browser')
       await expect(protectedPage.getByRole('heading', { name: 'This page is password-protected' })).toBeVisible()
-      await protectedPage.getByLabel('Page password').fill('wrong-password')
+      await protectedPage.getByRole('textbox', { name: 'Page password' }).fill('wrong-password')
       await protectedPage.getByRole('button', { name: 'Unlock page' }).click()
       await expect(protectedPage.getByText('Access denied', { exact: true })).toBeVisible()
-      await protectedPage.getByLabel('Page password').fill(password)
+      await protectedPage.getByRole('textbox', { name: 'Page password' }).fill(password)
       const [unlockResponse] = await Promise.all([
         protectedPage.waitForResponse(response => response.url().endsWith(`/_unlock/${pageId}`) && response.request().method() === 'POST'),
         protectedPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),

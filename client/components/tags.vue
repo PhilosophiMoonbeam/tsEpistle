@@ -1054,7 +1054,7 @@ export default {
 
 .tags-workspace--selected {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 336px minmax(0, 1fr);
   gap: var(--wiki-space-6);
   align-items: start;
 }
