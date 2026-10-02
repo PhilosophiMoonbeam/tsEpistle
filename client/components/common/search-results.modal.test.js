@@ -266,3 +266,106 @@ describe('Ask modal accessibility contract', () => {
     }
   })
 })
+
+const compileSearchComputed = (source, names) => {
+  const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
+  if (!script) throw new Error('Search component script was not found.')
+  const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  let computed
+  const visit = node => {
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === 'computed' && ts.isObjectLiteralExpression(node.initializer)) {
+      computed = node.initializer
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  const selected = new Set(names)
+  const declarations = computed.properties.filter(node => ts.isMethodDeclaration(node) && selected.has(node.name.getText(sourceFile)))
+  if (declarations.length !== selected.size) throw new Error('A requested search computed property was not found.')
+  const compiled = ts.transpileModule(`const computed = ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+  }).outputText
+  return new Function(`${compiled}\nreturn computed`)()
+}
+
+describe('Search panel layout and hand-off', () => {
+  const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
+  const template = search.slice(0, search.indexOf('</template>'))
+  const english = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8')).common
+  const translate = (key, options = {}) => {
+    const [, keyPath] = key.split(':')
+    const [group, name] = keyPath.split('.')
+    const entries = english[group]
+    const value = entries[`${name}_${options.count === 1 ? 'one' : 'other'}`] ?? entries[name]
+    if (typeof value !== 'string') throw new Error(`Missing English string ${key}`)
+    return value.replace(/\{\{(\w+)\}\}/g, (_, field) => String(options[field]))
+  }
+
+  test('keeps one heading level below the page title, one Close, and one paging model', () => {
+    // aria-modal stays Agent-only: in search mode the focused header field lives outside the dialog.
+    expect(template).toContain(":aria-modal='isAgentOpen ? `true` : undefined'")
+    expect(template).not.toMatch(/^\s*h1/m)
+    expect(template).toContain('h2#wiki-search-title.sr-only')
+    expect(template).not.toContain('v-pagination')
+    expect(template).not.toContain('search-results-close')
+  })
+
+  test('folds truncation into one result summary', () => {
+    const computed = compileSearchComputed(search, ['resultSummary', 'resultSummaryHint'])
+    const summarize = (response, extra = {}) => {
+      const state = { $t: translate, hasFreshResponse: true, offlineSearchActive: false, offlineCorpusCount: null, offlineResultsTruncated: false, response, ...extra }
+      return [computed.resultSummary.call(state), computed.resultSummaryHint.call(state)]
+    }
+    const rows = count => Array.from({ length: count }, (_, id) => ({ id }))
+    expect(summarize({ results: rows(1), totalHits: 1 })).toEqual(['1 match', ''])
+    expect(summarize({ results: rows(12), totalHits: 12 })).toEqual(['12 matches', ''])
+    expect(summarize({ results: rows(10), totalHits: 37, nextCursor: 'next' })).toEqual(['Top 10 of 37 matches', ''])
+    expect(summarize({ results: rows(50), totalHits: 230, windowTruncated: true })).toEqual(['Top 50 of 230+ matches', 'Narrow the query or scope to find more'])
+    expect(summarize({ results: rows(5), totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 9 })).toEqual(['9 saved pages searched', ''])
+    expect(summarize({ results: rows(50), totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 80, offlineResultsTruncated: true }))
+      .toEqual(['Top 50 matches from 80 saved pages', 'Narrow the query to find more'])
+    expect(summarize({ results: [], totalHits: 0 })).toEqual(['', ''])
+  })
+
+  test('keeps live-only scope filters focusable offline but does not apply them', () => {
+    const methods = compileSearchMethods(search, ['toggleLocaleScope', 'togglePathScope'])
+    const state = { offlineSearchActive: true, searchRestrictLocale: false, searchRestrictPath: false }
+    methods.toggleLocaleScope.call(state)
+    methods.togglePathScope.call(state)
+    expect(state).toMatchObject({ searchRestrictLocale: false, searchRestrictPath: false })
+    state.offlineSearchActive = false
+    methods.toggleLocaleScope.call(state)
+    methods.togglePathScope.call(state)
+    expect(state).toMatchObject({ searchRestrictLocale: true, searchRestrictPath: true })
+  })
+
+  test('Agent search button returns to the page search and focuses the header field', async () => {
+    let focusRequests = 0
+    const methods = compileSearchMethods(search, ['returnToSearch'], { emitSearchFocus: () => { focusRequests += 1 } })
+    const deactivations = []
+    const state = {
+      searchMode: 'ask',
+      searchIsFocused: true,
+      canAsk: true,
+      directPromptHandoffId: 3,
+      pendingAskRestoreTarget: {},
+      agentResumeSessionId: 'session',
+      get isAgentOpen() { return this.canAsk && this.searchMode === 'ask' },
+      captureAgentExcursion() { this.agentResumeSessionId = null },
+      deactivateAgentModal(restoreFocus) { deactivations.push(restoreFocus) },
+      $nextTick: () => Promise.resolve()
+    }
+    await methods.returnToSearch.call(state)
+    expect(state.searchMode).toBe('search')
+    expect(state.searchIsFocused).toBe(true)
+    expect(state.pendingAskRestoreTarget).toBeNull()
+    expect(state.agentResumeSessionId).toBeNull()
+    expect(deactivations).toEqual([false, false])
+    expect(focusRequests).toBe(1)
+
+    const superseded = { ...state, searchMode: 'ask', $nextTick() { this.directPromptHandoffId += 1; return Promise.resolve() } }
+    Object.defineProperty(superseded, 'isAgentOpen', { get() { return this.canAsk && this.searchMode === 'ask' } })
+    await methods.returnToSearch.call(superseded)
+    expect(focusRequests).toBe(1)
+  })
+})
