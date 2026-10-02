@@ -46,7 +46,7 @@
                 template(v-slot:append-inner)
                   password-visibility-toggle(
                     :visible='!hidePassword'
-                    :field='$t(`common:pageUnlock.password`)'
+                    :field='$t(`common:password.fields.pagePassword`)'
                     @update:visible='hidePassword = !$event'
                   )
               v-btn.mt-2(

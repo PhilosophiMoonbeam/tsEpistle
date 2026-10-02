@@ -726,7 +726,15 @@
       "average": "Average",
       "veryWeak": "Very Weak",
       "veryStrong": "Very Strong",
-      "show": "Show {{field}}"
+      "show": "Show {{field}}",
+      "fields": {
+        "password": "password",
+        "passwordConfirmation": "password confirmation",
+        "currentPassword": "current password",
+        "newPassword": "new password",
+        "newPasswordConfirmation": "new password confirmation",
+        "pagePassword": "page password"
+      }
     },
     "confirm": {
       "discard": "Discard",

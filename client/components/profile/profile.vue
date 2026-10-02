@@ -303,7 +303,7 @@
                   :disabled='changePassLoading'
                 )
                   template(v-slot:append-inner)
-                    password-visibility-toggle(v-model:visible='showCurrentPass', :field='$t(`profile:auth.currentPassword`)', :disabled='changePassLoading')
+                    password-visibility-toggle(v-model:visible='showCurrentPass', :field='$t(`common:password.fields.currentPassword`)', :disabled='changePassLoading')
                 v-text-field(
                   ref='iptNewPass'
                   v-model='newPass'
@@ -323,7 +323,7 @@
                   template(v-slot:loader)
                     password-strength(v-model='newPass')
                   template(v-slot:append-inner)
-                    password-visibility-toggle(v-model:visible='showNewPass', :field='$t(`profile:auth.newPassword`)', :disabled='changePassLoading')
+                    password-visibility-toggle(v-model:visible='showNewPass', :field='$t(`common:password.fields.newPassword`)', :disabled='changePassLoading')
                 v-text-field(
                   ref='iptVerifyPass'
                   v-model='verifyPass'
@@ -337,7 +337,7 @@
                   :disabled='changePassLoading'
                 )
                   template(v-slot:append-inner)
-                    password-visibility-toggle(v-model:visible='showVerifyPass', :field='$t(`profile:auth.verifyPassword`)', :disabled='changePassLoading')
+                    password-visibility-toggle(v-model:visible='showVerifyPass', :field='$t(`common:password.fields.newPasswordConfirmation`)', :disabled='changePassLoading')
                 .profile-password-form__actions
                   v-btn(
                     color='primary'
