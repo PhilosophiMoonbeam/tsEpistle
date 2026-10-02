@@ -15,6 +15,8 @@ import * as InsertEvents from './editor-insert-events'
 import * as Base64 from './base64'
 import { TextEditor } from '../components/editor/common/text-editor'
 import { EditorAdapterController } from '../components/editor/common/editor-adapter'
+import * as FormattingTools from '../components/editor/common/formatting-tools'
+import * as RovingToolbar from '../components/editor/common/roving-toolbar'
 import lodash from 'lodash'
 
 import * as editorConflictEvents from './editor-conflict-events.ts'
@@ -94,6 +96,8 @@ function componentOptions (relativePath, wikiStore) {
     ...InsertEvents,
     ...editorConflictEvents,
     ...Base64,
+    ...FormattingTools,
+    ...RovingToolbar,
     TextEditor,
     EditorAdapterController,
     wikiStore,
@@ -114,6 +118,7 @@ function lifecycleContext (component) {
     $refs: { root, cm },
     $vuetify: { theme: { current: { dark: false } } },
     $emit: () => {},
+    $t: key => key,
     $nextTick: callback => Vue.nextTick(callback),
     mdAndUp: false,
     wikiLinkOptions: WikiLinks.WIKI_LINKS_DISABLED

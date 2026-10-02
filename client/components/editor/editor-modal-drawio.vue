@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-drawio.animated.fadeIn(
+  v-card.editor-modal-drawio(
     ref='modalRoot'
     flat
     rounded='0'

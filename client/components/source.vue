@@ -31,13 +31,30 @@
           v-btn(variant='tonal', color='primary', size='small', @click='goDownload', :aria-label='$t(`common:actions.download`)')
             v-icon(:start='$vuetify.display.mdAndUp') mdi-download
             span(v-if='$vuetify.display.mdAndUp') {{$t('common:actions.download')}}
-          v-btn(variant='flat', color='primary', size='small', @click='goLive', :aria-label='$t(`common:page.returnNormalView`)')
-            v-icon(v-if='$vuetify.display.smAndDown') mdi-close
-            span(v-else) {{$t('common:page.returnNormalView')}}
+          v-btn(
+            variant='tonal'
+            color='primary'
+            size='small'
+            :aria-pressed='wrapLines ? `true` : `false`'
+            :aria-label='$t(`common:pageSource.wrapLines`)'
+            @click='toggleWrap'
+          )
+            v-icon(:start='$vuetify.display.mdAndUp') mdi-wrap
+            span(v-if='$vuetify.display.mdAndUp') {{$t('common:pageSource.wrapLines')}}
+          v-btn(variant='flat', color='primary', size='small', @click='goLive', :aria-label='$t(`common:pageSource.backToPage`)')
+            v-icon(:start='$vuetify.display.mdAndUp') mdi-arrow-left
+            span(v-if='$vuetify.display.mdAndUp') {{$t('common:pageSource.backToPage')}}
       v-container.source-shell(fluid)
         article.source-code-card
-          pre(tabindex='0' aria-labelledby='source-title')
-            code(v-text='sourceContent')
+          //- Line numbers are CSS counters, so copying the text never includes them.
+          pre.source-code(
+            tabindex='0'
+            aria-labelledby='source-title'
+            :class='{ "is-wrapped": wrapLines }'
+            :style='{ "--source-gutter": `${String(sourceLines.length).length + 1}ch` }'
+          )
+            code
+              span.source-line(v-for='line of sourceLines', :key='line.number') {{ line.text }}
     nav-footer
     notify
     search-results
@@ -48,6 +65,16 @@ import { defineComponent } from 'vue'
 import { getPageDownloadPath } from '../helpers/page-actions'
 import { wikiStore } from '@/store/index.ts'
 import { decodeBase64Json, decodeBase64Text } from '../helpers/base64'
+
+const WRAP_PREFERENCE_KEY = 'wiki.source.wrapLines'
+
+function readWrapPreference (): boolean {
+  try {
+    return window.localStorage.getItem(WRAP_PREFERENCE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 export default defineComponent({
   props: {
@@ -86,7 +113,21 @@ export default defineComponent({
   },
   data () {
     return {
-      sourceContent: decodeBase64Text(this.contentBase64)
+      sourceContent: decodeBase64Text(this.contentBase64),
+      wrapLines: readWrapPreference()
+    }
+  },
+  computed: {
+    /** One entry per source line; each keeps its own line break so textContent equals the source. */
+    sourceLines (): Array<{ number: number; text: string }> {
+      const parts = this.sourceContent.split('\n')
+      if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop()
+      const lastIndex = parts.length - 1
+      const trailingBreak = this.sourceContent.endsWith('\n')
+      return parts.map((text, index) => ({
+        number: index + 1,
+        text: index < lastIndex || trailingBreak ? `${text}\n` : text
+      }))
     }
   },
   created () {
@@ -102,18 +143,26 @@ export default defineComponent({
     }
   },
   methods: {
+    toggleWrap () {
+      this.wrapLines = !this.wrapLines
+      try {
+        window.localStorage.setItem(WRAP_PREFERENCE_KEY, this.wrapLines ? '1' : '0')
+      } catch {
+        // Storage can be unavailable (private mode); the toggle still works for this view.
+      }
+    },
     async copySource () {
       try {
         await navigator.clipboard.writeText(this.sourceContent)
         wikiStore.showNotification({
           style: 'success',
-          message: 'Source copied to clipboard.',
+          message: String(this.$t('common:pageSource.copied')),
           icon: 'content-copy'
         })
       } catch {
         wikiStore.showNotification({
           style: 'red',
-          message: 'Copy failed. Select the source text and copy it manually.',
+          message: String(this.$t('common:pageSource.copyFailed')),
           icon: 'alert'
         })
       }
@@ -199,9 +248,8 @@ export default defineComponent({
   display: flex;
   gap: var(--wiki-space-3);
   margin-top: 3px;
-  color: rgb(var(--v-theme-on-surface));
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-type-micro);
-  opacity: .56;
 }
 
 .source-toolbar-actions {
@@ -234,7 +282,36 @@ export default defineComponent({
     overflow-y: visible;
     margin: 0;
     padding: clamp(18px, 3vw, 30px);
+    padding-inline-start: clamp(10px, 2vw, 18px);
     white-space: pre;
+    counter-reset: source-line;
+  }
+
+  pre.is-wrapped {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+
+    > code {
+      min-width: 0;
+    }
+  }
+
+  .source-line {
+    display: block;
+    position: relative;
+    padding-inline-start: calc(var(--source-gutter, 4ch) + 1.25rem);
+
+    &::before {
+      position: absolute;
+      inset-inline-start: 0;
+      width: var(--source-gutter, 4ch);
+      color: var(--wiki-text-muted);
+      content: counter(source-line);
+      counter-increment: source-line;
+      font-variant-numeric: tabular-nums;
+      text-align: end;
+      user-select: none;
+    }
   }
 
   pre > code {

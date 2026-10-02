@@ -1,4 +1,5 @@
-import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
+import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import { Compartment, EditorSelection, EditorState, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
@@ -54,6 +55,10 @@ export interface TextEditorHandle {
   replaceSelection: (content: string) => void
   setMarkers: (markers: Array<{ from: TextPosition; to: TextPosition; text: string; action: EventListener }>) => void
   foldRange: (from: TextPosition, to: TextPosition) => void
+  undo?: () => boolean
+  redo?: () => boolean
+  historyDepth?: () => { undo: number; redo: number }
+  syntaxPath?: () => string[]
 }
 
 class ActionWidget extends WidgetType {
@@ -89,8 +94,13 @@ const markerField = StateField.define<DecorationSet>({
   provide: field => EditorView.decorations.from(field)
 })
 
+const EDITOR_SELECTION_TINT = 'color-mix(in srgb, rgb(var(--v-theme-primary)) 75%, rgb(var(--v-theme-on-surface)))'
+export const EDITOR_SELECTION = `var(--wiki-editor-selection, color-mix(in srgb, ${EDITOR_SELECTION_TINT} 42%, transparent))`
+export const EDITOR_SELECTION_INACTIVE = `var(--wiki-editor-selection-inactive, color-mix(in srgb, ${EDITOR_SELECTION_TINT} 28%, transparent))`
+
 const textEditorTheme = EditorView.theme({
   '&': {
+    isolation: 'isolate',
     height: '100%',
     backgroundColor: 'rgb(var(--v-theme-surface))',
     color: 'rgb(var(--v-theme-on-surface))',
@@ -102,14 +112,20 @@ const textEditorTheme = EditorView.theme({
   '.cm-cursor': { borderLeftColor: 'rgb(var(--v-theme-on-surface))' },
   '.cm-gutters': {
     backgroundColor: 'color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-on-surface)) 6%)',
-    color: 'rgba(var(--v-theme-on-surface), .54)',
+    color: 'var(--wiki-text-muted)',
     borderRight: '1px solid rgba(var(--v-theme-on-surface), .12)'
   },
-  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .06)' },
-  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, & > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
-    backgroundColor: 'rgba(var(--v-theme-primary), .24)'
+  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .04)' },
+  // One selection token for focused, unfocused and native selections. The tint
+  // mixes the palette primary with on-surface ink so pale or custom palettes
+  // still separate the selection from the editor background.
+  '& > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    backgroundColor: EDITOR_SELECTION_INACTIVE
   },
-  '::selection': { backgroundColor: 'rgba(var(--v-theme-primary), .24)' },
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    backgroundColor: EDITOR_SELECTION
+  },
+  '::selection': { backgroundColor: EDITOR_SELECTION },
   '.cm-buttonmarker': {
     backgroundColor: 'rgba(var(--v-theme-primary), .18)',
     border: '1px solid rgba(var(--v-theme-primary), .7)',
@@ -319,6 +335,28 @@ export class TextEditor implements TextEditorHandle {
       }).range(this.offsetAt(marker.from), this.offsetAt(marker.to))
     )
     this.view.dispatch({ effects: setMarkers.of(Decoration.set(decorations, true)) })
+  }
+
+  undo(): boolean {
+    return undo(this.view)
+  }
+
+  redo(): boolean {
+    return redo(this.view)
+  }
+
+  historyDepth(): { undo: number; redo: number } {
+    return { undo: undoDepth(this.view.state), redo: redoDepth(this.view.state) }
+  }
+
+  /** Syntax node names around the main cursor, innermost first. */
+  syntaxPath(): string[] {
+    const head = this.view.state.selection.main.head
+    const names: string[] = []
+    for (let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = syntaxTree(this.view.state).resolveInner(head, -1); node; node = node.parent) {
+      names.push(node.name)
+    }
+    return names
   }
 
   foldRange(from: TextPosition, to: TextPosition): void {

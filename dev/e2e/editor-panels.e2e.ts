@@ -181,7 +181,7 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
         if (selection === 'selected text') await page.keyboard.press('Shift+Home')
         expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(selection === 'selected text' ? label : '')
 
-        await page.getByRole('button', { name: 'Link to page', exact: true }).click()
+        await page.getByRole('button', { name: 'Insert Link', exact: true }).click()
         const selector = page.getByRole('dialog').filter({ has: page.locator('.page-selector') })
         await expect(selector).toBeVisible()
         await selector.locator('.page-selector__pages-list').getByText(targetTitle, { exact: true }).click()
