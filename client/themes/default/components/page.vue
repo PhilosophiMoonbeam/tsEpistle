@@ -1680,7 +1680,7 @@ export default defineComponent({
     },
     // The header already shows the site logo; skip a page mark that is the same file.
     pageBrandingDuplicatesSiteLogo (): boolean {
-      return brandingDuplicatesSiteLogo(this.pageBranding?.imageUrl, wikiStore.site.logoUrl)
+      return brandingDuplicatesSiteLogo(this.pageBranding, wikiStore.site)
     },
     pageBrandingStyle (): Record<string, string> {
       return resolvePageBrandingStyle(this.pageBranding, this.brandingFailureIdentity, this.$vuetify.theme.current.dark)
