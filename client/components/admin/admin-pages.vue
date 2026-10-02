@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="admin-pages">
     <admin-hero title="Pages" description="Care for the knowledge in your workspace." icon="mdi-file-document-multiple-outline">
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || bulkOpen" @click="refresh">Refresh</v-btn><v-btn variant="outlined" prepend-icon="mdi-graph-outline" to="/pages/visualize">Explore structure</v-btn><v-btn v-if="canManageSystem" variant="outlined" prepend-icon="mdi-delete-clock-outline" to="/pages/recycle-bin">Recycle bin</v-btn><v-btn v-if="canManageSystem" variant="outlined" prepend-icon="mdi-shield-search-outline" to="/pages/integrity">Page integrity</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || bulkOpen" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload the page list</v-tooltip></v-btn><v-btn variant="outlined" prepend-icon="mdi-graph-outline" to="/pages/visualize">Explore structure</v-btn><v-btn v-if="canManageSystem" variant="outlined" prepend-icon="mdi-delete-clock-outline" to="/pages/recycle-bin">Recycle bin</v-btn><v-btn v-if="canManageSystem" variant="outlined" prepend-icon="mdi-shield-search-outline" to="/pages/integrity">Page integrity</v-btn></template>
     </admin-hero>
     <section class="pages-overview"><div><span class="pages-kicker">Knowledge register</span><h2>A clear view of every page.</h2><p>Find what needs attention, understand who can read it, and manage publication with a review before each change.</p></div><dl class="pages-totals"><div><dt>Accessible pages</dt><dd>{{ pages.length }}</dd></div><div><dt>{{ pages.some(page => page.isPublished === undefined) ? 'Known drafts' : 'Drafts' }}</dt><dd>{{ pages.filter(page => page.isPublished === false).length }}</dd></div><div><dt>Publication unavailable</dt><dd>{{ pages.filter(page => page.isPublished === undefined).length }}</dd></div><div><dt>Private</dt><dd>{{ pages.filter(page => page.visibility === 'private').length }}</dd></div></dl></section>
     <div class="pages-quickviews" role="group" aria-label="Page views"><v-btn v-for="view in views" :key="view.value" :variant="view.value === currentView ? 'tonal' : 'text'" :aria-pressed="view.value === currentView" @click="setView(view.value)">{{ view.title }}</v-btn></div>
@@ -29,6 +29,7 @@
   </v-container>
 </template>
 <script lang='ts'>
+import { requestConfirmation } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import AdminPagesPublication from './admin-pages-publication.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -96,7 +97,7 @@ export default {
     }
   },  mounted() { this.restoreFilters(); this.loadPages(); this.clock = setInterval(() => { this.now = Date.now() }, 60000) },
   watch: { '$route.query'() { this.restoreFilters() }, pageCount(value: number) { this.pagination = Math.max(1, Math.min(this.pagination, value)) } },
-  beforeRouteLeave() { if (this.bulkBusy) { wikiStore.showNotification({ message: 'Stop or finish the publication operation before leaving.', style: 'warning', icon: 'info' }); return false } return !this.bulkOpen || window.confirm('Leave this publication review? Completed changes are already saved.') },
+  async beforeRouteLeave() { if (this.bulkBusy) { wikiStore.showNotification({ message: 'Stop or finish the publication operation before leaving.', style: 'warning', icon: 'info' }); return false } return !this.bulkOpen || await requestConfirmation({ title: 'Leave this publication review?', message: 'Completed changes are already saved.', confirmLabel: 'Leave review', cancelLabel: 'Stay' }) },
   beforeUnmount() { this.loadRequestId++; if (this.clock) clearInterval(this.clock) }
 }
 </script>

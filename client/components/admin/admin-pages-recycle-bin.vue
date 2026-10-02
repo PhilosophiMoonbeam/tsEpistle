@@ -3,7 +3,7 @@
     <admin-hero title="Page recovery" description="Restore a deleted page from its retained history without reopening a public route." icon="mdi-history">
       <template #actions>
         <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">Page register</v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="listLoading" :disabled="listLoading || restoring" @click="loadFirstPage">Refresh records</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="listLoading" :disabled="listLoading || restoring" @click="loadFirstPage">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload deleted page records</v-tooltip></v-btn>
       </template>
     </admin-hero>
 

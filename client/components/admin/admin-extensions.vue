@@ -1,11 +1,13 @@
 <template lang="pug">
 v-container.extensions-workspace(fluid)
-  section.extensions-heading(aria-labelledby='extensions-title')
-    div.extensions-heading-copy
-      span.extensions-kicker Optional capabilities
-      h1#extensions-title Extensions
-      p See which optional tools are available to the wiki and where to configure them.
-    div.extensions-heading-meta
+  admin-hero(
+    :title='$t(`admin:extensions.title`)'
+    description='See which optional tools are available to the wiki and where to configure them.'
+    eyebrow='Operations'
+    icon='mdi-puzzle-plus-outline'
+    heading-id='extensions-title'
+  )
+    template(#extra)
       dl.extensions-heading-facts
         div
           dt Bundled
@@ -16,11 +18,13 @@ v-container.extensions-workspace(fluid)
         div
           dt Observed
           dd: time(:datetime='workspace?.observedAt') {{ workspace ? dateTime(workspace.observedAt) : '—' }}
-      div.extensions-heading-actions
-        v-btn(variant='outlined' color='primary' size='small' prepend-icon='mdi-refresh' :loading='loading' :disabled='loading' @click='refresh') Refresh observations
-        p.extensions-boundary
-          v-icon(icon='mdi-shield-lock-outline' size='16' aria-hidden='true')
-          span Availability is checked in this process. Installation is managed with the application image.
+      p.extensions-boundary
+        v-icon(icon='mdi-shield-lock-outline' size='16' aria-hidden='true')
+        span Availability is checked in this process. Installation is managed with the application image.
+    template(#actions)
+      v-btn(variant='text' prepend-icon='mdi-refresh' :loading='loading' :disabled='loading' @click='refresh')
+        | {{ $t('admin:shell.reload') }}
+        v-tooltip(activator='parent' location='bottom') Reload extension observations
   async-state(v-if='loading && !workspace' state='loading' title='Reading the deployed extension library' message='Checking the bundled definitions and their bounded process observations.')
   async-state(v-else-if='error && !workspace' state='error' title='Extension observations could not be read' :message='error' retry-label='Try again' @retry='refresh')
   template(v-else-if='workspace && workspace.extensions.length')

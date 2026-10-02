@@ -1,14 +1,16 @@
 <template>
   <div class="tls-workspace">
-    <div :inert="dialog || leaveDialog || undefined">
-      <header class="tls-hero">
-        <div>
-          <p class="tls-eyebrow">Workspace controls / Infrastructure</p>
-          <h1>HTTPS &amp; certificates</h1>
-          <p class="tls-intro">Know where encryption begins. Keep every connection and certificate change accountable.</p>
-        </div>
-        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">Refresh evidence</v-btn>
-      </header>
+    <div :inert="dialog || undefined">
+      <admin-hero
+        title="HTTPS & certificates"
+        description="Know where encryption begins. Keep every connection and certificate change accountable."
+        eyebrow="Operations"
+        icon="mdi-certificate-outline"
+      >
+        <template #actions>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload certificate evidence</v-tooltip></v-btn>
+        </template>
+      </admin-hero>
       <v-alert v-if="error" type="error" variant="tonal" class="mb-4" role="alert">{{ error }}</v-alert>
       <v-alert v-if="notice" type="info" variant="tonal" class="mb-4" role="status">{{ notice }}</v-alert>
       <div v-if="!workspace" class="tls-empty">
@@ -489,20 +491,11 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-    <v-dialog v-model="leaveDialog" max-width="460" aria-labelledby="tls-leave-title">
-      <v-card class="pa-6">
-        <h2 id="tls-leave-title">Leave unsaved policy?</h2>
-        <p class="my-4">Your redirect policy draft will be discarded. Recorded operations continue on the server.</p>
-        <v-card-actions>
-          <v-btn @click="stay">Keep editing</v-btn>
-          <v-btn color="primary" @click="leave">Discard draft</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { confirmDiscard } from '../common/confirm-dialog.ts'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import type { TlsOperation, TlsOperationKind, TlsWorkspace } from '../../../shared/tls-workspace.ts'
 import { applyTlsPolicy, fetchTlsOperation, fetchTlsWorkspace, saveTlsPolicy, startTlsOperation } from '../../helpers/tls-workspace-api.ts'
@@ -783,31 +776,10 @@ const exportEvidence = () => {
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
-const leaveDialog = ref(false)
-let resolveLeave: ((value: boolean) => void) | undefined
-watch(leaveDialog, (value) => {
-  if (!value) {
-    resolveLeave?.(false)
-    resolveLeave = undefined
-  }
-})
-const stay = () => {
-  leaveDialog.value = false
-  resolveLeave?.(false)
-  resolveLeave = undefined
-}
-const leave = () => {
-  leaveDialog.value = false
-  resolveLeave?.(true)
-  resolveLeave = undefined
-}
-onBeforeRouteLeave(() => {
+onBeforeRouteLeave(async () => {
   if (busy.value) return false
   if (!dirty.value) return true
-  leaveDialog.value = true
-  return new Promise<boolean>((resolve) => {
-    resolveLeave = resolve
-  })
+  return confirmDiscard('Leave unsaved policy?', 'Your redirect policy draft will be discarded. Recorded operations continue on the server.', 'Discard draft')
 })
 const beforeUnload = (event: BeforeUnloadEvent) => {
   if (dirty.value || busy.value) {
@@ -824,7 +796,6 @@ onBeforeUnmount(() => {
   generation++
   clearTimeout(poll)
   window.removeEventListener('beforeunload', beforeUnload)
-  resolveLeave?.(false)
 })
 </script>
 <style lang="scss" src="./tls-workspace.scss"></style>

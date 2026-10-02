@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="admin-authoring">
     <admin-hero title="Editors" description="Shape how people create knowledge." icon="mdi-pencil-ruler">
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :disabled="saving || reviewOpen" :loading="loading" @click="reload">Reload saved policy</v-btn><v-btn variant="flat" color="primary" :disabled="!dirty || loading || saving || !valid" @click="reviewOpen = true">Review changes</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :disabled="saving || reviewOpen" :loading="loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved editor policy</v-tooltip></v-btn><v-btn variant="flat" color="primary" :disabled="!dirty || loading || saving || !valid" @click="reviewOpen = true">Review changes</v-btn></template>
     </admin-hero>
     <section class="authoring-intro"><div><span class="authoring-kicker">The authoring experience</span><h2>A good starting point for every author.</h2><p>Offer the right tools, recommend a shared starting point, and understand the formats already in your workspace.</p></div><dl><div><dt>Available in draft</dt><dd>{{ loaded ? draft.available.length : '—' }}<small> / {{ editors.length }}</small></dd></div><div><dt>Existing pages</dt><dd>{{ loaded ? totalPages : '—' }}</dd></div><div><dt>Chooser formats in use</dt><dd>{{ loaded ? usedFormats : '—' }}</dd></div></dl></section>
     <v-alert v-if="success" type="success" variant="tonal" closable class="mb-4" @click:close="success = ''">{{ success }}</v-alert>
@@ -24,6 +24,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { PAGE_EDITOR_DEFINITIONS, type PageEditorDefinition } from '../../helpers/page-editors.ts'
 import { fetchEditorWorkspace, saveEditorWorkspace } from '../../helpers/editor-policy-api.ts'
@@ -59,13 +60,13 @@ export default {
     reset() { if (this.saved) this.draft = { available: [...this.saved.available], recommended: this.saved.recommended }; this.recommendationNotice = ''; this.saveError = '' },
     setSection(value: string) { this.section = value; this.$router.replace({ hash: `#${value}` }) },
     tabKey(event: KeyboardEvent, value: string) { if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const index = this.tabs.findIndex(tab => tab.value === value), next = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (index + (event.key === 'ArrowRight' ? 1 : -1) + 3) % 3; this.setSection(this.tabs[next]!.value); this.$nextTick(() => document.getElementById(`authoring-tab-${this.section}`)?.focus()) },
-    async reload() { if (this.saving || (this.dirty && !window.confirm('Discard the unsaved editor policy and reload the saved settings?'))) return; this.loading = true; this.loadError = ''; try { const result = await fetchEditorWorkspace(); this.saved = result.policy; this.registeredKeys = result.registered; this.counts = result.usage; this.reset() } catch (error) { this.loadError = getErrorMessage(error) } finally { this.loading = false } },
-    async reloadFromReview() { if (this.saving) return; if (this.dirty && !window.confirm('Discard the unsaved editor policy and load the current saved settings?')) return; this.reviewOpen = false; this.reset(); await this.reload() },
+    async reload() { if (this.saving || (this.dirty && !(await confirmDiscard('Discard the unsaved editor policy and reload the saved settings?'))) || this.saving) return; this.loading = true; this.loadError = ''; try { const result = await fetchEditorWorkspace(); this.saved = result.policy; this.registeredKeys = result.registered; this.counts = result.usage; this.reset() } catch (error) { this.loadError = getErrorMessage(error) } finally { this.loading = false } },
+    async reloadFromReview() { if (this.saving) return; if (this.dirty && !(await confirmDiscard('Discard the unsaved editor policy and load the current saved settings?'))) return; this.reviewOpen = false; this.reset(); await this.reload() },
     async save() { if (!this.saved || this.saving || !this.valid || !this.dirty) return; this.saving = true; this.saveError = ''; const draft = { available: [...this.draft.available], recommended: this.draft.recommended }; try { const result = await saveEditorWorkspace(draft, this.saved.fingerprint); this.saved = result.policy; this.reset(); siteConfig.availableEditors = [...result.policy.available]; siteConfig.recommendedEditor = result.policy.recommended; this.warnings = result.warnings; this.success = 'Editor policy saved. New authoring sessions will use these choices.'; this.reviewOpen = false } catch (error) { this.saveError = getErrorMessage(error) } finally { this.saving = false } },
     beforeUnload(event: BeforeUnloadEvent) { if (this.dirty || this.saving) { event.preventDefault(); event.returnValue = '' } }
   },
   watch: { '$route.hash'(hash: string) { const value = hash.slice(1); if (this.tabs.some(tab => tab.value === value)) this.section = value } },
-  beforeRouteLeave() { return !this.saving && (!this.dirty || window.confirm('Discard the unsaved editor policy?')) },
+  async beforeRouteLeave() { return !this.saving && (!this.dirty || await confirmDiscard('Discard the unsaved editor policy?')) },
   mounted() { const hash = this.$route.hash.slice(1); if (this.tabs.some(tab => tab.value === hash)) this.section = hash; this.reload(); window.addEventListener('beforeunload', this.beforeUnload) },
   beforeUnmount() { window.removeEventListener('beforeunload', this.beforeUnload) }
 }

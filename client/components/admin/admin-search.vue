@@ -2,7 +2,7 @@
   <v-container class="admin-search" fluid>
     <AdminHero title="Search" description="Tune discovery for readers and agents. Configure retrieval, evaluate real queries, and maintain the index." eyebrow="Intelligence & connections" icon="mdi-text-search-variant">
       <template #status><v-chip size="small" variant="tonal" :color="dirty ? 'warning' : undefined">{{ enginesLoading ? 'Loading configuration' : enginesLoadError ? 'Configuration unavailable' : dirty ? 'Unsaved changes' : 'Configuration up to date' }}</v-chip></template>
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="enginesLoading" :disabled="saving || rebuilding || dirty" @click="refresh">Refresh configuration</v-btn></template>
+      <template #actions><v-btn :aria-disabled="dirty || undefined" variant="text" prepend-icon="mdi-refresh" :loading="enginesLoading" :disabled="saving || rebuilding" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ dirty ? 'Save or reset your search changes before you reload.' : 'Reload saved search configuration' }}</v-tooltip></v-btn></template>
     </AdminHero>
     <v-tabs v-model="tab" class="search-tabs" color="primary" show-arrows aria-label="Search administration sections">
       <v-tab id="search-tab-configure" aria-controls="search-panel-configure" value="configure" prepend-icon="mdi-tune-variant">Configuration</v-tab>

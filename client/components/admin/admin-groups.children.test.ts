@@ -1,6 +1,11 @@
 import fs from 'node:fs'
 import { groupPermissions, normalizeGroupRulePath } from '../../../shared/group-policy.ts'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+// The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
+const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
+  confirmDiscard: async (title: string) => host.confirm(title),
+  requestConfirmation: async ({ title }: { title: string }) => host.confirm(title)
+})
 function arrange(name: string, dependencies: Record<string, unknown> = {}, props: Record<string, unknown> = {}) {
   const source = fs.readFileSync(`client/components/admin/${name}.vue`, 'utf8')
   const script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)![1]!
@@ -16,6 +21,7 @@ function arrange(name: string, dependencies: Record<string, unknown> = {}, props
     groupRequestStatus: (error: { status?: number }) => error.status ?? 0,
     ...dependencies
   }
+  Object.assign(bindings, confirmStubs(window))
   const component = new Function(...Object.keys(bindings), compiled + ';return component')(...Object.values(bindings))
   const state = {
     ...component.data(),
@@ -83,7 +89,7 @@ describe('group directory and creation', () => {
       'current'
     )
     expect(state.$emit).toHaveBeenCalledWith('created', 19)
-    expect(state.canLeave()).toBe(true)
+    await expect(state.canLeave()).resolves.toBe(true)
   })
   it('enforces allowed presets and requires a current creation policy after conflicts or failed reloads', async () => {
     const createReviewedGroup = vi.fn().mockRejectedValue(Object.assign(new Error('Changed'), { status: 409 })),
@@ -119,7 +125,7 @@ describe('group directory and creation', () => {
     state.name = 'Research'
     state.reason = 'Create research'
     const pending = state.create()
-    expect(state.canLeave()).toBe(false)
+    await expect(state.canLeave()).resolves.toBe(false)
     reject(new Error('Connection lost'))
     await pending
     await state.create()

@@ -1,6 +1,6 @@
 .developer-flags-workspace {
   --flags-line: rgba(var(--v-theme-on-surface), 0.14);
-  --flags-muted: rgba(var(--v-theme-on-surface), 0.7);
+  --flags-muted: var(--wiki-text-muted);
   max-width: 1420px;
   margin: 0 auto;
   padding: 28px 30px 40px;
@@ -45,7 +45,6 @@
     outline-offset: 4px;
   }
 
-  .flags-hero,
   .flags-section-head,
   .flags-savebar,
   .flags-history-row,
@@ -56,23 +55,13 @@
     gap: 22px;
   }
 
-  .flags-hero {
-    align-items: end;
-    margin-bottom: 28px;
-  }
-
   .flags-kicker {
     color: var(--flags-muted);
-    font-size: 10px;
+    font-size: var(--wiki-label-size);
     font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
     margin-bottom: 10px;
-  }
-
-  .flags-intro {
-    max-width: 720px;
-    margin-top: 12px;
   }
 
   .flags-strip {
@@ -286,7 +275,6 @@
   @media (max-width: 599.98px) {
     padding: 18px 14px 28px;
 
-    .flags-hero,
     .flags-section-head,
     .flags-savebar,
     .flags-history-row,

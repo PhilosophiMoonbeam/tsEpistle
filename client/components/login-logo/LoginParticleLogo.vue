@@ -543,9 +543,9 @@ export default defineComponent({
       const marker = instance?.proxy?.$el as Node | undefined
       const parent = marker?.parentElement
       const directCard = parent
-        ? Array.from(parent.children).find(element => element.matches('main.login-sd'))
+        ? Array.from(parent.children).find(element => element.matches('main.auth-shell__card'))
         : undefined
-      if (!(parent instanceof HTMLElement) || !parent.classList.contains('login') || !(directCard instanceof HTMLElement)) return
+      if (!(parent instanceof HTMLElement) || !parent.classList.contains('auth-shell') || !(directCard instanceof HTMLElement)) return
 
       loginElement = parent
       cardElement = directCard

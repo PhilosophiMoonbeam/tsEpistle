@@ -2,7 +2,7 @@
   <v-container fluid class="locale-workspace">
     <admin-hero icon="mdi-translate" title="Locale" description="Make your knowledge feel at home in every language.">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">Reload settings</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved language settings</v-tooltip></v-btn>
         <v-btn color="primary" :disabled="locked || !dirty" @click="review">Review changes</v-btn>
       </template>
     </admin-hero>
@@ -552,6 +552,7 @@
   </v-container>
 </template>
 <script setup lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AsyncState from '@/components/common/async-state.vue'
@@ -747,12 +748,13 @@ async function load(background = false) {
   }
 }
 async function reload() {
+  if (busy.value) return
   if (
-    busy.value ||
-    ((dirty.value || hasLocalDraft.value) &&
-      !window.confirm('Discard this draft and reload? An unexpired server-reviewed file remains available to commit.'))
+    (dirty.value || hasLocalDraft.value) &&
+    !(await confirmDiscard('Discard this draft and reload?', 'An unexpired server-reviewed file remains available to commit.'))
   )
     return
+  if (busy.value) return
   reviewing.value = false
   operationOpen.value = false
   localFile.value = null
@@ -965,9 +967,9 @@ const operationIcon = (state: string) =>
 const preventUnload = (event: BeforeUnloadEvent) => {
   if (dirty.value || busy.value || hasLocalDraft.value) event.preventDefault()
 }
-onBeforeRouteLeave(() =>
+onBeforeRouteLeave(async () =>
   !(dirty.value || busy.value || hasLocalDraft.value) ||
-  (!busy.value && window.confirm('Discard unsaved language changes or the selected local file?'))
+  (!busy.value && (await confirmDiscard('Discard unsaved language changes or the selected local file?')))
 )
 onMounted(() => {
   window.addEventListener('beforeunload', preventUnload)
