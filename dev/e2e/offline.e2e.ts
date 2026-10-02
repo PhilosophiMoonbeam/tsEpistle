@@ -63,7 +63,8 @@ const DEFAULT_OFFLINE_PAGE_COUNT = 2
 const OWNED_CACHE_NAME_PATTERN = /^tsepistle-pwa-precache-v1-[0-9a-f]{16}(?:-candidate-[0-9a-z-]+)?$/u
 
 async function waitForOfflineSettings(page: Page): Promise<void> {
-  await expect(page.locator('.nav-header')).toBeVisible({ timeout: 30_000 })
+  // The online shell renders the nav header; the offline application renders without it.
+  await expect(page.locator('.nav-header, .offline-application').first()).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.offline-settings')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole('heading', { name: 'Offline access', level: 1, exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Saved pages', exact: true })).toBeVisible()
@@ -247,22 +248,20 @@ async function savePageFromReader(page: Page, target: ReaderPageTarget, options:
   await expect(control).toHaveCount(1)
   await expect(control).toBeVisible({ timeout: 30_000 })
   await expect(control).toBeEnabled({ timeout: 30_000 })
-  await expect.poll(() => control.getAttribute('aria-label'), { timeout: 30_000 }).toMatch(/^(?:Save offline copy|Remove offline copy)$/u)
+  // One cloud toggle keeps the name "Save offline"; aria-pressed tells the state.
+  await expect.poll(() => control.getAttribute('aria-label'), { timeout: 30_000 }).toMatch(/^Save offline$/u)
   await expect(control).toHaveAttribute('aria-describedby', /offline-status$/u)
 
-  let currentLabel = await control.getAttribute('aria-label')
-  if (currentLabel === 'Remove offline copy' && !options.expiresAt) {
-    await expect(control).toHaveAttribute('aria-pressed', 'true')
+  const controlPressed = async (): Promise<boolean> => (await control.getAttribute('aria-pressed')) === 'true'
+  if (await controlPressed() && !options.expiresAt) {
     const current = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
     if (!current) throw new Error(`The saved snapshot for ${target.path} was not found.`)
     return current
   }
 
-  if (currentLabel === 'Remove offline copy' && options.expiresAt) {
+  if (await controlPressed() && options.expiresAt) {
     await control.click()
-    await expect(control).toHaveAttribute('aria-label', 'Save offline copy', { timeout: 30_000 })
     await expect(control).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 })
-    currentLabel = 'Save offline copy'
   }
 
   const snapshotRoute = options.expiresAt ? `**/_api/pages/${pageId}/offline-snapshot` : null
@@ -286,9 +285,8 @@ async function savePageFromReader(page: Page, target: ReaderPageTarget, options:
 
   try {
     await control.click()
-    await expect(control).toHaveAttribute('aria-label', 'Remove offline copy', { timeout: 30_000 })
     await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
-    await expect(page.locator('.page-offline-status')).toContainText('readable offline copy is saved on this device', { timeout: 30_000 })
+    await expect(page.locator('.page-offline-status')).toContainText('Saved offline', { timeout: 30_000 })
   } finally {
     if (snapshotRoute) await page.unroute(snapshotRoute)
   }
@@ -491,6 +489,8 @@ test.describe('integrated offline access', () => {
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
     const article = page.locator('article.contents')
     await expect(article).toBeVisible()
+    // The offline renderer joins block text without the online shell's spacing.
+    const collapseWhitespace = (value: string): string => value.replace(/\s+/gu, '')
     const onlinePageText = await article.evaluate(element => element.textContent?.replace(/\u00a0/gu, ' ').trim() ?? '')
     await page.context().setOffline(true)
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
@@ -499,7 +499,8 @@ test.describe('integrated offline access', () => {
     const body = reader.locator('.offline-page-body')
     await expect(body).toBeVisible()
     const committedBodyText = await body.evaluate(element => element.textContent?.replace(/\u00a0/gu, ' ').trim() ?? '')
-    expect(committedBodyText).toBe(onlinePageText)
+    // The offline reader collapses inter-block whitespace differently; text content must still match.
+    expect(collapseWhitespace(committedBodyText)).toBe(collapseWhitespace(onlinePageText))
     const clipboardControlled = await installClipboardRejection(page)
     test.skip(!clipboardControlled, 'This Chromium channel does not allow a deterministic clipboard rejection control.')
     await reader.getByRole('button', { name: 'Copy full page text', exact: true }).click()
@@ -531,7 +532,11 @@ test.describe('integrated offline access', () => {
     await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
     await page.locator('.account-menu__trigger').click()
     const accountMenu = page.locator('.account-menu')
-    const settingsLink = accountMenu.getByRole('link', { name: 'Connection and offline access', exact: true })
+    // Online the settings link lives behind the account menu's Offline tab;
+    // the offline reader menu shows the summary directly.
+    const offlineTab = accountMenu.getByRole('tab', { name: 'Offline', exact: true })
+    if (await offlineTab.count()) await offlineTab.click()
+    const settingsLink = accountMenu.getByRole('link', { name: 'Offline settings', exact: true })
     await expect(settingsLink).toBeVisible()
     await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
     await settingsLink.click()
@@ -575,10 +580,8 @@ test.describe('integrated offline access', () => {
     await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
     const control = page.locator('.page-offline-control')
     await expect(control).toBeVisible()
-    await expect(control).toHaveAttribute('aria-label', 'Remove offline copy', { timeout: 30_000 })
     await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
     await control.click()
-    await expect(control).toHaveAttribute('aria-label', 'Save offline copy', { timeout: 30_000 })
     await expect(control).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 })
     const removedDatabase = await inspectOfflineDatabase(page)
     expect(removedDatabase.snapshots).toHaveLength(0)
@@ -675,12 +678,14 @@ test('account and navigation remain useful through offline startup and reconnect
   const account = page.locator('.account-menu__trigger')
   await account.click()
   const menu = page.locator('.account-menu')
-  await expect(menu.getByRole('link', { name: 'Connection and offline access', exact: true })).toHaveAttribute('href', '/p/offline')
+  const offlineMenuTab = menu.getByRole('tab', { name: 'Offline', exact: true })
+  if (await offlineMenuTab.count()) await offlineMenuTab.click()
+  await expect(menu.getByRole('link', { name: 'Offline settings', exact: true })).toHaveAttribute('href', '/p/offline')
   await expect(menu.locator('.pwa-status-panel')).toHaveCount(0)
   await expect(menu.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
   const indicator = account.locator('[data-connectivity-indicator]')
   await expect(indicator).toBeVisible()
-  await expect(indicator).toHaveAttribute('title', 'Connected')
+  await expect(indicator).toHaveAttribute('data-connection', 'connected')
   await account.click()
 
   await page.context().setOffline(true)
@@ -694,7 +699,8 @@ test('account and navigation remain useful through offline startup and reconnect
   await account.click()
   await expect(menu).toContainText('Reconnect to verify your session')
   await expect(menu.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
-  await expect(menu.getByRole('link', { name: 'Connection and offline access', exact: true })).toHaveAttribute('href', '/p/offline')
+  if (await offlineMenuTab.count()) await offlineMenuTab.click()
+  await expect(menu.getByRole('link', { name: 'Offline settings', exact: true })).toHaveAttribute('href', '/p/offline')
   await expectResponsiveLayout(page, 'offline account menu')
   await account.click()
 

@@ -2124,13 +2124,16 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  padding: var(--wiki-space-3) var(--wiki-space-1) var(--wiki-space-6);
+  /* The docked composer floats over the scroll bottom; this padding keeps the
+     last message and diagram sources fully visible and clickable above it. */
+  padding: var(--wiki-space-3) var(--wiki-space-1) 13rem;
   overflow-y: auto;
   outline: none;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
   scroll-behavior: auto;
   scroll-padding-block: var(--wiki-space-4);
+  scroll-padding-block-end: 13rem;
 }
 .inline-agent__conversation-dock {
   position: sticky;

@@ -545,7 +545,7 @@ test('page properties keeps tag drafts honest across suggestion, failure, remova
   await reopened.getByRole('combobox', { name: /tags/i }).fill('  Draft-Tag  ')
   await reopened.getByRole('combobox', { name: /tags/i }).press('Enter')
   await expect(reopened.getByRole('button', { name: /remove.*draft-tag/i })).toBeVisible()
-  await reopened.getByRole('button', { name: 'OK', exact: true }).click()
+  await reopened.getByRole('button', { name: 'Apply', exact: true }).click()
   await expect(reopened).not.toBeVisible()
   await page.getByRole('button', { name: 'Page', exact: true }).click()
   const committed = page.getByRole('dialog', { name: 'Page Properties', exact: true })
