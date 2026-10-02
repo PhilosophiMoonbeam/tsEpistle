@@ -296,30 +296,21 @@
                   variant='outlined'
                   density='comfortable'
                   :label='$t(`profile:auth.currentPassword`)'
-                  :type='hideCurrentPass ? "password" : "text"'
+                  :type='showCurrentPass ? "text" : "password"'
                   :error-messages='passwordErrors.current'
                   prepend-inner-icon='mdi-form-textbox-password'
                   autocomplete='current-password'
                   :disabled='changePassLoading'
                 )
                   template(v-slot:append-inner)
-                    v-btn(
-                      icon
-                      variant='text'
-                      size='small'
-                      type='button'
-                      :aria-label='passwordToggleLabel(hideCurrentPass, $t(`profile:auth.currentPassword`))'
-                      :disabled='changePassLoading'
-                      @click='hideCurrentPass = !hideCurrentPass'
-                    )
-                      v-icon(aria-hidden='true') {{ hideCurrentPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
+                    password-visibility-toggle(v-model:visible='showCurrentPass', :field='$t(`profile:auth.currentPassword`)', :disabled='changePassLoading')
                 v-text-field(
                   ref='iptNewPass'
                   v-model='newPass'
                   variant='outlined'
                   density='comfortable'
                   :label='$t(`profile:auth.newPassword`)'
-                  :type='hideNewPass ? "password" : "text"'
+                  :type='showNewPass ? "text" : "password"'
                   :error-messages='passwordErrors.password'
                   :hint='passwordHint'
                   persistent-hint
@@ -332,39 +323,21 @@
                   template(v-slot:loader)
                     password-strength(v-model='newPass')
                   template(v-slot:append-inner)
-                    v-btn(
-                      icon
-                      variant='text'
-                      size='small'
-                      type='button'
-                      :aria-label='passwordToggleLabel(hideNewPass, $t(`profile:auth.newPassword`))'
-                      :disabled='changePassLoading'
-                      @click='hideNewPass = !hideNewPass'
-                    )
-                      v-icon(aria-hidden='true') {{ hideNewPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
+                    password-visibility-toggle(v-model:visible='showNewPass', :field='$t(`profile:auth.newPassword`)', :disabled='changePassLoading')
                 v-text-field(
                   ref='iptVerifyPass'
                   v-model='verifyPass'
                   variant='outlined'
                   density='comfortable'
                   :label='$t(`profile:auth.verifyPassword`)'
-                  :type='hideVerifyPass ? "password" : "text"'
+                  :type='showVerifyPass ? "text" : "password"'
                   :error-messages='passwordErrors.verifyPassword'
                   prepend-inner-icon='mdi-form-textbox-password'
                   autocomplete='new-password'
                   :disabled='changePassLoading'
                 )
                   template(v-slot:append-inner)
-                    v-btn(
-                      icon
-                      variant='text'
-                      size='small'
-                      type='button'
-                      :aria-label='passwordToggleLabel(hideVerifyPass, $t(`profile:auth.verifyPassword`))'
-                      :disabled='changePassLoading'
-                      @click='hideVerifyPass = !hideVerifyPass'
-                    )
-                      v-icon(aria-hidden='true') {{ hideVerifyPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
+                    password-visibility-toggle(v-model:visible='showVerifyPass', :field='$t(`profile:auth.verifyPassword`)', :disabled='changePassLoading')
                 .profile-password-form__actions
                   v-btn(
                     color='primary'
@@ -428,18 +401,6 @@
             @click='saveDraft'
           ) {{ $t('profile:dock.save', { defaultValue: 'Save changes' }) }}
 
-    v-dialog(
-      v-model='discardOpen'
-      max-width='440'
-      aria-labelledby='profile-discard-title'
-    )
-      v-card.profile-discard-dialog
-        v-card-title#profile-discard-title(tag='h2') {{ $t('profile:discard.title', { defaultValue: 'Discard unsaved changes?' }) }}
-        v-card-text {{ discardMessage }}
-        v-card-actions
-          v-spacer
-          v-btn(variant='text' @click='cancelDiscard') {{ $t('profile:discard.keep', { defaultValue: 'Keep editing' }) }}
-          v-btn(color='error' variant='flat' @click='confirmDiscard') {{ $t('profile:discard.confirm', { defaultValue: 'Discard changes' }) }}
 </template>
 
 <script lang='ts'>
@@ -447,6 +408,8 @@ import { passwordPolicyMixin } from '../../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import PasswordStrength from '../common/password-strength.vue'
+import PasswordVisibilityToggle from '../common/password-visibility-toggle.vue'
+import { requestConfirmation } from '../common/confirm-dialog.ts'
 import { wikiStore } from '@/store/index.ts'
 import {
   changeProfilePassword,
@@ -476,7 +439,6 @@ import {
   type ProfileDraftIssue,
   type TimezoneOption
 } from './profile-draft.ts'
-import type { RouteLocationNormalized } from 'vue-router'
 
 type MenuField = 'timezone' | 'dateFormat' | 'timeFormat' | 'appearance' | 'contentTextSize' | 'communicationLocale'
 
@@ -495,10 +457,11 @@ export default {
   },
   components: {
     AsyncState,
-    PasswordStrength
+    PasswordStrength,
+    PasswordVisibilityToggle
   },
-  beforeRouteLeave (to: RouteLocationNormalized): boolean {
-    return this.canLeave(to)
+  beforeRouteLeave (): Promise<boolean> {
+    return this.canLeave()
   },
   data() {
     return {
@@ -516,9 +479,9 @@ export default {
       currentPass: '',
       newPass: '',
       verifyPass: '',
-      hideCurrentPass: true,
-      hideNewPass: true,
-      hideVerifyPass: true,
+      showCurrentPass: false,
+      showNewPass: false,
+      showVerifyPass: false,
       passwordErrors: {
         current: [] as string[],
         password: [] as string[],
@@ -532,9 +495,6 @@ export default {
         contentTextSize: false,
         communicationLocale: false
       } as Record<MenuField, boolean>,
-      discardOpen: false,
-      pendingLeave: '' as string,
-      allowLeave: false
     }
   },
   computed: {
@@ -714,12 +674,6 @@ export default {
       if (issue === 'nameTooLong') return [this.$t('profile:issues.nameTooLong', { defaultValue: 'Use 255 characters or fewer.' })]
       return [this.$t('profile:issues.handleInvalid', { defaultValue: 'Use 3–32 letters, numbers, underscores or hyphens.' })]
     },
-    passwordToggleLabel (hidden: boolean, field: string): string {
-      const action = hidden
-        ? this.$t('auth:showPassword', { defaultValue: 'Show password' })
-        : this.$t('auth:hidePassword', { defaultValue: 'Hide password' })
-      return `${action}: ${field}`
-    },
     /**
      * Esc restores the saved value of the focused field. An open option list closes first.
      */
@@ -739,27 +693,23 @@ export default {
       if (!this.user || !this.savedDraft || this.saving) return
       restoreProfileDraft(this.user, this.savedDraft)
     },
-    canLeave (to: RouteLocationNormalized): boolean {
-      if (this.allowLeave || !this.dirty) return true
+    /**
+     * Leave guard: the shared themed dialog asks before unsaved changes are discarded.
+     * A save that starts while the dialog is open keeps the user on the page.
+     */
+    async canLeave (): Promise<boolean> {
+      if (!this.dirty) return true
       if (this.saving) return false
-      this.pendingLeave = to.fullPath
-      this.discardOpen = true
-      return false
-    },
-    cancelDiscard () {
-      this.discardOpen = false
-      this.pendingLeave = ''
-    },
-    confirmDiscard () {
-      const target = this.pendingLeave
-      this.discardOpen = false
-      this.pendingLeave = ''
-      this.resetDraft()
-      if (!target) return
-      this.allowLeave = true
-      void Promise.resolve(this.$router.push(target)).finally(() => {
-        this.allowLeave = false
+      const confirmed = await requestConfirmation({
+        title: this.$t('profile:discard.title', { defaultValue: 'Discard unsaved changes?' }),
+        message: this.discardMessage,
+        confirmLabel: this.$t('profile:discard.confirm', { defaultValue: 'Discard changes' }),
+        cancelLabel: this.$t('profile:discard.keep', { defaultValue: 'Keep editing' }),
+        tone: 'destructive'
       })
+      if (!confirmed || this.saving) return false
+      this.resetDraft()
+      return true
     },
     beforeUnload (event: BeforeUnloadEvent) {
       if (!this.dirty) return
@@ -995,6 +945,9 @@ export default {
           this.currentPass = ''
           this.newPass = ''
           this.verifyPass = ''
+          this.showCurrentPass = false
+          this.showNewPass = false
+          this.showVerifyPass = false
           await wikiStore.refreshAuth()
           wikiStore.showNotification({
             message: this.$t('profile:auth.changePassSuccess'),
