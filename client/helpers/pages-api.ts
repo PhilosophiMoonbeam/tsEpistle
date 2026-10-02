@@ -4,6 +4,7 @@ import { parseCollaborationSession, type CollaborationSession } from '../../shar
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 import { PageFeaturesSchema, normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 import {
+  offlineIneligibleReason,
   OfflinePageSnapshotV1Schema,
   OfflinePrivateSnapshotResponseV1Schema,
   type OfflinePageSnapshotV1,
@@ -492,7 +493,11 @@ async function parseJsonResponse(response: JsonResponse, fallbackMessage: string
       if (typeof error === 'string' && error.length > 0) message = error
       else if (typeof detail === 'string' && detail.length > 0) message = detail
     }
-    throw errorWithResponseStatus(new Error(message), response, fallbackMessage)
+    const failure = errorWithResponseStatus(new Error(message), response, fallbackMessage)
+    // Offline snapshot refusals may name a known reason code; anything else is dropped.
+    const reason = isRecord(payload) ? offlineIneligibleReason(payload.reason) : null
+    if (reason) Object.defineProperty(failure, 'offlineReason', { configurable: true, enumerable: true, value: reason, writable: false })
+    throw failure
   }
 
   if (payload === null) {

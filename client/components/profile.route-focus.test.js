@@ -25,7 +25,9 @@ const compiled = compileTemplate({
 if (compiled.errors.length) throw new Error(`Cannot compile profile.vue: ${compiled.errors}`)
 const render = new Function('Vue', compiled.code)(Vue)
 const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const evaluate = new Function('defineComponent', 'ref', 'watch', 'useDisplay', 'wikiStore', script)
+const evaluate = new Function('defineComponent', 'ref', 'watch', 'useDisplay', 'wikiStore', 'ConfirmDialogHost', script)
+// Marks where the shell mounts the shared confirm dialog host.
+const ConfirmDialogHost = Vue.defineComponent({ setup: () => () => Vue.h('div', { 'data-confirm-host': '' }) })
 
 const passthrough = (tag = 'div') =>
   Vue.defineComponent({
@@ -63,7 +65,7 @@ const settle = async () => {
 
 const mountProfile = async () => {
   const wikiStore = { page: { mode: 'view' } }
-  const options = evaluate(Vue.defineComponent, Vue.ref, Vue.watch, () => ({ mdAndUp: Vue.ref(true) }), wikiStore)
+  const options = evaluate(Vue.defineComponent, Vue.ref, Vue.watch, () => ({ mdAndUp: Vue.ref(true) }), wikiStore, ConfirmDialogHost)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -114,6 +116,12 @@ describe('profile route accessibility', () => {
     // The first load leaves focus alone; only in-app navigation moves it.
     expect(document.activeElement).not.toBe(host.querySelector('main h1'))
     expect(host.querySelector('main h1').hasAttribute('tabindex')).toBe(false)
+  })
+
+  it('mounts one shared confirm dialog host for the leave guard of its views', async () => {
+    const { host } = await mountProfile()
+
+    expect(host.querySelectorAll('[data-confirm-host]')).toHaveLength(1)
   })
 
   it('names the shell once and offers a way back to the wiki', async () => {

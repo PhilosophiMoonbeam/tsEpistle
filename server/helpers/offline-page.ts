@@ -5,6 +5,7 @@ import {
   OFFLINE_CONTENT_TYPE,
   OFFLINE_HTML_SANITIZER_VERSION,
   OFFLINE_RECORD_BYTES_LIMIT,
+  type OfflineIneligibleReason,
   type OfflinePageSnapshotV1,
   OfflinePageSnapshotV1Schema
 } from '../../shared/offline.ts'
@@ -109,10 +110,13 @@ export const OFFLINE_PAGE_INELIGIBLE_CODE = 'OFFLINE_PAGE_INELIGIBLE' as const
 export class OfflinePageProjectionError extends Error {
   readonly status = 404
   readonly code = OFFLINE_PAGE_INELIGIBLE_CODE
+  /** Set only after the requester's read access to the page is confirmed. */
+  readonly reason: OfflineIneligibleReason | null
 
-  constructor(message = 'This page is not available for offline use.') {
+  constructor(message = 'This page is not available for offline use.', reason: OfflineIneligibleReason | null = null) {
     super(message)
     this.name = 'OfflinePageProjectionError'
+    this.reason = reason
   }
 }
 
@@ -169,6 +173,10 @@ export interface OfflinePageSnapshotInput extends OfflinePageLinkProjection {
 
 const invalid = (message: string): never => {
   throw new OfflinePageProjectionError(message)
+}
+/** A refusal the requester may learn about: use only after canReadPage() has passed. */
+const refuse = (message: string, reason: OfflineIneligibleReason): never => {
+  throw new OfflinePageProjectionError(message, reason)
 }
 const offlinePageVisibility = (value: unknown): 'public' | 'private' => {
   if (value === 'public' || value === 'private') return value
@@ -463,7 +471,6 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
   const sourceRevision = canonicalSourceRevision(page.sourceRevision)
   const renderedSourceRevision =
     page.renderedSourceRevision === undefined || page.renderedSourceRevision === null ? null : canonicalSourceRevision(page.renderedSourceRevision)
-  if (renderedSourceRevision === null || renderedSourceRevision !== sourceRevision) invalid('The page render is not current for its source revision')
   const visibility = offlinePageVisibility(page.visibility)
   if (input.audience === 'public' && visibility !== 'public') invalid('The page is not publicly readable')
   const canonicalPath = pageRoute({ visibility, localeCode, path })
@@ -483,11 +490,14 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
   const renderValue = page.render
   const editorKey = page.editorKey
   const contentType = page.contentType
-  const render = typeof renderValue === 'string' ? renderValue : invalid('The page has no rendered projection')
 
   const accessPage: PageVisibilityRecord = { path, locale: localeCode, localeCode, visibility, ownerId: pageOwnerId, tags }
   if (pageAuthorizationContext(accessPage) === null || !canReadPage(input.requester, accessPage, input.authority))
     invalid(input.audience === 'public' ? 'The page is not publicly readable' : 'The page is not readable')
+  // Every refusal from here on concerns a page the requester can read, so it may carry a reason.
+  if (renderedSourceRevision === null || renderedSourceRevision !== sourceRevision)
+    refuse('The page render is not current for its source revision', 'render-pending')
+  const render = typeof renderValue === 'string' ? renderValue : refuse('The page has no rendered projection', 'render-pending')
   const capturedAt =
     input.capturedAt === undefined
       ? new Date()
@@ -502,17 +512,25 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
     (publicationStart !== null && publicationStart.valueOf() > capturedAt.valueOf()) ||
     (publicationEnd !== null && publicationEnd.valueOf() < capturedAt.valueOf())
   )
-    invalid('The page is not currently published')
-  if (editorKey !== 'markdown' && editorKey !== 'visual-markdown' && editorKey !== 'asciidoc') invalid('The page editor is not supported offline')
-  if ((editorKey === 'markdown' || editorKey === 'visual-markdown') && contentType !== 'markdown') invalid('The page content type is not supported offline')
-  if (editorKey === 'asciidoc' && contentType !== 'asciidoc') invalid('The page content type is not supported offline')
-  if (normalizedExtra(page.extra) === null) invalid('The page contains unsupported custom content')
-  const html = sanitizeOfflineHtmlFragment(render, linkProjection)
+    refuse('The page is not currently published', 'unpublished')
+  if (editorKey !== 'markdown' && editorKey !== 'visual-markdown' && editorKey !== 'asciidoc') refuse('The page editor is not supported offline', 'editor')
+  if ((editorKey === 'markdown' || editorKey === 'visual-markdown') && contentType !== 'markdown')
+    refuse('The page content type is not supported offline', 'editor')
+  if (editorKey === 'asciidoc' && contentType !== 'asciidoc') refuse('The page content type is not supported offline', 'editor')
+  if (normalizedExtra(page.extra) === null) refuse('The page contains unsupported custom content', 'custom-content')
+  let html: string
+  try {
+    html = sanitizeOfflineHtmlFragment(render, linkProjection)
+  } catch (error) {
+    // Active or unsafe markup in a readable page is custom content the offline reader cannot keep.
+    if (error instanceof OfflinePageProjectionError && error.reason === null) refuse(error.message, 'custom-content')
+    throw error
+  }
   const contentTemplate = createTemplate()
   contentTemplate.innerHTML = html
   const searchText = (contentTemplate.content.textContent ?? '').replace(/\s+/gu, ' ').trim()
   if (Buffer.byteLength(html, 'utf8') > OFFLINE_RECORD_BYTES_LIMIT || Buffer.byteLength(searchText, 'utf8') > OFFLINE_RECORD_BYTES_LIMIT)
-    invalid('The page projection exceeds the offline size limit')
+    refuse('The page projection exceeds the offline size limit', 'too-large')
   const snapshotWithoutIntegrity: Omit<OfflinePageSnapshotV1, 'integrity'> = {
     schemaVersion: 1,
     pageId,
@@ -531,7 +549,8 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
   const result: OfflinePageSnapshotV1 = { ...snapshotWithoutIntegrity, integrity: integrityFor(snapshotWithoutIntegrity) }
   const parsed = OfflinePageSnapshotV1Schema.safeParse(result)
   if (parsed.success) {
-    if (Buffer.byteLength(JSON.stringify(parsed.data), 'utf8') > OFFLINE_RECORD_BYTES_LIMIT) invalid('The page projection exceeds the offline size limit')
+    if (Buffer.byteLength(JSON.stringify(parsed.data), 'utf8') > OFFLINE_RECORD_BYTES_LIMIT)
+      refuse('The page projection exceeds the offline size limit', 'too-large')
     return parsed.data
   }
   return invalid('The page projection is invalid')

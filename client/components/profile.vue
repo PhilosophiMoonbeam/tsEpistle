@@ -60,15 +60,18 @@
     nav-footer
     notify
     search-results
+    confirm-dialog-host
 </template>
 
 <script lang='ts'>
 import { defineComponent, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
+import ConfirmDialogHost from './common/confirm-dialog-host.vue'
 
 export default defineComponent({
   i18nOptions: { namespaces: 'profile' },
+  components: { ConfirmDialogHost },
   setup() {
     const { mdAndUp } = useDisplay()
     const profileDrawerShown = ref(mdAndUp.value)

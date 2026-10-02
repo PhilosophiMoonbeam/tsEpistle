@@ -1899,6 +1899,7 @@ export default defineComponent({
         revealTagNames: !(this.offlinePrivatePath && this.offlineAccessState !== null),
         quietIneligibility: this.offlineQuietIneligibility,
         localReason: this.offlineLocalIneligibilityReason,
+        serverReason: policy?.availability === 'ineligible' ? policy.ineligibleReason ?? null : null,
         connected: this.pageTransportVerified,
         // A passive visit record never blocks the toggle; an explicit change does.
         busy: owned !== null && owned !== this.offlinePassiveOperationId,
