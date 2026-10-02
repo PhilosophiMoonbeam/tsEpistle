@@ -15,9 +15,18 @@
               bdi(dir='ltr') {{ requestedPath }}
           .newpage-actions(role='group', :aria-label='$t(`notfound.actions`)')
             v-btn.newpage-action.newpage-action--create(
+              v-if='editorHref'
+              :href='editorHref'
               size='large'
               color='primary'
               variant='flat'
+              prepend-icon='mdi-plus'
+            ) {{$t('notfound.create')}}
+            v-btn.newpage-action(
+              :class='editorHref ? `newpage-action--back` : `newpage-action--create`'
+              size='large'
+              color='primary'
+              :variant='editorHref ? `outlined` : `flat`'
               prepend-icon='mdi-magnify'
               @click='searchWiki'
             ) {{$t('notfound.search')}}
@@ -39,12 +48,18 @@
 </template>
 
 <script setup lang='ts'>
-import { nextTick } from 'vue'
+import { computed, nextTick } from 'vue'
 import { emitSearchFocus } from '../helpers/search-navigation-events'
-import { goBackOrHome, searchQueryFromPath } from '../helpers/state-page-actions'
+import { goBackOrHome, safeEditorHref, searchQueryFromPath } from '../helpers/state-page-actions'
 import { wikiStore } from '../store/index.ts'
 
+const { createHref = '' } = defineProps<{
+  /** Set by the server only when the signed-in user may create a page at this path. */
+  createHref?: string
+}>()
+
 const requestedPath = typeof window === 'undefined' ? '' : safeDecode(window.location.pathname)
+const editorHref = computed(() => safeEditorHref(createHref))
 
 function safeDecode (value: string): string {
   try {

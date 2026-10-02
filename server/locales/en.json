@@ -716,7 +716,8 @@
       "subtitle": "This page does not exist.",
       "search": "Search the wiki",
       "goback": "Go back",
-      "actions": "Page not found actions"
+      "actions": "Page not found actions",
+      "create": "Create this page"
     },
     "password": {
       "label": "Password strength",

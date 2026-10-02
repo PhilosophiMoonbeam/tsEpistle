@@ -14,6 +14,7 @@ describe('not found page', () => {
     const { document, html } = await renderTemplate('client/components/not-found.vue', { $t: keyTranslator, $vuetify: vuetify(), requestedPath: '/en/missing-guide' })
     const buttons = actionButtons(document)
     expect(buttons.map(button => button.textContent?.trim())).toEqual(['notfound.search', 'notfound.gohome', 'notfound.goback'])
+    expect(buttons[0]?.getAttribute('variant')).toBe('flat')
     expect(new Set(buttons.map(button => button.getAttribute('size')))).toEqual(new Set(['large']))
     expect(buttons[1]?.getAttribute('href')).toBe('/')
     expect(buttons[2]?.getAttribute('prepend-icon')).toBe('mdi-arrow-left')
@@ -21,6 +22,21 @@ describe('not found page', () => {
     expect(html).toContain('data-stub="nav-header"')
     expect(html).toContain('data-stub="search-results"')
     expect(html).not.toContain('animated')
+  })
+
+  it('offers Create this page first only when the server allows it', async () => {
+    const { document } = await renderTemplate('client/components/not-found.vue', {
+      $t: keyTranslator,
+      $vuetify: vuetify(),
+      requestedPath: '/h/en/missing-guide',
+      editorHref: '/e/en/missing-guide'
+    })
+    const buttons = actionButtons(document)
+    expect(buttons.map(button => button.textContent?.trim())).toEqual(['notfound.create', 'notfound.search', 'notfound.gohome', 'notfound.goback'])
+    expect(buttons[0]?.getAttribute('href')).toBe('/e/en/missing-guide')
+    expect(buttons[0]?.getAttribute('variant')).toBe('flat')
+    expect(buttons[1]?.getAttribute('variant')).toBe('outlined')
+    expect(new Set(buttons.map(button => button.getAttribute('size')))).toEqual(new Set(['large']))
   })
 
   it('mirrors the back arrow in right-to-left locales', async () => {
