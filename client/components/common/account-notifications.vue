@@ -1,8 +1,8 @@
 <template lang='pug'>
-section.account-notifications(aria-labelledby='account-notifications-title')
-  h2#account-notifications-title.account-notifications__title {{$t('common:accountNotifications.title')}}
-  section.account-notifications__group(aria-labelledby='account-notifications-page-changes-title')
-    h3#account-notifications-page-changes-title.account-notifications__heading {{$t('common:accountNotifications.pageChanges')}}
+section.account-notifications(:aria-labelledby='section === `all` ? ids.title : undefined')
+  h2.account-notifications__title(v-if='section === `all`', :id='ids.title') {{$t('common:accountNotifications.title')}}
+  section.account-notifications__group(v-if='section !== `approvals`', :aria-labelledby='ids.changes')
+    h3.account-notifications__heading(:id='ids.changes') {{$t('common:accountNotifications.pageChanges')}}
     p.account-notifications__description {{$t('common:accountNotifications.recentPageChanges')}}
     .account-notifications__state(v-if='store.watchesLoading', role='status') {{$t('common:accountNotifications.loadingPageChanges')}}
     .account-notifications__state.account-notifications__state--error(v-if='store.watchesError', role='alert')
@@ -33,10 +33,10 @@ section.account-notifications(aria-labelledby='account-notifications-title')
     .account-notifications__state(v-if='!store.watchesLoading && !store.watchesError && notificationIdentityReady() && store.watches.length > 0 && store.watchesNextCursor !== null', role='status')
       v-btn(size='small', variant='text', color='primary', :aria-label='$t("common:accountNotifications.loadMorePageChanges")', :disabled='store.watchesLoading', @click='loadMoreWatches') {{$t('common:accountNotifications.loadMorePageChanges')}}
 
-  v-divider.my-2
+  v-divider.my-2(v-if='section === `all`')
 
-  section.account-notifications__group(aria-labelledby='account-notifications-approvals-title')
-    h3#account-notifications-approvals-title.account-notifications__heading {{$t('common:accountNotifications.approvals')}}
+  section.account-notifications__group(v-if='section !== `changes`', :aria-labelledby='ids.approvals')
+    h3.account-notifications__heading(:id='ids.approvals') {{$t('common:accountNotifications.approvals')}}
     .account-notifications__state(v-if='store.approvalsLoading', role='status') {{$t('common:accountNotifications.loadingApprovals')}}
     .account-notifications__state.account-notifications__state--error(v-if='store.approvalsError', role='alert')
       span {{ store.approvalsError }}
@@ -62,10 +62,21 @@ section.account-notifications(aria-labelledby='account-notifications-title')
 </template>
 
 <script setup lang='ts'>
+import { useId } from 'vue'
 import { pageHref } from '../../helpers/admin-pages.ts'
 import { navigateToWikiPage } from '../../helpers/wiki-navigation.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
+
+/** `all` shows both groups; the account menu shows each group in its own tab. */
+const { section = 'all' } = defineProps<{ section?: 'all' | 'changes' | 'approvals' }>()
+// Unique ids: the account menu can mount one instance per tab.
+const uid = useId()
+const ids = {
+  title: `${uid}-account-notifications-title`,
+  changes: `${uid}-account-notifications-page-changes-title`,
+  approvals: `${uid}-account-notifications-approvals-title`
+}
 
 const store = useSiteNotificationsStore()
 const pendingWatchReads = new Set<string>()
@@ -220,7 +231,7 @@ const openApprovalPage = (event: MouseEvent | KeyboardEvent, item: PageApprovalI
 .account-notifications__heading {
   padding: var(--wiki-space-2) var(--wiki-space-3);
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
   font-weight: 700;
   letter-spacing: .08em;
@@ -231,7 +242,7 @@ const openApprovalPage = (event: MouseEvent | KeyboardEvent, item: PageApprovalI
 .account-notifications__description {
   padding: 0 var(--wiki-space-3) var(--wiki-space-2);
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
 }
 
@@ -288,7 +299,7 @@ const openApprovalPage = (event: MouseEvent | KeyboardEvent, item: PageApprovalI
   justify-content: space-between;
   gap: var(--wiki-space-2);
   padding: var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .875rem;
 }
 

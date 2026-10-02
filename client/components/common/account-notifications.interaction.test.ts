@@ -81,9 +81,17 @@ const evaluateNotifications = new Function(
   'useSiteNotificationsStore',
   'pageHref',
   'navigateToWikiPage',
+  'defineProps',
+  'useId',
   `${executableScript}
-return { store, notificationIdentityReady, retryWatches, watchErrorAction, loadMoreWatches, retryApprovals, loadMoreApprovals, pageUrl, isUnread, watchAction, watchSummary, watchAriaLabel, approvalSummary, isOrdinaryActivation, openWatchPage, openApprovalPage }`
-) as (useStore: () => NotificationStore, href: typeof pageHref, navigate: (value: string) => void) => Record<string, unknown>
+return { section, ids, store, notificationIdentityReady, retryWatches, watchErrorAction, loadMoreWatches, retryApprovals, loadMoreApprovals, pageUrl, isUnread, watchAction, watchSummary, watchAriaLabel, approvalSummary, isOrdinaryActivation, openWatchPage, openApprovalPage }`
+) as (
+  useStore: () => NotificationStore,
+  href: typeof pageHref,
+  navigate: (value: string) => void,
+  defineProps: () => { section?: string },
+  useId: () => string
+) => Record<string, unknown>
 
 type NotificationStore = {
   ownerId: number | null
@@ -203,8 +211,8 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-const mountNotifications = (store: NotificationStore, navigate = vi.fn()) => {
-  const bindings = evaluateNotifications(() => store, pageHref, navigate)
+const mountNotifications = (store: NotificationStore, navigate = vi.fn(), section?: 'all' | 'changes' | 'approvals') => {
+  const bindings = evaluateNotifications(() => store, pageHref, navigate, () => (section ? { section } : {}), () => 'v-test')
   const component = Vue.defineComponent({
     setup: () => bindings,
     render: renderNotifications
@@ -258,6 +266,25 @@ describe('account notifications interaction', () => {
     expect(host.textContent).toContain('Unread')
     expect(host.querySelector('.account-notifications__unread-marker')).not.toBeNull()
     expect(host.querySelector('a')?.getAttribute('aria-label')).toBe('Editor localized moved this page — Docs (Unread)')
+  })
+
+  it('renders one group per account-menu tab with unique heading ids', () => {
+    const store = makeStore({ watches: [makeWatch()], approvals: [makeApproval()] })
+    const changes = mountNotifications(store, vi.fn(), 'changes').host
+    expect(changes.querySelector('h2')).toBeNull()
+    expect([...changes.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['Localized page changes'])
+    expect(changes.textContent).not.toContain('Release notes')
+    expect(changes.querySelector('hr')).toBeNull()
+    const group = changes.querySelector('section.account-notifications__group')
+    expect(group?.getAttribute('aria-labelledby')).toBe(changes.querySelector('h3')?.id)
+    expect(changes.querySelector('h3')?.id).toStartWith('v-test-')
+    mountedApp?.unmount()
+    document.body.replaceChildren()
+
+    const approvals = mountNotifications(store, vi.fn(), 'approvals').host
+    expect([...approvals.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['Approvals'])
+    expect(approvals.textContent).toContain('Release notes')
+    expect(approvals.textContent).not.toContain('Docs')
   })
 
   it('marks an ordinary unread watch once, keeps failure feedback, and navigates for the same owner', async () => {

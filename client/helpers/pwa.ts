@@ -156,6 +156,8 @@ const state = reactive<MutablePwaState>({
 // `readonly(reactive(...))` gives consumers one stable, reactive, mutation-safe view.
 export const pwaState: Readonly<PwaState> = readonly(state)
 export type PwaConnectionPresentation = {
+  /** Stable locale key suffix under `common:offline.connection`. */
+  readonly key: 'checking' | 'offline' | 'serverUnavailable' | 'connected' | 'notVerified'
   readonly label: string
   readonly tone: 'success' | 'warning' | 'error'
   readonly icon: string
@@ -165,18 +167,18 @@ type PwaConnectionPresentationState = Pick<PwaState, 'connection' | 'serverReach
 
 export const pwaConnectionPresentation = (currentState: PwaConnectionPresentationState): PwaConnectionPresentation => {
   if (currentState.connection === 'checking') {
-    return { label: 'Checking connection…', tone: 'warning', icon: 'mdi-sync' }
+    return { key: 'checking', label: 'Checking connection…', tone: 'warning', icon: 'mdi-sync' }
   }
   if (currentState.connection === 'offline') {
-    return { label: 'Offline', tone: 'error', icon: 'mdi-wifi-off' }
+    return { key: 'offline', label: 'Offline', tone: 'error', icon: 'mdi-wifi-off' }
   }
   if (currentState.connection === 'server-unavailable') {
-    return { label: 'Server unavailable', tone: 'error', icon: 'mdi-server-network-off' }
+    return { key: 'serverUnavailable', label: 'Server unavailable', tone: 'error', icon: 'mdi-server-network-off' }
   }
   if (currentState.connection === 'online' && currentState.serverReachable === true && currentState.serverHealthy === true) {
-    return { label: 'Connected', tone: 'success', icon: 'mdi-check-network-outline' }
+    return { key: 'connected', label: 'Connected', tone: 'success', icon: 'mdi-check-network-outline' }
   }
-  return { label: 'Connection not verified', tone: 'warning', icon: 'mdi-help-network-outline' }
+  return { key: 'notVerified', label: 'Connection not verified', tone: 'warning', icon: 'mdi-help-network-outline' }
 }
 
 type PromptOffer = {
