@@ -547,6 +547,53 @@ describe('workspace title responsiveness', () => {
   })
 })
 
+describe('workspace title fit', () => {
+  // Layout stand-in: each line needs `wordWidth * scale` pixels and the
+  // title box holds three lines of 15px * scale.
+  const fakeLayout = (box: HTMLElement, { available, wordWidth, lines }: { available: number; wordWidth: number; lines: number }) => {
+    const scale = () => Number(box.style.getPropertyValue('--nav-header-title-fit') || 1)
+    const define = (target: HTMLElement, props: Record<string, () => number>) => {
+      for (const [key, get] of Object.entries(props)) Object.defineProperty(target, key, { configurable: true, get })
+    }
+    define(box, { clientWidth: () => available, scrollHeight: () => lines * 15 * scale(), clientHeight: () => Math.min(48, lines * 15 * scale()) })
+    box.getBoundingClientRect = () => ({ width: available }) as DOMRect
+    for (const line of box.querySelectorAll<HTMLElement>('.nav-header-title-line'))
+      define(line, { clientWidth: () => available, scrollWidth: () => Math.min(wordWidth, available) + (box.classList.contains('is-measuring') ? Math.max(0, wordWidth * scale() - available) : 0) })
+  }
+
+  it('keeps the full size when the title fits and steps down only as far as needed', async () => {
+    wikiStore.site.title = `Tim O'Pedia`
+    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
+    const vm = mounted.vm as unknown as { applyNavHeaderTitleFit: () => void; navHeaderTitleFitScale: number }
+    const box = mounted.host.querySelector<HTMLElement>('.nav-header-title-stacked')!
+
+    fakeLayout(box, { available: 70, wordWidth: 52, lines: 2 })
+    vm.applyNavHeaderTitleFit()
+    expect(vm.navHeaderTitleFitScale).toBe(1)
+
+    fakeLayout(box, { available: 50, wordWidth: 64, lines: 2 })
+    vm.applyNavHeaderTitleFit()
+    expect(vm.navHeaderTitleFitScale).toBe(0.76)
+    expect(box.classList.contains('is-measuring')).toBe(false)
+
+    // Four lines at full size exceed the box; three lines fit after a step.
+    fakeLayout(box, { available: 70, wordWidth: 40, lines: 4 })
+    vm.applyNavHeaderTitleFit()
+    expect(vm.navHeaderTitleFitScale).toBe(0.76)
+  })
+
+  it('stops at the smallest step and lets an over-long word break instead of cutting it off', async () => {
+    wikiStore.site.title = 'Supercalifragilistic'
+    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
+    const vm = mounted.vm as unknown as { applyNavHeaderTitleFit: () => void; navHeaderTitleFitScale: number }
+    const box = mounted.host.querySelector<HTMLElement>('.nav-header-title-stacked')!
+    fakeLayout(box, { available: 40, wordWidth: 140, lines: 1 })
+    vm.applyNavHeaderTitleFit()
+    expect(vm.navHeaderTitleFitScale).toBe(0.7)
+    expect(box.querySelector('.nav-header-title-line')?.textContent).toBe('Supercalifragilistic')
+  })
+})
+
 describe('notification header identity recovery', () => {
   it('recovers an A-to-B shared-cookie identity without displaying stale items or retrying while stale', async () => {
     const mounted = await mountHeader()
