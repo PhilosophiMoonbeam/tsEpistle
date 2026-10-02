@@ -66,6 +66,11 @@ describe('profile route loading ownership', () => {
 
     errorHandlers[0]!(new Error('late route error'), firstNavigation)
     expect(wikiStore.loadingCounts.profile).toBe(1)
+    // The reload question goes through the shared confirm service (native fallback without a host).
+    await Promise.resolve()
+    const stubbedWindow = globalThis.window as unknown as { confirm: ReturnType<typeof vi.fn>; location: { reload: ReturnType<typeof vi.fn> } }
+    expect(stubbedWindow.confirm).toHaveBeenCalledWith('This section could not be loaded.\n\nReload the page to try again.')
+    expect(stubbedWindow.location.reload).not.toHaveBeenCalled()
 
     afterEachHandlers[0]!(secondNavigation)
     expect(wikiStore.loadingCounts.profile).toBeUndefined()

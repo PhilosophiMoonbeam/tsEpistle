@@ -15,54 +15,54 @@
       template(v-slot:prepend)
         v-icon(
           :key='copied ? "check" : "copy"'
-          :class='{ "icon-tactile-bounce": copied }'
-          :color='copied ? "success" : "grey"'
+          :class='copied ? "icon-tactile-bounce" : "social-sharing__icon"'
+          :color='copied ? "success" : undefined'
           size="small"
         ) {{ copied ? 'mdi-check-bold' : 'mdi-content-copy' }}
       v-list-item-title.px-3 {{$t('common:actions.copy')}} URL
     v-list-item(v-if='!offline' tag='button', type='button', role='button', @click='copySummary')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-text-box-outline
+        v-icon.social-sharing__icon(size="small") mdi-text-box-outline
       v-list-item-title.px-3 Copy page summary
     v-list-item(v-else tag='button', type='button', role='button', @click='copyText')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-text-box-outline
+        v-icon.social-sharing__icon(size="small") mdi-text-box-outline
       v-list-item-title.px-3 Copy page text
     v-list-item(:href='shareUrls.email')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-email-outline
+        v-icon.social-sharing__icon(size="small") mdi-email-outline
       v-list-item-title.px-3 Email
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.facebook)')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-facebook
+        v-icon.social-sharing__icon(size="small") mdi-facebook
       v-list-item-title.px-3 Facebook
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.linkedin)')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-linkedin
+        v-icon.social-sharing__icon(size="small") mdi-linkedin
       v-list-item-title.px-3 LinkedIn
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.reddit)')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-reddit
+        v-icon.social-sharing__icon(size="small") mdi-reddit
       v-list-item-title.px-3 Reddit
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.telegram)')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-telegram
+        v-icon.social-sharing__icon(size="small") mdi-telegram
       v-list-item-title.px-3 Telegram
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.x)')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-alpha-x-box-outline
+        v-icon.social-sharing__icon(size="small") mdi-alpha-x-box-outline
       v-list-item-title.px-3 X
     v-list-item(:href='shareUrls.viber')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-phone-in-talk
+        v-icon.social-sharing__icon(size="small") mdi-phone-in-talk
       v-list-item-title.px-3 Viber
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.weibo)')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-sina-weibo
+        v-icon.social-sharing__icon(size="small") mdi-sina-weibo
       v-list-item-title.px-3 Weibo
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.whatsapp)')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-whatsapp
+        v-icon.social-sharing__icon(size="small") mdi-whatsapp
       v-list-item-title.px-3 WhatsApp
     span.social-sharing-status.sr-only(role='status', aria-live='polite') {{ copyStatus }}
 </template>
@@ -354,6 +354,11 @@ export default defineComponent({
 </script>
 
 <style scoped>
+/* Secondary share icons use the muted text token so palettes and dark mode apply. */
+.social-sharing__icon {
+  color: var(--wiki-text-muted);
+}
+
 .icon-tactile-bounce {
   animation: tactile-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   transform-origin: center;

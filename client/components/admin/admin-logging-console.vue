@@ -131,10 +131,11 @@ const statusLabel = computed(() => {
       return 'Closed'
   }
 })
-const statusColor = computed(() => {
+// A closed console uses the neutral chip (theme on-surface), not a palette grey.
+const statusColor = computed((): string | undefined => {
   if (connection.value === 'live') return paused.value ? 'warning' : 'success'
   if (connection.value === 'connecting' || connection.value === 'reconnecting') return 'info'
-  if (connection.value === 'closed') return 'grey'
+  if (connection.value === 'closed') return undefined
   return 'warning'
 })
 const lineBytes = (timestamp: string, level: string, output: string) => encoder.encode(`${timestamp} ${level} ${output}\n`).byteLength

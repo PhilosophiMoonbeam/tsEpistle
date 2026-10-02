@@ -473,11 +473,12 @@ export default {
         this.deliveryBusy = ''
       }
     },
-    stateColor (state: string): string {
+    stateColor (state: string): string | undefined {
       if (state === 'succeeded') return 'success'
       if (state === 'failed') return 'error'
       if (state === 'running') return 'primary'
-      if (state === 'cancelled') return 'grey'
+      // A cancelled delivery uses the neutral chip (theme on-surface).
+      if (state === 'cancelled') return undefined
       return 'warning'
     }
   },

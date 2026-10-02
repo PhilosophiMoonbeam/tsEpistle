@@ -111,7 +111,10 @@ if (!accountMenuStyles || !notificationStyles) {
 const testTranslations: Record<string, string> = {
   'common:header.account': 'Localized account',
   'common:header.accountNotificationsAvailable': '{{account}}, Localized notifications available',
-  'common:header.accountNotificationsUnknown': '{{account}}, Localized notification status not fully checked'
+  'common:header.accountNotificationsUnknown': '{{account}}, Localized notification status not fully checked',
+  'common:header.agent': 'Agent localisé',
+  'common:header.agentOpen': 'Ouvrir l’agent',
+  'common:header.searchOpen': 'Ouvrir la recherche'
 }
 
 const translate = (key: string, params?: Record<string, unknown>): string => {
@@ -438,13 +441,14 @@ const menuSlotForwardingStub = VueRuntime.defineComponent({
 interface HeaderMountOptions {
   hideSearch?: boolean
   smAndDown?: boolean
+  dense?: boolean
 }
 
-const mountHeader = async ({ hideSearch = true, smAndDown = false }: HeaderMountOptions = {}) => {
+const mountHeader = async ({ hideSearch = true, smAndDown = false, dense = true }: HeaderMountOptions = {}) => {
   installBrowserGlobals()
   const host = browserWindow.document.createElement('div')
   browserWindow.document.body.append(host)
-  const app = testRenderer.createApp(NavHeader, { dense: true, hideSearch })
+  const app = testRenderer.createApp(NavHeader, { dense, hideSearch })
   app.component('v-menu', menuSlotForwardingStub)
   app.component('v-tooltip', slotForwardingStub)
   app.config.globalProperties.$t = translate
@@ -493,6 +497,23 @@ describe('search header affordances', () => {
     const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
 
     expect(mounted.host.querySelector('.nav-header-browse')).toBeNull()
+  })
+})
+
+describe('Wiki Agent header entry', () => {
+  it.each([false, true])('names the Agent button and its tooltip through the locale (small screen: %s)', async smAndDown => {
+    globals.siteConfig = { ...globals.siteConfig, agentsEnabled: true }
+    wikiStore.user = { ...user(1), permissions: ['use:agents'] }
+    try {
+      const mounted = await mountHeader({ hideSearch: false, smAndDown, dense: false })
+      const agent = mounted.host.querySelector<HTMLElement>('.nav-header-agent')
+      expect(agent?.getAttribute('aria-label')).toBe('Ouvrir l’agent')
+      expect(agent?.parentElement?.textContent).toContain('Agent localisé')
+      expect(mounted.host.textContent).not.toContain('Wiki Agent')
+      if (smAndDown) expect(mounted.host.querySelector('.nav-header-search-toggle')?.getAttribute('aria-label')).toBe('Ouvrir la recherche')
+    } finally {
+      globals.siteConfig = { ...globals.siteConfig, agentsEnabled: false }
+    }
   })
 })
 

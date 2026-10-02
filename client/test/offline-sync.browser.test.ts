@@ -215,7 +215,7 @@ export async function run(operation, payload = {}) {
       const pageId = Number(requestURL.pathname.split('/').at(-2));
       if (kind === 'private-retirement') return privateResponse(pageId, 401);
       if (kind === 'private-denied-403' && privateSuccessCount > 0) return privateResponse(pageId, 403);
-      if (kind === 'private-denied-404' && privateSuccessCount > 0) return privateResponse(pageId, 404);
+      if (kind === 'private-denied-404' && privateSuccessCount > 0) return json({ message: 'Private snapshot unavailable.', reason: 'render-pending' }, 404);
       if (kind === 'private-strict-context') return privateResponse(pageId, 200, { accountId: PRIVATE_ACCOUNT_ID + 1 });
       privateSuccessCount += 1;
       return privateResponse(pageId);
@@ -232,7 +232,11 @@ export async function run(operation, payload = {}) {
         recoveryFetchStarted.resolve();
         await recoveryFetchRelease.promise;
       }
-      if (denyReselectedPage) return json({ message: 'Snapshot not found.' }, 404);
+      if (denyReselectedPage) {
+        // Known reason codes are kept; anything else (here a page title) is dropped by the client.
+        const reason = kind === 'denied-manual' || kind === 'reselect-denied' ? 'custom-content' : kind === 'retry-concurrent-denial' ? 'Private page title' : undefined;
+        return json({ message: 'Snapshot not found.', ...(reason ? { reason } : {}) }, 404);
+      }
       if (kind === 'private-public-transport') throw new TypeError('offline public transport failed');
       if (kind === 'private-public-401') return json({ message: 'Guest is not authorized.' }, 401);
       if (kind === 'private-public-404') return json({ message: 'Guest cannot read this page.' }, 404);
@@ -818,6 +822,7 @@ describe('foreground offline sync coordinator', () => {
     expect(pageIds(run)).toEqual([])
     expect(snapshotRequests(run)).toEqual([1, 1])
     expect(policyFor(run, 1)).toMatchObject({ availability: 'ineligible' })
+    expect(policyFor(run, 1)).not.toHaveProperty('ineligibleReason')
     expect(run.result.status).toBe('partial')
   })
 
@@ -858,7 +863,7 @@ describe('foreground offline sync coordinator', () => {
     expect(run.result.error).toContain('not available for offline use')
     expect(pageIds(run)).toEqual([])
     expect(snapshotRequests(run)).toEqual([1, 1])
-    expect(policyFor(run, 1)).toMatchObject({ manual: true, availability: 'ineligible' })
+    expect(policyFor(run, 1)).toMatchObject({ manual: true, availability: 'ineligible', ineligibleReason: 'custom-content' })
   })
 
   test('checks server eligibility again when a denied page is removed and manually reselected', async () => {
@@ -868,6 +873,8 @@ describe('foreground offline sync coordinator', () => {
     expect(pageIds(run)).toEqual([1])
     expect(snapshotRequests(run)).toEqual([1, 1])
     expect(policyFor(run, 1)).toMatchObject({ manual: true, excluded: false, availability: 'available' })
+    // The earlier refusal reason does not outlive the refusal.
+    expect(policyFor(run, 1)).not.toHaveProperty('ineligibleReason')
   })
 
   test('reconciles a manual offline intent immediately with a typed success outcome', async () => {
@@ -1135,6 +1142,9 @@ describe('foreground offline sync coordinator', () => {
     expect(run.privateRecords).toHaveLength(2)
     expect(run.privateRecords?.every(record => record.kind === 'policy-state' || record.kind === 'policy-page')).toBe(true)
     expect(run.privatePolicy?.pages[0]).toMatchObject({ manual: true, availability: 'ineligible' })
+    // The encrypted private policy keeps the reason code the server sent, and only that.
+    if (kind === 'private-denied-404') expect(run.privatePolicy?.pages[0]?.ineligibleReason).toBe('render-pending')
+    else expect(run.privatePolicy?.pages[0]).not.toHaveProperty('ineligibleReason')
     expect(run.result.removed).toBe(1)
   })
 })

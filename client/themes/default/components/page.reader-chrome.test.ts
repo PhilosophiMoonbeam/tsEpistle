@@ -63,17 +63,12 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   pageBranding: null,
   pageApproval: null,
   offlineControl: {
-    state: 'available',
-    tone: 'neutral',
-    icon: 'mdi-cloud-download-outline',
-    action: 'save',
-    blocked: false,
-    label: 'Save offline',
-    title: 'Not saved offline',
-    detail: '',
-    pressed: false
+    state: 'off', tone: 'neutral', icon: 'mdi-cloud-download-outline', action: 'save', blocked: false,
+    label: 'Save offline', title: 'Save offline', detail: 'Keep a copy on this device.', pressed: false
   },
+  offlineActionLoading: false,
   offlineStatusId: 'offline-status',
+  offlineStatusLabel: 'Save offline. Keep a copy on this device.',
   approvalStatusLabel: (status: string) => status,
   tagColor: () => 'neutral',
   readingProgress: 0,

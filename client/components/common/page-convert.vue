@@ -4,8 +4,6 @@
     max-width='550'
     scrollable
     :persistent='loading'
-    scrim='blue-grey-darken-4'
-    :opacity='0.7'
     aria-labelledby='page-convert-dialog-title'
     aria-describedby='page-convert-dialog-description'
     @after-enter='focusEditor'
@@ -17,7 +15,7 @@
         span#page-convert-dialog-title {{$t('common:page.convert')}}
       v-card-text.pt-5
         i18next#page-convert-dialog-description.text-body-medium(path='common:page.convertTitle', tag='div')
-          span.text-blue-grey-darken-2(place='title') {{pageTitle}}
+          strong(place='title') {{pageTitle}}
         v-select.mt-5(
           ref='editorSelect'
           :items='editorOptions'

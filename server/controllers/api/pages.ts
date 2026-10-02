@@ -17,6 +17,7 @@ import { OkfDocumentError } from '../../okf/format.ts'
 import { buildPageOkfView } from '../../okf/page-view.ts'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 import { OFFLINE_PAGE_INELIGIBLE_CODE } from '../../helpers/offline-page.ts'
+import { type OfflineIneligibleReason, offlineIneligibleReason } from '../../../shared/offline.ts'
 import deletedPageRecovery from '../../operations/deleted-page-recovery.ts'
 import {
   DeletedPageRecoveryInspectSchema,
@@ -116,6 +117,14 @@ const errorStatus = (err: unknown, fallback: number): number => {
 }
 const OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE = 'Offline snapshot is unavailable.'
 const OFFLINE_PAGE_INELIGIBLE_MESSAGE = 'This page is not available for offline use.'
+/**
+ * The machine-readable refusal reason, when the snapshot builder attached one.
+ * It is set only after read access is confirmed; the error message is never sent.
+ */
+const offlineRefusalReason = (err: unknown): { reason: OfflineIneligibleReason } | Record<string, never> => {
+  const reason = typeof err === 'object' && err !== null ? offlineIneligibleReason(Reflect.get(err, 'reason')) : null
+  return reason ? { reason } : {}
+}
 
 const requestBody = (req: Request): Record<string, unknown> => {
   const body: unknown = req.body
@@ -1245,7 +1254,7 @@ router.get('/:id/offline-snapshot', async (req, res, next) => {
     return res.json(await pageOperations.getOfflineSnapshot({ id }))
   } catch (err) {
     if (typeof err === 'object' && err !== null && Reflect.get(err, 'code') === OFFLINE_PAGE_INELIGIBLE_CODE)
-      return res.status(404).json({ error: OFFLINE_PAGE_INELIGIBLE_MESSAGE, code: OFFLINE_PAGE_INELIGIBLE_CODE })
+      return res.status(404).json({ error: OFFLINE_PAGE_INELIGIBLE_MESSAGE, code: OFFLINE_PAGE_INELIGIBLE_CODE, ...offlineRefusalReason(err) })
     return sendOperationError(res, next, err, 'Offline snapshot is unavailable')
   }
 })
@@ -1261,7 +1270,7 @@ router.get('/:id/offline-private-snapshot', async (req, res, next) => {
     return res.json(await pageOperations.getOfflinePrivateSnapshot({ id, ...requesterInput(req) }))
   } catch (err) {
     const code = typeof err === 'object' && err !== null ? Reflect.get(err, 'code') : undefined
-    if (code === OFFLINE_PAGE_INELIGIBLE_CODE) return res.status(404).json({ error: OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE })
+    if (code === OFFLINE_PAGE_INELIGIBLE_CODE) return res.status(404).json({ error: OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE, ...offlineRefusalReason(err) })
     if (errorStatus(err, 0) === 401) return res.status(401).json({ error: OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE })
     return sendOperationError(res, next, err, OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE)
   }

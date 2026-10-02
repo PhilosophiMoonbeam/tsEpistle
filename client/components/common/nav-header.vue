@@ -99,7 +99,7 @@
         .nav-header-inner.nav-header-actions
           v-spacer
           .navHeaderLoading(v-show='isLoading')
-            v-progress-circular(indeterminate, color='primary', :size='22', :width='2', aria-label='Page loading')
+            v-progress-circular(indeterminate, color='primary', :size='22', :width='2', :aria-label='$t(`common:header.pageLoading`, { defaultValue: `Page loading` })')
           v-tooltip(location='bottom')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-agent(
@@ -107,13 +107,13 @@
                 v-if='canEnterAgent && $vuetify.display.mdAndUp'
                 icon
                 rounded='lg'
-                aria-label='Open Wiki Agent'
+                :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
                 data-search-modal-action
                 @click='openAgent'
               )
                 v-icon(icon='mdi-creation-outline')
                 ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
-            span Wiki Agent
+            span {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
           template(v-if='hasWritePagesPermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-tooltip(location='bottom')
               template(v-slot:activator='{ props }')
@@ -134,13 +134,13 @@
                 v-if='canEnterAgent && $vuetify.display.smAndDown'
                 icon
                 rounded='lg'
-                aria-label='Open Wiki Agent'
+                :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
                 data-search-modal-action
                 @click='openAgent'
               )
                 v-icon(icon='mdi-creation-outline')
                 ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
-            span Wiki Agent
+            span {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
 
           //- (mobile) SEARCH TOGGLE
 
@@ -153,7 +153,7 @@
             :size='dense ? `small` : `default`'
             :aria-expanded='searchIsShown ? `true` : `false`'
             aria-controls='nav-header-mobile-search'
-            :aria-label='searchIsShown ? `Close search` : `Open search`'
+            :aria-label='searchIsShown ? $t(`common:header.searchCloseLabel`, { defaultValue: `Close search` }) : $t(`common:header.searchOpen`, { defaultValue: `Open search` })'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
           v-tooltip.nav-header-mobile-browse(v-if='!hideSearch && $vuetify.display.smAndDown', location='bottom')
@@ -205,7 +205,7 @@
                     :aria-current='lc.code === locale ? `true` : undefined'
                     @click='changeLocale(lc)'
                   )
-                    template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
+                    template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : undefined', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
 
           //- PAGE ACTIONS
@@ -1479,10 +1479,10 @@ export default defineComponent({
   isolation: isolate;
   flex: 0 0 auto;
   margin-inline: 0;
-  // The spark beam sweeping the button border shares the Agent icon's Capri accent,
+  // The spark beam sweeping the button border shares the Agent icon's accent,
   // overriding the global warm/spectral beam palette for this control only.
   --wiki-beam-violet: var(--nav-header-agent-icon-color);
-  --wiki-beam-cool: color-mix(in srgb, var(--nav-header-agent-icon-color) 62%, white);
+  --wiki-beam-cool: color-mix(in srgb, var(--nav-header-agent-icon-color) 62%, rgb(var(--v-theme-surface)));
 }
 /* The Agent entry button keeps the shared focus outline but semi-transparent:
    40% of the neutral focus color instead of the fully opaque default. */
@@ -1491,7 +1491,8 @@ export default defineComponent({
 }
 
 .nav-header {
-  --nav-header-agent-icon-color: #00bfff;
+  // Same palette-aware agent mark color as the Wiki Agent thread (agent-thread.vue).
+  --nav-header-agent-icon-color: color-mix(in srgb, rgb(var(--v-theme-info)) 85%, rgb(var(--v-theme-on-surface)));
   --nav-header-edit-icon-color: #fdb600;
   --nav-header-edit-eraser-color: #dbb7bb;
   --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
@@ -1896,7 +1897,7 @@ export default defineComponent({
       filter var(--wiki-motion-normal) var(--wiki-motion-ease);
   }
 
-  // Fixed, theme-independent icon accents: the Agent spark stays soft neo blue
+  // Icon accents: the Agent spark follows the palette info color (the agent mark)
   // and the Edit pencil stays pencil yellow with a pink eraser in every theme.
   // Labels and button chrome keep inheriting the surrounding accent-ink color.
   .nav-header-inner .nav-header-agent .v-icon {
