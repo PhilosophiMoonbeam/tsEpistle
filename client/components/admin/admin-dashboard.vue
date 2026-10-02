@@ -305,7 +305,7 @@ export default {
       try {
         const fetchImpl = (url: string, init: any) =>
           window.fetch(url, controller ? { ...init, signal: controller.signal } : init)
-        const pages = await fetchRecentPages(fetchImpl as any, 'Recent pages response is invalid')
+        const pages = await fetchRecentPages(fetchImpl as any, this.$t('admin:dashboard.recentPagesResponseInvalid'))
         if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false
         this.recentPages = markRaw(pages)
         return true
@@ -336,7 +336,7 @@ export default {
       try {
         const fetchImpl = (url: string, init: any) =>
           window.fetch(url, controller ? { ...init, signal: controller.signal } : init)
-        const users = await fetchLastLogins(fetchImpl as any, 'Last logins response is invalid')
+        const users = await fetchLastLogins(fetchImpl as any, this.$t('admin:dashboard.lastLoginsResponseInvalid'))
         if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false
         this.lastLogins = markRaw(users)
         return true

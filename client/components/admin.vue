@@ -136,6 +136,7 @@ import { wikiStore } from '@/store/index.ts'
 import { adminSummaryKey } from '../helpers/admin-summary'
 import { fetchSystemSummary } from '../helpers/system-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../helpers/root-ui-store'
+import { useTranslate } from '../helpers/use-translate'
 
 import { buildAdminNavigation, filterAdminNavigation, type AdminNavGroup, type AdminNavItem } from '../helpers/admin-navigation'
 import ConfirmDialogHost from './common/confirm-dialog-host.vue'
@@ -145,6 +146,7 @@ export default defineComponent({
   i18nOptions: { namespaces: 'admin' },
   components: { ConfirmDialogHost },
   setup() {
+    const t = useTranslate()
     const summaryLoading = ref(false)
     const summaryError = ref('')
     async function loadInfo() {
@@ -153,7 +155,7 @@ export default defineComponent({
       summaryError.value = ''
       loadingStart(wikiStore, 'admin-stats-refresh')
       try {
-        wikiStore.admin.info = await fetchSystemSummary(window.fetch.bind(window), 'System summary response is invalid')
+        wikiStore.admin.info = await fetchSystemSummary(window.fetch.bind(window), t('common:adminShell.systemSummaryInvalid'))
       } catch (err) {
         summaryError.value = getErrorMessage(err)
         showNotification(wikiStore, {

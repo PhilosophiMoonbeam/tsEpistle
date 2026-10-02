@@ -399,7 +399,7 @@ const sections = [
 ] as const
 const levels = ['error', 'warn', 'info', 'verbose', 'debug', 'silly']
 const formats = [
-  { title: 'Human-readable', value: 'default' },
+  { title: t('admin:logging.consoleFormatReadable'), value: 'default' },
   { title: 'JSON', value: 'json' }
 ]
 const saved = ref<LoggingWorkspace | null>(null)
