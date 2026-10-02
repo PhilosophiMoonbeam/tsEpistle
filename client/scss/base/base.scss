@@ -51,6 +51,9 @@
   --wiki-text-subtle: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
   --wiki-surface-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 13%, transparent);
   --wiki-surface-border-strong: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent);
+  // The edge that identifies a control, such as a text field outline. It must
+  // reach 3:1 against the control and page surfaces (WCAG 1.4.11).
+  --wiki-control-edge: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 44%, transparent);
   --wiki-surface-raised: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-surface-bright)) 6%);
   --wiki-surface-sunken: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, rgb(var(--v-theme-surface)) 28%);
   --wiki-surface-soft: var(--wiki-surface-sunken);
@@ -62,6 +65,16 @@
   --wiki-accent-warm: rgb(var(--v-theme-primary));
   --wiki-accent-ink: color-mix(in srgb, var(--wiki-accent-warm) 38%, rgb(var(--v-theme-on-surface)) 62%);
   --wiki-accent-spectral: rgb(var(--v-theme-secondary));
+  // Palette colors as text or icons on page surfaces. Each ink keeps its palette
+  // color when that color already meets 4.5:1 and otherwise deepens or lightens
+  // it until it does (createInkColorMap in client/helpers/theme.ts). Use these,
+  // not rgb(var(--v-theme-<color>)) or --wiki-accent-warm, for colored text and icons.
+  --wiki-primary-ink: rgb(var(--v-theme-primary-ink, var(--v-theme-primary)));
+  --wiki-secondary-ink: rgb(var(--v-theme-secondary-ink, var(--v-theme-secondary)));
+  --wiki-info-ink: rgb(var(--v-theme-info-ink, var(--v-theme-info)));
+  --wiki-success-ink: rgb(var(--v-theme-success-ink, var(--v-theme-success)));
+  --wiki-warning-ink: rgb(var(--v-theme-warning-ink, var(--v-theme-warning)));
+  --wiki-error-ink: rgb(var(--v-theme-error-ink, var(--v-theme-error)));
   --wiki-ambient-accent: color-mix(in srgb, rgb(var(--v-theme-primary)) 62%, rgb(var(--v-theme-secondary)) 38%);
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 15%, transparent);
   --wiki-shadow-xs: 0 1px 2px var(--wiki-shadow-color);
@@ -102,6 +115,26 @@
   --wiki-beam-cool: var(--wiki-accent-spectral);
   --v-font-body: var(--wiki-font-body);
   --v-font-heading: var(--wiki-font-heading);
+}
+
+// Vuetify's text-<color> utilities color text, outlined and tonal buttons,
+// icons and selection controls with the raw palette color. Use the readable
+// ink instead. :where() keeps the utility at zero specificity, so component
+// rules still override it as they override Vuetify's layered utility.
+:where(.text-primary) { color: rgb(var(--v-theme-primary-ink, var(--v-theme-primary))); }
+:where(.text-secondary) { color: rgb(var(--v-theme-secondary-ink, var(--v-theme-secondary))); }
+:where(.text-accent) { color: rgb(var(--v-theme-accent-ink, var(--v-theme-accent))); }
+:where(.text-info) { color: rgb(var(--v-theme-info-ink, var(--v-theme-info))); }
+:where(.text-success) { color: rgb(var(--v-theme-success-ink, var(--v-theme-success))); }
+:where(.text-warning) { color: rgb(var(--v-theme-warning-ink, var(--v-theme-warning))); }
+:where(.text-error) { color: rgb(var(--v-theme-error-ink, var(--v-theme-error))); }
+
+// A checked switch paints its track and thumb with bg-<color>. The thumb is the
+// state indicator, so it uses the readable ink too (at least 3:1 on the surface).
+@each $key in primary, secondary, accent, info, success, warning, error {
+  .v-switch :is(.v-switch__track, .v-switch__thumb).bg-#{$key} {
+    background-color: rgb(var(--v-theme-#{$key}-ink, var(--v-theme-#{$key})));
+  }
 }
 
 .v-theme--dark {

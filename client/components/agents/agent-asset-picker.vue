@@ -102,7 +102,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort() })
 .agent-asset-picker__header h2 { font-size: 1.1rem; font-weight: 600; margin: 0 0 4px; }
 .agent-asset-picker__header p { margin: 0; font-size: .8rem; opacity: .7; }
 .agent-asset-picker__breadcrumbs { display: flex; align-items: center; gap: 7px; overflow-x: auto; padding: 0 20px 12px; font-size: .8rem; }
-.agent-asset-picker__breadcrumbs button { white-space: nowrap; color: rgb(var(--v-theme-primary)); }
+.agent-asset-picker__breadcrumbs button { white-space: nowrap; color: var(--wiki-primary-ink); }
 .agent-asset-picker__breadcrumbs button:disabled { color: inherit; opacity: .65; }
 .agent-asset-picker__search { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; border: 1px solid var(--wiki-surface-border); border-radius: 10px; padding: 9px 12px; }
 .agent-asset-picker__search input { appearance: none; border: 0; border-radius: 0; box-shadow: none; background: transparent; color: inherit; width: 100%; min-width: 0; outline: none; font-size: .875rem; }

@@ -97,7 +97,7 @@ const renderedContent = computed(() => renderSafeMarkdown(banner.content)
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 82%, transparent);
 }
 .site-banner__content :deep(a) {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   text-decoration: underline;
   text-decoration-thickness: .1em;
   text-underline-offset: .15em;

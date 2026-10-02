@@ -1391,7 +1391,7 @@ export default {
 
   &:hover,
   &:focus-visible {
-    color: rgb(var(--v-theme-primary));
+    color: var(--wiki-primary-ink);
   }
 }
 

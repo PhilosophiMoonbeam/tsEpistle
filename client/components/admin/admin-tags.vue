@@ -812,7 +812,7 @@ export default {
 
 .taxonomy-welcome-mark {
   padding-bottom: 16px;
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   font-size: 3.5rem;
   font-weight: 250;
   line-height: 1;
@@ -858,7 +858,7 @@ export default {
   height: 64px;
   border: 1px solid var(--taxonomy-border);
   border-radius: var(--wiki-panel-radius, 12px);
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   font-size: 2.5rem;
   font-weight: 250;
 }

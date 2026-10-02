@@ -1766,7 +1766,7 @@ export default defineComponent({
       box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
 
       .v-field__prepend-inner {
-        color: var(--wiki-accent-warm);
+        color: var(--wiki-primary-ink);
       }
     }
 
@@ -1838,7 +1838,7 @@ export default defineComponent({
       &:hover {
         border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent);
         background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
-        color: var(--wiki-accent-warm);
+        color: var(--wiki-primary-ink);
         transform: none;
       }
     }
@@ -1846,7 +1846,7 @@ export default defineComponent({
     &:focus-visible {
       border-color: color-mix(in srgb, var(--wiki-focus-color) 48%, transparent);
       background: color-mix(in srgb, var(--wiki-focus-color) 8%, transparent);
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-primary-ink);
     }
 
     &:active {
@@ -2070,7 +2070,7 @@ export default defineComponent({
     &:focus-visible {
       border-color: color-mix(in srgb, var(--wiki-ambient-accent) 18%, transparent);
       background: color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent);
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-primary-ink);
     }
 
     &.v-list-item--active {
@@ -2220,7 +2220,7 @@ export default defineComponent({
 .account-menu__tab--active,
 .account-menu__tab--active:hover {
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, transparent);
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   font-weight: 750;
 }
 

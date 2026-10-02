@@ -558,7 +558,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(li::marker) {
-  color: color-mix(in srgb, var(--wiki-accent-warm) 72%, rgb(var(--v-theme-on-surface)));
+  color: color-mix(in srgb, var(--wiki-primary-ink) 72%, rgb(var(--v-theme-on-surface)));
   font-weight: 700;
 }
 
@@ -696,7 +696,7 @@ onBeforeUnmount(() => {
 
 .agent-markdown :deep(.agent-markdown__copy:hover) {
   background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-primary-ink);
 }
 
 .agent-markdown :deep(.agent-markdown__copy[data-copy-state='success']) {
