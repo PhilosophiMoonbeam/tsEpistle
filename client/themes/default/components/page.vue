@@ -102,7 +102,8 @@
                     size="small"
                     variant="text"
                     :aria-current='props.item.href === breadcrumbs[breadcrumbs.length - 1].href ? `page` : undefined'
-                  ) {{props.item.title}}
+                  )
+                    span.breadcrumbs-nav__label {{props.item.title}}
             //- One static unpublished surface: chip plus one sentence.
             .page-header-unpublished(v-if='!isPublished', role='note')
               v-chip.page-unpublished-chip(size='small', color='warning', variant='tonal', prepend-icon='mdi-eye-off-outline') {{$t('common:page.unpublished')}}
@@ -217,13 +218,13 @@
             :disabled='printView'
           )
             v-card.page-tools-card.mb-4(flat, role='group', :aria-label='$t(`common:page.pageTools`)')
-              //- Utility tooltips open below the whole card, so they never cover
-              //- the top bar, the page title or the Updated/author line, and
-              //- their width is capped so long reasons wrap.
+              //- Utility tooltips are measured when they open and placed on the
+              //- first side of the card where they cover no content (see
+              //- placeUtilityTooltip); their width is capped so long reasons wrap.
               .page-tools-card__utilities(v-if='!printView')
                 v-menu(:location='isTocMobile ? `top end` : `bottom`', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
+                    v-tooltip(v-bind='utilityTooltipProps(`share`)')
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn(
                           icon
@@ -244,7 +245,7 @@
                 //- can explain why; each handler refuses the action itself.
                 //- One bell: it starts watching, and once watching it opens the
                 //- watch settings (delivery switches and Stop watching).
-                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', v-if='isAuthenticated && !pageWatched')
+                v-tooltip(v-bind='utilityTooltipProps(`watch`)', v-if='isAuthenticated && !pageWatched')
                   template(v-slot:activator='{ props }')
                     v-btn.page-watch-control(
                       icon
@@ -264,7 +265,7 @@
                   span.page-tool-blocked-reason(v-if='pageWatchBlockedReason') {{ pageWatchBlockedReason }}
                 v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? `top end` : `bottom`', :close-on-content-click='false', min-width='260')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
+                    v-tooltip(v-bind='utilityTooltipProps(`watching`)')
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn.page-watch-control.page-watch-control--watching(
                           icon
@@ -311,7 +312,7 @@
                         @click='togglePageWatch'
                       ) {{$t('common:page.stopWatchingPage')}}
 
-                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                v-tooltip(v-bind='utilityTooltipProps(`approval`)', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn.page-approval-control(
                       icon
@@ -327,7 +328,7 @@
                       v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
                   span {{$t('common:page.approvalWorkflow')}}
                   span.page-tool-blocked-reason(v-if='!pageOnlineActionReady') {{ pageOnlineActionUnavailableReason }}
-                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                v-tooltip(v-bind='utilityTooltipProps(`protection`)', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn.page-protection-control(
                       icon
@@ -343,7 +344,7 @@
                       v-icon mdi-form-textbox-password
                   span {{$t('common:page.pagePasswordProtection')}}
                   span.page-tool-blocked-reason(v-if='pageProtectionBlockedReason') {{ pageProtectionBlockedReason }}
-                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
+                v-tooltip(v-bind='utilityTooltipProps(`print`)')
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
@@ -356,7 +357,7 @@
                     )
                       v-icon mdi-printer
                   span {{$t('common:page.printFormat')}}
-                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', :open-on-click='offlineControl.blocked')
+                v-tooltip(v-bind='utilityTooltipProps(`offline`)', :open-on-click='offlineControl.blocked')
                   template(v-slot:activator='{ props }')
                     v-btn.page-offline-control(
                       v-bind='props'
@@ -369,7 +370,7 @@
                       :aria-disabled='offlineControl.blocked ? `true` : undefined'
                       :aria-label='offlineControl.label'
                       :aria-pressed='offlineControl.pressed === undefined ? undefined : String(offlineControl.pressed)'
-                      :aria-describedby='offlineStatusId'
+                      :aria-describedby='[props["aria-describedby"], offlineStatusId].filter(Boolean).join(" ")'
                       :data-offline-state='offlineControl.state'
                       @click='toggleOfflinePage'
                     )
@@ -378,7 +379,7 @@
                   .page-offline-tooltip
                     strong.page-offline-tooltip__title {{ offlineControl.title }}
                     span.page-offline-tooltip__detail(v-if='offlineControl.detail') {{ offlineControl.detail }}
-                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
+                v-tooltip(v-bind='utilityTooltipProps(`focus`)')
                   template(v-slot:activator='{ props }')
                     v-btn.page-focus-control(
                       v-bind='props'
@@ -393,7 +394,7 @@
                     )
                       v-icon(aria-hidden='true') mdi-book-open-page-variant-outline
                   span {{$t('common:page.focusReading')}}
-                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', v-if='canViewHistory')
+                v-tooltip(v-bind='utilityTooltipProps(`history`)', v-if='canViewHistory')
                   template(v-slot:activator='{ props }')
                     v-btn.page-tools-history-link(
                       icon
@@ -847,6 +848,12 @@ import {
   pageBrandingIdentity,
   resolvePageBrandingStyle
 } from '../../../helpers/page-branding'
+import {
+  UTILITY_TOOLTIP_GAP,
+  UTILITY_TOOLTIP_MAX_WIDTH,
+  chooseUtilityTooltipPlacement,
+  isContentAtPoint
+} from '../../../helpers/utility-tooltip-placement'
 import { pwaState } from '../../../helpers/pwa.ts'
 import { canSearchReviewerDirectory, manualReviewerId, searchApprovalReviewers, type ApprovalReviewerOption } from '../../../helpers/approval-reviewer-search.ts'
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
@@ -1589,6 +1596,8 @@ export default defineComponent({
       approvalRequestId: 0,
       approvalMutationId: 0,
       pageApproval: null as PageApproval | null,
+      utilityTooltip: { location: 'top left', offset: UTILITY_TOOLTIP_GAP as number | [number, number], measuring: false },
+      utilityTooltipToken: 0,
       approvalComment: '',
       approvalAssigneeId: null as number | null,
       approvalReviewerQuery: '',
@@ -3595,6 +3604,45 @@ export default defineComponent({
         : this.$t('common:page.reviewerSearchHint')
       return prefix ? `${prefix} ${help}` : help
     },
+    // Shared by every utility tooltip; only one is open at a time. The key names
+    // the tooltip so placement measures that one and its own button.
+    utilityTooltipProps (key: string): Record<string, unknown> {
+      return {
+        id: `page-tool-tip-${key}`,
+        target: this.utilityTooltipTarget,
+        location: this.utilityTooltip.location,
+        offset: this.utilityTooltip.offset,
+        maxWidth: UTILITY_TOOLTIP_MAX_WIDTH,
+        contentClass: this.utilityTooltip.measuring ? 'page-tool-tip page-tool-tip--measuring' : 'page-tool-tip',
+        'onUpdate:modelValue': (open: boolean) => this.placeUtilityTooltip(open, key)
+      }
+    },
+    // Measure the opening utility tooltip while hidden, then move it to the first
+    // side of the tools card where it covers no content.
+    async placeUtilityTooltip (open: boolean, key: string): Promise<void> {
+      if (!open || typeof window === 'undefined') return
+      const token = ++this.utilityTooltipToken
+      this.utilityTooltip = { ...this.utilityTooltip, measuring: true }
+      await this.$nextTick()
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+      if (token !== this.utilityTooltipToken) return
+      const id = `page-tool-tip-${key}`
+      const content = document.getElementById(id)?.querySelector<HTMLElement>(':scope > .page-tool-tip')
+      const card = document.querySelector(this.utilityTooltipTarget)
+      const activator = card?.querySelector(`[aria-describedby~="${id}"]`) ?? card
+      if (!content || content.offsetWidth === 0 || !activator || !card) {
+        this.utilityTooltip = { ...this.utilityTooltip, measuring: false }
+        return
+      }
+      const placement = chooseUtilityTooltipPlacement({
+        card: card.getBoundingClientRect(),
+        activator: activator.getBoundingClientRect(),
+        size: { width: content.offsetWidth, height: content.offsetHeight },
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+        isContentAt: (x, y) => isContentAtPoint(x, y)
+      })
+      this.utilityTooltip = { location: placement.location, offset: placement.offset, measuring: false }
+    },
     approvalActorLabel (actorId: number, actorName?: unknown): string {
       if (wikiStore.user.authenticated && actorId === wikiStore.user.id) return this.$t('common:page.reviewerYou')
       const name = typeof actorName === 'string' && actorName.trim() ? actorName.trim() : this.approvalActorNames?.get(actorId)
@@ -4287,10 +4335,14 @@ export default defineComponent({
   color: var(--wiki-text-subtle);
 }
 
+// Hidden for one frame while placeUtilityTooltip measures it.
+.page-tool-tip--measuring {
+  visibility: hidden !important;
+}
+
 // Tooltip second line: why a focusable aria-disabled utility does nothing.
 .page-tool-blocked-reason {
   display: block;
-  max-width: 16rem;
   margin-block-start: 2px;
   font-size: .75rem;
   opacity: .86;
@@ -4344,7 +4396,6 @@ export default defineComponent({
 .page-offline-tooltip {
   display: grid;
   gap: 2px;
-  max-width: 260px;
 }
 
 .page-offline-tooltip__title {
@@ -4561,18 +4612,27 @@ export default defineComponent({
     font-size: inherit;
     letter-spacing: .01em;
 
+    // The label, not the flex content box, truncates: an ellipsis on a flex
+    // container never shows, and centered overflow clipped both ends.
     &__content {
-      overflow: hidden;
-      max-width: min(24rem, 34vw);
-      text-overflow: ellipsis;
+      min-width: 0;
+      max-width: 100%;
       text-transform: none;
-      white-space: nowrap;
     }
 
     &:hover {
       background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
       color: var(--wiki-accent-ink);
     }
+  }
+
+  .breadcrumbs-nav__label {
+    display: block;
+    min-width: 0;
+    max-width: min(24rem, 34vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .v-breadcrumbs-divider {
@@ -5858,6 +5918,11 @@ export default defineComponent({
 @media (max-width: 599px) {
   .breadcrumbs-nav {
     font-size: .75rem;
+  }
+
+  // Phones: the current page may use most of the row; parents stay short.
+  .breadcrumbs-nav [aria-current='page'] .breadcrumbs-nav__label {
+    max-width: calc(100vw - 8rem);
   }
 
   .page-header-path {
