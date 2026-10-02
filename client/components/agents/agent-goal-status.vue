@@ -502,7 +502,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__collapsed-meta {
   align-items: center;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   display: inline-flex;
   flex: 0 0 auto;
   font-size: var(--wiki-type-micro, .75rem);
@@ -578,7 +578,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__continuity {
   align-items: center;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   display: flex;
   flex-wrap: wrap;
   font-size: var(--wiki-type-micro, .75rem);
@@ -600,7 +600,7 @@ const progressLabel = computed(() => {
   justify-content: space-between;
   margin-bottom: var(--wiki-space-2);
 }
-.agent-goal__progress-heading span { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-weight: 650; }
+.agent-goal__progress-heading span { color: var(--wiki-text-muted); font-weight: 650; }
 .agent-goal__progress-heading strong { color: var(--goal-ink); font-variant-numeric: tabular-nums; }
 .agent-goal__meter {
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
@@ -630,7 +630,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__budget:first-child { border-inline-start: 0; padding-inline-start: 0; }
 .agent-goal__budget dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-type-micro, .75rem);
   font-weight: 650;
 }
@@ -643,7 +643,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__budget dd span { font-size: .78rem; font-variant-numeric: tabular-nums; font-weight: 700; }
 .agent-goal__budget dd small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-type-micro, .75rem);
   overflow-wrap: anywhere;
 }
@@ -657,7 +657,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__budget-track > span { background: var(--goal-accent); display: block; height: 100%; }
 .agent-goal__summary {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .74rem;
   line-height: 1.5;
   margin: var(--wiki-space-3) 0 0;
@@ -683,7 +683,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__renewal-facts div { min-width: 0; }
 .agent-goal__renewal-facts dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-type-micro, .75rem);
   font-weight: 650;
 }
@@ -695,7 +695,7 @@ const progressLabel = computed(() => {
   overflow-wrap: anywhere;
 }
 .agent-goal__renewal-copy {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .74rem;
   line-height: 1.5;
   margin: var(--wiki-space-3) 0 0;
@@ -718,7 +718,7 @@ const progressLabel = computed(() => {
 .agent-goal__blockers ul { margin: var(--wiki-space-2) 0 0; padding-inline-start: var(--wiki-space-5); }
 .agent-goal__blockers li { font-size: .74rem; line-height: 1.45; overflow-wrap: anywhere; padding-inline-start: var(--wiki-space-1); }
 .agent-goal__blockers li + li { margin-top: var(--wiki-space-2); }
-.agent-goal__issue-state { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent); display: block; font-size: .65rem; margin-top: var(--wiki-space-1); }
+.agent-goal__issue-state { color: var(--wiki-text-muted); display: block; font-size: .65rem; margin-top: var(--wiki-space-1); }
 .agent-goal__pending {
   align-items: center;
   color: rgb(var(--v-theme-primary));

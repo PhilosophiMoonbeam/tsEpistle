@@ -31,6 +31,7 @@ const composerDescriptor = parse(composerComponentSource, { filename: composerCo
 if (!composerDescriptor.template || !composerDescriptor.scriptSetup) throw new Error('agent-composer.vue template and setup script are required')
 
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 
 resetBody()
 
@@ -186,36 +187,7 @@ interface LockState {
   setSessionNotice: (message: string) => void
   clearSessionNotice: () => void
   SESSION_NOTICE_VISIBLE_MS: number
-  startersRow: ValueRef<HTMLElement | null>
-  startersStrip: ValueRef<HTMLElement | null>
-  startersMarqueeActive: ValueRef<boolean>
-  startersMarqueePeriod: ValueRef<number>
-  startersMarqueeState: {
-    pos: number
-    vel: number
-    dragging: boolean
-    paused: boolean
-    suppressClick: boolean
-    dragStartX: number
-    lastX: number
-    dragDistance: number
-    lastFrame: number
-    samples: Array<{ t: number; x: number }>
-  }
-  startStartersMarquee: () => void
-  stopStartersMarquee: () => void
-  stepStartersMarquee: (now: number) => void
-  measureStartersPeriod: () => number
-  applyStartersTransform: () => void
-  onStartersPointerDown: (event: { isPrimary?: boolean; pointerId?: number; clientX: number; timeStamp: number }) => void
-  onStartersPointerMove: (event: { isPrimary?: boolean; clientX: number; timeStamp: number }) => void
-  onStartersPointerUp: (event: { isPrimary?: boolean; clientX: number; timeStamp: number }) => void
-  onStartersPointerCancel: (event: { isPrimary?: boolean }) => void
-  onStartersWheel: (event: { deltaX: number; deltaY: number }) => void
-  onStartersClickCapture: (event: { preventDefault: () => void; stopPropagation: () => void }) => void
-  pauseStartersMarquee: () => void
-  resumeStartersMarquee: (event: { relatedTarget: EventTarget | null }) => void
-  STARTERS_MARQUEE_SPEED: number
+  emitted: unknown[][]
   pendingStartersFrames: Array<{ callback: (now: number) => void }>
   clearedStartersFrameIds: number[]
   componentProps: { pageId: number; pageLocale: string; pagePath: string; pageUpdatedAt: string; resumeSessionId?: string }
@@ -412,6 +384,7 @@ const loadGoalLockState = (
   const unmountedCallbacks: Array<() => void> = []
   const scope = Vue.effectScope()
   const bindingNames = Array.from(setupScript.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
+  const emitted: unknown[][] = []
   const pendingStartersFrames: Array<{ callback: (now: number) => void }> = []
   const clearedStartersFrameIds: number[] = []
   const evaluate = new Function(
@@ -442,7 +415,7 @@ const loadGoalLockState = (
     useId: () => `agent-state-${++stateId}`,
     watch: Vue.watch,
     storeToRefs: realStore ? storeToRefs : () => storeRefs,
-    defineEmits: () => () => undefined,
+    defineEmits: () => (...event: unknown[]) => { emitted.push(event) },
     defineProps: () => props,
     useAgentsStore: () => realStore ?? agentCalls,
     activeOwnedOverlayRoots: () => [],
@@ -468,6 +441,7 @@ const loadGoalLockState = (
     ...state,
     agentCalls: realStore ? realStore as unknown as LockState['agentCalls'] : agentCalls,
     componentProps: props,
+    emitted,
     advanceTime,
     pendingStartersFrames,
     clearedStartersFrameIds,
@@ -641,7 +615,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
 
 const menuAction = (items: HTMLElement[], name: string): HTMLElement => {
   const item = items.find(candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === name)
-  if (!item) throw new Error(`Missing Settings action: ${name}`)
+  if (!item) throw new Error(`Missing More chat actions item: ${name}`)
   return item
 }
 
@@ -743,6 +717,7 @@ const mountInlineAgent = (
   })
   const app = Vue.createApp(inlineHarness, Object.fromEntries(Object.entries(lockState.componentProps).filter(([name]) => inlinePropNames.includes(name))))
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.config.globalProperties.$t = translateEnglish
   for (const name of ['AgentGoalStatus', 'AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentThread', 'WikiSourcePreview'])
     app.component(name, componentStub)
   app.component('AgentHistoryPanel', Vue.defineComponent({
@@ -762,7 +737,7 @@ const mountInlineAgent = (
   app.mount(host)
 
   const root = host.querySelector<HTMLElement>('.inline-agent')
-  const activator = host.querySelector<HTMLElement>('[aria-label="Settings"]')
+  const activator = host.querySelector<HTMLElement>('[aria-label="More chat actions"]')
   if (!root || !activator) throw new Error('Inline Agent mobile panel controls did not render')
   let mounted = true
   const unmount = (): void => {
@@ -821,7 +796,7 @@ const openPanelMenu = async (mounted: MountedInlineAgent, options: { readonly is
   expect(list?.getAttribute('role')).toBe('list')
   expect(list?.getAttribute('role')).not.toBe('menu')
   const items = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__panel-menu-item'))
-  menuAction(items, 'Agent memory')
+  menuAction(items, 'Memory')
   menuAction(items, 'Pin chat')
   menuAction(items, options.isTemporary ? 'Keep conversation' : 'Temporary chat')
   expect(items.every(item => item.getAttribute('role') === 'listitem')).toBe(true)
@@ -865,7 +840,7 @@ describe('Inline Agent mobile panel controls', () => {
 })
 
 describe('Inline Agent workspace actions', () => {
-  it('keeps a temporary conversation through Settings and creates a saved conversation through New', async () => {
+  it('keeps a temporary conversation through More chat actions and creates a saved conversation through New', async () => {
     const workspace = realWorkspace('temporary')
     const mounted = mountInlineAgent(workspace.state())
     const historyToggle = mounted.root.querySelector<HTMLButtonElement>('[aria-label="History"]')
@@ -894,7 +869,7 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.root.querySelector('.inline-agent__retention')).toBeNull()
   })
 
-  it('starts a selected temporary conversation from Settings and discloses its retention', async () => {
+  it('starts a selected temporary conversation from More chat actions and discloses its retention', async () => {
     const workspace = realWorkspace()
     const temporary = threadFixture('00000000-0000-4000-8000-000000000003', 'temporary')
     workspace.creations.push({ retention: 'temporary', thread: temporary })
@@ -905,7 +880,7 @@ describe('Inline Agent workspace actions', () => {
     expect(workspace.store.thread?.session).toMatchObject({ id: temporary.session.id, retention: 'temporary' })
     const retention = mounted.root.querySelector<HTMLElement>('.inline-agent__retention')
     expect(retention?.getAttribute('role')).toBe('status')
-    expect(retention?.getAttribute('aria-label')).toBe('Temp chat')
+    expect(retention?.getAttribute('aria-label')).toBe('Temporary chat')
     expect(retention?.textContent).toContain('Hidden from history')
   })
 
@@ -951,7 +926,7 @@ describe('Inline Agent workspace actions', () => {
   it('offers labelled no-page starters and admits a Wiki-wide run', async () => {
     const workspace = realWorkspace()
     const mounted = mountInlineAgent(workspace.state())
-    const group = mounted.root.querySelector('[role="group"][aria-label="Conversation starters"]')
+    const group = mounted.root.querySelector('[role="group"][aria-label="Suggested prompts"]')
     expect(group).not.toBeNull()
     const starter = Array.from(group?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(button => button.textContent?.includes('Explore the Wiki'))
     if (!starter) throw new Error('No-page exploration starter missing')
@@ -978,7 +953,7 @@ describe('Inline Agent workspace actions', () => {
     const mounted = mountInlineAgent(first)
     const expectIncluded = (root: HTMLElement, page: TestPageHint): void => {
       const chip = root.querySelector('[aria-pressed="true"].agent-context__page-chip')
-      expect(chip?.getAttribute('aria-label')).toContain(`${page.locale}/${page.path} is included`)
+      expect(chip?.getAttribute('aria-label')).toBe(`Include current page: ${page.locale}/${page.path}`)
     }
     expect(first.currentPage.value).toEqual(firstPage)
     expectIncluded(mounted.root, firstPage)
@@ -1261,7 +1236,7 @@ describe('Agent workspace action semantics', () => {
     expect(submit?.textContent?.trim()).toBe('Send')
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
     expect(newChat?.getAttribute('aria-label')).toBe('New chat')
-    expect(moreMenu?.getAttribute('aria-label')).toBe('Settings')
+    expect(moreMenu?.getAttribute('aria-label')).toBe('More chat actions')
   })
 
   it('announces Working with Stop instead of Send during an active run', () => {
@@ -1374,165 +1349,110 @@ describe('Inline Agent session notice', () => {
   })
 })
 
-describe('Inline Agent starters marquee', () => {
-  const PERIOD = 600
-  interface LockStateWithFakes extends LockState {
-    pendingStartersFrames: Array<{ callback: (now: number) => void }>
-    clearedStartersFrameIds: number[]
-  }
-
-  const buildMarqueeFixtures = () => {
-    const chipLefts = [0, 195, 390, PERIOD, PERIOD + 195, PERIOD + 390, 2 * PERIOD, 2 * PERIOD + 195, 2 * PERIOD + 390]
-    const setPointerCapture = vi.fn()
-    const row = document.createElement('div')
-    const strip = document.createElement('div')
-    Object.defineProperty(row, 'setPointerCapture', { value: setPointerCapture })
-    for (const left of chipLefts) {
-      const chip = document.createElement('button')
-      chip.className = 'inline-agent__starter'
-      vi.spyOn(chip, 'getBoundingClientRect').mockReturnValue({ left, right: left + 180, top: 0, bottom: 44, width: 180, height: 44, x: left, y: 0, toJSON: () => ({}) })
-      strip.append(chip)
-    }
-    row.append(strip)
-    return { row, strip, stripStyle: strip.style, setPointerCapture }
-  }
-
-  const startMarquee = (lockState: LockStateWithFakes, row: HTMLElement, strip: HTMLElement): void => {
-    lockState.startersRow.value = row
-    lockState.startersStrip.value = strip
-    lockState.startStartersMarquee()
-    // First frame only measures the period; dt is zero on the first tick.
-    lockState.pendingStartersFrames[0]?.callback(1_000)
-  }
-
-  const translatedX = (transform: string): number => {
-    const translation = /translate(?:3d|X)?\(\s*(-?[\d.]+)(?:px)?(?:\s*[,)]|\s)/.exec(transform)
-    if (!translation) throw new Error(`Unsupported translation: ${transform}`)
-    return Number(translation[1])
-  }
-
-  it('measures the wrap period, drifts toward the right, and wraps the offset', () => {
-    const lockState = loadGoalLockState(null) as LockStateWithFakes
-    const { row, strip, stripStyle } = buildMarqueeFixtures()
-    startMarquee(lockState, row, strip)
-
-    expect(lockState.startersMarqueeActive.value).toBe(true)
-    expect(lockState.startersMarqueePeriod.value).toBe(PERIOD)
-    expect(lockState.pendingStartersFrames).toHaveLength(2)
-    expect(lockState.startersMarqueeState.pos).toBe(0)
-
-    // One second later the strip has drifted rightward toward its resting speed.
-    lockState.pendingStartersFrames.at(-1)?.callback(2_000)
-    expect(lockState.startersMarqueeState.pos).toBeGreaterThan(0)
-    expect(lockState.startersMarqueeState.pos).toBeLessThan(lockState.STARTERS_MARQUEE_SPEED)
-
-    // Keep stepping: velocity relaxes fully to the resting drift (per-frame
-    // dt is clamped to one 64ms frame, so step frame by frame).
-    let last = 2_000
-    for (let step = 0; step < 60; step += 1) {
-      last += 64
-      lockState.pendingStartersFrames.at(-1)?.callback(last)
-    }
-    expect(lockState.startersMarqueeState.vel).toBe(lockState.STARTERS_MARQUEE_SPEED)
-
-    // The offset wraps seamlessly inside [0, period) and never escapes it.
-    lockState.startersMarqueeState.pos = PERIOD - 1
-    lockState.pendingStartersFrames.at(-1)?.callback(last + 64)
-    expect(lockState.startersMarqueeState.pos).toBeLessThan(PERIOD)
-    expect(lockState.startersMarqueeState.pos).toBeGreaterThanOrEqual(0)
-    expect(translatedX(stripStyle.transform)).toBeCloseTo(lockState.startersMarqueeState.pos - PERIOD, 2)
-
-    lockState.stopStartersMarquee()
-    expect(lockState.startersMarqueeActive.value).toBe(false)
-    expect(lockState.clearedStartersFrameIds).toHaveLength(1)
-    expect(stripStyle.transform).toBe('')
+describe('Inline Agent conversation starters', () => {
+  it('renders one static, centered set of suggested prompts below the greeting', () => {
+    const mounted = mountInlineAgent()
+    const welcome = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome')
+    expect(welcome?.getAttribute('aria-label')).toBe('Start a conversation')
+    // The rotating two-line greeting is text, not a second section heading.
+    expect(welcome?.querySelector('h1, h2, h3')).toBeNull()
+    expect(welcome?.querySelectorAll('p.inline-agent__welcome-title .inline-agent__welcome-line')).toHaveLength(2)
+    const group = mounted.root.querySelector<HTMLElement>('[role="group"][aria-label="Suggested prompts"]')
+    expect(group?.classList.contains('inline-agent__starters--marquee')).toBe(false)
+    const starters = Array.from(group?.querySelectorAll<HTMLButtonElement>('.inline-agent__starter') ?? [])
+    expect(starters.map(starter => starter.querySelector('strong')?.textContent?.trim())).toEqual(['Explore the Wiki', 'Connect the dots', 'Catch up'])
+    expect(starters.map(starter => starter.querySelector('.inline-agent__starter-copy')?.textContent?.trim())).toEqual([
+      'Find a place to begin',
+      'Discover related knowledge',
+      'See what changed recently'
+    ])
+    // No duplicated marquee clones: every starter is a real, reachable control.
+    expect(starters.every(starter => !starter.hasAttribute('aria-hidden') && starter.getAttribute('tabindex') !== '-1')).toBe(true)
+    expect(group?.hasAttribute('aria-describedby')).toBe(false)
   })
 
-  it('coasts after a leftward fling, decelerates to a stop, then ramps back toward the right', () => {
-    const lockState = loadGoalLockState(null) as LockStateWithFakes
-    const { row, strip } = buildMarqueeFixtures()
-    startMarquee(lockState, row, strip)
-    lockState.pendingStartersFrames[0]?.callback(1_000)
-    lockState.startersMarqueeState.vel = -800
-    lockState.startersMarqueeState.pos = 300
+  it('keeps blocked starters focusable, explains why, and does not send', async () => {
+    const lockState = loadGoalLockState(null, true)
+    const mounted = mountInlineAgent(lockState)
+    await settle()
+    const group = mounted.root.querySelector<HTMLElement>('[role="group"][aria-label="Suggested prompts"]')
+    const starters = Array.from(group?.querySelectorAll<HTMLButtonElement>('.inline-agent__starter') ?? [])
+    expect(starters).toHaveLength(3)
+    expect(starters.every(starter => !starter.disabled && starter.getAttribute('aria-disabled') === 'true')).toBe(true)
+    const reasonId = group?.getAttribute('aria-describedby')
+    const reason = reasonId ? mounted.root.querySelector<HTMLElement>(`[id="${reasonId}"]`) : null
+    expect(reason?.textContent?.trim()).toBe(lockState.submitUnavailableReason.value)
+    expect(reason?.textContent?.trim()).not.toBe('')
+    starters[0]?.click()
+    await settle()
+    expect(lockState.agentCalls.send).not.toHaveBeenCalled()
+  })
+})
 
-    const positions: number[] = []
-    let last = 1_000
-    for (let step = 1; step <= 60; step += 1) {
-      last += 64
-      lockState.pendingStartersFrames.at(-1)?.callback(last)
-      positions.push(lockState.startersMarqueeState.pos)
-    }
-    // Early frames drift leftward (fling momentum), then the row turns around.
-    expect(positions[0]).toBeLessThan(300)
-    expect(positions[positions.length - 1]).toBeGreaterThan(positions[positions.length - 2])
-    expect(lockState.startersMarqueeState.vel).toBeGreaterThan(0)
-    expect(lockState.startersMarqueeState.vel).toBeLessThan(lockState.STARTERS_MARQUEE_SPEED)
-
-    lockState.stopStartersMarquee()
+describe('Inline Agent header actions', () => {
+  it('opens Memory from its own toggle beside History', async () => {
+    const lockState = loadGoalLockState(null)
+    const mounted = mountInlineAgent(lockState, { viewportWidth: 1024 })
+    const navigation = mounted.root.querySelector<HTMLElement>('.inline-agent__mobile-navigation')
+    const memoryToggle = navigation?.querySelector<HTMLButtonElement>('.inline-agent__memory-toggle')
+    expect(navigation?.querySelector('.inline-agent__history-toggle')).not.toBeNull()
+    expect(memoryToggle?.getAttribute('aria-label')).toBe('Memory')
+    expect(memoryToggle?.getAttribute('aria-expanded')).toBe('false')
+    memoryToggle?.click()
+    await settle()
+    expect(mounted.memoryOpen.value).toBe(true)
+    expect(memoryToggle?.getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('drags with the pointer, flings on release, and swallows the trailing click only after a real drag', () => {
-    const lockState = loadGoalLockState(null) as LockStateWithFakes
-    const { row, strip, stripStyle, setPointerCapture } = buildMarqueeFixtures()
-    startMarquee(lockState, row, strip)
-    lockState.pendingStartersFrames[0]?.callback(1_000)
-
-    lockState.onStartersPointerDown({ isPrimary: true, pointerId: 7, clientX: 300, timeStamp: 1_000 })
-    expect(setPointerCapture).toHaveBeenCalledWith(7)
-
-    lockState.onStartersPointerMove({ isPrimary: true, clientX: 240, timeStamp: 1_050 })
-    expect(lockState.startersMarqueeState.pos).toBe(PERIOD - 60)
-    expect(translatedX(stripStyle.transform)).toBeCloseTo(-60, 2)
-
-    lockState.onStartersPointerMove({ isPrimary: true, clientX: 240, timeStamp: 1_100 })
-    lockState.onStartersPointerUp({ isPrimary: true, clientX: 240, timeStamp: 1_100 })
-    // (240 - 300) px over 100ms -> -600 px/s fling
-    expect(lockState.startersMarqueeState.vel).toBeCloseTo(-600, 0)
-    expect(lockState.startersMarqueeState.suppressClick).toBe(true)
-
-    const clickEvent = { preventDefault: vi.fn(), stopPropagation: vi.fn() }
-    lockState.onStartersClickCapture(clickEvent)
-    expect(clickEvent.preventDefault).toHaveBeenCalledTimes(1)
-    expect(clickEvent.stopPropagation).toHaveBeenCalledTimes(1)
-    expect(lockState.startersMarqueeState.suppressClick).toBe(false)
-
-    // A nudge that never becomes a drag keeps the tap clickable.
-    lockState.onStartersPointerDown({ isPrimary: true, pointerId: 8, clientX: 300, timeStamp: 2_000 })
-    lockState.onStartersPointerMove({ isPrimary: true, clientX: 303, timeStamp: 2_020 })
-    lockState.onStartersPointerUp({ isPrimary: true, clientX: 303, timeStamp: 2_020 })
-    expect(lockState.startersMarqueeState.suppressClick).toBe(false)
-    const plainClick = { preventDefault: vi.fn(), stopPropagation: vi.fn() }
-    lockState.onStartersClickCapture(plainClick)
-    expect(plainClick.preventDefault).not.toHaveBeenCalled()
-
-    lockState.stopStartersMarquee()
+  it('asks the host to return to page search from the search button', async () => {
+    const lockState = loadGoalLockState(null)
+    const mounted = mountInlineAgent(lockState)
+    const search = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__search-action')
+    expect(search?.getAttribute('aria-label')).toBe('Search the Wiki')
+    search?.click()
+    await settle()
+    expect(lockState.emitted).toEqual([['return-search']])
   })
 
-  it('nudges velocity on horizontal wheel input and holds still for keyboard focus', () => {
-    const lockState = loadGoalLockState(null) as LockStateWithFakes
-    const { row, strip } = buildMarqueeFixtures()
-    startMarquee(lockState, row, strip)
-    lockState.pendingStartersFrames[0]?.callback(1_000)
+  it('keeps Close focusable while memory saves and closes only after it finishes', async () => {
+    const lockState = loadGoalLockState(null)
+    const mounted = mountInlineAgent(lockState)
+    const close = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__close-action')
+    expect(close?.getAttribute('aria-label')).toBe('Close Wiki Agent')
+    ;(lockState.memoryMutationBusy as ValueRef<boolean>).value = true
+    await settle()
+    expect(close?.disabled).toBe(false)
+    expect(close?.getAttribute('aria-disabled')).toBe('true')
+    close?.click()
+    await settle()
+    expect(lockState.emitted).toEqual([])
+    ;(lockState.memoryMutationBusy as ValueRef<boolean>).value = false
+    await settle()
+    close?.click()
+    expect(lockState.emitted).toEqual([['close']])
+  })
 
-    lockState.onStartersWheel({ deltaX: 40, deltaY: 0 })
-    expect(lockState.startersMarqueeState.vel).toBe(240)
+  it('shows one status alert at a time, highest priority first', async () => {
+    const lockState = loadGoalLockState(null)
+    const mounted = mountInlineAgent(lockState)
+    const alerts = () => Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__body > .inline-agent__alert'))
+    ;(lockState.error as ValueRef<string>).value = 'The last request failed.'
+    await settle()
+    expect(alerts().map(alert => alert.textContent?.trim())).toEqual([expect.stringContaining('The last request failed.')])
+    ;(lockState.initializationError as ValueRef<string>).value = 'The conversation could not be opened.'
+    await settle()
+    expect(alerts()).toHaveLength(1)
+    expect(alerts()[0]?.textContent).toContain('The conversation could not be opened.')
+    expect(alerts()[0]?.textContent).toContain('Retry opening conversation')
+  })
 
-    // Vertical wheel intent leaves the row alone.
-    lockState.startersMarqueeState.vel = 0
-    lockState.onStartersWheel({ deltaX: 0, deltaY: 120 })
-    expect(lockState.startersMarqueeState.vel).toBe(0)
-
-    lockState.pauseStartersMarquee()
-    lockState.pendingStartersFrames.at(-1)?.callback(2_000)
-    const pausedPos = lockState.startersMarqueeState.pos
-    lockState.pendingStartersFrames.at(-1)?.callback(3_000)
-    expect(lockState.startersMarqueeState.pos).toBe(pausedPos)
-
-    lockState.resumeStartersMarquee({ relatedTarget: null })
-    expect(lockState.startersMarqueeState.paused).toBe(false)
-
-    lockState.stopStartersMarquee()
+  it('keeps the composer readable while the reader scrolls back', () => {
+    const lockState = loadGoalLockState(null)
+    const mounted = mountInlineAgent(lockState, { followJumpVisible: true })
+    const composer = mounted.root.querySelector<HTMLElement>('.inline-agent__composer')
+    expect(Number(composer?.style.getPropertyValue('--agent-composer-opacity'))).toBeCloseTo(0.85, 5)
+    const latest = mounted.root.querySelector<HTMLElement>('.inline-agent__follow-jump')
+    expect(latest?.style.opacity ?? '').toBe('')
   })
 })
 

@@ -75,7 +75,7 @@ describe('self-hosted typography contracts', () => {
     expect(rootTokens['--v-font-body']).toBe('var(--wiki-font-body)')
     expect(rootTokens['--v-font-heading']).toBe('var(--wiki-font-heading)')
     expect(displayFamily('client/themes/default/components/page.vue', '.page-title')).toBe('var(--wiki-font-display)')
-    expect(displayFamily('client/components/agents/inline-agent-chat.vue', '.inline-agent__welcome h2')).toBe('var(--wiki-font-display)')
+    expect(displayFamily('client/components/agents/inline-agent-chat.vue', '.inline-agent__welcome-title')).toBe('var(--wiki-font-display)')
   })
 
   test('declares the required local variable faces and real Newsreader italics', () => {

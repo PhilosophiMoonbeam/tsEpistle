@@ -815,14 +815,14 @@ test.describe('release accessibility profiles', () => {
       const composerSurround = agent.locator('.inline-agent__composer')
       await expect(composerSurround).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
       await expect(composerSurround).toHaveCSS('box-shadow', 'none')
-      const greetingBackdrop = await agent.locator('.inline-agent__welcome h2').evaluate(element => {
+      const greetingBackdrop = await agent.locator('.inline-agent__welcome-title').evaluate(element => {
         const styles = getComputedStyle(element, '::before')
         return { background: styles.backgroundImage, filter: styles.filter, pointerEvents: styles.pointerEvents }
       })
       expect(greetingBackdrop.background).toContain('radial-gradient')
       expect(greetingBackdrop.filter).toContain('blur')
       expect(greetingBackdrop.pointerEvents).toBe('none')
-      const greetingOpacity = () => agent.locator('.inline-agent__welcome h2').evaluate(element => getComputedStyle(element, '::before').opacity)
+      const greetingOpacity = () => agent.locator('.inline-agent__welcome-title').evaluate(element => getComputedStyle(element, '::before').opacity)
       await expect.poll(greetingOpacity).toBe('1')
       const transcriptWidth = await agent
         .locator('.inline-agent__transcript')
@@ -886,9 +886,6 @@ test.describe('release accessibility profiles', () => {
         const messageSurfaces = agent.locator('.agent-message__surface')
         await expect(messageSurfaces).toHaveCount(2)
         for (const surface of await messageSurfaces.all()) await expectOpaque(surface, 'Agent message surface')
-        await expectOpaque(agent.locator('.agent-composer'), 'Agent composer')
-        await expect(composerSurround).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-        await expect(composerSurround).toHaveCSS('box-shadow', 'none')
 
         await agent.getByRole('button', { name: 'History', exact: true }).click()
         const history = agent.locator('.inline-agent__side--history')
@@ -897,8 +894,13 @@ test.describe('release accessibility profiles', () => {
         await history.getByRole('button', { name: 'Close chat history' }).click()
         await expect(history).toBeHidden()
 
-        await agent.getByRole('button', { name: 'Settings', exact: true }).click()
-        await agent.locator('.v-menu.v-overlay--active').getByText('Agent memory', { exact: true }).click()
+        // Memory sits beside History on wider layouts and in More chat actions on phones.
+        const memoryToggle = agent.getByRole('button', { name: 'Memory', exact: true })
+        if (await memoryToggle.isVisible()) await memoryToggle.click()
+        else {
+          await agent.getByRole('button', { name: 'More chat actions', exact: true }).click()
+          await agent.locator('.v-menu.v-overlay--active').getByText('Memory', { exact: true }).click()
+        }
         const memory = agent.locator('.inline-agent__side--memory')
         await expect(memory).toBeVisible()
         await expectOpaque(memory, 'Agent memory')

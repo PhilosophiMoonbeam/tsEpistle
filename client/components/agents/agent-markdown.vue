@@ -663,7 +663,7 @@ onBeforeUnmount(() => {
   align-items: center;
   background: color-mix(in srgb, var(--wiki-surface-raised) 86%, var(--wiki-surface-sunken));
   border-block-end: 1px solid var(--wiki-surface-border);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   display: flex;
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
@@ -740,7 +740,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(.agent-markdown__diagram-output[aria-busy='true']) {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
 }
 
@@ -755,7 +755,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(.agent-markdown__diagram-source summary) {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   cursor: pointer;
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);

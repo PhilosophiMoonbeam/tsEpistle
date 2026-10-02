@@ -14,6 +14,7 @@ const descriptor = parse(componentSource, { filename: componentPath }).descripto
 if (!descriptor.template || !descriptor.scriptSetup) throw new Error('agent-context-picker.vue template and setup script are required')
 
 import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 
 setLocation('/wiki/en/home')
 
@@ -184,7 +185,8 @@ const mountPicker = (
   searchPagesImpl: (fetchImpl: unknown, query: string, options: Record<string, unknown>) => Promise<PageSearchResult>,
   fetchWikiSourceImpl: (selector: { id: number }, query: string, signal: AbortSignal) => Promise<WikiSource>,
   draft = emptyDraft(),
-  currentPage: AgentCurrentPageHint | null = null
+  currentPage: AgentCurrentPageHint | null = null,
+  extraProps: { connectionBlocked?: boolean; currentPageTitle?: string } = {}
 ): MountedPicker => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -197,7 +199,8 @@ const mountPicker = (
       currentPage: { type: Object, default: null },
       disabled: { type: Boolean, default: false },
       connectionBlocked: { type: Boolean, default: false },
-      connectionRetrying: { type: Boolean, default: false }
+      connectionRetrying: { type: Boolean, default: false },
+      currentPageTitle: { type: String, default: undefined }
     },
     setup(componentProps) {
       return evaluatePicker(
@@ -219,8 +222,9 @@ const mountPicker = (
     },
     render: renderPicker
   })
-  const app = Vue.createApp(picker, { draft, currentPage, disabled: false, connectionBlocked: false, connectionRetrying: false })
+  const app = Vue.createApp(picker, { draft, currentPage, disabled: false, connectionBlocked: false, connectionRetrying: false, ...extraProps })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.config.globalProperties.$t = translateEnglish
   app.component('WikiSourcePreview', Vue.defineComponent({ render: () => Vue.h('div') }))
   app.mount(host)
   const mounted = { app, changes, host, sourcesAdded }
@@ -403,6 +407,27 @@ describe('Agent context current-page inclusion', () => {
     await settle()
     expect(excluded.changes).toEqual([{ includeCurrentPage: true }])
     expect(window.location.pathname).toBe('/wiki/en/home')
+  })
+
+  it('names the chip by page title and explains, without toggling, while the connection is down', async () => {
+    const page: AgentCurrentPageHint = { id: 78, locale: 'en', path: 'handbook/title', observedUpdatedAt: '2026-09-16T00:00:00.000Z' }
+    const mounted = mountPicker(vi.fn(async () => result([])), vi.fn(async (selector: { id: number }) => source(selector.id)), emptyDraft(), page, {
+      connectionBlocked: true,
+      currentPageTitle: 'Team handbook'
+    })
+    const chip = mounted.host.querySelector<HTMLButtonElement>('.agent-context__page-chip')
+    if (!chip) throw new Error('Current-page source chip did not render')
+    expect(chip.textContent).toContain('Team handbook')
+    expect(chip.textContent).not.toContain('handbook/title')
+    expect(chip.getAttribute('aria-label')).toBe('Include current page: Team handbook')
+    expect(chip.getAttribute('aria-pressed')).toBe('true')
+    // Still focusable so its tooltip can give the reason, but the click changes nothing.
+    expect(chip.disabled).toBe(false)
+    expect(chip.getAttribute('aria-disabled')).toBe('true')
+    expect(chip.hasAttribute('title')).toBe(false)
+    chip.click()
+    await settle()
+    expect(mounted.changes).toEqual([])
   })
 })
 
