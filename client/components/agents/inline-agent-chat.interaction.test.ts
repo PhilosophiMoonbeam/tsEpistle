@@ -181,6 +181,9 @@ interface LockState {
   panelMenuOpen: ValueRef<boolean>
   toggleHistory: () => void
   toggleMemory: () => void
+  closeHistory: () => void
+  closeMemory: () => void
+  triggerForPanel: (kind: 'history' | 'memory') => HTMLElement | null
   thread: ValueRef<Record<string, unknown> | null>
   sendPrompt: (content: string) => Promise<boolean>
   currentPage: ValueRef<TestPageHint | null>
@@ -824,6 +827,35 @@ describe('Inline Agent mobile panel controls', () => {
 
     expect(historyToggle.getAttribute('aria-expanded')).toBe('true')
     expect(mounted.root.querySelector('.inline-agent__side--history')).not.toBeNull()
+  })
+
+  it('restores each modal panel to its own visible trigger at phone and desktop widths', async () => {
+    const state = loadGoalLockState(null)
+    const mounted = mountInlineAgent(state, { viewportWidth: 320 })
+    const history = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
+    const more = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__more-menu')
+    const memory = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__memory-toggle')
+    if (!history || !more || !memory) throw new Error('Panel triggers did not render')
+    // The test DOM has no layout; give visible buttons a client rect like Chromium does.
+    for (const button of [history, more, memory]) {
+      vi.spyOn(button, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList)
+    }
+    state.toggleHistory()
+    await settle()
+    state.closeHistory()
+    await settle()
+    expect(document.activeElement).toBe(history)
+    expect(state.triggerForPanel('history')).toBe(history)
+    expect(state.triggerForPanel('memory')).toBe(more)
+
+    resizeViewport?.(640)
+    await settle()
+    state.toggleMemory()
+    await settle()
+    state.closeMemory()
+    await settle()
+    expect(document.activeElement).toBe(memory)
+    expect(state.triggerForPanel('memory')).toBe(memory)
   })
 
   it('keeps History closed when the workspace is unavailable', async () => {
