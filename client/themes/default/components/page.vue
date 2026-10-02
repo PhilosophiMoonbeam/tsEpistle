@@ -4190,6 +4190,16 @@ export default defineComponent({
         this.railSpacingGap = Number.isFinite(resolvedGap) && resolvedGap > 0 ? resolvedGap : 8
       }
 
+      // Deferred Teleport content can be appended after the outline when the
+      // rail returns from TOC-off. Restore DOM and keyboard order before measuring.
+      const toolsCard = railEl.querySelector('.page-tools-card')
+      const tocCard = railEl.querySelector('.page-toc-card')
+      if (toolsCard && tocCard && toolsCard.parentElement === tocCard.parentElement &&
+          (tocCard.compareDocumentPosition(toolsCard) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+        tocCard.parentElement?.insertBefore(toolsCard, tocCard)
+        this.markDesktopRailAlignmentDirty()
+      }
+
       let railRect = railEl.getBoundingClientRect()
       if (window.scrollY <= 1 && (isResize || this.railAlignmentDirty)) {
         const heroEl = this.getPageHeaderElement()
