@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { wikiStore } from './store/index.ts'
 import { loadingStart, loadingStop } from './helpers/root-ui-store'
 import { requestConfirmation } from './components/common/confirm-dialog.ts'
+import { translate } from './modules/localization.ts'
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
 const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
@@ -92,10 +93,10 @@ router.onError((_error, to) => {
   // One surface only: the shell's themed confirm host offers Reload; without a
   // host the service falls back to the native prompt. No duplicate toast.
   void requestConfirmation({
-    title: 'This section could not be loaded.',
-    message: 'Reload the page to try again.',
-    confirmLabel: 'Reload',
-    cancelLabel: 'Not now'
+    title: translate('common:routeLoad.title', { defaultValue: 'This section could not be loaded.' }),
+    message: translate('common:routeLoad.message', { defaultValue: 'Reload the page to try again.' }),
+    confirmLabel: translate('common:routeLoad.reload', { defaultValue: 'Reload' }),
+    cancelLabel: translate('common:routeLoad.notNow', { defaultValue: 'Not now' })
   }).then(confirmed => {
     if (confirmed) window.location.reload()
   })
