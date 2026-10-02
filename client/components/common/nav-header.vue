@@ -1771,6 +1771,37 @@ export default defineComponent({
     .nav-header-inner .nav-header-edit-btn:hover {
       border-color: color-mix(in srgb, var(--nav-header-edit-icon-color) 48%, transparent) !important;
     }
+
+    // Hover accents touch only the glyph and label: the button fill keeps its
+    // resting value. Each accent blends the control's own hue with the active
+    // palette (secondary for Agent, primary for Edit) so custom themes follow.
+    .nav-header-inner .nav-header-agent:hover:not(.v-btn--disabled):not([aria-disabled='true']),
+    .nav-header-inner .nav-header-edit-btn:hover:not(.v-btn--disabled):not([aria-disabled='true']) {
+      background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
+
+      > .v-btn__overlay {
+        opacity: 0;
+      }
+    }
+    .nav-header-inner .nav-header-agent:hover:not(.v-btn--disabled) {
+      --nav-header-hover-accent: color-mix(in oklab, var(--nav-header-agent-icon-color) 55%, var(--wiki-accent-spectral));
+      color: var(--nav-header-hover-accent);
+    }
+    .nav-header-inner .nav-header-edit-btn:hover:not(.v-btn--disabled):not([aria-disabled='true']) {
+      --nav-header-hover-accent: color-mix(in oklab, var(--nav-header-edit-icon-color) 60%, var(--wiki-accent-warm));
+      color: var(--nav-header-hover-accent);
+    }
+    .nav-header-inner .nav-header-agent:hover:not(.v-btn--disabled) .v-icon,
+    .nav-header-inner .nav-header-edit-btn:hover:not(.v-btn--disabled):not([aria-disabled='true']) .v-icon {
+      color: var(--nav-header-hover-accent) !important;
+      // !important also pauses the Agent shimmer keyframes while hovered.
+      filter: drop-shadow(0 0 4px color-mix(in srgb, var(--nav-header-hover-accent) 45%, transparent)) !important;
+    }
+    // The pencil keeps its eraser cap; only the barrel takes the accent.
+    .nav-header-inner .nav-header-edit-btn:hover:not(.v-btn--disabled):not([aria-disabled='true']) .v-icon::before {
+      background: linear-gradient(45deg, var(--nav-header-hover-accent) 67%, var(--nav-header-edit-eraser-color) 67%);
+      background-clip: text;
+    }
   }
   .nav-header-inner .nav-header-agent:focus-visible {
     border-color: color-mix(in srgb, var(--nav-header-agent-icon-color) 48%, transparent) !important;
@@ -1781,7 +1812,10 @@ export default defineComponent({
 
   .nav-header-inner .nav-header-agent .v-icon,
   .nav-header-inner .nav-header-edit-btn .v-icon {
-    transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+    transition:
+      transform var(--wiki-motion-fast) var(--wiki-motion-ease-out),
+      color var(--wiki-motion-normal) var(--wiki-motion-ease),
+      filter var(--wiki-motion-normal) var(--wiki-motion-ease);
   }
 
   // Fixed, theme-independent icon accents: the Agent spark stays soft neo blue
