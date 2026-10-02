@@ -38,6 +38,7 @@
 <script lang='ts'>
 import { defineComponent, useId, type PropType } from 'vue'
 import { AtomSpinner } from 'epic-spinners'
+import { translate } from '../../modules/localization.ts'
 
 type LoaderMode = 'loading' | 'icon'
 
@@ -63,7 +64,7 @@ export default defineComponent({
     },
     subtitle: {
       type: String,
-      default: 'Please wait'
+      default: () => translate('common:loader.pleaseWait')
     },
     mode: {
       type: String as PropType<LoaderMode>,

@@ -19,12 +19,15 @@
     <slot />
   </component>
   <span :id="instructionsId" class="draggable-list__instructions" data-draggable-instructions>
-      Press Space or Enter to pick up. Use Arrow Up and Arrow Down to move. Press Space or Enter to drop, or Escape to cancel.
+      {{ $t('common:draggableList.pressSpaceEnterPick') }}
     </span>
   <span class="draggable-list__announcement" data-draggable-announcement aria-live="polite" aria-atomic="true">{{ liveMessage }}</span>
 </template>
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, onUpdated, ref, useId, useTemplateRef } from 'vue'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 defineOptions({ inheritAttrs: false })
 const modelValue = defineModel<unknown[]>({ required: true })
@@ -96,9 +99,9 @@ function refreshChildren (): void {
         if (!(elementHandle instanceof HTMLElement)) continue
         elementHandle.tabIndex = 0
         elementHandle.setAttribute('role', 'button')
-        elementHandle.setAttribute('aria-roledescription', 'sortable item')
+        elementHandle.setAttribute('aria-roledescription', t('common:draggableList.sortableItem'))
         if (!elementHandle.hasAttribute('aria-label') && !elementHandle.hasAttribute('aria-labelledby')) {
-          elementHandle.setAttribute('aria-label', 'Reorder item')
+          elementHandle.setAttribute('aria-label', t('common:draggableList.reorderItem'))
         }
         elementHandle.setAttribute('aria-pressed', String(sourceIndex === index))
         elementHandle.setAttribute('data-draggable-handle', 'true')
@@ -106,7 +109,7 @@ function refreshChildren (): void {
       }
     } else {
       child.tabIndex = 0
-      child.setAttribute('aria-roledescription', 'sortable item')
+      child.setAttribute('aria-roledescription', t('common:draggableList.sortableItem'))
       addInstructionReference(child)
     }
   }
@@ -146,7 +149,7 @@ function itemIndexForKeyboardTarget (target: EventTarget | null): number {
 }
 
 function positionMessage (index: number): string {
-  return `Position ${index + 1} of ${modelValue.value.length}`
+  return t('common:draggableList.position', { value: index + 1, valueCount: modelValue.value.length, interpolation: { escapeValue: false } })
 }
 
 function emitReorder (from: number, to: number): void {
@@ -179,7 +182,7 @@ function handlePointerMove (event: PointerEvent): void {
     pointerDragging = true
     pointerOriginal = [...modelValue.value]
     sourceIndex = pointerStartIndex
-    liveMessage.value = `Picked up item, ${positionMessage(pointerStartIndex)}`
+    liveMessage.value = t('common:draggableList.pickedUpItem', { pointerStartIndex: positionMessage(pointerStartIndex), interpolation: { escapeValue: false } })
   }
   event.preventDefault()
   const target = document.elementFromPoint(event.clientX, event.clientY)
@@ -189,7 +192,7 @@ function handlePointerMove (event: PointerEvent): void {
   emitReorder(previousIndex, targetIndex)
   sourceIndex = targetIndex
   dropTargetIndex = targetIndex
-  liveMessage.value = `Moved item, ${positionMessage(targetIndex)}`
+  liveMessage.value = t('common:draggableList.movedItem', { targetIndex: positionMessage(targetIndex), interpolation: { escapeValue: false } })
   scheduleRefreshChildren()
   void nextTick(() => {
     const child = itemChildren()[targetIndex]
@@ -205,7 +208,7 @@ function handlePointerUp (event: PointerEvent): void {
     return
   }
   if (pointerId !== event.pointerId) return
-  if (pointerDragging) liveMessage.value = `Dropped item, ${positionMessage(sourceIndex)}`
+  if (pointerDragging) liveMessage.value = t('common:draggableList.droppedItem', { sourceIndex: positionMessage(sourceIndex), interpolation: { escapeValue: false } })
   if (root.value?.hasPointerCapture?.(event.pointerId)) root.value.releasePointerCapture(event.pointerId)
   pointerId = null
   pointerStartIndex = -1
@@ -217,7 +220,7 @@ function handlePointerCancel (event: PointerEvent): void {
   if (pointerId !== event.pointerId) return
   if (pointerDragging && pointerOriginal) {
     modelValue.value = pointerOriginal
-    liveMessage.value = 'Cancelled reorder'
+    liveMessage.value = t('common:draggableList.cancelledReorder')
   }
   if (root.value?.hasPointerCapture?.(event.pointerId)) root.value.releasePointerCapture(event.pointerId)
   pointerId = null
@@ -237,7 +240,7 @@ function handleKeydown (event: KeyboardEvent): void {
     keyboardIndex = index
     keyboardOriginal = [...modelValue.value]
     sourceIndex = index
-    liveMessage.value = `Picked up item, ${positionMessage(index)}`
+    liveMessage.value = t('common:draggableList.pickedUpItem2', { index: positionMessage(index), interpolation: { escapeValue: false } })
     scheduleRefreshChildren()
     return
   }
@@ -245,7 +248,7 @@ function handleKeydown (event: KeyboardEvent): void {
     event.preventDefault()
     event.stopPropagation()
     if (keyboardOriginal) modelValue.value = keyboardOriginal
-    liveMessage.value = 'Cancelled reorder'
+    liveMessage.value = t('common:draggableList.cancelledReorder')
     resetDrag()
     keyboardIndex = -1
     keyboardOriginal = null
@@ -254,7 +257,7 @@ function handleKeydown (event: KeyboardEvent): void {
   if (isActivation) {
     event.preventDefault()
     event.stopPropagation()
-    liveMessage.value = `Dropped item, ${positionMessage(keyboardIndex)}`
+    liveMessage.value = t('common:draggableList.droppedItem2', { keyboardIndex: positionMessage(keyboardIndex), interpolation: { escapeValue: false } })
     resetDrag()
     keyboardIndex = -1
     keyboardOriginal = null
@@ -271,7 +274,7 @@ function handleKeydown (event: KeyboardEvent): void {
   keyboardIndex = targetIndex
   sourceIndex = targetIndex
   dropTargetIndex = targetIndex
-  liveMessage.value = `Moved item, ${positionMessage(targetIndex)}`
+  liveMessage.value = t('common:draggableList.movedItem', { targetIndex: positionMessage(targetIndex), interpolation: { escapeValue: false } })
   scheduleRefreshChildren()
   void nextTick(() => {
     const child = itemChildren()[targetIndex]
@@ -285,7 +288,7 @@ function handleFocusOut (event: FocusEvent): void {
   if (keyboardIndex < 0 || keyboardMoving) return
   if (itemIndexForKeyboardTarget(event.relatedTarget) === keyboardIndex) return
   if (keyboardOriginal) modelValue.value = keyboardOriginal
-  liveMessage.value = 'Cancelled reorder'
+  liveMessage.value = t('common:draggableList.cancelledReorder')
   keyboardIndex = -1
   keyboardOriginal = null
   resetDrag()
@@ -304,7 +307,7 @@ function handleDragStart (event: DragEvent): void {
   sourceIndex = index
   event.dataTransfer?.setData('text/plain', String(index))
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-  liveMessage.value = `Picked up item, ${positionMessage(index)}`
+  liveMessage.value = t('common:draggableList.pickedUpItem2', { index: positionMessage(index), interpolation: { escapeValue: false } })
   scheduleRefreshChildren()
 }
 
@@ -323,13 +326,13 @@ function handleDrop (event: DragEvent): void {
   const from = sourceIndex
   if (from >= 0 && targetIndex >= 0) {
     if (targetIndex !== from) emitReorder(from, targetIndex)
-    liveMessage.value = `Dropped item, ${positionMessage(targetIndex)}`
+    liveMessage.value = t('common:draggableList.droppedItem3', { targetIndex: positionMessage(targetIndex), interpolation: { escapeValue: false } })
   }
   resetDrag()
 }
 
 function handleDragEnd (): void {
-  if (sourceIndex >= 0) liveMessage.value = 'Cancelled reorder'
+  if (sourceIndex >= 0) liveMessage.value = t('common:draggableList.cancelledReorder')
   resetDrag()
 }
 

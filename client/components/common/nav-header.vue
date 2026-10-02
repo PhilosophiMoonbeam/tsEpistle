@@ -173,7 +173,7 @@
           .nav-header-slot-actions(v-if='($vuetify.display.mdAndUp || mobileActions) && $slots.actions')
             slot(name='actions')
           //- Divider between the authoring cluster (Agent / Edit) and the
-            global page + account controls; only when the left cluster exists.
+            {{ $t(`common:navHeader.globalPageAccountControls`) }}
           v-divider(
             v-if='$vuetify.display.mdAndUp && (canEnterAgent || (hasWritePagesPermission && path && mode !== `edit`))'
             vertical
@@ -597,8 +597,8 @@
     .nav-header-dev(v-if='isDevMode')
       v-icon mdi-alert
       div
-        .text-label-small DEVELOPMENT VERSION
-        .text-label-small This code base is NOT for production use!
+        .text-label-small {{ $t(`common:navHeader.developmentVersion`) }}
+        .text-label-small {{ $t(`common:navHeader.codeBaseNotProduction`) }}
 </template>
 
 <script lang='ts'>
@@ -816,12 +816,12 @@ export default defineComponent({
         wikiStore.authRefreshSettled && wikiStore.authRefreshOutcome === 'anonymous'
     },
     accountVerificationTitle(): string {
-      return this.transportVerified && wikiStore.authRefreshPending ? 'Checking account…' : 'Account not verified'
+      return this.transportVerified && wikiStore.authRefreshPending ? this.$t('common:navHeader.checkingAccount') : this.$t('common:navHeader.accountNotVerified')
     },
     accountVerificationDetail(): string {
       return this.transportVerified && wikiStore.authRefreshPending
-        ? 'Confirming your session with the server.'
-        : 'Reconnect to verify your session. Offline access is still available.'
+        ? this.$t('common:navHeader.confirmingSessionServer')
+        : this.$t('common:navHeader.reconnectVerifySessionOffline')
     },
     notificationOwnerId(): number { return this.isAuthenticated ? wikiStore.user.id : 0 },
     notificationState(): 'available' | 'unknown' | 'clear' { return this.siteNotifications.notificationState },
@@ -882,7 +882,7 @@ export default defineComponent({
         this.mode !== 'edit'
       )
     },
-    searchShortcutLabel(): string { return /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K' },
+    searchShortcutLabel(): string { return /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : this.$t('common:navHeader.ctrlK') },
     searchInputIcon(): string { return this.searchMode === 'ask' ? 'mdi-auto-fix' : 'mdi-magnify' },
     picture (): UserPicture {
       return resolveUserPicture(wikiStore.user)
@@ -1411,7 +1411,7 @@ export default defineComponent({
         sourcePageId !== this.sourcePageId ||
         expectedSourceRevision !== this.sourceSourceRevision
       ) {
-        const staleError = new Error('The page changed before this move could be confirmed.') as Error & { status: number }
+        const staleError = new Error(this.$t('common:navHeader.pageChangedBeforeMove')) as Error & { status: number }
         staleError.status = 409
         throw staleError
       }
@@ -1424,13 +1424,13 @@ export default defineComponent({
           locale,
           path,
           expectedSourceRevision,
-          'Page move failed',
+          this.$t('common:navHeader.pageMoveFailed'),
           reviewToken
         )
         if (generation !== this.headerActionGeneration)
-          throw new Error('The move response could not be confirmed.')
+          throw new Error(this.$t('common:navHeader.moveResponseCouldNot'))
         if (reviewToken !== undefined) {
-          if (!receipt) throw new Error('The move receipt could not be verified.')
+          if (!receipt) throw new Error(this.$t('common:navHeader.moveReceiptCouldNot'))
           return receipt
         }
         const scope = this.sourceVisibility === 'private' ? '/_private' : ''

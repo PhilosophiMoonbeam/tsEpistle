@@ -95,7 +95,7 @@ import { defineComponent, markRaw } from 'vue'
 import moment from 'moment'
 
 type DurationUnit = 'minutes' | 'hours' | 'days' | 'months' | 'years'
-const durationUnitError = 'Enter a whole number from 0 to 9,007,199,254,740,991.'
+const durationUnitError = 'common:durationPicker.unitError'
 
 function parseDurationUnit (value: unknown): number | null {
   if (value === null || value === undefined || String(value).trim() === '') return null
@@ -179,7 +179,7 @@ export default defineComponent({
       this.unitValues[unit] = value
       const numericValue = parseDurationUnit(value)
       if (numericValue === null) {
-        this.durationErrors[unit] = durationUnitError
+        this.durationErrors[unit] = this.$t(durationUnitError)
         return
       }
       this.durationErrors[unit] = ''
