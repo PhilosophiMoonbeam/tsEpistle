@@ -1,17 +1,16 @@
 <template>
   <div class="developer-flags-workspace">
     <div :inert="reviewOpen || discardOpen || undefined">
-      <header class="flags-hero">
-        <div>
-          <p class="flags-kicker">Workspace controls / Diagnostic boundaries</p>
-          <h1>Developer flags</h1>
-          <p class="flags-intro">
-            Temporary diagnostic settings for investigating an active problem. Save a reviewed policy first, then explicitly reconcile it with this
-            process.
-          </p>
-        </div>
-        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload developer flag observations</v-tooltip></v-btn>
-      </header>
+      <admin-hero
+        title="Developer flags"
+        description="Temporary diagnostic settings for investigating an active problem. Save a reviewed policy first, then explicitly reconcile it with this process."
+        eyebrow="Operations"
+        icon="mdi-toggle-switch-off-outline"
+      >
+        <template #actions>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload developer flag observations</v-tooltip></v-btn>
+        </template>
+      </admin-hero>
 
       <async-state
         v-if="loading && !workspace"

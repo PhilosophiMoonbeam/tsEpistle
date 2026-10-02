@@ -1,14 +1,16 @@
 <template>
   <div class="tls-workspace">
     <div :inert="dialog || leaveDialog || undefined">
-      <header class="tls-hero">
-        <div>
-          <p class="tls-eyebrow">Workspace controls / Infrastructure</p>
-          <h1>HTTPS &amp; certificates</h1>
-          <p class="tls-intro">Know where encryption begins. Keep every connection and certificate change accountable.</p>
-        </div>
-        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload certificate evidence</v-tooltip></v-btn>
-      </header>
+      <admin-hero
+        title="HTTPS & certificates"
+        description="Know where encryption begins. Keep every connection and certificate change accountable."
+        eyebrow="Operations"
+        icon="mdi-certificate-outline"
+      >
+        <template #actions>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload certificate evidence</v-tooltip></v-btn>
+        </template>
+      </admin-hero>
       <v-alert v-if="error" type="error" variant="tonal" class="mb-4" role="alert">{{ error }}</v-alert>
       <v-alert v-if="notice" type="info" variant="tonal" class="mb-4" role="status">{{ notice }}</v-alert>
       <div v-if="!workspace" class="tls-empty">
