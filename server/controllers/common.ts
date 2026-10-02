@@ -324,6 +324,25 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     return true
   }
 
+  /**
+   * Editor link for a 404 about a page that does not exist, only when the requester may
+   * create it. Mirrors the view route, which already sends such writers to the new-page
+   * screen, so it reveals nothing that route does not. Private and reserved paths never offer it.
+   */
+  const missingPageCreateHref = async (req: Request, pageArgs: ParsedPageArgs): Promise<string | undefined> => {
+    if (pageArgs.visibility !== 'public' || pageHelper.isReservedPath(pageArgs.path)) return undefined
+    const authority = await wiki.auth.loadPageRuleAuthority(req.user)
+    const permissions = wiki.auth.getEffectivePermissions(req, { ...pageArgs, tags: [] }, authority)
+    if (!permissions.pages.write) return undefined
+    return `/e${pageRoute({ visibility: 'public', path: pageArgs.path, localeCode: pageArgs.locale })}`
+  }
+
+  const renderMissingPage = async (req: Request, res: Response, pageArgs: ParsedPageArgs, action: string): Promise<void> => {
+    _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+    const createHref = await missingPageCreateHref(req, pageArgs)
+    res.status(404).render('notfound', createHref === undefined ? { action } : { action, createHref })
+  }
+
   const requesterGroups = (req: Request): unknown[] => (Array.isArray(req.user?.groups) ? req.user.groups : [])
 
   const stringifyQuery = (query: Request['query']): string => {
@@ -913,10 +932,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       ownerId: pageArgs.ownerId
     })
 
-    if (!page) {
-      _.set(res.locals, 'pageMeta.title', 'Page Not Found')
-      return res.status(404).render('notfound', { action: 'history' })
-    }
+    if (!page) return renderMissingPage(req, res, pageArgs, 'history')
 
     const authorization = pageAuthorizationContext(page)
     if (authorization === null) {
@@ -1026,10 +1042,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     }
 
     // -> Effective Permissions
-    if (!page) {
-      _.set(res.locals, 'pageMeta.title', 'Page Not Found')
-      return res.status(404).render('notfound', { action: 'source' })
-    }
+    if (!page) return renderMissingPage(req, res, pageArgs, 'source')
     const authority = await wiki.auth.loadPageRuleAuthority(req.user)
     const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
     if (!applyPrivatePermissions(req, page, effectivePermissions, authority)) {
