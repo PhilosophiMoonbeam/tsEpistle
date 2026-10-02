@@ -13,16 +13,25 @@
         role='alert'
         aria-live='polite'
       ) {{error}}
+      //- The destructive action sits apart at the start; each busy action shows its own spinner.
       v-card-chin
+        v-btn.px-4.editor-unsaved-discard(
+          color='error'
+          variant='text'
+          prepend-icon='mdi-delete-outline'
+          :loading='discarding'
+          :disabled='busy || discarding'
+          @click='discard'
+        ) {{$t('common:actions.discardChanges')}}
         v-spacer
         v-btn(variant="text", :disabled='busy || discarding', @click='isShown = false') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='error', variant='text', :disabled='busy || discarding', @click='discard') {{$t('common:actions.discardChanges')}}
         v-btn.px-4(
           color='primary'
+          variant='flat'
           :loading='busy'
           :disabled='busy || discarding'
           @click='save'
-        ) Save and close
+        ) {{$t('editor:save.saveAndClose')}}
 </template>
 
 <script lang='ts'>

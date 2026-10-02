@@ -1228,7 +1228,7 @@ test.describe('critical post-install workflows', () => {
     try {
       const protectedPage = await anonymousContext.newPage()
       await protectedPage.goto('/en/visual-html-browser')
-      await expect(protectedPage.getByRole('heading', { name: 'Protected page' })).toBeVisible()
+      await expect(protectedPage.getByRole('heading', { name: 'This page is password-protected' })).toBeVisible()
       await protectedPage.getByLabel('Page password').fill('wrong-password')
       await protectedPage.getByRole('button', { name: 'Unlock page' }).click()
       await expect(protectedPage.getByText('Access denied', { exact: true })).toBeVisible()

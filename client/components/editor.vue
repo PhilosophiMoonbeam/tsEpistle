@@ -19,40 +19,61 @@
           density="compact"
           :aria-label='$t(`editor:props.title`)'
         )
+          template(v-if='pageVisibility.chipKey', v-slot:append-inner)
+            v-chip.editor-visibility-chip(
+              size='small'
+              variant='tonal'
+              :prepend-icon='pageVisibility.icon'
+              :aria-label='$t(`editor:props.visibilityChipAction`, { state: $t(pageVisibility.chipKey ?? ``) })'
+              @click.stop='openPropsModal'
+            )
+              | {{ $t(pageVisibility.chipKey ?? '') }}
+              v-tooltip(activator='parent', location='bottom') {{ $t(pageVisibility.summaryKey, pageVisibility.values) }}
       template(v-slot:actions)
-        v-btn.editor-conflict-action.mr-3.animated.fadeIn(
+        span.editor-save-status.text-body-small(
+          role='status'
+          aria-live='polite'
+          :class='{ "is-visually-hidden": !$vuetify.display.mdAndUp, "is-error": saveFeedback === `failed` }'
+        )
+          v-icon.editor-save-status-icon(v-if='saveStatusIcon && saveStatusText', size='16', :icon='saveStatusIcon')
+          span {{ saveStatusText }}
+        v-btn.editor-conflict-action.mr-3(
           color='warning'
           variant="tonal"
           size="small"
           v-if='isConflict'
           @click='openConflict'
           :icon='$vuetify.display.smAndDown'
-          aria-label='Resolve editing conflict'
+          :aria-label='$t(`editor:conflict.resolveAction`)'
         )
-          .text-label-small.mr-3(v-if='$vuetify.display.mdAndUp') Conflict
+          .text-label-small.mr-3(v-if='$vuetify.display.mdAndUp') {{ $t('editor:conflict.label') }}
           status-indicator(intermediary, pulse)
-        v-btn.editor-save-action.animated.fadeInDown(
+        v-btn.editor-save-action(
           :variant='mode === `create` || isDirty ? `flat` : `text`'
           color='primary'
-          @click='save'
-          :disabled='collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
+          @click='save()'
+          :loading='isSaving'
+          :disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
-          :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
+          :aria-label='saveActionLabel'
           )
           v-icon(:start='$vuetify.display.lgAndUp') mdi-check
           span.text-medium-emphasis(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
           span(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
-        v-btn.editor-save-close-action.animated.fadeInDown.wait-p1s(
+          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ saveActionLabel }} · Ctrl+S
+        v-btn.editor-save-close-action(
           v-if='$vuetify.display.mdAndUp'
           variant='tonal'
           color='primary'
-          aria-label='Save and close'
-          prepend-icon='mdi-content-save-move-outline'
+          :class='{ "is-icon": $vuetify.display.mdAndDown }'
+          :aria-label='$t(`editor:save.saveAndClose`)'
           @click='saveAndClose'
-          :disabled='collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
+          :disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
         )
-          span Save and close
-        v-btn.editor-page-action.animated.fadeInDown.wait-p1s(
+          v-icon(:start='$vuetify.display.lgAndUp') mdi-content-save-move-outline
+          span(v-if='$vuetify.display.lgAndUp') {{ $t('editor:save.saveAndClose') }}
+          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t('editor:save.saveAndClose') }}
+        v-btn.editor-page-action(
           v-if='$vuetify.display.mdAndUp'
           variant="tonal"
           color='primary'
@@ -62,7 +83,8 @@
           )
           v-icon(:start='$vuetify.display.lgAndUp') mdi-tag-text-outline
           span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.page') }}
-        v-btn.editor-close-action.animated.fadeInDown.wait-p2s(
+          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t('common:actions.page') }}
+        v-btn.editor-close-action(
           v-if='!welcomeMode && $vuetify.display.mdAndUp'
           variant="text"
           color='error'
@@ -72,108 +94,147 @@
           )
           v-icon(:start='$vuetify.display.lgAndUp') mdi-close
           span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
+          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t('common:actions.close') }}
         v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-main
       .editor-main-surface
-        v-alert.editor-bootstrap-notice(
-          v-if='bootstrapNotice'
-          type='warning'
-          variant='tonal'
-          role='alert'
-          aria-live='polite'
-        )
-          .text-body-medium {{ bootstrapNotice }}
-        v-alert.editor-offline-save-notice(
-          v-if='serverSaveDisabled'
-          type='warning'
-          variant='tonal'
-          role='status'
-          aria-live='polite'
-        )
-          strong {{ offlineSaveNotice }}
-        v-alert.editor-draft-notice(
-          v-if='offlineDraftError || offlineDraftCandidate || offlineDraftCandidates.length > 0 || offlineSubmissionCandidates.length > 0 || offlineDraftStatusText'
-          :type='offlineDraftStatus === `locked` || offlineDraftStatus === `unavailable` ? `warning` : `info`'
-          variant='tonal'
-          role='status'
-          aria-live='polite'
-        )
-          .text-body-medium(v-if='offlineDraftError') {{ offlineDraftError }}
-          .text-body-medium(v-else) {{ offlineDraftStatusText }}
-          .editor-draft-recovery-actions(v-if='offlineDraftStatus === `locked` || !offlineDraftCoordinator')
-            v-btn(
-              size='small'
-              variant='tonal'
-              color='primary'
-              @click='reloadEditor'
-            ) Reload editor
-          .editor-draft-review-actions(v-if='offlineDraftCandidate')
-            v-btn(
-              size='small'
-              variant='flat'
-              color='primary'
-              :disabled='offlineDraftBusy'
-              @click='restoreOfflineDraft()'
-            ) Restore local draft
-            v-btn(
-              size='small'
-              variant='text'
-              color='error'
-              :disabled='offlineDraftBusy'
-              @click='discardOfflineDraft()'
-            ) Discard local draft
-          .editor-draft-review-actions(v-else-if='offlineDraftCandidates.length > 0')
-            .text-body-small Multiple local drafts need an explicit choice.
-            template(v-for='candidate of offlineDraftCandidates', :key='candidate.recordId')
+        .editor-notices(v-if='bootstrapNotice || serverSaveDisabled || hasOfflineDraftNotice')
+          v-alert.editor-bootstrap-notice.editor-notice(
+            v-if='bootstrapNotice'
+            type='warning'
+            variant='tonal'
+            density='compact'
+            role='alert'
+          )
+            .text-body-medium {{ bootstrapNotice }}
+          v-alert.editor-draft-notice.editor-notice(
+            v-if='serverSaveDisabled || hasOfflineDraftNotice'
+            :type='offlineNoticeType'
+            variant='tonal'
+            density='compact'
+            role='region'
+            :aria-label='$t(`editor:offline.noticeLabel`)'
+          )
+            .editor-notice-message(role='status')
+              .text-body-medium.editor-offline-save-notice(v-if='serverSaveDisabled')
+                strong {{ offlineSaveNotice }}
+              .text-body-medium(v-if='offlineDraftError') {{ offlineDraftError }}
+              .text-body-medium(v-else-if='offlineDraftStatusText') {{ offlineDraftStatusText }}
+            .editor-notice-actions.editor-draft-recovery-actions(v-if='offlineDraftStatus === `locked` || !offlineDraftCoordinator')
               v-btn(
                 size='small'
                 variant='tonal'
                 color='primary'
-                :disabled='offlineDraftBusy'
-                @click='restoreOfflineDraft(candidate.recordId)'
-              ) Restore a local draft
-              v-btn(
-                size='small'
-                variant='text'
-                color='error'
-                :disabled='offlineDraftBusy'
-                @click='discardOfflineDraft(candidate.recordId)'
-              ) Discard a local draft
-          .editor-draft-submission-actions(v-if='offlineSubmissionCandidates.length > 0')
-            .text-body-small A previous page submission needs explicit resolution. Its contents are hidden until you choose how to proceed.
-            .text-body-small(v-if='offlineSubmissionCandidates.length > 1') Multiple retained submissions need separate choices.
-            template(v-for='candidate of offlineSubmissionCandidates', :key='candidate.submission.recordId')
-              v-btn(
-                size='small'
-                variant='tonal'
-                color='primary'
-                :disabled='offlineDraftBusy'
-                @click='inspectOfflineSubmission(candidate.submission.recordId)'
-              ) Review submission outcome
-              v-btn(
-                size='small'
-                variant='text'
-                color='error'
-                :disabled='offlineDraftBusy'
-                @click='deleteOfflineSubmission(candidate.submission.recordId)'
-              ) Delete receipt
-          .editor-draft-reconcile-actions(v-if='offlineReconcilePrompt')
-            .text-body-small(v-if='offlineReconcilePrompt.kind === `update`') The current authoritative page was fetched. Choose whether the server result stands or the retained text becomes a new review draft.
-            .text-body-small(v-else) A create request cannot be replayed. Choose whether to delete its receipt or continue the captured text as a new review draft.
-            v-btn(
-              size='small'
-              variant='tonal'
-              color='primary'
-              :disabled='offlineDraftBusy'
-              @click='resolveOfflineSubmission(`discard`)'
-            ) Keep server result
-            v-btn(
-              size='small'
-              variant='outlined'
-              color='primary'
-              :disabled='offlineDraftBusy'
-              @click='resolveOfflineSubmission(`continue`)'
-            ) Keep as new draft
+                prepend-icon='mdi-refresh'
+                @click='reloadEditor'
+              ) {{ $t('editor:offline.reloadEditor') }}
+            .editor-draft-review-actions(v-if='offlineDraftRows.length > 0')
+              .text-body-small.editor-notice-lead {{ offlineDraftRows.length > 1 ? $t('editor:offline.draftsChoose', { count: offlineDraftRows.length }) : $t('editor:offline.draftFound') }}
+              ul.editor-recovery-list(:aria-label='$t(`editor:offline.draftListLabel`)')
+                li.editor-recovery-row(v-for='row of offlineDraftRows', :key='row.key')
+                  .editor-recovery-row-text
+                    .text-body-medium.editor-recovery-row-title {{ row.title }}
+                    .text-body-small.editor-recovery-row-meta
+                      span
+                        | {{ row.relativeTime }}
+                        v-tooltip(activator='parent', location='bottom') {{ row.exactTime }}
+                      span(aria-hidden='true') ·
+                      span {{ row.delta }}
+                  .editor-notice-actions(v-if='pendingDraftDiscard !== row.key')
+                    v-btn(
+                      size='small'
+                      variant='flat'
+                      color='primary'
+                      :loading='offlineDraftBusy && busyRecoveryRow === row.key'
+                      :disabled='offlineDraftBusy'
+                      @click='restoreOfflineDraftRow(row)'
+                    ) {{ $t('editor:offline.restoreDraftAt', { time: row.shortTime }) }}
+                    v-btn(
+                      size='small'
+                      variant='text'
+                      color='error'
+                      :disabled='offlineDraftBusy'
+                      :aria-label='$t(`editor:offline.discardDraftAt`, { time: row.shortTime })'
+                      @click='pendingDraftDiscard = row.key'
+                    ) {{ $t('editor:offline.discard') }}
+                  .editor-notice-actions.editor-recovery-confirm(v-else, role='group', :aria-label='$t(`editor:offline.confirmDiscardDraft`)')
+                    span.text-body-small {{ $t('editor:offline.confirmDiscardDraft') }}
+                    v-btn(
+                      size='small'
+                      variant='flat'
+                      color='error'
+                      :loading='offlineDraftBusy && busyRecoveryRow === row.key'
+                      :disabled='offlineDraftBusy'
+                      @click='discardOfflineDraftRow(row)'
+                    ) {{ $t('editor:offline.discardDraftAt', { time: row.shortTime }) }}
+                    v-btn(
+                      size='small'
+                      variant='text'
+                      :disabled='offlineDraftBusy'
+                      @click='pendingDraftDiscard = null'
+                    ) {{ $t('common:actions.cancel') }}
+              details.editor-notice-details
+                summary.text-body-small {{ $t('editor:offline.whatIsThis') }}
+                .text-body-small {{ $t('editor:offline.draftExplanation') }}
+            .editor-draft-submission-actions(v-if='offlineSubmissionCandidates.length > 0')
+              .text-body-small.editor-notice-lead {{ offlineSubmissionCandidates.length > 1 ? $t('editor:offline.submissionsChoose', { count: offlineSubmissionCandidates.length }) : $t('editor:offline.submissionFound') }}
+              ul.editor-recovery-list(:aria-label='$t(`editor:offline.submissionListLabel`)')
+                li.editor-recovery-row(v-for='(candidate, index) of offlineSubmissionCandidates', :key='candidate.submission.recordId')
+                  .editor-recovery-row-text
+                    .text-body-medium.editor-recovery-row-title {{ $t('editor:offline.submissionLabel', { number: index + 1 }) }}
+                    .text-body-small.editor-recovery-row-meta {{ $t('editor:offline.submissionHidden') }}
+                  .editor-notice-actions(v-if='pendingSubmissionDelete !== candidate.submission.recordId')
+                    v-btn(
+                      size='small'
+                      variant='tonal'
+                      color='primary'
+                      :disabled='offlineDraftBusy'
+                      :aria-label='$t(`editor:offline.reviewSubmissionNumber`, { number: index + 1 })'
+                      @click='inspectOfflineSubmission(candidate.submission.recordId)'
+                    ) {{ $t('editor:offline.reviewSubmission') }}
+                    v-btn(
+                      size='small'
+                      variant='text'
+                      color='error'
+                      :disabled='offlineDraftBusy'
+                      :aria-label='$t(`editor:offline.deleteReceiptNumber`, { number: index + 1 })'
+                      @click='pendingSubmissionDelete = candidate.submission.recordId'
+                    ) {{ $t('editor:offline.deleteReceipt') }}
+                  .editor-notice-actions.editor-recovery-confirm(v-else, role='group', :aria-label='$t(`editor:offline.confirmDeleteReceipt`)')
+                    span.text-body-small {{ $t('editor:offline.confirmDeleteReceipt') }}
+                    v-btn(
+                      size='small'
+                      variant='flat'
+                      color='error'
+                      :disabled='offlineDraftBusy'
+                      @click='confirmDeleteOfflineSubmission(candidate.submission.recordId)'
+                    ) {{ $t('editor:offline.deleteReceipt') }}
+                    v-btn(
+                      size='small'
+                      variant='text'
+                      :disabled='offlineDraftBusy'
+                      @click='pendingSubmissionDelete = null'
+                    ) {{ $t('common:actions.cancel') }}
+              details.editor-notice-details
+                summary.text-body-small {{ $t('editor:offline.whatIsThis') }}
+                .text-body-small {{ $t('editor:offline.submissionExplanation') }}
+            .editor-draft-reconcile-actions(v-if='offlineReconcilePrompt')
+              .text-body-small.editor-notice-lead {{ offlineReconcilePrompt.kind === 'update' ? $t('editor:offline.reconcileUpdate') : $t('editor:offline.reconcileCreate') }}
+              .editor-notice-actions
+                v-btn(
+                  size='small'
+                  variant='tonal'
+                  color='primary'
+                  :disabled='offlineDraftBusy'
+                  @click='resolveOfflineSubmission(`discard`)'
+                ) {{ offlineReconcilePrompt.kind === 'update' ? $t('editor:offline.keepServerResult') : $t('editor:offline.deleteReceipt') }}
+                v-btn(
+                  size='small'
+                  variant='outlined'
+                  color='primary'
+                  :disabled='offlineDraftBusy'
+                  @click='resolveOfflineSubmission(`continue`)'
+                ) {{ $t('editor:offline.keepAsNewDraft') }}
         component.editor-active-editor(
           :is='currentEditor'
           v-if='currentEditor'
@@ -200,17 +261,21 @@
     v-bottom-navigation.editor-mobile-actions(
       v-if='$vuetify.display.smAndDown'
       tag='nav'
-      aria-label='Editor actions'
+      :aria-label='$t(`editor:actions.mobileLabel`)'
       grow
       :elevation='0'
     )
-      v-btn(
+      v-btn.editor-mobile-save(
+        :class='{ "is-clean": mode !== `create` && !isDirty }'
         color='primary'
-        @click.exact='save'
-        :disabled='collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
-        :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
+        @click.exact='saveFromMobile'
+        :loading='isSaving'
+        :disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
+        :aria-disabled='mode !== `create` && !isDirty ? `true` : undefined'
+        :aria-label='saveActionLabel'
       )
-        span {{ mode === 'create' ? $t('common:actions.create') : (isDirty ? $t('common:actions.save') : $t('editor:save.saved')) }}
+        v-icon {{ mode !== 'create' && !isDirty ? 'mdi-check-circle-outline' : 'mdi-check' }}
+        span {{ mobileSaveLabel }}
       v-btn(color='primary', @click='openPropsModal', :aria-label='$t(`common:actions.page`)')
         v-icon mdi-tag-text-outline
         span {{ $t('common:actions.page') }}
@@ -219,30 +284,28 @@
           v-btn(
             v-bind='props'
             :color='isConflict ? `warning` : undefined'
-            aria-label='More editor actions'
+            :aria-label='$t(`editor:actions.more`)'
           )
             v-icon {{ isConflict ? 'mdi-alert-outline' : 'mdi-dots-horizontal' }}
-            span More
+            span {{ $t('editor:actions.moreShort') }}
         v-list.editor-mobile-menu(nav)
           v-list-item(v-if='isConflict', @click='openConflict')
             template(v-slot:prepend)
               v-icon(color='warning') mdi-alert-outline
-            v-list-item-title Conflict
-          v-list-item(:disabled='collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked', @click='saveAndClose')
+            v-list-item-title {{ $t('editor:conflict.resolveAction') }}
+          v-list-item(:disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked', @click='saveAndClose')
             template(v-slot:prepend)
               v-icon(color='primary') mdi-content-save-move-outline
-            v-list-item-title Save and close
+            v-list-item-title {{ $t('editor:save.saveAndClose') }}
           v-list-item(v-if='!welcomeMode', @click='exit')
             template(v-slot:prepend)
               v-icon(color='error') mdi-close
             v-list-item-title {{ $t('common:actions.close') }}
-    loader(v-model='dialogProgress', :title='$t(`editor:save.processing`)', :subtitle='$t(`editor:save.pleaseWait`)')
-      template(v-slot:illustration)
-        login-success-animation
 </template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent, shallowRef, type PropType } from 'vue'
+import { defineComponent, shallowRef, type PropType } from 'vue'
+import moment from 'moment-timezone'
 import { useHotkey } from 'vuetify'
 import { createAsyncComponent } from './common/async-component-state.vue'
 import _ from 'lodash'
@@ -268,6 +331,7 @@ import {
 } from '../helpers/offline-editor-drafts.ts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT, requestOfflineIdentityBoundary } from '../helpers/offline-session.ts'
 import { bindEditorFlushSignals, type EditorAdapter, type EditorAdapterCapture, type EditorAdapterSafety } from './editor/common/editor-adapter'
+import { describePageVisibility, type PageVisibilitySummary } from './editor/common/page-visibility'
 import type { OfflineDraftPayloadV1, OfflineDraftState } from '../../shared/offline.ts'
 import { OfflineSnapshotSelectorSchema, type OfflineSnapshotSelector } from '../../shared/offline.ts'
 import {
@@ -281,6 +345,22 @@ import type { WikiLinkOptions } from '../../shared/wikilinks.ts'
 
 
 const OFFLINE_CREATE_IDENTITY_KEY = 'tsepistle-offline-create-identity'
+
+type EditorSaveFeedback = 'idle' | 'saving' | 'saved' | 'failed'
+
+type OfflineDraftRow = {
+  readonly key: string
+  readonly recordId: string | undefined
+  readonly title: string
+  readonly shortTime: string
+  readonly relativeTime: string
+  readonly exactTime: string
+  readonly delta: string
+}
+
+const SAVE_SHORTCUT_LABEL = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '') ? '⌘S' : 'Ctrl+S'
+
+const countWords = (text: string): number => text.trim() ? text.trim().split(/\s+/u).length : 0
 
 const readOfflineCreateIdentity = (): string | null => {
   try {
@@ -306,7 +386,6 @@ const clearOfflineCreateIdentity = (): void => {
     // Session storage is optional.
   }
 }
-const LoginSuccessAnimation = defineAsyncComponent(() => import('./login-success-animation.vue'))
 
 const EDITOR_PAGE_CANVAS_SCOPE = '.editor-page-canvas'
 
@@ -428,7 +507,6 @@ export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
   components: {
     StatusIndicator,
-    LoginSuccessAnimation,
     editorCode: createAsyncComponent(() => import('./editor/editor-code.vue')),
     editorCkeditor: createAsyncComponent(() => import('./editor/editor-ckeditor.vue')),
     editorVisualMarkdown: createAsyncComponent(() => import('./editor/editor-visual-markdown.vue')),
@@ -607,7 +685,12 @@ export default defineComponent({
       dialogUnsaved: false,
       exitConfirmed: false,
       dialogProps: false,
-      dialogProgress: false,
+      saveFeedback: 'idle' as EditorSaveFeedback,
+      lastSavedAt: null as number | null,
+      lastSaveKind: 'server' as 'server' | 'device',
+      pendingDraftDiscard: null as string | null,
+      pendingSubmissionDelete: null as string | null,
+      busyRecoveryRow: null as string | null,
       dialogEditorSelector: false,
       offlineDraftCoordinator: null as OfflineEditorDraftCoordinator | null,
       offlineMetadataOperation: 0,
@@ -697,27 +780,106 @@ export default defineComponent({
     },
     offlineSaveNotice(): string {
       if (this.offlineDraftCoordinator?.hasCommittedCurrentValues === true) {
-        return 'Server publishing is unavailable while disconnected. Current changes are saved on this device.'
+        return this.$t('editor:offline.serverUnavailableSaved')
       }
       if (this.offlineDraftError) {
-        return 'Server publishing is unavailable while disconnected. Local saving is not currently confirmed.'
+        return this.$t('editor:offline.serverUnavailableUnconfirmed')
       }
-      return 'Server publishing is unavailable while disconnected. Local saving will be reported only after this device confirms a commit.'
+      return this.$t('editor:offline.serverUnavailablePending')
     },
     serverSaveDisabled(): boolean {
       return wikiStore.user.authenticated && (pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable')
     },
     offlineDraftStatusText(): string {
       if (this.offlineDraftError) return ''
-      if (this.offlineDraftStatus === 'local') return 'Saved on this device. Publishing remains a separate online action.'
-      if (this.offlineDraftStatus === 'needs-review') return 'Needs review before publishing.'
-      if (this.offlineDraftStatus === 'publishing') return 'Publishing…'
-      if (this.offlineDraftStatus === 'conflict') return 'Conflict needs resolution before publishing.'
-      if (this.offlineDraftStatus === 'locked') return 'Local draft recovery is locked. Verify this account online, then reload the editor to recover encrypted drafts.'
-      if (this.offlineDraftStatus === 'unavailable') return 'The page may have been deleted or access may have been denied. Publishing and replay are blocked; local recovery and deletion remain available.'
-      if (!this.offlineDraftCoordinator) return 'Offline draft recovery is unavailable. Reload the editor before saving.'
-      if (this.offlineDraftStatus === 'outcome-unknown') return 'Outcome unknown. Review the submission before trying again.'
+      if (this.offlineDraftStatus === 'local') return this.$t('editor:offline.statusLocal')
+      if (this.offlineDraftStatus === 'needs-review') return this.$t('editor:offline.statusNeedsReview')
+      if (this.offlineDraftStatus === 'publishing') return this.$t('editor:offline.statusPublishing')
+      if (this.offlineDraftStatus === 'conflict') return this.$t('editor:offline.statusConflict')
+      if (this.offlineDraftStatus === 'locked') return this.$t('editor:offline.statusLocked')
+      if (this.offlineDraftStatus === 'unavailable') return this.$t('editor:offline.statusUnavailable')
+      if (!this.offlineDraftCoordinator) return this.$t('editor:offline.statusNoRecovery')
+      if (this.offlineDraftStatus === 'outcome-unknown') return this.$t('editor:offline.statusOutcomeUnknown')
       return ''
+    },
+    hasOfflineDraftNotice(): boolean {
+      return Boolean(
+        this.offlineDraftError ||
+        this.offlineDraftCandidate ||
+        this.offlineDraftCandidates.length > 0 ||
+        this.offlineSubmissionCandidates.length > 0 ||
+        this.offlineReconcilePrompt ||
+        this.offlineDraftStatusText
+      )
+    },
+    offlineNoticeType(): 'warning' | 'info' {
+      return this.serverSaveDisabled || this.offlineDraftStatus === 'locked' || this.offlineDraftStatus === 'unavailable' || Boolean(this.offlineDraftError)
+        ? 'warning'
+        : 'info'
+    },
+    offlineDraftRows(): OfflineDraftRow[] {
+      // Local drafts are the author's own decrypted working copies; retained
+      // submissions are deliberately excluded so their plaintext stays hidden.
+      const candidates: Array<{ key: string; recordId: string | undefined; payload: OfflineDraftPayloadV1 }> = this.offlineDraftCandidate
+        ? [{ key: 'current', recordId: undefined, payload: this.offlineDraftCandidate }]
+        : this.offlineDraftCandidates.map(candidate => ({ key: candidate.recordId, recordId: candidate.recordId, payload: candidate.payload }))
+      const current = wikiStore.editor.content
+      return candidates.map(({ key, recordId, payload }) => {
+        const savedAt = moment(payload.updatedAt)
+        const valid = savedAt.isValid()
+        const sameDay = valid && savedAt.isSame(moment(), 'day')
+        const charDelta = payload.content.length - current.length
+        const wordDelta = countWords(payload.content) - countWords(current)
+        const delta = charDelta === 0
+          ? this.$t('editor:offline.deltaSame')
+          : this.$t(charDelta > 0 ? 'editor:offline.deltaMore' : 'editor:offline.deltaLess', {
+            chars: Math.abs(charDelta),
+            words: Math.abs(wordDelta)
+          })
+        return {
+          key,
+          recordId,
+          title: payload.title.trim() || `/${payload.locale}/${payload.path}`,
+          shortTime: valid ? savedAt.format(sameDay ? 'LT' : 'lll') : '',
+          relativeTime: valid ? savedAt.fromNow() : this.$t('editor:offline.unknownTime'),
+          exactTime: valid ? savedAt.format('LLLL') : this.$t('editor:offline.unknownTime'),
+          delta
+        }
+      })
+    },
+    pageVisibility(): PageVisibilitySummary {
+      const page = wikiStore.page
+      return describePageVisibility(
+        { visibility: page.visibility, isPublished: page.isPublished, publishStartDate: page.publishStartDate, publishEndDate: page.publishEndDate },
+        new Date(),
+        document.documentElement.lang || undefined
+      )
+    },
+    saveStatusText(): string {
+      if (this.saveFeedback === 'saving') return this.$t('editor:save.saving')
+      if (this.saveFeedback === 'failed') return this.$t('editor:save.notSaved')
+      const time = this.lastSavedAt === null ? '' : moment(this.lastSavedAt).format('LT')
+      if (this.lastSaveKind === 'device' && time) return this.$t('editor:save.savedOfflineAt', { time })
+      if (this.isDirty) return this.mode === 'create' ? '' : this.$t('editor:save.unsavedChanges')
+      return time ? this.$t('editor:save.savedAt', { time }) : ''
+    },
+    saveStatusIcon(): string {
+      if (this.saveFeedback === 'saving') return 'mdi-progress-upload'
+      if (this.saveFeedback === 'failed') return 'mdi-alert-circle-outline'
+      if (this.lastSaveKind === 'device' && this.lastSavedAt !== null) return 'mdi-cloud-off-outline'
+      if (this.isDirty) return 'mdi-circle-medium'
+      return 'mdi-check'
+    },
+    saveActionLabel(): string {
+      if (this.mode === 'create') return this.$t('common:actions.create')
+      if (this.isSaving) return this.$t('editor:save.saving')
+      return this.isDirty ? `${this.$t('common:actions.save')} (${SAVE_SHORTCUT_LABEL})` : this.$t('editor:save.saved')
+    },
+    mobileSaveLabel(): string {
+      if (this.mode === 'create') return this.$t('common:actions.create')
+      if (this.isDirty) return this.$t('common:actions.save')
+      const time = this.lastSavedAt === null ? '' : moment(this.lastSavedAt).format('LT')
+      return time ? this.$t('editor:save.savedAt', { time }) : this.$t('editor:save.saved')
     },
     offlineDraftSource(): readonly string[] {
       return [
@@ -1332,6 +1494,30 @@ export default defineComponent({
         this.notifySafetyChanged()
       }
     },
+    async restoreOfflineDraftRow(row: OfflineDraftRow) {
+      this.busyRecoveryRow = row.key
+      try {
+        await this.restoreOfflineDraft(row.recordId)
+      } finally {
+        this.busyRecoveryRow = null
+      }
+    },
+    async discardOfflineDraftRow(row: OfflineDraftRow) {
+      this.busyRecoveryRow = row.key
+      try {
+        await this.discardOfflineDraft(row.recordId)
+      } finally {
+        this.busyRecoveryRow = null
+        if (this.pendingDraftDiscard === row.key) this.pendingDraftDiscard = null
+      }
+    },
+    async confirmDeleteOfflineSubmission(recordId: string) {
+      try {
+        await this.deleteOfflineSubmission(recordId)
+      } finally {
+        if (this.pendingSubmissionDelete === recordId) this.pendingSubmissionDelete = null
+      }
+    },
     async inspectOfflineSubmission(recordId: string) {
       if (this.offlineDraftBusy) return
       const coordinator = this.offlineDraftCoordinator
@@ -1484,7 +1670,10 @@ export default defineComponent({
       this.offlineDraftBusy = false
       this.dialogUnsaved = false
       this.discardError = ''
-      this.dialogProgress = false
+      this.saveFeedback = 'idle'
+      this.pendingDraftDiscard = null
+      this.pendingSubmissionDelete = null
+      this.busyRecoveryRow = null
       this.dialogProps = false
       this.dialogEditorSelector = false
       this.activeModal = ''
@@ -1516,11 +1705,24 @@ export default defineComponent({
     openPropsModal() {
       this.dialogProps = true
     },
-    showProgressDialog() {
-      this.dialogProgress = true
+    beginSaveFeedback() {
+      this.saveFeedback = 'saving'
     },
-    hideProgressDialog() {
-      this.dialogProgress = false
+    endSaveFeedback(outcome: 'saved' | 'device' | 'failed' | 'idle') {
+      if (outcome === 'saved' || outcome === 'device') {
+        this.lastSavedAt = Date.now()
+        this.lastSaveKind = outcome === 'device' ? 'device' : 'server'
+        this.saveFeedback = 'saved'
+        return
+      }
+      this.saveFeedback = outcome
+    },
+    saveFromMobile() {
+      if (this.mode !== 'create' && !this.isDirty) {
+        wikiStore.showNotification({ message: this.$t('editor:save.noChanges'), style: 'info', icon: 'check' })
+        return
+      }
+      void this.save()
     },
     handleEditorConflictReset() {
       this.isConflict = false
@@ -1659,6 +1861,9 @@ export default defineComponent({
       emitEditorSaveConflict()
     },
     async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}): Promise<boolean> {
+      // Saving no longer blocks the editor with an overlay, so a second Save,
+      // Ctrl+S or Save and close must not start a parallel write.
+      if (this.isSaving) return false
       ++this.offlineMetadataOperation
       if (this.discardPending) return false
       if (this.collaborationDiscarded) {
@@ -1700,7 +1905,7 @@ export default defineComponent({
 
       this.isSaving = true
       this.notifySafetyChanged()
-      this.showProgressDialog()
+      this.beginSaveFeedback()
       let prepared: PreparedOfflineSubmission | null = null
       let completionAttempted = false
       let postWriteError: string | null = null
@@ -1728,6 +1933,7 @@ export default defineComponent({
             style: 'success',
             icon: 'check'
           })
+          this.endSaveFeedback('device')
           return true
         }
 
@@ -1924,6 +2130,7 @@ export default defineComponent({
           style: postWriteError || receiptPreparationWarning ? 'warning' : 'success',
           icon: postWriteError || receiptPreparationWarning ? 'warning' : 'check'
         })
+        this.endSaveFeedback('saved')
 
         const canNavigateAfterSave = (): boolean => {
           const safety = coordinator?.reloadSafetySnapshot
@@ -2023,11 +2230,12 @@ export default defineComponent({
           style: status === 409 ? 'warning' : 'error',
           icon: 'warning'
         })
+        this.endSaveFeedback('failed')
         if (rethrow) throw error
         return false
       } finally {
         this.isSaving = false
-        this.hideProgressDialog()
+        if (this.saveFeedback === 'saving') this.endSaveFeedback('idle')
         this.notifySafetyChanged()
       }
     },
@@ -2337,9 +2545,91 @@ export default defineComponent({
     width: 100%;
   }
 
-  .editor-bootstrap-notice {
+  .editor-notices {
+    display: flex;
     flex: none;
-    margin: var(--wiki-space-4) clamp(var(--wiki-space-4), 4vw, var(--wiki-space-8)) 0;
+    flex-direction: column;
+    gap: var(--wiki-space-2);
+    max-height: 40dvh;
+    overflow-y: auto;
+    padding: var(--wiki-space-3) clamp(var(--wiki-space-4), 4vw, var(--wiki-space-8)) var(--wiki-space-2);
+  }
+
+  .editor-notice {
+    flex: none;
+
+    .v-alert__content {
+      display: flex;
+      flex-direction: column;
+      gap: var(--wiki-space-2);
+      min-width: 0;
+    }
+  }
+
+  .editor-notice-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wiki-space-2);
+  }
+
+  .editor-notice-lead {
+    margin-block-end: var(--wiki-space-1);
+  }
+
+  .editor-recovery-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wiki-space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .editor-recovery-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wiki-space-2) var(--wiki-space-4);
+    padding: var(--wiki-space-2) var(--wiki-space-3);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius);
+    background: var(--wiki-surface-raised);
+  }
+
+  .editor-recovery-row-text {
+    min-width: 0;
+    flex: 1 1 12rem;
+  }
+
+  .editor-recovery-row-title {
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .editor-recovery-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-1);
+    color: var(--wiki-text-muted);
+  }
+
+  .editor-notice-details {
+    color: var(--wiki-text-muted);
+
+    summary {
+      width: fit-content;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: .15em;
+    }
+
+    > div {
+      margin-block-start: var(--wiki-space-1);
+    }
   }
 
   &-title-input {
@@ -2401,6 +2691,28 @@ export default defineComponent({
   text-transform: none;
 }
 
+.editor-save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wiki-space-1);
+  margin-inline-end: var(--wiki-space-2);
+  color: var(--wiki-text-muted);
+  white-space: nowrap;
+
+  &.is-error {
+    color: rgb(var(--v-theme-error));
+  }
+
+  &.is-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 .editor-actions-divider {
   border-color: var(--wiki-surface-border) !important;
 }
@@ -2418,6 +2730,10 @@ export default defineComponent({
 
     &:first-child {
       color: var(--wiki-accent-warm);
+    }
+
+    &.editor-mobile-save.is-clean {
+      color: var(--wiki-text-muted);
     }
   }
 
@@ -2439,7 +2755,57 @@ export default defineComponent({
   display: inline-block;
 }
 
+.editor-visibility-chip {
+  cursor: pointer;
+  flex: 0 0 auto;
+  margin-inline-start: var(--wiki-space-2);
+}
+
+// Formatting tools in the Markdown and visual editors share one neutral look.
+// The accent marks only state (pressed/active), hover and focus, so colour
+// carries meaning instead of decorating every tool.
+.editor-tool-group {
+  align-items: center;
+  display: flex;
+  gap: 3px;
+}
+
+.editor-tool.v-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--wiki-text-muted);
+
+  &:hover {
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 7%, transparent);
+    color: rgb(var(--v-theme-on-surface));
+  }
+
+  &:focus-visible {
+    outline: .125rem solid var(--wiki-focus-color);
+    outline-offset: .0625rem;
+  }
+
+  &[aria-pressed='true'],
+  &.is-active {
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, transparent);
+    border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 45%, transparent);
+    color: var(--wiki-accent-ink);
+  }
+
+  &[aria-disabled='true'] {
+    background: transparent;
+    color: var(--wiki-text-subtle);
+    cursor: not-allowed;
+  }
+}
+
 @media (forced-colors: active) {
+  .editor-tool.v-btn[aria-pressed='true'],
+  .editor-tool.v-btn.is-active {
+    border-color: Highlight;
+    outline: 1px solid Highlight;
+  }
+
   .editor .nav-header,
   .editor-mobile-actions,
   .editor-mobile-menu {

@@ -20,25 +20,22 @@
         v-icon(color='primary') mdi-tag-text-outline
         .text-body-large.ml-3#editor-properties-title {{$t('editor:props.pageProperties')}}
         v-spacer
-        v-btn.mx-0.mr-2(
-          variant='text'
-          @click='cancel'
-          )
-          span {{ $t('common:actions.cancel') }}
-        v-btn.mx-0(
-          variant="outlined"
-          @click='close'
-          )
-          v-icon(start) mdi-check
-          span {{ $t('common:actions.ok') }}
+        v-chip.editor-properties-visibility-chip(
+          v-if='visibilitySummary.chipKey'
+          size='small'
+          variant='tonal'
+          :prepend-icon='visibilitySummary.icon'
+        ) {{ $t(visibilitySummary.chipKey) }}
+      //- Tabs the user cannot use are hidden instead of shown disabled without a reason.
       v-tabs(v-model='currentTab', color='primary', align-tabs="center", show-arrows)
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}
-        v-tab(:value='2', :disabled='!hasScriptPermission') {{$t('editor:props.scripts')}}
-        //- v-tab(:value='3', disabled) {{$t('editor:props.social')}}
-        v-tab(:value='3', :disabled='!hasStylePermission') {{$t('editor:props.styles')}}
-        v-tab(:value='4', :disabled='mode === `create`') {{$t('editor:props.translations')}}
-        v-tab(:value='5') Knowledge / OKF
+        v-tab(v-if='hasScriptPermission', :value='2') {{$t('editor:props.scripts')}}
+        v-tab(v-if='hasStylePermission', :value='3') {{$t('editor:props.styles')}}
+        v-tab(:value='4') {{$t('editor:props.translations')}}
+        v-tab(:value='5')
+          span {{ $t('editor:props.knowledge') }}
+          v-tooltip(activator='parent', location='bottom') {{ $t('editor:props.knowledgeHint') }}
       v-tabs-window.editor-properties-tabs-window(v-model='currentTab')
         v-tabs-window-item(:value='0', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text.pt-5
@@ -97,15 +94,28 @@
                 span(v-else-if='draft.brandingAssignment && !draft.brandingView') Assigned image is unavailable. You can replace or remove it.
                 span(v-else-if='draft.brandingAssignment') Page identity image selected.
                 span(v-else) No page identity image selected.
-            v-switch(
-              ref='privatePageSwitch'
-              label='Private page'
-              v-model='privatePage'
-              color='deep-orange'
-              hint='Private pages are visible only to you. Publishing makes this page available through normal page permissions.'
-              persistent-hint
-              inset
-            )
+            section.editor-properties-visibility(aria-labelledby='editor-properties-visibility-title')
+              .text-label-small#editor-properties-visibility-title {{ $t('editor:props.visibility') }}
+              .editor-properties-visibility-summary(role='status', aria-live='polite')
+                v-icon(size='18', :icon='visibilitySummary.icon')
+                span {{ visibilitySummaryText }}
+              v-switch(
+                ref='privatePageSwitch'
+                :label='$t(`editor:props.privatePage`)'
+                v-model='privatePage'
+                color='primary'
+                :hint='$t(`editor:props.privatePageHint`)'
+                persistent-hint
+                inset
+              )
+              v-switch(
+                :label='$t(`editor:props.publishToggle`)'
+                v-model='isPublished'
+                color='primary'
+                :hint='$t(`editor:props.publishToggleHint`)'
+                persistent-hint
+                inset
+              )
             v-switch(
               ref='searchablePageSwitch'
               :label='$t(`editor:props.searchable`)'
@@ -261,14 +271,10 @@
         v-tabs-window-item(:value='1', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text
             .text-label-small {{$t('editor:props.publishState')}}
-            v-switch(
-              :label='$t(`editor:props.publishToggle`)'
-              v-model='isPublished'
-              color='primary'
-              :hint='$t(`editor:props.publishToggleHint`)'
-              persistent-hint
-              inset
-              )
+            .editor-properties-visibility-summary
+              v-icon(size='18', :icon='visibilitySummary.icon')
+              span {{ visibilitySummaryText }}
+            .text-body-small.text-medium-emphasis.mt-2(v-if='!isPublished') {{ $t('editor:props.scheduleNeedsPublish') }}
           v-divider
           v-card-text.editor-properties-subsection.pt-5
             v-container.pa-0(fluid)
@@ -358,43 +364,6 @@
           .editor-props-codeeditor-hint
             .text-body-small {{$t('editor:props.htmlHint')}}
 
-        //- v-tabs-window-item(:value='3', transition='fade-transition', reverse-transition='fade-transition')
-        //-   v-card-text
-        //-     .text-label-small {{$t('editor:props.socialFeatures')}}
-        //-     v-switch(
-        //-       :label='$t(`editor:props.allowComments`)'
-        //-       v-model='isPublished'
-        //-       color='primary'
-        //-       :hint='$t(`editor:props.allowCommentsHint`)'
-        //-       persistent-hint
-        //-       inset
-        //-       )
-        //-     v-switch(
-        //-       :label='$t(`editor:props.allowRatings`)'
-        //-       v-model='isPublished'
-        //-       color='primary'
-        //-       :hint='$t(`editor:props.allowRatingsHint`)'
-        //-       persistent-hint
-        //-       disabled
-        //-       inset
-        //-       )
-        //-     v-switch(
-        //-       :label='$t(`editor:props.displayAuthor`)'
-        //-       v-model='isPublished'
-        //-       color='primary'
-        //-       :hint='$t(`editor:props.displayAuthorHint`)'
-        //-       persistent-hint
-        //-       inset
-        //-       )
-        //-     v-switch(
-        //-       :label='$t(`editor:props.displaySharingBar`)'
-        //-       v-model='isPublished'
-        //-       color='primary'
-        //-       :hint='$t(`editor:props.displaySharingBarHint`)'
-        //-       persistent-hint
-        //-       inset
-        //-       )
-
         v-tabs-window-item.editor-properties-code-tab(:value='3', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
             .text-label-small {{$t('editor:props.css')}}
@@ -404,11 +373,14 @@
             .text-body-small {{$t('editor:props.cssHint')}}
 
         v-tabs-window-item(:value='4', transition='fade-transition', reverse-transition='fade-transition')
-          v-card-text
+          v-card-text(v-if='mode === `create`')
+            .text-label-small {{$t('editor:props.translations')}}
+            .text-body-medium.text-medium-emphasis.mt-2 {{ $t('editor:props.translationsAfterCreate') }}
+          v-card-text(v-else)
             .d-flex.align-center.mb-4
               div
                 .text-label-small {{$t('editor:props.translations')}}
-                .text-body-small.text-grey {{$t('editor:props.translationsHint')}}
+                .text-body-small.text-medium-emphasis {{$t('editor:props.translationsHint')}}
               v-spacer
               v-btn(
                 color='primary'
@@ -442,6 +414,12 @@
                 v-btn(variant='text', size='small', @click='loadTranslations') Retry
         v-tabs-window-item(:value='5', transition='fade-transition', reverse-transition='fade-transition')
           editor-okf-panel
+      v-divider
+      v-card-actions.editor-properties-actions
+        .text-body-small.text-medium-emphasis.editor-properties-actions-hint {{ $t('editor:props.applyHint') }}
+        v-spacer
+        v-btn(variant='text', @click='cancel') {{ $t('common:actions.cancel') }}
+        v-btn(color='primary', variant='flat', prepend-icon='mdi-check', @click='close') {{ $t('common:actions.apply') }}
 
 
     v-dialog(
@@ -453,12 +431,12 @@
       @after-leave='restorePrivatePageFocus'
     )
       v-card
-        v-card-title#editor-properties-private-title Publish private page?
-        v-card-text#editor-properties-private-description Publish this private page? It will become available through normal page permissions.
+        v-card-title#editor-properties-private-title {{ $t('editor:props.privateConfirmTitle') }}
+        v-card-text#editor-properties-private-description {{ $t('editor:props.privateConfirmBody') }}
         v-card-actions
           v-spacer
           v-btn(variant='text', @click='privatePageConfirm = false') {{$t('common:actions.cancel')}}
-          v-btn(color='primary', @click='confirmPublish') {{$t('common:actions.ok')}}
+          v-btn(color='primary', variant='flat', @click='confirmPublish') {{ $t('editor:props.privateConfirmAction') }}
     page-selector(:mode='pageSelectorMode', v-model='pageSelectorShown', :path='path', :locale='locale', :open-handler='setPath')
     page-selector(
       mode='select'
@@ -498,6 +476,7 @@ import { css } from '@codemirror/lang-css'
 import { javascript } from '@codemirror/lang-javascript'
 import { TextEditor, type TextEditorHandle } from './common/text-editor'
 import EditorOkfPanel from './editor-okf-panel.vue'
+import { describePageVisibility, type PageVisibilitySummary } from './common/page-visibility'
 
 /* global siteLangs, siteConfig */
 
@@ -776,6 +755,12 @@ export default defineComponent({
       set(value: string) {
         this.draft.scriptCss = value
       }
+    },
+    visibilitySummary (): PageVisibilitySummary {
+      return describePageVisibility(this.draft, new Date(), document.documentElement.lang || undefined)
+    },
+    visibilitySummaryText (): string {
+      return String(this.$t(this.visibilitySummary.summaryKey, this.visibilitySummary.values))
     },
     hasScriptPermission() {
       return wikiStore.page.effectivePermissions.pages.script
@@ -1220,7 +1205,7 @@ export default defineComponent({
 
 .editor-properties-branding-status {
   min-height: 20px;
-  color: rgba(var(--v-theme-on-surface), .62);
+  color: var(--wiki-text-muted);
   font-size: .78rem;
   line-height: 1.35;
   margin-top: 8px;
@@ -1232,7 +1217,7 @@ export default defineComponent({
 .editor-properties-tags-persistence-hint,
 .editor-properties-tag-search-state,
 .editor-properties-tag-status {
-  color: rgba(var(--v-theme-on-surface), .68);
+  color: var(--wiki-text-muted);
   font-size: .8rem;
   line-height: 1.4;
   margin-top: 8px;
@@ -1259,8 +1244,38 @@ export default defineComponent({
   color: rgb(var(--v-theme-on-surface));
 
   > .dialog-header,
-  > .v-tabs {
+  > .v-tabs,
+  > .v-divider,
+  > .editor-properties-actions {
     flex: 0 0 auto;
+  }
+
+  > .editor-properties-actions {
+    background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
+    flex-wrap: wrap;
+    gap: var(--wiki-space-2);
+    padding-inline: var(--wiki-space-4, 1rem);
+  }
+
+  .editor-properties-actions-hint {
+    flex: 1 1 16rem;
+    min-width: 0;
+  }
+
+  .editor-properties-visibility {
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius);
+    margin-block: var(--wiki-space-4, 1rem);
+    padding: var(--wiki-space-3);
+  }
+
+  .editor-properties-visibility-summary {
+    align-items: center;
+    color: rgb(var(--v-theme-on-surface));
+    display: flex;
+    font-weight: 600;
+    gap: var(--wiki-space-2);
+    margin-top: var(--wiki-space-2);
   }
 
   .editor-properties-subsection {
@@ -1305,7 +1320,7 @@ export default defineComponent({
   &-hint {
     background: rgba(var(--v-theme-on-surface), .04);
     border-top: 1px solid rgba(var(--v-theme-on-surface), .12);
-    color: rgba(var(--v-theme-on-surface), .62);
+    color: var(--wiki-text-muted);
     flex: 0 0 auto;
     padding: 5px 10px;
   }
