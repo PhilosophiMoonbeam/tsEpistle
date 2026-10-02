@@ -1,12 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { onWatcherCleanup, reactive, watch } from 'vue'
-import { createPatch as createRealPatch } from 'diff'
-import * as RealDiff2Html from 'diff2html'
 import { createPinia } from 'pinia'
 import { JSDOM } from 'jsdom'
 import { loadingStart, loadingStop, setLoading } from '../helpers/root-ui-store.ts'
 import { createInstance as createI18nInstance } from 'i18next'
+import englishLocale from '../../server/locales/en.json'
+import { formatRevisionTime, friendlyEditorName, translatedParts } from '../helpers/history-presentation.ts'
 import { afterEach, beforeEach } from '../../server/test/bun-test.mts'
 
 const fixtureSiteConfig = {
@@ -31,6 +31,35 @@ try {
   restoreImportConfig()
 }
 const source = fs.readFileSync(path.join(process.cwd(), 'client/components/history.vue'), 'utf8')
+const englishI18n = createI18nInstance()
+await englishI18n.init({
+  lng: 'en',
+  fallbackLng: 'en',
+  resources: { en: { history: englishLocale.history, common: englishLocale.common } }
+})
+// Mirrors the client `$t` (client/modules/localization.ts): `namespace:path` keys.
+const translate = (key, options) => {
+  const separator = key.indexOf(':')
+  const ns = separator < 0 ? 'common' : key.slice(0, separator)
+  const keyPath = separator < 0 ? key : key.slice(separator + 1)
+  return englishI18n.t(keyPath, { ns, ...options })
+}
+// A comparison renderer double: answers immediately with a recorded outcome.
+const createFakeRenderer = (outcomeFor = request => ({ status: 'ready', html: `<div class="fake-diff">${request.key}|${request.format}</div>` })) => {
+  const cache = new Map()
+  const calls = []
+  return {
+    calls,
+    peek: request => cache.get(`${request.key}|${request.format}`),
+    render: vi.fn(async request => {
+      calls.push(request)
+      const outcome = await outcomeFor(request)
+      if (outcome.status !== 'timeout' && outcome.status !== 'failed') cache.set(`${request.key}|${request.format}`, outcome)
+      return outcome
+    }),
+    dispose: vi.fn()
+  }
+}
 
 describe('history revision list and comparison behavior', () => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)[1]
@@ -53,11 +82,10 @@ describe('history revision list and comparison behavior', () => {
 
   const createHistoryInstance = (overrides = {}, dependencies = {}) => {
     const wikiStore = dependencies.wikiStore ?? useWikiStore(createPinia())
+    const renderer = dependencies.renderer ?? createFakeRenderer()
     const component = new Function(
       'markRaw',
       'onWatcherCleanup',
-      'Diff2Html',
-      'createPatch',
       'AsyncState',
       'fetchPageHistory',
       'fetchPageVersion',
@@ -71,25 +99,31 @@ describe('history revision list and comparison behavior', () => {
       'showNotification',
       'wikiStore',
       'decodeBase64Json',
+      'createHistoryDiffRenderer',
+      'formatRevisionTime',
+      'friendlyEditorName',
+      'translatedParts',
       executable
     )(
       value => value,
       onWatcherCleanup,
-      dependencies.Diff2Html ?? { html: () => '' },
-      dependencies.createPatch ?? (() => ''),
       {},
       dependencies.fetchPageHistory ?? {},
       dependencies.fetchPageVersion ?? {},
       dependencies.restorePageVersion ?? {},
       () => '',
-      () => '',
+      dependencies.getPageSourcePath ?? (() => ''),
       dependencies.getErrorMessage ?? (error => (error instanceof Error ? error.message : String(error))),
       dependencies.loadingStart ?? loadingStart,
       dependencies.loadingStop ?? loadingStop,
       dependencies.setLoading ?? setLoading,
       dependencies.showNotification ?? (() => {}),
       wikiStore,
-      () => ({})
+      () => ({}),
+      () => renderer,
+      formatRevisionTime,
+      friendlyEditorName,
+      translatedParts
     )
 
     const instance = {
@@ -112,6 +146,7 @@ describe('history revision list and comparison behavior', () => {
       $vuetify: { display: { mdAndUp: true, smAndDown: false } },
       $nextTick: fn => fn(),
       $helpers: { formatMoment: value => value },
+      $t: translate,
       $refs: {},
       $el: {},
       ...overrides
@@ -146,7 +181,7 @@ describe('history revision list and comparison behavior', () => {
     })
 
     ownedInstances.push({ component, instance, wikiStore })
-    return { component, instance, wikiStore }
+    return { component, instance, wikiStore, renderer }
   }
 
   const watchSelections = (component, instance) => {
@@ -208,9 +243,9 @@ describe('history revision list and comparison behavior', () => {
     expect(store.isLoading).toBe(false)
   }
 
-  test('uses explicit comparison format choices and preserves trail scroll position', () => {
+  test('renders comparisons through the diff renderer, reuses cached formats and preserves trail scroll position', async () => {
     const trailEl = { scrollTop: 0 }
-    const { instance } = createHistoryInstance({
+    const { instance, renderer } = createHistoryInstance({
       $refs: { trailContainer: trailEl },
       source: { ...page(1), content: 'Original paragraph\n' },
       target: { ...page(2), content: 'Updated paragraph\n' },
@@ -218,24 +253,173 @@ describe('history revision list and comparison behavior', () => {
       targetReady: true,
       diffSource: 1,
       diffTarget: 2
-    }, { createPatch: createRealPatch, Diff2Html: RealDiff2Html })
+    })
 
     instance.trailScrollTop = 75
+    expect(instance.comparisonRendering).toBe(true)
+    await instance.renderComparison()
+    expect(instance.comparisonRendering).toBe(false)
+    expect(instance.diffHTML).toContain('1:2|line-by-line')
+    expect(renderer.calls[0]).toEqual({
+      key: '1:2',
+      path: 'home',
+      source: 'Original paragraph\n',
+      target: 'Updated paragraph\n',
+      format: 'line-by-line'
+    })
 
     instance.setViewMode('side-by-side')
     expect(instance.viewMode).toBe('side-by-side')
     expect(trailEl.scrollTop).toBe(75)
-    const sideBySide = JSDOM.fragment(instance.diffHTML)
-    expect(sideBySide.querySelectorAll('.d2h-file-side-diff')).toHaveLength(2)
-    expect(sideBySide.querySelector('.d2h-file-diff')).toBeNull()
+    await instance.renderComparison()
+    expect(instance.diffHTML).toContain('1:2|side-by-side')
 
     trailEl.scrollTop = 0
     instance.setViewMode('line-by-line')
-    expect(instance.viewMode).toBe('line-by-line')
     expect(trailEl.scrollTop).toBe(75)
-    const unified = JSDOM.fragment(instance.diffHTML)
-    expect(unified.querySelectorAll('.d2h-file-diff')).toHaveLength(1)
-    expect(unified.querySelector('.d2h-file-side-diff')).toBeNull()
+    // The cached result is applied synchronously, without a loading state.
+    const rerender = instance.renderComparison()
+    expect(instance.comparisonRendering).toBe(false)
+    expect(instance.diffHTML).toContain('1:2|line-by-line')
+    await rerender
+    expect(renderer.render).toHaveBeenCalledTimes(2)
+  })
+
+  test('ignores a comparison result after the selection changed', async () => {
+    const resolvers = []
+    const renderer = createFakeRenderer(() => new Promise(resolve => { resolvers.push(resolve) }))
+    const { instance } = createHistoryInstance({
+      source: page(1),
+      target: page(2),
+      sourceReady: true,
+      targetReady: true,
+      diffSource: 1,
+      diffTarget: 2
+    }, { renderer })
+
+    const first = instance.renderComparison()
+    instance.source = page(3)
+    instance.diffSource = 3
+    const second = instance.renderComparison()
+    resolvers[1]({ status: 'ready', html: '<p>3 to 2</p>' })
+    await second
+    resolvers[0]({ status: 'ready', html: '<p>1 to 2</p>' })
+    await first
+    expect(instance.diffHTML).toBe('<p>3 to 2</p>')
+  })
+
+  test('maps comparison outcomes to problem, empty and retry states', async () => {
+    const outcomes = [{ status: 'limit' }, { status: 'timeout' }, { status: 'ready', html: '<p>ok</p>' }, { status: 'empty' }]
+    const renderer = createFakeRenderer(() => outcomes.shift())
+    const { instance } = createHistoryInstance({
+      source: page(1),
+      target: page(2),
+      sourceReady: true,
+      targetReady: true,
+      diffSource: 1,
+      diffTarget: 2
+    }, { renderer })
+
+    await instance.renderComparison()
+    expect(instance.comparisonProblem).toBe('limit')
+    expect(instance.diffHTML).toBe('')
+    expect(translate(`history:comparison.${instance.comparisonProblem}Message`)).toContain('too large')
+
+    instance.viewMode = 'side-by-side'
+    await instance.renderComparison()
+    expect(instance.comparisonProblem).toBe('timeout')
+    expect(translate('history:comparison.timeoutTitle')).toBe('Comparison took too long')
+    instance.retryComparison()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(instance.comparisonProblem).toBe('')
+    expect(instance.diffHTML).toBe('<p>ok</p>')
+
+    instance.target = { ...page(2), versionId: 4 }
+    instance.diffTarget = 4
+    await instance.renderComparison()
+    expect(instance.comparisonEmpty).toBe(true)
+  })
+
+  test('does not render or keep comparison state before both revisions are ready', async () => {
+    const { instance, renderer } = createHistoryInstance({
+      source: page(1),
+      target: page(2),
+      sourceReady: false,
+      targetReady: true,
+      diffSource: 1,
+      diffTarget: 2,
+      diffOutcome: { status: 'ready', html: '<p>stale</p>' }
+    })
+    await instance.renderComparison()
+    expect(renderer.render).not.toHaveBeenCalled()
+    expect(instance.diffHTML).toBe('')
+    expect(instance.comparisonRendering).toBe(false)
+  })
+
+  test('disposes the comparison renderer on unmount', async () => {
+    const { component, instance, renderer } = createHistoryInstance({
+      source: page(1),
+      target: page(2),
+      sourceReady: true,
+      targetReady: true,
+      diffSource: 1,
+      diffTarget: 2
+    })
+    await instance.renderComparison()
+    component.beforeUnmount.call(instance)
+    expect(renderer.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  test('labels revision rows with the time, author and selection state', () => {
+    const { instance } = createHistoryInstance({
+      total: 3,
+      trail: [
+        { ...trailItem(2), authorName: 'Ada' },
+        { ...trailItem(1, 'move'), valueBefore: 'old/path', valueAfter: 'home' }
+      ],
+      diffSource: 2,
+      diffTarget: 0
+    })
+    const [live, second, oldest] = instance.trailRows
+    expect(live.name).toBe('Current version')
+    expect(live.parts).toEqual([{ text: 'Last edited by ' }, { text: 'TestAuthor', value: 'author' }])
+    expect(live.time.short).not.toBe('')
+    expect(live.label).toContain('Current version')
+    expect(live.label).toContain('Compare with the revision before it')
+    expect(live.canCompare).toBe(false)
+    expect(second.name).toBe('Revision 2')
+    expect(second.canCompare).toBe(false)
+    expect(oldest.parts.map(part => part.text).join('')).toBe('Moved from /old/path to /home by TestAuthor')
+    expect(oldest.canCompare).toBe(true)
+    // More revisions exist on the server, so the oldest loaded row cannot be selected yet.
+    expect(oldest.selectable).toBe(false)
+    expect(oldest.label).toContain('Load older revisions to compare it')
+  })
+
+  test('shows friendly target metadata without raw formats or unknown values', () => {
+    const { instance } = createHistoryInstance({
+      target: { ...page(2), editor: 'markdown', contentType: 'text/markdown', visibility: 'private', isPublished: false, tags: ['a', 'b'], versionDate: '' }
+    })
+    expect(instance.targetMetadata).toEqual(['Revision 2', 'Markdown', 'Private', 'Unpublished', 'Tags: a, b'])
+    instance.target = { ...page(0), editor: 'unknown', versionDate: '' }
+    expect(instance.targetMetadata).toEqual(['Current version'])
+  })
+
+  test('keeps a bounded revision cache that retains the live and compared versions', async () => {
+    const fetchPageVersion = vi.fn(async (_fetch, _pageId, versionId) => page(versionId))
+    const { instance } = createHistoryInstance({
+      cache: [{ ...page(0), versionId: 0 }],
+      trail: [trailItem(30)],
+      diffSource: 3,
+      diffTarget: 0
+    }, { fetchPageVersion })
+    for (let versionId = 3; versionId <= 20; versionId += 1) await instance.loadVersion(versionId)
+    const ids = instance.cache.map(item => item.versionId)
+    expect(ids.length).toBeLessThanOrEqual(12)
+    expect(ids).toContain(0)
+    expect(ids).toContain(3)
+    expect(ids).toContain(20)
   })
 
   test('supports live, historical, and initial-empty comparison selections', () => {
@@ -668,106 +852,5 @@ describe('history revision list and comparison behavior', () => {
       expect(component.computed.diffHTML.call(instance)).toBe('')
       stop()
     }
-  })
-
-  test('reports oversized comparisons instead of invoking the diff renderer', () => {
-    const createPatch = vi.fn(() => 'should not be called')
-    const { component, instance } = createHistoryInstance(
-      {
-        source: { ...page(1), content: 'a'.repeat(1_000_001) },
-        target: { ...page(2), content: 'b' },
-        sourceReady: true,
-        targetReady: true,
-        diffSource: 1,
-        diffTarget: 2
-      },
-      { createPatch }
-    )
-
-    expect(component.computed.comparisonError.call(instance)).toContain('too large')
-    expect(component.computed.diffHTML.call(instance)).toBe('')
-    expect(createPatch).not.toHaveBeenCalled()
-  })
-
-  test('bounds wholly changed revisions below the input size limits', () => {
-    const Diff2Html = { html: vi.fn() }
-    const { instance } = createHistoryInstance(
-      {
-        source: { ...page(1), content: Array.from({ length: 18_000 }, (_, index) => `old${index}\n`).join('') },
-        target: { ...page(2), content: Array.from({ length: 18_000 }, (_, index) => `new${index}\n`).join('') },
-        sourceReady: true,
-        targetReady: true,
-        diffSource: 1,
-        diffTarget: 2
-      },
-      { createPatch: createRealPatch, Diff2Html }
-    )
-
-    const started = performance.now()
-    const result = instance.diffResult
-    expect(performance.now() - started).toBeLessThan(1_000)
-    expect(result.error).toContain('View Source or Download Version')
-    expect(result.html).toBe('')
-    expect(Diff2Html.html).not.toHaveBeenCalled()
-  })
-
-  test('caps rendered patch rows before building a large DOM', () => {
-    const Diff2Html = { html: vi.fn() }
-    const { instance } = createHistoryInstance(
-      {
-        source: page(1),
-        target: page(2),
-        sourceReady: true,
-        targetReady: true,
-        diffSource: 1,
-        diffTarget: 2
-      },
-      { createPatch: () => '+changed\n'.repeat(4_001), Diff2Html }
-    )
-
-    expect(instance.diffResult.error).toContain('too large')
-    expect(Diff2Html.html).not.toHaveBeenCalled()
-  })
-
-  test('renders ordinary revisions and limits expensive line matching for larger patches', () => {
-    const html = vi.fn(RealDiff2Html.html)
-    const { instance } = createHistoryInstance(
-      {
-        source: { ...page(1), content: 'Original paragraph\n' },
-        target: { ...page(2), content: 'Updated paragraph\n' },
-        sourceReady: true,
-        targetReady: true,
-        diffSource: 1,
-        diffTarget: 2
-      },
-      { createPatch: createRealPatch, Diff2Html: { html } }
-    )
-
-    expect(instance.diffResult.html).toContain('d2h-ins')
-    expect(html.mock.calls[0][1].matching).toBe('lines')
-    instance.target.content = 'Updated paragraph\n'.repeat(250)
-    expect(instance.diffResult.html).toContain('d2h-ins')
-    expect(html.mock.calls[1][1].matching).toBe('none')
-    expect(html.mock.calls[1][1].maxLineLengthHighlight).toBe(0)
-  })
-
-  test('avoids unbounded word comparisons within long changed lines', () => {
-    const { instance } = createHistoryInstance(
-      {
-        source: { ...page(1), content: 'old '.repeat(2_000) },
-        target: { ...page(2), content: 'new '.repeat(2_000) },
-        sourceReady: true,
-        targetReady: true,
-        diffSource: 1,
-        diffTarget: 2
-      },
-      { createPatch: createRealPatch, Diff2Html: RealDiff2Html }
-    )
-
-    const started = performance.now()
-    const result = instance.diffResult
-    expect(performance.now() - started).toBeLessThan(1_000)
-    expect(result.error).toBe('')
-    expect(result.html).toContain('d2h-ins')
   })
 })

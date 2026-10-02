@@ -2,134 +2,103 @@
   v-app.history
     nav-header
     v-main.history-main
-      v-toolbar.history-toolbar(color='surface', flat)
+      header.history-toolbar
         .history-toolbar-copy
-          .history-eyebrow Revision history
-          h1.history-toolbar-title Viewing history of #[strong.history-path-fragment /{{path}}]
-          .history-toolbar-meta(v-if='$vuetify.display.mdAndUp')
-            span {{total}} revisions
-            span {{locale}}
-        v-spacer
-        v-btn.history-live-action(variant='flat', color='primary', size='small', @click='goLive', aria-label='Return to page')
-          v-icon(v-if='$vuetify.display.smAndDown') mdi-close
-          span(v-else) Return to page
+          h1.history-toolbar-title {{ title }}
+          .history-toolbar-meta
+            span {{ $t('history:pageHistory') }}
+            span.history-path-fragment(dir='ltr') /{{ path }}
+            span(v-if='trailLoaded') {{ $t('history:revisionCount', { count: total }) }}
+        v-btn.history-live-action(
+          variant='flat'
+          color='primary'
+          size='small'
+          prepend-icon='mdi-arrow-left'
+          @click='goLive'
+        ) {{ $t('history:backToPage') }}
       v-container.history-shell(fluid)
         v-row.history-shell-row
           v-col.history-trail-column(cols='12')
-            .history-trail-panel(ref='trailContainer', tabindex='0', role='region', aria-label='Revision history', @scroll.passive='onTrailScroll')
-              .history-trail-header
-                .history-trail-heading
-                  span.history-section-kicker Revisions
-                  strong {{total}} total
-                .history-live-chip
-                  v-icon(size='small', aria-hidden='true') mdi-access-point
-                  span Live
+            .history-trail-panel(ref='trailContainer', tabindex='0', role='region', :aria-label='$t(`history:regionLabel`)', @scroll.passive='onTrailScroll')
               .history-refreshing(v-if='trailLoading && trail.length > 0', role='status', aria-live='polite')
                 v-progress-circular(indeterminate, size='16', width='2', color='primary', aria-hidden='true')
-                span Refreshing history…
+                span {{ $t('history:refreshing') }}
               async-state(
                 v-if='trailLoading && trail.length === 0'
                 state='loading'
-                title='Loading page history'
-                message='Fetching revision metadata.'
+                :title='$t(`history:loadingTitle`)'
+                :message='$t(`history:loadingMessage`)'
               )
               async-state(
                 v-else-if='trailError && trail.length === 0'
                 state='error'
-                title='Page history could not be loaded'
+                :title='$t(`history:loadErrorTitle`)'
                 :message='trailError'
-                retry-label='Retry history'
+                :retry-label='$t(`history:retry`)'
                 @retry='loadHistory'
               )
               async-state(
                 v-else-if='trailLoaded && trail.length === 0'
                 state='empty'
-                title='No revisions yet'
-                message='This page has no saved revisions to compare.'
+                :title='$t(`history:emptyTitle`)'
+                :message='$t(`history:emptyMessage`)'
               )
               template(v-else)
                 .history-refresh-error(v-if='trailError', role='alert')
                   v-icon(size='small', aria-hidden='true') mdi-alert-circle-outline
-                  span {{trailError}}
-                  v-btn(size='small', variant='text', color='primary', @click='loadHistory') Retry
-                .history-revision-list(v-if='trail.length > 0', role='list', aria-label='Saved revisions')
-                  .history-revision-row(
-                    v-for='(ph, idx) in fullTrail'
-                    :key='ph.versionId'
-                    :class='{ "history-revision-row--target": diffTarget === ph.versionId, "history-revision-row--source": diffSource === ph.versionId }'
-                    role='listitem'
+                  span {{ trailError }}
+                  v-btn(size='small', variant='text', color='primary', @click='loadHistory') {{ $t('history:retry') }}
+                ol.history-revision-list(v-if='trail.length > 0', :aria-label='$t(`history:listLabel`)')
+                  li.history-revision-row(
+                    v-for='row in trailRows'
+                    :key='row.item.versionId'
+                    :class='{ "history-revision-row--target": diffTarget === row.item.versionId, "history-revision-row--source": diffSource === row.item.versionId }'
                   )
                     .history-revision-main(
                       role='button'
-                      :tabindex='canSelectVersion(idx) ? 0 : -1'
-                      :aria-disabled='!canSelectVersion(idx)'
-                      :aria-current='diffTarget === ph.versionId ? `true` : undefined'
-                      :aria-label='revisionAriaLabel(ph, idx)'
-                      @click='selectVersion(idx)'
-                      @keydown.enter.prevent='selectVersion(idx)'
-                      @keydown.space.prevent='selectVersion(idx)'
+                      :tabindex='row.selectable ? 0 : -1'
+                      :aria-disabled='!row.selectable'
+                      :aria-current='diffTarget === row.item.versionId ? `true` : undefined'
+                      :aria-label='row.label'
+                      @click='selectVersion(row.index)'
+                      @keydown.enter.prevent='selectVersion(row.index)'
+                      @keydown.space.prevent='selectVersion(row.index)'
                     )
-                      .history-revision-date(:title='String($helpers.formatMoment(ph.versionDate, `LLL`))') {{ $helpers.formatMoment(ph.versionDate, 'll') }}
-                      .history-revision-copy
-                        .history-revision-action(v-if='ph.actionType === `edit`') Edited by #[strong {{ ph.authorName }}]
-                        .history-revision-action(v-else-if='ph.actionType === `move`') Moved from #[strong.history-path-fragment {{ph.valueBefore}}] to #[strong.history-path-fragment {{ph.valueAfter}}] by #[strong {{ ph.authorName }}]
-                        .history-revision-action(v-else-if='ph.actionType === `initial`') Initial revision by #[strong {{ ph.authorName }}]
-                        .history-revision-action(v-else-if='ph.actionType === `live`') Live version, last edited by #[strong {{ ph.authorName }}]
-                        .history-revision-action(v-else) Revision by #[strong {{ ph.authorName }}]
-                      .history-revision-selection(v-if='diffTarget === ph.versionId') Newer
-                      .history-revision-selection(v-if='diffSource === ph.versionId') Older
+                      .history-revision-heading
+                        time.history-revision-date(v-if='row.time', :datetime='row.time.iso') {{ row.time.short }}
+                          v-tooltip(activator='parent', location='top', :open-delay='400') {{ row.time.full }}
+                        span.history-revision-badge.history-revision-badge--current(v-if='row.item.versionId === 0') {{ $t('history:current') }}
+                        span.history-revision-badge.history-revision-badge--newer(v-if='diffTarget === row.item.versionId') {{ $t('history:newer') }}
+                        span.history-revision-badge(v-if='diffSource === row.item.versionId') {{ $t('history:older') }}
+                      .history-revision-action
+                        template(v-for='(part, partIndex) in row.parts', :key='partIndex')
+                          bdi.history-revision-value(v-if='part.value', :class='{ "history-path-fragment": part.value !== `author` }') {{ part.text }}
+                          template(v-else) {{ part.text }}
+                      .history-revision-hint(v-if='!row.selectable') {{ $t('history:loadOlderToCompare') }}
                     .history-revision-actions
-                      v-menu(location='start')
+                      v-btn.history-compare-button(
+                        v-if='row.canCompare'
+                        size='small'
+                        variant='text'
+                        prepend-icon='mdi-compare-horizontal'
+                        :aria-label='$t(`history:compareLabel`, { revision: row.name })'
+                        @click.stop='setDiffSource(row.item.versionId)'
+                      ) {{ $t('history:compare') }}
+                      v-menu(location='bottom end')
                         template(v-slot:activator='{ props }')
-                          v-btn(
+                          v-btn.history-more-button(
                             v-bind='props'
-                            icon
+                            icon='mdi-dots-horizontal'
                             size='small'
                             variant='text'
-                            :aria-label='`More actions for ${ph.versionId === 0 ? `live version` : `revision ${ph.versionId}`}`'
+                            :aria-label='$t(`history:moreActions`, { revision: row.name })'
                             @click.stop
-                          ): v-icon mdi-dots-horizontal
-                        v-list(density='compact', nav).history-promptmenu
-                          v-list-item(@click.stop='setDiffSource(ph.versionId)', :disabled='!canSetDiffSource(ph.versionId)')
-                            template(v-slot:prepend)
-                              v-icon(size='small') mdi-chevron-down
-                            v-list-item-title Set as Older revision
-                          v-list-item(@click.stop='setDiffTarget(ph.versionId)', :disabled='!canSetDiffTarget(ph.versionId)')
-                            template(v-slot:prepend)
-                              v-icon(size='small') mdi-chevron-up
-                            v-list-item-title Set as Newer revision
-                          v-list-item(@click.stop='viewSource(ph.versionId)')
-                            template(v-slot:prepend)
-                              v-icon(size='small') mdi-code-tags
-                            v-list-item-title View Source
-                          v-list-item(@click.stop='download(ph.versionId)')
-                            template(v-slot:prepend)
-                              v-icon(size='small') mdi-cloud-download-outline
-                            v-list-item-title Download Version
-                          v-list-item(@click.stop='restore(ph.versionId, ph.versionDate)', :disabled='ph.versionId === 0')
-                            template(v-slot:prepend)
-                              v-icon(size='small') mdi-history
-                            v-list-item-title Restore
-                          v-list-item(@click.stop='branchOff(ph.versionId)')
-                            template(v-slot:prepend)
-                              v-icon(size='small') mdi-source-branch
-                            v-list-item-title Branch off from here
-                      v-btn.history-selection-button(
-                        size='small'
-                        variant='text'
-                        :aria-label='`Set revision ${ph.versionId === 0 ? `live version` : ph.versionId} as Older revision`'
-                        :aria-pressed='diffSource === ph.versionId'
-                        :disabled='!canSetDiffSource(ph.versionId)'
-                        @click.stop='setDiffSource(ph.versionId)'
-                      ) Older
-                      v-btn.history-selection-button(
-                        size='small'
-                        variant='text'
-                        :aria-label='`Set revision ${ph.versionId === 0 ? `live version` : ph.versionId} as Newer revision`'
-                        :aria-pressed='diffTarget === ph.versionId'
-                        :disabled='!canSetDiffTarget(ph.versionId)'
-                        @click.stop='setDiffTarget(ph.versionId)'
-                      ) Newer
+                          )
+                        v-list.history-promptmenu(density='compact', nav)
+                          v-list-item(prepend-icon='mdi-code-tags', :title='$t(`history:menu.viewSource`)', @click='viewSource(row.item.versionId)')
+                          v-list-item(prepend-icon='mdi-download-outline', :title='$t(`history:menu.download`)', @click='download(row.item.versionId)')
+                          v-list-item(v-if='row.item.versionId !== 0', prepend-icon='mdi-history', :title='$t(`history:menu.restore`)', @click='restore(row.item.versionId, row.item.versionDate)')
+                          v-list-item(prepend-icon='mdi-source-branch', :title='$t(`history:menu.branch`)', @click='branchOff(row.item.versionId)')
                 .history-pagination(v-if='trailLoaded && trail.length > 0')
                   v-btn.history-load-more(
                     v-if='total > trail.length && !paginationError'
@@ -139,107 +108,111 @@
                     @click='loadMore'
                     :loading='loadingMore'
                     :disabled='loadingMore || trailLoading'
-                  ) Load more revisions
+                  ) {{ $t('history:loadOlder') }}
                   async-state(
                     v-if='paginationError'
                     state='error'
-                    title='Older revisions could not be loaded'
+                    :title='$t(`history:olderErrorTitle`)'
                     :message='paginationError'
-                    retry-label='Retry older revisions'
+                    :retry-label='$t(`history:retry`)'
                     @retry='loadMore'
                   )
                   .history-end-state(v-else-if='total <= trail.length', role='status')
-                    v-icon(size='small', aria-hidden='true') mdi-archive-check-outline
-                    span End of revision history
+                    span {{ $t('history:firstRevision') }}
           v-col.history-comparison-column(cols='12')
-            v-card.history-comparison-surface(v-if='trailLoaded && trail.length > 0')
-              v-card-text
-                .history-comparison-header
-                  .history-comparison-heading-copy
-                    span.history-section-kicker Comparison
-                    h2#history-comparison-heading.history-comparison-heading(ref='comparisonHeading', tabindex='-1') Older revision to Newer revision
-                    .history-comparison-range(aria-live='polite')
-                      span.history-comparison-range-item
-                        strong Older
-                        span {{sourceSelectionLabel}}
-                      v-icon(size='small', aria-hidden='true') mdi-arrow-right
-                      span.history-comparison-range-item
-                        strong Newer
-                        span {{targetSelectionLabel}}
-                  .history-comparison-controls(role='group', aria-label='Comparison format')
-                    v-btn.history-view-choice(
-                      size='small'
-                      :variant='viewMode === `line-by-line` ? `flat` : `text`'
-                      :color='viewMode === `line-by-line` ? `primary` : undefined'
-                      :aria-pressed='viewMode === `line-by-line`'
-                      @click='setViewMode(`line-by-line`)'
-                    ) Unified
-                    v-btn.history-view-choice(
-                      size='small'
-                      :variant='viewMode === `side-by-side` ? `flat` : `text`'
-                      :color='viewMode === `side-by-side` ? `primary` : undefined'
-                      :aria-pressed='viewMode === `side-by-side`'
-                      @click='setViewMode(`side-by-side`)'
-                    ) Side by side
-                .history-comparison-details(v-if='targetReady')
-                  h3.history-comparison-title {{target.title}}
-                  .history-comparison-description(v-if='target.description') {{target.description}}
-                  .history-revision-meta
-                    span {{ target.versionId === 0 ? 'Live version' : `Revision ${target.versionId}` }}
-                    span {{ target.editor || 'unknown editor' }} / {{ target.contentType || 'unknown format' }}
-                    span {{ target.visibility || 'unknown visibility' }}{{ target.isPublished === false ? ' / unpublished' : '' }}
-                    span(v-if='target.tags && target.tags.length > 0') Tags: {{ target.tags.join(', ') }}
+            section.history-comparison-surface(v-if='trailLoaded && trail.length > 0', aria-labelledby='history-comparison-heading')
+              .history-comparison-header
+                .history-comparison-heading-copy
+                  h2#history-comparison-heading.history-comparison-heading(ref='comparisonHeading', tabindex='-1') {{ $t('history:comparison.heading') }}
+                  .history-comparison-range(aria-live='polite')
+                    span.history-comparison-range-item
+                      span.history-comparison-side {{ $t('history:older') }}
+                      strong {{ sourceSelectionLabel }}
+                    v-icon(size='small', aria-hidden='true') mdi-arrow-right
+                    span.history-comparison-range-item
+                      span.history-comparison-side {{ $t('history:newer') }}
+                      strong {{ targetSelectionLabel }}
+                .history-comparison-controls(role='group', :aria-label='$t(`history:comparison.formatLabel`)')
+                  v-btn.history-view-choice(
+                    size='small'
+                    :variant='viewMode === `line-by-line` ? `flat` : `text`'
+                    :color='viewMode === `line-by-line` ? `primary` : undefined'
+                    :aria-pressed='viewMode === `line-by-line`'
+                    @click='setViewMode(`line-by-line`)'
+                  ) {{ $t('history:comparison.unified') }}
+                  v-btn.history-view-choice(
+                    size='small'
+                    :variant='viewMode === `side-by-side` ? `flat` : `text`'
+                    :color='viewMode === `side-by-side` ? `primary` : undefined'
+                    :aria-pressed='viewMode === `side-by-side`'
+                    @click='setViewMode(`side-by-side`)'
+                  ) {{ $t('history:comparison.sideBySide') }}
+              .history-comparison-details(v-if='targetReady')
+                h3.history-comparison-title {{ target.title }}
+                .history-comparison-description(v-if='target.description') {{ target.description }}
+                .history-revision-meta
+                  span(v-for='item in targetMetadata', :key='item') {{ item }}
+              async-state(
+                v-if='comparisonLoading'
+                state='loading'
+                :title='$t(`history:comparison.loadingTitle`)'
+                :message='$t(`history:comparison.loadingMessage`)'
+              )
+              async-state(
+                v-else-if='sourceError'
+                state='error'
+                :title='$t(`history:comparison.olderUnavailable`)'
+                :message='sourceError'
+                :retry-label='$t(`history:retry`)'
+                @retry='retrySource'
+              )
+              async-state(
+                v-else-if='targetError'
+                state='error'
+                :title='$t(`history:comparison.newerUnavailable`)'
+                :message='targetError'
+                :retry-label='$t(`history:retry`)'
+                @retry='retryTarget'
+              )
+              template(v-else-if='comparisonRendering')
                 async-state(
-                  v-if='comparisonLoading'
+                  v-if='diffSlow'
                   state='loading'
-                  title='Loading comparison'
-                  message='Fetching the selected revisions.'
+                  :title='$t(`history:comparison.renderingTitle`)'
+                  :message='$t(`history:comparison.renderingMessage`)'
                 )
+                .history-diff-pending(v-else, aria-hidden='true')
+              template(v-else-if='comparisonProblem')
                 async-state(
-                  v-else-if='sourceError'
                   state='error'
-                  title='Older revision is unavailable'
-                  :message='sourceError'
-                  retry-label='Retry Older revision'
-                  @retry='retrySource'
+                  :title='$t(`history:comparison.${comparisonProblem}Title`)'
+                  :message='$t(`history:comparison.${comparisonProblem}Message`)'
+                  :retry-label='comparisonProblem === `limit` ? undefined : $t(`history:retry`)'
+                  @retry='retryComparison'
                 )
-                async-state(
-                  v-else-if='targetError'
-                  state='error'
-                  title='Newer revision is unavailable'
-                  :message='targetError'
-                  retry-label='Retry Newer revision'
-                  @retry='retryTarget'
-                )
-                async-state(
-                  v-else-if='comparisonError'
-                  state='error'
-                  title='Comparison could not be rendered'
-                  :message='comparisonError'
-                )
-                async-state(
-                  v-else-if='comparisonEmpty'
-                  state='empty'
-                  title='No textual changes'
-                  message='These revisions contain the same text.'
-                )
-                .history-diff(v-else-if='comparisonReady', dir='ltr', aria-labelledby='history-comparison-heading')
-                  div(v-html='diffHTML')
+                .history-problem-actions(v-if='comparisonProblem === `limit`')
+                  v-btn(size='small', variant='text', color='primary', prepend-icon='mdi-code-tags', @click='viewSource(diffTarget)') {{ $t('history:comparison.viewNewerSource') }}
+              async-state(
+                v-else-if='comparisonEmpty'
+                state='empty'
+                :title='$t(`history:comparison.noChangesTitle`)'
+                :message='$t(`history:comparison.noChangesMessage`)'
+              )
+              .history-diff(v-else-if='diffHTML', dir='ltr')
+                div(v-html='diffHTML')
     v-dialog(
       v-model='isRestoreConfirmDialogShown'
-      max-width='650'
+      max-width='560'
       persistent
       :aria-label='$t(`history:restore.confirmTitle`)'
     )
       v-card.history-restore-dialog
-        .dialog-header.history-restore-header {{$t('history:restore.confirmTitle')}}
-        v-card-text.pa-4
-          i18next(tag='span', path='history:restore.confirmText')
-            strong(place='date') {{ $helpers.formatMoment(restoreTarget.versionDate, 'LLL') }}
+        v-card-title.history-restore-header {{ $t('history:restore.confirmTitle') }}
+        v-card-text.history-restore-text {{ $t('history:restore.confirmText', { date: restoreDateLabel, interpolation: { escapeValue: false } }) }}
         v-card-actions
           v-spacer
-          v-btn(variant='text', @click='isRestoreConfirmDialogShown = false', :disabled='restoreLoading') {{$t('common:actions.cancel')}}
-          v-btn(color='warning', variant='flat', @click='restoreConfirm', :loading='restoreLoading') {{$t('history:restore.confirmButton')}}
+          v-btn(variant='text', @click='isRestoreConfirmDialogShown = false', :disabled='restoreLoading') {{ $t('common:actions.cancel') }}
+          v-btn(color='warning', variant='flat', @click='restoreConfirm', :loading='restoreLoading') {{ $t('history:restore.confirmButton') }}
     page-selector(mode='create', v-model='branchOffOpts.modal', :open-handler='branchOffHandle', :path='branchOffOpts.path', :locale='branchOffOpts.locale')
     nav-footer
     notify
@@ -248,25 +221,36 @@
 
 <script lang='ts'>
 import { markRaw, onWatcherCleanup } from 'vue'
-import * as Diff2Html from 'diff2html'
-import { createPatch } from 'diff'
 import AsyncState from '@/components/common/async-state.vue'
 import { fetchPageHistory, fetchPageVersion, restorePageVersion, type PageHistoryTrailItem, type PageVersion } from '../helpers/pages-api'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
 import { getErrorMessage, loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
 import { decodeBase64Json } from '../helpers/base64'
+import { createHistoryDiffRenderer, type HistoryDiffRenderer } from '../helpers/history-diff-client'
+import type { HistoryDiffOutcome, HistoryDiffRequest } from '../helpers/history-diff'
+import { formatRevisionTime, friendlyEditorName, translatedParts, type RevisionTime, type TranslatedPart } from '../helpers/history-presentation'
 
 const HISTORY_PAGE_SIZE = 25
-const MAX_COMPARISON_CHARACTERS = 1_000_000
-const MAX_COMPARISON_LINES = 100_000
-const COMPARISON_TIMEOUT_MS = 150
-const MAX_COMPARISON_EDITS = 2_000
-const MAX_RENDERED_PATCH_LINES = 4_000
-const MAX_MATCHED_PATCH_LINES = 200
-const COMPARISON_LIMIT_MESSAGE = 'This comparison is too large to render safely. Choose closer revisions, or use View Source or Download Version from the revision menu.'
+// Loaded revision contents kept for quick re-selection. The live version, the
+// two compared revisions and the newest saved revision are always kept.
+const MAX_CACHED_VERSIONS = 12
+// Show the "Comparing revisions" state only when a comparison is slow, so a
+// fast comparison does not flash a loading card.
+const SLOW_COMPARISON_MS = 200
 
 type HistorySide = 'source' | 'target'
+type ComparisonProblem = 'limit' | 'failed' | 'timeout'
+type HistoryRow = {
+  readonly item: PageHistoryTrailItem
+  readonly index: number
+  readonly name: string
+  readonly time: RevisionTime | null
+  readonly parts: TranslatedPart[]
+  readonly selectable: boolean
+  readonly canCompare: boolean
+  readonly label: string
+}
 
 const emptyPageVersion = (versionId = 0): PageVersion => ({
   versionId,
@@ -414,7 +398,13 @@ export default {
       historyMoreRequestId: 0,
       restoreRequestId: 0,
       isUnmounted: false,
-      requestsAbortController: markRaw(new AbortController())
+      requestsAbortController: markRaw(new AbortController()),
+      diffRenderer: null as HistoryDiffRenderer | null,
+      diffOutcome: null as HistoryDiffOutcome | null,
+      diffRendering: false,
+      diffSlow: false,
+      diffRenderId: 0,
+      diffSlowTimer: null as number | null
     }
   },
   computed: {
@@ -436,14 +426,47 @@ export default {
       }
       return [liveTrailItem, ...this.trail]
     },
+    trailIndexById (): Map<number, number> {
+      const indexes = new Map<number, number>()
+      this.fullTrail.forEach((item, index) => indexes.set(item.versionId, index))
+      return indexes
+    },
+    trailRows (): HistoryRow[] {
+      return this.fullTrail.map((item, index) => {
+        const selectable = this.canSelectVersion(index)
+        return {
+          item,
+          index,
+          name: this.revisionName(item.versionId),
+          time: formatRevisionTime(item.versionDate),
+          parts: this.revisionActionParts(item),
+          selectable,
+          canCompare: this.diffSource !== item.versionId && this.canSetDiffSource(item.versionId),
+          label: this.revisionAriaLabel(item, index)
+        }
+      })
+    },
     sourceSelectionLabel () {
-      if (this.diffSource === -1) return 'Empty baseline'
-      if (this.diffSource === 0) return 'Live version'
-      return `Revision ${this.diffSource}`
+      if (this.diffSource === -1) return this.$t('history:emptyBaseline')
+      return this.revisionName(this.diffSource)
     },
     targetSelectionLabel () {
-      if (this.diffTarget === 0) return 'Live version'
-      return `Revision ${this.diffTarget}`
+      return this.revisionName(this.diffTarget)
+    },
+    targetMetadata (): string[] {
+      const items = [this.revisionName(this.target.versionId)]
+      const time = formatRevisionTime(this.target.versionDate)
+      if (time) items.push(time.short)
+      const editor = friendlyEditorName(this.target.editor)
+      if (editor) items.push(editor)
+      if (this.target.visibility === 'private') items.push(this.$t('history:comparison.private'))
+      if (this.target.isPublished === false) items.push(this.$t('history:comparison.unpublished'))
+      const tags = Array.isArray(this.target.tags) ? this.target.tags.filter(tag => typeof tag === 'string' && tag) : []
+      if (tags.length > 0) items.push(this.$t('history:comparison.tags', { tags: tags.join(', '), interpolation: { escapeValue: false } }))
+      return items
+    },
+    restoreDateLabel (): string {
+      return formatRevisionTime(this.restoreTarget.versionDate)?.full ?? ''
     },
     comparisonReady () {
       return Boolean(
@@ -461,75 +484,40 @@ export default {
         (!this.targetReady && !this.targetError)
       )
     },
-    diffResult () {
-      if (!this.comparisonReady) return { patch: '', html: '', error: '', empty: false }
-      const sourceContent = typeof this.source.content === 'string' ? this.source.content : ''
-      const targetContent = typeof this.target.content === 'string' ? this.target.content : ''
-      if (sourceContent === targetContent) return { patch: '', html: '', error: '', empty: true }
-      if (sourceContent.length + targetContent.length > MAX_COMPARISON_CHARACTERS) {
-        return {
-          patch: '',
-          html: '',
-          error: COMPARISON_LIMIT_MESSAGE,
-          empty: false
-        }
-      }
-      const sourceLines = sourceContent.length === 0 ? 0 : sourceContent.split('\n').length
-      const targetLines = targetContent.length === 0 ? 0 : targetContent.split('\n').length
-      if (sourceLines + targetLines > MAX_COMPARISON_LINES) {
-        return {
-          patch: '',
-          html: '',
-          error: COMPARISON_LIMIT_MESSAGE,
-          empty: false
-        }
-      }
-      try {
-        const patch = createPatch(`/${this.path}`, sourceContent, targetContent, undefined, undefined, {
-          timeout: COMPARISON_TIMEOUT_MS,
-          maxEditLength: MAX_COMPARISON_EDITS
-        })
-        const patchLines = patch?.split('\n').length ?? 0
-        if (patch === undefined || patchLines > MAX_RENDERED_PATCH_LINES) {
-          return { patch: '', html: '', error: COMPARISON_LIMIT_MESSAGE, empty: false }
-        }
-        return {
-          patch,
-          html: Diff2Html.html(patch, {
-            drawFileList: false,
-            matching: patchLines <= MAX_MATCHED_PATCH_LINES ? 'lines' : 'none',
-            matchingMaxComparisons: 100,
-            maxLineLengthHighlight: patchLines <= MAX_MATCHED_PATCH_LINES ? 500 : 0,
-            outputFormat: this.viewMode
-          }),
-          error: '',
-          empty: false
-        }
-      } catch {
-        return {
-          patch: '',
-          html: '',
-          error: 'This comparison could not be rendered. Retry the selected revisions.',
-          empty: false
-        }
+    comparisonRequest (): HistoryDiffRequest | null {
+      if (!this.comparisonReady) return null
+      return {
+        key: `${this.source.versionId}:${this.target.versionId}`,
+        path: this.path,
+        source: typeof this.source.content === 'string' ? this.source.content : '',
+        target: typeof this.target.content === 'string' ? this.target.content : '',
+        format: this.viewMode
       }
     },
-    diffs () {
-      return this.diffResult.patch
+    comparisonRequestKey (): string {
+      const request = this.comparisonRequest
+      return request ? `${request.key}|${request.format}` : ''
     },
-    diffHTML () {
-      return this.diffResult.html
+    comparisonRendering (): boolean {
+      return Boolean(this.comparisonRequest && (this.diffRendering || !this.diffOutcome))
     },
-    comparisonError () {
-      return this.diffResult.error
+    diffHTML (): string {
+      return this.diffOutcome?.status === 'ready' ? this.diffOutcome.html : ''
     },
-    comparisonEmpty () {
-      return this.diffResult.empty
+    comparisonProblem (): ComparisonProblem | '' {
+      const status = this.diffOutcome?.status
+      return status === 'limit' || status === 'failed' || status === 'timeout' ? status : ''
+    },
+    comparisonEmpty (): boolean {
+      return this.diffOutcome?.status === 'empty'
     }
   },
   watch: {
     trail () {
       this.reconcileSelections()
+    },
+    comparisonRequestKey () {
+      void this.renderComparison()
     },
     viewMode () {
       this.preserveTrailScroll()
@@ -549,7 +537,7 @@ export default {
     wikiStore.page.path = this.path
     wikiStore.page.visibility = this.visibility === 'private' ? 'private' : 'public'
     wikiStore.page.mode = 'history'
-    this.cache.push({
+    this.cache.push(markRaw({
       action: 'live',
       authorId: this.authorId,
       authorName: this.authorName,
@@ -570,7 +558,7 @@ export default {
       title: this.title,
       versionId: 0,
       versionDate: this.updatedAt
-    })
+    }))
     this.target = this.cache[0]!
     if (this.effectivePermissions) {
       wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
@@ -596,6 +584,10 @@ export default {
     this.sourceVersionController = null
     this.targetVersionController = null
     this.requestsAbortController.abort()
+    this.diffRenderId += 1
+    this.clearDiffSlowTimer()
+    this.diffRenderer?.dispose()
+    this.diffRenderer = null
     if (this.restoreRedirectTimer !== null) {
       window.clearTimeout(this.restoreRedirectTimer)
       this.restoreRedirectTimer = null
@@ -668,8 +660,10 @@ export default {
         ) throw cancelledError()
         const cached = this.cache.find(item => item.versionId === page.versionId)
         if (cached) return cached
-        this.cache.push(page)
-        return page
+        const stored = markRaw(page)
+        this.cache.push(stored)
+        this.pruneVersionCache(stored.versionId)
+        return stored
       } finally {
         this.activeVersionControllers.delete(requestController)
         loadingStop(wikiStore, 'history-version-' + versionId)
@@ -737,11 +731,11 @@ export default {
         if (isSource) {
           this.sourceError = message
           this.sourceReady = false
-          showNotification(wikiStore, { style: 'red', message: `Older revision unavailable: ${message}`, icon: 'alert' })
+          showNotification(wikiStore, { style: 'red', message: this.$t('history:olderUnavailableNotice', { message, interpolation: { escapeValue: false } }), icon: 'alert' })
         } else {
           this.targetError = message
           this.targetReady = false
-          showNotification(wikiStore, { style: 'red', message: `Newer revision unavailable: ${message}`, icon: 'alert' })
+          showNotification(wikiStore, { style: 'red', message: this.$t('history:newerUnavailableNotice', { message, interpolation: { escapeValue: false } }), icon: 'alert' })
         }
         return false
       } finally {
@@ -795,7 +789,7 @@ export default {
         this.isRestoreConfirmDialogShown = false
         this.restoreRedirectTimer = window.setTimeout(() => {
           if (!isCurrent()) return
-          window.location.assign(`/${this.locale}/${this.path}`)
+          window.location.assign(this.livePath())
         }, 1000)
       } catch (error) {
         if (!isCurrent() || isAbortError(error)) return
@@ -827,14 +821,93 @@ export default {
       this.viewMode = mode
       this.preserveTrailScroll()
     },
-    goLive () {
+    livePath (): string {
       const privatePrefix = this.visibility === 'private' ? '/_private' : ''
-      window.location.assign(`${privatePrefix}/${this.locale}/${this.path}`)
+      return `${privatePrefix}/${this.locale}/${this.path}`
+    },
+    goLive () {
+      window.location.assign(this.livePath())
+    },
+    revisionName (versionId: number): string {
+      if (versionId === 0) return this.$t('history:currentVersion')
+      return this.$t('history:revisionNumber', { id: versionId })
+    },
+    revisionActionParts (item: PageHistoryTrailItem): TranslatedPart[] {
+      const author = item.authorName || ''
+      const translate = (key: string) => (values: Record<string, string>) => this.$t(key, { ...values, interpolation: { escapeValue: false } })
+      if (item.actionType === 'move') {
+        return translatedParts(translate('history:action.move'), {
+          from: `/${item.valueBefore ?? ''}`.replace(/^\/+/, '/'),
+          to: `/${item.valueAfter ?? ''}`.replace(/^\/+/, '/'),
+          author
+        })
+      }
+      const key = item.actionType === 'edit' || item.actionType === 'initial' || item.actionType === 'live' ? item.actionType : 'other'
+      return translatedParts(translate(`history:action.${key}`), { author })
     },
     revisionAriaLabel (item: PageHistoryTrailItem, index: number) {
-      const date = this.$helpers.formatMoment(item.versionDate, 'LLL')
-      if (!this.canSelectVersion(index)) return `Revision from ${date} has no earlier comparison source`
-      return `Compare revision from ${date}`
+      const values = {
+        revision: this.revisionName(item.versionId),
+        date: formatRevisionTime(item.versionDate)?.full ?? '',
+        interpolation: { escapeValue: false }
+      }
+      if (!this.canSelectVersion(index)) return this.$t('history:selectRevisionUnavailable', values)
+      return this.$t('history:selectRevision', values)
+    },
+    pruneVersionCache (keepVersionId: number) {
+      const extra = this.cache.length - MAX_CACHED_VERSIONS
+      if (extra <= 0) return
+      const keep = new Set([0, keepVersionId, this.diffSource, this.diffTarget, this.trail[0]?.versionId ?? 0])
+      let remaining = extra
+      this.cache = this.cache.filter(item => {
+        if (remaining <= 0 || keep.has(item.versionId)) return true
+        remaining -= 1
+        return false
+      })
+    },
+    getDiffRenderer (): HistoryDiffRenderer {
+      this.diffRenderer ??= markRaw(createHistoryDiffRenderer())
+      return this.diffRenderer
+    },
+    clearDiffSlowTimer () {
+      if (this.diffSlowTimer !== null) {
+        window.clearTimeout(this.diffSlowTimer)
+        this.diffSlowTimer = null
+      }
+    },
+    async renderComparison (): Promise<void> {
+      const renderId = ++this.diffRenderId
+      this.clearDiffSlowTimer()
+      this.diffSlow = false
+      const request = this.comparisonRequest
+      if (this.isUnmounted || !request) {
+        this.diffOutcome = null
+        this.diffRendering = false
+        return
+      }
+      const renderer = this.getDiffRenderer()
+      const cached = renderer.peek(request)
+      if (cached) {
+        this.diffOutcome = markRaw(cached)
+        this.diffRendering = false
+        return
+      }
+      this.diffOutcome = null
+      this.diffRendering = true
+      this.diffSlowTimer = window.setTimeout(() => {
+        this.diffSlowTimer = null
+        if (renderId === this.diffRenderId) this.diffSlow = true
+      }, SLOW_COMPARISON_MS)
+      const outcome = await renderer.render(request)
+      if (renderId !== this.diffRenderId || this.isUnmounted) return
+      this.clearDiffSlowTimer()
+      this.diffOutcome = markRaw(outcome)
+      this.diffRendering = false
+      this.diffSlow = false
+      this.preserveTrailScroll()
+    },
+    retryComparison () {
+      void this.renderComparison()
     },
     canSelectVersion (index: number) {
       const target = this.fullTrail[index]
@@ -864,17 +937,9 @@ export default {
     },
     canSetDiffSource (versionId: number) {
       if (versionId <= 0) return false
-      const sourceIndex = this.fullTrail.findIndex(item => item.versionId === versionId)
-      const targetIndex = this.fullTrail.findIndex(item => item.versionId === this.diffTarget)
-      return sourceIndex >= 0 && (this.diffTarget === 0 || targetIndex < 0 || sourceIndex > targetIndex)
-    },
-    canSetDiffTarget (versionId: number) {
-      if (versionId < 0 || versionId === this.diffSource && this.diffSource !== -1) return false
-      if (this.diffSource === -1) return true
-      if (versionId === 0) return true
-      const targetIndex = this.fullTrail.findIndex(item => item.versionId === versionId)
-      const sourceIndex = this.fullTrail.findIndex(item => item.versionId === this.diffSource)
-      return targetIndex >= 0 && sourceIndex >= 0 && targetIndex < sourceIndex
+      const sourceIndex = this.trailIndexById.get(versionId)
+      const targetIndex = this.trailIndexById.get(this.diffTarget)
+      return sourceIndex !== undefined && (this.diffTarget === 0 || targetIndex === undefined || sourceIndex > targetIndex)
     },
     isMobileViewport (): boolean {
       if (typeof window !== 'undefined' && typeof window.innerWidth === 'number') return window.innerWidth < 960
@@ -917,11 +982,6 @@ export default {
     setDiffSource (versionId: number) {
       if (!this.canSetDiffSource(versionId)) return
       this.diffSource = versionId
-      this.preserveTrailScroll()
-    },
-    setDiffTarget (versionId: number) {
-      if (!this.canSetDiffTarget(versionId)) return
-      this.diffTarget = versionId
       this.preserveTrailScroll()
     },
     dedupeTrail (trail: PageHistoryTrailItem[]) {
@@ -1053,42 +1113,33 @@ export default {
 }
 
 .history-toolbar {
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10)) !important;
-  padding-inline: var(--wiki-page-gutter);
-  border-bottom: 1px solid var(--wiki-surface-border) !important;
-  background: var(--wiki-surface-raised) !important;
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-4);
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10));
+  padding: var(--wiki-space-3) var(--wiki-page-gutter);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-raised);
 }
 
 .history-toolbar-copy {
   min-width: 0;
-  padding-block: var(--wiki-space-3);
-}
-
-.history-eyebrow,
-.history-section-kicker {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .12em;
-  text-transform: uppercase;
+  flex: 1 1 auto;
 }
 
 .history-toolbar-title {
   overflow: hidden;
-  margin: var(--wiki-space-1) 0 0;
+  margin: 0;
   color: rgb(var(--v-theme-on-surface));
-  font-size: 1rem;
-  font-weight: 520;
+  font-size: 1.125rem;
+  font-weight: 650;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
-
-  strong {
-    font-family: var(--wiki-font-mono);
-    font-weight: 680;
-  }
 }
 
 .history-path-fragment {
+  font-family: var(--wiki-font-mono);
   direction: ltr;
   unicode-bidi: isolate;
 }
@@ -1097,18 +1148,34 @@ export default {
 .history-revision-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--wiki-space-1) var(--wiki-space-4);
+  gap: var(--wiki-space-1) var(--wiki-space-2);
   margin-top: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
-  font-size: .75rem;
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+
+  > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  > span + span::before {
+    margin-inline-end: var(--wiki-space-2);
+    color: var(--wiki-text-subtle);
+    content: '·';
+  }
+}
+
+.history-live-action {
+  flex: 0 0 auto;
 }
 
 .history-live-action,
 .history-load-more,
 .history-view-choice,
-.history-selection-button {
+.history-compare-button {
   border-radius: var(--wiki-control-radius);
   font-weight: 650;
+  letter-spacing: 0;
   text-transform: none;
 }
 
@@ -1122,6 +1189,7 @@ export default {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--wiki-space-6);
+  margin: 0;
 
   > .history-trail-column,
   > .history-comparison-column {
@@ -1139,7 +1207,7 @@ export default {
 
 .history-trail-panel {
   min-width: 0;
-  padding: var(--wiki-space-3);
+  padding: var(--wiki-space-2);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
@@ -1151,52 +1219,18 @@ export default {
   box-shadow: inset var(--wiki-focus-ring);
 }
 
-.history-trail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--wiki-space-3);
-  padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-3);
-}
-
-.history-trail-heading {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--wiki-space-1);
-
-  strong {
-    color: rgb(var(--v-theme-on-surface));
-    font-size: .8125rem;
-    font-weight: 650;
-  }
-}
-
-.history-live-chip {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--wiki-space-1);
-  padding: .25rem .5rem;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: 999px;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
-  font-size: .75rem;
-  font-weight: 650;
-}
-
 .history-refreshing,
 .history-refresh-error,
 .history-end-state {
   display: flex;
   align-items: center;
   gap: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
 }
 
 .history-refreshing {
-  padding: 0 var(--wiki-space-1) var(--wiki-space-2);
+  padding: var(--wiki-space-1) var(--wiki-space-2) var(--wiki-space-2);
 }
 
 .history-refresh-error {
@@ -1214,29 +1248,43 @@ export default {
 }
 
 .history-revision-list {
-  overflow: hidden;
-  border-block: 1px solid var(--wiki-surface-border);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .history-revision-row {
   position: relative;
   display: flex;
-  flex-direction: column;
   min-width: 0;
-  border-bottom: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
+  align-items: flex-start;
+  gap: var(--wiki-space-1);
+  border-radius: var(--wiki-control-radius);
+  // Rows far outside the viewport skip layout and paint on long histories.
+  content-visibility: auto;
+  contain-intrinsic-size: auto 4.5rem;
 
-  &:last-child {
-    border-bottom: 0;
+  & + & {
+    margin-top: 1px;
   }
 
   &::before {
     position: absolute;
-    inset-block: 0;
+    inset-block: var(--wiki-space-2);
     inset-inline-start: 0;
-    width: .2rem;
+    width: .1875rem;
+    border-radius: 999px;
     background: transparent;
     content: '';
+  }
+
+  &:hover {
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, transparent);
+  }
+
+  &--target,
+  &--target:hover {
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 9%, transparent);
   }
 
   &--target::before {
@@ -1244,23 +1292,22 @@ export default {
   }
 
   &--source::before {
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 50%, rgb(var(--v-theme-on-surface)));
+    background: var(--wiki-text-muted);
   }
 }
 
 .history-revision-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   min-width: 0;
   flex: 1 1 auto;
-  align-items: flex-start;
-  gap: var(--wiki-space-3);
-  padding: var(--wiki-space-3) var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-3);
+  flex-direction: column;
+  gap: .125rem;
+  padding: var(--wiki-space-2) var(--wiki-space-2) var(--wiki-space-2) var(--wiki-space-3);
+  border-radius: var(--wiki-control-radius);
   cursor: pointer;
 
   &[aria-disabled='true'] {
     cursor: default;
-    opacity: .62;
   }
 
   &:focus-visible {
@@ -1270,65 +1317,86 @@ export default {
   }
 }
 
+.history-revision-heading {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wiki-space-1) var(--wiki-space-2);
+}
+
 .history-revision-date {
-  grid-column: 1;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
-  font-family: var(--wiki-font-mono);
-  font-size: .7rem;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .8125rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
   line-height: 1.35;
 }
 
-.history-revision-copy {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  min-width: 0;
-  flex: 1 1 auto;
+.history-revision-badge {
+  padding: 0 .4375rem;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: 999px;
+  color: var(--wiki-text-muted);
+  font-size: .6875rem;
+  font-weight: 650;
+  line-height: 1.125rem;
+
+  &--current {
+    border-color: color-mix(in srgb, rgb(var(--v-theme-success)) 45%, transparent);
+    background: color-mix(in srgb, rgb(var(--v-theme-success)) 10%, transparent);
+    color: rgb(var(--v-theme-on-surface));
+  }
+}
+
+.history-revision-badge--newer {
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 50%, transparent);
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .history-revision-action {
+  min-width: 0;
   overflow-wrap: anywhere;
-  color: rgb(var(--v-theme-on-surface));
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
   line-height: 1.45;
 }
 
-.history-revision-selection {
-  grid-column: 2;
-  grid-row: 1;
-  flex: 0 0 auto;
-  align-self: flex-start;
-  padding: .125rem .375rem;
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: 999px;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
-  font-size: .65rem;
-  font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
+.history-revision-value {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: 600;
+}
+
+.history-revision-hint {
+  color: var(--wiki-text-muted);
+  font-size: .75rem;
+  font-style: italic;
 }
 
 .history-revision-actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  justify-content: flex-end;
   gap: 0;
-  padding: 0 var(--wiki-space-2) var(--wiki-space-2);
+  padding: var(--wiki-space-1) var(--wiki-space-1) 0 0;
 
   .v-btn {
     min-width: 0;
-    min-height: var(--wiki-control-height);
-    padding-inline: var(--wiki-space-2);
   }
 }
 
-.history-selection-button {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
-  font-size: .7rem;
+.history-compare-button {
+  color: var(--wiki-text-muted);
+  font-size: .75rem;
+
+  &:hover,
+  &:focus-visible {
+    color: rgb(var(--v-theme-primary));
+  }
 }
 
-.history-selection-button[aria-pressed='true'] {
-  color: rgb(var(--v-theme-primary));
+.history-more-button {
+  color: var(--wiki-text-muted);
 }
 
 .history-promptmenu,
@@ -1341,7 +1409,7 @@ export default {
 }
 
 .history-pagination {
-  padding-top: var(--wiki-space-3);
+  padding: var(--wiki-space-2) var(--wiki-space-1) var(--wiki-space-1);
 }
 
 .history-load-more {
@@ -1350,19 +1418,16 @@ export default {
 
 .history-end-state {
   justify-content: center;
-  padding: var(--wiki-space-3) var(--wiki-space-1) var(--wiki-space-1);
+  padding: var(--wiki-space-2) var(--wiki-space-1);
 }
 
 .history-comparison-surface {
   overflow: hidden;
+  padding: var(--wiki-space-5);
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius) !important;
+  border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-sm);
-
-  > .v-card-text {
-    padding: var(--wiki-space-5);
-  }
 }
 
 .history-comparison-header {
@@ -1379,10 +1444,15 @@ export default {
 }
 
 .history-comparison-heading {
-  margin: var(--wiki-space-1) 0 0;
+  margin: 0;
   color: rgb(var(--v-theme-on-surface));
-  font-size: 1.15rem;
-  font-weight: 720;
+  font-size: 1.125rem;
+  font-weight: 700;
+
+  &:focus-visible {
+    outline: .125rem solid var(--wiki-focus-color);
+    outline-offset: var(--wiki-focus-offset);
+  }
 }
 
 .history-comparison-range {
@@ -1390,20 +1460,25 @@ export default {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--wiki-space-2);
-  margin-top: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  margin-top: var(--wiki-space-1);
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
 }
 
 .history-comparison-range-item {
   display: inline-flex;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: var(--wiki-space-1);
 
   strong {
     color: rgb(var(--v-theme-on-surface));
-    font-weight: 700;
+    font-weight: 650;
   }
+}
+
+.history-comparison-side {
+  color: var(--wiki-text-muted);
 }
 
 .history-comparison-controls {
@@ -1428,12 +1503,24 @@ export default {
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .history-comparison-description {
   margin-top: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
+}
+
+.history-diff-pending {
+  min-height: 7rem;
+}
+
+.history-problem-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--wiki-space-2);
+  padding-top: var(--wiki-space-2);
 }
 
 .history-diff {
@@ -1445,6 +1532,7 @@ export default {
   text-align: left;
 
   .d2h-file-wrapper {
+    margin: 0;
     border: 0;
   }
 
@@ -1466,9 +1554,14 @@ export default {
     color: rgb(var(--v-theme-on-surface));
   }
 
+  .d2h-code-linenumber,
+  .d2h-code-side-linenumber {
+    color: var(--wiki-text-muted);
+  }
+
   .d2h-info {
     background: color-mix(in srgb, rgb(var(--v-theme-info)) 10%, var(--wiki-surface-raised));
-    color: rgb(var(--v-theme-on-surface));
+    color: var(--wiki-text-muted);
   }
 
   .d2h-del {
@@ -1478,12 +1571,35 @@ export default {
   .d2h-ins {
     background: color-mix(in srgb, rgb(var(--v-theme-success)) 12%, var(--wiki-surface-raised));
   }
+
+  del,
+  .d2h-del .d2h-change {
+    background: color-mix(in srgb, rgb(var(--v-theme-error)) 28%, var(--wiki-surface-raised));
+  }
+
+  ins,
+  .d2h-ins .d2h-change {
+    background: color-mix(in srgb, rgb(var(--v-theme-success)) 28%, var(--wiki-surface-raised));
+  }
+
+  .d2h-emptyplaceholder,
+  .d2h-code-side-emptyplaceholder {
+    border-color: var(--wiki-surface-border);
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, var(--wiki-surface-raised));
+  }
 }
 
 .history-restore-header {
-  border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 22%, transparent);
-  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 12%, var(--wiki-surface-raised));
+  padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-2);
   color: rgb(var(--v-theme-on-surface));
+  font-size: 1.125rem;
+  font-weight: 650;
+  white-space: normal;
+}
+
+.history-restore-text {
+  padding-inline: var(--wiki-space-5) !important;
+  color: var(--wiki-text-muted);
 }
 
 @media (min-width: 960px) {
@@ -1504,17 +1620,7 @@ export default {
 
 @media (max-width: 959.98px) {
   .history-toolbar {
-    min-height: calc(var(--wiki-control-height) + var(--wiki-space-8)) !important;
     padding-inline: var(--wiki-space-3);
-  }
-
-  .history-toolbar-copy {
-    max-width: calc(100vw - 5.75rem);
-  }
-
-  .history-live-action {
-    min-width: var(--wiki-control-height);
-    min-height: var(--wiki-control-height);
   }
 
   .history-shell {
@@ -1527,15 +1633,22 @@ export default {
 }
 
 @media (max-width: 599px) {
+  .history-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--wiki-space-2);
+  }
+
   .history-toolbar-title {
-    font-size: .875rem;
+    font-size: 1rem;
+    white-space: normal;
   }
 
   .history-shell {
     padding-inline: var(--wiki-space-2) !important;
   }
 
-  .history-comparison-surface > .v-card-text {
+  .history-comparison-surface {
     padding: var(--wiki-space-3);
   }
 
@@ -1551,32 +1664,22 @@ export default {
       flex: 1 1 50%;
     }
   }
-
-  .history-revision-row {
-    display: block;
-  }
-
-  .history-revision-main {
-    padding-inline-end: var(--wiki-space-3);
-  }
-
-  .history-revision-actions {
-    justify-content: flex-end;
-    padding-top: 0;
-    border-top: 1px solid var(--wiki-surface-border);
-  }
 }
 
 @media (forced-colors: active) {
   .history-trail-panel,
-  .history-revision-list,
-  .history-revision-row,
   .history-comparison-surface,
   .history-diff,
   .history-promptmenu,
-  .history-restore-dialog {
+  .history-restore-dialog,
+  .history-revision-badge {
     border-color: CanvasText;
     box-shadow: none;
+  }
+
+  .history-revision-row--target,
+  .history-revision-row--source {
+    outline: 1px solid CanvasText;
   }
 
   .history-revision-row::before {
@@ -1605,6 +1708,10 @@ export default {
     border: 0;
     background: transparent;
     box-shadow: none;
+  }
+
+  .history-revision-row {
+    content-visibility: visible;
   }
 
   .history-live-action,
