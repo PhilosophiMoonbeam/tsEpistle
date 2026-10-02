@@ -1166,6 +1166,30 @@ describe('modern editor shell interaction contract', () => {
     expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-modal-unsaved\([\s\S]*:error='discardError'/)
   })
 
+  test('unsaved dialog shows a spinner on Discard and keeps it apart from Save and close', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp({
+      render: () => Vue.h(Vue.resolveComponent('EditorModalUnsaved'), { modelValue: true, discarding: true })
+    })
+    app.config.globalProperties.$t = (key: string) => key
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.component('VCardChin', { render: cardRender })
+    app.component('EditorModalUnsaved', { ...modalOptions, render: modalRender })
+    app.mount(host)
+    modalUnmounts.push(() => { app.unmount(); host.remove() })
+    await Vue.nextTick()
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button'))
+    expect(buttons.map(button => button.textContent?.trim())).toEqual([
+      'common:actions.discardChanges',
+      'common:actions.cancel',
+      'editor:save.saveAndClose'
+    ])
+    expect(buttons[0]?.classList.contains('v-btn--loading')).toBe(true)
+    expect(buttons[2]?.classList.contains('v-btn--loading')).toBe(false)
+    expect(buttons.every(button => button.disabled)).toBe(true)
+  })
+
   test('records one eligible automatic edit after a successful update', async () => {
     const store = createStore()
     const testWindow = createTestWindow()

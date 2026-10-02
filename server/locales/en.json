@@ -361,6 +361,21 @@
       },
       "goback": "Go Back"
     },
+    "pageUnlock": {
+      "title": "This page is password-protected",
+      "body": "Enter the page password to continue.",
+      "password": "Page password",
+      "showPassword": "Show password",
+      "submit": "Unlock page",
+      "unavailable": "This protected page is not available.",
+      "returnHome": "Return home"
+    },
+    "pageSource": {
+      "backToPage": "Back to page",
+      "wrapLines": "Wrap lines",
+      "copied": "Source copied to the clipboard.",
+      "copyFailed": "Copy failed. Select the source text and copy it manually."
+    },
     "modernBrowser": "modern browser",
     "outdatedBrowserWarning": "Your browser is outdated. Upgrade to a {{modernBrowser}}."
   },
