@@ -13,7 +13,7 @@
 
         section.tags-selection(
           v-if='hasSelection'
-          aria-label='Selected tags; all selected tags must match'
+          :aria-label='$t(`tags:selectedTagsRegion`)'
         )
           .tags-selection-heading
             div
@@ -93,8 +93,8 @@
               async-state(
                 v-else-if='tagsError'
                 :state='offlineBrowseUnavailable ? `empty` : `error`'
-                :title='offlineBrowseUnavailable ? `Reconnect to browse all tags` : $t(`tags:loadError`, { defaultValue: `Tags could not be loaded` })'
-                :message='offlineBrowseUnavailable ? `The tag library needs a connection. You can still open saved pages from Offline preferences.` : tagsError'
+                :title='offlineBrowseUnavailable ? $t(`tags:reconnectToBrowse`) : $t(`tags:loadError`, { defaultValue: `Tags could not be loaded` })'
+                :message='offlineBrowseUnavailable ? $t(`tags:reconnectToBrowseMessage`) : tagsError'
                 :retry-label='$t(`common:actions.retry`, { defaultValue: `Try again` })'
                 @retry='loadTags'
               )
@@ -104,18 +104,17 @@
                 :title='$t(`tags:empty`, { defaultValue: `No tags available` })'
                 :message='$t(`tags:emptyMessage`, { defaultValue: `There are no tags to browse yet.` })'
               )
-              v-empty-state.tags-index-empty(
+              async-state.tags-index-empty(
                 v-else-if='filteredTags.length === 0'
-                icon='mdi-text-search'
-                color='primary'
-                :text='$t(`tags:noMatchingTagsMessage`, { defaultValue: `Try a different search or clear the tag filter.` })'
+                state='empty'
+                :title='$t(`tags:noMatchingTags`, { defaultValue: `No matching tags` })'
+                :message='$t(`tags:noMatchingTagsMessage`, { defaultValue: `Try a different search or clear the tag filter.` })'
               )
-                template(#title)
-                  h3.v-empty-state__title {{$t(`tags:noMatchingTags`, { defaultValue: `No matching tags` })}}
                 template(#actions)
                   v-btn(
                     color='primary'
                     variant='tonal'
+                    size='small'
                     prepend-icon='mdi-close'
                     @click='clearTagSearch'
                   ) {{$t('tags:clearSearch', { defaultValue: 'Clear search' })}}
@@ -240,31 +239,40 @@
               template(v-slot:header='props')
                 p.tags-results-status(role='status')
                   span(v-if='isLoading') {{$t('tags:retrievingResultsLoading', { defaultValue: 'Loading matching pages…' })}}
-                  span(v-else-if='pagesError') {{offlineBrowseUnavailable ? 'Reconnect to view matching pages.' : $t('tags:resultsError', { defaultValue: 'Matching pages could not be loaded.' })}}
-                  span(v-else) {{props.itemsCount}} {{$t('tags:resultCount', { defaultValue: 'matching pages' })}}
+                  span(v-else-if='pagesError') {{offlineBrowseUnavailable ? $t('tags:reconnectToViewPages') : $t('tags:resultsError', { defaultValue: 'Matching pages could not be loaded.' })}}
+                  span(v-else) {{$t('tags:matchingPagesCount', { count: props.itemsCount })}}
               template(v-slot:loader)
-                .tags-state.tags-state--loading(role='status')
-                  v-progress-circular(indeterminate color='primary' size='40' width='3' aria-hidden='true')
-                  h3 {{$t('tags:retrievingResultsLoading', { defaultValue: 'Loading matching pages…' })}}
+                //- The header status line already announces loading.
+                async-state(
+                  state='loading'
+                  :announce='false'
+                  :title='$t(`tags:retrievingResultsLoading`, { defaultValue: `Loading matching pages…` })'
+                )
               template(v-slot:no-data)
                 async-state(
                   v-if='pagesError'
                   :state='offlineBrowseUnavailable ? `empty` : `error`'
-                  :title='offlineBrowseUnavailable ? `Reconnect to browse matching pages` : $t(`tags:resultsError`, { defaultValue: `Matching pages could not be loaded` })'
-                  :message='offlineBrowseUnavailable ? `The full tag library needs a connection. Your saved pages are still available in Offline preferences.` : pagesError'
+                  :title='offlineBrowseUnavailable ? $t(`tags:reconnectToBrowsePages`) : $t(`tags:resultsError`, { defaultValue: `Matching pages could not be loaded` })'
+                  :message='offlineBrowseUnavailable ? $t(`tags:reconnectToBrowsePagesMessage`) : pagesError'
                   :retry-label='$t(`common:actions.retry`, { defaultValue: `Try again` })'
                   @retry='loadPages'
                 )
-                .tags-state(v-else-if='typeof innerSearch === `string` && innerSearch.trim()')
-                  v-icon(size='42' color='primary' aria-hidden='true') mdi-text-search
-                  h3 {{$t('tags:noResultsWithFilter', { defaultValue: 'No pages match this search' })}}
-                  p {{$t('tags:noResultsWithFilterMessage', { defaultValue: 'Try a different search or clear the page filter.' })}}
-                  v-btn(color='primary' variant='tonal' prepend-icon='mdi-close' @click='clearResultSearch') {{$t('tags:clearSearch', { defaultValue: 'Clear search' })}}
-                .tags-state(v-else)
-                  v-icon(size='42' color='primary' aria-hidden='true') mdi-file-search-outline
-                  h3 {{$t('tags:noResults', { defaultValue: 'No matching pages' })}}
-                  p {{$t('tags:noResultsMessage', { defaultValue: 'Adjust your selected tags to find pages.' })}}
-                  v-btn(color='primary' variant='tonal' prepend-icon='mdi-filter-remove-outline' @click='clearSelection') {{$t('tags:clearSelection', { defaultValue: 'Clear selection' })}}
+                async-state(
+                  v-else-if='typeof innerSearch === `string` && innerSearch.trim()'
+                  state='empty'
+                  :title='$t(`tags:noResultsWithFilter`, { defaultValue: `No pages match this search` })'
+                  :message='$t(`tags:noResultsWithFilterMessage`, { defaultValue: `Try a different search or clear the page filter.` })'
+                )
+                  template(#actions)
+                    v-btn(color='primary' variant='tonal' size='small' prepend-icon='mdi-close' @click='clearResultSearch') {{$t('tags:clearSearch', { defaultValue: 'Clear search' })}}
+                async-state(
+                  v-else
+                  state='empty'
+                  :title='$t(`tags:noResults`, { defaultValue: `No matching pages` })'
+                  :message='$t(`tags:noResultsMessage`, { defaultValue: `Adjust your selected tags to find pages.` })'
+                )
+                  template(#actions)
+                    v-btn(color='primary' variant='tonal' size='small' prepend-icon='mdi-filter-remove-outline' @click='clearSelection') {{$t('tags:clearSelection', { defaultValue: 'Clear selection' })}}
               template(v-slot:default='props')
                 .tags-result-register
                   article.tags-result(v-for='entry of props.items' :key='`page-` + entry.raw.id')
@@ -917,7 +925,7 @@ export default {
 .tags-intro p {
   max-width: 52rem;
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, rgb(var(--v-theme-background)));
+  color: var(--wiki-text-muted);
   font-size: 1rem;
   line-height: 1.6;
 }
@@ -957,7 +965,7 @@ export default {
 
 .tags-selection-heading p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, rgb(var(--v-theme-background)));
+  color: var(--wiki-text-muted);
   font-size: .875rem;
   line-height: 1.5;
 }
@@ -996,7 +1004,7 @@ export default {
 
 .tags-selected-canonical {
   display: block;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, var(--wiki-surface-raised));
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: .8125rem;
 }
@@ -1109,7 +1117,7 @@ export default {
 .tags-results-status {
   min-height: 1.25rem;
   margin: 0 0 var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, var(--wiki-surface-raised));
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
   line-height: 1.5;
 }
@@ -1129,7 +1137,7 @@ export default {
   margin: 0 0 var(--wiki-space-2);
   padding-bottom: var(--wiki-space-2);
   border-bottom: 1px solid var(--wiki-surface-border);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, var(--wiki-surface-raised));
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-heading);
   font-size: .875rem;
   font-weight: 720;
@@ -1296,7 +1304,7 @@ export default {
 
 .tags-index-item-canonical {
   display: block;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, var(--wiki-surface-raised));
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: .8125rem;
   line-height: 1.3;
@@ -1307,34 +1315,6 @@ export default {
   border-radius: var(--wiki-control-radius);
 }
 
-.tags-state {
-  display: grid;
-  min-height: 13rem;
-  place-items: center;
-  align-content: center;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-6) var(--wiki-space-4);
-  border: 1px dashed var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
-  color: rgb(var(--v-theme-on-surface));
-  text-align: center;
-}
-
-.tags-state h3 {
-  margin: 0;
-  font-family: var(--wiki-font-heading);
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.tags-state p {
-  max-width: 34rem;
-  margin: 0 0 var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, var(--wiki-surface-raised));
-  font-size: .875rem;
-  line-height: 1.5;
-}
 
 .tags-results {
   min-width: 0;
@@ -1389,7 +1369,7 @@ export default {
 }
 
 .tags-field-label {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, rgb(var(--v-theme-background)));
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
   line-height: 1.35;
 }
@@ -1408,9 +1388,6 @@ export default {
   margin-bottom: var(--wiki-space-3);
 }
 
-.tags-state--loading {
-  min-height: 13rem;
-}
 
 .tags-result-register {
   min-width: 0;
@@ -1450,7 +1427,7 @@ export default {
 .tags-result-link p {
   max-width: 62rem;
   margin: 0 0 var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, var(--wiki-surface-raised));
+  color: var(--wiki-text-muted);
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -1461,7 +1438,7 @@ export default {
   min-width: 0;
   align-items: center;
   gap: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, var(--wiki-surface-raised));
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
   line-height: 1.4;
 }
