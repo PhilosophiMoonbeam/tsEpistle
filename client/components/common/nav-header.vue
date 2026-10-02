@@ -1337,9 +1337,16 @@ export default defineComponent({
       if (this.searchIsShown) void this.focusSearchField()
       else this.searchClose()
     },
-    openAgent(): void {
+    async openAgent(): Promise<void> {
       if (!this.canEnterAgent || !this.onlineActionReady) return
       if (this.$vuetify.display.xs) {
+        // Retire an existing Search scope so Agent owns the stable menu opener,
+        // rather than inheriting Search's original restore target.
+        if (this.searchIsFocused) {
+          emitSearchExit(false)
+          this.searchIsFocused = false
+          await this.$nextTick()
+        }
         const activator = this.$refs.mobileActions
         const element = activator instanceof HTMLElement
           ? activator
