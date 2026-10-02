@@ -34,7 +34,7 @@ export const translate = (key: string, options?: Record<string, unknown>): strin
   return i18next.t(path, { ns: namespace, ...options })
 }
 
-const plugin: Plugin = {
+export const localizationPlugin: Plugin = {
   install(app: App) {
     app.config.globalProperties.$t = translate
     app.config.globalProperties.$i18n = i18next
@@ -91,6 +91,6 @@ export default {
     ])
     if (timeoutId !== undefined) clearTimeout(timeoutId)
     if (!initialized) console.warn('Localization initialization timed out; continuing with fallback labels.')
-    return plugin
+    return localizationPlugin
   }
 }
