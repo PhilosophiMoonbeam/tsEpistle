@@ -5,6 +5,7 @@ import type { AccountWorkspace } from '../../../shared/account-policy.ts'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { document, resetBody } from '../../test/browser-dom.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -97,7 +98,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
   }
   Object.assign(dependencies, confirmStubs(window))
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
-  const state = { ...component.data(), passwordMinimum: 12, $route: { params: { id: '7' }, query: {}, hash: '' }, $router: { replace: vi.fn(), push: vi.fn() } }
+  const state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, passwordMinimum: 12, $route: { params: { id: '7' }, query: {}, hash: '' }, $router: { replace: vi.fn(), push: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
   return { state, component, transport, window }
@@ -127,6 +128,7 @@ describe('account workspace review and recovery', () => {
     app.config.globalProperties.$route = arranged.state.$route
     app.config.globalProperties.$router = arranged.state.$router
     app.config.globalProperties.passwordMinimum = 12
+    app.config.globalProperties.$t = translateEnglish
     app.component('AdminHero', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('header', [slots.default?.(), slots.actions?.()]) }))
     app.component('RouterLink', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('a', slots.default?.()) }))
     const state = app.mount(host) as unknown as typeof arranged.state
@@ -187,7 +189,7 @@ describe('account workspace review and recovery', () => {
     app.config.globalProperties.$route = arranged.state.$route
     app.config.globalProperties.$router = arranged.state.$router
     app.config.globalProperties.passwordMinimum = 12
-    app.config.globalProperties.$t = (key: string, options: { field?: string } = {}) => (key === 'common:password.show' ? `Show ${options.field}` : key)
+    app.config.globalProperties.$t = translateEnglish
     app.component('AdminHero', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('header', [slots.default?.(), slots.actions?.()]) }))
     app.component('RouterLink', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('a', slots.default?.()) }))
     const state = app.mount(host) as unknown as typeof arranged.state

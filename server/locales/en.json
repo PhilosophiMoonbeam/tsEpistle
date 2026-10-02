@@ -5126,7 +5126,11 @@
       "reassignContributionAttribution": "Reassign contribution attribution to",
       "searchAnotherActiveAccount": "Search for another active account in your administrative scope.",
       "administrativeReason": "Administrative reason",
-      "n31000Characters": "3–1,000 characters. Do not include credentials or private recovery information."
+      "n31000Characters": "3–1,000 characters. Do not include credentials or private recovery information.",
+      "permissionsCount_one": "{{count}} permission",
+      "permissionsCount_other": "{{count}} permissions",
+      "fieldsChangedCount_one": "{{count}} field changed",
+      "fieldsChangedCount_other": "{{count}} fields changed"
     },
     "apiConnect": {
       "restV1": "REST v1",
