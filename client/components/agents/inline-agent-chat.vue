@@ -2433,8 +2433,20 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   background: var(--wiki-surface-sunken);
 }
 
+/* Unavailable starters stay opaque and readable (text keeps its normal
+   contrast); a dashed border, muted icons and the visible reason below the
+   group mark the state. Opacity would also let the page show through. */
 .inline-agent__starter[aria-disabled='true'] {
-  opacity: .6;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.inline-agent__starter[aria-disabled='true'] .inline-agent__starter-heading > :deep(.v-icon) {
+  color: var(--wiki-text-muted);
+}
+
+.inline-agent__starter[aria-disabled='true'] :deep(.v-btn__overlay) {
+  opacity: 0;
 }
 
 .inline-agent__starter :deep(.v-btn__content) {
