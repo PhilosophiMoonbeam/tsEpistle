@@ -192,7 +192,9 @@
       "tabApprovals": "Approvals",
       "approvalsCount": "{{count}} active",
       "tabAppearance": "Appearance",
-      "tabOffline": "Offline"
+      "tabOffline": "Offline",
+      "reasonConnection": "Reconnect to the server to use this.",
+      "reasonSession": "Your sign-in must be checked again before you can use this."
     },
     "offline": {
       "summary": {

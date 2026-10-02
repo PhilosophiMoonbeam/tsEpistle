@@ -196,6 +196,7 @@
                       v-icon mdi-web
                   span {{$t('common:header.language')}}
               v-list.nav-header-menu(nav)
+                p.nav-header-menu__note(v-if='!readerActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
                 template(v-for='lc of locales', :key='lc.code')
                   v-list-item(
                     role='button'
@@ -223,7 +224,8 @@
                       v-icon mdi-dots-horizontal
                   span {{$t('common:header.pageActions')}}
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
-                .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
+                .text-label-small.pa-4 {{$t('common:header.currentPage')}}
+                p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
                 v-list-item.pl-4(
                   role='button'
                   link
@@ -297,12 +299,12 @@
                   icon
                   rounded='lg'
                   v-bind='props'
-                  :disabled='!onlineActionReady'
+                  :aria-disabled='!onlineActionReady ? `true` : undefined'
                   @click='pageNew'
                   :aria-label='$t(`common:header.newPage`)'
                 )
                   v-icon mdi-text-box-plus-outline
-              span {{$t('common:header.newPage')}}
+              span {{ onlineActionReady ? $t('common:header.newPage') : onlineActionUnavailableReason }}
 
           //- ADMIN
 
@@ -313,12 +315,12 @@
                   icon
                   rounded='lg'
                   v-bind='props'
-                  :disabled='!onlineActionReady'
+                  :aria-disabled='!onlineActionReady ? `true` : undefined'
                   @click='openAdmin'
                   :aria-label='$t(`common:header.admin`)'
                 )
                   v-icon mdi-cog
-              span {{$t('common:header.admin')}}
+              span {{ onlineActionReady ? $t('common:header.admin') : onlineActionUnavailableReason }}
             v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)')
               v-icon(start) mdi-exit-to-app
           v-menu(v-if='hasMobilePageActions && $vuetify.display.smAndDown', location='bottom end', min-width='240')
@@ -327,11 +329,12 @@
                 icon
                 v-bind='props'
                 :size='dense ? `small` : `default`'
-                aria-label='More page actions'
+                :aria-label='$t(`common:header.pageActions`)'
               )
                 v-icon mdi-dots-vertical
             v-list.nav-header-menu(nav)
-              v-list-subheader Page actions
+              v-list-subheader {{ $t('common:header.pageActions') }}
+              p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
               v-list-item(
                 role='button'
                 link
@@ -775,7 +778,7 @@ export default defineComponent({
         pwa.pwaState?.serverHealthy === true
     },
     navigationUnavailableReason(): string {
-      return this.transportVerified ? '' : 'This navigation requires a verified server connection.'
+      return this.transportVerified ? '' : this.$t('common:accountMenu.reasonConnection', { defaultValue: 'Reconnect to the server to use this.' })
     },
     authorizationFresh(): boolean {
       return this.isAuthenticated &&
@@ -799,8 +802,8 @@ export default defineComponent({
       return this.transportVerified && this.authorizationFresh
     },
     onlineActionUnavailableReason(): string {
-      if (!this.transportVerified) return 'This action requires a verified server connection.'
-      if (!this.authorizationFresh) return 'This action requires a freshly verified signed-in session.'
+      if (!this.transportVerified) return this.$t('common:accountMenu.reasonConnection', { defaultValue: 'Reconnect to the server to use this.' })
+      if (!this.authorizationFresh) return this.$t('common:accountMenu.reasonSession', { defaultValue: 'Your sign-in must be checked again before you can use this.' })
       return ''
     },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
@@ -1722,7 +1725,7 @@ export default defineComponent({
     }
 
     .v-label {
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, rgb(var(--v-theme-surface)) 38%);
+      color: var(--wiki-text-muted);
       font-size: .8125rem;
       opacity: 1;
     }
@@ -1982,7 +1985,7 @@ export default defineComponent({
   > .text-label-small {
     min-height: var(--wiki-space-8);
     padding-inline: var(--wiki-space-3) !important;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent) !important;
+    color: var(--wiki-text-muted) !important;
     font-size: var(--wiki-label-size);
     font-weight: var(--wiki-label-weight);
     letter-spacing: .075em;
@@ -2015,12 +2018,6 @@ export default defineComponent({
     &.v-list-item--disabled {
       opacity: .4;
     }
-  }
-
-  .v-list-item.bg-grey-darken-4,
-  .v-list-item.bg-grey-lighten-5 {
-    border-color: var(--wiki-surface-border);
-    background: var(--wiki-surface-sunken) !important;
   }
 
   .v-divider {
@@ -2183,6 +2180,15 @@ export default defineComponent({
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+.nav-header-menu__note {
+  max-width: 18rem;
+  margin: 0;
+  padding: 0 var(--wiki-space-4) var(--wiki-space-2);
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+  line-height: 1.4;
 }
 
 .account-menu__panel-note {
