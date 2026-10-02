@@ -22,7 +22,8 @@ type Translate = (key: string, options?: Record<string, unknown>) => string
  * It is a toggle button: the name stays "Show <field>" and aria-pressed says
  * whether the text is visible, so screen readers do not hear a changing name
  * and a changing state at once. The icon follows the action: the eye shows,
- * the crossed eye hides. Works without i18n (first-run setup).
+ * the crossed eye hides. Keeps field-specific English names before i18n is
+ * initialized (first-run setup), while honoring available localized labels.
  */
 export default defineComponent({
   props: {
@@ -34,8 +35,18 @@ export default defineComponent({
   computed: {
     label (): string {
       const translate = (this as unknown as { $t?: Translate }).$t
-      const fallback = this.$t('common:passwordVisibilityToggle.show', { field: this.field, interpolation: { escapeValue: false } })
-      return typeof translate === 'function' ? translate('common:password.show', { field: this.field, defaultValue: fallback }) : fallback
+      const fallback = `Show ${this.field}`
+      if (typeof translate !== 'function') return fallback
+      const localized = translate('common:passwordVisibilityToggle.show', {
+        field: this.field,
+        defaultValue: fallback,
+        interpolation: { escapeValue: false }
+      })
+      return translate('common:password.show', {
+        field: this.field,
+        defaultValue: localized,
+        interpolation: { escapeValue: false }
+      })
     }
   }
 })

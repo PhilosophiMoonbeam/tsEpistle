@@ -48,7 +48,8 @@ const outcomeCacheKey = (request: HistoryDiffRequest): string => `${request.key}
  * content key and format. When no worker can start (unsupported browser or
  * a strict Content-Security-Policy), it uses the same bounded engine on the
  * main thread. A worker that does not answer in time is stopped and the
- * comparison is reported as `timeout`; the next request starts a new worker.
+ * comparison is reported as `timeout`; even a first-job timeout leaves the
+ * next request eligible to start a new worker.
  */
 export const createHistoryDiffRenderer = (options: HistoryDiffRendererOptions = {}): HistoryDiffRenderer => {
   const createWorker = options.createWorker ?? defaultCreateWorker
@@ -171,8 +172,7 @@ export const createHistoryDiffRenderer = (options: HistoryDiffRendererOptions = 
     const promise = new Promise<HistoryDiffOutcome>(resolve => {
       const timer = setTimer(() => {
         if (!pending.has(id)) return
-        // A worker that never answered is treated as unable to start.
-        if (!workerAnswered) workerUnavailable = true
+        // No startup acknowledgement exists; a slow first job is not a load failure.
         stopWorker({ status: 'timeout' })
       }, timeoutMs)
       pending.set(id, { cacheKey, request, resolve, timer })

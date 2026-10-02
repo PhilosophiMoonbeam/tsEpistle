@@ -1,10 +1,12 @@
 <template lang="pug">
   v-dialog(
+    ref='dialog'
     :model-value='request !== null'
     max-width='460'
     :aria-labelledby='request ? `confirm-dialog-title-${request.id}` : undefined'
     :aria-describedby='request && request.message ? `confirm-dialog-message-${request.id}` : undefined'
     @update:model-value='onModel'
+    @after-leave='restoreFocus'
   )
     v-card.confirm-dialog(v-if='request', :key='request.id')
       v-card-title.confirm-dialog__title(:id='`confirm-dialog-title-${request.id}`')
@@ -27,14 +29,18 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue'
-import { currentConfirmation, registerConfirmationHost, settleConfirmation, type PendingConfirmation } from './confirm-dialog.ts'
+import { currentConfirmation, registerConfirmationHost, settleConfirmation } from './confirm-dialog.ts'
+import type { PendingConfirmation } from './confirm-dialog.ts'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
 /** Mount once per shell. Shows queued requestConfirmation() calls one at a time. */
 export default defineComponent({
   data () {
-    return { unregister: null as (() => void) | null }
+    return {
+      unregister: null as (() => void) | null,
+      returnFocusTo: null as HTMLElement | null
+    }
   },
   computed: {
     request (): PendingConfirmation | null {
@@ -47,10 +53,25 @@ export default defineComponent({
       return this.translate('common:confirm.discard', 'Discard')
     }
   },
+  watch: {
+    async request (request: PendingConfirmation | null, previous: PendingConfirmation | null) {
+      if (!request) return
+      this.returnFocusTo = null
+      // Queued cards replace one another without re-entering VDialog. Keep
+      // focus in the next card rather than on the removed action button.
+      if (!previous) return
+      await this.$nextTick()
+      const dialog = this.$refs.dialog as { contentEl?: HTMLElement; globalTop?: boolean } | undefined
+      if (this.request?.id === request.id && dialog?.globalTop && !dialog.contentEl?.contains(dialog.contentEl.ownerDocument.activeElement)) {
+        dialog.contentEl?.focus({ preventScroll: true })
+      }
+    }
+  },
   mounted () {
     this.unregister = registerConfirmationHost()
   },
   beforeUnmount () {
+    this.returnFocusTo = null
     this.unregister?.()
     this.unregister = null
   },
@@ -60,10 +81,30 @@ export default defineComponent({
       return typeof translate === 'function' ? translate(key, { defaultValue: fallback }) : fallback
     },
     answer (confirmed: boolean): void {
-      if (this.request) settleConfirmation(this.request.id, confirmed)
+      if (!this.request) return
+      this.returnFocusTo = confirmed ? null : this.request.returnFocusTo
+      settleConfirmation(this.request.id, confirmed)
     },
     onModel (open: boolean): void {
       if (!open) this.answer(false)
+    },
+    restoreFocus (): void {
+      const target = this.returnFocusTo
+      this.returnFocusTo = null
+      // Acceptance lets the caller navigate/focus its destination. Cancellation
+      // waits for Vuetify's leave transition and never jumps behind a queued or
+      // newly opened dialog, or back into a parent dialog that has also closed.
+      if (this.request || !this.unregister || !target?.isConnected || target.matches(':disabled') ||
+          target.closest('[inert], [aria-hidden="true"], .v-overlay:not(.v-overlay--active)')) return
+      const document = target.ownerDocument
+      const focusedOverlay = document.activeElement?.closest('.v-overlay--active')
+      if (focusedOverlay && !focusedOverlay.contains(target)) return
+      let topDialog: HTMLElement | null = null
+      for (const dialog of document.querySelectorAll<HTMLElement>('.v-dialog.v-overlay--active')) {
+        if (!topDialog || Number(dialog.style.zIndex) >= Number(topDialog.style.zIndex)) topDialog = dialog
+      }
+      if (topDialog && !topDialog.contains(target)) return
+      target.focus({ preventScroll: true })
     }
   }
 })

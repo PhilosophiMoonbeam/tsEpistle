@@ -13,6 +13,7 @@ import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { emptyAgentDraft } from '../../helpers/agent-draft.ts'
 import { searchPages } from '../../helpers/pages-api.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
+import { fallbackLocalizationLabel } from '../../modules/localization.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import type { AgentProviderProfileView, AgentThreadState } from '../../../shared/agents/contracts.ts'
 
@@ -153,6 +154,8 @@ interface LockState {
   handleComposerFocusIn: () => void
   handleComposerFocusOut: (event: FocusEvent) => void
   handleTranscriptEngagement: (event: FocusEvent | PointerEvent) => void
+  transcript: ValueRef<HTMLElement | null>
+  reconcileTranscriptGrowth: (shouldFollow: boolean) => Promise<void>
   openGoal: ValueRef<{ status: string } | null>
   goalSubmitUnavailableReason: ValueRef<string>
   submitUnavailableReason: ValueRef<string>
@@ -1048,6 +1051,34 @@ describe('Inline Agent workspace actions', () => {
     starter.click()
     await settle()
     expect(lockState.agentCalls.send).toHaveBeenCalledTimes(2)
+  })
+
+  it('positions empty mobile starters above the focused composer while translations are unavailable and after recovery', async () => {
+    installBrowserSurface()
+    resizeViewport?.(390)
+    const translator = vi.spyOn(globalThis, 'useTranslate').mockReturnValue(fallbackLocalizationLabel)
+    const state = loadGoalLockState(null)
+    const transcript = document.createElement('div')
+    document.body.append(transcript)
+    // Model a keyboard-reduced scrollport; native delayed-media anchoring is
+    // exercised separately by the responsive browser case.
+    Object.defineProperties(transcript, {
+      scrollHeight: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 240 }
+    })
+    state.transcript.value = transcript
+    state.handleComposerFocusIn()
+    await state.reconcileTranscriptGrowth(false)
+    expect(transcript.scrollTop).toBe(560)
+
+    translator.mockReturnValue(translateEnglish)
+    transcript.scrollTo({ top: 0 })
+    await state.reconcileTranscriptGrowth(false)
+    expect(transcript.scrollTop).toBe(560)
+
+    resizeViewport?.(1024)
+    await state.reconcileTranscriptGrowth(false)
+    expect(transcript.scrollTop).toBe(0)
   })
 
   it('keeps composer dock focus state independent from transcript scrolling and engagement', async () => {

@@ -686,8 +686,13 @@ export default defineComponent({
       this.previewShown = !this.previewShown
     },
     destroyMarkdownCollaboration() {
-      collaborations.get(this)?.destroy()
-      collaborations.delete(this)
+      const collaboration = collaborations.get(this)
+      if (collaboration) {
+        this.cm?.setHistory?.(null)
+        this.syncFormatState()
+        collaboration.destroy()
+        collaborations.delete(this)
+      }
       this.collaborationAbortController?.abort()
       this.collaborationAbortController = null
       this.$emit('collaboration-state', { active: false, discarded: false, generation: null })
@@ -1203,6 +1208,7 @@ export default defineComponent({
           pageId: wikiStore.page.id,
           expectedUpdatedAt: () => wikiStore.editor.checkoutDateActive,
           fetchImpl: (input, init) => window.fetch(input, { ...init, signal: collaborationAbortController.signal }),
+          onHistoryChange: () => this.syncFormatState(),
           onBaseline: baseline => {
             wikiStore.editor.checkoutDateActive = baseline.updatedAt
             wikiStore.page.sourceRevision = baseline.sourceRevision
@@ -1233,7 +1239,6 @@ export default defineComponent({
         collaborations.set(this, collaboration)
         this.$emit('collaboration-state', { active: true, discarded: false, generation: collaboration.generation })
         wikiStore.editor.content = collaboration.content
-        extensions.push(collaboration.extension)
       } catch {
         collaborationAbortController.abort()
         if (this.collaborationAbortController === collaborationAbortController) {
@@ -1270,6 +1275,7 @@ export default defineComponent({
       spellcheck: false,
       direction: siteConfig.rtl ? 'rtl' : 'ltr',
       extensions,
+      history: collaborations.get(this),
       onChange: value => {
         wikiStore.editor.content = value
         this.editorAdapter?.noteTextChange()
@@ -1342,12 +1348,9 @@ export default defineComponent({
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
     const root = this.$refs.root
     if (root instanceof HTMLElement) delete (root as MarkdownEditorHost).__wikiSourceEditor
+    this.destroyMarkdownCollaboration()
     this.cm?.destroy()
     this.cm = null
-    collaborations.get(this)?.destroy()
-    collaborations.delete(this)
-    this.collaborationAbortController?.abort()
-    this.collaborationAbortController = null
     sourceLinesByEditor.delete(this)
   }
 })

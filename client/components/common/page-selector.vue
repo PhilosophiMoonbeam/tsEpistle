@@ -210,6 +210,7 @@
         v-alert(v-if='moveReviewError' type='error' variant='tonal' density='compact' role='alert') {{moveReviewError}}
         article.page-selector__candidate(v-for='item in selectedMoveReview.items' :key='item.id')
           h4.page-selector__candidate-title {{item.title}}
+          p.page-selector__candidate-location {{$t('common:pageSelector.candidateLocation', { locale: item.locale, path: item.path, revision: item.sourceRevision, interpolation: { escapeValue: false } })}}
           p.page-selector__candidate-reason(v-if='item.id === sourcePageId') {{$t('common:pageSelector.selfLinkBundled')}}
           p.page-selector__candidate-reason(v-if='!item.eligible') {{item.reason || $t('common:pageSelector.manualRepairRequired')}}
           dl.page-selector__diff(v-if='item.changes.length')

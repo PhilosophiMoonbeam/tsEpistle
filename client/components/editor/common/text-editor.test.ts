@@ -1,7 +1,10 @@
+import { redo, undo, undoDepth } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
+import { yCollab } from 'y-codemirror.next'
+import * as Y from 'yjs'
 import { EDITOR_SELECTION, EDITOR_SELECTION_INACTIVE, TextEditor } from './text-editor.ts'
 
 const editors: TextEditor[] = []
@@ -114,5 +117,66 @@ describe('TextEditor', () => {
     expect(editor.historyDepth()).toEqual({ undo: 0, redo: 1 })
     expect(editor.redo()).toBe(true)
     expect(editor.getValue()).toBe(`${value}!`)
+  })
+  it('preserves standalone keyboard and native history, including reset', () => {
+    const { editor, parent } = createEditor({ value: 'baseline' })
+    const content = parent.querySelector<HTMLElement>('.cm-content')!
+    editor.replaceOffsets(' local', 8, 8)
+    content.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
+    expect(editor.getValue()).toBe('baseline')
+    expect(editor.historyDepth()).toEqual({ undo: 0, redo: 1 })
+    content.dispatchEvent(new InputEvent('beforeinput', { inputType: 'historyRedo', bubbles: true, cancelable: true }))
+    expect(editor.getValue()).toBe('baseline local')
+    editor.reset('replacement')
+    expect(editor.historyDepth()).toEqual({ undo: 0, redo: 0 })
+    expect(editor.undo()).toBe(false)
+    editor.replaceOffsets('!', 11, 11)
+    expect(editor.undo()).toBe(true)
+    expect(editor.getValue()).toBe('replacement')
+  })
+
+  it('installs only provider history and detaches it without changing the document or selection', () => {
+    const document = new Y.Doc()
+    const text = document.getText('source')
+    text.insert(0, 'baseline')
+    const manager = new Y.UndoManager(text)
+    const provider = {
+      extension: yCollab(text, null, { undoManager: manager }),
+      undo: () => manager.undo() != null,
+      redo: () => manager.redo() != null,
+      historyDepth: () => ({ undo: manager.undoStack.length, redo: manager.redoStack.length })
+    }
+    const { editor, parent } = createEditor({ value: text.toString(), history: provider })
+    const view = EditorView.findFromDOM(parent.querySelector<HTMLElement>('.cm-editor')!)!
+    try {
+      editor.replaceOffsets(' local', 8, 8)
+      expect(editor.historyDepth()).toEqual({ undo: 1, redo: 0 })
+      // Ordinary commands must not provide another route into collaborative edits.
+      expect(undoDepth(view.state)).toBe(0)
+      expect(undo(view)).toBe(false)
+      expect(redo(view)).toBe(false)
+      expect(editor.undo()).toBe(true)
+      expect(editor.undo()).toBe(false)
+      expect(editor.getValue()).toBe('baseline')
+      expect(editor.redo()).toBe(true)
+      editor.setSelection({ line: 0, ch: 3 }, { line: 0, ch: 6 })
+      const selection = editor.selectedOffsets()
+      editor.setHistory(null)
+      expect(editor.getValue()).toBe('baseline local')
+      expect(editor.selectedOffsets()).toEqual(selection)
+      expect(editor.historyDepth()).toEqual({ undo: 0, redo: 0 })
+      manager.destroy()
+      document.destroy()
+      editor.setHistory(null)
+      editor.reset('detached')
+      editor.replaceOffsets('!', 8, 8)
+      expect(editor.historyDepth()).toEqual({ undo: 1, redo: 0 })
+      expect(editor.undo()).toBe(true)
+      expect(editor.getValue()).toBe('detached')
+    } finally {
+      editor.setHistory(null)
+      manager.destroy()
+      document.destroy()
+    }
   })
 })

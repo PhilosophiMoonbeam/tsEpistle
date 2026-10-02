@@ -272,6 +272,7 @@
             <div
               ref="transcript"
               class="inline-agent__transcript"
+              :class="{ 'inline-agent__transcript--following': transcriptFollowing }"
               tabindex="0"
               role="region"
               :aria-label="$t('common:inlineAgentChat.conversationTranscript')"
@@ -746,7 +747,7 @@ const sendStarter = (prompt: string): void => {
 
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
-const mobilePanelQuery = t('common:inlineAgentChat.maxWidth63998px')
+const mobilePanelQuery = '(max-width: 639.98px)'
 
 const pageHintFromProps = (): AgentCurrentPageHint | null => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
@@ -2142,15 +2143,17 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
      last message and diagram sources fully visible and clickable above it. */
   padding: var(--wiki-space-3) var(--wiki-space-1) 13rem;
   overflow-y: auto;
-  /* Streaming text changes can otherwise anchor the scrollport back to an old
-     message after the response follow-scroll, especially with mobile focus. */
-  overflow-anchor: none;
   outline: none;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
   scroll-behavior: auto;
   scroll-padding-block: var(--wiki-space-4);
   scroll-padding-block-end: 13rem;
+}
+.inline-agent__transcript--following {
+  /* Automatic follow owns the scroll position while streaming. When reading
+     earlier messages, browser anchoring keeps delayed media from shifting them. */
+  overflow-anchor: none;
 }
 .inline-agent__conversation-dock {
   position: sticky;

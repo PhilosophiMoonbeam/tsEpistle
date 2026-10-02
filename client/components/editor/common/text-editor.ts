@@ -1,9 +1,12 @@
-import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
-import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete'
+import { defaultKeymap, history, historyKeymap, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
+import { bracketMatching, defaultHighlightStyle, foldEffect, foldGutter, foldKeymap, HighlightStyle, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language'
+import { lintKeymap } from '@codemirror/lint'
+import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
 import { Compartment, EditorSelection, EditorState, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
-import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
+import { crosshairCursor, Decoration, type DecorationSet, drawSelection, dropCursor, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers, rectangularSelection, WidgetType } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
-import { basicSetup } from 'codemirror'
+import { yUndoManagerKeymap } from 'y-codemirror.next'
 
 export type TextPosition = {
   line: number
@@ -27,6 +30,14 @@ export type TextEditorSelection = {
 export type TextEditorSelectionChange = TextEditorOffsetChange & {
   anchor: number
   head: number
+}
+
+/** The active history implementation, including its keyboard and native-input bindings. */
+export interface TextEditorHistory {
+  readonly extension: Extension
+  undo(): boolean
+  redo(): boolean
+  historyDepth(): { undo: number; redo: number }
 }
 
 export interface TextEditorHandle {
@@ -58,6 +69,7 @@ export interface TextEditorHandle {
   undo?: () => boolean
   redo?: () => boolean
   historyDepth?: () => { undo: number; redo: number }
+  setHistory?: (history: TextEditorHistory | null) => void
   syntaxPath?: () => string[]
 }
 
@@ -153,6 +165,7 @@ type TextEditorOptions = {
   onCursor?: (position: TextPosition) => void
   onClick?: (position: TextPosition) => void
   extensions?: Extension[]
+  history?: TextEditorHistory
 }
 
 export class TextEditor implements TextEditorHandle {
@@ -160,10 +173,30 @@ export class TextEditor implements TextEditorHandle {
   private readonly extensions: Extension[]
   private readonly spellcheck = new Compartment()
   private readonly darkTheme = new Compartment()
+  private readonly historyCompartment = new Compartment()
+  private historyProvider: TextEditorHistory | null
 
-  constructor({ parent, value, ariaLabel, dark, language, direction = 'ltr', spellcheck, onChange, onCursor, onClick, extensions = [] }: TextEditorOptions) {
+  constructor({ parent, value, ariaLabel, dark, language, direction = 'ltr', spellcheck, onChange, onCursor, onClick, extensions = [], history: historyProvider }: TextEditorOptions) {
+    this.historyProvider = historyProvider ?? null
     this.extensions = [
-      basicSetup,
+      this.historyCompartment.of(this.historyExtensions()),
+      // The non-history equivalent of codemirror 6.0.2's basicSetup.
+      lineNumbers(),
+      highlightActiveLineGutter(),
+      highlightSpecialChars(),
+      foldGutter(),
+      drawSelection(),
+      dropCursor(),
+      EditorState.allowMultipleSelections.of(true),
+      indentOnInput(),
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      bracketMatching(),
+      closeBrackets(),
+      autocompletion(),
+      rectangularSelection(),
+      crosshairCursor(),
+      highlightActiveLine(),
+      highlightSelectionMatches(),
       syntaxHighlighting(defaultHighlightStyle),
       Prec.highest(syntaxHighlighting(semanticHighlightStyle)),
       this.darkTheme.of(EditorView.darkTheme.of(dark)),
@@ -195,6 +228,27 @@ export class TextEditor implements TextEditorHandle {
       doc: value,
       extensions: this.extensions
     })
+  }
+
+  private historyExtensions(): Extension {
+    const beforeHistory = [...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap]
+    const afterHistory = [...foldKeymap, ...completionKeymap, ...lintKeymap]
+    return this.historyProvider
+      ? [
+          this.historyProvider.extension,
+          Prec.high(keymap.of(yUndoManagerKeymap)),
+          keymap.of([...beforeHistory, ...afterHistory])
+        ]
+      : [history(), keymap.of([...beforeHistory, ...historyKeymap, ...afterHistory])]
+  }
+
+  setHistory(history: TextEditorHistory | null): void {
+    if (history === this.historyProvider) return
+    this.historyProvider = history
+    const extension = this.historyExtensions()
+    // Keep reset()'s configuration in step with the live compartment.
+    this.extensions[0] = this.historyCompartment.of(extension)
+    this.view.dispatch({ effects: this.historyCompartment.reconfigure(extension) })
   }
 
   destroy(): void {
@@ -338,15 +392,15 @@ export class TextEditor implements TextEditorHandle {
   }
 
   undo(): boolean {
-    return undo(this.view)
+    return this.historyProvider ? this.historyProvider.undo() : undo(this.view)
   }
 
   redo(): boolean {
-    return redo(this.view)
+    return this.historyProvider ? this.historyProvider.redo() : redo(this.view)
   }
 
   historyDepth(): { undo: number; redo: number } {
-    return { undo: undoDepth(this.view.state), redo: redoDepth(this.view.state) }
+    return this.historyProvider ? this.historyProvider.historyDepth() : { undo: undoDepth(this.view.state), redo: redoDepth(this.view.state) }
   }
 
   /** Syntax node names around the main cursor, innermost first. */
