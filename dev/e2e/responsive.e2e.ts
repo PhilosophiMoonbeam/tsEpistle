@@ -2830,7 +2830,19 @@ test.describe('responsive UI quality matrix', () => {
         await panel.getByRole('button', { name: 'Close chat history' }).click()
       }
       await expect(panel).toBeHidden()
-      if (expectedMode === 'modal') await expect(width < 640 ? agent.getByRole('button', { name: 'More chat actions', exact: true }) : historyToggle).toBeFocused()
+      // History is visible even below 640px. Only Memory moves into More chat actions.
+      if (expectedMode === 'modal') await expect(historyToggle).toBeFocused()
+      if (expectedMode === 'modal' && width < 640) {
+        const moreActions = agent.getByRole('button', { name: 'More chat actions', exact: true })
+        await moreActions.click()
+        await agent.locator('.inline-agent__panel-menu-item--compact').click()
+        const mobileMemory = agent.getByRole('dialog', { name: 'Agent memory' })
+        await expect(mobileMemory).toBeVisible()
+        await expect.poll(() => mobileMemory.evaluate(root => root.contains(document.activeElement))).toBe(true)
+        await page.keyboard.press('Escape')
+        await expect(mobileMemory).toBeHidden()
+        await expect(moreActions).toBeFocused()
+      }
     }
 
     await page.setViewportSize({ width: 640, height: 420 })
