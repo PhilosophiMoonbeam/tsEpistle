@@ -205,7 +205,7 @@
                     :aria-current='lc.code === locale ? `true` : undefined'
                     @click='changeLocale(lc)'
                   )
-                    template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
+                    template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : undefined', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
 
           //- PAGE ACTIONS
