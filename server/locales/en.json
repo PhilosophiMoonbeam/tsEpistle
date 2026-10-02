@@ -767,8 +767,6 @@
     "outdatedBrowserWarning": "Your browser is outdated. Upgrade to a {{modernBrowser}}."
   },
   "auth": {
-    "showPassword": "Show password",
-    "hidePassword": "Hide password",
     "tfa": {
       "title": "Two Factor Authentication",
       "subtitle": "Security code required:",

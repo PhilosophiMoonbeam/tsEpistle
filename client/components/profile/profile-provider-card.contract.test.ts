@@ -41,12 +41,28 @@ const evaluate = new Function(
   'updateProfilePreferences', 'uploadProfileAvatar', 'fetchLocales', 'validateValues',
   'resolveThemeName', 'applyUserPresentation', 'getErrorMessage', 'changedProfileFields',
   'PROFILE_DETAIL_FIELDS', 'PROFILE_PREFERENCE_FIELDS', 'profileDraftIssues', 'restoreProfileDraft',
-  'restoreProfileField', 'snapshotProfileDraft', 'timezoneOptions', executable
+  'restoreProfileField', 'snapshotProfileDraft', 'timezoneOptions', 'PasswordVisibilityToggle', 'requestConfirmation', executable
 )
+// The real shared password toggle, so the profile keeps its fixed name and pressed state.
+const toggleFile = join(process.cwd(), 'client/components/common/password-visibility-toggle.vue')
+const toggleSfc = parse(readFileSync(toggleFile, 'utf8'), { filename: toggleFile }).descriptor
+const toggleTemplate = compileTemplate({
+  filename: toggleFile,
+  id: 'profile-password-toggle',
+  source: toggleSfc.template!.content,
+  preprocessLang: toggleSfc.template!.lang,
+  preprocessOptions: { doctype: 'html' },
+  compilerOptions: { mode: 'function' }
+})
+const PasswordVisibilityToggle = {
+  ...new Function('defineComponent', new Bun.Transpiler({ loader: 'ts' }).transformSync(
+    toggleSfc.script!.content.replace(/^import .*$/gm, '').replace('export default', 'return')
+  ))(Vue.defineComponent),
+  render: new Function('Vue', toggleTemplate.code)(Vue) as RenderFunction
+}
 
 const translations: Record<string, string> = {
-  'auth:showPassword': 'Afficher le mot de passe',
-  'auth:hidePassword': 'Masquer le mot de passe',
+  'common:password.show': 'Afficher : {{field}}',
   'profile:displayName': 'Nom affiché',
   'profile:mentionHandle': 'Identifiant de mention',
   'profile:location': 'Lieu',
@@ -73,6 +89,7 @@ const translations: Record<string, string> = {
   'profile:dock.unsavedOne': '1 modification non enregistrée',
   'profile:dock.unsavedMany': '{{count}} modifications non enregistrées',
   'profile:dock.fixOne': 'Corrigez 1 champ avant d’enregistrer',
+  'profile:discard.title': 'Abandonner les modifications non enregistrées ?',
   'profile:discard.confirm': 'Abandonner les modifications',
   'profile:discard.keep': 'Continuer'
 }
@@ -191,6 +208,9 @@ const mount = async (initialProfile = profile()) => {
   })
   ownProperty(browserWindow, 'fetch', fetch)
   const applyUserPresentation = vi.fn()
+  // The shell mounts the shared host; here each test answers the queued question itself.
+  const confirmAnswers: boolean[] = []
+  const requestConfirmation = vi.fn(async (_request: Record<string, unknown>) => confirmAnswers.shift() ?? false)
   const options = evaluate(
     passwordPolicyMixin, newPasswordIssue, placeholder, placeholder, store,
     usersApi.changeProfilePassword, usersApi.fetchProfile, usersApi.removeProfileAvatar,
@@ -198,7 +218,7 @@ const mount = async (initialProfile = profile()) => {
     fetchLocales, validateValues, resolveThemeName, applyUserPresentation, getErrorMessage,
     draftModel.changedProfileFields, draftModel.PROFILE_DETAIL_FIELDS, draftModel.PROFILE_PREFERENCE_FIELDS,
     draftModel.profileDraftIssues, draftModel.restoreProfileDraft, draftModel.restoreProfileField,
-    draftModel.snapshotProfileDraft, draftModel.timezoneOptions
+    draftModel.snapshotProfileDraft, draftModel.timezoneOptions, PasswordVisibilityToggle, requestConfirmation
   ) as ComponentOptions
   app = Vue.createApp({ ...options, render })
   fixtureScope = Vue.effectScope()
@@ -221,7 +241,7 @@ const mount = async (initialProfile = profile()) => {
   document.body.append(host)
   const vm = app.mount(host) as unknown as ProfileVm
   await settle()
-  return { host, vm, fetch, store, activeLoading, vuetify, componentErrors, applyUserPresentation, router, options }
+  return { host, vm, fetch, store, activeLoading, vuetify, componentErrors, applyUserPresentation, router, options, requestConfirmation, confirmAnswers }
 }
 const button = (host: ParentNode, name: string) => {
   const matches = [...host.querySelectorAll<HTMLButtonElement>('button')].filter(item =>
@@ -408,25 +428,33 @@ describe('profile workspace contracts', () => {
   })
 
   test('guards leaving with unsaved changes and restores the saved theme on discard or unmount', async () => {
-    const { host, vm, vuetify, router, options, applyUserPresentation } = await mount()
-    const leave = options.beforeRouteLeave as (this: unknown, to: { fullPath: string }) => boolean
-    expect(leave.call(vm, { fullPath: '/pages' })).toBe(true)
+    const { host, vm, vuetify, options, applyUserPresentation, requestConfirmation, confirmAnswers } = await mount()
+    const leave = options.beforeRouteLeave as (this: unknown) => Promise<boolean>
+    expect(await leave.call(vm)).toBe(true)
+    expect(requestConfirmation).not.toHaveBeenCalled()
     await vuetify.theme.change('light')
     await chooseOption(host, translations['profile:appearance']!, translations['profile:appearanceDark']!)
-    expect(leave.call(vm, { fullPath: '/pages' })).toBe(false)
-    await settle()
-    button(document, translations['profile:discard.keep']!).click()
-    await settle()
-    expect(router.push).not.toHaveBeenCalled()
-    expect(vuetify.theme.name.value).toBe('dark')
 
-    expect(leave.call(vm, { fullPath: '/pages' })).toBe(false)
+    confirmAnswers.push(false)
+    expect(await leave.call(vm)).toBe(false)
+    expect(requestConfirmation).toHaveBeenLastCalledWith({
+      title: translations['profile:discard.title'],
+      message: 'You have 1 unsaved change. Theme and date previews return to your saved settings.',
+      confirmLabel: translations['profile:discard.confirm'],
+      cancelLabel: translations['profile:discard.keep'],
+      tone: 'destructive'
+    })
     await settle()
-    button(document, translations['profile:discard.confirm']!).click()
+    expect(vuetify.theme.name.value).toBe('dark')
+    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
+
+    confirmAnswers.push(true)
+    expect(await leave.call(vm)).toBe(true)
     await settle()
     expect(vuetify.theme.name.value).toBe('light')
-    expect(router.push).toHaveBeenCalledWith('/pages')
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    // The profile no longer renders its own dialog: one shared host per shell.
+    expect(document.querySelector('.v-dialog')).toBeNull()
 
     const unload = new browserWindow.Event('beforeunload', { cancelable: true })
     browserWindow.dispatchEvent(unload)
@@ -459,20 +487,23 @@ describe('profile workspace contracts', () => {
     expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
   })
 
-  test('reveals and conceals each local password independently with show/hide names', async () => {
+  test('reveals and conceals each local password independently with the shared toggle', async () => {
     const { host } = await mount()
     const inputs = passwordInputs(host)
     expect(inputs).toHaveLength(3)
     for (const [index, key] of ['currentPassword', 'newPassword', 'verifyPassword'].entries()) {
-      const name = translations[`profile:auth.${key}`]
+      const toggle = button(host, `Afficher : ${translations[`profile:auth.${key}`]}`)
       expect(inputs[index]!.type).toBe('password')
-      button(host, `${translations['auth:showPassword']}: ${name}`).click()
+      expect(toggle.getAttribute('aria-pressed')).toBe('false')
+      toggle.click()
       await settle()
       expect(inputs[index]!.type).toBe('text')
+      expect(toggle.getAttribute('aria-pressed')).toBe('true')
       for (const other of inputs.filter((_input, otherIndex) => otherIndex !== index)) expect(other.type).toBe('password')
-      button(host, `${translations['auth:hidePassword']}: ${name}`).click()
+      toggle.click()
       await settle()
       expect(inputs[index]!.type).toBe('password')
+      expect(toggle.getAttribute('aria-pressed')).toBe('false')
     }
   })
 
@@ -487,6 +518,9 @@ describe('profile workspace contracts', () => {
     const { host, fetch, store, activeLoading } = await mount()
     await fillPasswords(host)
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    button(host, `Afficher : ${translations['profile:auth.newPassword']}`).click()
+    await settle()
+    expect(passwordInputs(host)[1]!.type).toBe('text')
     const pending = deferred()
     fetch.mockImplementationOnce(() => pending.promise)
     const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!
@@ -511,6 +545,8 @@ describe('profile workspace contracts', () => {
     for (const input of passwordInputs(host)) {
       expect(input.disabled).toBe(false)
       expect(input.value).toBe('')
+      // A changed password is hidden again.
+      expect(input.type).toBe('password')
     }
     expect(store.showNotification).toHaveBeenCalledWith(expect.objectContaining({ style: 'success' }))
     await fillPasswords(host)
