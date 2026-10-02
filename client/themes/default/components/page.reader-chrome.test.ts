@@ -114,6 +114,13 @@ describe('page reader chrome template', () => {
     expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
   })
 
+  it('opens utility tooltips above the row so they never cover the metadata below', async () => {
+    const { document } = await renderTemplate(PAGE, baseState({ isAuthenticated: true }))
+    const tooltips = Array.from(document.querySelectorAll('.page-tools-card__utilities [data-stub="v-tooltip"]'))
+    expect(tooltips.length).toBeGreaterThan(2)
+    expect(tooltips.map(tooltip => tooltip.getAttribute('location'))).toEqual(tooltips.map(() => 'top'))
+  })
+
   it('renders an author placeholder in the middle of a translated sentence without moving the name', async () => {
     const { document } = await renderTemplate(PAGE, baseState({ authorAttribution: { before: 'Zuletzt von ', after: ' bearbeitet' } }))
     const author = document.querySelector('.page-document-author')

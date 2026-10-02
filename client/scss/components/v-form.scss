@@ -56,8 +56,16 @@
       var(--wiki-shadow-inset, inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent));
   }
 
+  // Focused labels use the palette's readable primary ink: a light primary
+  // (the default amber) falls below AA contrast on the field surface.
   &:not(.v-input--error).v-input--focused .v-field-label {
-    color: rgb(var(--v-theme-primary));
+    color: var(--wiki-purpose-primary-ink);
+  }
+
+  // Vuetify paints the focused outline with a `text-primary` utility that is
+  // !important, so the readable ink must be !important too to apply.
+  &:not(.v-input--error) .v-field--focused .v-field__outline.text-primary {
+    color: var(--wiki-purpose-primary-ink) !important;
   }
 
   &.v-input--error:not(.v-input--disabled) {
