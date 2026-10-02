@@ -2,46 +2,46 @@
   <v-container fluid class="logging-workspace">
     <div :inert="dialogOpen || undefined">
       <admin-hero
-        title="Logging"
-        description="Configure log delivery, tune console output and follow live events."
+        :title="$t('admin:logging.title')"
+        :description="$t('admin:logging.configureLogDeliveryTune')"
         icon="mdi-text-box-search-outline"
       >
         <template #actions>
-          <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved logging settings</v-tooltip></v-btn>
-          <v-btn v-if="dirty" variant="text" :disabled="busy" @click="askDiscard(reset)">Reset draft</v-btn>
-          <v-btn color="primary" :disabled="locked || !dirty || issues.length > 0" @click="openReview">Review changes</v-btn>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:logging.reloadSavedLoggingSettings') }}</v-tooltip></v-btn>
+          <v-btn v-if="dirty" variant="text" :disabled="busy" @click="askDiscard(reset)">{{ $t('admin:logging.resetDraft') }}</v-btn>
+          <v-btn color="primary" :disabled="locked || !dirty || issues.length > 0" @click="openReview">{{ $t('admin:logging.reviewChanges') }}</v-btn>
         </template>
       </admin-hero>
 
       <async-state
         v-if="loading && !saved"
         state="loading"
-        title="Loading Logging"
-        message="Reading saved destinations and this process's runtime observation."
+        :title="$t('admin:logging.loadingLogging')"
+        :message="$t('admin:logging.readingSavedDestinationsProcesss')"
       />
       <async-state
         v-else-if="error && !saved"
         state="error"
-        title="Logging could not be loaded"
+        :title="$t('admin:logging.loggingCouldNotLoaded')"
         :message="error"
-        retry-label="Try again"
+        :retry-label="$t('admin:logging.tryAgain')"
         @retry="load"
       />
       <v-alert v-else-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</v-alert>
       <v-alert v-if="notice" type="info" variant="tonal" class="mb-5" aria-live="polite">{{ notice }}</v-alert>
       <v-alert v-if="stale" type="warning" variant="tonal" class="mb-5">
-        Saved settings changed, or an action outcome is unconfirmed. Reload and review before another save or application.
+        {{ $t('admin:logging.savedSettingsChangedAction') }}
       </v-alert>
 
       <template v-if="saved && consolePolicy">
         <div class="logging-state-line">
           <span>
             <i :class="{ 'is-draft': dirty }" />
-            {{ dirty ? 'Unsaved logging draft' : 'Showing saved settings' }}
+            {{ dirty ? $t('admin:logging.unsavedLoggingDraft') : $t('admin:logging.showingSavedSettings') }}
           </span>
-          <span>Observed {{ dateTime(saved.observedAt) }}</span>
+          <span>{{ $t('admin:logging.observed', { observedAt: dateTime(saved.observedAt), interpolation: { escapeValue: false } }) }}</span>
         </div>
-        <nav class="logging-tabs" aria-label="Logging sections">
+        <nav class="logging-tabs" :aria-label="$t('admin:logging.loggingSections')">
           <button
             v-for="item in sections"
             :key="item.key"
@@ -58,18 +58,17 @@
           <section class="logging-main">
             <template v-if="section === 'destinations'">
               <header class="logging-heading">
-                <span class="logging-kicker">01 / Intentional delivery</span>
-                <h2>Choose where records can go.</h2>
+                <span class="logging-kicker">{{ $t('admin:logging.n01IntentionalDelivery') }}</span>
+                <h2>{{ $t('admin:logging.chooseWhereRecordsCan') }}</h2>
                 <p>
-                  Only destinations with an active transport in this release can be enabled. A destination being active confirms local initialization,
-                  not remote delivery.
+                  {{ $t('admin:logging.onlyDestinationsActiveTransport') }}
                 </p>
               </header>
               <section class="logging-panel logging-destination-layout">
-                <aside class="logging-catalogue" aria-label="Logging destinations">
+                <aside class="logging-catalogue" :aria-label="$t('admin:logging.loggingDestinations')">
                   <v-text-field
                     v-model="catalogueQuery"
-                    label="Find a destination"
+                    :label="$t('admin:logging.findDestination')"
                     prepend-inner-icon="mdi-magnify"
                     variant="outlined"
                     density="compact"
@@ -83,7 +82,7 @@
                     :disabled="busy"
                     @click="showLegacy = !showLegacy"
                   >
-                    {{ showLegacy ? 'Hide legacy destinations' : 'Show legacy destinations (' + legacyDestinationCount + ')' }}
+                    {{ showLegacy ? $t('admin:logging.hideLegacyDestinations') : $t('admin:logging.showLegacyDestinations', { legacyDestinationCount, interpolation: { escapeValue: false } }) }}
                   </button>
                   <div v-if="filteredDestinations.length" class="logging-destination-list">
                     <button
@@ -97,7 +96,7 @@
                       <span>
                         <strong>{{ destination.title }}</strong>
                         <small>
-                          {{ destination.availability === 'available' ? `Saved: ${destination.isEnabled ? 'Enabled' : 'Disabled'}` : 'Unavailable' }}
+                          {{ destination.availability === 'available' ? $t('admin:logging.saved', { isEnabled: destination.isEnabled ? 'Enabled' : 'Disabled', interpolation: { escapeValue: false } }) : $t('admin:logging.unavailable') }}
                         </small>
                       </span>
                       <v-icon size="16" aria-hidden="true">mdi-chevron-right</v-icon>
@@ -105,8 +104,8 @@
                   </div>
                   <div v-else class="logging-empty">
                     <v-icon>mdi-magnify</v-icon>
-                    <h3>No matching destination</h3>
-                    <p>Try a provider name or clear the search.</p>
+                    <h3>{{ $t('admin:logging.noMatchingDestination') }}</h3>
+                    <p>{{ $t('admin:logging.tryProviderNameClear') }}</p>
                   </div>
                 </aside>
                 <article v-if="selectedDestination && selectedDraft" class="logging-destination-detail">
@@ -114,24 +113,24 @@
                     <v-icon class="logging-provider-icon" size="48" aria-hidden="true">mdi-domain</v-icon>
                     <div>
                       <span class="logging-kicker">
-                        {{ selectedDestination.availability === 'available' ? 'Available destination' : 'Legacy destination' }}
+                        {{ selectedDestination.availability === 'available' ? $t('admin:logging.availableDestination') : $t('admin:logging.legacyDestination') }}
                       </span>
                       <h3>{{ selectedDestination.title }}</h3>
-                      <p>{{ selectedDestination.description || 'No provider description is available.' }}</p>
+                      <p>{{ selectedDestination.description || $t('admin:logging.noProviderDescriptionAvailable') }}</p>
                       <a v-if="selectedDestination.website" :href="selectedDestination.website" target="_blank" rel="noopener noreferrer">
-                        Provider website
-                        <span class="sr-only">opens in a new tab</span>
+                        {{ $t('admin:logging.providerWebsite') }}
+                        <span class="sr-only">{{ $t('admin:logging.opensNewTab') }}</span>
                         <v-icon size="14" aria-hidden="true">mdi-open-in-new</v-icon>
                       </a>
                     </div>
                   </div>
                   <v-alert :type="destinationRuntimeTone(selectedDestination.runtime.state)" variant="tonal" class="mt-5">
-                    <strong class="mr-1">Runtime in this process: {{ destinationRuntimeLabel(selectedDestination.runtime.state) }}.</strong>
+                    <strong class="mr-1">{{ $t('admin:logging.runtimeProcess', { state: destinationRuntimeLabel(selectedDestination.runtime.state), interpolation: { escapeValue: false } }) }}</strong>
                     <span v-if="selectedDestination.runtime.message">{{ selectedDestination.runtime.message }}</span>
-                    <span v-else>Saved policy is {{ selectedDestination.isEnabled ? 'enabled' : 'disabled' }}.</span>
+                    <span v-else>{{ $t('admin:logging.savedPolicy', { isEnabled: selectedDestination.isEnabled ? 'enabled' : 'disabled', interpolation: { escapeValue: false } }) }}</span>
                   </v-alert>
                   <v-alert v-if="selectedDestination.availability === 'unavailable'" type="warning" variant="tonal" class="mt-5">
-                    {{ selectedDestination.availabilityReason }} Historic configuration remains untouched.
+                    {{ $t('admin:logging.historicConfigurationRemainsUntouched', { availabilityReason: selectedDestination.availabilityReason, interpolation: { escapeValue: false } }) }}
                     <v-btn
                       v-if="selectedDraft.isEnabled"
                       class="mt-3"
@@ -140,25 +139,25 @@
                       :disabled="locked"
                       @click="selectedDraft.isEnabled = false"
                     >
-                      Disable unsupported destination
+                      {{ $t('admin:logging.disableUnsupportedDestination') }}
                     </v-btn>
                   </v-alert>
                   <template v-else>
                     <div class="logging-section-head mt-6">
                       <div>
-                        <h4>Delivery policy</h4>
-                        <p>Enable only after the required provider settings are saved.</p>
+                        <h4>{{ $t('admin:logging.deliveryPolicy') }}</h4>
+                        <p>{{ $t('admin:logging.enableOnlyAfterRequired') }}</p>
                       </div>
-                      <v-switch v-model="selectedDraft.isEnabled" label="Destination enabled" color="primary" inset hide-details :disabled="locked" />
+                      <v-switch v-model="selectedDraft.isEnabled" :label="$t('admin:logging.destinationEnabled')" color="primary" inset hide-details :disabled="locked" />
                     </div>
                     <v-select
                       v-model="selectedDraft.level"
                       :items="levels"
-                      label="Minimum level"
+                      :label="$t('admin:logging.minimumLevel2')"
                       variant="outlined"
                       :disabled="locked"
                       persistent-hint
-                      hint="Only records at this severity or above are routed to this destination."
+                      :hint="$t('admin:logging.onlyRecordsSeverityAbove')"
                     />
                     <template v-for="field in selectedDestination.fields" :key="field.key">
                       <logging-secret-field
@@ -204,73 +203,71 @@
                       />
                     </template>
                     <p class="logging-note">
-                      No test event is sent from Administration. Runtime status confirms local initialization only; inspect your provider
-                      independently for delivery evidence.
+                      {{ $t('admin:logging.noTestEventSent') }}
                     </p>
                   </template>
                 </article>
                 <div v-else class="logging-empty">
                   <v-icon>mdi-text-box-search-outline</v-icon>
-                  <h3>Select a destination</h3>
-                  <p>Choose a visible provider to inspect its saved policy.</p>
+                  <h3>{{ $t('admin:logging.selectDestination') }}</h3>
+                  <p>{{ $t('admin:logging.chooseVisibleProviderInspect') }}</p>
                 </div>
               </section>
             </template>
 
             <template v-else-if="section === 'console'">
               <header class="logging-heading">
-                <span class="logging-kicker">02 / Local record</span>
-                <h2>Keep the console legible.</h2>
+                <span class="logging-kicker">{{ $t('admin:logging.n02LocalRecord') }}</span>
+                <h2>{{ $t('admin:logging.keepConsoleLegible') }}</h2>
                 <p>
-                  The console is always local to this process. Its policy is saved separately, then applied deliberately without sending a remote test
-                  event.
+                  {{ $t('admin:logging.consoleAlwaysLocalProcess') }}
                 </p>
               </header>
               <section class="logging-panel">
                 <div class="logging-section-head">
                   <div>
-                    <h3>Console policy</h3>
-                    <p>Controls the minimum level and presentation used by the application console.</p>
+                    <h3>{{ $t('admin:logging.consolePolicy') }}</h3>
+                    <p>{{ $t('admin:logging.controlsMinimumLevelPresentation') }}</p>
                   </div>
                 </div>
                 <div class="logging-fields">
-                  <v-select v-model="consolePolicy.level" :items="levels" label="Minimum level" variant="outlined" :disabled="locked" />
-                  <v-select v-model="consolePolicy.format" :items="formats" label="Output format" variant="outlined" :disabled="locked" />
+                  <v-select v-model="consolePolicy.level" :items="levels" :label="$t('admin:logging.minimumLevel2')" variant="outlined" :disabled="locked" />
+                  <v-select v-model="consolePolicy.format" :items="formats" :label="$t('admin:logging.outputFormat')" variant="outlined" :disabled="locked" />
                 </div>
                 <v-alert v-if="consolePolicy.format === 'json'" type="info" variant="tonal" class="mt-3">
-                  JSON is intended for a collector or structured process output. It changes representation, not which remote destinations exist.
+                  {{ $t('admin:logging.jsonIntendedCollectorStructured') }}
                 </v-alert>
               </section>
               <section class="logging-panel">
                 <div class="logging-section-head">
                   <div>
-                    <h3>Application sequence</h3>
-                    <p>Save persists the policy and its reviewed reason. Apply reconciles that saved policy in this process.</p>
+                    <h3>{{ $t('admin:logging.applicationSequence') }}</h3>
+                    <p>{{ $t('admin:logging.savePersistsPolicyReviewed') }}</p>
                   </div>
                 </div>
                 <ol class="logging-steps">
                   <li>
                     <b>1</b>
                     <span>
-                      Review and save
+                      {{ $t('admin:logging.reviewSave') }}
                       <br />
-                      <small>Atomic database record</small>
+                      <small>{{ $t('admin:logging.atomicDatabaseRecord') }}</small>
                     </span>
                   </li>
                   <li>
                     <b>2</b>
                     <span>
-                      Reload the saved policy
+                      {{ $t('admin:logging.reloadSavedPolicy') }}
                       <br />
-                      <small>Fresh authority and fingerprint</small>
+                      <small>{{ $t('admin:logging.freshAuthorityFingerprint') }}</small>
                     </span>
                   </li>
                   <li>
                     <b>3</b>
                     <span>
-                      Apply in this process
+                      {{ $t('admin:logging.applyProcess') }}
                       <br />
-                      <small>Observe local runtime only</small>
+                      <small>{{ $t('admin:logging.observeLocalRuntimeOnly') }}</small>
                     </span>
                   </li>
                 </ol>
@@ -279,11 +276,10 @@
 
             <template v-else>
               <header class="logging-heading">
-                <span class="logging-kicker">03 / Ephemeral troubleshooting</span>
-                <h2>Watch the live trail.</h2>
+                <span class="logging-kicker">{{ $t('admin:logging.n03EphemeralTroubleshooting') }}</span>
+                <h2>{{ $t('admin:logging.watchLiveTrail') }}</h2>
                 <p>
-                  Use this short-lived, privileged view while investigating a current issue. It is not a log archive or an assertion of remote
-                  delivery.
+                  {{ $t('admin:logging.useShortLivedPrivileged') }}
                 </p>
               </header>
               <logging-console :active="section === 'trail'" :limits="saved.liveTrail" />
@@ -292,25 +288,25 @@
 
           <aside v-if="section !== 'trail'" class="logging-aside">
             <section class="logging-aside-card">
-              <span class="logging-kicker">Current process</span>
-              <h3>{{ saved.runtime.settingsCurrent ? 'Saved settings applied' : 'Reconciliation needed' }}</h3>
+              <span class="logging-kicker">{{ $t('admin:logging.currentProcess') }}</span>
+              <h3>{{ saved.runtime.settingsCurrent ? $t('admin:logging.savedSettingsApplied') : $t('admin:logging.reconciliationNeeded') }}</h3>
               <p>{{ runtimeDescription }}</p>
               <dl>
                 <div>
-                  <dt>Saved level</dt>
+                  <dt>{{ $t('admin:logging.savedLevel') }}</dt>
                   <dd>{{ saved.console.level }}</dd>
                 </div>
                 <div>
-                  <dt>Process level</dt>
-                  <dd>{{ saved.runtime.console.level || 'Not observed' }}</dd>
+                  <dt>{{ $t('admin:logging.processLevel') }}</dt>
+                  <dd>{{ saved.runtime.console.level || $t('admin:logging.notObserved') }}</dd>
                 </div>
                 <div>
-                  <dt>Format</dt>
-                  <dd>{{ saved.runtime.console.format || 'Not observed' }}</dd>
+                  <dt>{{ $t('admin:logging.format') }}</dt>
+                  <dd>{{ saved.runtime.console.format || $t('admin:logging.notObserved') }}</dd>
                 </div>
                 <div>
-                  <dt>Observation</dt>
-                  <dd>{{ saved.runtime.observedAt ? dateTime(saved.runtime.observedAt) : 'Not yet reconciled' }}</dd>
+                  <dt>{{ $t('admin:logging.observation') }}</dt>
+                  <dd>{{ saved.runtime.observedAt ? dateTime(saved.runtime.observedAt) : $t('admin:logging.notYetReconciled') }}</dd>
                 </div>
               </dl>
               <v-btn
@@ -321,19 +317,19 @@
                 :disabled="busy"
                 @click="applySaved"
               >
-                Apply saved settings
+                {{ $t('admin:logging.applySavedSettings') }}
               </v-btn>
-              <p v-else-if="dirty" class="logging-aside-note">Save the reviewed draft before applying a new process configuration.</p>
+              <p v-else-if="dirty" class="logging-aside-note">{{ $t('admin:logging.saveReviewedDraftBefore') }}</p>
             </section>
             <section class="logging-aside-note">
               <v-icon size="18" aria-hidden="true">mdi-shield-lock-outline</v-icon>
               <div>
-                <strong>Secrets stay private</strong>
-                <p>Stored credentials are represented only by their presence. Choose Keep, Replace or Clear; a value is never echoed back.</p>
+                <strong>{{ $t('admin:logging.secretsStayPrivate') }}</strong>
+                <p>{{ $t('admin:logging.storedCredentialsRepresentedOnly') }}</p>
               </div>
             </section>
             <details class="logging-history">
-              <summary>Recent reviewed changes ({{ saved.history.length }})</summary>
+              <summary>{{ $t('admin:logging.recentReviewedChanges', { historyCount: saved.history.length, interpolation: { escapeValue: false } }) }}</summary>
               <div v-if="saved.history.length">
                 <article v-for="entry in saved.history" :key="entry.id">
                   <strong>{{ dateTime(entry.createdAt) }}</strong>
@@ -341,7 +337,7 @@
                   <small>{{ entry.changed.join(' · ') }}</small>
                 </article>
               </div>
-              <p v-else>No reviewed logging changes have been recorded yet.</p>
+              <p v-else>{{ $t('admin:logging.noReviewedLoggingChanges') }}</p>
             </details>
           </aside>
         </div>
@@ -350,15 +346,15 @@
 
     <v-dialog v-model="reviewOpen" max-width="680" persistent aria-labelledby="logging-review-title">
       <v-card class="logging-review-card">
-        <v-card-title id="logging-review-title">Review logging changes</v-card-title>
+        <v-card-title id="logging-review-title">{{ $t('admin:logging.reviewLoggingChanges') }}</v-card-title>
         <v-card-text>
-          <p>Changes are written atomically with your reason. Saving does not claim that this process or a remote provider has delivered a record.</p>
+          <p>{{ $t('admin:logging.changesWrittenAtomicallyReason') }}</p>
           <ul class="logging-change-list">
             <li v-for="change in changes" :key="change">{{ change }}</li>
           </ul>
           <v-textarea
             v-model="reason"
-            label="Reason for this change"
+            :label="$t('admin:logging.reasonChange')"
             variant="outlined"
             :counter="1000"
             :disabled="saving"
@@ -368,8 +364,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" :disabled="saving" @click="reviewOpen = false">Back to draft</v-btn>
-          <v-btn color="primary" :loading="saving" :disabled="issues.length > 0" @click="save">Save reviewed settings</v-btn>
+          <v-btn variant="text" :disabled="saving" @click="reviewOpen = false">{{ $t('admin:logging.backDraft') }}</v-btn>
+          <v-btn color="primary" :loading="saving" :disabled="issues.length > 0" @click="save">{{ $t('admin:logging.saveReviewedSettings') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -391,12 +387,15 @@ import type {
   LoggingSecretChange,
   LoggingWorkspace
 } from '../../../shared/logging-workspace.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const route = useRoute()
 const router = useRouter()
 const sections = [
-  { key: 'destinations', title: 'Destinations' },
-  { key: 'console', title: 'Console' },
-  { key: 'trail', title: 'Live trail' }
+  { key: 'destinations', title: t('admin:logging.destinations') },
+  { key: 'console', title: t('admin:logging.console') },
+  { key: 'trail', title: t('admin:logging.liveTrail') }
 ] as const
 const levels = ['error', 'warn', 'info', 'verbose', 'debug', 'silly']
 const formats = [
@@ -492,7 +491,7 @@ const issues = computed(() => {
       if (!field.sensitive) continue
       const action = secretChanges.value[secretKey(destination.key, field.key)] ?? { action: 'keep' }
       if (action.action === 'replace' && action.value.trim().length === 0)
-        result.push(`Enter a nonblank replacement value for ${savedDestination.title} ${field.title}.`)
+        result.push(t('admin:logging.enterNonblankReplacementValue', { title: savedDestination.title, title2: field.title, interpolation: { escapeValue: false } }))
     }
     if (!destination.isEnabled || destination.key !== 'sentry') continue
     const action = secretChanges.value[secretKey(destination.key, 'key')] ?? { action: 'keep' }
@@ -501,7 +500,7 @@ const issues = computed(() => {
       (action.action === 'keep' && !savedDestination.secrets.key) ||
       (action.action === 'replace' && !action.value.trim())
     )
-      result.push('A Sentry DSN is required while the Sentry destination is enabled.')
+      result.push(t('admin:logging.sentryDsnRequiredWhile'))
   }
   return result
 })
@@ -509,16 +508,16 @@ const changes = computed(() => {
   if (!saved.value || !consolePolicy.value) return []
   const result: string[] = []
   if (consolePolicy.value.level !== saved.value.console.level)
-    result.push(`Console minimum level: ${saved.value.console.level} → ${consolePolicy.value.level}`)
+    result.push(t('admin:logging.consoleMinimumLevel', { level: saved.value.console.level, level2: consolePolicy.value.level, interpolation: { escapeValue: false } }))
   if (consolePolicy.value.format !== saved.value.console.format)
-    result.push(`Console format: ${saved.value.console.format} → ${consolePolicy.value.format}`)
+    result.push(t('admin:logging.consoleFormat', { format: saved.value.console.format, format2: consolePolicy.value.format, interpolation: { escapeValue: false } }))
   for (const destination of destinations.value) {
     const original = destinationFor(destination.key)
     if (!original) continue
     if (destination.isEnabled !== original.isEnabled) result.push(`${original.title}: ${destination.isEnabled ? 'enabled' : 'disabled'}`)
-    if (destination.level !== original.level) result.push(`${original.title} minimum level: ${original.level} → ${destination.level}`)
+    if (destination.level !== original.level) result.push(t('admin:logging.minimumLevel', { title: original.title, level: original.level, level2: destination.level, interpolation: { escapeValue: false } }))
     for (const [key, value] of Object.entries(destination.config))
-      if (JSON.stringify(value) !== JSON.stringify(original.config[key])) result.push(`${original.title}: ${key} changed`)
+      if (JSON.stringify(value) !== JSON.stringify(original.config[key])) result.push(t('admin:logging.changed', { title: original.title, key, interpolation: { escapeValue: false } }))
     for (const [key, action] of Object.entries(destination.secrets)) {
       const selected = secretChanges.value[secretKey(destination.key, key)] ?? action
       if (selected.action !== 'keep') result.push(`${original.title}: ${key} ${selected.action === 'clear' ? 'cleared' : 'replaced'}`)
@@ -530,24 +529,24 @@ const locked = computed(() => busy.value || stale.value || !saved.value || !cons
 const runtimeDescription = computed(() => {
   if (!saved.value) return ''
   if (saved.value.runtime.settingsCurrent)
-    return 'The saved policy has been reconciled in this application process. Remote delivery still requires provider-side evidence.'
+    return t('admin:logging.savedPolicyHasBeen')
   return (
-    saved.value.runtime.message || 'Saved logging policy differs from this process. Apply the saved settings after checking the runtime observation.'
+    saved.value.runtime.message || t('admin:logging.savedLoggingPolicyDiffers')
   )
 })
 
 const destinationRuntimeLabel = (state: LoggingDestination['runtime']['state']): string => {
   switch (state) {
     case 'active':
-      return 'Active'
+      return t('admin:logging.active')
     case 'inactive':
-      return 'Inactive'
+      return t('admin:logging.inactive')
     case 'unavailable':
-      return 'Unavailable'
+      return t('admin:logging.unavailable')
     case 'failed':
-      return 'Failed'
+      return t('admin:logging.failed')
     default:
-      return 'Not applied'
+      return t('admin:logging.notApplied')
   }
 }
 const destinationRuntimeTone = (state: LoggingDestination['runtime']['state']): 'success' | 'info' | 'warning' | 'error' => {
@@ -591,7 +590,7 @@ const load = async (): Promise<boolean> => {
     return true
   } catch (caught) {
     if (sequence !== loadSequence) return false
-    error.value = caught instanceof Error ? caught.message : 'Logging settings could not be loaded.'
+    error.value = caught instanceof Error ? caught.message : t('admin:logging.loggingSettingsCouldNot')
     return false
   } finally {
     if (sequence === loadSequence) loading.value = false
@@ -606,7 +605,7 @@ const askDiscard = async (next: () => void) => {
     next()
     return
   }
-  if (!(await confirmDiscard('Discard logging draft?', 'Your unsaved destination, console and secret-action changes will be lost.', 'Discard draft'))) return
+  if (!(await confirmDiscard(t('admin:logging.discardLoggingDraft'), t('admin:logging.unsavedDestinationConsoleSecret'), t('admin:logging.discardDraft')))) return
   reset()
   next()
 }
@@ -632,7 +631,7 @@ const save = async () => {
   if (!saved.value || !consolePolicy.value || issues.value.length) return
   const trimmed = reason.value.trim()
   if (trimmed.length < 3) {
-    reasonError.value = 'Provide a brief reason of at least three characters.'
+    reasonError.value = t('admin:logging.provideBriefReasonLeast')
     return
   }
   saving.value = true
@@ -640,13 +639,13 @@ const save = async () => {
   try {
     const result = await saveLoggingWorkspace({ fingerprint: saved.value.fingerprint, reason: trimmed, ...draftPayload() })
     reviewOpen.value = false
-    notice.value = `Logging settings were saved in revision ${result.revision}. Reloaded settings must be applied separately to reconcile this process.`
+    notice.value = t('admin:logging.loggingSettingsWereSaved', { revision: result.revision, interpolation: { escapeValue: false } })
     stale.value = true
     await load()
   } catch (caught) {
     const status = typeof caught === 'object' && caught !== null && 'status' in caught ? (caught as { status?: unknown }).status : undefined
     if (requiresRecovery(status)) stale.value = true
-    reasonError.value = caught instanceof Error ? caught.message : 'The save outcome is unconfirmed. Reload before repeating it.'
+    reasonError.value = caught instanceof Error ? caught.message : t('admin:logging.saveOutcomeUnconfirmedReload')
   } finally {
     saving.value = false
   }
@@ -657,14 +656,14 @@ const applySaved = async () => {
   try {
     const result = await applyLoggingWorkspace(saved.value.fingerprint)
     notice.value = result.applied
-      ? 'Saved logging settings were reconciled in this application process. This is not evidence of remote delivery.'
-      : 'Saved settings were read, but this process could not fully reconcile them. Inspect the runtime observation before trying again.'
+      ? t('admin:logging.savedLoggingSettingsWere')
+      : t('admin:logging.savedSettingsWereRead')
     stale.value = true
     await load()
   } catch (caught) {
     const status = typeof caught === 'object' && caught !== null && 'status' in caught ? (caught as { status?: unknown }).status : undefined
     if (requiresRecovery(status)) stale.value = true
-    error.value = caught instanceof Error ? caught.message : 'The application outcome is unconfirmed. Reload before repeating it.'
+    error.value = caught instanceof Error ? caught.message : t('admin:logging.applicationOutcomeUnconfirmedReload')
   } finally {
     applying.value = false
   }
@@ -678,7 +677,7 @@ onBeforeUnmount(() => {
 })
 onBeforeRouteLeave(async () => {
   if (!dirty.value) return true
-  return confirmDiscard('Discard logging draft?', 'Your unsaved destination, console and secret-action changes will be lost.', 'Discard draft')
+  return confirmDiscard(t('admin:logging.discardLoggingDraft'), t('admin:logging.unsavedDestinationConsoleSecret'), t('admin:logging.discardDraft'))
 })
 </script>
 

@@ -1,20 +1,20 @@
 <template lang="pug">
 v-card
-  v-card-title Telemetry and privacy
-  v-card-subtitle Saved preference is separate from a successful external telemetry delivery. This workspace does not infer delivery health.
+  v-card-title {{ $t(`admin:utilitiesTelemetry.telemetryPrivacy`) }}
+  v-card-subtitle {{ $t(`admin:utilitiesTelemetry.savedPreferenceSeparateSuccessful`) }}
   v-card-text
     v-alert(color='info' variant='tonal' icon='mdi-information-outline')
-      .text-body-medium When enabled, telemetry sends anonymized installation and platform information to the configured endpoint. It does not include wiki content or personal data.
-    v-switch.mt-6(v-model='enabled' label='Enable telemetry' color='primary' :disabled='busy' persistent-hint hint='Changing this preference is recorded and persisted before local runtime state is updated.')
-    v-btn.mt-4(color='primary' variant='flat' :disabled='busy || !preferenceChanged' @click='openSaveReview') Review telemetry preference
+      .text-body-medium {{ $t(`admin:utilitiesTelemetry.whenEnabledTelemetrySends`) }}
+    v-switch.mt-6(v-model='enabled' :label='$t(`admin:utilitiesTelemetry.enableTelemetry`)' color='primary' :disabled='busy' persistent-hint :hint='$t(`admin:utilitiesTelemetry.changingPreferenceRecordedPersisted`)')
+    v-btn.mt-4(color='primary' variant='flat' :disabled='busy || !preferenceChanged' @click='openSaveReview') {{ $t(`admin:utilitiesTelemetry.reviewTelemetryPreference`) }}
     v-divider.my-6
-    h2.text-title-medium Anonymous client ID
-    p.text-body-medium.mt-2 This identifier groups telemetry requests. Resetting it breaks continuity with prior telemetry. It is not evidence that a request was delivered.
+    h2.text-title-medium {{ $t(`admin:utilitiesTelemetry.anonymousClientId`) }}
+    p.text-body-medium.mt-2 {{ $t(`admin:utilitiesTelemetry.identifierGroupsTelemetryRequests`) }}
     v-sheet.pa-3.rounded.border
-      code.telemetry-client-id {{ workspace.telemetry.clientId ?? 'No client ID is currently configured.' }}
+      code.telemetry-client-id {{ workspace.telemetry.clientId ?? $t(`admin:utilitiesTelemetry.noClientIdCurrently`) }}
     .d-flex.flex-wrap.ga-2.mt-4
-      v-btn(variant='outlined' :disabled='!workspace.telemetry.clientId || busy' @click='copyClientId') Copy ID
-      v-btn(color='warning' variant='outlined' :disabled='busy' @click='openResetReview') Review client-ID reset
+      v-btn(variant='outlined' :disabled='!workspace.telemetry.clientId || busy' @click='copyClientId') {{ $t(`admin:utilitiesTelemetry.copyId`) }}
+      v-btn(color='warning' variant='outlined' :disabled='busy' @click='openResetReview') {{ $t(`admin:utilitiesTelemetry.reviewClientIdReset`) }}
   utility-review(
     v-model:open='review.open'
     :title='review.title'
@@ -99,10 +99,10 @@ export default defineComponent({
       this.review = {
         open: true,
         kind: 'telemetry-save',
-        title: 'Review telemetry preference',
-        effect: `This saves telemetry as ${payload.enabled ? 'enabled' : 'disabled'} and then reconciles this process with the saved preference.`,
+        title: this.$t('admin:utilitiesTelemetry.reviewTelemetryPreference'),
+        effect: this.$t('admin:utilitiesTelemetry.savesTelemetryThenReconciles', { enabled: payload.enabled ? 'enabled' : 'disabled', interpolation: { escapeValue: false } }),
         confirmation: utilityOperationConfirmation('telemetry-save'),
-        parameters: [{ label: 'Telemetry preference', value: payload.enabled ? 'Enabled' : 'Disabled' }],
+        parameters: [{ label: this.$t('admin:utilitiesTelemetry.telemetryPreference'), value: payload.enabled ? this.$t('admin:utilitiesTelemetry.enabled') : this.$t('admin:utilitiesTelemetry.disabled') }],
         payload
       }
       this.reviewError = ''
@@ -112,10 +112,10 @@ export default defineComponent({
       this.review = {
         open: true,
         kind: 'telemetry-reset-client-id',
-        title: 'Review telemetry client-ID reset',
-        effect: 'This creates and saves a new anonymous client ID. The previous ID cannot be recovered from the Utilities receipt.',
+        title: this.$t('admin:utilitiesTelemetry.reviewTelemetryClientId'),
+        effect: this.$t('admin:utilitiesTelemetry.createsSavesNewAnonymous'),
         confirmation: utilityOperationConfirmation('telemetry-reset-client-id'),
-        parameters: [{ label: 'Client ID action', value: 'Replace the current anonymous client ID' }],
+        parameters: [{ label: this.$t('admin:utilitiesTelemetry.clientIdAction'), value: this.$t('admin:utilitiesTelemetry.replaceCurrentAnonymousClient') }],
         payload: Object.freeze({}) as Record<string, boolean>
       }
       this.reviewError = ''
@@ -125,9 +125,9 @@ export default defineComponent({
       if (!clientId) return
       try {
         await navigator.clipboard.writeText(clientId)
-        this.$emit('notice', { message: 'Telemetry client ID copied.', color: 'success' })
+        this.$emit('notice', { message: this.$t('admin:utilitiesTelemetry.telemetryClientIdCopied'), color: 'success' })
       } catch {
-        this.$emit('notice', { message: 'The browser could not copy the telemetry client ID.', color: 'warning' })
+        this.$emit('notice', { message: this.$t('admin:utilitiesTelemetry.browserCouldNotCopy'), color: 'warning' })
       }
     },
     setReviewDirty(dirty: boolean) {

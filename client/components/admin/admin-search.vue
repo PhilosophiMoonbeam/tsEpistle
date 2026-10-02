@@ -1,32 +1,32 @@
 <template>
   <v-container class="admin-search" fluid>
-    <AdminHero title="Search" description="Tune discovery for readers and agents. Configure retrieval, evaluate real queries, and maintain the index." eyebrow="Intelligence & connections" icon="mdi-text-search-variant">
-      <template #status><v-chip size="small" variant="tonal" :color="dirty ? 'warning' : undefined">{{ enginesLoading ? 'Loading configuration' : enginesLoadError ? 'Configuration unavailable' : dirty ? 'Unsaved changes' : 'Configuration up to date' }}</v-chip></template>
-      <template #actions><v-btn :aria-disabled="dirty || undefined" variant="text" prepend-icon="mdi-refresh" :loading="enginesLoading" :disabled="saving || rebuilding" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ dirty ? 'Save or reset your search changes before you reload.' : 'Reload saved search configuration' }}</v-tooltip></v-btn></template>
+    <AdminHero :title="$t('admin:search.search')" :description="$t('admin:search.tuneDiscoveryReadersAgents')" :eyebrow="$t('admin:search.intelligenceConnections')" icon="mdi-text-search-variant">
+      <template #status><v-chip size="small" variant="tonal" :color="dirty ? 'warning' : undefined">{{ enginesLoading ? $t('admin:search.loadingConfiguration') : enginesLoadError ? $t('admin:search.configurationUnavailable') : dirty ? $t('admin:search.unsavedChanges') : $t('admin:search.configurationUpDate') }}</v-chip></template>
+      <template #actions><v-btn :aria-disabled="dirty || undefined" variant="text" prepend-icon="mdi-refresh" :loading="enginesLoading" :disabled="saving || rebuilding" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ dirty ? $t('admin:search.saveResetSearchChanges') : $t('admin:search.reloadSavedSearchConfiguration') }}</v-tooltip></v-btn></template>
     </AdminHero>
-    <v-tabs v-model="tab" class="search-tabs" color="primary" show-arrows aria-label="Search administration sections">
-      <v-tab id="search-tab-configure" aria-controls="search-panel-configure" value="configure" prepend-icon="mdi-tune-variant">Configuration</v-tab>
-      <v-tab id="search-tab-evaluate" aria-controls="search-panel-evaluate" value="evaluate" prepend-icon="mdi-text-box-search-outline">Evaluate queries</v-tab>
-      <v-tab id="search-tab-index" aria-controls="search-panel-index" value="index" prepend-icon="mdi-database-sync-outline">Index maintenance</v-tab>
+    <v-tabs v-model="tab" class="search-tabs" color="primary" show-arrows :aria-label="$t('admin:search.searchAdministrationSections')">
+      <v-tab id="search-tab-configure" aria-controls="search-panel-configure" value="configure" prepend-icon="mdi-tune-variant">{{ $t('admin:search.configuration') }}</v-tab>
+      <v-tab id="search-tab-evaluate" aria-controls="search-panel-evaluate" value="evaluate" prepend-icon="mdi-text-box-search-outline">{{ $t('admin:search.evaluateQueries') }}</v-tab>
+      <v-tab id="search-tab-index" aria-controls="search-panel-index" value="index" prepend-icon="mdi-database-sync-outline">{{ $t('admin:search.indexMaintenance') }}</v-tab>
     </v-tabs>
-    <v-alert v-if="enginesLoadError" type="error" variant="tonal" class="mb-5">Search configuration could not be loaded.<template #append><v-btn variant="text" @click="retryLoad">Retry</v-btn></template></v-alert>
+    <v-alert v-if="enginesLoadError" type="error" variant="tonal" class="mb-5">{{ $t('admin:search.searchConfigurationCouldNot') }}<template #append><v-btn variant="text" @click="retryLoad">{{ $t('admin:search.retry') }}</v-btn></template></v-alert>
     <v-alert v-if="operationError" type="error" variant="tonal" class="mb-5" closable @click:close="operationError = ''">{{ operationError }}</v-alert>
     <v-window v-model="tab">
       <v-window-item id="search-panel-configure" role="tabpanel" aria-labelledby="search-tab-configure" value="configure">
         <v-skeleton-loader v-if="enginesLoading" type="article, article" />
         <div v-else-if="enginesLoaded" class="search-configuration">
           <section class="search-panel" aria-labelledby="search-engine-title">
-            <header><div class="search-kicker">Retrieval foundation</div><h2 id="search-engine-title">Search engine</h2><p>The saved engine serves reader searches and the Agent's page-retrieval tools.</p></header>
-            <v-radio-group v-model="selectedEngine" label="Choose an engine" :disabled="saving || rebuilding">
+            <header><div class="search-kicker">{{ $t('admin:search.retrievalFoundation') }}</div><h2 id="search-engine-title">{{ $t('admin:search.searchEngine2') }}</h2><p>{{ $t('admin:search.savedEngineServesReader') }}</p></header>
+            <v-radio-group v-model="selectedEngine" :label="$t('admin:search.chooseEngine')" :disabled="saving || rebuilding">
               <v-radio v-for="eng in engines" :key="eng.key" :value="eng.key" :disabled="saving || rebuilding || !eng.isAvailable" class="engine-choice">
-                <template #label><span><strong>{{ eng.title }}</strong><small>{{ eng.description }}{{ !eng.isAvailable ? ' · Unavailable on this deployment' : '' }}</small><v-chip v-if="eng.isEnabled" size="x-small" variant="tonal" class="mt-1">Saved engine</v-chip></span></template>
+                <template #label><span><strong>{{ eng.title }}</strong><small>{{ eng.description }}{{ !eng.isAvailable ? ` ${$t('admin:search.unavailableDeployment')}` : '' }}</small><v-chip v-if="eng.isEnabled" size="x-small" variant="tonal" class="mt-1">{{ $t('admin:search.savedEngine') }}</v-chip></span></template>
               </v-radio>
             </v-radio-group>
-            <p v-if="!engines.length">No search engines are installed.</p>
+            <p v-if="!engines.length">{{ $t('admin:search.noSearchEnginesInstalled') }}</p>
             <div v-if="engine.key" class="engine-settings">
-              <h3>Retrieval settings</h3>
-              <p v-if="engine.key === 'postgres'">The dictionary controls stemming and stop words. Changing it rebuilds derived search data when the engine activates.</p>
-              <p v-if="!engine.config.length">This engine needs no additional configuration.</p>
+              <h3>{{ $t('admin:search.retrievalSettings') }}</h3>
+              <p v-if="engine.key === 'postgres'">{{ $t('admin:search.dictionaryControlsStemmingStop') }}</p>
+              <p v-if="!engine.config.length">{{ $t('admin:search.engineNeedsNoAdditional') }}</p>
               <div v-for="cfg in engine.config" :key="cfg.key" class="engine-setting">
                 <v-select v-if="cfg.value.type === 'string' && cfg.value.enum" :model-value="String(cfg.value.value ?? '')" @update:model-value="cfg.value.value = $event" :items="cfg.value.enum" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint :disabled="saving || rebuilding" />
                 <v-switch v-else-if="cfg.value.type === 'boolean'" v-model="cfg.value.value" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint color="primary" inset :disabled="saving || rebuilding" />
@@ -36,37 +36,37 @@
             </div>
           </section>
           <aside class="search-principles">
-            <div class="search-kicker">From question to source</div><h2>How discovery works</h2>
-            <ol><li><strong>Match the language</strong><p>Text and spelling matches help readers find pages without knowing their exact titles.</p></li><li><strong>Follow the connections</strong><p>The PostgreSQL engine also uses tags and the wiki link graph to surface related knowledge.</p></li><li><strong>Respect access</strong><p>Search results are filtered for the current user. An administrator's evaluation can differ from another reader's results.</p></li></ol>
-            <v-btn variant="tonal" append-icon="mdi-arrow-right" @click="tab = 'evaluate'">Evaluate a query</v-btn>
+            <div class="search-kicker">{{ $t('admin:search.questionSource') }}</div><h2>{{ $t('admin:search.howDiscoveryWorks') }}</h2>
+            <ol><li><strong>{{ $t('admin:search.matchLanguage') }}</strong><p>{{ $t('admin:search.textSpellingMatchesHelp') }}</p></li><li><strong>{{ $t('admin:search.followConnections') }}</strong><p>{{ $t('admin:search.postgresqlEngineAlsoUses') }}</p></li><li><strong>{{ $t('admin:search.respectAccess') }}</strong><p>{{ $t('admin:search.searchResultsFilteredCurrent') }}</p></li></ol>
+            <v-btn variant="tonal" append-icon="mdi-arrow-right" @click="tab = 'evaluate'">{{ $t('admin:search.evaluateQuery') }}</v-btn>
           </aside>
         </div>
       </v-window-item>
-      <v-window-item id="search-panel-evaluate" role="tabpanel" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">These results use the saved engine. Save your configuration changes to evaluate them.</v-alert><AdminSearchEvaluate /></v-window-item>
+      <v-window-item id="search-panel-evaluate" role="tabpanel" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ $t('admin:search.theseResultsUseSaved') }}</v-alert><AdminSearchEvaluate /></v-window-item>
       <v-window-item id="search-panel-index" role="tabpanel" aria-labelledby="search-tab-index" value="index">
         <section class="search-panel search-index" aria-labelledby="search-index-title">
-          <header class="index-heading"><div><div class="search-kicker">Maintenance & evidence</div><h2 id="search-index-title">Index coverage</h2><p>Inspect the saved engine's derived index against current published public page revisions.</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting" @click="inspect">Inspect index</v-btn></header>
+          <header class="index-heading"><div><div class="search-kicker">{{ $t('admin:search.maintenanceEvidence') }}</div><h2 id="search-index-title">{{ $t('admin:search.indexCoverage') }}</h2><p>{{ $t('admin:search.inspectSavedEnginesDerived') }}</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting" @click="inspect">{{ $t('admin:search.inspectIndex') }}</v-btn></header>
           <v-alert v-if="inspectionError" type="error" variant="tonal">{{ inspectionError }}</v-alert>
           <v-skeleton-loader v-if="inspecting && !inspection" type="list-item-three-line" />
           <template v-if="inspection">
-            <div class="index-verdict"><v-icon :color="indexAligned ? 'success' : 'warning'">{{ indexAligned ? 'mdi-check-circle-outline' : 'mdi-alert-circle-outline' }}</v-icon><div><strong>{{ indexAligned ? 'Source revisions and dictionary align' : 'Index maintenance is needed' }}</strong><p>Observed {{ formatDate(inspection.checkedAt) }} · {{ inspectedEngine }}</p></div></div>
-            <dl class="index-metrics"><div><dt>Published public pages</dt><dd>{{ inspection.publicPages.toLocaleString() }}</dd></div><div><dt>Indexed entries</dt><dd>{{ inspection.indexedPages.toLocaleString() }}</dd></div><div><dt>Missing pages</dt><dd>{{ inspection.missingPages.toLocaleString() }}</dd></div><div><dt>Stale revisions</dt><dd>{{ inspection.stalePages.toLocaleString() }}</dd></div><div><dt>Entries to remove</dt><dd>{{ inspection.excludedEntries.toLocaleString() }}</dd></div></dl>
-            <p class="index-note">Configured dictionary: <strong>{{ inspection.configuredDictionary }}</strong> · Indexed dictionary: <strong>{{ inspection.indexedDictionary || 'Not recorded' }}</strong>. This snapshot checks coverage and metadata; evaluate queries to assess result quality.</p>
+            <div class="index-verdict"><v-icon :color="indexAligned ? 'success' : 'warning'">{{ indexAligned ? 'mdi-check-circle-outline' : 'mdi-alert-circle-outline' }}</v-icon><div><strong>{{ indexAligned ? $t('admin:search.sourceRevisionsDictionaryAlign') : $t('admin:search.indexMaintenanceNeeded') }}</strong><p>{{ $t('admin:search.observed', { checkedAt: formatDate(inspection.checkedAt), inspectedEngine, interpolation: { escapeValue: false } }) }}</p></div></div>
+            <dl class="index-metrics"><div><dt>{{ $t('admin:search.publishedPublicPages') }}</dt><dd>{{ inspection.publicPages.toLocaleString() }}</dd></div><div><dt>{{ $t('admin:search.indexedEntries') }}</dt><dd>{{ inspection.indexedPages.toLocaleString() }}</dd></div><div><dt>{{ $t('admin:search.missingPages') }}</dt><dd>{{ inspection.missingPages.toLocaleString() }}</dd></div><div><dt>{{ $t('admin:search.staleRevisions') }}</dt><dd>{{ inspection.stalePages.toLocaleString() }}</dd></div><div><dt>{{ $t('admin:search.entriesRemove') }}</dt><dd>{{ inspection.excludedEntries.toLocaleString() }}</dd></div></dl>
+            <p class="index-note">{{ $t('admin:search.configuredDictionary') }} <strong>{{ inspection.configuredDictionary }}</strong> {{ $t('admin:search.indexedDictionary') }} <strong>{{ inspection.indexedDictionary || $t('admin:search.notRecorded') }}</strong>{{ $t('admin:search.snapshotChecksCoverageMetadata') }}</p>
           </template>
-          <p v-else-if="!inspecting && !inspectionError" class="index-empty">{{ inspectionUnsupported ? 'The active engine does not provide index inspection.' : 'Run an inspection to see current coverage. No inspection has been requested in this visit.' }}</p>
-          <div class="index-rebuild"><div><h3>Rebuild derived search data</h3><p>Use this after a configuration change or when indexed content is missing or out of date. The operation can take time and may temporarily delay searches.</p><p class="index-note">Private pages are outside the public index. Access checks still apply to results. Leaving this page does not cancel a server rebuild.</p></div><v-btn variant="outlined" color="primary" prepend-icon="mdi-cached" :loading="rebuilding" :disabled="saving || enginesLoading || dirty || !enginesLoaded" @click="rebuildConfirm = true">Rebuild index</v-btn></div>
+          <p v-else-if="!inspecting && !inspectionError" class="index-empty">{{ inspectionUnsupported ? $t('admin:search.activeEngineDoesNot') : $t('admin:search.runInspectionSeeCurrent') }}</p>
+          <div class="index-rebuild"><div><h3>{{ $t('admin:search.rebuildDerivedSearchData') }}</h3><p>{{ $t('admin:search.useAfterConfigurationChange') }}</p><p class="index-note">{{ $t('admin:search.privatePagesOutsidePublic') }}</p></div><v-btn variant="outlined" color="primary" prepend-icon="mdi-cached" :loading="rebuilding" :disabled="saving || enginesLoading || dirty || !enginesLoaded" @click="rebuildConfirm = true">{{ $t('admin:search.rebuildIndex2') }}</v-btn></div>
           <v-alert v-if="rebuildMessage" type="info" variant="tonal" class="mt-4" role="status">{{ rebuildMessage }}</v-alert>
-          <p v-if="dirty" class="index-note">Save or reset configuration changes before rebuilding the saved engine.</p>
+          <p v-if="dirty" class="index-note">{{ $t('admin:search.saveResetConfigurationChanges') }}</p>
         </section>
       </v-window-item>
     </v-window>
         <div v-if="enginesLoaded && tab === 'configure'" class="search-savebar" role="status">
-          <span>{{ saving ? 'Saving and activating the engine…' : dirty ? 'Your changes are not active yet' : 'Configuration matches the last load' }}</span>
-          <div><v-btn variant="text" prepend-icon="mdi-restore" :disabled="!dirty || saving || rebuilding" @click="resetDraft">Reset changes</v-btn><v-btn color="primary" prepend-icon="mdi-check" :disabled="!canSave" :loading="saving" @click="save">Save configuration</v-btn></div>
+          <span>{{ saving ? $t('admin:search.savingActivatingEngine') : dirty ? $t('admin:search.changesNotActiveYet') : $t('admin:search.configurationMatchesLastLoad') }}</span>
+          <div><v-btn variant="text" prepend-icon="mdi-restore" :disabled="!dirty || saving || rebuilding" @click="resetDraft">{{ $t('admin:search.resetChanges') }}</v-btn><v-btn color="primary" prepend-icon="mdi-check" :disabled="!canSave" :loading="saving" @click="save">{{ $t('admin:search.saveConfiguration') }}</v-btn></div>
         </div>
 
-    <v-dialog v-model="rebuildConfirm" max-width="32rem" :persistent="rebuilding" aria-labelledby="rebuild-confirm-title"><v-card><v-card-title id="rebuild-confirm-title">Rebuild the search index?</v-card-title><v-card-text>This rebuilds the saved engine's derived data from wiki pages. Source pages are preserved. Searches may wait while the operation runs.</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="rebuilding" @click="rebuildConfirm = false">Cancel</v-btn><v-btn color="primary" :loading="rebuilding" :disabled="saving || enginesLoading" @click="rebuild">Rebuild index</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog :model-value="Boolean(leaveResolve)" persistent max-width="30rem" aria-labelledby="search-discard-title"><v-card><v-card-title id="search-discard-title">Discard search changes?</v-card-title><v-card-text>Your configuration edits have not been saved.</v-card-text><v-card-actions><v-spacer /><v-btn @click="finishLeave(false)">Keep editing</v-btn><v-btn color="warning" @click="finishLeave(true)">Discard changes</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="rebuildConfirm" max-width="32rem" :persistent="rebuilding" aria-labelledby="rebuild-confirm-title"><v-card><v-card-title id="rebuild-confirm-title">{{ $t('admin:search.rebuildSearchIndex') }}</v-card-title><v-card-text>{{ $t('admin:search.rebuildsSavedEnginesDerived') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="rebuilding" @click="rebuildConfirm = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="rebuilding" :disabled="saving || enginesLoading" @click="rebuild">{{ $t('admin:search.rebuildIndex2') }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog :model-value="Boolean(leaveResolve)" persistent max-width="30rem" aria-labelledby="search-discard-title"><v-card><v-card-title id="search-discard-title">{{ $t('admin:search.discardSearchChanges') }}</v-card-title><v-card-text>{{ $t('admin:search.configurationEditsHaveNot') }}</v-card-text><v-card-actions><v-spacer /><v-btn @click="finishLeave(false)">{{ $t('admin:search.keepEditing') }}</v-btn><v-btn color="warning" @click="finishLeave(true)">{{ $t('admin:search.discardChanges') }}</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
 </template>
 
@@ -190,7 +190,7 @@ export default {
       try {
         const engines = await fetchSearchEngines(
           createAbortableFetch(controller.signal),
-          'Search engines response is invalid'
+          this.$t('admin:search.searchEnginesResponseInvalid')
         )
         if (controller.signal.aborted) {
           return false
@@ -279,7 +279,7 @@ export default {
         })
       } catch (err) {
         if (!controller.signal.aborted) {
-          this.operationError = saveAccepted ? `Configuration was saved, but could not be reloaded. Refresh to read the current state. ${getErrorMessage(err)}` : getErrorMessage(err)
+          this.operationError = saveAccepted ? this.$t('admin:search.configurationWasSavedBut', { err: getErrorMessage(err), interpolation: { escapeValue: false } }) : getErrorMessage(err)
           pushGraphError(wikiStore, err)
         }
       } finally {
@@ -299,7 +299,7 @@ export default {
       this.rebuildController = controller
       this.rebuilding = true
       this.rebuildConfirm = false
-      this.rebuildMessage = 'Rebuilding the saved engine. Waiting for server confirmation…'
+      this.rebuildMessage = this.$t('admin:search.rebuildingSavedEngineWaiting')
       this.operationError = ''
       loadingStart(wikiStore, 'admin-search-rebuildindex')
       try {
@@ -307,7 +307,7 @@ export default {
         if (controller.signal.aborted) {
           return
         }
-        this.rebuildMessage = 'The server confirmed that the index rebuild completed.'
+        this.rebuildMessage = this.$t('admin:search.serverConfirmedIndexRebuild')
         this.inspection = null
         this.inspectionUnsupported = false
         showNotification(wikiStore, {
@@ -317,7 +317,7 @@ export default {
         })
       } catch (err) {
         if (!controller.signal.aborted) {
-          this.rebuildMessage = 'The request ended without completion confirmation. Inspect the index before retrying.'
+          this.rebuildMessage = this.$t('admin:search.requestEndedWithoutCompletion')
           this.operationError = getErrorMessage(err)
           pushGraphError(wikiStore, err)
         }

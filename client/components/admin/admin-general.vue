@@ -2,8 +2,8 @@
   <v-container fluid class="general-workspace">
     <admin-hero
       icon="mdi-tune-variant"
-      title="General"
-      description="Give your workspace its identity, voice and publishing conventions."
+      :title="$t('admin:general.title')"
+      :description="$t('admin:general.giveWorkspaceIdentityVoice')"
     >
       <template #actions>
         <v-btn
@@ -12,10 +12,10 @@
           :disabled="busy || initializing"
           :loading="loading"
           @click="reload"
-          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved workspace settings</v-tooltip></v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:general.reloadSavedWorkspaceSettings') }}</v-tooltip></v-btn
         >
         <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset"
-          >Reset draft</v-btn
+          >{{ $t('admin:general.resetDraft') }}</v-btn
         >
         <v-btn
           color="primary"
@@ -23,28 +23,28 @@
           prepend-icon="mdi-check"
           :disabled="locked || !dirty"
           @click="review"
-          >Review changes</v-btn
+          >{{ $t('admin:general.reviewChanges') }}</v-btn
         >
       </template>
     </admin-hero>
     <async-state
       v-if="!saved && loading"
       state="loading"
-      title="Loading workspace settings"
+      :title="$t('admin:general.loadingWorkspaceSettings')"
     />
     <async-state
       v-else-if="!saved && loadError"
       state="error"
-      title="Workspace settings are unavailable"
+      :title="$t('admin:general.workspaceSettingsUnavailable')"
       :message="loadError"
-      retry-label="Try again"
+      :retry-label="$t('admin:general.tryAgain')"
       @retry="load"
     />
     <template v-if="saved && draft">
       <v-alert v-if="loadError" type="error" variant="tonal" class="mt-5"
         >{{ loadError
         }}<v-btn variant="text" :disabled="busy" @click="reload"
-          >Reload saved settings</v-btn
+          >{{ $t('admin:general.reloadSavedSettings') }}</v-btn
         ></v-alert
       >
       <v-alert
@@ -57,15 +57,15 @@
       <div class="general-status">
         <span
           ><i :class="dirty ? 'is-draft' : ''" />{{
-            dirty ? "Unsaved workspace draft" : "Showing saved settings"
+            dirty ? $t('admin:general.unsavedWorkspaceDraft') : $t('admin:general.showingSavedSettings')
           }}</span
         ><span>{{
           saved.runtime.state === "applied"
-            ? "Runtime configuration current"
-            : "Runtime configuration needs attention"
+            ? $t('admin:general.runtimeConfigurationCurrent')
+            : $t('admin:general.runtimeConfigurationNeedsAttention')
         }}</span>
       </div>
-      <nav class="general-tabs" aria-label="General sections">
+      <nav class="general-tabs" :aria-label="$t('admin:general.generalSections')">
         <button
           v-for="tab in sections"
           :key="tab.key"
@@ -81,51 +81,47 @@
         <section class="general-editor">
           <template v-if="section === 'identity'">
             <div class="general-heading">
-              <span class="general-kicker">A place to know</span>
-              <h2>Workspace identity</h2>
+              <span class="general-kicker">{{ $t('admin:general.placeKnow') }}</span>
+              <h2>{{ $t('admin:general.workspaceIdentity') }}</h2>
               <p>
-                The name, address and attribution that make this knowledge space
-                recognizable.
+                {{ $t('admin:general.nameAddressAttributionMake') }}
               </p>
             </div>
             <div class="general-setting-group">
               <v-text-field
                 v-model="draft.title"
-                label="Workspace name"
+                :label="$t('admin:general.fieldLabels.title')"
                 variant="outlined"
                 maxlength="50"
                 counter="50"
                 :disabled="locked"
-                hint="Used in navigation, browser titles and workspace messages."
+                :hint="$t('admin:general.usedNavigationBrowserTitles')"
                 persistent-hint
               />
               <v-text-field
                 v-model="draft.host"
-                label="Public address"
+                :label="$t('admin:general.fieldLabels.host')"
                 variant="outlined"
                 :disabled="locked"
-                hint="The HTTP(S) origin used for generated links and identity-provider callbacks. Do not include a page path."
+                :hint="$t('admin:general.httpSOriginUsed')"
                 persistent-hint
               />
               <p class="general-note">
-                Changing the address does not configure DNS, certificates or a
-                reverse proxy. Review identity-provider callbacks when the
-                origin changes.
+                {{ $t('admin:general.changingAddressDoesNot') }}
               </p>
             </div>
             <div class="general-setting-group">
-              <h3>Workspace logo</h3>
+              <h3>{{ $t('admin:general.workspaceLogo') }}</h3>
               <general-logo-manager :disabled="locked || reviewing" />
             </div>
             <div class="general-setting-group">
-              <h3>Attribution & footer</h3>
+              <h3>{{ $t('admin:general.attributionFooter') }}</h3>
               <p>
-                Set the organization and content attribution readers see at the
-                foot of a page.
+                {{ $t('admin:general.setOrganizationContentAttribution') }}
               </p>
               <v-text-field
                 v-model="draft.company"
-                label="Organization"
+                :label="$t('admin:general.fieldLabels.company')"
                 variant="outlined"
                 maxlength="255"
                 :disabled="locked"
@@ -133,34 +129,33 @@
               <v-select
                 v-model="draft.contentLicense"
                 :items="licenses"
-                label="Content license"
+                :label="$t('admin:general.fieldLabels.contentLicense')"
                 variant="outlined"
                 :disabled="locked"
               />
               <v-textarea
                 v-model="draft.footerOverride"
-                label="Custom footer"
+                :label="$t('admin:general.customFooter')"
                 variant="outlined"
                 rows="3"
                 auto-grow
                 maxlength="8000"
                 :disabled="locked"
-                hint="Markdown. Leave empty to use the standard workspace footer."
+                :hint="$t('admin:general.markdownLeaveEmptyUse')"
                 persistent-hint
               />
               <div v-if="draft.footerOverride" class="general-preview-fragment">
-                <span class="general-kicker">Footer preview</span>
+                <span class="general-kicker">{{ $t('admin:general.footerPreview') }}</span>
                 <div class="general-markdown" v-html="footerPreview" />
               </div>
             </div>
           </template>
           <template v-else-if="section === 'announcement'">
             <div class="general-heading">
-              <span class="general-kicker">The shared noticeboard</span>
-              <h2>Workspace announcement</h2>
+              <span class="general-kicker">{{ $t('admin:general.sharedNoticeboard') }}</span>
+              <h2>{{ $t('admin:general.workspaceAnnouncement') }}</h2>
               <p>
-                Give readers timely context: planned maintenance, an important
-                change or a useful update.
+                {{ $t('admin:general.giveReadersTimelyContext') }}
               </p>
             </div>
             <div class="general-announcement-state">
@@ -179,16 +174,16 @@
             <div class="general-setting-group">
               <v-switch
                 v-model="draft.banner.isEnabled"
-                label="Publish this announcement"
+                :label="$t('admin:general.publishAnnouncement')"
                 color="primary"
                 inset
                 :disabled="locked"
-                hint="The announcement appears on wiki pages during its publication window."
+                :hint="$t('admin:general.announcementAppearsWikiPages')"
                 persistent-hint
               />
               <v-text-field
                 v-model="draft.banner.title"
-                label="Announcement title"
+                :label="$t('admin:general.announcementTitle')"
                 variant="outlined"
                 maxlength="160"
                 counter="160"
@@ -196,37 +191,35 @@
               />
               <v-textarea
                 v-model="draft.banner.content"
-                label="Announcement message"
+                :label="$t('admin:general.announcementMessage')"
                 variant="outlined"
                 rows="6"
                 auto-grow
                 maxlength="8000"
                 :disabled="locked"
-                hint="Markdown is supported. Include a title or message before publishing."
+                :hint="$t('admin:general.markdownSupportedIncludeTitle')"
                 persistent-hint
               />
               <v-select
                 :model-value="draft.banner.tone || 'warning'"
                 :items="tones"
-                label="Notice tone"
+                :label="$t('admin:general.noticeTone')"
                 variant="outlined"
                 :disabled="locked"
                 @update:model-value="draft.banner.tone = $event"
               />
             </div>
             <div class="general-setting-group">
-              <h3>Publication window</h3>
+              <h3>{{ $t('admin:general.publicationWindow') }}</h3>
               <p>
-                Use UTC for an unambiguous schedule. A blank start publishes
-                immediately; a blank end keeps the notice visible until you
-                disable it.
+                {{ $t('admin:general.useUtcUnambiguousSchedule') }}
               </p>
               <div class="general-pair">
                 <v-text-field
                   :model-value="dateInput(draft.banner.startsAt)"
                   type="datetime-local"
                   step="60"
-                  label="Starts at (UTC)"
+                  :label="$t('admin:general.startsUtc')"
                   variant="outlined"
                   clearable
                   :disabled="locked"
@@ -235,7 +228,7 @@
                   :model-value="dateInput(draft.banner.endsAt)"
                   type="datetime-local"
                   step="60"
-                  label="Ends at (UTC)"
+                  :label="$t('admin:general.endsUtc')"
                   variant="outlined"
                   clearable
                   :disabled="locked"
@@ -243,41 +236,37 @@
                 />
               </div>
               <p class="general-note">
-                Scheduled notices appear when a reader loads a page. Notices
-                already open disappear at the end time. Your preview shows the
-                draft outside this window, too.
+                {{ $t('admin:general.scheduledNoticesAppearWhen') }}
               </p>
             </div>
             <div class="general-preview-fragment">
-              <span class="general-kicker">Reader preview · unsaved draft</span
+              <span class="general-kicker">{{ $t('admin:general.readerPreviewUnsavedDraft') }}</span
               ><site-banner
                 v-if="draft.banner.title || draft.banner.content"
                 :banner="{ ...draft.banner, isEnabled: true }"
                 preview
               />
               <p v-else class="general-note">
-                Add a title or message to preview the announcement.
+                {{ $t('admin:general.addTitleMessagePreview') }}
               </p>
             </div>
           </template>
           <template v-else-if="section === 'publishing'">
             <div class="general-heading">
-              <span class="general-kicker">Reader & author conventions</span>
-              <h2>Publishing defaults</h2>
+              <span class="general-kicker">{{ $t('admin:general.readerAuthorConventions') }}</span>
+              <h2>{{ $t('admin:general.publishingDefaults') }}</h2>
               <p>
-                Help people discover pages and reach their source. Content
-                permissions continue to govern who can read and edit.
+                {{ $t('admin:general.helpPeopleDiscoverPages') }}
               </p>
             </div>
             <div class="general-setting-group">
-              <h3>Search presentation</h3>
+              <h3>{{ $t('admin:general.searchPresentation') }}</h3>
               <p>
-                Metadata for external search engines. These preferences do not
-                change the wiki’s internal search or page access.
+                {{ $t('admin:general.metadataExternalSearchEngines') }}
               </p>
               <v-textarea
                 v-model="draft.description"
-                label="Search description"
+                :label="$t('admin:general.fieldLabels.description')"
                 variant="outlined"
                 rows="3"
                 maxlength="1000"
@@ -287,49 +276,47 @@
                 <v-select
                   :model-value="indexDirective"
                   :items="indexOptions"
-                  label="Index pages"
+                  :label="$t('admin:general.indexPages')"
                   variant="outlined"
                   :disabled="locked"
                   @update:model-value="setRobots('index', $event)"
                 /><v-select
                   :model-value="followDirective"
                   :items="followOptions"
-                  label="Follow page links"
+                  :label="$t('admin:general.followPageLinks')"
                   variant="outlined"
                   :disabled="locked"
                   @update:model-value="setRobots('follow', $event)"
                 />
               </div>
               <div class="general-search-preview">
-                <span>{{ draft.host || "Workspace address" }}</span
-                ><strong>{{ draft.title || "Workspace name" }}</strong>
+                <span>{{ draft.host || $t('admin:general.workspaceAddress') }}</span
+                ><strong>{{ draft.title || $t('admin:general.fieldLabels.title') }}</strong>
                 <p>
                   {{
                     draft.description ||
-                    "Your workspace description will appear here."
+                    $t('admin:general.workspaceDescriptionWillAppear')
                   }}
                 </p>
                 <small
-                  >Illustrative search preview. Search engines choose their own
-                  snippets.</small
+                  >{{ $t('admin:general.illustrativeSearchPreviewSearch') }}</small
                 >
               </div>
             </div>
             <div class="general-setting-group">
-              <h3>Page URL extensions</h3>
+              <h3>{{ $t('admin:general.fieldLabels.pageExtensions') }}</h3>
               <p>
-                Choose which file-like URLs resolve to wiki pages. Removing an
-                extension can change how existing links are handled.
+                {{ $t('admin:general.chooseWhichFileLike') }}
               </p>
               <v-combobox
                 v-model="draft.pageExtensions"
-                label="Recognized page extensions"
+                :label="$t('admin:general.recognizedPageExtensions')"
                 variant="outlined"
                 multiple
                 chips
                 closable-chips
                 :disabled="locked"
-                hint="Type an extension and press Enter. Use letters or digits without a leading dot."
+                :hint="$t('admin:general.typeExtensionPressEnter')"
                 persistent-hint
               />
               <div class="general-url-examples">
@@ -343,41 +330,39 @@
                   >
                 </div>
                 <p v-if="!draft.pageExtensions.length">
-                  No extension aliases. Extensionless page URLs remain
-                  available.
+                  {{ $t('admin:general.noExtensionAliasesExtensionless') }}
                 </p>
               </div>
             </div>
             <div class="general-setting-group">
-              <h3>Page editing actions</h3>
+              <h3>{{ $t('admin:general.pageEditingActions') }}</h3>
               <p>
-                Choose how authors reach the editor. These controls are shown
-                only where page permissions allow them.
+                {{ $t('admin:general.chooseHowAuthorsReach') }}
               </p>
               <v-switch
                 v-model="draft.editFab"
-                label="Show a floating edit button"
+                :label="$t('admin:general.showFloatingEditButton')"
                 color="primary"
                 inset
                 :disabled="locked"
               />
               <v-switch
                 v-model="draft.editMenuBar"
-                label="Show the page action bar"
+                :label="$t('admin:general.showPageActionBar')"
                 color="primary"
                 inset
                 :disabled="locked"
               />
               <v-switch
                 v-model="draft.editMenuBtn"
-                label="Include the edit action"
+                :label="$t('admin:general.includeEditAction')"
                 color="primary"
                 inset
                 :disabled="locked || !draft.editMenuBar"
               />
               <v-switch
                 v-model="draft.editMenuExternalBtn"
-                label="Include an external source action"
+                :label="$t('admin:general.includeExternalSourceAction')"
                 color="primary"
                 inset
                 :disabled="locked || !draft.editMenuBar"
@@ -385,30 +370,30 @@
               <template v-if="draft.editMenuExternalBtn"
                 ><v-text-field
                   v-model="draft.editMenuExternalName"
-                  label="External action label"
+                  :label="$t('admin:general.fieldLabels.editMenuExternalName')"
                   variant="outlined"
                   :disabled="locked"
                   maxlength="80"
                 /><v-text-field
                   v-model="draft.editMenuExternalIcon"
-                  label="External action icon"
+                  :label="$t('admin:general.fieldLabels.editMenuExternalIcon')"
                   variant="outlined"
                   :disabled="locked"
-                  hint="An mdi- icon name, for example mdi-github."
+                  :hint="$t('admin:general.mdiIconNameExample')"
                   persistent-hint
                 /><v-text-field
                   v-model="draft.editMenuExternalUrl"
-                  label="External source URL"
+                  :label="$t('admin:general.fieldLabels.editMenuExternalUrl')"
                   variant="outlined"
                   :disabled="locked"
-                  hint="Use {filename} for the page source path. HTTP(S) only."
+                  :hint="$t('admin:general.useFilenamePageSource')"
                   persistent-hint
                 />
                 <div class="general-source-preview">
-                  <span class="general-kicker">Example · en/handbook.md</span
+                  <span class="general-kicker">{{ $t('admin:general.exampleEnHandbookMd') }}</span
                   ><code>{{
                     sourcePreview ||
-                    "Enter a valid source URL to preview this destination."
+                    $t('admin:general.enterValidSourceUrl')
                   }}</code>
                 </div>
               </template>
@@ -416,57 +401,53 @@
           </template>
           <template v-else-if="section === 'accounts'">
             <div class="general-heading">
-              <span class="general-kicker">A consistent starting point</span>
-              <h2>New account presentation</h2>
+              <span class="general-kicker">{{ $t('admin:general.consistentStartingPoint') }}</span>
+              <h2>{{ $t('admin:general.newAccountPresentation') }}</h2>
               <p>
-                These defaults are applied once when a new human account is
-                created. Existing accounts keep their saved preferences, and
-                each person can override these values from their profile.
+                {{ $t('admin:general.theseDefaultsAppliedOnce') }}
               </p>
             </div>
             <div class="general-setting-group">
               <v-text-field
                 v-model="draft.userDefaults.timezone"
-                label="Default time zone"
+                :label="$t('admin:general.defaultTimeZone')"
                 variant="outlined"
                 :disabled="locked"
-                hint="IANA time zone, for example UTC or Europe/London."
+                :hint="$t('admin:general.ianaTimeZoneExample')"
                 persistent-hint
               />
               <v-select
                 v-model="draft.userDefaults.dateFormat"
                 :items="dateFormats"
-                label="Default date format"
+                :label="$t('admin:general.defaultDateFormat')"
                 variant="outlined"
                 :disabled="locked"
               />
               <v-select
                 v-model="draft.userDefaults.timeFormat"
                 :items="timeFormats"
-                label="Default time format"
+                :label="$t('admin:general.defaultTimeFormat')"
                 variant="outlined"
                 :disabled="locked"
               />
             </div>
             <p class="general-note">
-              Locale default keeps the browser’s language convention. Saving
-              does not rewrite existing profiles or system accounts.
+              {{ $t('admin:general.localeDefaultKeepsBrowsers') }}
             </p>
           </template>
           <template v-else>
             <div class="general-heading">
-              <span class="general-kicker">Workspace decisions</span>
-              <h2>Change history</h2>
+              <span class="general-kicker">{{ $t('admin:general.workspaceDecisions') }}</span>
+              <h2>{{ $t('admin:general.changeHistory') }}</h2>
               <p>
-                The latest 50 saved General revisions, with their administrative
-                reasons. Logo processing has its own status in Identity.
+                {{ $t('admin:general.latest50SavedGeneral') }}
               </p>
             </div>
             <async-state
               v-if="!saved.history.length"
               state="empty"
-              title="No General changes recorded yet"
-              message="Reviewed saves will appear here. Earlier settings changes are not reconstructed."
+              :title="$t('admin:general.noGeneralChangesRecorded')"
+              :message="$t('admin:general.reviewedSavesWillAppear')"
             />
             <ol v-else class="general-activity">
               <li v-for="event in saved.history" :key="event.id">
@@ -479,8 +460,8 @@
                 <p>
                   {{
                     event.actorId
-                      ? `Account ${event.actorId}`
-                      : "API administrator"
+                      ? $t('admin:general.account', { actorId: event.actorId, interpolation: { escapeValue: false } })
+                      : $t('admin:general.apiAdministrator')
                   }}
                 </p>
                 <ul>
@@ -494,52 +475,48 @@
         </section>
         <aside class="general-aside">
           <div class="general-identity-card">
-            <span class="general-kicker">Workspace at a glance</span
+            <span class="general-kicker">{{ $t('admin:general.workspaceGlance') }}</span
             ><img
               v-if="logoUrl && !logoImageFailed"
               :key="logoUrl"
               :src="logoUrl"
               :data-logo-source="logoUrl"
-              alt="Current workspace logo"
+              :alt="$t('admin:general.currentWorkspaceLogo')"
               @error="handleLogoError"
               @load="handleLogoLoad"
             />
-            <h3>{{ draft.title || "Workspace name" }}</h3>
-            <p>{{ draft.company || "Your shared knowledge space" }}</p>
-            <code>{{ draft.host || "Public address not set" }}</code
+            <h3>{{ draft.title || $t('admin:general.fieldLabels.title') }}</h3>
+            <p>{{ draft.company || $t('admin:general.sharedKnowledgeSpace') }}</p>
+            <code>{{ draft.host || $t('admin:general.publicAddressNotSet') }}</code
             ><span class="general-preview-label">{{
               dirty
-                ? "Identity preview · unsaved draft"
-                : "Saved workspace identity"
+                ? $t('admin:general.identityPreviewUnsavedDraft')
+                : $t('admin:general.savedWorkspaceIdentity')
             }}</span>
           </div>
           <div class="general-panel">
-            <span class="general-kicker">Saved configuration</span>
+            <span class="general-kicker">{{ $t('admin:general.savedConfiguration') }}</span>
             <h3>
               {{
                 saved.runtime.state === "applied"
-                  ? "Configuration current"
-                  : "Activation needs attention"
+                  ? $t('admin:general.configurationCurrent')
+                  : $t('admin:general.activationNeedsAttention')
               }}
             </h3>
             <p>
-              The observed application settings
-              {{
-                saved.runtime.state === "applied" ? "match" : "differ from"
-              }}
-              the saved configuration.
+              {{ $t('admin:general.observedApplicationSettingsSaved', { state: saved.runtime.state === "applied" ? "match" : $t('admin:general.differ'), interpolation: { escapeValue: false } }) }}
             </p>
-            <p>Last observed {{ date(saved.runtime.observedAt) }}</p>
+            <p>{{ $t('admin:general.lastObserved', { observedAt: date(saved.runtime.observedAt), interpolation: { escapeValue: false } }) }}</p>
             <v-btn
               variant="text"
               :disabled="locked || dirty"
               :loading="initializing"
               @click="initialize"
-              >Retry runtime activation</v-btn
+              >{{ $t('admin:general.retryRuntimeActivation') }}</v-btn
             >
           </div>
           <div class="general-panel">
-            <span class="general-kicker">Related workspaces</span
+            <span class="general-kicker">{{ $t('admin:general.relatedWorkspaces') }}</span
             ><router-link v-for="link in related" :key="link.to" :to="link.to"
               >{{ link.label }}<v-icon icon="mdi-arrow-top-right" size="16"
             /></router-link>
@@ -555,11 +532,10 @@
     >
       <v-card v-if="reviewed && saved" class="general-review"
         ><div class="general-review-heading">
-          <span class="general-kicker">Review before publishing</span>
-          <h2 id="general-review-title">Review workspace settings</h2>
+          <span class="general-kicker">{{ $t('admin:general.reviewBeforePublishing') }}</span>
+          <h2 id="general-review-title">{{ $t('admin:general.reviewWorkspaceSettings') }}</h2>
           <p>
-            These values are fixed for this review. Saved settings apply to the
-            workspace; your logo is managed separately.
+            {{ $t('admin:general.theseValuesFixedReview') }}
           </p>
         </div>
         <v-card-text
@@ -579,13 +555,11 @@
             type="warning"
             variant="tonal"
             class="mb-5"
-            >Generated links and identity-provider callbacks use the new public
-            address. Confirm the destination and provider configuration before
-            saving.</v-alert
+            >{{ $t('admin:general.generatedLinksIdentityProvider') }}</v-alert
           >
           <v-textarea
             v-model="reason"
-            label="Administrative reason"
+            :label="$t('admin:general.administrativeReason')"
             variant="outlined"
             rows="2"
             maxlength="1000"
@@ -598,19 +572,19 @@
               variant="text"
               :disabled="busy"
               @click="reloadReview"
-              >Reload saved settings</v-btn
+              >{{ $t('admin:general.reloadSavedSettings') }}</v-btn
             ></v-alert
           > </v-card-text
         ><v-card-actions
           ><v-btn variant="text" :disabled="busy" @click="reviewing = false"
-            >Keep editing</v-btn
+            >{{ $t('admin:general.keepEditing') }}</v-btn
           ><v-spacer /><v-btn
             color="primary"
             variant="flat"
             :disabled="busy || stale || reason.trim().length < 3"
             :loading="busy"
             @click="confirm"
-            >Save workspace settings</v-btn
+            >{{ $t('admin:general.saveWorkspaceSettings') }}</v-btn
           ></v-card-actions
         >
       </v-card>
@@ -644,11 +618,11 @@ import { renderFooterMarkdown } from "../../helpers/footer-markdown.ts";
 import { getErrorMessage } from "../../helpers/root-ui-store.ts";
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const sections = [
-  { key: "identity", title: "Identity" },
-  { key: "announcement", title: "Announcement" },
-  { key: "publishing", title: "Publishing" },
-  { key: "accounts", title: "Accounts" },
-  { key: "activity", title: "Activity" },
+  { key: "identity", title: "admin:general.identity" },
+  { key: "announcement", title: "admin:general.fieldLabels.banner" },
+  { key: "publishing", title: "admin:general.publishing" },
+  { key: "accounts", title: "admin:general.accounts" },
+  { key: "activity", title: "admin:general.activity" },
 ];
 export default {
   components: { AsyncState, SiteBanner, GeneralLogoManager },
@@ -658,8 +632,8 @@ export default {
       draft: null as GeneralPolicy | null,
       reviewed: null as GeneralPolicy | null,
       changes: [] as Array<keyof GeneralPolicy>,
-      labels: generalFieldLabels,
-      sections,
+      labels: Object.fromEntries(Object.entries(generalFieldLabels).map(([key, value]) => [key, this.$t(`admin:general.fieldLabels.${key}`, { defaultValue: value })])) as typeof generalFieldLabels,
+      sections: sections.map((item) => ({ ...item, title: this.$t(item.title) })),
       section: "identity",
       loading: false,
       busy: false,
@@ -678,32 +652,32 @@ export default {
       now: Date.now(),
       clockTimer: undefined as number | undefined,
       announcementLabels: {
-        disabled: "Not published",
-        scheduled: "Scheduled to appear",
-        ended: "Publication window ended",
-        visible: "Visible during the current window",
+        disabled: this.$t('admin:general.notPublished'),
+        scheduled: this.$t('admin:general.scheduledAppear'),
+        ended: this.$t('admin:general.publicationWindowEnded'),
+        visible: this.$t('admin:general.visibleDuringCurrentWindow'),
       },
       tones: [
-        { title: "Information", value: "info" },
-        { title: "Notice", value: "warning" },
-        { title: "Critical update", value: "critical" },
+        { title: this.$t('admin:general.information'), value: "info" },
+        { title: this.$t('admin:general.notice'), value: "warning" },
+        { title: this.$t('admin:general.criticalUpdate'), value: "critical" },
       ],
       indexOptions: [
-        { title: "Search engine default", value: "" },
-        { title: "Allow indexing", value: "index" },
-        { title: "Request no indexing", value: "noindex" },
+        { title: this.$t('admin:general.searchEngineDefault'), value: "" },
+        { title: this.$t('admin:general.allowIndexing'), value: "index" },
+        { title: this.$t('admin:general.requestNoIndexing'), value: "noindex" },
       ],
       followOptions: [
-        { title: "Search engine default", value: "" },
-        { title: "Allow following links", value: "follow" },
-        { title: "Request no following", value: "nofollow" },
+        { title: this.$t('admin:general.searchEngineDefault'), value: "" },
+        { title: this.$t('admin:general.allowFollowingLinks'), value: "follow" },
+        { title: this.$t('admin:general.requestNoFollowing'), value: "nofollow" },
       ],
       related: [
-        { label: "Editors & authoring defaults", to: "/editor" },
-        { label: "Page discussions", to: "/comments" },
-        { label: "Theme & appearance", to: "/theme" },
-        { label: "Navigation", to: "/navigation" },
-        { label: "Analytics", to: "/analytics" },
+        { label: this.$t('admin:general.editorsAuthoringDefaults'), to: "/editor" },
+        { label: this.$t('admin:general.pageDiscussions'), to: "/comments" },
+        { label: this.$t('admin:general.themeAppearance'), to: "/theme" },
+        { label: this.$t('admin:general.navigation'), to: "/navigation" },
+        { label: this.$t('admin:general.analytics'), to: "/analytics" },
       ],
     };
   },
@@ -740,14 +714,14 @@ export default {
     },
     announcementExplanation(): string {
       if (this.announcementState === "disabled")
-        return "The message remains available for editing.";
+        return this.$t('admin:general.messageRemainsAvailableEditing');
       if (this.announcementState === "scheduled")
-        return "Readers receive this notice on page loads after its start time.";
+        return this.$t('admin:general.readersReceiveNoticePage');
       if (this.announcementState === "ended")
-        return "Choose a new publication window to show this notice again.";
+        return this.$t('admin:general.chooseNewPublicationWindow');
       return this.dirty
-        ? "This is the draft’s current schedule. Review and save to publish your changes."
-        : "The saved announcement is available to readers loading a wiki page.";
+        ? this.$t('admin:general.draftsCurrentScheduleReview')
+        : this.$t('admin:general.savedAnnouncementAvailableReaders');
     },
     indexDirective(): string {
       return (
@@ -781,7 +755,7 @@ export default {
     },
     dateFormats() {
       return [
-        { title: "Locale default", value: "" },
+        { title: this.$t('admin:general.localeDefault'), value: "" },
         { title: "DD/MM/YYYY", value: "DD/MM/YYYY" },
         { title: "DD.MM.YYYY", value: "DD.MM.YYYY" },
         { title: "MM/DD/YYYY", value: "MM/DD/YYYY" },
@@ -791,8 +765,8 @@ export default {
     },
     timeFormats() {
       return [
-        { title: "Locale default", value: "locale" },
-        { title: "12-hour (AM/PM)", value: "12h" },
+        { title: this.$t('admin:general.localeDefault'), value: "locale" },
+        { title: this.$t('admin:general.n12HourAmPm'), value: "12h" },
         { title: "24-hour", value: "24h" },
       ];
     },
@@ -867,7 +841,7 @@ export default {
     },
     async reload() {
       if (this.busy || this.initializing) return;
-      if (this.dirty && !(await confirmDiscard("Discard unsaved workspace changes?")))
+      if (this.dirty && !(await confirmDiscard(this.$t('admin:general.discardUnsavedWorkspaceChanges'))))
         return;
       await this.load();
     },
@@ -913,30 +887,30 @@ export default {
       field: keyof GeneralPolicy,
       value: GeneralPolicy[keyof GeneralPolicy],
     ): string {
-      if (typeof value === "boolean") return value ? "Shown" : "Hidden";
+      if (typeof value === "boolean") return value ? this.$t('admin:general.shown') : this.$t('admin:general.hidden');
       if (field === "banner") {
         const banner = value as SiteBannerConfig;
         return [
-          banner.isEnabled ? "Published during its window" : "Not published",
-          banner.title || "No title",
-          banner.content || "No message",
-          "Tone: " + (banner.tone || "warning"),
-          "Starts: " + (banner.startsAt || "Immediately"),
-          "Ends: " + (banner.endsAt || "Until disabled"),
+          banner.isEnabled ? this.$t('admin:general.publishedDuringWindow') : this.$t('admin:general.notPublished'),
+          banner.title || this.$t('admin:general.noTitle'),
+          banner.content || this.$t('admin:general.noMessage'),
+          this.$t('admin:general.tone', { tone: (banner.tone || "warning"), interpolation: { escapeValue: false } }),
+          this.$t('admin:general.starts', { startsAt: (banner.startsAt || "Immediately"), interpolation: { escapeValue: false } }),
+          this.$t('admin:general.ends', { endsAt: (banner.endsAt || "Until disabled"), interpolation: { escapeValue: false } }),
         ].join("\n");
       }
       if (field === "userDefaults") {
         const defaults = value as GeneralPolicy["userDefaults"];
         return [
-          "Time zone: " + defaults.timezone,
-          "Date format: " + (defaults.dateFormat || "Locale default"),
-          "Time format: " + defaults.timeFormat,
+          this.$t('admin:general.timeZone', { timezone: defaults.timezone, interpolation: { escapeValue: false } }),
+          this.$t('admin:general.dateFormat', { dateFormat: (defaults.dateFormat || "Locale default"), interpolation: { escapeValue: false } }),
+          this.$t('admin:general.timeFormat', { timeFormat: defaults.timeFormat, interpolation: { escapeValue: false } }),
         ].join("\n");
       }
-      if (Array.isArray(value)) return value.join(", ") || "None selected";
+      if (Array.isArray(value)) return value.join(", ") || this.$t('admin:general.noneSelected');
       if (field === "contentLicense")
         return this.$t("common:license." + (value || "none"));
-      return String(value || "Not set");
+      return String(value || this.$t('admin:general.notSet'));
     },
     review() {
       if (this.locked || !this.saved || !this.draft || !this.dirty) return;
@@ -993,10 +967,9 @@ export default {
         this.reviewed = null;
         this.reason = "";
         this.notice =
-          "Workspace settings saved." +
-          (result.activation === "needs-attention"
+          this.$t('admin:general.workspaceSettingsSaved', { activation: (result.activation === "needs-attention"
             ? " Runtime activation needs attention."
-            : "");
+            : ""), interpolation: { escapeValue: false } });
         this.attention = result.activation === "needs-attention";
         this.busy = false;
         this.stale = true;
@@ -1014,11 +987,11 @@ export default {
           this.saveError =
             getErrorMessage(error) +
             (!status
-              ? " The outcome is unconfirmed. Reload before saving again."
+              ? ` ${this.$t('admin:general.outcomeUnconfirmedReloadBefore')}`
               : "");
           if (this.stale) {
             this.notice =
-              "Reload saved settings before another review. Your draft is retained.";
+              this.$t('admin:general.reloadSavedSettingsBefore');
             this.attention = true;
           }
         }
@@ -1030,7 +1003,7 @@ export default {
       if (
         this.busy ||
         !(await confirmDiscard(
-          "Discard this review and load saved workspace settings?",
+          this.$t('admin:general.discardReviewLoadSaved'),
         ))
       )
         return;
@@ -1044,8 +1017,8 @@ export default {
         const result = await retryGeneralRuntime(this.saved.fingerprint);
         this.notice =
           result.activation === "applied"
-            ? "Runtime workspace configuration applied."
-            : "Runtime activation needs attention. Review server diagnostics.";
+            ? this.$t('admin:general.runtimeWorkspaceConfigurationApplied')
+            : this.$t('admin:general.runtimeActivationNeedsAttention2');
         this.attention = result.activation !== "applied";
         await this.load();
       } catch (error) {
@@ -1060,7 +1033,7 @@ export default {
         !this.busy &&
         !this.initializing &&
         ((!this.dirty && !(this.reviewing && this.reason)) ||
-          (await confirmDiscard("Discard unsaved workspace changes?")))
+          (await confirmDiscard(this.$t('admin:general.discardUnsavedWorkspaceChanges'))))
       );
     },
     beforeUnload(event: BeforeUnloadEvent) {

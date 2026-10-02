@@ -1,15 +1,15 @@
 <template lang="pug">
 v-card
-  v-card-title Export workspace data
-  v-card-subtitle Prepare a local export through a recorded request. The receipt never stores its filesystem destination.
+  v-card-title {{ $t(`admin:utilitiesExport.exportWorkspaceData`) }}
+  v-card-subtitle {{ $t(`admin:utilitiesExport.prepareLocalExportThrough`) }}
   v-card-text
     v-alert(color='info' variant='tonal' icon='mdi-information-outline')
-      .text-body-medium This creates portable safe projections of selected shared content and administration metadata. It is not a full or restorable backup.
-      .text-body-small.mt-1 Credentials, signing and session material, API tokens, user hashes and TFA data, IPs, private-owner content and protected assets are excluded.
-    h2.text-title-medium.mt-6 Select portable projections
-    v-checkbox(v-for='choice in choices' :key='choice.key' v-model='entities' :value='choice.key' :label='choice.title' :hint='choice.hint' persistent-hint hide-details :disabled='busy')
-    v-text-field.utility-export-destination.mt-6(v-model='path' label='Empty destination within the application root' hint='Relative paths are supported. The server requires an empty, symlink-safe folder inside the application root.' persistent-hint variant='outlined' :error-messages='pathError' :disabled='busy')
-    v-btn.mt-4(color='primary' variant='flat' :disabled='busy || !valid' @click='openReview') Review export
+      .text-body-medium {{ $t(`admin:utilitiesExport.createsPortableSafeProjections`) }}
+      .text-body-small.mt-1 {{ $t(`admin:utilitiesExport.credentialsSigningSessionMaterial`) }}
+    h2.text-title-medium.mt-6 {{ $t(`admin:utilitiesExport.selectPortableProjections`) }}
+    v-checkbox(v-for='choice in choices' :key='choice.key' v-model='entities' :value='choice.key' :label='$t(choice.title)' :hint='$t(choice.hint)' persistent-hint hide-details :disabled='busy')
+    v-text-field.utility-export-destination.mt-6(v-model='path' :label='$t(`admin:utilitiesExport.emptyDestinationWithinApplication`)' :hint='$t(`admin:utilitiesExport.relativePathsSupportedServer`)' persistent-hint variant='outlined' :error-messages='pathError' :disabled='busy')
+    v-btn.mt-4(color='primary' variant='flat' :disabled='busy || !valid' @click='openReview') {{ $t(`admin:utilitiesExport.reviewExport`) }}
   utility-review(
     v-model:open='review.open'
     :title='review.title'
@@ -30,14 +30,14 @@ import { utilityOperationConfirmation, type UtilitiesWorkspace, type UtilityOper
 import UtilityReview from './admin-utilities-review.vue'
 
 const choices = [
-  { key: 'pages', title: 'Pages', hint: 'Page content, tags and metadata.' },
-  { key: 'history', title: 'Page history', hint: 'Previous page versions and metadata.' },
-  { key: 'assets', title: 'Assets', hint: 'Uploaded media and files.' },
-  { key: 'users', title: 'Users', hint: 'Identity metadata and group membership.' },
-  { key: 'groups', title: 'Groups', hint: 'Permissions and page rules.' },
-  { key: 'settings', title: 'Settings', hint: 'Portable administration and module metadata; credentials are excluded.' },
-  { key: 'navigation', title: 'Navigation', hint: 'Static or custom navigation.' },
-  { key: 'comments', title: 'Comments', hint: 'Built-in comment records.' }
+  { key: 'pages', title: 'admin:utilitiesExport.pages', hint: 'admin:utilitiesExport.pageContentTagsMetadata' },
+  { key: 'history', title: 'admin:utilitiesExport.pageHistory', hint: 'admin:utilitiesExport.previousPageVersionsMetadata' },
+  { key: 'assets', title: 'admin:utilitiesExport.assets', hint: 'admin:utilitiesExport.uploadedMediaFiles' },
+  { key: 'users', title: 'admin:utilitiesExport.users', hint: 'admin:utilitiesExport.identityMetadataGroupMembership' },
+  { key: 'groups', title: 'admin:utilitiesExport.groups', hint: 'admin:utilitiesExport.permissionsPageRules' },
+  { key: 'settings', title: 'admin:utilitiesExport.settings', hint: 'admin:utilitiesExport.portableAdministrationModuleMetadata' },
+  { key: 'navigation', title: 'admin:utilitiesExport.navigation', hint: 'admin:utilitiesExport.staticCustomNavigation' },
+  { key: 'comments', title: 'admin:utilitiesExport.comments', hint: 'admin:utilitiesExport.builtCommentRecords' }
 ] as const
 
 type ExportPayload = { entities: string[]; path: string }
@@ -50,13 +50,13 @@ export default defineComponent({
     uncertainReceipt: { type: Object as PropType<UtilityOperation | null>, default: null }
   },
   emits: ['request', 'draft-state'],
-  data: () => ({
+  data: (vm) => ({
     choices,
     entities: [] as string[],
     path: './data/export',
     review: {
       open: false,
-      title: 'Review export',
+      title: vm.$t('admin:utilitiesExport.reviewExport'),
       effect: '',
       confirmation: utilityOperationConfirmation('export'),
       parameters: [] as Array<{ label: string; value: string }>,
@@ -70,7 +70,7 @@ export default defineComponent({
       return this.entities.length > 0 && this.path.trim().length > 0
     },
     pathError(): string {
-      return this.path.trim().length > 0 ? '' : 'Enter a target folder path.'
+      return this.path.trim().length > 0 ? '' : this.$t('admin:utilitiesExport.enterTargetFolderPath')
     },
     formDirty(): boolean {
       return this.entities.length > 0 || this.path !== './data/export'
@@ -93,13 +93,13 @@ export default defineComponent({
       const payload = Object.freeze({ entities: [...this.entities], path: this.path.trim() }) as ExportPayload
       this.review = {
         open: true,
-        title: 'Review export',
+        title: this.$t('admin:utilitiesExport.reviewExport'),
         effect:
-          'The export service will create selected portable safe projections in the reviewed empty, symlink-safe folder within the application root. It is not a full or restorable backup, and the folder path is intentionally omitted from the receipt and recovery history.',
+          this.$t('admin:utilitiesExport.exportServiceWillCreate'),
         confirmation: utilityOperationConfirmation('export'),
         parameters: [
-          { label: 'Export sections', value: payload.entities.map((key) => choices.find((choice) => choice.key === key)?.title ?? key).join(', ') },
-          { label: 'Target folder', value: payload.path }
+          { label: this.$t('admin:utilitiesExport.exportSections'), value: payload.entities.map((key) => this.$t(choices.find((choice) => choice.key === key)?.title ?? key)).join(', ') },
+          { label: this.$t('admin:utilitiesExport.targetFolder'), value: payload.path }
         ],
         payload
       }

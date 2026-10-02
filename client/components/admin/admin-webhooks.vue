@@ -1,58 +1,58 @@
 <template>
   <v-container fluid class="webhook-admin">
-    <admin-hero title="Webhooks" description="Connect the life of your wiki to the systems around it." icon="mdi-webhook">
-      <template #actions><v-btn color="primary" prepend-icon="mdi-plus" :disabled="webhookBusy || Boolean(revealedSecret) || (!draft.id && editorVisible)" @click="newHook">New endpoint</v-btn></template>
+    <admin-hero :title="$t('admin:webhooks.title')" :description="$t('admin:webhooks.connectLifeWikiSystems')" icon="mdi-webhook">
+      <template #actions><v-btn color="primary" prepend-icon="mdi-plus" :disabled="webhookBusy || Boolean(revealedSecret) || (!draft.id && editorVisible)" @click="newHook">{{ $t('admin:webhooks.newEndpoint') }}</v-btn></template>
     </admin-hero>
     <v-alert v-if="operationError" type="error" variant="tonal" class="mb-4" closable @click:close="operationError = ''">{{ operationError }}</v-alert>
     <div class="webhook-workspace">
-      <aside class="endpoint-directory" aria-label="Webhook endpoints">
-        <div class="directory-heading"><h2>Endpoints <span v-if="loadState === 'success'">· {{ hooks.length }}</span></h2><v-btn class="directory-toggle" variant="text" size="small" :aria-expanded="directoryExpanded || !editorVisible" aria-controls="endpoint-list-region" @click="directoryExpanded = !directoryExpanded">{{ directoryExpanded || !editorVisible ? 'Hide endpoints' : 'Choose endpoint' }}</v-btn></div>
+      <aside class="endpoint-directory" :aria-label="$t('admin:webhooks.webhookEndpoints')">
+        <div class="directory-heading"><h2>{{ $t('admin:webhooks.endpoints') }} <span v-if="loadState === 'success'">· {{ hooks.length }}</span></h2><v-btn class="directory-toggle" variant="text" size="small" :aria-expanded="directoryExpanded || !editorVisible" aria-controls="endpoint-list-region" @click="directoryExpanded = !directoryExpanded">{{ directoryExpanded || !editorVisible ? $t('admin:webhooks.hideEndpoints') : $t('admin:webhooks.chooseEndpoint') }}</v-btn></div>
         <div id="endpoint-list-region" class="directory-content" :class="{ expanded: directoryExpanded || !editorVisible }">
-        <v-text-field v-model="endpointQuery" label="Find an endpoint" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable />
-        <v-select v-model="endpointFilter" :items="['All endpoints', 'Enabled', 'Disabled']" label="Endpoint status" variant="outlined" density="compact" hide-details class="mt-3" />
+        <v-text-field v-model="endpointQuery" :label="$t('admin:webhooks.findEndpoint')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable />
+        <v-select v-model="endpointFilter" :items="[{ title: $t('admin:webhooks.allEndpoints'), value: 'All endpoints' }, { title: $t('admin:webhooks.enabled'), value: 'Enabled' }, { title: $t('admin:webhooks.disabled'), value: 'Disabled' }]" :label="$t('admin:webhooks.endpointStatus')" variant="outlined" density="compact" hide-details class="mt-3" />
         <v-skeleton-loader v-if="loadState === 'loading'" type="list-item-two-line@3" />
-        <v-alert v-else-if="loadState === 'error'" type="error" variant="tonal" class="mt-4">Unable to load endpoints. <v-btn variant="text" size="small" @click="loadHooks">Retry</v-btn></v-alert>
+        <v-alert v-else-if="loadState === 'error'" type="error" variant="tonal" class="mt-4">{{ $t('admin:webhooks.unableLoadEndpoints') }} <v-btn variant="text" size="small" @click="loadHooks">{{ $t('admin:webhooks.retry') }}</v-btn></v-alert>
         <div v-else-if="filteredHooks.length" class="endpoint-list">
           <button v-for="hook in filteredHooks" :key="hook.id" type="button" class="endpoint-choice" :class="{ selected: draft.id === hook.id }" :aria-current="draft.id === hook.id ? 'true' : undefined" :disabled="webhookBusy || Boolean(revealedSecret)" @click="selectHook(hook)">
             <span class="endpoint-choice-top"><strong>{{ hook.name }}</strong><v-icon size="17" :color="hook.isEnabled ? 'success' : undefined">{{ hook.isEnabled ? 'mdi-circle-small' : 'mdi-pause-circle-outline' }}</v-icon></span>
             <span class="endpoint-address">{{ endpointHost(hook.url) }}</span>
-            <span class="endpoint-meta">{{ hook.isEnabled ? 'Enabled' : 'Disabled' }} · {{ hook.events.includes('*') ? 'Every event' : `${hook.events.length} ${hook.events.length === 1 ? 'subscription' : 'subscriptions'}` }}</span>
+            <span class="endpoint-meta">{{ hook.isEnabled ? $t('admin:webhooks.enabled') : $t('admin:webhooks.disabled') }} · {{ hook.events.includes('*') ? $t('admin:webhooks.everyEvent') : `${$t('admin:webhooks.subscriptionsCount', { count: hook.events.length })}` }}</span>
           </button>
         </div>
-        <p v-else class="directory-empty">{{ hooks.length ? 'No endpoints match these filters.' : 'Your connections start here. Add an endpoint to subscribe a receiver to wiki events.' }}</p>
+        <p v-else class="directory-empty">{{ hooks.length ? $t('admin:webhooks.noEndpointsMatchThese') : $t('admin:webhooks.connectionsStartHereAdd') }}</p>
         </div>
-        <p class="directory-note">HTTPS receivers · Signed payloads · Durable delivery</p>
+        <p class="directory-note">{{ $t('admin:webhooks.httpsReceiversSignedPayloads') }}</p>
       </aside>
-      <div v-if="editorVisible" class="endpoint-main" aria-label="Selected webhook">
+      <div v-if="editorVisible" class="endpoint-main" :aria-label="$t('admin:webhooks.selectedWebhook')">
         <div class="endpoint-heading">
-          <div><span class="webhook-kicker">{{ draft.id ? 'Endpoint workspace' : 'New connection' }}</span><h2>{{ savedHook?.name || 'Connect a receiver' }}</h2><p>{{ draft.id ? savedHook?.url || draft.url : 'Choose where events go, then decide what your receiver needs to know.' }}</p></div>
-          <v-chip v-if="savedHook" size="small" :color="savedHook.isEnabled ? 'success' : undefined">{{ savedHook.isEnabled ? 'Enabled' : 'Disabled' }}</v-chip>
+          <div><span class="webhook-kicker">{{ draft.id ? $t('admin:webhooks.endpointWorkspace') : $t('admin:webhooks.newConnection') }}</span><h2>{{ savedHook?.name || $t('admin:webhooks.connectReceiver') }}</h2><p>{{ draft.id ? savedHook?.url || draft.url : $t('admin:webhooks.chooseWhereEventsGo') }}</p></div>
+          <v-chip v-if="savedHook" size="small" :color="savedHook.isEnabled ? 'success' : undefined">{{ savedHook.isEnabled ? $t('admin:webhooks.enabled') : $t('admin:webhooks.disabled') }}</v-chip>
         </div>
         <v-alert v-if="revealedSecret" type="warning" variant="tonal" class="mb-5">
-          <strong>Save your signing secret</strong><p>This is its only display. Store it in your receiver before leaving this endpoint.</p>
-          <code class="webhook-secret" tabindex="0" aria-label="Webhook signing secret" @focus="selectSecretText">{{ revealedSecret }}</code>
-          <div class="webhook-actions mt-3"><v-btn ref="copySecretButton" variant="outlined" @click="copySecret">{{ secretCopied ? 'Copied' : 'Copy secret' }}</v-btn><v-btn variant="flat" color="warning" :disabled="webhookBusy" @click="finishSecret">I’ve saved this secret</v-btn></div>
+          <strong>{{ $t('admin:webhooks.saveSigningSecret') }}</strong><p>{{ $t('admin:webhooks.onlyDisplayStoreReceiver') }}</p>
+          <code class="webhook-secret" tabindex="0" :aria-label="$t('admin:webhooks.webhookSigningSecret')" @focus="selectSecretText">{{ revealedSecret }}</code>
+          <div class="webhook-actions mt-3"><v-btn ref="copySecretButton" variant="outlined" @click="copySecret">{{ secretCopied ? $t('admin:webhooks.copied') : $t('admin:webhooks.copySecret') }}</v-btn><v-btn variant="flat" color="warning" :disabled="webhookBusy" @click="finishSecret">{{ $t('admin:webhooks.iveSavedSecret') }}</v-btn></div>
         </v-alert>
-        <v-tabs v-model="section" class="webhook-tabs" color="primary" show-arrows aria-label="Endpoint sections">
-          <v-tab id="webhook-tab-setup" value="setup" aria-controls="webhook-panel-setup">Setup</v-tab>
-          <v-tab id="webhook-tab-deliveries" value="deliveries" aria-controls="webhook-panel-deliveries" :disabled="!draft.id">Deliveries</v-tab>
-          <v-tab id="webhook-tab-integration" value="integration" aria-controls="webhook-panel-integration">Receiver guide</v-tab>
+        <v-tabs v-model="section" class="webhook-tabs" color="primary" show-arrows :aria-label="$t('admin:webhooks.endpointSections')">
+          <v-tab id="webhook-tab-setup" value="setup" aria-controls="webhook-panel-setup">{{ $t('admin:webhooks.setup') }}</v-tab>
+          <v-tab id="webhook-tab-deliveries" value="deliveries" aria-controls="webhook-panel-deliveries" :disabled="!draft.id">{{ $t('admin:webhooks.deliveries') }}</v-tab>
+          <v-tab id="webhook-tab-integration" value="integration" aria-controls="webhook-panel-integration">{{ $t('admin:webhooks.receiverGuide') }}</v-tab>
         </v-tabs>
         <section v-show="section === 'setup'" id="webhook-panel-setup" role="tabpanel" aria-labelledby="webhook-tab-setup">
           <v-form ref="webhookForm" @submit.prevent="save">
             <div class="webhook-panel">
-              <span class="webhook-kicker">01 / Destination</span><h3>A recognizable connection</h3>
-              <p>Name the system receiving these events. Use a public HTTPS URL that accepts signed JSON requests.</p>
-              <v-text-field ref="webhookNameInput" v-model="draft.name" label="Endpoint name" maxlength="128" variant="outlined" :rules="[requiredRule]" :disabled="webhookBusy || Boolean(revealedSecret)" />
-              <v-text-field ref="webhookUrlInput" v-model="draft.url" label="HTTPS endpoint URL" maxlength="2048" placeholder="https://hooks.example.com/wiki" type="url" variant="outlined" :rules="[httpsRule]" :disabled="webhookBusy || Boolean(revealedSecret)" />
-              <v-switch v-model="draft.isEnabled" color="primary" label="Enable event delivery" hide-details :disabled="webhookBusy || Boolean(revealedSecret)" />
-              <p v-if="!draft.id" class="field-note">New endpoints start disabled. Create the endpoint, configure its signing secret in your receiver, then enable delivery.</p>
-              <p class="field-note">Disabling stops new deliveries and skips queued deliveries that have not started. A request already in flight may finish.</p>
+              <span class="webhook-kicker">{{ $t('admin:webhooks.n01Destination') }}</span><h3>{{ $t('admin:webhooks.recognizableConnection') }}</h3>
+              <p>{{ $t('admin:webhooks.nameSystemReceivingThese') }}</p>
+              <v-text-field ref="webhookNameInput" v-model="draft.name" :label="$t('admin:webhooks.endpointName')" maxlength="128" variant="outlined" :rules="[requiredRule]" :disabled="webhookBusy || Boolean(revealedSecret)" />
+              <v-text-field ref="webhookUrlInput" v-model="draft.url" :label="$t('admin:webhooks.httpsEndpointUrl')" maxlength="2048" :placeholder="$t('admin:webhooks.httpsHooksExampleCom')" type="url" variant="outlined" :rules="[httpsRule]" :disabled="webhookBusy || Boolean(revealedSecret)" />
+              <v-switch v-model="draft.isEnabled" color="primary" :label="$t('admin:webhooks.enableEventDelivery')" hide-details :disabled="webhookBusy || Boolean(revealedSecret)" />
+              <p v-if="!draft.id" class="field-note">{{ $t('admin:webhooks.newEndpointsStartDisabled') }}</p>
+              <p class="field-note">{{ $t('admin:webhooks.disablingStopsNewDeliveries') }}</p>
             </div>
             <div class="webhook-panel mt-4">
-              <span class="webhook-kicker">02 / Subscriptions</span><h3>Listen for the right changes</h3>
-              <p>Events include page metadata and review details, including private page metadata. Subscribe only receivers that should have this workspace access.</p>
-              <v-checkbox :model-value="subscribedEvents.includes('*')" label="Every event, including future event types" color="primary" hide-details :disabled="webhookBusy || Boolean(revealedSecret)" @update:model-value="setAllEvents(Boolean($event))" />
+              <span class="webhook-kicker">{{ $t('admin:webhooks.n02Subscriptions') }}</span><h3>{{ $t('admin:webhooks.listenRightChanges') }}</h3>
+              <p>{{ $t('admin:webhooks.eventsIncludePageMetadata') }}</p>
+              <v-checkbox :model-value="subscribedEvents.includes('*')" :label="$t('admin:webhooks.everyEventIncludingFuture')" color="primary" hide-details :disabled="webhookBusy || Boolean(revealedSecret)" @update:model-value="setAllEvents(Boolean($event))" />
               <div v-if="!subscribedEvents.includes('*')" class="event-groups">
                 <fieldset v-for="group in ['Pages', 'Reviews']" :key="group"><legend>{{ group }}</legend>
                   <label v-for="event in eventCatalog.filter(item => item.group === group)" :key="event.name" class="event-option">
@@ -61,41 +61,41 @@
                   </label>
                 </fieldset>
               </div>
-              <details class="custom-events"><summary>Custom event subscriptions</summary><p>Use exact event names, one per line. A subscription does not create an event producer.</p><v-textarea ref="webhookEventsInput" v-model="eventsText" label="Event names" rows="4" variant="outlined" :rules="[eventsRule]" :disabled="webhookBusy || Boolean(revealedSecret)" /></details>
-              <p v-if="!subscribedEvents.length" class="text-error" role="status">Choose at least one event before saving.</p>
+              <details class="custom-events"><summary>{{ $t('admin:webhooks.customEventSubscriptions') }}</summary><p>{{ $t('admin:webhooks.useExactEventNames') }}</p><v-textarea ref="webhookEventsInput" v-model="eventsText" :label="$t('admin:webhooks.eventNames')" rows="4" variant="outlined" :rules="[eventsRule]" :disabled="webhookBusy || Boolean(revealedSecret)" /></details>
+              <p v-if="!subscribedEvents.length" class="text-error" role="status">{{ $t('admin:webhooks.chooseLeastOneEvent') }}</p>
             </div>
-            <div class="webhook-savebar"><span>{{ dirty ? 'Unsaved endpoint changes' : 'Endpoint settings are up to date' }}</span><div class="webhook-actions"><v-btn variant="text" :disabled="!dirty || webhookBusy || Boolean(revealedSecret)" @click="resetDraft">Reset changes</v-btn><v-btn ref="webhookSaveButton" color="primary" type="submit" :loading="saving" :disabled="webhookBusy || Boolean(revealedSecret) || !dirty || !isWebhookValid">{{ draft.id ? 'Save endpoint' : 'Create endpoint' }}</v-btn></div></div>
+            <div class="webhook-savebar"><span>{{ dirty ? $t('admin:webhooks.unsavedEndpointChanges') : $t('admin:webhooks.endpointSettingsUpDate') }}</span><div class="webhook-actions"><v-btn variant="text" :disabled="!dirty || webhookBusy || Boolean(revealedSecret)" @click="resetDraft">{{ $t('admin:webhooks.resetChanges') }}</v-btn><v-btn ref="webhookSaveButton" color="primary" type="submit" :loading="saving" :disabled="webhookBusy || Boolean(revealedSecret) || !dirty || !isWebhookValid">{{ draft.id ? $t('admin:webhooks.saveEndpoint') : $t('admin:webhooks.createEndpoint') }}</v-btn></div></div>
           </v-form>
-          <div v-if="draft.id" class="endpoint-maintenance"><div><h3>Connection maintenance</h3><p>Rotate credentials when updating your receiver, or remove a retired connection.</p></div><div class="webhook-actions"><v-btn variant="outlined" :disabled="webhookBusy || dirty || Boolean(revealedSecret)" @click="rotateDialog = true">Rotate secret</v-btn><v-btn variant="text" color="error" :disabled="webhookBusy || dirty || Boolean(revealedSecret)" @click="deleteDialog = true">Delete endpoint</v-btn></div></div>
+          <div v-if="draft.id" class="endpoint-maintenance"><div><h3>{{ $t('admin:webhooks.connectionMaintenance') }}</h3><p>{{ $t('admin:webhooks.rotateCredentialsWhenUpdating') }}</p></div><div class="webhook-actions"><v-btn variant="outlined" :disabled="webhookBusy || dirty || Boolean(revealedSecret)" @click="rotateDialog = true">{{ $t('admin:webhooks.rotateSecret') }}</v-btn><v-btn variant="text" color="error" :disabled="webhookBusy || dirty || Boolean(revealedSecret)" @click="deleteDialog = true">{{ $t('admin:webhooks.deleteEndpoint') }}</v-btn></div></div>
         </section>
         <section v-show="section === 'deliveries'" id="webhook-panel-deliveries" role="tabpanel" aria-labelledby="webhook-tab-deliveries">
-          <div class="deliveries-heading"><div><h3>Follow every delivery</h3><p>The latest 100 deliveries for the saved endpoint. Open a delivery to inspect the response and recovery options.</p></div><div class="webhook-actions"><v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="deliveryLoading" :disabled="webhookBusy || deliveryLoading" @click="loadDeliveries">Refresh</v-btn><v-btn color="primary" prepend-icon="mdi-send-check-outline" :disabled="webhookBusy || dirty || Boolean(revealedSecret) || !savedHook?.isEnabled" @click="testDialog = true">Send test</v-btn></div></div>
-          <v-alert v-if="dirty" type="info" variant="tonal" class="mb-4">Save or reset changes before sending a test. Delivery history belongs to the saved endpoint.</v-alert>
+          <div class="deliveries-heading"><div><h3>{{ $t('admin:webhooks.followEveryDelivery') }}</h3><p>{{ $t('admin:webhooks.latest100DeliveriesSaved') }}</p></div><div class="webhook-actions"><v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="deliveryLoading" :disabled="webhookBusy || deliveryLoading" @click="loadDeliveries">{{ $t('common:actions.refresh') }}</v-btn><v-btn color="primary" prepend-icon="mdi-send-check-outline" :disabled="webhookBusy || dirty || Boolean(revealedSecret) || !savedHook?.isEnabled" @click="testDialog = true">{{ $t('admin:webhooks.sendTest') }}</v-btn></div></div>
+          <v-alert v-if="dirty" type="info" variant="tonal" class="mb-4">{{ $t('admin:webhooks.saveResetChangesBefore') }}</v-alert>
           <v-alert v-if="testMessage" type="info" variant="tonal" class="mb-4">{{ testMessage }}</v-alert>
-          <p v-if="deliveriesCheckedAt" class="field-note">Last refreshed {{ formatDate(deliveriesCheckedAt) }}. Refresh to see queue progress.</p>
-          <div class="delivery-toolbar"><v-text-field v-model="deliveryQuery" label="Find event or delivery ID" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable /><v-select v-model="deliveryFilter" :items="['All states', 'Needs attention', 'In progress', 'Succeeded', 'Cancelled']" label="Delivery state" variant="outlined" density="compact" hide-details /></div>
+          <p v-if="deliveriesCheckedAt" class="field-note">{{ $t('admin:webhooks.lastRefreshedRefreshSee', { deliveriesCheckedAt: formatDate(deliveriesCheckedAt), interpolation: { escapeValue: false } }) }}</p>
+          <div class="delivery-toolbar"><v-text-field v-model="deliveryQuery" :label="$t('admin:webhooks.findEventDeliveryId')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable /><v-select v-model="deliveryFilter" :items="[{ title: $t('admin:webhooks.allStates'), value: 'All states' }, { title: $t('admin:webhooks.needsAttention'), value: 'Needs attention' }, { title: $t('admin:webhooks.progress'), value: 'In progress' }, { title: $t('admin:webhooks.succeeded'), value: 'Succeeded' }, { title: $t('admin:webhooks.cancelled'), value: 'Cancelled' }]" :label="$t('admin:webhooks.deliveryState')" variant="outlined" density="compact" hide-details /></div>
           <v-skeleton-loader v-if="deliveryLoading && !deliveries.length" type="list-item-three-line@3" />
-          <v-alert v-if="deliveryError" type="error" variant="tonal" class="mt-4">Unable to refresh delivery history. Previously loaded rows may be out of date. <v-btn variant="text" @click="loadDeliveries">Retry</v-btn></v-alert>
+          <v-alert v-if="deliveryError" type="error" variant="tonal" class="mt-4">{{ $t('admin:webhooks.unableRefreshDeliveryHistory') }} <v-btn variant="text" @click="loadDeliveries">{{ $t('admin:webhooks.retry') }}</v-btn></v-alert>
           <div class="delivery-list">
             <details v-for="delivery in filteredDeliveries" :key="delivery.id" class="delivery-record">
-              <summary><span><strong>{{ delivery.eventType }}</strong><small>{{ formatDate(delivery.createdAt) }}</small></span><span>{{ delivery.attempts }} / {{ delivery.maxAttempts }} attempts</span><span class="delivery-http">{{ delivery.statusCode ? `HTTP ${delivery.statusCode}` : 'No HTTP response' }}</span><v-chip size="small" :color="stateColor(delivery.state)">{{ deliveryLabel(delivery) }}</v-chip><v-icon size="18">mdi-chevron-down</v-icon></summary>
-              <div class="delivery-detail"><dl><div><dt>Delivery ID</dt><dd>{{ delivery.id }}</dd></div><div><dt>Event ID · version {{ delivery.eventVersion }}</dt><dd>{{ delivery.eventId }}</dd></div><div><dt>{{ delivery.deliveredAt ? 'Completed' : 'Next scheduled attempt' }}</dt><dd>{{ formatDate(delivery.deliveredAt || (delivery.state === 'pending' ? delivery.nextRunAt : null)) }}</dd></div></dl>
+              <summary><span><strong>{{ delivery.eventType }}</strong><small>{{ formatDate(delivery.createdAt) }}</small></span><span>{{ $t('admin:webhooks.attempts', { attempts: delivery.attempts, maxAttempts: delivery.maxAttempts, interpolation: { escapeValue: false } }) }}</span><span class="delivery-http">{{ delivery.statusCode ? $t('admin:webhooks.http', { statusCode: delivery.statusCode, interpolation: { escapeValue: false } }) : $t('admin:webhooks.noHttpResponse') }}</span><v-chip size="small" :color="stateColor(delivery.state)">{{ deliveryLabel(delivery) }}</v-chip><v-icon size="18">mdi-chevron-down</v-icon></summary>
+              <div class="delivery-detail"><dl><div><dt>{{ $t('admin:webhooks.deliveryId') }}</dt><dd>{{ delivery.id }}</dd></div><div><dt>{{ $t('admin:webhooks.eventIdVersion', { eventVersion: delivery.eventVersion, interpolation: { escapeValue: false } }) }}</dt><dd>{{ delivery.eventId }}</dd></div><div><dt>{{ delivery.deliveredAt ? $t('admin:webhooks.completed') : $t('admin:webhooks.nextScheduledAttempt') }}</dt><dd>{{ formatDate(delivery.deliveredAt || (delivery.state === 'pending' ? delivery.nextRunAt : null)) }}</dd></div></dl>
               <v-alert v-if="delivery.lastError" type="error" variant="tonal" class="mb-3">{{ delivery.lastError }}</v-alert>
-              <h4>Latest response</h4><pre>{{ delivery.responseSnippet || 'No response body recorded.' }}</pre><p class="field-note">Response excerpts are limited to 4 KiB. History shows the latest outcome for each delivery, not every attempt.</p>
-              <div class="webhook-actions"><v-btn v-if="delivery.state === 'failed'" variant="outlined" :loading="deliveryBusy === delivery.id" :disabled="webhookBusy || dirty || Boolean(revealedSecret)" @click="changeDelivery(delivery.id, 'retry')">Retry delivery</v-btn><v-btn v-if="delivery.state === 'pending' || delivery.state === 'running'" variant="outlined" color="error" :disabled="webhookBusy || Boolean(revealedSecret)" @click="requestDeliveryCancel(delivery.id)">Cancel delivery</v-btn></div></div>
+              <h4>{{ $t('admin:webhooks.latestResponse') }}</h4><pre>{{ delivery.responseSnippet || $t('admin:webhooks.noResponseBodyRecorded') }}</pre><p class="field-note">{{ $t('admin:webhooks.responseExcerptsLimited4') }}</p>
+              <div class="webhook-actions"><v-btn v-if="delivery.state === 'failed'" variant="outlined" :loading="deliveryBusy === delivery.id" :disabled="webhookBusy || dirty || Boolean(revealedSecret)" @click="changeDelivery(delivery.id, 'retry')">{{ $t('admin:webhooks.retryDelivery') }}</v-btn><v-btn v-if="delivery.state === 'pending' || delivery.state === 'running'" variant="outlined" color="error" :disabled="webhookBusy || Boolean(revealedSecret)" @click="requestDeliveryCancel(delivery.id)">{{ $t('admin:webhooks.cancelDelivery') }}</v-btn></div></div>
             </details>
           </div>
-          <div v-if="!filteredDeliveries.length && !deliveryLoading && !deliveryError" class="webhook-empty"><v-icon size="36" color="primary">mdi-transit-connection-variant</v-icon><h3>{{ deliveries.length ? 'No matching deliveries' : 'Ready for the first event' }}</h3><p>{{ deliveries.length ? 'Adjust the event search or state filter.' : 'Send a test to check your receiver, or wait for a subscribed event. Enable and save the endpoint first.' }}</p></div>
+          <div v-if="!filteredDeliveries.length && !deliveryLoading && !deliveryError" class="webhook-empty"><v-icon size="36" color="primary">mdi-transit-connection-variant</v-icon><h3>{{ deliveries.length ? $t('admin:webhooks.noMatchingDeliveries') : $t('admin:webhooks.readyFirstEvent') }}</h3><p>{{ deliveries.length ? $t('admin:webhooks.adjustEventSearchState') : $t('admin:webhooks.sendTestCheckReceiver') }}</p></div>
         </section>
         <section v-show="section === 'integration'" id="webhook-panel-integration" role="tabpanel" aria-labelledby="webhook-tab-integration"><admin-webhook-guide /></section>
       </div>
-      <div v-else class="webhook-empty endpoint-welcome"><span class="webhook-kicker">Events, with a destination</span><h2>Keep your systems in conversation.</h2><p>Notify a workflow, synchronize a catalog, or let an agent respond to wiki activity. Each endpoint has its own subscriptions, signing secret and delivery history.</p><v-btn color="primary" prepend-icon="mdi-plus" :disabled="loadState !== 'success'" @click="newHook">Add your first endpoint</v-btn></div>
+      <div v-else class="webhook-empty endpoint-welcome"><span class="webhook-kicker">{{ $t('admin:webhooks.eventsDestination') }}</span><h2>{{ $t('admin:webhooks.keepSystemsConversation') }}</h2><p>{{ $t('admin:webhooks.notifyWorkflowSynchronizeCatalog') }}</p><v-btn color="primary" prepend-icon="mdi-plus" :disabled="loadState !== 'success'" @click="newHook">{{ $t('admin:webhooks.addFirstEndpoint') }}</v-btn></div>
     </div>
-    <v-dialog v-model="deleteDialog" max-width="480" persistent aria-labelledby="delete-webhook-dialog-title"><v-card><v-card-title id="delete-webhook-dialog-title">Delete endpoint?</v-card-title><v-card-text>Remove {{ savedHook?.name || draft.name }} and its delivery history? Requests already in flight may still reach the receiver.</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="deleting" @click="deleteDialog = false">Keep endpoint</v-btn><v-btn color="error" :loading="deleting" @click="removeHook">Delete endpoint</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog v-model="rotateDialog" max-width="500" persistent aria-labelledby="rotate-webhook-dialog-title"><v-card><v-card-title id="rotate-webhook-dialog-title">Rotate signing secret?</v-card-title><v-card-text>The old secret for {{ savedHook?.name }} stops working immediately. Update your receiver with the new secret. Requests already in flight may carry the old signature.</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="rotating" @click="rotateDialog = false">Cancel</v-btn><v-btn color="primary" :loading="rotating" @click="rotateSecret">Rotate secret</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog v-model="cancelDeliveryDialog" max-width="500" persistent aria-labelledby="cancel-webhook-delivery-dialog-title"><v-card><v-card-title id="cancel-webhook-delivery-dialog-title">Cancel delivery?</v-card-title><v-card-text>Stop further attempts for {{ cancelDelivery?.eventType }}. A request already in flight may still reach the receiver. Cancelled deliveries cannot be retried.</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="Boolean(deliveryBusy)" @click="cancelDeliveryDialog = false">Keep delivery</v-btn><v-btn color="error" :loading="Boolean(deliveryBusy)" @click="confirmDeliveryCancel">Cancel delivery</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog v-model="testDialog" max-width="520" persistent aria-labelledby="test-webhook-title"><v-card><v-card-title id="test-webhook-title">Send a test delivery?</v-card-title><v-card-text><p>A signed <code>webhook.test</code> event will be sent to <strong>{{ savedHook?.url }}</strong>.</p><p>It contains a test marker and message, with no page data. It targets only this endpoint, regardless of subscriptions, and attempts delivery once. You can retry a failed test from its delivery details.</p></v-card-text><v-card-actions><v-spacer /><v-btn :disabled="testing" @click="testDialog = false">Cancel</v-btn><v-btn color="primary" :loading="testing" @click="sendTest">Send test delivery</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog :model-value="Boolean(pendingChange)" max-width="500" persistent aria-labelledby="webhook-discard-title"><v-card><v-card-title id="webhook-discard-title">{{ revealedSecret ? 'Leave without saving the secret?' : 'Discard endpoint changes?' }}</v-card-title><v-card-text>{{ revealedSecret ? 'This secret cannot be displayed again. Save it in your receiver before leaving, or rotate it later.' : 'Your unsaved changes will be lost. Stay here to finish editing or discard them to continue.' }}</v-card-text><v-card-actions><v-spacer /><v-btn @click="finishChange(false)">Keep editing</v-btn><v-btn color="error" @click="finishChange(true)">{{ revealedSecret ? 'Leave endpoint' : 'Discard changes' }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="deleteDialog" max-width="480" persistent aria-labelledby="delete-webhook-dialog-title"><v-card><v-card-title id="delete-webhook-dialog-title">{{ $t('admin:webhooks.deleteEndpoint2') }}</v-card-title><v-card-text>{{ $t('admin:webhooks.removeDeliveryHistoryRequests', { name: savedHook?.name || draft.name, interpolation: { escapeValue: false } }) }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="deleting" @click="deleteDialog = false">{{ $t('admin:webhooks.keepEndpoint') }}</v-btn><v-btn color="error" :loading="deleting" @click="removeHook">{{ $t('admin:webhooks.deleteEndpoint') }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="rotateDialog" max-width="500" persistent aria-labelledby="rotate-webhook-dialog-title"><v-card><v-card-title id="rotate-webhook-dialog-title">{{ $t('admin:webhooks.rotateSigningSecret') }}</v-card-title><v-card-text>{{ $t('admin:webhooks.oldSecretStopsWorking', { name: savedHook?.name, interpolation: { escapeValue: false } }) }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="rotating" @click="rotateDialog = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="rotating" @click="rotateSecret">{{ $t('admin:webhooks.rotateSecret') }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="cancelDeliveryDialog" max-width="500" persistent aria-labelledby="cancel-webhook-delivery-dialog-title"><v-card><v-card-title id="cancel-webhook-delivery-dialog-title">{{ $t('admin:webhooks.cancelDelivery2') }}</v-card-title><v-card-text>{{ $t('admin:webhooks.stopFurtherAttemptsRequest', { eventType: cancelDelivery?.eventType, interpolation: { escapeValue: false } }) }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="Boolean(deliveryBusy)" @click="cancelDeliveryDialog = false">{{ $t('admin:webhooks.keepDelivery') }}</v-btn><v-btn color="error" :loading="Boolean(deliveryBusy)" @click="confirmDeliveryCancel">{{ $t('admin:webhooks.cancelDelivery') }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="testDialog" max-width="520" persistent aria-labelledby="test-webhook-title"><v-card><v-card-title id="test-webhook-title">{{ $t('admin:webhooks.sendTestDelivery') }}</v-card-title><v-card-text><p>{{ $t('admin:webhooks.signed') }} <code>webhook.test</code> {{ $t('admin:webhooks.eventWillSent') }} <strong>{{ savedHook?.url }}</strong>.</p><p>{{ $t('admin:webhooks.containsTestMarkerMessage') }}</p></v-card-text><v-card-actions><v-spacer /><v-btn :disabled="testing" @click="testDialog = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="testing" @click="sendTest">{{ $t('admin:webhooks.sendTestDelivery2') }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog :model-value="Boolean(pendingChange)" max-width="500" persistent aria-labelledby="webhook-discard-title"><v-card><v-card-title id="webhook-discard-title">{{ revealedSecret ? $t('admin:webhooks.leaveWithoutSavingSecret') : $t('admin:webhooks.discardEndpointChanges') }}</v-card-title><v-card-text>{{ revealedSecret ? $t('admin:webhooks.secretCannotDisplayedAgain') : $t('admin:webhooks.unsavedChangesWillLost') }}</v-card-text><v-card-actions><v-spacer /><v-btn @click="finishChange(false)">{{ $t('admin:webhooks.keepEditing') }}</v-btn><v-btn color="error" @click="finishChange(true)">{{ revealedSecret ? $t('admin:webhooks.leaveEndpoint') : $t('admin:webhooks.discardChanges') }}</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
 </template>
 
@@ -210,13 +210,13 @@ export default {
       return this.draft.name.trim().length > 0 && this.draft.name.trim().length <= 128 && this.draft.url.trim().length <= 2048 && isHttpsEndpoint(this.draft.url) && this.subscribedEvents.length > 0 && this.subscribedEvents.length <= 50 && this.subscribedEvents.every(isWebhookEventName)
     },
     requiredRule (): (value: string) => true | string {
-      return (value: string) => value.trim().length > 0 || 'Name is required.'
+      return (value: string) => value.trim().length > 0 || this.$t('admin:webhooks.nameRequired')
     },
     httpsRule (): (value: string) => true | string {
-      return (value: string) => isHttpsEndpoint(value) || 'Use an HTTPS endpoint URL.'
+      return (value: string) => isHttpsEndpoint(value) || this.$t('admin:webhooks.useHttpsEndpointUrl')
     },
     eventsRule (): (value: string) => true | string {
-      return () => (this.subscribedEvents.length > 0 && this.subscribedEvents.length <= 50 && this.subscribedEvents.every(isWebhookEventName)) || 'Use 1–50 event names with lowercase words separated by dots or hyphens, or *.'
+      return () => (this.subscribedEvents.length > 0 && this.subscribedEvents.length <= 50 && this.subscribedEvents.every(isWebhookEventName)) || this.$t('admin:webhooks.use150Event')
     },
     cancelDelivery (): WebhookDelivery | null {
       return this.deliveries.find(delivery => delivery.id === this.cancelDeliveryId) || null
@@ -247,7 +247,7 @@ export default {
     toggleEvent (name: string) { this.eventsText = (this.subscribedEvents.includes(name) ? this.subscribedEvents.filter(event => event !== name) : [...this.subscribedEvents, name]).join('\n') },
     endpointHost (url: string): string { try { return new URL(url).host } catch { return url } },
     formatDate (value: string | null): string { return value ? new Date(value).toLocaleString() : '—' },
-    deliveryLabel (delivery: WebhookDelivery): string { return delivery.responseSnippet === 'Webhook disabled before delivery' ? 'Skipped · disabled' : delivery.state },
+    deliveryLabel (delivery: WebhookDelivery): string { return delivery.responseSnippet === 'Webhook disabled before delivery' ? this.$t('admin:webhooks.skippedDisabled') : delivery.state },
     async sendTest () {
       if (this.webhookBusy || this.dirty || !this.savedHook?.isEnabled || !this.draft.id || this.revealedSecret) return
       this.testing = true
@@ -257,7 +257,7 @@ export default {
         this.testDialog = false
         this.deliveryFilter = 'All states'
         this.deliveryQuery = ''
-        this.testMessage = `Test queued. Delivery ${id}. Refresh to see the result.`
+        this.testMessage = this.$t('admin:webhooks.testQueuedDeliveryRefresh', { id, interpolation: { escapeValue: false } })
         await this.loadDeliveries()
       } catch (error) { this.reportError(error) } finally { this.testing = false }
     },
@@ -267,7 +267,7 @@ export default {
         await navigator.clipboard.writeText(this.revealedSecret)
         this.secretCopied = true
       } catch {
-        wikiStore.showNotification({ style: 'red', message: 'Copy failed. Select the secret and copy it manually.', icon: 'alert' })
+        wikiStore.showNotification({ style: 'red', message: this.$t('admin:webhooks.copyFailedSelectSecret'), icon: 'alert' })
       }
     },
     selectSecretText (event: FocusEvent) {
@@ -390,7 +390,7 @@ export default {
         this.markClean()
         this.updateLocation()
         await this.loadHooks()
-        wikiStore.showNotification({ style: 'success', message: 'Webhook saved.', icon: 'check' })
+        wikiStore.showNotification({ style: 'success', message: this.$t('admin:webhooks.webhookSaved'), icon: 'check' })
       } catch (error) {
         this.reportError(error)
       } finally {
@@ -466,7 +466,7 @@ export default {
       try {
         await changeWebhookDelivery(window.fetch.bind(window), id, action)
         await this.loadDeliveries()
-        wikiStore.showNotification({ style: 'success', message: action === 'retry' ? 'Delivery queued for retry.' : 'Delivery cancelled.', icon: 'check' })
+        wikiStore.showNotification({ style: 'success', message: action === 'retry' ? this.$t('admin:webhooks.deliveryQueuedRetry') : this.$t('admin:webhooks.deliveryCancelled'), icon: 'check' })
       } catch (error) {
         this.reportError(error)
       } finally {

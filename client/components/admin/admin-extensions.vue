@@ -2,45 +2,45 @@
 v-container.extensions-workspace(fluid)
   admin-hero(
     :title='$t(`admin:extensions.title`)'
-    description='See which optional tools are available to the wiki and where to configure them.'
-    eyebrow='Operations'
+    :description='$t(`admin:extensions.seeWhichOptionalTools`)'
+    :eyebrow='$t(`admin:extensions.operations`)'
     icon='mdi-puzzle-plus-outline'
     heading-id='extensions-title'
   )
     template(#extra)
       dl.extensions-heading-facts
         div
-          dt Bundled
+          dt {{ $t(`admin:extensions.bundled`) }}
           dd.extensions-stat {{ workspace?.extensions.length ?? 0 }}
         div
-          dt Usable now
+          dt {{ $t(`admin:extensions.usableNow`) }}
           dd.extensions-stat {{ usableCount }}
         div
-          dt Observed
+          dt {{ $t(`admin:extensions.observed`) }}
           dd: time(:datetime='workspace?.observedAt') {{ workspace ? dateTime(workspace.observedAt) : '—' }}
       p.extensions-boundary
         v-icon(icon='mdi-shield-lock-outline' size='16' aria-hidden='true')
-        span Availability is checked in this process. Installation is managed with the application image.
+        span {{ $t(`admin:extensions.availabilityCheckedProcessInstallation`) }}
     template(#actions)
       v-btn(variant='text' prepend-icon='mdi-refresh' :loading='loading' :disabled='loading' @click='refresh')
         | {{ $t('admin:shell.reload') }}
-        v-tooltip(activator='parent' location='bottom') Reload extension observations
-  async-state(v-if='loading && !workspace' state='loading' title='Reading the deployed extension library' message='Checking the bundled definitions and their bounded process observations.')
-  async-state(v-else-if='error && !workspace' state='error' title='Extension observations could not be read' :message='error' retry-label='Try again' @retry='refresh')
+        v-tooltip(activator='parent' location='bottom') {{ $t(`admin:extensions.reloadExtensionObservations`) }}
+  async-state(v-if='loading && !workspace' state='loading' :title='$t(`admin:extensions.readingDeployedExtensionLibrary`)' :message='$t(`admin:extensions.checkingBundledDefinitionsTheir`)')
+  async-state(v-else-if='error && !workspace' state='error' :title='$t(`admin:extensions.extensionObservationsCouldNot2`)' :message='error' :retry-label='$t(`admin:extensions.tryAgain`)' @retry='refresh')
   template(v-else-if='workspace && workspace.extensions.length')
     v-alert(v-if='error' type='warning' variant='tonal' closable class='mb-5' @click:close='dismissError')
-      | The last refresh could not be confirmed. The records below are the earlier observation; retry before acting on them.
+      | {{ $t(`admin:extensions.lastRefreshCouldNot`) }}
 
     section.extensions-library(aria-labelledby='extensions-library-title')
       aside.extensions-library-nav
         .extensions-library-heading
           div
-            span.extensions-kicker Deployment observations
-            h2#extensions-library-title Library
-          span {{ filteredExtensions.length }} shown
+            span.extensions-kicker {{ $t(`admin:extensions.deploymentObservations`) }}
+            h2#extensions-library-title {{ $t(`admin:extensions.library`) }}
+          span {{ $t(`admin:extensions.shown`, { filteredExtensionsCount: filteredExtensions.length, interpolation: { escapeValue: false } }) }}
         v-text-field(
           v-model='search'
-          label='Search extensions'
+          :label='$t(`admin:extensions.searchExtensions`)'
           prepend-inner-icon='mdi-magnify'
           variant='outlined'
           density='comfortable'
@@ -50,13 +50,13 @@ v-container.extensions-workspace(fluid)
         v-select.extensions-status-filter(
           v-model='statusFilter'
           :items='statusFilters'
-          label='Observed state'
+          :label='$t(`admin:extensions.observedState`)'
           variant='outlined'
           density='comfortable'
           hide-details
         )
-        p.extensions-filter-note Search matches the title, purpose, dependencies and recovery guidance.
-        ul.extensions-library-list(v-if='filteredExtensions.length' aria-label='Filtered extensions')
+        p.extensions-filter-note {{ $t(`admin:extensions.searchMatchesTitlePurpose`) }}
+        ul.extensions-library-list(v-if='filteredExtensions.length' :aria-label='$t(`admin:extensions.filteredExtensions`)')
           li(v-for='extension in filteredExtensions' :key='extension.key')
             button.extensions-library-row(
               type='button'
@@ -70,33 +70,33 @@ v-container.extensions-workspace(fluid)
                 strong {{ extension.title }}
                 small {{ observationPresentations[extension.observation.state].label }}
               v-icon(icon='mdi-chevron-right' size='18' aria-hidden='true')
-        v-alert(v-else type='info' variant='outlined' density='comfortable' icon='mdi-filter-variant-remove') No extension records match this filter.
-      article#extension-detail.extensions-detail(v-if='selectedExtension' :aria-label='`${selectedExtension.title} deployment details`')
+        v-alert(v-else type='info' variant='outlined' density='comfortable' icon='mdi-filter-variant-remove') {{ $t(`admin:extensions.noExtensionRecordsMatch`) }}
+      article#extension-detail.extensions-detail(v-if='selectedExtension' :aria-label='$t(`admin:extensions.deploymentDetails`, { title: selectedExtension.title, interpolation: { escapeValue: false } })')
         header.extensions-detail-header
           div
-            span.extensions-kicker {{ selectedExtension.key }} / deployment boundary
+            span.extensions-kicker {{ $t(`admin:extensions.deploymentBoundary`, { key: selectedExtension.key, interpolation: { escapeValue: false } }) }}
             h2 {{ selectedExtension.title }}
             p {{ selectedExtension.description }}
           .extensions-state-chips
             v-chip(label size='small' :color='observationPresentations[selectedExtension.observation.state].color' :prepend-icon='observationPresentations[selectedExtension.observation.state].icon') {{ observationPresentations[selectedExtension.observation.state].label }}
             v-chip(label size='small' variant='outlined' :color='compatibilityPresentations[selectedExtension.observation.compatibility].color') {{ compatibilityPresentations[selectedExtension.observation.compatibility].label }}
         section.extensions-evidence
-          h3 Observed process evidence
+          h3 {{ $t(`admin:extensions.observedProcessEvidence`) }}
           p {{ selectedExtension.observation.evidence }}
-          time(:datetime='selectedExtension.observation.checkedAt') Checked {{ dateTime(selectedExtension.observation.checkedAt) }}
+          time(:datetime='selectedExtension.observation.checkedAt') {{ $t(`admin:extensions.checked`, { checkedAt: dateTime(selectedExtension.observation.checkedAt), interpolation: { escapeValue: false } }) }}
         section.extensions-installation
           span.extensions-section-number 01
           div
-            h3 Installation boundary & setup
+            h3 {{ $t(`admin:extensions.installationBoundarySetup`) }}
             p {{ selectedExtension.installation.detail }}
             dl
               div
-                dt Owned by
+                dt {{ $t(`admin:extensions.owned`) }}
                 dd {{ boundaryLabels[selectedExtension.installation.boundary] }}
         section.extensions-grid
           section
             span.extensions-section-number 02
-            h3 Capabilities & configuration
+            h3 {{ $t(`admin:extensions.capabilitiesConfiguration`) }}
             ul.extensions-fact-list
               li(v-for='capability in selectedExtension.capabilities' :key='capability.title')
                 strong {{ capability.title }}
@@ -104,7 +104,7 @@ v-container.extensions-workspace(fluid)
                 v-btn(v-if='capability.configuration' :to='linkTarget(capability.configuration)' variant='text' color='primary' size='small' append-icon='mdi-arrow-right') {{ capability.configuration.label }}
           section
             span.extensions-section-number 03
-            h3 Dependencies
+            h3 {{ $t(`admin:extensions.dependencies`) }}
             ul.extensions-fact-list
               li(v-for='dependency in selectedExtension.dependencies' :key='dependency.title')
                 strong {{ dependency.title }}
@@ -112,13 +112,13 @@ v-container.extensions-workspace(fluid)
         section.extensions-recovery
           span.extensions-section-number 04
           div
-            h3 If a tool is missing
+            h3 {{ $t(`admin:extensions.ifToolMissing`) }}
             p {{ selectedExtension.installation.recovery }}
-            p.extensions-recovery-note After updating the application image, refresh to check availability again.
-      v-alert(v-else-if='requestedExtensionIsFilteredOut' type='info' variant='outlined' icon='mdi-filter-variant') The selected extension is outside the current filter. Clear or change the filter to inspect it.
-      v-alert(v-else-if='requestedExtensionIsUnavailable' type='warning' variant='outlined' icon='mdi-alert-circle-outline') The selected extension is not reported by this deployed application image. Choose an available extension to inspect it.
-      v-alert(v-else type='info' variant='outlined' icon='mdi-puzzle-outline') Select an extension to inspect its deployment boundary.
-  async-state(v-else state='empty' title='No extension definitions are bundled' message='This application image did not report any optional extension definitions.')
+            p.extensions-recovery-note {{ $t(`admin:extensions.afterUpdatingApplicationImage`) }}
+      v-alert(v-else-if='requestedExtensionIsFilteredOut' type='info' variant='outlined' icon='mdi-filter-variant') {{ $t(`admin:extensions.selectedExtensionOutsideCurrent`) }}
+      v-alert(v-else-if='requestedExtensionIsUnavailable' type='warning' variant='outlined' icon='mdi-alert-circle-outline') {{ $t(`admin:extensions.selectedExtensionNotReported`) }}
+      v-alert(v-else type='info' variant='outlined' icon='mdi-puzzle-outline') {{ $t(`admin:extensions.selectExtensionInspectDeployment`) }}
+  async-state(v-else state='empty' :title='$t(`admin:extensions.noExtensionDefinitionsBundled`)' :message='$t(`admin:extensions.applicationImageDidNot`)')
 </template>
 
 <script setup lang="ts">
@@ -133,6 +133,9 @@ import type {
 } from '../../../shared/extensions-workspace.ts'
 import { fetchExtensionsWorkspace } from '../../helpers/extensions-workspace-api.ts'
 import './extensions-workspace.scss'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const route = useRoute()
 const router = useRouter()
@@ -142,11 +145,11 @@ const error = ref('')
 const search = ref('')
 const statusFilter = ref('all')
 const statusFilters = [
-  { title: 'All observations', value: 'all' },
-  { title: 'Usable in this process', value: 'usable' },
-  { title: 'Missing from this process', value: 'missing' },
-  { title: 'Not provided here', value: 'not-provided' },
-  { title: 'Observation unknown', value: 'unknown' }
+  { title: t('admin:extensions.allObservations'), value: 'all' },
+  { title: t('admin:extensions.usableProcess'), value: 'usable' },
+  { title: t('admin:extensions.missingProcess'), value: 'missing' },
+  { title: t('admin:extensions.notProvidedHere'), value: 'not-provided' },
+  { title: t('admin:extensions.observationUnknown'), value: 'unknown' }
 ]
 
 let disposed = false
@@ -195,29 +198,29 @@ const requestedExtensionIsUnavailable = computed(() =>
 const usableCount = computed(() => workspace.value?.extensions.filter((extension) => extension.observation.state === 'usable').length || 0)
 
 const observationPresentations = {
-  usable: { label: 'Usable in this process', color: 'success', icon: 'mdi-check-circle-outline' },
-  missing: { label: 'Missing from this process', color: 'warning', icon: 'mdi-package-variant-remove' },
-  'not-provided': { label: 'Not provided here', color: 'info', icon: 'mdi-information-outline' },
-  unknown: { label: 'Observation unknown', color: 'warning', icon: 'mdi-help-circle-outline' }
+  usable: { label: t('admin:extensions.usableProcess'), color: 'success', icon: 'mdi-check-circle-outline' },
+  missing: { label: t('admin:extensions.missingProcess'), color: 'warning', icon: 'mdi-package-variant-remove' },
+  'not-provided': { label: t('admin:extensions.notProvidedHere'), color: 'info', icon: 'mdi-information-outline' },
+  unknown: { label: t('admin:extensions.observationUnknown'), color: 'warning', icon: 'mdi-help-circle-outline' }
 } satisfies Record<ExtensionWorkspaceExtension['observation']['state'], { label: string; color: string; icon: string }>
 
 const compatibilityPresentations = {
-  verified: { label: 'Compatibility observed', color: 'success' },
-  'not-applicable': { label: 'No in-process compatibility check', color: 'info' },
-  unknown: { label: 'Compatibility unconfirmed', color: 'warning' }
+  verified: { label: t('admin:extensions.compatibilityObserved'), color: 'success' },
+  'not-applicable': { label: t('admin:extensions.noProcessCompatibilityCheck'), color: 'info' },
+  unknown: { label: t('admin:extensions.compatibilityUnconfirmed'), color: 'warning' }
 } satisfies Record<ExtensionWorkspaceExtension['observation']['compatibility'], { label: string; color: string }>
 
 const boundaryLabels = {
-  'application-image': 'Reviewed application image',
-  'application-package': 'Production application package',
-  'separate-image': 'Separate deployed image'
+  'application-image': t('admin:extensions.reviewedApplicationImage'),
+  'application-package': t('admin:extensions.productionApplicationPackage'),
+  'separate-image': t('admin:extensions.separateDeployedImage')
 } satisfies Record<ExtensionWorkspaceExtension['installation']['boundary'], string>
 
 const dateTime = (value: string) => {
   const date = new Date(value)
   return Number.isFinite(date.valueOf())
     ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
-    : 'Unknown time'
+    : t('admin:extensions.unknownTime')
 }
 
 const linkTarget = (link: ExtensionWorkspaceLink) => ({
@@ -262,7 +265,7 @@ const refresh = async () => {
     workspace.value = next
   } catch (cause) {
     if (disposed || request !== sequence || activeController.signal.aborted) return
-    error.value = cause instanceof Error ? cause.message : 'Extension observations could not be loaded.'
+    error.value = cause instanceof Error ? cause.message : t('admin:extensions.extensionObservationsCouldNot')
   } finally {
     if (!disposed && request === sequence) loading.value = false
   }

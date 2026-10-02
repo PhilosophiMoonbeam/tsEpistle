@@ -20,7 +20,7 @@
         class="navigation-drag-handle"
         type="button"
         :disabled="disabled"
-        :aria-label="'Reorder ' + (item.label || 'divider')"
+        :aria-label="$t('admin:navigationOutline.reorder', { label: (item.label || 'divider'), interpolation: { escapeValue: false } })"
       >
         <v-icon icon="mdi-drag" size="17" />
       </button>
@@ -37,22 +37,22 @@
         <span class="navigation-outline-label"
           ><strong>{{
             item.kind === "divider"
-              ? "Divider"
-              : item.label || "Untitled " + item.kind
+              ? $t('admin:navigationOutline.divider')
+              : item.label || $t('admin:navigationOutline.untitled', { kind: item.kind, interpolation: { escapeValue: false } })
           }}</strong
           ><small>{{
             item.kind === "link"
-              ? item.target || "Choose a destination"
+              ? item.target || $t('admin:navigationOutline.chooseDestination')
               : item.kind === "header"
-                ? "Section heading"
-                : "Visual separator"
+                ? $t('admin:navigationOutline.sectionHeading')
+                : $t('admin:navigationOutline.visualSeparator')
           }}</small></span
         >
         <v-icon
           v-if="item.visibilityMode === 'restricted'"
           icon="mdi-account-lock-outline"
           size="15"
-          title="Restricted audience"
+          :title="$t('admin:navigationOutline.restrictedAudience')"
         />
       </button>
     </div>

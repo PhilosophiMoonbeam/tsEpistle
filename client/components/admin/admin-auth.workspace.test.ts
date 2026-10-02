@@ -4,6 +4,7 @@ import { NodeTypes, type ElementNode, type TemplateChildNode } from '@vue/compil
 import * as ts from 'typescript'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { authenticationDraft, authenticationSignature } from '../../helpers/authentication-workspace-api.ts'
+import { translateEnglish } from '../../test/english-translate.mts'
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -99,7 +100,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
     }
   Object.assign(bindings, confirmStubs(window))
   const component = new Function(...Object.keys(bindings), compiled + ';return component')(...Object.values(bindings)),
-    state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
+    state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
   return { state, component, transport, window }

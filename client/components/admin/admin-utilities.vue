@@ -1,37 +1,37 @@
 <template lang="pug">
 v-container.admin-utilities(fluid)
   AdminHero(
-    title='Utilities'
-    description='Maintain content, move data and recover workspace services. Review each action and follow its recorded outcome.'
+    :title='$t(`admin:utilities.title`)'
+    :description='$t(`admin:utilities.maintainContentMoveData`)'
     icon='mdi-toolbox-outline'
     heading-id='admin-utilities-heading'
   )
   async-state.mt-6(
     v-if='loading && !workspace'
     state='loading'
-    title='Loading utilities'
-    message='Collecting current authority, available import targets, current locales, telemetry settings and recent operation receipts.'
+    :title='$t(`admin:utilities.loadingUtilities`)'
+    :message='$t(`admin:utilities.collectingCurrentAuthorityAvailable`)'
   )
   async-state.mt-6(
     v-else-if='error && !workspace'
     state='error'
-    title='Utilities could not be loaded'
+    :title='$t(`admin:utilities.utilitiesCouldNotLoaded`)'
     :message='error'
-    retry-label='Try again'
+    :retry-label='$t(`admin:utilities.tryAgain`)'
     @retry='reload'
   )
   template(v-else-if='workspace')
     v-alert.mb-4(v-if='recoveryStorageUnavailable' color='error' variant='tonal' icon='mdi-lock-alert-outline')
-      .text-body-medium This browser cannot read or write the protected Utilities recovery record.
-      .text-body-small.mt-1 New Utilities actions are locked because an interrupted request cannot be safely ruled out. Restore browser storage access, reload Utilities, and inspect any existing receipt before continuing.
+      .text-body-medium {{ $t(`admin:utilities.browserCannotReadWrite`) }}
+      .text-body-small.mt-1 {{ $t(`admin:utilities.newUtilitiesActionsLocked`) }}
     v-alert.mb-4(v-else-if='pendingRequest' color='warning' variant='tonal' icon='mdi-alert-outline')
-      .text-body-medium The outcome of a reviewed request has not been confirmed.
-      .text-body-small.mt-1 New Utilities actions remain locked while this exact receipt is checked. The request will not be sent again automatically.
-      v-btn.mt-3(size='small' variant='outlined' :loading='pendingLookupLoading' @click='recoverPending') Check this receipt again
+      .text-body-medium {{ $t(`admin:utilities.outcomeReviewedRequestHas`) }}
+      .text-body-small.mt-1 {{ $t(`admin:utilities.newUtilitiesActionsRemain`) }}
+      v-btn.mt-3(size='small' variant='outlined' :loading='pendingLookupLoading' @click='recoverPending') {{ $t(`admin:utilities.checkReceiptAgain`) }}
     v-alert.mb-4(v-else-if='runningOperation' color='info' variant='tonal' icon='mdi-progress-clock')
-      .text-body-medium {{ operationTitle(runningOperation.kind) }} is still running.
-      .text-body-small.mt-1 Open its receipt to follow persisted progress. Starting another Utilities action is disabled until it settles.
-      v-btn.mt-3(size='small' variant='outlined' @click='selectReceipt(runningOperation.id)') Open running receipt
+      .text-body-medium {{ $t(`admin:utilities.stillRunning`, { kind: operationTitle(runningOperation.kind), interpolation: { escapeValue: false } }) }}
+      .text-body-small.mt-1 {{ $t(`admin:utilities.openReceiptFollowPersisted`) }}
+      v-btn.mt-3(size='small' variant='outlined' @click='selectReceipt(runningOperation.id)') {{ $t(`admin:utilities.openRunningReceipt`) }}
     v-row.mt-2
       v-col(cols='12' lg='3')
         v-card.admin-utilities-nav
@@ -39,22 +39,22 @@ v-container.admin-utilities(fluid)
             v-select.d-lg-none(
               v-model='section'
               :items='tools'
-              item-title='title'
+              :item-title='(tool: { title: string }) => $t(tool.title)'
               item-value='key'
-              label='Utility'
+              :label='$t(`admin:utilities.utility`)'
               variant='outlined'
               hide-details
               :disabled='busy || Boolean(pendingRequest)'
               @update:model-value='selectSection'
             )
-            v-list.d-none.d-lg-block(nav density='compact' aria-label='Utility workflows')
+            v-list.d-none.d-lg-block(nav density='compact' :aria-label='$t(`admin:utilities.utilityWorkflows`)')
               v-list-item(
                 v-for='tool in tools'
                 :key='tool.key'
                 :active='section === tool.key'
                 :prepend-icon='tool.icon'
-                :title='tool.title'
-                :subtitle='tool.subtitle'
+                :title='$t(tool.title)'
+                :subtitle='$t(tool.subtitle)'
                 :disabled='busy || Boolean(pendingRequest)'
                 @click='selectSection(tool.key)'
               )
@@ -73,13 +73,13 @@ v-container.admin-utilities(fluid)
           )
         v-card.mt-5(variant='outlined')
           v-card-title.d-flex.flex-wrap.align-center.ga-2
-            span Operation receipts
+            span {{ $t(`admin:utilities.operationReceipts`) }}
             v-spacer
-            v-btn(size='small' variant='text' :loading='loading' :disabled='busy' @click='reload') Refresh
+            v-btn(size='small' variant='text' :loading='loading' :disabled='busy' @click='reload') {{ $t(`common:actions.refresh`) }}
           v-card-text
-            .text-body-small.text-medium-emphasis.mb-3 Receipts are recovery records. Refreshing never restarts an action. An interrupted outcome must be inspected and explicitly acknowledged before another request.
-            v-alert(v-if='workspace.operations.length === 0' variant='tonal' color='info') No reviewed Utilities actions have been recorded yet.
-            v-list.admin-utilities-receipts(v-else lines='two' density='comfortable' aria-label='Recent Utilities operation receipts')
+            .text-body-small.text-medium-emphasis.mb-3 {{ $t(`admin:utilities.receiptsRecoveryRecordsRefreshing`) }}
+            v-alert(v-if='workspace.operations.length === 0' variant='tonal' color='info') {{ $t(`admin:utilities.noReviewedUtilitiesActions`) }}
+            v-list.admin-utilities-receipts(v-else lines='two' density='comfortable' :aria-label='$t(`admin:utilities.recentUtilitiesOperationReceipts`)')
               v-list-item(v-for='operation in workspace.operations' :key='operation.id' :active='receiptId === operation.id' :aria-current='receiptId === operation.id ? `true` : undefined' @click='selectReceipt(operation.id)')
                 template(#prepend)
                   v-icon(:color='receiptColor(operation.state)') {{ receiptIcon(operation.state) }}
@@ -89,23 +89,23 @@ v-container.admin-utilities(fluid)
                   .text-body-small.text-medium-emphasis {{ operation.state }}
             v-card.mt-3(v-if='receiptId' variant='tonal')
               v-card-text
-                async-state(v-if='receiptLoading' state='loading' title='Loading operation receipt')
-                async-state(v-else-if='receiptError' state='error' title='Receipt unavailable' :message='receiptError' retry-label='Try again' @retry='loadReceiptDetail(receiptId)')
+                async-state(v-if='receiptLoading' state='loading' :title='$t(`admin:utilities.loadingOperationReceipt`)')
+                async-state(v-else-if='receiptError' state='error' :title='$t(`admin:utilities.receiptUnavailable`)' :message='receiptError' :retry-label='$t(`admin:utilities.tryAgain`)' @retry='loadReceiptDetail(receiptId)')
                 template(v-else-if='selectedReceipt')
                   .text-body-medium {{ operationTitle(selectedReceipt.kind) }} · {{ selectedReceipt.state }}
                   .text-body-small.mt-1 {{ selectedReceipt.summary }}
-                  .text-body-small.mt-2(v-if='selectedReceipt.progress !== null') Progress: {{ selectedReceipt.progress }}%
+                  .text-body-small.mt-2(v-if='selectedReceipt.progress !== null') {{ $t(`admin:utilities.progress`, { progress: selectedReceipt.progress, interpolation: { escapeValue: false } }) }}
                   dl.admin-utilities-result.mt-3(v-if='receiptResultLines(selectedReceipt).length')
                     template(v-for='line in receiptResultLines(selectedReceipt)' :key='line.label')
                       dt {{ line.label }}
                       dd {{ line.value }}
-                  v-alert.mt-3(v-if='hasPartialResult(selectedReceipt)' color='warning' variant='tonal' density='compact') This receipt records aggregate counts only. It does not identify individual imported or skipped items; inspect the affected source and application logs before deciding whether to start a new import.
-                  .text-body-small.mt-3 Receipt ID: #[code {{ selectedReceipt.id }}]
-                  .text-body-small.mt-1 Requested: {{ new Date(selectedReceipt.createdAt).toLocaleString() }}
-                  .text-body-small.mt-1 {{ selectedReceipt.apiKeyId ? `API key ${selectedReceipt.apiKeyId}` : selectedReceipt.actorId ? `User ${selectedReceipt.actorId}` : 'System' }}
-                  .text-body-small.mt-1 Reason: {{ selectedReceipt.reason }}
-                  .text-body-small.mt-1(v-if='selectedReceipt.acknowledgedAt') Uncertainty acknowledged by a later recorded request.
-                v-btn.mt-3(size='small' variant='text' :disabled='receiptLoading' @click='clearReceipt') Clear receipt selection
+                  v-alert.mt-3(v-if='hasPartialResult(selectedReceipt)' color='warning' variant='tonal' density='compact') {{ $t(`admin:utilities.receiptRecordsAggregateCounts`) }}
+                  .text-body-small.mt-3 {{ $t(`admin:utilities.receiptId`) }} #[code {{ selectedReceipt.id }}]
+                  .text-body-small.mt-1 {{ $t(`admin:utilities.requested`, { createdAt: new Date(selectedReceipt.createdAt).toLocaleString(), interpolation: { escapeValue: false } }) }}
+                  .text-body-small.mt-1 {{ selectedReceipt.apiKeyId ? $t(`admin:utilities.apiKey`, { apiKeyId: selectedReceipt.apiKeyId, interpolation: { escapeValue: false } }) : selectedReceipt.actorId ? $t(`admin:utilities.user`, { actorId: selectedReceipt.actorId, interpolation: { escapeValue: false } }) : $t(`admin:utilities.system`) }}
+                  .text-body-small.mt-1 {{ $t(`admin:utilities.reason`, { reason: selectedReceipt.reason, interpolation: { escapeValue: false } }) }}
+                  .text-body-small.mt-1(v-if='selectedReceipt.acknowledgedAt') {{ $t(`admin:utilities.uncertaintyAcknowledgedLaterRecorded`) }}
+                v-btn.mt-3(size='small' variant='text' :disabled='receiptLoading' @click='clearReceipt') {{ $t(`admin:utilities.clearReceiptSelection`) }}
   v-snackbar(v-model='notice.open' :color='notice.color' timeout='5000' role='status') {{ notice.message }}
 </template>
 
@@ -127,26 +127,27 @@ import {
   startUtilitiesOperation,
   type UtilitiesOperationRequest
 } from '../../helpers/utilities-workspace-api.ts'
+import type { Translate } from '../../helpers/use-translate.ts'
 
 const tools = markRaw([
-  { key: 'auth', title: 'Authentication cleanup', subtitle: 'Session and guest recovery', icon: 'mdi-shield-key-outline', component: 'UtilityAuth' },
+  { key: 'auth', title: 'admin:utilities.authenticationCleanup', subtitle: 'admin:utilities.sessionGuestRecovery', icon: 'mdi-shield-key-outline', component: 'UtilityAuth' },
   {
     key: 'content',
-    title: 'Content maintenance',
-    subtitle: 'Tree, render, locale and history',
+    title: 'admin:utilities.contentMaintenance',
+    subtitle: 'admin:utilities.treeRenderLocaleHistory',
     icon: 'mdi-file-cog-outline',
     component: 'UtilityContent'
   },
-  { key: 'export', title: 'Export', subtitle: 'Create a guarded local archive', icon: 'mdi-database-export-outline', component: 'UtilityExport' },
-  { key: 'cache', title: 'Cache', subtitle: 'Clear server or browser caches', icon: 'mdi-cached', component: 'UtilityCache' },
+  { key: 'export', title: 'admin:utilities.export', subtitle: 'admin:utilities.createGuardedLocalArchive', icon: 'mdi-database-export-outline', component: 'UtilityExport' },
+  { key: 'cache', title: 'admin:utilities.cache', subtitle: 'admin:utilities.clearServerBrowserCaches', icon: 'mdi-cached', component: 'UtilityCache' },
   {
     key: 'import',
-    title: 'Content import',
-    subtitle: 'Bring in documents and assets',
+    title: 'admin:utilities.contentImport',
+    subtitle: 'admin:utilities.bringDocumentsAssets',
     icon: 'mdi-database-import-outline',
     component: 'UtilityImportv1'
   },
-  { key: 'telemetry', title: 'Telemetry', subtitle: 'Privacy preference and client identity', icon: 'mdi-radar', component: 'UtilityTelemetry' }
+  { key: 'telemetry', title: 'admin:utilities.telemetryTitle', subtitle: 'admin:utilities.privacyPreferenceClientIdentity', icon: 'mdi-radar', component: 'UtilityTelemetry' }
 ] as const)
 
 const pendingStorageKey = 'utilities.pending-operation.v1'
@@ -161,7 +162,7 @@ type PendingRequest = { id: string; kind: UtilityOperationKind; createdAt: strin
 
 const record = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : 'Utilities administration is unavailable.')
+const errorMessage = (t: Translate, error: unknown): string => (error instanceof Error ? error.message : t('admin:utilities.utilitiesAdministrationUnavailable'))
 const errorStatus = (error: unknown): number | null => {
   const value = record(error)
   return typeof value?.status === 'number' && Number.isInteger(value.status) ? value.status : null
@@ -287,7 +288,7 @@ export default defineComponent({
     async canLeave(): Promise<boolean> {
       if (this.busy || this.pendingRequest) return false
       if (!this.draftDirty) return true
-      if (!(await confirmDiscard('Discard the unsaved Utilities draft?'))) return false
+      if (!(await confirmDiscard(this.$t('admin:utilities.discardUnsavedUtilitiesDraft')))) return false
       if (this.busy || this.pendingRequest) return false
       this.draftDirty = false
       return true
@@ -300,12 +301,12 @@ export default defineComponent({
         if (saved && !this.pendingRequest) {
           this.recoveryStorageUnavailable = true
           this.error =
-            'The protected Utilities recovery record is incomplete. New Utilities actions remain locked because an unconfirmed request cannot be safely inspected.'
+            this.$t('admin:utilities.protectedUtilitiesRecoveryRecord')
         }
       } catch {
         this.recoveryStorageUnavailable = true
         this.error =
-          'This browser could not read the protected Utilities recovery record. Do not repeat an unconfirmed Utilities action until its receipt is inspected.'
+          this.$t('admin:utilities.browserCouldNotRead')
       }
     },
     persistPending(pending: PendingRequest): boolean {
@@ -315,7 +316,7 @@ export default defineComponent({
         return true
       } catch {
         this.recoveryStorageUnavailable = true
-        this.error = 'This browser cannot securely store a Utilities recovery record. The reviewed action was not sent.'
+        this.error = this.$t('admin:utilities.browserCannotSecurelyStore')
         return false
       }
     },
@@ -326,7 +327,7 @@ export default defineComponent({
         this.pendingCallbacks = null
         return true
       } catch {
-        this.error = 'This browser could not clear the Utilities recovery record. New Utilities actions remain locked to prevent a duplicate request.'
+        this.error = this.$t('admin:utilities.browserCouldNotClear')
         return false
       }
     },
@@ -343,7 +344,7 @@ export default defineComponent({
         else if (this.receiptId) void this.loadReceiptDetail(this.receiptId)
         this.scheduleRefresh()
       } catch (error) {
-        if (!this.disposed) this.error = errorMessage(error)
+        if (!this.disposed) this.error = errorMessage(this.$t, error)
       } finally {
         if (!this.disposed) this.loading = false
       }
@@ -377,7 +378,7 @@ export default defineComponent({
         }
       } catch (error) {
         if (!this.disposed)
-          this.error = `The exact pending receipt could not be read: ${errorMessage(error)} New Utilities actions remain locked; retry this receipt lookup instead of repeating the request.`
+          this.error = this.$t('admin:utilities.exactPendingReceiptCould', { error: errorMessage(this.$t, error), interpolation: { escapeValue: false } })
       } finally {
         if (!this.disposed) this.pendingLookupLoading = false
       }
@@ -393,7 +394,7 @@ export default defineComponent({
         if (this.disposed || sequence !== this.receiptSequence || this.receiptId !== id) return
         this.receiptDetail = receipt
       } catch (error) {
-        if (!this.disposed && sequence === this.receiptSequence && this.receiptId === id) this.receiptError = errorMessage(error)
+        if (!this.disposed && sequence === this.receiptSequence && this.receiptId === id) this.receiptError = errorMessage(this.$t, error)
       } finally {
         if (!this.disposed && sequence === this.receiptSequence) this.receiptLoading = false
       }
@@ -446,10 +447,10 @@ export default defineComponent({
     receiptResultLines(receipt: UtilityOperation): Array<{ label: string; value: number }> {
       if (!receipt.result) return []
       const lines: Array<[string, number | undefined]> = [
-        ['Processed', receipt.result.processed],
-        ['Succeeded', receipt.result.succeeded],
-        ['Failed', receipt.result.failed],
-        ['Skipped', receipt.result.skipped]
+        [this.$t('admin:utilities.processed'), receipt.result.processed],
+        [this.$t('admin:utilities.succeeded'), receipt.result.succeeded],
+        [this.$t('admin:utilities.failed'), receipt.result.failed],
+        [this.$t('admin:utilities.skipped'), receipt.result.skipped]
       ]
       return lines.flatMap(([label, value]) => (typeof value === 'number' ? [{ label, value }] : []))
     },
@@ -474,7 +475,7 @@ export default defineComponent({
         window.location.assign('/login')
       } catch {
         this.error =
-          'Authentication certificates were recorded, but this browser could not preserve the receipt return path. Sign in again, then open Utilities and inspect the receipt identifier.'
+          this.$t('admin:utilities.authenticationCertificatesWereRecorded')
       }
     },
     async requestOperation(request: RequestedOperation) {
@@ -482,7 +483,7 @@ export default defineComponent({
       const kind = request.kind,
         reason = request.reason.trim()
       if (reason.length < 3 || reason.length > 1000) {
-        const message = 'Enter an administrative reason of 3 to 1000 characters.'
+        const message = this.$t('admin:utilities.enterAdministrativeReason3')
         this.error = message
         request.onRejected?.(message)
         return
@@ -500,7 +501,7 @@ export default defineComponent({
       )
       const pending: PendingRequest = { id: operation.id, kind: operation.kind, createdAt: new Date().toISOString() }
       if (!this.persistPending(pending)) {
-        request.onRejected?.(this.error || 'This browser cannot store the Utilities recovery record.')
+        request.onRejected?.(this.error || this.$t('admin:utilities.browserCannotStoreUtilities'))
         return
       }
       this.pendingCallbacks = { onRecorded: request.onRecorded, onRejected: request.onRejected }
@@ -518,19 +519,19 @@ export default defineComponent({
           this.redirectAfterCertificateReceipt(response.id)
           return
         }
-        this.notice = { open: true, color: 'success', message: `${utilityOperationTitle(kind)} was recorded. Follow its receipt for the outcome.` }
+        this.notice = { open: true, color: 'success', message: this.$t('admin:utilities.wasRecordedFollowReceipt', { kind: utilityOperationTitle(kind), interpolation: { escapeValue: false } }) }
         this.replaceReceiptQuery(response.id)
         await this.reload()
       } catch (error) {
         if (this.disposed) return
-        const message = errorMessage(error),
+        const message = errorMessage(this.$t, error),
           status = errorStatus(error)
         if (status !== null && status >= 400 && status < 500) {
           if (this.clearPending()) request.onRejected?.(message)
           this.error = message
           return
         }
-        const recoveryMessage = `The Utilities response did not confirm this request. Its exact receipt is being checked; the request will not be repeated automatically. ${message}`
+        const recoveryMessage = this.$t('admin:utilities.utilitiesResponseDidNot', { message, interpolation: { escapeValue: false } })
         this.error = recoveryMessage
         request.onRejected?.(recoveryMessage)
         await this.recoverPending()

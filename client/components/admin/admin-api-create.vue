@@ -3,26 +3,26 @@
     <v-dialog v-model="isShown" max-width="760" persistent aria-labelledby="api-key-create-title">
       <v-form ref="createForm" @submit.prevent="generate">
         <v-card class="api-key-dialog">
-          <header class="key-dialog-heading"><span class="key-kicker">{{ seed ? 'Credential replacement' : 'New integration identity' }}</span><h2 id="api-key-create-title">{{ step === 1 ? 'Name this connection.' : step === 2 ? 'Define its authority.' : 'Review before issuing.' }}</h2><p>{{ seed ? 'The existing key stays valid until you revoke it. Configure and verify the replacement first.' : 'Create a dedicated credential with the access this integration needs.' }}</p></header>
-          <ol class="key-progress" aria-label="Key creation steps"><li v-for="(label, index) in ['Identity', 'Access', 'Review']" :key="label" :aria-current="step === index + 1 ? 'step' : undefined" :class="{ current: step === index + 1 }"><span>{{ index + 1 }}</span>{{ label }}</li></ol>
+          <header class="key-dialog-heading"><span class="key-kicker">{{ seed ? $t('admin:apiCreate.credentialReplacement') : $t('admin:apiCreate.newIntegrationIdentity') }}</span><h2 id="api-key-create-title">{{ step === 1 ? $t('admin:apiCreate.nameConnection') : step === 2 ? $t('admin:apiCreate.defineAuthority') : $t('admin:apiCreate.reviewBeforeIssuing') }}</h2><p>{{ seed ? $t('admin:apiCreate.existingKeyStaysValid') : $t('admin:apiCreate.createDedicatedCredentialAccess') }}</p></header>
+          <ol class="key-progress" :aria-label="$t('admin:apiCreate.keyCreationSteps')"><li v-for="(label, index) in ['Identity', 'Access', 'Review']" :key="label" :aria-current="step === index + 1 ? 'step' : undefined" :class="{ current: step === index + 1 }"><span>{{ index + 1 }}</span>{{ label }}</li></ol>
           <v-card-text class="key-dialog-body">
             <v-alert v-if="formError" type="error" variant="tonal" class="mb-4">{{ formError }}</v-alert>
-            <section v-show="step === 1" aria-label="Credential identity"><v-text-field ref="keyNameInput" v-model="name" label="Integration name" hint="Use a name that identifies the application, agent or workflow." persistent-hint variant="outlined" :rules="nameRules" :disabled="loading" maxlength="255" autocomplete="off" /><v-select ref="expirationInput" v-model="expiration" :items="expirations" label="Key lifetime" hint="Plan to replace this key before it expires." persistent-hint variant="outlined" :rules="[requiredRule]" :disabled="loading" class="mt-4" /></section>
-            <section v-show="step === 2" aria-label="Credential authority">
-              <v-radio-group ref="scopeInput" v-model="scope" label="Permission source" :rules="[scopeRule]" :disabled="loading" color="primary"><v-radio value="group" label="Use a group’s permissions" :disabled="!selectableGroups.length" /><v-radio value="full" label="System administrator permissions" :disabled="!createFullAccess" /></v-radio-group>
-              <v-alert v-if="scope === 'full'" type="warning" variant="tonal" class="mb-4">This key receives unrestricted system-administrator authority. Choose a scoped group when the integration needs less access.</v-alert>
-              <template v-if="scope === 'group'"><v-alert v-if="!selectableGroups.length" type="info" variant="tonal" class="mb-3">No permission groups are currently available for delegation.</v-alert><v-select ref="groupInput" v-model="group" :items="selectableGroups" item-title="name" item-value="id" variant="outlined" color="primary" label="Permission group" :rules="groupRules" :disabled="loading || !selectableGroups.length" />
-                <div v-if="selectedGrant" class="grant-preview"><strong>{{ selectedGrant.name }}</strong><p>{{ selectedGrant.permissions.length }} current permissions · {{ selectedGrant.pageRuleCount }} page rules</p><div class="grant-permissions"><code v-for="permission in selectedGrant.permissions" :key="permission">{{ permission }}</code></div><details v-if="selectedGrant.pageRules.length" class="grant-rules"><summary>Review page access rules</summary><ul><li v-for="(rule, index) in selectedGrant.pageRules" :key="index"><strong>{{ rule.deny ? 'Deny' : 'Allow' }} · {{ rule.match }}</strong><code>{{ rule.path || '/' }}</code><small>{{ rule.roles.join(', ') || 'No actions' }} · {{ rule.locales.join(', ') || 'All languages' }}</small></li></ul></details><p class="key-note">This is the group’s current grant. Future group changes apply to the key.</p></div><v-alert v-else-if="group" type="info" variant="tonal">Permission details are unavailable. Reload the API administration page.</v-alert>
+            <section v-show="step === 1" :aria-label="$t('admin:apiCreate.credentialIdentity')"><v-text-field ref="keyNameInput" v-model="name" :label="$t('admin:apiCreate.integrationName')" :hint="$t('admin:apiCreate.useNameIdentifiesApplication')" persistent-hint variant="outlined" :rules="nameRules" :disabled="loading" maxlength="255" autocomplete="off" /><v-select ref="expirationInput" v-model="expiration" :items="expirations" :label="$t('admin:apiCreate.keyLifetime')" :hint="$t('admin:apiCreate.planReplaceKeyBefore')" persistent-hint variant="outlined" :rules="[requiredRule]" :disabled="loading" class="mt-4" /></section>
+            <section v-show="step === 2" :aria-label="$t('admin:apiCreate.credentialAuthority')">
+              <v-radio-group ref="scopeInput" v-model="scope" :label="$t('admin:apiCreate.permissionSource')" :rules="[scopeRule]" :disabled="loading" color="primary"><v-radio value="group" :label="$t('admin:apiCreate.useGroupsPermissions')" :disabled="!selectableGroups.length" /><v-radio value="full" :label="$t('admin:apiCreate.systemAdministratorPermissions')" :disabled="!createFullAccess" /></v-radio-group>
+              <v-alert v-if="scope === 'full'" type="warning" variant="tonal" class="mb-4">{{ $t('admin:apiCreate.keyReceivesUnrestrictedSystem') }}</v-alert>
+              <template v-if="scope === 'group'"><v-alert v-if="!selectableGroups.length" type="info" variant="tonal" class="mb-3">{{ $t('admin:apiCreate.noPermissionGroupsCurrently') }}</v-alert><v-select ref="groupInput" v-model="group" :items="selectableGroups" item-title="name" item-value="id" variant="outlined" color="primary" :label="$t('admin:apiCreate.permissionGroup')" :rules="groupRules" :disabled="loading || !selectableGroups.length" />
+                <div v-if="selectedGrant" class="grant-preview"><strong>{{ selectedGrant.name }}</strong><p>{{ $t('admin:apiCreate.currentPermissionsPageRules', { permissionsCount: selectedGrant.permissions.length, pageRuleCount: selectedGrant.pageRuleCount, interpolation: { escapeValue: false } }) }}</p><div class="grant-permissions"><code v-for="permission in selectedGrant.permissions" :key="permission">{{ permission }}</code></div><details v-if="selectedGrant.pageRules.length" class="grant-rules"><summary>{{ $t('admin:apiCreate.reviewPageAccessRules') }}</summary><ul><li v-for="(rule, index) in selectedGrant.pageRules" :key="index"><strong>{{ rule.deny ? $t('admin:apiCreate.deny') : $t('admin:apiCreate.allow') }} · {{ rule.match }}</strong><code>{{ rule.path || '/' }}</code><small>{{ rule.roles.join(', ') || $t('admin:apiCreate.noActions') }} · {{ rule.locales.join(', ') || $t('admin:apiCreate.allLanguages') }}</small></li></ul></details><p class="key-note">{{ $t('admin:apiCreate.groupsCurrentGrantFuture') }}</p></div><v-alert v-else-if="group" type="info" variant="tonal">{{ $t('admin:apiCreate.permissionDetailsUnavailableReload') }}</v-alert>
               </template>
-              <div class="mcp-key-choice"><v-checkbox v-model="mcpAccess" label="Allow this key to connect through MCP" color="primary" hide-details :disabled="loading || (!mcpAccess && (!connections?.mcpEnabled || connections.mcpConfigurationError))" /><p class="key-note">{{ connections?.mcpEnabled ? 'The key will be bound to the configured MCP resource below. REST and GraphQL access also remain available.' : 'MCP must be enabled in the deployment before issuing an MCP-capable key.' }}</p><p v-if="mcpAccess && scope === 'group' && selectedGrant && !selectedGrant.permissions.some(permission => ['use:mcp', 'manage:system'].includes(permission))" class="key-note">This group does not currently grant use:mcp or manage:system. The binding alone will not authorize MCP requests.</p><code v-if="mcpAccess">{{ connections?.mcpResource }}</code></div>
+              <div class="mcp-key-choice"><v-checkbox v-model="mcpAccess" :label="$t('admin:apiCreate.allowKeyConnectThrough')" color="primary" hide-details :disabled="loading || (!mcpAccess && (!connections?.mcpEnabled || connections.mcpConfigurationError))" /><p class="key-note">{{ connections?.mcpEnabled ? $t('admin:apiCreate.keyWillBoundConfigured') : $t('admin:apiCreate.mcpMustEnabledDeployment') }}</p><p v-if="mcpAccess && scope === 'group' && selectedGrant && !selectedGrant.permissions.some(permission => ['use:mcp', 'manage:system'].includes(permission))" class="key-note">{{ $t('admin:apiCreate.groupDoesNotCurrently') }}</p><code v-if="mcpAccess">{{ connections?.mcpResource }}</code></div>
             </section>
-            <section v-if="step === 3" aria-label="Credential review"><dl class="key-review"><div><dt>Integration</dt><dd>{{ name.trim() }}</dd></div><div><dt>Lifetime</dt><dd>{{ expirations.find(item => item.value === expiration)?.title }}</dd></div><div><dt>Authority</dt><dd>{{ scope === 'full' ? 'System administrator' : selectableGroups.find(item => item.id === group)?.name || `Group ${group}` }}</dd></div><div><dt>Protocols</dt><dd>{{ mcpAccess ? 'REST v1 · GraphQL · MCP' : 'REST v1 · GraphQL' }}</dd></div><div v-if="mcpAccess"><dt>MCP resource</dt><dd>{{ connections?.mcpResource }}</dd></div></dl><p>After issuing, save the key in your client’s secret storage. This interface will show the complete credential only once.</p></section>
+            <section v-if="step === 3" :aria-label="$t('admin:apiCreate.credentialReview')"><dl class="key-review"><div><dt>{{ $t('admin:apiCreate.integration') }}</dt><dd>{{ name.trim() }}</dd></div><div><dt>{{ $t('admin:apiCreate.lifetime') }}</dt><dd>{{ expirations.find(item => item.value === expiration)?.title }}</dd></div><div><dt>{{ $t('admin:apiCreate.authority') }}</dt><dd>{{ scope === 'full' ? $t('admin:apiCreate.systemAdministrator') : selectableGroups.find(item => item.id === group)?.name || $t('admin:apiCreate.group', { group, interpolation: { escapeValue: false } }) }}</dd></div><div><dt>{{ $t('admin:apiCreate.protocols') }}</dt><dd>{{ mcpAccess ? $t('admin:apiCreate.restV1GraphqlMcp') : $t('admin:apiCreate.restV1Graphql') }}</dd></div><div v-if="mcpAccess"><dt>{{ $t('admin:apiCreate.mcpResource') }}</dt><dd>{{ connections?.mcpResource }}</dd></div></dl><p>{{ $t('admin:apiCreate.afterIssuingSaveKey') }}</p></section>
           </v-card-text>
-          <v-card-actions class="key-dialog-actions"><v-btn variant="text" :disabled="loading" @click="isShown = false">Cancel</v-btn><v-spacer /><v-btn v-if="step > 1" variant="text" :disabled="loading" @click="step--">Back</v-btn><v-btn v-if="step < 3" color="primary" variant="flat" :disabled="loading" @click="nextStep">Continue</v-btn><v-btn v-else type="submit" color="primary" variant="flat" :loading="loading" :disabled="loading || (scope === 'group' && !selectableGroups.length)">Issue key</v-btn></v-card-actions>
+          <v-card-actions class="key-dialog-actions"><v-btn variant="text" :disabled="loading" @click="isShown = false">{{ $t('common:actions.cancel') }}</v-btn><v-spacer /><v-btn v-if="step > 1" variant="text" :disabled="loading" @click="step--">{{ $t('admin:apiCreate.back') }}</v-btn><v-btn v-if="step < 3" color="primary" variant="flat" :disabled="loading" @click="nextStep">{{ $t('admin:apiCreate.continue') }}</v-btn><v-btn v-else type="submit" color="primary" variant="flat" :loading="loading" :disabled="loading || (scope === 'group' && !selectableGroups.length)">{{ $t('admin:apiCreate.issueKey') }}</v-btn></v-card-actions>
         </v-card>
       </v-form>
     </v-dialog>
-    <v-dialog v-model="isCopyKeyDialogShown" max-width="760" persistent aria-labelledby="api-key-copy-title"><v-card class="api-key-dialog"><header class="key-dialog-heading"><span class="key-kicker">Credential issued</span><h2 id="api-key-copy-title">Save your new key.</h2><p>Copy it to your client’s secret storage before continuing. The complete key will not be displayed again here.</p></header><v-card-text><v-textarea ref="keyContentsIpt" readonly no-resize label="Generated API key" :model-value="key" :rows="5" variant="outlined" hide-details class="api-key-value" /><div class="key-copy-actions"><v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyKey">{{ copied ? 'Copied' : 'Copy key' }}</v-btn><span v-if="copied" role="status">Key copied.</span></div><v-alert v-if="seed" type="info" variant="tonal" class="mt-4">Configure and verify this replacement, then revoke {{ seed.name }} from the credential register.</v-alert></v-card-text><v-card-actions><v-spacer /><v-btn color="primary" variant="flat" :disabled="loading" @click="finishCopyKey">I’ve saved this key</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="isCopyKeyDialogShown" max-width="760" persistent aria-labelledby="api-key-copy-title"><v-card class="api-key-dialog"><header class="key-dialog-heading"><span class="key-kicker">{{ $t('admin:apiCreate.credentialIssued') }}</span><h2 id="api-key-copy-title">{{ $t('admin:apiCreate.saveNewKey') }}</h2><p>{{ $t('admin:apiCreate.copyClientsSecretStorage') }}</p></header><v-card-text><v-textarea ref="keyContentsIpt" readonly no-resize :label="$t('admin:apiCreate.generatedApiKey')" :model-value="key" :rows="5" variant="outlined" hide-details class="api-key-value" /><div class="key-copy-actions"><v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyKey">{{ copied ? $t('admin:apiCreate.copied') : $t('admin:apiCreate.copyKey') }}</v-btn><span v-if="copied" role="status">{{ $t('admin:apiCreate.keyCopied') }}</span></div><v-alert v-if="seed" type="info" variant="tonal" class="mt-4">{{ $t('admin:apiCreate.configureVerifyReplacementThen', { name: seed.name, interpolation: { escapeValue: false } }) }}</v-alert></v-card-text><v-card-actions><v-spacer /><v-btn color="primary" variant="flat" :disabled="loading" @click="finishCopyKey">{{ $t('admin:apiCreate.iveSavedKey') }}</v-btn></v-card-actions></v-card></v-dialog>
   </div>
 </template>
 
@@ -84,7 +84,7 @@ export default {
       ]
     },
     requiredRule (): (value: unknown) => true | string {
-      return (value: unknown) => Boolean(value) || 'This field is required.'
+      return (value: unknown) => Boolean(value) || this.$t('admin:apiCreate.fieldRequired')
     },
     nameRules (): Array<(value: string) => true | string> {
       return [
@@ -95,7 +95,7 @@ export default {
       ]
     },
     scopeRule (): (value: string | null) => true | string {
-      return (value: string | null) => Boolean(value) || 'Choose a permission scope.'
+      return (value: string | null) => Boolean(value) || this.$t('admin:apiCreate.choosePermissionScope')
     },
     groupRules (): Array<(value: number | null) => true | string> {
       return [
@@ -114,7 +114,7 @@ export default {
       handler (newValue: boolean) {
         if (newValue) {
           this.step = 1; this.formError = ''
-          this.name = this.seed ? `${this.seed.name} replacement`.slice(0, 255) : ''
+          this.name = this.seed ? this.$t('admin:apiCreate.replacement', { name: this.seed.name, interpolation: { escapeValue: false } }).slice(0, 255) : ''
           this.expiration = '90d'
           this.scope = this.seed?.grant.groupId === 1 ? 'full' : 'group'
           this.group = this.seed?.grant.groupId && this.seed.grant.groupId > 2 ? this.seed.grant.groupId : null
@@ -136,9 +136,9 @@ export default {
     warnBeforeUnload (event: BeforeUnloadEvent) { if (this.modelValue || this.flowProtected) { event.preventDefault(); event.returnValue = '' } },
     nextStep () {
       this.formError = ''
-      if (this.step === 1 && (this.name.trim().length < 2 || this.name.trim().length > 255 || !this.expiration)) { this.formError = 'Enter a name with 2–255 characters and choose a lifetime.'; this.focusFormControl('keyNameInput'); return }
-      if (this.step === 2 && (!this.scope || (this.scope === 'full' && !this.createFullAccess) || (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)))) { this.formError = 'Choose an available permission group or administrator access.'; return }
-      if (this.step === 2 && this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.formError = 'MCP configuration is unavailable. Reload connection details or turn off MCP access.'; return }
+      if (this.step === 1 && (this.name.trim().length < 2 || this.name.trim().length > 255 || !this.expiration)) { this.formError = this.$t('admin:apiCreate.enterName2255'); this.focusFormControl('keyNameInput'); return }
+      if (this.step === 2 && (!this.scope || (this.scope === 'full' && !this.createFullAccess) || (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)))) { this.formError = this.$t('admin:apiCreate.chooseAvailablePermissionGroup'); return }
+      if (this.step === 2 && this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.formError = this.$t('admin:apiCreate.mcpConfigurationUnavailableReload'); return }
       this.step++
     },
     async copyKey () {
@@ -148,7 +148,7 @@ export default {
       } catch {
         const input = this.$refs.keyContentsIpt as { select?: () => void } | undefined
         input?.select?.()
-        wikiStore.showNotification({ style: 'red', message: 'Copy failed. Select the key and copy it manually.', icon: 'alert' })
+        wikiStore.showNotification({ style: 'red', message: this.$t('admin:apiCreate.copyFailedSelectKey'), icon: 'alert' })
       }
     },
     finishCopyKey () {
@@ -170,9 +170,9 @@ export default {
     async generate () {
       if (this.loading) return
       if (this.step < 3) { this.nextStep(); return }
-      if (this.scope === 'full' && !this.createFullAccess) { this.step = 2; this.formError = 'System administrator delegation is unavailable for your current session.'; return }
-      if (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)) { this.step = 2; this.formError = 'Choose an available permission group or administrator access.'; return }
-      if (this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.step = 2; this.formError = 'MCP configuration is unavailable. Reload connection details or turn off MCP access.'; return }
+      if (this.scope === 'full' && !this.createFullAccess) { this.step = 2; this.formError = this.$t('admin:apiCreate.systemAdministratorDelegationUnavailable'); return }
+      if (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)) { this.step = 2; this.formError = this.$t('admin:apiCreate.chooseAvailablePermissionGroup'); return }
+      if (this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.step = 2; this.formError = this.$t('admin:apiCreate.mcpConfigurationUnavailableReload'); return }
       const form = this.$refs.createForm as {
         validate?: () => Promise<{ valid: boolean }>
       } | undefined

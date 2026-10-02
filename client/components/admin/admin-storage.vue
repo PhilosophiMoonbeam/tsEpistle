@@ -5,8 +5,8 @@
     :inert="reviewOpen"
   >
     <admin-hero
-      title="Storage"
-      description="Keep knowledge portable. Make every copy and every recovery deliberate."
+      :title="$t('admin:storage.title')"
+      :description="$t('admin:storage.keepKnowledgePortableMake')"
       icon="mdi-database-outline"
     >
       <template #actions>
@@ -15,32 +15,32 @@
           prepend-icon="mdi-refresh"
           :disabled="busy || loading"
           @click="reload"
-        >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved storage settings</v-tooltip></v-btn>
+        >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:storage.reloadSavedStorageSettings') }}</v-tooltip></v-btn>
         <v-btn
           v-if="dirty"
           variant="text"
           :disabled="locked"
           @click="reset"
-        >Reset draft</v-btn>
+        >{{ $t('admin:storage.resetDraft') }}</v-btn>
         <v-btn
           color="primary"
           :disabled="locked || !dirty"
           @click="reviewSave"
-        >Review changes</v-btn>
+        >{{ $t('admin:storage.reviewChanges') }}</v-btn>
       </template>
     </admin-hero>
     <async-state
       v-if="loading && !saved"
       state="loading"
-      title="Loading Storage"
-      message="Reading saved targets, active runtimes and operation receipts."
+      :title="$t('admin:storage.loadingStorage')"
+      :message="$t('admin:storage.readingSavedTargetsActive')"
     />
     <async-state
       v-else-if="error && !saved"
       state="error"
-      title="Storage could not be loaded"
+      :title="$t('admin:storage.storageCouldNotLoaded2')"
       :message="error"
-      retry-label="Try again"
+      :retry-label="$t('admin:storage.tryAgain')"
       @retry="load(true)"
     />
     <v-alert
@@ -54,7 +54,7 @@
       variant="tonal"
       type="warning"
       class="mb-5"
-    >Reload before another change. The saved state changed or the outcome of a request needs confirmation.</v-alert>
+    >{{ $t('admin:storage.reloadBeforeAnotherChange') }}</v-alert>
     <v-alert
       v-if="notice"
       variant="tonal"
@@ -64,12 +64,12 @@
     >{{ notice }}</v-alert>
     <template v-if="saved">
       <div class="storage-status"><span><i
-            :class="{attention:dirty || stale}" />{{ stale ? 'Reload required' : dirty ? 'Unsaved target configuration' : 'Saved configuration & observed runtime' }}</span><time
+            :class="{attention:dirty || stale}" />{{ stale ? $t('admin:storage.reloadRequired') : dirty ? $t('admin:storage.unsavedTargetConfiguration') : $t('admin:storage.savedConfigurationObservedRuntime') }}</span><time
           :datetime="saved.observedAt"
-        >Observed {{ dateTime(saved.observedAt) }}</time></div>
+        >{{ $t('admin:storage.observed', { observedAt: dateTime(saved.observedAt), interpolation: { escapeValue: false } }) }}</time></div>
       <nav
         class="storage-tabs"
-        aria-label="Storage sections"
+        :aria-label="$t('admin:storage.storageSections')"
       ><button
           v-for="tab in sections"
           :key="tab.key"
@@ -83,8 +83,8 @@
         variant="tonal"
         class="mb-6"
       >{{ saved.gitSyncAllowedWhileOffline
-          ? 'Offline mode pauses other remote storage targets. Git synchronization is allowed. Work already in progress may finish.'
-          : 'Offline mode pauses new remote storage work. Local disk remains available. Work already in progress may finish.' }}</v-alert>
+          ? $t('admin:storage.offlineModePausesOther')
+          : $t('admin:storage.offlineModePausesNew') }}</v-alert>
       <div
         v-if="activeOperation"
         class="storage-running"
@@ -93,35 +93,35 @@
         <v-icon :icon="activeOperation.state === 'interrupted' ? 'mdi-alert-circle-outline' : 'mdi-timer-sand'" />
         <div><strong>{{ operationLabel(activeOperation.state) }} · {{ activeOperation.title }}</strong>
           <p>
-            {{ activeOperation.state === 'interrupted' ? 'Its outcome needs review before settings can change or another operation can start.' : 'Settings and additional operations are locked until this work finishes. You can leave this page and return to its receipt.' }}
+            {{ activeOperation.state === 'interrupted' ? $t('admin:storage.outcomeNeedsReviewBefore') : $t('admin:storage.settingsAdditionalOperationsLocked') }}
           </p>
         </div>
         <v-btn
           variant="outlined"
           @click="selectOperation(activeOperation.id)"
-        >View operation</v-btn>
+        >{{ $t('admin:storage.viewOperation') }}</v-btn>
       </div>
       <template v-if="section === 'overview'">
         <div class="storage-overview">
           <section>
-            <div class="storage-heading"><span class="storage-kicker">01 / Copies with a purpose</span>
-              <h2>Your knowledge,<br />beyond this database</h2>
-              <p>Choose where shared pages and assets go. Know which settings are running, what changed, and what each copy can restore.</p>
+            <div class="storage-heading"><span class="storage-kicker">{{ $t('admin:storage.n01CopiesPurpose') }}</span>
+              <h2>{{ $t('admin:storage.knowledge') }}<br />{{ $t('admin:storage.beyondDatabase') }}</h2>
+              <p>{{ $t('admin:storage.chooseWhereSharedPages') }}</p>
             </div>
             <div class="storage-metrics">
-              <div><span>Using saved settings</span><strong>{{ currentTargets.length }}<small> / {{ enabledTargets.length }}</small></strong>
-                <p>Initialized and available for new work</p>
+              <div><span>{{ $t('admin:storage.usingSavedSettings') }}</span><strong>{{ currentTargets.length }}<small> / {{ enabledTargets.length }}</small></strong>
+                <p>{{ $t('admin:storage.initializedAvailableNewWork') }}</p>
               </div>
-              <div><span>Awaiting application</span><strong>{{ pendingTargets.length }}</strong>
-                <p>Saved configuration differs from the runtime</p>
+              <div><span>{{ $t('admin:storage.awaitingApplication') }}</span><strong>{{ pendingTargets.length }}</strong>
+                <p>{{ $t('admin:storage.savedConfigurationDiffersRuntime') }}</p>
               </div>
             </div>
             <div class="storage-section-head">
-              <h3>Configured destinations</h3><v-btn
+              <h3>{{ $t('admin:storage.configuredDestinations') }}</h3><v-btn
                 variant="text"
                 append-icon="mdi-arrow-right"
                 @click="selectSection('targets')"
-              >All targets</v-btn>
+              >{{ $t('admin:storage.allTargets') }}</v-btn>
             </div>
             <div
               v-if="!enabledTargets.length"
@@ -130,12 +130,11 @@
                 size="36"
                 icon="mdi-folder-plus-outline"
               />
-              <h3>Choose your first destination</h3>
-              <p>Start with a local export, connect a Git repository, or send content to an object store. Targets stay disabled until you configure and
-                apply them.</p><v-btn
+              <h3>{{ $t('admin:storage.chooseFirstDestination') }}</h3>
+              <p>{{ $t('admin:storage.startLocalExportConnect') }}</p><v-btn
                 variant="outlined"
                 @click="selectSection('targets')"
-              >Browse targets</v-btn>
+              >{{ $t('admin:storage.browseTargets') }}</v-btn>
             </div>
             <button
               v-for="target in enabledTargets"
@@ -153,75 +152,73 @@
               /></button>
           </section>
           <aside class="storage-aside">
-            <span class="storage-kicker">Configuration → runtime</span>
-            <h3>Saved is one step.<br />Running is the next.</h3>
-            <p>Review changes and choose Save and apply to queue activation. Save only lets you stage settings for later.</p>
-            <p>Initialization can connect to services, create destination resources and synchronize Git content.</p><v-btn
+            <span class="storage-kicker">{{ $t('admin:storage.configurationRuntime') }}</span>
+            <h3>{{ $t('admin:storage.savedOneStep') }}<br />{{ $t('admin:storage.runningNext') }}</h3>
+            <p>{{ $t('admin:storage.reviewChangesChooseSave') }}</p>
+            <p>{{ $t('admin:storage.initializationCanConnectServices') }}</p><v-btn
               block
               variant="outlined"
               :disabled="actionLocked || (!enabledTargets.length && !pendingTargets.length)"
               @click="reviewActivation"
-            >Apply saved settings</v-btn>
-            <div class="storage-aside-rule" /><span class="storage-kicker">Recovery coverage</span>
-            <h3>A content copy has boundaries</h3>
-            <p>Storage exports are useful for portability. Whole-workspace recovery also needs the database, files and configuration secrets.</p><v-btn
+            >{{ $t('admin:storage.applySavedSettings') }}</v-btn>
+            <div class="storage-aside-rule" /><span class="storage-kicker">{{ $t('admin:storage.recoveryCoverage') }}</span>
+            <h3>{{ $t('admin:storage.contentCopyHasBoundaries') }}</h3>
+            <p>{{ $t('admin:storage.storageExportsUsefulPortability') }}</p><v-btn
               variant="text"
               append-icon="mdi-arrow-right"
               @click="selectSection('recovery')"
-            >Build a recovery plan</v-btn>
+            >{{ $t('admin:storage.buildRecoveryPlan') }}</v-btn>
             <div class="storage-aside-rule" />
-            <p class="storage-note">Observations refresh every 10 seconds while this page is open. An initialized target is not proof that its remote
-              copy is complete.</p>
+            <p class="storage-note">{{ $t('admin:storage.observationsRefreshEvery10') }}</p>
           </aside>
         </div>
       </template>
       <template v-else-if="section === 'targets'">
-        <div class="storage-heading"><span class="storage-kicker">02 / Destination catalog</span>
-          <h2>A home for each copy</h2>
-          <p>Configure the destination, its access and the direction of content flow. Review all changed targets together.</p>
+        <div class="storage-heading"><span class="storage-kicker">{{ $t('admin:storage.n02DestinationCatalog') }}</span>
+          <h2>{{ $t('admin:storage.homeEachCopy') }}</h2>
+          <p>{{ $t('admin:storage.configureDestinationAccessDirection') }}</p>
         </div>
         <div class="storage-target-layout">
           <aside class="storage-catalog">
             <v-select
               class="storage-mobile-target"
               :model-value="selectedTarget?.key"
-              :items="saved.targets.map(target => ({value:target.key,title:target.title + (target.isAvailable ? '' : ' · Unavailable')}))"
-              label="Storage target"
+              :items="saved.targets.map(target => ({value:target.key,title:target.title + (target.isAvailable ? '' : ` ${$t('admin:storage.unavailable')}`)}))"
+              :label="$t('admin:storage.storageTarget')"
               variant="outlined"
               hide-details
               @update:model-value="selectTarget"
             />
             <v-text-field
               v-model="targetSearch"
-              label="Find a target"
+              :label="$t('admin:storage.findTarget')"
               prepend-inner-icon="mdi-magnify"
               variant="outlined"
               density="compact"
               clearable
               hide-details
             />
-            <nav aria-label="Storage targets"><button
+            <nav :aria-label="$t('admin:storage.storageTargets')"><button
                 v-for="target in filteredTargets"
                 :key="target.key"
                 type="button"
                 :aria-current="selectedTarget?.key === target.key ? 'page' : undefined"
                 @click="selectTarget(target.key)"
               ><v-icon
-                  :icon="targetIcon(target.key)" /><span><strong>{{ target.title }}</strong><small>{{ target.isAvailable ? draftFor(target.key)?.isEnabled ? 'Enabled in draft' : 'Disabled in draft' : 'Unavailable in this build' }}</small></span><i
+                  :icon="targetIcon(target.key)" /><span><strong>{{ target.title }}</strong><small>{{ target.isAvailable ? draftFor(target.key)?.isEnabled ? $t('admin:storage.enabledDraft') : $t('admin:storage.disabledDraft') : $t('admin:storage.unavailableBuild') }}</small></span><i
                   v-if="targetChanged(target.key)"
-                  aria-label="Unsaved changes"
+                  :aria-label="$t('admin:storage.unsavedChanges')"
                 /></button></nav>
             <p
               v-if="!filteredTargets.length"
               class="storage-note"
-            >No targets match this search.</p>
-            <p class="storage-note">All {{ saved.targets.length }} installed targets are shown. Credentials are kept unless you explicitly replace or
-              clear them.</p>
+            >{{ $t('admin:storage.noTargetsMatchSearch') }}</p>
+            <p class="storage-note">{{ $t('admin:storage.allInstalledTargetsShown', { targetsCount: saved.targets.length, interpolation: { escapeValue: false } }) }}</p>
           </aside>
           <section
             v-if="selectedTarget && selectedDraft"
             class="storage-target-detail"
-            :aria-label="selectedTarget.title + ' configuration'"
+            :aria-label="$t('admin:storage.configuration', { title: selectedTarget.title, interpolation: { escapeValue: false } })"
           >
             <div class="storage-target-head">
               <div><span class="storage-kicker">{{ targetKind(selectedTarget.key) }}</span>
@@ -234,12 +231,12 @@
             </div>
             <div class="storage-enable">
               <div>
-                <h4>Include this target</h4>
-                <p>The draft becomes active after you save and apply it.</p>
+                <h4>{{ $t('admin:storage.includeTarget') }}</h4>
+                <p>{{ $t('admin:storage.draftBecomesActiveAfter') }}</p>
               </div><v-switch
                 :model-value="selectedDraft.isEnabled"
-                :label="selectedDraft.isEnabled ? 'Enabled' : 'Disabled'"
-                :aria-label="'Enable ' + selectedTarget.title"
+                :label="selectedDraft.isEnabled ? $t('admin:storage.enabled') : $t('admin:storage.disabled')"
+                :aria-label="$t('admin:storage.enable', { title: selectedTarget.title, interpolation: { escapeValue: false } })"
                 color="primary"
                 hide-details
                 :disabled="locked || (!selectedTarget.isAvailable && !selectedDraft.isEnabled)"
@@ -250,43 +247,41 @@
               class="storage-runtime-evidence"
               :open="['error','warning'].includes(observation(selectedTarget.key)?.lastOutcome || '')"
             >
-              <summary>Runtime evidence</summary>
+              <summary>{{ $t('admin:storage.runtimeEvidence') }}</summary>
               <dl class="storage-facts">
-                <dt>Using saved configuration</dt>
-                <dd>{{ observation(selectedTarget.key)?.matchesSaved ? 'Yes' : 'Apply required' }}</dd>
-                <dt>Last recorded attempt</dt>
+                <dt>{{ $t('admin:storage.usingSavedConfiguration') }}</dt>
+                <dd>{{ observation(selectedTarget.key)?.matchesSaved ? $t('admin:storage.yes') : $t('admin:storage.applyRequired') }}</dd>
+                <dt>{{ $t('admin:storage.lastRecordedAttempt') }}</dt>
                 <dd>{{ dateTime(observation(selectedTarget.key)?.lastAttempt) }}</dd>
-                <dt>Last recorded result</dt>
+                <dt>{{ $t('admin:storage.lastRecordedResult') }}</dt>
                 <dd>{{ lastOutcomeLabel(observation(selectedTarget.key)?.lastOutcome) }}</dd>
               </dl>
-              <p class="storage-note">An attempt can be initialization, a content event, synchronization or an explicit action. It does not verify the
-                completeness of a destination copy.</p>
+              <p class="storage-note">{{ $t('admin:storage.attemptCanInitializationContent') }}</p>
               <p
                 v-if="['error','warning'].includes(observation(selectedTarget.key)?.lastOutcome || '')"
                 class="storage-note"
-              >The target reported an issue. Review its destination and access settings and inspect application logs before deciding whether to repeat
-                an operation.</p>
+              >{{ $t('admin:storage.targetReportedIssueReview') }}</p>
             </details>
             <v-alert
               v-if="!selectedTarget.isAvailable"
               variant="tonal"
               type="warning"
               class="mb-5"
-            >This module cannot run in the current build. Saved values are retained. You can disable an enabled target.</v-alert>
+            >{{ $t('admin:storage.moduleCannotRunCurrent') }}</v-alert>
             <div class="storage-fields storage-direction">
               <v-select
                 v-model="selectedDraft.mode"
                 :items="selectedTarget.modes.map(value => ({value,title:modeLabel(value)}))"
-                label="Content direction"
+                :label="$t('admin:storage.contentDirection')"
                 variant="outlined"
                 :disabled="locked || !selectedTarget.isAvailable"
                 persistent-hint
-                hint="Explicit actions describe their own effects below."
+                :hint="$t('admin:storage.explicitActionsDescribeTheir')"
               />
               <div v-if="selectedTarget.schedule"><v-select
                   :model-value="scheduleMode"
                   :items="intervals"
-                  label="Scheduled synchronization"
+                  :label="$t('admin:storage.scheduledSynchronization')"
                   variant="outlined"
                   :disabled="locked"
                   @update:model-value="setSchedule"
@@ -294,19 +289,19 @@
                   v-credential-autofill
                   v-if="scheduleMode === 'custom'"
                   v-model="selectedDraft.syncInterval"
-                  label="Custom interval (ISO 8601)"
+                  :label="$t('admin:storage.customIntervalIso8601')"
                   autocomplete="off"
                   variant="outlined"
-                  hint="Examples: PT30M or PT2H. From 10 seconds to 24 days."
+                  :hint="$t('admin:storage.examplesPt30mPt2h10')"
                   persistent-hint
                   :disabled="locked"
                 /></div>
               <div
                 v-else
                 class="storage-field-note"
-              ><strong>{{ selectedTarget.key === 'disk' ? 'Archives follow their own schedule' : 'Updates follow content events' }}</strong>
+              ><strong>{{ selectedTarget.key === 'disk' ? $t('admin:storage.archivesFollowTheirOwn') : $t('admin:storage.updatesFollowContentEvents') }}</strong>
                 <p>
-                  {{ selectedTarget.key === 'disk' ? 'Daily folder archives can be enabled in Target behavior. They do not refresh the folder from the database first.' : 'This target has no configurable synchronization interval. Use an export to catch up content created while it was disabled.' }}
+                  {{ selectedTarget.key === 'disk' ? $t('admin:storage.dailyFolderArchivesCan') : $t('admin:storage.targetHasNoConfigurable') }}
                 </p>
               </div>
             </div>
@@ -328,11 +323,11 @@
                     class="storage-secret"
                     :class="{'storage-full':field.multiline}"
                   ><label>{{ field.title }}</label>
-                    <p>{{ selectedTarget.secrets[field.key] ? 'A value is saved. It is never returned to this page.' : 'No value is currently saved.' }}
+                    <p>{{ selectedTarget.secrets[field.key] ? $t('admin:storage.valueSavedNeverReturned') : $t('admin:storage.noValueCurrentlySaved') }}
                     </p><v-select
                       :model-value="selectedDraft.secrets[field.key]?.action"
                       :items="secretActions"
-                      :label="field.title + ' action'"
+                      :label="$t('admin:storage.action', { title: field.title, interpolation: { escapeValue: false } })"
                       variant="outlined"
                       density="compact"
                       hide-details
@@ -342,7 +337,7 @@
                       v-credential-autofill
                       v-if="field.multiline && selectedDraft.secrets[field.key]?.action === 'replace'"
                       :model-value="secretValue(field.key)"
-                      :label="'New ' + field.title"
+                      :label="$t('admin:storage.new', { title: field.title, interpolation: { escapeValue: false } })"
                       variant="outlined"
                       rows="4"
                       class="mt-4"
@@ -353,7 +348,7 @@
                       v-credential-autofill
                       v-else-if="selectedDraft.secrets[field.key]?.action === 'replace'"
                       :model-value="secretValue(field.key)"
-                      :label="'New ' + field.title"
+                      :label="$t('admin:storage.new', { title: field.title, interpolation: { escapeValue: false } })"
                       type="password"
                       autocomplete="new-password"
                       variant="outlined"
@@ -422,7 +417,7 @@
               :type="selectedDraft.isEnabled ? 'warning' : 'info'"
               variant="tonal"
               class="mb-6"
-            ><strong>{{ selectedDraft.isEnabled ? 'Before this target can run' : 'Before enabling this target' }}</strong>
+            ><strong>{{ selectedDraft.isEnabled ? $t('admin:storage.beforeTargetCanRun') : $t('admin:storage.beforeEnablingTarget') }}</strong>
               <ul>
                 <li
                   v-for="issue in selectedIssues"
@@ -432,12 +427,12 @@
             </v-alert>
             <section class="storage-field-section">
               <div class="storage-section-head">
-                <h4>Target operations</h4><span>Use the saved, active configuration</span>
+                <h4>{{ $t('admin:storage.targetOperations') }}</h4><span>{{ $t('admin:storage.useSavedActiveConfiguration') }}</span>
               </div>
               <p
                 v-if="dirty || !observation(selectedTarget.key)?.matchesSaved || !observation(selectedTarget.key)?.active"
                 class="storage-note"
-              >Save and apply this target successfully before running an action. Each operation has a separate review and receipt.</p>
+              >{{ $t('admin:storage.saveApplyTargetSuccessfully') }}</p>
               <div class="storage-action-list">
                 <article
                   v-for="action in selectedTarget.actions"
@@ -450,7 +445,7 @@
                     variant="outlined"
                     :disabled="!canRun(selectedTarget.key)"
                     @click="reviewAction(selectedTarget,action)"
-                  >Review action</v-btn>
+                  >{{ $t('admin:storage.reviewAction') }}</v-btn>
                 </article>
               </div>
             </section>
@@ -459,19 +454,19 @@
             v-else
             class="storage-empty"
           >
-            <h3>No storage modules are installed</h3>
-            <p>Check the application build and refresh the workspace.</p>
+            <h3>{{ $t('admin:storage.noStorageModulesInstalled') }}</h3>
+            <p>{{ $t('admin:storage.checkApplicationBuildRefresh') }}</p>
           </div>
         </div>
       </template>
       <template v-else-if="section === 'operations'">
-        <div class="storage-heading"><span class="storage-kicker">03 / A record of the work</span>
-          <h2>Every operation leaves a receipt</h2>
-          <p>Follow queued work, inspect completed imports and exports, and resolve uncertainty before repeating external effects.</p>
+        <div class="storage-heading"><span class="storage-kicker">{{ $t('admin:storage.n03RecordWork') }}</span>
+          <h2>{{ $t('admin:storage.everyOperationLeavesReceipt') }}</h2>
+          <p>{{ $t('admin:storage.followQueuedWorkInspect') }}</p>
         </div>
         <div class="storage-section-head"><v-text-field
             v-model="operationSearch"
-            label="Find an operation"
+            :label="$t('admin:storage.findOperation')"
             prepend-inner-icon="mdi-magnify"
             variant="outlined"
             density="compact"
@@ -480,7 +475,7 @@
           /><v-select
             v-model="operationFilter"
             :items="operationFilters"
-            label="Outcome"
+            :label="$t('admin:storage.outcome')"
             variant="outlined"
             density="compact"
             hide-details
@@ -492,15 +487,15 @@
             size="36"
             icon="mdi-clipboard-text-clock-outline"
           />
-          <h3>{{ saved.operations.length ? 'No matching operations' : 'No reviewed operations yet' }}</h3>
-          <p>Applying settings and running target actions creates records here. Older runtime observations remain in the target summary.</p>
+          <h3>{{ saved.operations.length ? $t('admin:storage.noMatchingOperations') : $t('admin:storage.noReviewedOperationsYet') }}</h3>
+          <p>{{ $t('admin:storage.applyingSettingsRunningTarget') }}</p>
         </div>
         <div
           v-else
           class="storage-operation-layout"
         >
           <nav
-            aria-label="Storage operation history"
+            :aria-label="$t('admin:storage.storageOperationHistory')"
             class="storage-operation-list"
           ><button
               v-for="operation in filteredOperations"
@@ -511,7 +506,7 @@
             ><span
                 class="storage-badge"
                 :data-state="operation.state"
-              >{{ operationLabel(operation.state) }}</span><strong>{{ operation.title }}</strong><small>{{ operation.targetKey ? targetTitle(operation.targetKey) : 'All configured targets' }}
+              >{{ operationLabel(operation.state) }}</span><strong>{{ operation.title }}</strong><small>{{ operation.targetKey ? targetTitle(operation.targetKey) : $t('admin:storage.allConfiguredTargets') }}
                 · {{ dateTime(operation.createdAt) }}</small></button></nav>
           <storage-operation-receipt
             v-if="selectedOperation"
@@ -522,10 +517,9 @@
             @decision="reviewDecision($event.operation,$event.kind)"
           />
         </div>
-        <p class="storage-note mt-5">Showing up to 50 recent records, plus any older unresolved operation. Uncertain jobs are never replayed
-          automatically.</p>
+        <p class="storage-note mt-5">{{ $t('admin:storage.showingUp50Recent') }}</p>
         <details class="storage-configuration-history">
-          <summary>Configuration publication history · {{ saved.history.length }} recent changes</summary>
+          <summary>{{ $t('admin:storage.configurationPublicationHistoryRecent', { historyCount: saved.history.length, interpolation: { escapeValue: false } }) }}</summary>
           <article
             v-for="event in saved.history"
             :key="event.id"
@@ -538,71 +532,66 @@
               >{{ targetTitle(target.key) }}: {{ target.fields.map(changedFieldLabel).join(', ') }}</li>
             </ul>
           </article>
-          <p v-if="!saved.history.length">No reviewed configuration publications have been recorded.</p>
+          <p v-if="!saved.history.length">{{ $t('admin:storage.noReviewedConfigurationPublications') }}</p>
         </details>
       </template>
       <template v-else>
         <div class="storage-overview">
           <section>
-            <div class="storage-heading"><span class="storage-kicker">04 / Recovery, considered</span>
-              <h2>Know what your copy can bring back</h2>
-              <p>Start with the failure you need to recover from. Keep content portability and whole-workspace restoration in the same plan.</p>
+            <div class="storage-heading"><span class="storage-kicker">{{ $t('admin:storage.n04RecoveryConsidered') }}</span>
+              <h2>{{ $t('admin:storage.knowWhatCopyCan') }}</h2>
+              <p>{{ $t('admin:storage.startFailureYouNeed') }}</p>
             </div>
             <div class="storage-coverage">
               <article><span>01</span>
                 <div>
-                  <h3>Shared-content export</h3>
-                  <p>Copies shared pages and assets into a target. Private pages, users, permissions, settings and database history are outside this
-                    export.</p><v-btn
+                  <h3>{{ $t('admin:storage.sharedContentExport') }}</h3>
+                  <p>{{ $t('admin:storage.copiesSharedPagesAssets') }}</p><v-btn
                     variant="text"
                     append-icon="mdi-arrow-right"
                     @click="selectSection('targets')"
-                  >Configure an export target</v-btn>
+                  >{{ $t('admin:storage.configureExportTarget') }}</v-btn>
                 </div>
               </article>
               <article><span>02</span>
                 <div>
-                  <h3>Storage-folder archive</h3>
-                  <p>Local disk archives package the files already in that folder. They do not refresh the folder first or form a transactional snapshot
-                    of files being edited.</p>
-                  <p>Daily archives rotate by day of the month; manual archives have unique names. Neither includes the workspace database or
-                    application configuration.</p><v-btn
+                  <h3>{{ $t('admin:storage.storageFolderArchive') }}</h3>
+                  <p>{{ $t('admin:storage.localDiskArchivesPackage') }}</p>
+                  <p>{{ $t('admin:storage.dailyArchivesRotateDay') }}</p><v-btn
                     variant="text"
                     append-icon="mdi-arrow-right"
                     @click="selectTarget('disk')"
-                  >Inspect local disk</v-btn>
+                  >{{ $t('admin:storage.inspectLocalDisk') }}</v-btn>
                 </div>
               </article>
               <article><span>03</span>
                 <div>
-                  <h3>Whole-workspace recovery</h3>
-                  <p>Keep a database backup, required persistent files, application configuration and the secrets needed to decrypt stored credentials.
-                    Store these independently of the application host.</p>
-                  <p>Restore into an isolated environment and verify the result before reconnecting storage targets. The application cannot verify an
-                    external backup from this page.</p><v-btn
+                  <h3>{{ $t('admin:storage.wholeWorkspaceRecovery') }}</h3>
+                  <p>{{ $t('admin:storage.keepDatabaseBackupRequired') }}</p>
+                  <p>{{ $t('admin:storage.restoreIntoIsolatedEnvironment') }}</p><v-btn
                     to="/a/system"
                     variant="text"
                     append-icon="mdi-arrow-right"
-                  >Inspect deployment information</v-btn>
+                  >{{ $t('admin:storage.inspectDeploymentInformation') }}</v-btn>
                 </div>
               </article>
             </div>
           </section>
-          <aside class="storage-aside"><span class="storage-kicker">Recovery rehearsal</span>
-            <h3>A copy becomes useful<br />when a restore works</h3>
+          <aside class="storage-aside"><span class="storage-kicker">{{ $t('admin:storage.recoveryRehearsal') }}</span>
+            <h3>{{ $t('admin:storage.copyBecomesUseful') }}<br />{{ $t('admin:storage.whenRestoreWorks') }}</h3>
             <ol class="storage-checklist">
-              <li>Record the deployment version and configuration requirements.</li>
-              <li>Back up the database and required persistent files with a consistent capture procedure.</li>
-              <li>Restore to an isolated instance with remote storage disabled.</li>
-              <li>Verify accounts, permissions, private and shared pages, assets and agent memory.</li>
-              <li>Rebuild derived indexes as needed, then deliberately reconnect storage destinations.</li>
+              <li>{{ $t('admin:storage.recordDeploymentVersionConfiguration') }}</li>
+              <li>{{ $t('admin:storage.backUpDatabaseRequired') }}</li>
+              <li>{{ $t('admin:storage.restoreIsolatedInstanceRemote') }}</li>
+              <li>{{ $t('admin:storage.verifyAccountsPermissionsPrivate') }}</li>
+              <li>{{ $t('admin:storage.rebuildDerivedIndexesNeeded') }}</li>
             </ol><v-btn
               block
               variant="outlined"
               prepend-icon="mdi-download"
               @click="downloadRecoveryPlan"
-            >Download recovery checklist</v-btn>
-            <p class="storage-note">This downloads a plan and current target observations. It does not create or validate a backup.</p>
+            >{{ $t('admin:storage.downloadRecoveryChecklist') }}</v-btn>
+            <p class="storage-note">{{ $t('admin:storage.downloadsPlanCurrentTarget') }}</p>
           </aside>
         </div>
       </template>
@@ -610,16 +599,15 @@
         v-if="dirty"
         class="storage-draft-bar"
       >
-        <div><strong>{{ changedTargets.length }} changed {{ changedTargets.length === 1 ? 'target' : 'targets' }}</strong><span>Review the complete
-            draft before saving.</span></div><v-btn
+        <div><strong>{{ $t('admin:storage.changedTargetsCount', { count: changedTargets.length }) }}</strong><span>{{ $t('admin:storage.reviewCompleteDraftBefore') }}</span></div><v-btn
           variant="text"
           :disabled="locked"
           @click="reset"
-        >Reset draft</v-btn><v-btn
+        >{{ $t('admin:storage.resetDraft') }}</v-btn><v-btn
           color="primary"
           :disabled="locked"
           @click="reviewSave"
-        >Review changes</v-btn>
+        >{{ $t('admin:storage.reviewChanges') }}</v-btn>
       </div>
     </template>
     <v-dialog
@@ -628,7 +616,7 @@
       :persistent="busy"
       aria-labelledby="storage-review-title"
     ><v-card class="storage-dialog"><v-card-title
-          id="storage-review-title">{{ reviewState?.title || 'Review storage changes' }}</v-card-title><v-card-text v-if="reviewState">
+          id="storage-review-title">{{ reviewState?.title || $t('admin:storage.reviewStorageChanges') }}</v-card-title><v-card-text v-if="reviewState">
           <p>{{ reviewState.effect }}</p>
           <template v-if="reviewState.kind === 'save'">
             <article
@@ -651,31 +639,29 @@
               type="info"
               variant="tonal"
               class="my-5"
-            >Save and apply queues initialization as part of the same publication. It can connect to services, create destination resources and
-              synchronize Git content. Save only keeps the current runtimes until a later application.</v-alert>
+            >{{ $t('admin:storage.saveApplyQueuesInitialization') }}</v-alert>
           </template>
           <v-alert
             v-if="reviewState.kind === 'resolve'"
             type="warning"
             variant="tonal"
             class="my-5"
-          >Resolving this record does not undo prior effects or stop a worker. Verify its destination and stop the prior worker before proceeding. This
-            unlocks configuration and new operations.</v-alert>
+          >{{ $t('admin:storage.resolvingRecordDoesNot') }}</v-alert>
           <v-textarea
             v-model="reason"
-            label="Administrative reason"
+            :label="$t('admin:storage.administrativeReason')"
             variant="outlined"
             rows="2"
             maxlength="1000"
             counter
             :disabled="busy"
-            hint="Record the intent so another administrator can understand this decision."
+            :hint="$t('admin:storage.recordIntentSoAnother')"
             persistent-hint
           />
           <v-text-field
             v-if="reviewState.confirmation"
             v-model="confirmation"
-            :label="'Type ' + reviewState.confirmation"
+            :label="$t('admin:storage.type', { confirmation: reviewState.confirmation, interpolation: { escapeValue: false } })"
             variant="outlined"
             autocomplete="off"
             :disabled="busy"
@@ -689,18 +675,18 @@
         </v-card-text><v-card-actions class="storage-dialog-actions"><v-btn
             :disabled="busy"
             @click="reviewOpen = false"
-          >Back</v-btn><v-spacer /><v-btn
+          >{{ $t('admin:storage.back') }}</v-btn><v-spacer /><v-btn
             v-if="reviewState?.kind === 'save'"
             variant="outlined"
             :disabled="!canConfirm"
             @click="submit(false)"
-          >Save only</v-btn><v-btn
+          >{{ $t('admin:storage.saveOnly') }}</v-btn><v-btn
             color="primary"
             variant="flat"
             :disabled="!canConfirm"
             :aria-busy="busy"
             @click="submit(true)"
-          >{{ busy ? 'Recording…' : reviewState?.kind === 'save' ? 'Save and apply' : reviewState?.kind === 'cancel' ? 'Cancel operation' : reviewState?.kind === 'resolve' ? 'Resolve operation' : 'Queue operation' }}</v-btn></v-card-actions></v-card></v-dialog>
+          >{{ busy ? $t('admin:storage.recording') : reviewState?.kind === 'save' ? $t('admin:storage.saveApply') : reviewState?.kind === 'cancel' ? $t('admin:storage.cancelOperation2') : reviewState?.kind === 'resolve' ? $t('admin:storage.resolveOperation') : $t('admin:storage.queueOperation') }}</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
 </template>
 
@@ -725,14 +711,17 @@ import { fetchStorageWorkspace, saveStorageConfiguration, submitStorageOperation
 import StorageOperationReceipt from './storage-operation-receipt.vue'
 import { dateTime, actor, operationLabel } from '../../helpers/storage-presentation.ts'
 import './storage-workspace.scss'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const targetTitles = computed(() => Object.fromEntries(saved.value?.targets.map(target => [target.key, target.title]) || []))
 const route = useRoute(),
   router = useRouter(),
   sections = [
-    { key: 'overview', title: 'Overview' },
-    { key: 'targets', title: 'Targets' },
-    { key: 'operations', title: 'Operations' },
-    { key: 'recovery', title: 'Recovery' }
+    { key: 'overview', title: t('admin:storage.overview') },
+    { key: 'targets', title: t('admin:storage.targets') },
+    { key: 'operations', title: t('admin:storage.operations') },
+    { key: 'recovery', title: t('admin:storage.recovery') }
   ]
 const saved = shallowRef<StorageWorkspace | null>(null),
   drafts = ref<StorageTargetDraft[]>([]),
@@ -796,7 +785,7 @@ const filteredTargets = computed(
     ) || []
 )
 const operationFilters = [
-  { value: 'all', title: 'All outcomes' },
+  { value: 'all', title: t('admin:storage.allOutcomes') },
   ...['queued', 'running', 'succeeded', 'partial', 'failed', 'interrupted', 'cancelled', 'resolved'].map(value => ({ value, title: operationLabel(value) }))
 ]
 const filteredOperations = computed(
@@ -809,17 +798,17 @@ const filteredOperations = computed(
 )
 const selectedOperation = computed(() => filteredOperations.value.find(operation => operation.id === route.query.operation) || filteredOperations.value[0])
 const secretActions = [
-  { value: 'keep', title: 'Keep saved value' },
-  { value: 'replace', title: 'Replace value' },
-  { value: 'clear', title: 'Clear saved value' }
+  { value: 'keep', title: t('admin:storage.keepSavedValue') },
+  { value: 'replace', title: t('admin:storage.replaceValue') },
+  { value: 'clear', title: t('admin:storage.clearSavedValue') }
 ]
 const intervals = [
-  { value: 'P0D', title: 'No scheduled sync' },
-  { value: 'PT1M', title: 'Every minute' },
-  { value: 'PT5M', title: 'Every 5 minutes' },
-  { value: 'PT15M', title: 'Every 15 minutes' },
-  { value: 'PT1H', title: 'Every hour' },
-  { value: 'custom', title: 'Custom interval' }
+  { value: 'P0D', title: t('admin:storage.noScheduledSync') },
+  { value: 'PT1M', title: t('admin:storage.everyMinute') },
+  { value: 'PT5M', title: t('admin:storage.every5Minutes') },
+  { value: 'PT15M', title: t('admin:storage.every15Minutes') },
+  { value: 'PT1H', title: t('admin:storage.everyHour') },
+  { value: 'custom', title: t('admin:storage.customInterval') }
 ]
 const scheduleMode = computed(() =>
   selectedDraft.value
@@ -863,11 +852,11 @@ function visibleField(field: StorageField) {
 const fieldGroups = computed(() => {
   const fields = selectedTarget.value?.fields.filter(visibleField) || []
   return [
-    { title: 'Destination', hint: 'Where content is stored', fields: fields.filter(field => destinationKeys.includes(field.key)) },
-    { title: 'Access', hint: 'Hidden credentials are retained', fields: fields.filter(field => field.sensitive || accessKeys.includes(field.key)) },
+    { title: t('admin:storage.destination'), hint: t('admin:storage.whereContentStored'), fields: fields.filter(field => destinationKeys.includes(field.key)) },
+    { title: t('admin:storage.access'), hint: t('admin:storage.hiddenCredentialsRetained'), fields: fields.filter(field => field.sensitive || accessKeys.includes(field.key)) },
     {
-      title: 'Target behavior',
-      hint: 'Provider-specific options',
+      title: t('admin:storage.targetBehavior'),
+      hint: t('admin:storage.providerSpecificOptions'),
       fields: fields.filter(field => !field.sensitive && !accessKeys.includes(field.key) && !destinationKeys.includes(field.key))
     }
   ].filter(group => group.fields.length)
@@ -911,7 +900,7 @@ const reviewChanges = computed(
           if (before[key] !== draft[key])
             fields.push({
               key,
-              label: key === 'isEnabled' ? 'Target state' : key === 'mode' ? 'Direction' : 'Schedule',
+              label: key === 'isEnabled' ? t('admin:storage.targetState2') : key === 'mode' ? t('admin:storage.direction') : t('admin:storage.schedule'),
               before: display(before[key]),
               after: display(draft[key])
             })
@@ -922,8 +911,8 @@ const reviewChanges = computed(
               fields.push({
                 key: field.key,
                 label: field.title,
-                before: target.secrets[field.key] ? 'Value saved' : 'Not configured',
-                after: change.action === 'replace' ? 'Replace credential' : 'Clear credential'
+                before: target.secrets[field.key] ? t('admin:storage.valueSaved') : t('admin:storage.notConfigured'),
+                after: change.action === 'replace' ? t('admin:storage.replaceCredential') : t('admin:storage.clearCredential')
               })
           } else if (before.config[field.key] !== draft.config[field.key])
             fields.push({ key: field.key, label: field.title, before: display(before.config[field.key]), after: display(draft.config[field.key]) })
@@ -932,35 +921,35 @@ const reviewChanges = computed(
       }) || []
 )
 function display(value: unknown) {
-  return typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled') : value === undefined || value === '' ? 'Empty' : String(value)
+  return typeof value === 'boolean' ? (value ? t('admin:storage.enabled') : t('admin:storage.disabled')) : value === undefined || value === '' ? t('admin:storage.empty') : String(value)
 }
 
 function modeLabel(value: string) {
-  return ({ push: 'Export to target', pull: 'Import from target', sync: 'Two-way synchronization' } as Record<string, string>)[value] || value
+  return ({ push: t('admin:storage.exportTarget'), pull: t('admin:storage.importTarget'), sync: t('admin:storage.twoWaySynchronization') } as Record<string, string>)[value] || value
 }
 
 function lastOutcomeLabel(value: string | null | undefined) {
   return (
     (
-      { operational: 'Completed attempt', pending: 'Pending', warning: 'Issue recorded', error: 'Failed attempt', paused: 'Paused offline' } as Record<
+      { operational: t('admin:storage.completedAttempt'), pending: t('admin:storage.pending'), warning: t('admin:storage.issueRecorded'), error: t('admin:storage.failedAttempt'), paused: t('admin:storage.pausedOffline') } as Record<
         string,
         string
       >
-    )[value || ''] || 'Not recorded'
+    )[value || ''] || t('admin:storage.notRecorded')
   )
 }
 function runtimeLabel(key: string) {
   return (
     (
       {
-        disabled: 'Disabled',
-        pending: 'Apply required',
-        active: 'Using saved settings',
-        paused: 'Paused offline',
-        failed: 'Initialization failed',
-        outdated: 'Apply required'
+        disabled: t('admin:storage.disabled'),
+        pending: t('admin:storage.applyRequired'),
+        active: t('admin:storage.usingSavedSettings'),
+        paused: t('admin:storage.pausedOffline'),
+        failed: t('admin:storage.initializationFailed'),
+        outdated: t('admin:storage.applyRequired')
       } as Record<string, string>
-    )[observation(key)?.state || 'pending'] || 'Not observed'
+    )[observation(key)?.state || 'pending'] || t('admin:storage.notObserved')
   )
 }
 function targetIcon(key: string) {
@@ -979,7 +968,7 @@ function targetIcon(key: string) {
   )
 }
 function targetKind(key: string) {
-  return key === 'disk' ? 'Local filesystem' : key === 'git' ? 'Versioned repository' : key === 'sftp' ? 'Remote filesystem' : 'Object storage'
+  return key === 'disk' ? t('admin:storage.localFilesystem') : key === 'git' ? t('admin:storage.versionedRepository') : key === 'sftp' ? t('admin:storage.remoteFilesystem') : t('admin:storage.objectStorage')
 }
 function targetTitle(key: string) {
   return saved.value?.targets.find(target => target.key === key)?.title || key
@@ -993,8 +982,8 @@ function intervalLabel(target: StorageTargetView) {
   return target.schedule
     ? intervals.find(interval => interval.value === target.syncInterval)?.title || target.syncInterval
     : target.key === 'disk'
-      ? 'Folder archives available'
-      : 'Content event updates'
+      ? t('admin:storage.folderArchivesAvailable')
+      : t('admin:storage.contentEventUpdates')
 }
 function setField(key: string, value: StorageValue) {
   if (!locked.value && selectedDraft.value) selectedDraft.value.config[key] = value
@@ -1058,7 +1047,7 @@ async function load(replace = true) {
     if (!replace && saved.value && saved.value.fingerprint !== value.fingerprint && (dirty.value || reviewOpen.value || stale.value)) {
       stale.value = true
       saved.value = { ...saved.value, runtime: value.runtime, operations: value.operations, observedAt: value.observedAt }
-      error.value = 'Storage settings or your access changed. Your draft is retained until you reload.'
+      error.value = t('admin:storage.storageSettingsAccessChanged')
     } else {
       const preserve = !replace && dirty.value
       saved.value = value
@@ -1070,7 +1059,7 @@ async function load(replace = true) {
     }
     return true
   } catch (err) {
-    if (!disposed && id === sequence) error.value = err instanceof Error ? err.message : 'Storage could not be loaded.'
+    if (!disposed && id === sequence) error.value = err instanceof Error ? err.message : t('admin:storage.storageCouldNotLoaded')
     return false
   } finally {
     if (!disposed && id === sequence) {
@@ -1081,11 +1070,11 @@ async function load(replace = true) {
 }
 const askDiscard = () =>
   confirmDiscard(
-    'Discard unsaved changes?',
+    t('admin:storage.discardUnsavedChanges'),
     stale.value
-      ? 'The server outcome needs confirmation. Reload discards this local draft and reads saved state; it does not undo server changes.'
-      : 'Your target draft has not been saved. Leaving or reloading will discard it.',
-    'Discard draft'
+      ? t('admin:storage.serverOutcomeNeedsConfirmation')
+      : t('admin:storage.targetDraftHasNot'),
+    t('admin:storage.discardDraft')
   )
 async function guarded(action: () => void) {
   if (!dirty.value || writeConfirmed) return action()
@@ -1110,7 +1099,7 @@ function reviewSave() {
   for (const draft of drafts.value) {
     const validation = StorageTargetDraftSchema.safeParse(draft)
     if (!validation.success) {
-      error.value = `Check the fields and replacement credentials for ${targetTitle(draft.key)}.`
+      error.value = t('admin:storage.checkFieldsReplacementCredentials', { key: targetTitle(draft.key), interpolation: { escapeValue: false } })
       selectTarget(draft.key)
       return
     }
@@ -1123,8 +1112,8 @@ function reviewSave() {
   }
   openReview({
     kind: 'save',
-    title: 'Review storage publication',
-    effect: 'Review every changed target. Credential values are omitted from this summary.',
+    title: t('admin:storage.reviewStoragePublication'),
+    effect: t('admin:storage.reviewEveryChangedTarget'),
     confirmation: '',
     body: { targets: clone(drafts.value), fingerprint: saved.value.fingerprint },
     drafts: clone(drafts.value)
@@ -1134,10 +1123,10 @@ function reviewActivation() {
   if (actionLocked.value || !saved.value) return
   openReview({
     kind: 'enqueue',
-    title: 'Apply saved storage settings',
+    title: t('admin:storage.applySavedStorageSettings'),
     effect:
-      'Stop the previous targets and initialize enabled targets using saved settings. Initialization can connect to remote services, create resources and synchronize Git content.',
-    confirmation: 'APPLY STORAGE SETTINGS',
+      t('admin:storage.stopPreviousTargetsInitialize'),
+    confirmation: t('admin:storage.applyStorageSettings'),
     body: { targetKey: null, handler: 'activate', fingerprint: saved.value.fingerprint }
   })
 }
@@ -1155,9 +1144,9 @@ function reviewDecision(operation: StorageOperationView, kind: 'cancel' | 'resol
   if (baseLocked.value || dirty.value || !saved.value) return
   openReview({
     kind,
-    title: kind === 'cancel' ? 'Cancel before execution' : 'Resolve an uncertain operation',
+    title: kind === 'cancel' ? t('admin:storage.cancelBeforeExecution') : t('admin:storage.resolveUncertainOperation'),
     effect: operation.effect,
-    confirmation: kind === 'cancel' ? 'CANCEL OPERATION' : 'PRIOR WORKER STOPPED',
+    confirmation: kind === 'cancel' ? t('admin:storage.cancelOperation') : t('admin:storage.priorWorkerStopped'),
     body: { fingerprint: saved.value.fingerprint },
     id: operation.id
   })
@@ -1175,23 +1164,23 @@ async function submit(apply: boolean) {
     if (review.kind === 'save') {
       const receipt = await saveStorageConfiguration({ ...review.body, reason: reason.value.trim(), apply })
       operationId = receipt.operation?.id
-      notice.value = apply ? 'Settings saved. Applying them is queued.' : 'Settings saved. Existing runtimes continue until you apply the saved configuration.'
+      notice.value = apply ? t('admin:storage.settingsSavedApplyingThem') : t('admin:storage.settingsSavedExistingRuntimes')
     } else if (review.kind === 'enqueue') {
       operationId = (await submitStorageOperation({ ...review.body, reason: reason.value.trim(), confirmation: confirmation.value })).id
-      notice.value = 'Operation queued. Its receipt will remain available after you leave this page.'
+      notice.value = t('admin:storage.operationQueuedReceiptWill')
     } else {
       await decideStorageOperation(review.id!, review.kind, { ...review.body, reason: reason.value.trim(), confirmation: confirmation.value })
-      notice.value = review.kind === 'cancel' ? 'Operation cancelled before execution.' : 'Recovery decision recorded. Prior effects have not been undone.'
+      notice.value = review.kind === 'cancel' ? t('admin:storage.operationCancelledBeforeExecution') : t('admin:storage.recoveryDecisionRecordedPrior')
     }
     writeConfirmed = true
     reviewOpen.value = false
     if (!(await load(true))) {
       stale.value = true
-      error.value = 'The action was recorded, but the refreshed workspace could not be loaded. Reload to confirm its current state.'
+      error.value = t('admin:storage.actionWasRecordedBut')
     }
     if (operationId) selectOperation(operationId)
   } catch (err) {
-    reviewError.value = err instanceof Error ? err.message : 'The outcome is unconfirmed.'
+    reviewError.value = err instanceof Error ? err.message : t('admin:storage.outcomeUnconfirmed')
     const status = err && typeof err === 'object' ? Reflect.get(err, 'status') : undefined
     if (status !== 400) {
       stale.value = true

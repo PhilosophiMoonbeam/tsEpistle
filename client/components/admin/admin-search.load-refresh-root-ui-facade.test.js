@@ -7,6 +7,7 @@ import { browserWindow, document } from '../../test/browser-dom.mts'
 import { afterEach } from '../../../server/test/bun-test.mts'
 import { compileTemplate } from '@vue/compiler-sfc'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 const Vue = await import('vue')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
@@ -93,7 +94,7 @@ function createHarness(fetchImpl) {
     pushGraphError,
     { fetch: fetchImpl, location: browserWindow.location, history: browserWindow.history, addEventListener() {}, removeEventListener() {} }
   )
-  instance = { ...component.data(), $t: key => key }
+  instance = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish }
   for (const [key, method] of Object.entries(component.methods)) {
     if (typeof method === 'function') instance[key] = method.bind(instance)
   }
@@ -113,7 +114,7 @@ if (template.errors.length) throw template.errors[0]
 const render = new Function('Vue', template.code)(Vue)
 const mountSearch = harness => {
   const { component, instance } = harness
-  const data = Object.fromEntries(Object.keys(component.data()).map(key => [key, instance[key]]))
+  const data = Object.fromEntries(Object.keys(component.data.call({ $t: translateEnglish })).map(key => [key, instance[key]]))
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({
@@ -123,7 +124,7 @@ const mountSearch = harness => {
   })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives, defaults: { VDialog: { transition: false }, VWindow: { transition: false } } }))
   app.component('AdminHero', { render: () => null })
-  app.config.globalProperties.$t = key => key
+  app.config.globalProperties.$t = translateEnglish
   const vm = app.mount(host)
   mounted.push({ app, host })
   return { vm, host }
@@ -212,7 +213,7 @@ describe('admin-search REST and root UI facade contracts', () => {
     expect(instance.engines[0].config[0].value.value).toBe('reloaded')
     expect(harness.notifications).toEqual([
       {
-        message: 'admin:search.listRefreshSuccess',
+        message: 'List of search engines has been refreshed.',
         style: 'success',
         icon: 'cached'
       }
@@ -457,7 +458,7 @@ describe('admin-search REST and root UI facade contracts', () => {
     expect(instance.saving).toBe(false)
     expect(harness.notifications).toEqual([
       {
-        message: 'admin:search.configSaveSuccess',
+        message: 'Search engine configuration saved successfully.',
         style: 'success',
         icon: 'check'
       }
@@ -521,7 +522,7 @@ describe('admin-search REST and root UI facade contracts', () => {
     expect(vm.rebuilding).toBe(false)
     expect(harness.notifications).toEqual([
       {
-        message: 'admin:search.indexRebuildSuccess',
+        message: 'Index rebuilt successfully.',
         style: 'success',
         icon: 'check'
       }
