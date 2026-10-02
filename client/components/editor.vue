@@ -312,6 +312,7 @@ import _ from 'lodash'
 import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage, type PageDetails, type PageWriteInput } from '../helpers/pages-api'
 import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import { wikiStore } from '@/store/index.ts'
+import { translate } from '../modules/localization.ts'
 import { notifyReloadSafetyChanged, pwaState, setReloadSafetyProvider } from '../helpers/pwa.ts'
 import { Base64 } from 'js-base64'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -531,7 +532,7 @@ export default defineComponent({
     },
     title: {
       type: String,
-      default: translate('editor:editor.untitledPage')
+      default: () => translate('editor:editor.untitledPage')
     },
     description: {
       type: String,
