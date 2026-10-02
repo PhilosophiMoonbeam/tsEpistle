@@ -162,13 +162,37 @@ const createPurposeColorMap = (colors: ThemeModeColors, raisedSurface: string): 
   return purposeColors
 }
 
+export const WIKI_INK_KEYS = ['primary', 'secondary', 'accent', 'info', 'success', 'warning', 'error'] as const
+const INK_STEPS = Array.from({ length: 21 }, (_, index) => index / 20)
+
+// Palette colors used as text or icons (`text-<color>` utilities and the
+// `--wiki-<color>-ink` tokens). Each ink keeps the palette color when it already
+// reads at 4.5:1 on every page surface and on its own 12% tint; otherwise it
+// moves toward the surface text color in 5% steps until it does. A light
+// primary such as the default amber therefore keeps its hue as a deeper bronze
+// in light mode and stays unchanged in dark mode.
+const createInkColorMap = (colors: ThemeModeColors, surfaces: readonly string[]): Record<string, string> => {
+  const onSurface = contrastForeground(colors.surface)
+  // Tonal buttons and chips lay their own ink at Vuetify's 12% activated opacity under the label.
+  const score = (ink: string): number =>
+    Math.min(...[...surfaces, mixHex(colors.surface, ink, 0.12)].map(surface => contrastRatio(ink, surface)))
+  const inks: Record<string, string> = {}
+  for (const key of WIKI_INK_KEYS) {
+    const candidates = INK_STEPS.map(step => mixHex(colors[key], onSurface, step))
+    inks[`${key}-ink`] = candidates.find(candidate => score(candidate) >= 4.5)
+      ?? candidates.reduce((best, candidate) => (score(candidate) > score(best) ? candidate : best))
+  }
+  return inks
+}
+
 const createThemeColorMap = (colors: ThemeModeColors, dark: boolean): Record<string, string> => {
   const surfaceBright = mixHex(colors.surface, '#FFFFFF', dark ? 0.12 : 0.04)
   const surfaceLight = mixHex(colors.surface, dark ? '#FFFFFF' : '#000000', dark ? 0.06 : 0.03)
   const surfaceVariant = mixHex(colors.background, colors.surface, 0.5)
   const surfaceRaised = mixHex(colors.surface, surfaceBright, 0.06)
+  const surfaceSunken = mixHex(colors.background, colors.surface, 0.28)
   const disabledPrimaryRaised = mixHex(surfaceRaised, colors.primary, 0.8)
-  const disabledPrimarySunken = mixHex(mixHex(colors.background, colors.surface, 0.28), colors.primary, 0.8)
+  const disabledPrimarySunken = mixHex(surfaceSunken, colors.primary, 0.8)
   const colorMap: Record<string, string> = {
     ...colors,
     'surface-bright': surfaceBright,
@@ -179,7 +203,8 @@ const createThemeColorMap = (colors: ThemeModeColors, dark: boolean): Record<str
     'on-primary-disabled-sunken': contrastForeground(disabledPrimarySunken),
     // A neutral focus role is selected against both root surfaces, not the site accent.
     focus: contrastForegroundForSurfaces(colors.background, colors.surface),
-    ...createPurposeColorMap(colors, surfaceRaised)
+    ...createPurposeColorMap(colors, surfaceRaised),
+    ...createInkColorMap(colors, [colors.background, colors.surface, surfaceRaised, surfaceSunken])
   }
   for (const key of THEME_COLOR_KEYS) colorMap[`on-${key}`] = contrastForeground(colors[key])
   return colorMap
