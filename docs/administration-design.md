@@ -16,6 +16,12 @@ The dashboard presents workspace inventory, search and agent/integration entry p
 
 General settings includes section anchors and a sticky save bar using the existing form validation and dirty state. Search index maintenance is separate from the Apply action. API keys can be filtered by name and revocation status, with a record layout on smaller screens; integration reference includes the MCP endpoint and its resource-bound authentication requirement.
 
+Canceling a shared confirmation with either its safe action or Escape returns focus to the invoking control after the dialog leaves. A canceled General settings Reload retains the unsaved draft; queued confirmations do not steal focus from the next dialog.
+
+Storage confirmation phrases are protocol values, not translated copy: `APPLY STORAGE SETTINGS`, `CANCEL OPERATION`, and `PRIOR WORKER STOPPED` remain exact across locales. The instructions and surrounding labels may be translated.
+
+Password visibility controls retain field-specific Show/Hide accessible names when localization is unavailable, including the administrator-password and password-confirmation fields in first-install setup.
+
 ## Unified tag library
 
 Tags are one editorial vocabulary across public browsing at `/t`, Page Properties, and the system-administrator taxonomy workspace. The canonical `tag` is the lower-case identity used by URLs, assignments, and rules; an optional title is a display label, with the canonical name retained as secondary text when the label differs. The public library groups and searches that vocabulary locally, uses AND semantics for multi-selection, preserves locale/sort query parameters and encoded bookmarks, and keeps an unknown or historical alias token removable. It deliberately shows no usage counts and does not treat directory absence as proof that a name is invalid or globally unused.

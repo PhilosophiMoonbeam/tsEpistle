@@ -131,7 +131,7 @@
             template(v-slot:activator='{ props }')
               v-btn.nav-header-agent(
                 v-bind='props'
-                v-if='canEnterAgent && $vuetify.display.smAndDown'
+                v-if='canEnterAgent && $vuetify.display.smAndDown && !$vuetify.display.xs'
                 icon
                 rounded='lg'
                 :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
@@ -156,7 +156,7 @@
             :aria-label='searchIsShown ? $t(`common:header.searchCloseLabel`, { defaultValue: `Close search` }) : $t(`common:header.searchOpen`, { defaultValue: `Open search` })'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
-          v-tooltip.nav-header-mobile-browse(v-if='!hideSearch && $vuetify.display.smAndDown', location='bottom')
+          v-tooltip.nav-header-mobile-browse(v-if='!hideSearch && $vuetify.display.smAndDown && !$vuetify.display.xs', location='bottom')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-browse(
                 v-bind='props'
@@ -325,16 +325,39 @@
               v-icon(start) mdi-exit-to-app
           v-menu(v-if='hasMobilePageActions && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
-              v-btn(
+              v-btn.nav-header-mobile-actions(
+                ref='mobileActions'
                 icon
                 v-bind='props'
                 :size='dense ? `small` : `default`'
                 :aria-label='$t(`common:header.pageActions`)'
+                :data-search-modal-action='$vuetify.display.xs ? `` : undefined'
               )
                 v-icon mdi-dots-vertical
             v-list.nav-header-menu(nav)
               v-list-subheader {{ $t('common:header.pageActions') }}
               p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
+              v-list-item(
+                v-if='$vuetify.display.xs && canEnterAgent'
+                role='button'
+                link
+                prepend-icon='mdi-creation-outline'
+                :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
+                data-search-modal-action
+                @click='openAgent'
+              )
+                v-list-item-title {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
+              v-list-item(
+                v-if='$vuetify.display.xs && !hideSearch'
+                href='/t'
+                prepend-icon='mdi-tag-outline'
+                :aria-label='$t(`common:header.browseTags`)'
+                :aria-disabled='!transportVerified ? `true` : undefined'
+                :aria-current='mode === `tags` ? `page` : undefined'
+                data-search-modal-action
+                @click='guardHeaderNavigation'
+              )
+                v-list-item-title {{ $t('common:header.browseTags') }}
               v-list-item(
                 role='button'
                 link
@@ -913,6 +936,7 @@ export default defineComponent({
     },
     hasMobilePageActions (): boolean {
       return Boolean(
+        (this.$vuetify.display.xs && !this.hideSearch) ||
         (this.path && (
           this.mode !== 'view' ||
           this.hasAnyPagePermissions ||
@@ -1253,12 +1277,12 @@ export default defineComponent({
       await this.$nextTick()
       const desktop = this.$vuetify.display.mdAndUp
       const previousTarget = document.querySelector<HTMLElement>(
-        desktop ? '.nav-header-browse' : '.nav-header-agent'
+        desktop ? '.nav-header-browse' : this.$vuetify.display.xs ? '.nav-header-logo' : '.nav-header-agent'
       ) ?? document.querySelector<HTMLElement>('.nav-header-logo')
       const forwardTarget = document.querySelector<HTMLElement>(
         desktop
           ? '.nav-header-actions button:not(:disabled), .nav-header-actions a[href]'
-          : '.nav-header-browse'
+          : this.$vuetify.display.xs ? '.nav-header-mobile-actions' : '.nav-header-browse'
       ) ?? document.querySelector<HTMLElement>('.nav-header-actions button:not(:disabled), .nav-header-actions a[href]')
       const target = event.shiftKey ? previousTarget : forwardTarget
       target?.focus({ preventScroll: true })
@@ -1314,6 +1338,13 @@ export default defineComponent({
     },
     openAgent(): void {
       if (!this.canEnterAgent || !this.onlineActionReady) return
+      if (this.$vuetify.display.xs) {
+        const activator = this.$refs.mobileActions
+        const element = activator instanceof HTMLElement
+          ? activator
+          : (activator as { $el?: unknown } | undefined)?.$el
+        if (element instanceof HTMLElement) element.focus({ preventScroll: true })
+      }
       this.searchMode = 'ask'
       void this.focusSearchField()
     },
