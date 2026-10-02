@@ -1,64 +1,64 @@
 <template>
   <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading || Boolean(actionBusy)">
-    <AgentPanelHeader ref="memoryHeading" title="Agent memory" icon="mdi-brain" close-label="Close agent memory" :heading-id="headingId" :description-id="descriptionId" :busy="Boolean(actionBusy)" :busy-reason="$t('common:agentWorkspace.waitForMemory')" @close="requestClose">
-      <p class="agent-memory__intro">Preferences and facts carried into your conversations.</p>
+    <AgentPanelHeader ref="memoryHeading" :title="$t('common:agentMemoryManager.agentMemory')" icon="mdi-brain" :close-label="$t('common:agentMemoryManager.closeAgentMemory')" :heading-id="headingId" :description-id="descriptionId" :busy="Boolean(actionBusy)" :busy-reason="$t('common:agentWorkspace.waitForMemory')" @close="requestClose">
+      <p class="agent-memory__intro">{{ $t('common:agentMemoryManager.preferencesFactsCarriedInto') }}</p>
       <span v-if="loaded" class="agent-memory__count" role="status" aria-live="polite" aria-atomic="true">{{ memoryCountLabel }}</span>
     </AgentPanelHeader>
     <div v-if="loaded && memoryCount > 0" class="agent-memory__search">
-      <v-text-field v-model="searchQuery" label="Find a memory" aria-label="Search agent memory" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" clearable hide-details />
+      <v-text-field v-model="searchQuery" :label="$t('common:agentMemoryManager.findMemory')" :aria-label="$t('common:agentMemoryManager.searchAgentMemory')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" clearable hide-details />
       <span class="sr-only" role="status" aria-live="polite">{{ memorySearchStatus }}</span>
     </div>
 
-    <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Loading agent memory" />
+    <v-progress-linear v-if="loading" indeterminate color="primary" :aria-label="$t('common:agentMemoryManager.loadingAgentMemory2')" />
     <v-alert v-if="networkBlocked" class="agent-memory__connection-warning" density="compact" type="warning" variant="tonal" role="status">
-      Connection required to change Agent memory. Retry connection in the Agent workspace before saving.
+      {{ $t('common:agentMemoryManager.connectionRequiredChangeAgent') }}
     </v-alert>
 
     <v-card-text class="agent-memory__body">
       <v-alert v-if="error" class="agent-memory__error" type="error" variant="tonal" :closable="!stale" role="alert" @click:close="error = ''">
         <div class="agent-memory__error-content">
           <span>{{ error }}</span>
-          <v-btn v-if="!loading" variant="text" size="small" :disabled="networkBlocked" @click="load()">Refresh memory</v-btn>
+          <v-btn v-if="!loading" variant="text" size="small" :disabled="networkBlocked" @click="load()">{{ $t('common:agentMemoryManager.refreshMemory') }}</v-btn>
         </div>
       </v-alert>
 
       <div v-if="loading && !loaded" class="agent-memory__state" role="status" aria-live="polite">
         <v-progress-circular color="primary" indeterminate :size="24" :width="2" aria-hidden="true" />
-        <span>Loading memory…</span>
+        <span>{{ $t('common:agentMemoryManager.loadingMemory') }}</span>
       </div>
 
       <template v-else-if="loaded">
         <p v-if="loading" class="agent-memory__refresh" role="status" aria-live="polite">
           <v-icon icon="mdi-sync" size="16" aria-hidden="true" />
-          Refreshing memory…
+          {{ $t('common:agentMemoryManager.refreshingMemory') }}
         </p>
 
         <v-expand-transition>
           <section v-if="editing" class="agent-memory__editor" aria-labelledby="agent-memory-editor-title" :aria-busy="saving" @keydown.esc.stop="saving ? undefined : cancelEdit()">
             <header class="agent-memory__editor-header">
               <div>
-                <p class="agent-memory__eyebrow">{{ editing.id ? 'Revise record' : 'New record' }}</p>
-                <h3 id="agent-memory-editor-title" class="text-title-medium">{{ editing.id ? 'Edit memory' : 'Add to memory' }}</h3>
+                <p class="agent-memory__eyebrow">{{ editing.id ? $t('common:agentMemoryManager.reviseRecord') : $t('common:agentMemoryManager.newRecord') }}</p>
+                <h3 id="agent-memory-editor-title" class="text-title-medium">{{ editing.id ? $t('common:agentMemoryManager.editMemory2') : $t('common:agentMemoryManager.addMemory') }}</h3>
               </div>
-              <v-btn class="wiki-close-control" icon="mdi-close" size="small" variant="text" aria-label="Cancel memory edit" :disabled="saving" @click="cancelEdit" />
+              <v-btn class="wiki-close-control" icon="mdi-close" size="small" variant="text" :aria-label="$t('common:agentMemoryManager.cancelMemoryEdit')" :disabled="saving" @click="cancelEdit" />
             </header>
             <v-alert v-if="draftConflictMessage" class="agent-memory__editor-warning" type="warning" variant="tonal" density="compact" role="alert">
               <span>{{ draftConflictMessage }}</span>
               <div class="agent-memory__editor-warning-actions">
-                <v-btn v-if="draftConflict?.latest" size="small" variant="text" @click="keepDraftAfterRefresh">Keep my text</v-btn>
-                <v-btn v-if="draftConflict?.latest" size="small" variant="text" @click="useRefreshedMemory">Use refreshed record</v-btn>
-                <v-btn v-else size="small" variant="text" @click="cancelEdit">Discard draft</v-btn>
+                <v-btn v-if="draftConflict?.latest" size="small" variant="text" @click="keepDraftAfterRefresh">{{ $t('common:agentMemoryManager.keepMyText') }}</v-btn>
+                <v-btn v-if="draftConflict?.latest" size="small" variant="text" @click="useRefreshedMemory">{{ $t('common:agentMemoryManager.useRefreshedRecord') }}</v-btn>
+                <v-btn v-else size="small" variant="text" @click="cancelEdit">{{ $t('common:agentMemoryManager.discardDraft') }}</v-btn>
               </div>
             </v-alert>
             <p v-if="refreshNotice" class="agent-memory__refresh-notice" role="status" aria-live="polite">{{ refreshNotice }}</p>
             <fieldset class="agent-memory__target" :disabled="saving">
-              <legend>Save under</legend>
+              <legend>{{ $t('common:agentMemoryManager.saveUnder') }}</legend>
               <v-btn-toggle v-model="draftTarget" class="agent-memory__target-toggle" mandatory variant="outlined">
                 <div class="agent-memory__target-hit-area">
-                  <v-btn value="user" prepend-icon="mdi-account-outline">You</v-btn>
+                  <v-btn value="user" prepend-icon="mdi-account-outline">{{ $t('common:agentMemoryManager.you') }}</v-btn>
                 </div>
                 <div class="agent-memory__target-hit-area">
-                  <v-btn value="agent" prepend-icon="mdi-notebook-outline">Agent</v-btn>
+                  <v-btn value="agent" prepend-icon="mdi-notebook-outline">{{ $t('common:agentMemoryManager.agent') }}</v-btn>
                 </div>
               </v-btn-toggle>
             </fieldset>
@@ -69,7 +69,7 @@
               class="wiki-notched-field"
               :counter="targetLimit"
               :maxlength="targetLimit"
-              :label="draftTarget === 'user' ? 'Personal detail' : 'Project or workflow fact'"
+              :label="draftTarget === 'user' ? $t('common:agentMemoryManager.personalDetail') : $t('common:agentMemoryManager.projectWorkflowFact')"
               :hint="draftCapacityLabel"
               persistent-hint
               rows="3"
@@ -80,10 +80,10 @@
             />
             <p v-if="draftOverLimit" class="agent-memory__draft-limit" role="alert">{{ draftCapacityLabel }}</p>
             <div class="agent-memory__editor-actions">
-              <span class="agent-memory__shortcut">Esc to cancel · <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to save</span>
-              <v-btn variant="text" :disabled="saving" @click="cancelEdit">Cancel</v-btn>
+              <span class="agent-memory__shortcut">{{ $t('common:agentMemoryManager.escCancel') }} <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> {{ $t('common:agentMemoryManager.save') }}</span>
+              <v-btn variant="text" :disabled="saving" @click="cancelEdit">{{ $t('common:actions.cancel') }}</v-btn>
               <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving || stale || loading || networkBlocked || !memoryRefreshResult.accepted || !memoryRefreshResult.current || Boolean(draftConflict)" :loading="saving" @click="save">
-                {{ editing.id ? 'Save revision' : 'Save memory' }}
+                {{ editing.id ? $t('common:agentMemoryManager.saveRevision') : $t('common:agentMemoryManager.saveMemory') }}
               </v-btn>
             </div>
           </section>
@@ -91,8 +91,8 @@
 
         <div v-if="searchTerm && visibleSections.length === 0" class="agent-memory__no-results" role="status">
           <v-icon icon="mdi-text-search" size="24" aria-hidden="true" />
-          <strong>No matching memories</strong><p>Try a different word or return to all your notes.</p>
-          <v-btn size="small" variant="text" @click="searchQuery = ''">Clear search</v-btn>
+          <strong>{{ $t('common:agentMemoryManager.noMatchingMemories') }}</strong><p>{{ $t('common:agentMemoryManager.tryDifferentWordReturn') }}</p>
+          <v-btn size="small" variant="text" @click="searchQuery = ''">{{ $t('common:agentMemoryManager.clearSearch') }}</v-btn>
         </div>
         <section
           v-for="section in visibleSections"
@@ -114,27 +114,27 @@
                 <div class="agent-memory__entry-meta">{{ memoryDateLabel(entry) }}</div>
                 <p>{{ entry.content }}</p>
               </div>
-              <div class="agent-memory__entry-actions" role="group" :aria-label="`Actions for memory ${index + 1}`">
-                <v-btn prepend-icon="mdi-pencil-outline" size="small" variant="text" :aria-label="`Edit memory: ${entry.content}`" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading" @click="beginEdit(entry)">Edit</v-btn>
-                <v-btn prepend-icon="mdi-delete-outline" size="small" variant="text" color="error" :aria-label="`Remove memory: ${entry.content}`" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading" @click="beginRemove(entry, $event)">Remove</v-btn>
+              <div class="agent-memory__entry-actions" role="group" :aria-label="$t('common:agentMemoryManager.actionsMemory', { value: index + 1, interpolation: { escapeValue: false } })">
+                <v-btn prepend-icon="mdi-pencil-outline" size="small" variant="text" :aria-label="$t('common:agentMemoryManager.editMemory', { content: entry.content, interpolation: { escapeValue: false } })" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading" @click="beginEdit(entry)">{{ $t('common:actions.edit') }}</v-btn>
+                <v-btn prepend-icon="mdi-delete-outline" size="small" variant="text" color="error" :aria-label="$t('common:agentMemoryManager.removeMemory', { content: entry.content, interpolation: { escapeValue: false } })" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading" @click="beginRemove(entry, $event)">{{ $t('common:agentMemoryManager.remove') }}</v-btn>
               </div>
             </article>
           </div>
           <div v-else class="agent-memory__empty">
             <v-icon :icon="section.icon" size="20" aria-hidden="true" />
             <p>{{ section.empty }}</p>
-            <v-btn class="agent-memory__accent-action" variant="tonal" prepend-icon="mdi-plus" :aria-label="`Add ${section.target === 'user' ? 'personal detail' : 'Agent note'} to ${section.title}`" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading || !canAddTo(section.target)" @click="beginAdd(section.target)">
-              {{ section.target === 'user' ? 'Add detail' : 'Add note' }}
+            <v-btn class="agent-memory__accent-action" variant="tonal" prepend-icon="mdi-plus" :aria-label="$t('common:agentMemoryManager.add', { target: section.target === 'user' ? 'personal detail' : 'Agent note', title: section.title, interpolation: { escapeValue: false } })" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading || !canAddTo(section.target)" @click="beginAdd(section.target)">
+              {{ section.target === 'user' ? $t('common:agentMemoryManager.addDetail') : $t('common:agentMemoryManager.addNote') }}
             </v-btn>
           </div>
           <v-alert v-if="!canAddTo(section.target)" class="agent-memory__limit-alert" color="warning" icon="mdi-archive-lock-outline" variant="tonal" density="compact">
-            Full. Edit or remove a record to add another.
+            {{ $t('common:agentMemoryManager.fullEditRemoveRecord') }}
           </v-alert>
         </section>
 
-        <aside class="agent-memory__safety" aria-label="Memory safety">
+        <aside class="agent-memory__safety" :aria-label="$t('common:agentMemoryManager.memorySafety')">
           <v-icon icon="mdi-shield-lock-outline" size="18" aria-hidden="true" />
-          <p><strong>Private to your account.</strong> Changes apply to future conversations only. Never save passwords, keys, or tokens.</p>
+          <p><strong>{{ $t('common:agentMemoryManager.privateAccount') }}</strong> {{ $t('common:agentMemoryManager.changesApplyFutureConversations') }}</p>
         </aside>
         <!-- Destructive Clear sits at the end of the panel body, away from the header's Close. -->
         <div v-if="memoryCount > 0" class="agent-memory__footer">
@@ -160,17 +160,17 @@
     <v-card ref="removeDialogCard" class="agent-memory__dialog" rounded="xl">
       <v-card-title :id="removeDialogTitleId" class="agent-memory__dialog-title">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-archive-remove-outline" aria-hidden="true" /></v-avatar>
-        <span>Remove this memory?</span>
+        <span>{{ $t('common:agentMemoryManager.removeMemory2') }}</span>
       </v-card-title>
       <v-card-text :id="removeDialogDescriptionId">
         <v-alert v-if="dialogError" class="agent-memory__dialog-error" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
-        <p>This record will be omitted from conversations started after removal. Existing conversation snapshots are unchanged.</p>
+        <p>{{ $t('common:agentMemoryManager.recordWillOmittedConversations') }}</p>
         <blockquote v-if="removing" class="agent-memory__dialog-record">{{ removing.content }}</blockquote>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelRemove">Keep record</v-btn>
-        <v-btn color="error" variant="tonal" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy) || networkBlocked" @click="remove">Remove memory</v-btn>
+        <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelRemove">{{ $t('common:agentMemoryManager.keepRecord') }}</v-btn>
+        <v-btn color="error" variant="tonal" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy) || networkBlocked" @click="remove">{{ $t('common:agentMemoryManager.removeMemory3') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -179,16 +179,16 @@
     <v-card ref="clearDialogCard" class="agent-memory__dialog" rounded="xl">
       <v-card-title :id="clearDialogTitleId" class="agent-memory__dialog-title">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
-        <span>Clear all memory?</span>
+        <span>{{ $t('common:agentMemoryManager.clearAllMemory') }}</span>
       </v-card-title>
       <v-card-text :id="clearDialogDescriptionId">
         <v-alert v-if="clearError" class="agent-memory__dialog-error" type="error" variant="tonal" density="compact">{{ clearError }}</v-alert>
-        Every saved preference and Agent note will be removed from future conversations. Conversation history and existing memory snapshots are not affected.
+        {{ $t('common:agentMemoryManager.everySavedPreferenceAgent') }}
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelClear">Keep memories</v-btn>
-        <v-btn color="error" variant="flat" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy) || networkBlocked" @click="clear">Clear memory</v-btn>
+        <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelClear">{{ $t('common:agentMemoryManager.keepMemories') }}</v-btn>
+        <v-btn color="error" variant="flat" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy) || networkBlocked" @click="clear">{{ $t('common:agentMemoryManager.clearMemory') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -200,12 +200,15 @@ import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef,
 import { clearAgentMemories, createAgentMemory, getAgentMemories, removeAgentMemory, updateAgentMemory, type AgentMemoryEntry, type AgentMemoryTarget, type AgentMemoryView } from '../../helpers/agents-api.ts'
 import type { AgentRefreshResult } from '../../store/agents.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const props = defineProps<{ csrfToken: string; headingId: string; descriptionId: string; networkBlocked?: boolean }>()
 const { csrfToken, headingId, descriptionId } = props
 const open = defineModel<boolean>({ required: true })
 const networkBlocked = computed(() => props.networkBlocked === true)
-const networkRequiredMessage = 'Connection required to change Agent memory. Retry connection in the Agent workspace before saving.'
+const networkRequiredMessage = t('common:agentMemoryManager.connectionRequiredChangeAgent')
 const instanceId = useId()
 const removeDialogTitleId = `${instanceId}-remove-title`
 const removeDialogDescriptionId = `${instanceId}-remove-description`
@@ -248,7 +251,7 @@ let disposed = false
 
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)
-const memoryCountLabel = computed(() => `${memoryCount.value} saved ${memoryCount.value === 1 ? 'record' : 'records'}`)
+const memoryCountLabel = computed(() => t('common:agentMemoryManager.saved', { value: memoryCount.value, memoryCount: memoryCount.value === 1 ? 'record' : 'records', interpolation: { escapeValue: false } }))
 const memoryEntrySeparatorLength = '\n§\n'.length
 const projectedStoreCharacters = computed(() => {
   const currentId = editing.value?.id
@@ -267,8 +270,8 @@ const projectedStoreCharacters = computed(() => {
 const draftOverLimit = computed(() => projectedStoreCharacters.value > targetLimit.value)
 const draftCapacityLabel = computed(() => {
   const difference = targetLimit.value - projectedStoreCharacters.value
-  if (difference < 0) return `This section would exceed its limit by ${Math.abs(difference).toLocaleString()} characters.`
-  return `${difference.toLocaleString()} characters will remain in this section after saving.`
+  if (difference < 0) return t('common:agentMemoryManager.sectionWouldExceedLimit', { abs: Math.abs(difference).toLocaleString(), interpolation: { escapeValue: false } })
+  return t('common:agentMemoryManager.charactersWillRemainSection', { difference: difference.toLocaleString(), interpolation: { escapeValue: false } })
 })
 
 const remainingCharacters = (store: MemoryStore): number => Math.max(0, store.limit - store.characters)
@@ -278,16 +281,16 @@ const canAddTo = (target: AgentMemoryTarget): boolean => {
   return remainingCharacters(store) >= requiredCharacters
 }
 const addMemoryDisabledReason = computed<string | undefined>(() => {
-  if (editing.value) return 'Finish the current memory edit first'
-  if (loading.value || !loaded.value) return 'Loading Agent memory'
-  if (stale.value) return 'Refresh Agent memory before adding'
-  if (!canAddTo('user') && !canAddTo('agent')) return 'Memory is at capacity'
+  if (editing.value) return t('common:agentMemoryManager.finishCurrentMemoryEdit')
+  if (loading.value || !loaded.value) return t('common:agentMemoryManager.loadingAgentMemory')
+  if (stale.value) return t('common:agentMemoryManager.refreshAgentMemoryBefore')
+  if (!canAddTo('user') && !canAddTo('agent')) return t('common:agentMemoryManager.memoryCapacity')
   return undefined
 })
 const clearMemoryDisabledReason = computed<string | undefined>(() => {
-  if (loading.value || !loaded.value) return 'Loading Agent memory'
-  if (stale.value) return 'Refresh Agent memory before clearing'
-  if (memoryCount.value === 0) return 'No saved memory to clear'
+  if (loading.value || !loaded.value) return t('common:agentMemoryManager.loadingAgentMemory')
+  if (stale.value) return t('common:agentMemoryManager.refreshAgentMemoryBefore2')
+  if (memoryCount.value === 0) return t('common:agentMemoryManager.noSavedMemoryClear')
   return undefined
 })
 const canAddMemory = computed(() => addMemoryDisabledReason.value === undefined)
@@ -299,27 +302,27 @@ const draftConflictMessage = computed(() => {
   const conflict = draftConflict.value
   if (!conflict) return ''
   return conflict.kind === 'removed'
-    ? 'This memory was removed while you were editing it. Review the current memory list before saving.'
-    : 'This memory changed while you were editing it. Review the refreshed record before saving.'
+    ? t('common:agentMemoryManager.memoryWasRemovedWhile')
+    : t('common:agentMemoryManager.memoryChangedWhileYou')
 })
 const memoryDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 const memoryDateLabel = (entry: AgentMemoryEntry): string => {
   const revised = entry.updatedAt !== entry.createdAt
-  return `${revised ? 'Revised' : 'Added'} ${memoryDateFormatter.format(new Date(revised ? entry.updatedAt : entry.createdAt))}`
+  return `${revised ? t('common:agentMemoryManager.revised') : t('common:agentMemoryManager.added')} ${memoryDateFormatter.format(new Date(revised ? entry.updatedAt : entry.createdAt))}`
 }
 
 const sections = computed(() => [
   {
     target: 'user' as const,
-    title: 'You',
-    empty: 'Save a lasting preference or personal detail.',
+    title: t('common:agentMemoryManager.you'),
+    empty: t('common:agentMemoryManager.saveLastingPreferencePersonal'),
     icon: 'mdi-account-outline',
     store: memories.value.user
   },
   {
     target: 'agent' as const,
-    title: 'Agent',
-    empty: 'Save durable project or workflow context.',
+    title: t('common:agentMemoryManager.agent'),
+    empty: t('common:agentMemoryManager.saveDurableProjectWorkflow'),
     icon: 'mdi-notebook-outline',
     store: memories.value.agent
   }
@@ -327,7 +330,7 @@ const sections = computed(() => [
 const visibleSections = computed(() => sections.value.map(section => ({
   ...section, entries: section.store.entries.filter(entry => !searchTerm.value || entry.content.toLocaleLowerCase().includes(searchTerm.value))
 })).filter(section => !searchTerm.value || section.entries.length > 0))
-const memorySearchStatus = computed(() => searchTerm.value ? `${visibleSections.value.reduce((sum, section) => sum + section.entries.length, 0)} matching memories` : 'All saved memories')
+const memorySearchStatus = computed(() => searchTerm.value ? t('common:agentMemoryManager.matchingMemories', { value: visibleSections.value.reduce((sum, section) => sum + section.entries.length, 0), interpolation: { escapeValue: false } }) : t('common:agentMemoryManager.allSavedMemories'))
 const focusEditor = async (): Promise<void> => {
   await nextTick()
   // Optional call: test DOM stubs (and some embedding hosts) may not implement scrollIntoView.
@@ -352,14 +355,14 @@ const reconcileSelectedMemory = (nextMemories: AgentMemoryView): void => {
     const latest = findMemoryEntry(nextMemories, pendingRemoval.id)
     if (!latest) {
       removing.value = null
-      dialogError.value = 'This memory is no longer available.'
+      dialogError.value = t('common:agentMemoryManager.memoryNoLongerAvailable')
     } else if (latest.version !== pendingRemoval.version) {
       removing.value = latest
-      dialogError.value = 'This memory changed while you were reviewing it. Review the updated record before removing it.'
+      dialogError.value = t('common:agentMemoryManager.memoryChangedWhileYou2')
     }
   }
   if (clearReviewCount.value !== null && clearReviewCount.value !== nextMemories.agent.entries.length + nextMemories.user.entries.length) {
-    clearError.value = 'Memory changed while you were reviewing the clear action. Review the updated count, then confirm again.'
+    clearError.value = t('common:agentMemoryManager.memoryChangedWhileYou3')
   }
 }
 const rejectedRefresh = (error?: unknown, current = false): AgentRefreshResult => ({
@@ -393,16 +396,16 @@ const load = async (committedMessage?: string): Promise<AgentRefreshResult> => {
     stale.value = false
     loaded.value = true
     reconcileSelectedMemory(nextMemories)
-    if (draftChangedDuringRefresh && editing.value) refreshNotice.value = 'Memory refreshed. Your unsaved text was kept.'
+    if (draftChangedDuringRefresh && editing.value) refreshNotice.value = t('common:agentMemoryManager.memoryRefreshedUnsavedText')
     const result: AgentRefreshResult = { accepted: true, current: true }
     memoryRefreshResult.value = result
     return result
   } catch (value) {
     if (disposed || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
     stale.value = loaded.value
-    const reason = message(value, loaded.value ? 'Agent memory could not be refreshed.' : 'Agent memory could not be loaded.')
+    const reason = message(value, loaded.value ? t('common:agentMemoryManager.agentMemoryCouldNot') : t('common:agentMemoryManager.agentMemoryCouldNot2'))
     error.value = loaded.value
-      ? `${committedMessage ? `${committedMessage}, but memory could not be refreshed. ` : ''}Showing last-loaded memory. ${reason}`
+      ? t('common:agentMemoryManager.showingLastLoadedMemory', { value: committedMessage ? `${committedMessage}, but memory could not be refreshed. ` : '', reason, interpolation: { escapeValue: false } })
       : reason
     const result = rejectedRefresh(value, true)
     memoryRefreshResult.value = result
@@ -449,7 +452,7 @@ const keepDraftAfterRefresh = (): void => {
   if (!conflict?.latest || !editing.value) return
   editing.value = { id: conflict.latest.id, version: conflict.latest.version }
   draftConflict.value = null
-  refreshNotice.value = 'Your text was kept and will be saved over the refreshed version.'
+  refreshNotice.value = t('common:agentMemoryManager.textWasKeptWill')
   draftRevision.value += 1
 }
 const useRefreshedMemory = (): void => {
@@ -463,7 +466,7 @@ const useRefreshedMemory = (): void => {
   draftTarget.value = conflict.latest.target
   draftContent.value = conflict.latest.content
   draftConflict.value = null
-  refreshNotice.value = 'The refreshed record is now the editing base.'
+  refreshNotice.value = t('common:agentMemoryManager.refreshedRecordNowEditing')
   draftRevision.value += 1
 }
 const beginRemove = (entry: AgentMemoryEntry, event: MouseEvent): void => {
@@ -509,14 +512,14 @@ const save = async (): Promise<void> => {
     else await createAgentMemory(window.fetch.bind(window), csrfToken, { target: draftTarget.value, content })
     if (disposed) return
     if (draftRevision.value !== draftRevisionAtStart) {
-      error.value = 'Memory was saved, but newer unsaved text was kept in the editor.'
-      await load('Memory was saved')
+      error.value = t('common:agentMemoryManager.memoryWasSavedBut')
+      await load(t('common:agentMemoryManager.memoryWasSaved'))
       return
     }
     cancelEdit()
-    await load('Memory was saved')
+    await load(t('common:agentMemoryManager.memoryWasSaved'))
   } catch (value) {
-    if (!disposed) error.value = message(value, 'Memory could not be saved.')
+    if (!disposed) error.value = message(value, t('common:agentMemoryManager.memoryCouldNotSaved'))
   } finally {
     if (!disposed) {
       saving.value = false
@@ -549,9 +552,9 @@ const remove = async (): Promise<void> => {
     if (draftRevision.value === draftRevisionAtStart && editing.value?.id === entry.id) cancelEdit()
     destructiveRestoreTarget.value = componentElement(memoryHeading.value)
     removing.value = null
-    await load('Memory was removed')
+    await load(t('common:agentMemoryManager.memoryWasRemoved'))
   } catch (value) {
-    if (!disposed) dialogError.value = message(value, 'Memory could not be removed.')
+    if (!disposed) dialogError.value = message(value, t('common:agentMemoryManager.memoryCouldNotRemoved'))
   } finally {
     if (!disposed) {
       saving.value = false
@@ -578,9 +581,9 @@ const clear = async (): Promise<void> => {
     clearing.value = false
     clearReviewCount.value = null
     if (draftRevision.value === draftRevisionAtStart) cancelEdit()
-    await load('Agent memory was cleared')
+    await load(t('common:agentMemoryManager.agentMemoryWasCleared'))
   } catch (value) {
-    if (!disposed) clearError.value = message(value, 'Agent memory could not be cleared.')
+    if (!disposed) clearError.value = message(value, t('common:agentMemoryManager.agentMemoryCouldNot3'))
   } finally {
     if (!disposed) {
       saving.value = false
