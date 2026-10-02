@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from '../../server/test/bun-test.mts'
 import { protectCredentialControl } from './credential-autofill.ts'
+import { translateEnglish } from '../test/english-translate.mts'
 import '../test/browser-dom.mts'
 import { babelParse, compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import type { BindingMetadata } from '@vue/compiler-sfc'
@@ -91,6 +92,7 @@ const expectProtection = (control: HTMLInputElement | HTMLTextAreaElement, autoc
 const mountFields = (component: Component) => {
   const host = document.body.appendChild(document.createElement('div'))
   const app = Vue.createApp(component)
+  app.config.globalProperties.$t = translateEnglish
   app.use(createVuetify({ components, directives }))
   app.mount(host)
   return { app, host }
