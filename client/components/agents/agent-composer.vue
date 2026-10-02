@@ -889,7 +889,7 @@ const submitIcon = computed(() => {
   if (sendFailed.value) return 'mdi-refresh'
   if (props.statusTone === 'error') return 'mdi-alert-circle-outline'
   if (props.statusTone === 'busy') return 'mdi-progress-clock'
-  return goalMode.value ? 'mdi-target-arrow' : 'mdi-send'
+  return goalMode.value ? 'mdi-bullseye-arrow' : 'mdi-send'
 })
 const isSelected = (versionId: string): boolean => selectedSkillIdSet.value.has(versionId)
 const getTextarea = (): HTMLTextAreaElement | null => {

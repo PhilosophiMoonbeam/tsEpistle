@@ -43,7 +43,7 @@ export function buildAdminNavigation(translate: (key: string) => string, permiss
         {
           key: 'page-integrity',
           label: 'Page integrity',
-          icon: 'mdi-shield-search-outline',
+          icon: 'mdi-shield-search',
           to: '/pages/integrity',
           permission: 'manage:system',
           description: 'Inspect page integrity',
