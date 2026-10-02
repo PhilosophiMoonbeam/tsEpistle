@@ -123,6 +123,9 @@ async function openContinuityAgent(page: Page, path?: string): Promise<Locator> 
   await page.getByRole('dialog', { name: 'Search the Wiki', exact: true }).getByRole('button', { name: 'Ask about this', exact: true }).click()
   const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
   await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
+  // The search hand-off prefills the composer with the search query asynchronously;
+  // wait for that hand-off to settle before the caller types over it.
+  await expect(agent.locator('.agent-composer textarea')).toHaveValue('context')
   return agent
 }
 
@@ -135,7 +138,15 @@ async function sendContinuityPrompt(page: Page, agent: Locator, prompt: string):
   const request = page.waitForRequest(
     request => request.method() === 'POST' && /\/_api\/agents\/sessions\/[^/]+\/messages$/.test(new URL(request.url()).pathname)
   )
-  await agent.locator('.agent-composer textarea').fill(prompt)
+  const composer = agent.locator('.agent-composer textarea')
+  // A conversation restore can land after the caller types and revert the
+  // composer to the saved draft; keep the typed prompt until it sticks.
+  await expect
+    .poll(async () => {
+      if ((await composer.inputValue()) !== prompt) await composer.fill(prompt)
+      return composer.inputValue()
+    }, { timeout: 15_000 })
+    .toBe(prompt)
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
   const body = (await request).postDataJSON() as ContinuitySubmission
   await expect(agent.locator('.agent-message--user').last()).toContainText(prompt)
@@ -1844,7 +1855,7 @@ test.describe('responsive UI quality matrix', () => {
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
     const newChatButton = agent.getByRole('button', { name: 'New chat', exact: true })
     const settingsButton = agent.getByRole('button', { name: 'More chat actions', exact: true })
-    const pinnedIndicator = agent.getByRole('img', { name: 'Pinned conversation', exact: true })
+    const pinnedIndicator = agent.locator('.inline-agent__pin-indicator')
     const settingsMenu = agent.locator('.v-menu.v-overlay--active')
     await expect(newChatButton).toBeVisible()
     await expect(pinnedIndicator).toHaveCount(0)
@@ -1853,13 +1864,14 @@ test.describe('responsive UI quality matrix', () => {
     const pinChatAction = settingsMenu.getByText('Pin chat', { exact: true })
     await expect(temporaryChatAction).toBeVisible()
     await expect(pinChatAction).toBeVisible()
-    await pinChatAction.click()
-    await expect(pinnedIndicator).toBeVisible()
-    await settingsButton.click()
-    const unpinChatAction = settingsMenu.getByText('Unpin chat', { exact: true })
-    await expect(unpinChatAction).toBeVisible()
-    await unpinChatAction.click()
+    // Pin and unpin with a live chat are covered by the enabled fixture continuity
+    // test; this surface keeps its starter state without a conversation to pin.
     await expect(pinnedIndicator).toHaveCount(0)
+    // Dismiss the actions menu with a pointer press on the agent chrome.
+    const dismissBounds = await agent.boundingBox()
+    if (!dismissBounds) throw new Error('Wiki Agent surface has no geometry')
+    await page.mouse.click(dismissBounds.x + 16, dismissBounds.y + 16)
+    await expect(settingsMenu).toBeHidden()
     await expect(agent.locator('.inline-agent__starter').first()).toBeVisible()
 
     await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeVisible()
@@ -2423,11 +2435,17 @@ test.describe('responsive UI quality matrix', () => {
         let agent = await openContinuityAgent(page, '/agent-context-fixture-a')
         const settingsButton = agent.getByRole('button', { name: 'More chat actions', exact: true })
         const settingsMenu = agent.locator('.v-menu.v-overlay--active')
-        const pinnedIndicator = agent.getByRole('img', { name: 'Pinned conversation', exact: true })
+        const pinnedIndicator = agent.locator('.inline-agent__pin-indicator')
         const setPinned = async (pinned: boolean): Promise<void> => {
           await settingsButton.click()
-          const action = settingsMenu.getByText(pinned ? 'Unpin chat' : 'Pin chat', { exact: true })
+          // "Pin chat" appears on an unpinned conversation and vice versa.
+          const action = settingsMenu.getByText(pinned ? 'Pin chat' : 'Unpin chat', { exact: true })
           await expect(action).toBeVisible()
+          // A freshly opened conversation may still be loading; wait until the action is usable.
+          const actionItem = settingsMenu.locator('.v-list-item').filter({ hasText: pinned ? 'Pin chat' : 'Unpin chat' })
+          await expect
+            .poll(() => actionItem.evaluate(element => !element.className.includes('v-list-item--disabled') && element.getAttribute('aria-disabled') !== 'true'))
+            .toBe(true)
           await action.click()
           await expect(pinnedIndicator).toHaveCount(pinned ? 1 : 0)
         }
@@ -2446,7 +2464,10 @@ test.describe('responsive UI quality matrix', () => {
         const third = await sendContinuityPrompt(page, agent, 'Now include page C.')
         expect(third.currentPage?.id).toBe(903)
         expect(third.knowledgeContext.sources.map(source => source.id)).toEqual([901, 902])
-        await agent.getByRole('button', { name: 'Exclude current page', exact: true }).click()
+        // One page chip: its aria-pressed state tells whether the page is included.
+        await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'true')
+        await agent.locator('.agent-context__page-chip').click()
+        await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
         await closeContinuityAgent(page)
         agent = await openContinuityAgent(page, '/agent-context-fixture-a')
         const revisited = await sendContinuityPrompt(page, agent, 'Return to page A without excluded C.')
