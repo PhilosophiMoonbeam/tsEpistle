@@ -9,7 +9,7 @@
           icon="mdi-dots-horizontal"
           size="small"
           variant="text"
-          :aria-label="`Conversation actions for ${session.title || 'New conversation'}`"
+          :aria-label="$t('common:agentHistorySessionActions.conversationActions', { title: session.title || 'New conversation', interpolation: { escapeValue: false } })"
           :disabled="busy || disabled"
           :loading="busy"
         />
@@ -18,11 +18,11 @@
         class="agent-history-session-actions__menu"
         density="compact"
         min-width="12rem"
-        :aria-label="`Actions for ${session.title || 'New conversation'}`"
+        :aria-label="$t('common:agentHistorySessionActions.actions', { title: session.title || 'New conversation', interpolation: { escapeValue: false } })"
       >
         <v-list-item
           prepend-icon="mdi-pencil-outline"
-          title="Rename"
+          :title="$t('common:actions.rename')"
           :disabled="busy || disabled"
           @click="requestRename"
         />
@@ -32,7 +32,7 @@
             <v-list-item
               v-bind="moveMenuProps"
               prepend-icon="mdi-folder-move-outline"
-              title="Move"
+              :title="$t('common:actions.move')"
               :disabled="busy || disabled"
             >
               <template #append>
@@ -44,13 +44,13 @@
             class="agent-history-session-actions__menu"
             density="compact"
             min-width="14.5rem"
-            :aria-label="`Move ${session.title || 'New conversation'}`"
+            :aria-label="$t('common:agentHistorySessionActions.move', { title: session.title || 'New conversation', interpolation: { escapeValue: false } })"
           >
             <v-list-item
               v-if="session.folderId !== null"
               prepend-icon="mdi-history"
-              title="Recent"
-              subtitle="Returns to the 90-day history window"
+              :title="$t('common:agentHistorySessionActions.recent')"
+              :subtitle="$t('common:agentHistorySessionActions.returns90DayHistory')"
               :disabled="busy || disabled"
               @click="emit('move', null)"
             />
@@ -64,8 +64,8 @@
             />
             <v-list-item
               prepend-icon="mdi-folder-plus-outline"
-              title="New folder…"
-              subtitle="Create a folder for this conversation"
+              :title="$t('common:agentHistorySessionActions.newFolder')"
+              :subtitle="$t('common:agentHistorySessionActions.createFolderConversation')"
               :disabled="busy || disabled"
               @click="requestNewFolder"
             />
@@ -75,7 +75,7 @@
         <v-list-item
           class="agent-history-session-actions__delete text-error"
           prepend-icon="mdi-delete-outline"
-          title="Delete"
+          :title="$t('common:actions.delete')"
           :disabled="busy || disabled"
           @click="requestRemove"
         />

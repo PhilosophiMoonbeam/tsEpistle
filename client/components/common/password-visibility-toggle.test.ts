@@ -4,6 +4,8 @@ import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { document, resetBody } from '../../test/browser-dom.mts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 resetBody()
 const Vue = await import('vue')
 const filename = path.join(process.cwd(), 'client/components/common/password-visibility-toggle.vue')
@@ -50,9 +52,9 @@ const mount = async (options: { translate?: boolean; disabled?: boolean } = {}) 
     setup: (props, { attrs, slots }) => () => Vue.h('button', { ...attrs, disabled: props.disabled || undefined }, slots.default?.())
   }))
   app.component('v-icon', Vue.defineComponent({ props: ['icon'], setup: props => () => Vue.h('i', { 'data-icon': props.icon }) }))
-  if (options.translate) {
-    app.config.globalProperties.$t = (key: string, opts: { field: string }) => (key === 'common:password.show' ? `Passwort anzeigen: ${opts.field}` : key)
-  }
+  app.config.globalProperties.$t = options.translate
+    ? (key: string, opts: { field: string }) => (key === 'common:password.show' ? `Passwort anzeigen: ${opts.field}` : key)
+    : translateEnglish
   const host = document.createElement('div')
   document.body.append(host)
   app.mount(host)
@@ -106,7 +108,7 @@ describe('password visibility toggle names', () => {
       const source = fs.readFileSync(path.join(process.cwd(), file), 'utf8')
       for (const usage of source.matchAll(/<password-visibility-toggle\b[^>]*>|(?<![.\w-])password-visibility-toggle\((?:[^()]|\([^()]*\))*\)/g)) {
         const text = usage[0]
-        const bound = text.match(/:field=["']\$t\(`([^`]+)`\)["']/)
+        const bound = text.match(/:field=["']\$t\([`'"]([^`'"]+)[`'"]\)["']/)
         const literal = text.match(/(?<![:\w])field=["']([^"']+)["']/)
         const value = bound ? resolve(bound[1]!) : literal?.[1]
         expect(typeof value).toBe('string')

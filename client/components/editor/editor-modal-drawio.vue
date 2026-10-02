@@ -12,16 +12,16 @@
         ref='closeButton'
         icon='mdi-arrow-left'
         variant='text'
-        aria-label='Back to editor'
+        :aria-label='$t(`editor:editorModalDrawio.backEditor`)'
         @click='close'
       )
-      v-toolbar-title#drawio-editor-title Draw.io
+      v-toolbar-title#drawio-editor-title {{ $t(`editor:editorModalDrawio.drawIo`) }}
     iframe(
       v-if='!loadError'
       ref='drawio'
       :key='frameVersion'
       src='https://embed.diagrams.net/?embed=1&proto=json&spin=1&saveAndExit=1&noSaveBtn=1&noExitBtn=0'
-      title='Diagram editor'
+      :title='$t(`editor:editorModalDrawio.diagramEditor`)'
     )
     div.editor-modal-drawio__focus-boundary(
       v-if='!loadError && focusScope && !disposed'
@@ -32,14 +32,14 @@
     async-state.editor-modal-drawio__state(
       v-if='loading && !loadError'
       state='loading'
-      title='Loading diagram editor'
+      :title='$t(`editor:editorModalDrawio.loadingDiagramEditor`)'
     )
     async-state.editor-modal-drawio__state(
       v-if='loadError'
       state='error'
-      title='Diagram editor unavailable'
+      :title='$t(`editor:editorModalDrawio.diagramEditorUnavailable2`)'
       :message='loadError'
-      retry-label='Retry'
+      :retry-label='$t(`editor:editorModalDrawio.retry`)'
       @retry='retry'
     )
 </template>
@@ -93,7 +93,7 @@ export default defineComponent({
       this.clearLoadTimer()
       this.loadTimer = setTimeout(() => {
         if (this.loading) {
-          this.showError('The diagram editor did not finish loading.')
+          this.showError(this.$t('editor:editorModalDrawio.diagramEditorDidNot'))
         }
       }, 15000)
     },
@@ -128,7 +128,7 @@ export default defineComponent({
     send (msg: DrawioRequest) {
       const drawio = this.$refs.drawio as HTMLIFrameElement | undefined
       if (!drawio?.contentWindow) {
-        this.showError('The diagram editor is unavailable.')
+        this.showError(this.$t('editor:editorModalDrawio.diagramEditorUnavailable'))
         return
       }
       drawio.contentWindow.postMessage(JSON.stringify(msg), DRAWIO_ORIGIN)
@@ -167,12 +167,12 @@ export default defineComponent({
           }
           case 'export': {
             if (typeof msg.data !== 'string') {
-              this.showError('The diagram could not be exported.')
+              this.showError(this.$t('editor:editorModalDrawio.diagramCouldNotExported'))
               break
             }
             const svgDataStart = msg.data.indexOf('base64,')
             if (svgDataStart < 0) {
-              this.showError('The diagram export was invalid.')
+              this.showError(this.$t('editor:editorModalDrawio.diagramExportWasInvalid'))
               break
             }
             emitEditorInsert({
@@ -183,14 +183,14 @@ export default defineComponent({
             break
           }
           case 'error':
-            this.showError(typeof msg.message === 'string' ? msg.message : 'The diagram editor reported an error.')
+            this.showError(typeof msg.message === 'string' ? msg.message : this.$t('editor:editorModalDrawio.diagramEditorReportedError'))
             break
           case 'exit':
             this.close()
             break
         }
       } catch {
-        this.showError('The diagram editor returned an invalid response.')
+        this.showError(this.$t('editor:editorModalDrawio.diagramEditorReturnedInvalid'))
       }
     }
   },
