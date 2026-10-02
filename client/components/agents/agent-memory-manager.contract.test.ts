@@ -34,12 +34,13 @@ const bundledSfc = await Bun.build({
     {
       name: 'agent-memory-manager-contract-sfc',
       setup(build) {
+        build.onResolve({ filter: /^@\// }, args => ({ path: path.join(process.cwd(), 'client', args.path.slice(2)) }))
         build.onResolve({ filter: /^virtual:agent-memory-manager\.vue$/ }, args => ({
           namespace: 'agent-memory-manager-sfc',
           path: args.path
         }))
         build.onLoad({ filter: /.*/, namespace: 'agent-memory-manager-sfc' }, () => ({
-          contents: compiledScript.content,
+          contents: compiledScript.content.replace("from '../../helpers/use-translate.ts'", "from '@/helpers/use-translate.ts'"),
           loader: 'ts',
           resolveDir: path.dirname(componentPath)
         }))

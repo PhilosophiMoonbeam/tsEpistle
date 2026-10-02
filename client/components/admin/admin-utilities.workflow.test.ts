@@ -4,6 +4,7 @@ import * as ts from 'typescript'
 import { reactive, toRaw } from 'vue'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 const compileComponentOptions = (path: string): string => {
   const parsed = parse(fs.readFileSync(path, 'utf8'), { filename: path })
   if (parsed.errors.length > 0 || !parsed.descriptor.script || parsed.descriptor.scriptSetup)
@@ -109,7 +110,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
     window
   }
   const component = new Function(...Object.keys(bindings), compiled + ';return component')(...Object.values(bindings))
-  const state = reactive({ ...component.data(), workspace: structuredClone(workspace), $route: { query: {} }, $router: { replace: vi.fn() } })
+  const state = reactive({ ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, workspace: structuredClone(workspace), $route: { query: {} }, $router: { replace: vi.fn() } })
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
   return { state, component, transport, window, values }
@@ -222,7 +223,8 @@ describe('Utilities browser-cache recovery', () => {
     )
     const notices: Array<{ message: string; color: string }> = []
     const state = {
-      ...component.data(),
+      ...component.data.call({ $t: translateEnglish }),
+      $t: translateEnglish,
       $emit: (event: string, value: { message: string; color: string }) => {
         if (event === 'notice') notices.push(value)
       }

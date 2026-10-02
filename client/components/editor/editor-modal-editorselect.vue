@@ -1,16 +1,16 @@
 <template>
   <v-dialog v-model="isShown" max-width="780" scrollable persistent content-class="editorselect-dialog" aria-labelledby="editor-select-title">
     <v-card class="editor-select">
-      <header class="editor-select__heading"><div><span>New page</span><h2 id="editor-select-title">How would you like to write?</h2></div><v-btn icon="mdi-arrow-left" variant="text" aria-label="Go back" :disabled="templateLoading" @click="goBack" /></header>
+      <header class="editor-select__heading"><div><span>{{ $t('editor:editorModalEditorselect.newPage') }}</span><h2 id="editor-select-title">{{ $t('editor:editorModalEditorselect.howWouldYouLike') }}</h2></div><v-btn icon="mdi-arrow-left" variant="text" :aria-label="$t('editor:editorModalEditorselect.goBack')" :disabled="templateLoading" @click="goBack" /></header>
       <v-card-text class="editor-select__content">
-        <p class="editor-select__intro">Choose an editor for this page. {{ recommendation ? 'Your workspace recommendation is highlighted.' : `Your workspace offers ${availableEditors.length} editors.` }}</p>
+        <p class="editor-select__intro">{{ $t('editor:editorModalEditorselect.chooseEditorPage', { availableEditors: recommendation ? $t('editor:editorModalEditorselect.workspaceRecommendationHighlighted') : $t('editor:editorModalEditorselect.workspaceOffersEditors', { availableEditorsCount: availableEditors.length, interpolation: { escapeValue: false } }), interpolation: { escapeValue: false } }) }}</p>
         <v-alert v-if="templateError" type="error" variant="tonal" class="mb-4">{{ templateError }}</v-alert>
-        <v-progress-linear v-if="templateLoading" indeterminate class="mb-4" aria-label="Checking template editor" />
+        <v-progress-linear v-if="templateLoading" indeterminate class="mb-4" :aria-label="$t('editor:editorModalEditorselect.checkingTemplateEditor')" />
         <div class="editor-select__grid">
-          <button v-for="editor in availableEditors" :key="editor.key" class="editor-select__option" :class="{ 'editor-select__option--recommended': editor.key === recommendation }" :disabled="templateLoading" @click="selectEditor(editor.key)"><div class="editor-select__option-top"><v-icon :icon="editor.icon" size="27" /><span v-if="editor.key === recommendation" class="editor-select__recommendation">Workspace recommendation</span></div><h3>{{ editor.title }}</h3><p>{{ editor.chooserDescription }}</p><span class="editor-select__format">{{ editor.format }} source</span></button>
-          <button class="editor-select__option editor-select__option--template" :disabled="templateLoading" @click="fromTemplate"><div class="editor-select__option-top"><v-icon icon="mdi-content-copy" size="27" /></div><h3>From a template</h3><p>Reuse an existing page as a starting point.</p><span class="editor-select__format">Reuse content</span></button>
+          <button v-for="editor in availableEditors" :key="editor.key" class="editor-select__option" :class="{ 'editor-select__option--recommended': editor.key === recommendation }" :disabled="templateLoading" @click="selectEditor(editor.key)"><div class="editor-select__option-top"><v-icon :icon="editor.icon" size="27" /><span v-if="editor.key === recommendation" class="editor-select__recommendation">{{ $t('editor:editorModalEditorselect.workspaceRecommendation') }}</span></div><h3>{{ editor.title }}</h3><p>{{ editor.chooserDescription }}</p><span class="editor-select__format">{{ $t('editor:editorModalEditorselect.source', { format: editor.format, interpolation: { escapeValue: false } }) }}</span></button>
+          <button class="editor-select__option editor-select__option--template" :disabled="templateLoading" @click="fromTemplate"><div class="editor-select__option-top"><v-icon icon="mdi-content-copy" size="27" /></div><h3>{{ $t('editor:editorModalEditorselect.template') }}</h3><p>{{ $t('editor:editorModalEditorselect.reuseExistingPageStarting') }}</p><span class="editor-select__format">{{ $t('editor:editorModalEditorselect.reuseContent') }}</span></button>
         </div>
-        <p class="editor-select__footnote">The editor determines the page’s source format. You can review format conversions later in page administration.</p>
+        <p class="editor-select__footnote">{{ $t('editor:editorModalEditorselect.editorDeterminesPagesSource') }}</p>
       </v-card-text>
       <page-selector mode="select" v-model="templateDialogIsShown" :open-handler="fromTemplateHandle" :path="path" :locale="locale" must-exist />
     </v-card>
@@ -84,7 +84,7 @@ export default defineComponent({
           this.availableEditors.map(editor => editor.key),
           async templateId => {
             const template = await fetchPage(window.fetch.bind(window), templateId)
-            if (template.editor === undefined) throw new Error('This template does not expose its editor to your current page access.')
+            if (template.editor === undefined) throw new Error(this.$t('editor:editorModalEditorselect.templateDoesNotExpose'))
             return { editor: template.editor }
           }
         )
@@ -92,7 +92,7 @@ export default defineComponent({
         window.location.assign(location)
         return true
       } catch (error) {
-        if (sequence === this.templateSequence) this.templateError = error instanceof Error ? error.message : 'This template could not be opened. Try again.'
+        if (sequence === this.templateSequence) this.templateError = error instanceof Error ? error.message : this.$t('editor:editorModalEditorselect.templateCouldNotOpened')
         return false
       } finally {
         if (sequence === this.templateSequence) this.templateLoading = false

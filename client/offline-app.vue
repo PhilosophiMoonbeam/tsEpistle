@@ -15,6 +15,9 @@ import {
 import { pwaState, retryServerConnection } from './helpers/pwa.ts'
 import { wikiStore } from './store/index.ts'
 import type { OfflineSnapshotRecord } from '../shared/offline.ts'
+import { useTranslate } from './helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const settings = window.location.pathname === '/p/offline'
 const siteTitle = siteConfig.title
@@ -39,7 +42,7 @@ const requestedSelector = (() => {
   const pageId = Number(url.searchParams.get('pageId'))
   const locale = url.searchParams.get('locale') ?? ''
   if (url.searchParams.get('site') !== window.location.origin || !Number.isSafeInteger(pageId) || pageId < 1 || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,34}$/.test(locale)) {
-    message.value = 'This saved-page link is invalid. Choose a saved page below.'
+    message.value = t('common:offlineApp.savedPageLinkInvalid')
     return null
   }
   return { siteId: window.location.origin, pageId, locale }
@@ -47,10 +50,10 @@ const requestedSelector = (() => {
 const settingsView = settings || window.location.pathname === '/p/offline'
 const requireOfflineSyncCoordinator = (): OfflineSyncCoordinator => {
   if (coordinator) return coordinator
-  throw new Error('Offline synchronization is not ready yet.')
+  throw new Error(t('common:offlineApp.offlineSynchronizationNotReady'))
 }
 const service: OfflineSyncService = {
-  reconcile: reason => coordinator?.reconcile(reason) ?? Promise.resolve(createOfflineSyncUnavailableResult('Offline storage is not ready yet.')),
+  reconcile: reason => coordinator?.reconcile(reason) ?? Promise.resolve(createOfflineSyncUnavailableResult(t('common:offlineApp.offlineStorageNotReady'))),
   readOfflinePolicy: async () => await requireOfflineSyncCoordinator().readOfflinePolicy(),
   readSnapshotCorpus: async selector => await requireOfflineSyncCoordinator().readSnapshotCorpus(selector),
   setManualOfflineIntent: async (selector, selected) => await requireOfflineSyncCoordinator().setManualOfflineIntent(selector, selected),
@@ -59,10 +62,10 @@ const service: OfflineSyncService = {
 }
 provide(OFFLINE_SYNC_COORDINATOR_KEY, service)
 const connectionMessage = computed(() => pwaState.connectionState === 'online'
-  ? 'Connected. Your account and saved pages can sync again.'
-  : pwaState.connectionState === 'checking' ? 'Checking connection. Your saved pages are available.'
-  : pwaState.connectionState === 'server-unavailable' ? 'The server is unavailable. Your saved pages are still available.'
-  : 'You’re offline. Saved pages are available; account actions and syncing will resume when you reconnect.')
+  ? t('common:offlineApp.connectedAccountSavedPages')
+  : pwaState.connectionState === 'checking' ? t('common:offlineApp.checkingConnectionSavedPages')
+  : pwaState.connectionState === 'server-unavailable' ? t('common:offlineApp.serverUnavailableSavedPages')
+  : t('common:offlineApp.youreOfflineSavedPages'))
 
 async function openStorage(): Promise<void> {
   storageState.value = 'checking'
@@ -133,7 +136,7 @@ async function openStorage(): Promise<void> {
     stopIdentityWatch = null
     coordinator = null
     storageState.value = 'unavailable'
-    message.value = 'Saved pages could not be opened on this device. Try again or reconnect.'
+    message.value = t('common:offlineApp.savedPagesCouldNot')
   }
 }
 async function retry(): Promise<void> {
@@ -174,7 +177,7 @@ function selectRecord(record: OfflineSnapshotRecord | null): void {
 }
 onMounted(() => {
   wikiStore.page.mode = settingsView ? 'profile' : 'view'
-  document.title = `${settingsView ? 'Offline access' : 'Saved pages'} | ${siteTitle}`
+  document.title = `${settingsView ? t('common:offlineApp.offlineAccess') : t('common:offlineApp.savedPages')} | ${siteTitle}`
   if (pwaState.connectionState === 'online') void wikiStore.refreshAuth()
   void openStorage()
 })
@@ -192,10 +195,10 @@ onBeforeUnmount(() => {
 
 <template>
   <v-app class="offline-application">
-    <a class="offline-skip" href="#offline-main">Skip to content</a>
+    <a class="offline-skip" href="#offline-main">{{ $t('common:offlineApp.skipContent') }}</a>
     <nav-header>
       <template #navigationToggle>
-        <v-btn icon="mdi-menu" aria-label="Open navigation" @click="drawer = !drawer" />
+        <v-btn icon="mdi-menu" :aria-label="$t('common:offlineApp.openNavigation')" @click="drawer = !drawer" />
       </template>
     </nav-header>
     <v-navigation-drawer v-model="drawer" :permanent="$vuetify.display.mdAndUp" :temporary="$vuetify.display.smAndDown" :width="256">
@@ -206,7 +209,7 @@ onBeforeUnmount(() => {
       <div class="offline-connection" role="status">
         <v-icon :icon="pwaState.connectionState === 'online' ? 'mdi-cloud-check-outline' : 'mdi-cloud-off-outline'" size="20" />
         <span>{{ connectionMessage }}</span>
-        <v-btn v-if="pwaState.connectionState !== 'online'" size="small" variant="text" :loading="retrying" @click="retry">Reconnect</v-btn>
+        <v-btn v-if="pwaState.connectionState !== 'online'" size="small" variant="text" :loading="retrying" @click="retry">{{ $t('common:offlineApp.reconnect') }}</v-btn>
       </div>
       <OfflineSettings v-if="settingsView" />
       <div v-else class="offline-reading-surface">

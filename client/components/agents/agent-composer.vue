@@ -24,16 +24,16 @@
       <v-card-title :id="composerIds.commandHeading" class="agent-composer__command-heading">
         <span>
           <v-icon icon="mdi-puzzle-outline" size="18" aria-hidden="true" />
-          Invoke a skill
+          {{ $t('common:agentComposer.invokeSkill') }}
         </span>
-        <span :id="composerIds.commandDescription" class="agent-composer__command-help">Type to filter · Esc to close</span>
+        <span :id="composerIds.commandDescription" class="agent-composer__command-help">{{ $t('common:agentComposer.typeFilterEscClose') }}</span>
       </v-card-title>
       <v-divider />
       <v-list
         :id="composerIds.commandResults"
         role="listbox"
         aria-multiselectable="true"
-        aria-label="Matching skills"
+        :aria-label="$t('common:agentComposer.matchingSkills2')"
         density="compact"
         max-height="320"
         class="overflow-y-auto"
@@ -49,25 +49,25 @@
           :disabled="isCommandSkillDisabled(skill.versionId)"
           :prepend-icon="isSelected(skill.versionId) ? 'mdi-check-circle' : 'mdi-puzzle-outline'"
           :title="skill.name"
-          :subtitle="isPreferred(skill.versionId) ? 'Always loaded in conversations' : skill.description"
+          :subtitle="isPreferred(skill.versionId) ? $t('common:agentComposer.alwaysLoadedConversations') : skill.description"
           @mouseenter="setActiveCommandSkill(skill.versionId)"
           @click="invokeCommandSkill(skill)"
         >
           <template #append>
             <div class="d-flex ga-1">
-              <v-chip v-if="skill.exposureMode === 'owner'" size="x-small" variant="tonal">Mine</v-chip>
-              <v-chip v-if="skill.exposureMode === 'owner' && !skill.isAgentDiscoverable" size="x-small" variant="outlined">Explicit only</v-chip>
+              <v-chip v-if="skill.exposureMode === 'owner'" size="x-small" variant="tonal">{{ $t('common:agentComposer.mine') }}</v-chip>
+              <v-chip v-if="skill.exposureMode === 'owner' && !skill.isAgentDiscoverable" size="x-small" variant="outlined">{{ $t('common:agentComposer.explicitOnly') }}</v-chip>
             </div>
           </template>
         </v-list-item>
-        <v-list-item v-if="skillCommandResults.length === 0 && skillsLoading" :id="composerIds.commandLoading" role="option" aria-disabled="true" title="Loading skill catalog" subtitle="Wait for the available skills to finish loading." disabled />
+        <v-list-item v-if="skillCommandResults.length === 0 && skillsLoading" :id="composerIds.commandLoading" role="option" aria-disabled="true" :title="$t('common:agentComposer.loadingSkillCatalog')" :subtitle="$t('common:agentComposer.waitAvailableSkillsFinish')" disabled />
         <v-list-item v-else-if="skillCommandResults.length === 0 && skillsPartial" :id="composerIds.commandPartial" role="option" aria-disabled="true" :title="skillLoadTitle" :subtitle="skillLoadMessage" disabled />
-        <v-list-item v-else-if="skillCommandResults.length === 0" :id="composerIds.commandEmpty" role="option" aria-disabled="true" title="No matching skills" subtitle="Try another name or description." disabled />
+        <v-list-item v-else-if="skillCommandResults.length === 0" :id="composerIds.commandEmpty" role="option" aria-disabled="true" :title="$t('common:agentComposer.noMatchingSkills')" :subtitle="$t('common:agentComposer.tryAnotherNameDescription')" disabled />
       </v-list>
       <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandStatus }}</div>
       <v-card-actions v-if="skillsLoadError" class="agent-composer__command-retry">
-        <span>{{ skills.length > 0 ? 'Showing the last-loaded catalog.' : 'No catalog entries are available.' }}</span>
-        <v-btn prepend-icon="mdi-refresh" size="small" variant="text" :loading="skillsLoading" :disabled="skillsLoading || networkBlocked" @click="retrySkills">Retry catalog</v-btn>
+        <span>{{ skills.length > 0 ? $t('common:agentComposer.showingLastLoadedCatalog2') : $t('common:agentComposer.noCatalogEntriesAvailable') }}</span>
+        <v-btn prepend-icon="mdi-refresh" size="small" variant="text" :loading="skillsLoading" :disabled="skillsLoading || networkBlocked" @click="retrySkills">{{ $t('common:agentComposer.retryCatalog') }}</v-btn>
       </v-card-actions>
     </v-card>
     <span
@@ -88,11 +88,11 @@
         variant="tonal"
         prepend-icon="mdi-target"
         closable
-        close-label="Turn off goal mode"
+        :close-label="$t('common:agentComposer.turnOffGoalMode')"
         :disabled="disabled || sendInProgress"
-        title="Goal mode is on. Your next message defines a durable outcome for Wiki Agent."
+        :title="$t('common:agentComposer.goalModeNextMessage')"
         @click:close="goalMode = false"
-      >Goal</v-chip>
+      >{{ $t('common:agentComposer.goal') }}</v-chip>
     </div>
 
     <div class="agent-composer__editor">
@@ -168,29 +168,29 @@
       @asset-picker-closed="focusAttachmentTrigger"
     >
       <template #attachments="{ attachments, uploading, locked, removeAttachment }">
-        <ul v-if="attachments.length" class="agent-composer__media-attachments" aria-label="Attachments for the next message">
+        <ul v-if="attachments.length" class="agent-composer__media-attachments" :aria-label="$t('common:agentComposer.attachmentsNextMessage')">
           <li v-for="item in attachments" :key="item.id">
             <img v-if="item.mimeType.startsWith('image/')" :src="agentMediaContentUrl(item.id)" alt="" />
             <v-icon v-else icon="mdi-file-pdf-box" size="24" aria-hidden="true" />
             <span :title="item.filename">{{ item.filename }}</span>
-            <v-btn icon="mdi-close" size="x-small" variant="text" :aria-label="`Remove ${item.filename}`" :disabled="locked" @click="removeAttachment(item)" />
+            <v-btn icon="mdi-close" size="x-small" variant="text" :aria-label="$t('common:agentComposer.remove', { filename: item.filename, interpolation: { escapeValue: false } })" :disabled="locked" @click="removeAttachment(item)" />
           </li>
         </ul>
-        <span v-if="uploading" class="agent-composer__uploading" role="status">Uploading…</span>
+        <span v-if="uploading" class="agent-composer__uploading" role="status">{{ $t('common:agentComposer.uploading') }}</span>
       </template>
     </AgentComposerMedia>
 
-    <div v-if="selectedSkills.length > 0" class="agent-composer__attachments" role="group" aria-label="Skills attached as context for the next message">
+    <div v-if="selectedSkills.length > 0" class="agent-composer__attachments" role="group" :aria-label="$t('common:agentComposer.skillsAttachedContextNext')">
       <span class="agent-composer__attachments-label">
         <v-icon icon="mdi-paperclip" size="15" aria-hidden="true" />
-        Attached context
+        {{ $t('common:agentComposer.attachedContext') }}
       </span>
       <div class="agent-composer__skills">
         <v-chip
           v-for="skill in selectedSkills"
           :key="skill.versionId"
           closable
-          :close-label="`Remove ${skill.name}`"
+          :close-label="$t('common:agentComposer.remove2', { name: skill.name, interpolation: { escapeValue: false } })"
           size="small"
           color="primary"
           variant="tonal"
@@ -209,22 +209,22 @@
         v-if="dictationAvailable && mediaRecording"
         class="agent-composer__context-controls agent-composer__dictation-actions-left"
         role="group"
-        aria-label="Recording actions"
+        :aria-label="$t('common:agentComposer.recordingActions')"
       >
-        <span v-if="mediaRequesting" class="agent-composer__dictation-requesting">Microphone access…</span>
+        <span v-if="mediaRequesting" class="agent-composer__dictation-requesting">{{ $t('common:agentComposer.microphoneAccess') }}</span>
         <v-btn
           class="agent-composer__dictation-discard"
           icon="mdi-close"
           variant="text"
           size="small"
           rounded="pill"
-          aria-label="Discard recording; keeps your typed message"
-          title="Discard recording; keeps your typed message"
+          :aria-label="$t('common:agentComposer.discardRecordingKeepsTyped')"
+          :title="$t('common:agentComposer.discardRecordingKeepsTyped')"
           :disabled="disabled || sendInProgress"
           @click="cancelDictation"
         />
       </div>
-      <div v-else ref="controlsGroup" class="agent-composer__context-controls" role="group" aria-label="Message tools">
+      <div v-else ref="controlsGroup" class="agent-composer__context-controls" role="group" :aria-label="$t('common:agentComposer.messageTools')">
         <v-menu v-if="attachmentsAvailable" content-class="agent-owned-overlay" location="top start" v-model="attachmentMenuOpen">
           <template #activator="{ props: activatorProps }">
             <v-btn
@@ -234,15 +234,15 @@
               variant="text"
               rounded="pill"
               prepend-icon="mdi-paperclip"
-              aria-label="Attach files"
-              title="Attach files"
+              :aria-label="$t('common:agentComposer.attachFiles')"
+              :title="$t('common:agentComposer.attachFiles')"
               :disabled="attachDisabled"
               :aria-expanded="attachmentMenuOpen"
-            >Attach</v-btn>
+            >{{ $t('common:agentComposer.attach') }}</v-btn>
           </template>
-          <v-list density="compact" aria-label="Attachment source">
-            <v-list-item prepend-icon="mdi-upload" title="Upload files" @click="openFilePicker" />
-            <v-list-item prepend-icon="mdi-folder-outline" title="Browse Wiki assets" @click="openAssetBrowser" />
+          <v-list density="compact" :aria-label="$t('common:agentComposer.attachmentSource')">
+            <v-list-item prepend-icon="mdi-upload" :title="$t('common:agentComposer.uploadFiles')" @click="openFilePicker" />
+            <v-list-item prepend-icon="mdi-folder-outline" :title="$t('common:agentComposer.browseWikiAssets')" @click="openAssetBrowser" />
           </v-list>
         </v-menu>
         <v-menu v-if="createAvailable && !isControlFolded('create')" content-class="agent-owned-overlay" location="top start">
@@ -256,13 +256,13 @@
               rounded="pill"
               prepend-icon="mdi-creation-outline"
               append-icon="mdi-chevron-down"
-              aria-label="Choose creation tools"
-              :title="selectedGenerationTools.length ? `${selectedGenerationTools.length} creation tool${selectedGenerationTools.length === 1 ? '' : 's'} enabled for the assistant` : 'Choose creation tools'"
+              :aria-label="$t('common:agentComposer.chooseCreationTools')"
+              :title="selectedGenerationTools.length ? $t('common:agentComposer.creationToolEnabledAssistant', { count: selectedGenerationTools.length, interpolation: { escapeValue: false } }) : $t('common:agentComposer.chooseCreationTools')"
               :disabled="attachDisabled"
-            >Create</v-btn>
+            >{{ $t('common:actions.create') }}</v-btn>
           </template>
-          <v-list density="compact" class="agent-composer__tool-menu" aria-label="Creation tools">
-            <v-list-subheader>Available for the assistant to use</v-list-subheader>
+          <v-list density="compact" class="agent-composer__tool-menu" :aria-label="$t('common:agentComposer.creationTools')">
+            <v-list-subheader>{{ $t('common:agentComposer.availableAssistantUse') }}</v-list-subheader>
             <v-list-item
               v-for="option in generationOptions"
               :key="option.value"
@@ -276,7 +276,7 @@
             >
               <template #append><v-icon :icon="selectedGenerationTools.includes(option.value) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
             </v-list-item>
-            <p class="agent-composer__tool-menu-note">Ask naturally. The assistant can combine your selected tools in one reply.</p>
+            <p class="agent-composer__tool-menu-note">{{ $t('common:agentComposer.askNaturallyAssistantCan') }}</p>
           </v-list>
         </v-menu>
         <v-tooltip v-if="!isControlFolded('web')" location="top" :text="googleSearchAvailable ? $t('common:agentComposer.webTooltip') : $t('common:agentComposer.webUnavailable')">
@@ -292,12 +292,12 @@
                 :checked="googleSearchEnabled"
                 :aria-checked="googleSearchEnabled ? 'true' : 'false'"
                 :disabled="webSearchDisabled"
-                aria-label="Use Google Search for this conversation"
+                :aria-label="$t('common:agentComposer.useGoogleSearchConversation')"
                 :aria-describedby="composerIds.webNotice"
                 @change="toggleGoogleSearch"
               >
               <v-icon icon="mdi-web" size="17" aria-hidden="true" />
-              <span>Web</span>
+              <span>{{ $t('common:agentComposer.web') }}</span>
             </label>
           </template>
         </v-tooltip>
@@ -309,11 +309,11 @@
           variant="text"
           rounded="pill"
           prepend-icon="mdi-target"
-          aria-label="Goal"
-          title="Define a durable outcome for multi-step tasks"
+          :aria-label="$t('common:agentComposer.goal')"
+          :title="$t('common:agentComposer.defineDurableOutcomeMulti')"
           :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0"
           @click="goalMode = true"
-        >Goal</v-btn>
+        >{{ $t('common:agentComposer.goal') }}</v-btn>
         <v-menu
           v-if="hasMoreMenuContent"
           content-class="agent-owned-overlay agent-composer__more-menu-content"
@@ -328,14 +328,14 @@
               variant="text"
               size="small"
               rounded="pill"
-              aria-label="More options"
+              :aria-label="$t('common:agentComposer.moreOptions')"
               aria-haspopup="menu"
               :aria-expanded="moreMenuOpen"
-              title="More options"
+              :title="$t('common:agentComposer.moreOptions')"
               :disabled="disabled || sendInProgress"
             />
           </template>
-          <v-list density="compact" class="agent-composer__more-menu" aria-label="More composer options">
+          <v-list density="compact" class="agent-composer__more-menu" :aria-label="$t('common:agentComposer.moreComposerOptions')">
             <v-list-item
               v-for="item in moreMenuItems"
               :key="item.key"
@@ -360,7 +360,7 @@
                 <v-list-item
                   v-bind="submenuProps"
                   prepend-icon="mdi-puzzle-outline"
-                  title="Skills"
+                  :title="$t('common:agentComposer.skills')"
                   append-icon="mdi-chevron-right"
                   aria-haspopup="dialog"
                   :aria-expanded="foldedSkillMenuOpen"
@@ -389,7 +389,7 @@
         </v-menu>
       </div>
 
-      <div class="agent-composer__primary-actions" role="group" aria-label="Message actions">
+      <div class="agent-composer__primary-actions" role="group" :aria-label="$t('common:agentComposer.messageActions')">
         <v-btn
           v-if="canStop"
           class="agent-composer__stop"
@@ -399,7 +399,7 @@
           :aria-describedby="composerIds.status"
           :disabled="networkBlocked"
           @click="emit('stop')"
-        >Stop response</v-btn>
+        >{{ $t('common:agentComposer.stopResponse') }}</v-btn>
         <template v-else>
           <template v-if="dictationAvailable && mediaRecording">
             <!-- Stop and review: outlined neutral control; red belongs to the
@@ -408,11 +408,11 @@
               class="agent-composer__dictation-review"
               variant="outlined"
               prepend-icon="mdi-stop"
-              aria-label="Stop dictation and review the transcript"
-              title="Stop and put the transcript into the editor"
+              :aria-label="$t('common:agentComposer.stopDictationReviewTranscript')"
+              :title="$t('common:agentComposer.stopPutTranscriptInto')"
               :aria-describedby="composerIds.status"
               @click="stopDictation"
-            >Review</v-btn>
+            >{{ $t('common:agentComposer.review') }}</v-btn>
           </template>
           <template v-else-if="dictationAvailable">
             <v-btn
@@ -422,8 +422,8 @@
               variant="text"
               size="small"
               rounded="pill"
-              aria-label="Start dictation"
-              title="Start dictation"
+              :aria-label="$t('common:agentComposer.startDictation')"
+              :title="$t('common:agentComposer.startDictation')"
               :disabled="disabled || sendInProgress || networkBlocked || mediaBusy"
               @click="startDictation"
             />
@@ -437,7 +437,7 @@
             :loading="sendInProgress || mediaTranscribing"
             :disabled="submitDisabled"
             :aria-describedby="composerIds.status"
-            :title="mediaRecording ? 'Send without reviewing' : undefined"
+            :title="mediaRecording ? $t('common:agentComposer.sendWithoutReviewing') : undefined"
           >{{ submitLabel }}</v-btn>
         </template>
       </div>
@@ -459,6 +459,9 @@ import type { AgentMediaView, AgentProviderProfileView, AgentThreadState, AgentS
 import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const props = defineProps<{
   csrfToken?: string
   mediaSession?: AgentThreadState['session'] | null
@@ -556,10 +559,10 @@ const mediaSpeechDetected = computed(() => {
 })
 /** Recording feedback states. Announce state changes, not timer ticks. */
 const dictationStatusLabel = computed(() => {
-  if (mediaTranscribing.value) return 'Transcribing…'
-  if (mediaRequesting.value) return 'Requesting microphone…'
-  if (mediaRecording.value && !mediaSpeechDetected.value) return 'Waiting for speech…'
-  return 'Listening…'
+  if (mediaTranscribing.value) return t('common:agentComposer.transcribing')
+  if (mediaRequesting.value) return t('common:agentComposer.requestingMicrophone')
+  if (mediaRecording.value && !mediaSpeechDetected.value) return t('common:agentComposer.waitingSpeech')
+  return t('common:agentComposer.listening')
 })
 const dictationTimerLabel = computed(() => {
   const total = Math.min(mediaSeconds.value, 60)
@@ -762,8 +765,8 @@ const moreMenuItems = computed(() => {
     items.push({
       key: 'goal',
       icon: 'mdi-target',
-      label: 'Goal',
-      subtitle: 'Define a durable outcome for multi-step tasks',
+      label: t('common:agentComposer.goal'),
+      subtitle: t('common:agentComposer.defineDurableOutcomeMulti'),
       checked: false,
       run: () => {
         if (props.disabled || sendInProgress.value || mediaBusy.value || mediaSubmission.value.attachmentIds.length > 0) return
@@ -775,8 +778,8 @@ const moreMenuItems = computed(() => {
     items.push({
       key: 'web',
       icon: 'mdi-web',
-      label: 'Web',
-      subtitle: props.googleSearchAvailable ? 'Use Google Search for this conversation' : 'Google Search is unavailable for this provider',
+      label: t('common:agentComposer.web'),
+      subtitle: props.googleSearchAvailable ? t('common:agentComposer.useGoogleSearchConversation') : t('common:agentComposer.googleSearchUnavailableProvider'),
       checked: props.googleSearchEnabled === true,
       disabled: webSearchDisabled.value,
       run: () => {
@@ -852,38 +855,38 @@ const handleFoldResize = (): void => {
 
 const composerInputLabel = computed(() =>
   goalMode.value
-    ? 'Define an outcome for Wiki Agent'
+    ? t('common:agentComposer.defineOutcomeWikiAgent')
     : props.hasMessages
-      ? 'Follow up with Wiki Agent'
-      : 'Message Wiki Agent'
+      ? t('common:agentComposer.followUpWikiAgent')
+      : t('common:agentComposer.messageWikiAgent')
 )
 const composerInputDescriptionIds = computed(() => [
   props.externalDescriptionId?.trim(),
   composerIds.status
 ].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
-  if (goalMode.value) return 'Describe a bounded outcome for Wiki Agent'
+  if (goalMode.value) return t('common:agentComposer.describeBoundedOutcomeWiki')
   if (props.skillsEnabled) {
     return props.hasMessages
-      ? 'Ask a follow-up · Type / for skills'
-      : 'Ask a question · Type / for skills'
+      ? t('common:agentComposer.askFollowUpType')
+      : t('common:agentComposer.askQuestionTypeSkills')
   }
-  return props.hasMessages ? 'Ask a follow-up' : 'Ask a question or search query'
+  return props.hasMessages ? t('common:agentComposer.askFollowUp') : t('common:agentComposer.askQuestionSearchQuery')
 })
 const liveStatusLabel = computed(() => {
-  if (mediaTranscribing.value) return 'Transcribing your recording'
-  if (mediaRecording.value) return mediaRequesting.value ? 'Requesting microphone access' : 'Recording. Listening for speech.'
-  if (sendFailed.value) return 'Message failed to send. Retry is available.'
+  if (mediaTranscribing.value) return t('common:agentComposer.transcribingRecording')
+  if (mediaRecording.value) return mediaRequesting.value ? t('common:agentComposer.requestingMicrophoneAccess') : t('common:agentComposer.recordingListeningSpeech')
+  if (sendFailed.value) return t('common:agentComposer.messageFailedSendRetry')
   const label = props.statusLabel.trim()
   if (sendInProgress.value || props.canStop) {
     if (label && label !== 'Ready') return label
-    return props.canStop ? 'Working' : 'Sending'
+    return props.canStop ? t('common:agentComposer.working') : t('common:agentComposer.sending')
   }
   return label || 'Ready'
 })
 const submitLabel = computed(() => {
-  if (sendFailed.value) return 'Retry'
-  return goalMode.value ? 'Start goal' : 'Send'
+  if (sendFailed.value) return t('common:agentComposer.retry')
+  return goalMode.value ? t('common:agentComposer.startGoal') : t('common:agentComposer.send')
 })
 const submitIcon = computed(() => {
   if (sendFailed.value) return 'mdi-refresh'
@@ -1067,20 +1070,20 @@ const skillCommandQuery = computed<string | null>(() => skillCommandMatch.value?
 const skillCommandOpen = computed(() => skillCommandQuery.value !== null)
 const skillCommandResults = computed(() => skillCommandQuery.value === null ? [] : filterSkillsForCommand(props.skills, skillCommandQuery.value))
 const skillLoadTitle = computed(() => props.skillsLoadError
-  ? props.skills.length > 0 ? 'Skill catalog incomplete' : 'Skill catalog unavailable'
-  : 'Loading skill catalog')
+  ? props.skills.length > 0 ? t('common:agentComposer.skillCatalogIncomplete') : t('common:agentComposer.skillCatalogUnavailable')
+  : t('common:agentComposer.loadingSkillCatalog'))
 const skillLoadMessage = computed(() => props.skillsLoadError
   ? props.skills.length > 0
-    ? `Showing the last-loaded catalog. ${props.skillsLoadError}`
+    ? t('common:agentComposer.showingLastLoadedCatalog', { skillsLoadError: props.skillsLoadError, interpolation: { escapeValue: false } })
     : props.skillsLoadError
-  : 'Available skills are still being loaded.')
+  : t('common:agentComposer.availableSkillsStillBeing'))
 const skillCommandStatus = computed(() => skillCommandResults.value.length
-  ? `${skillCommandResults.value.length} matching skills`
+  ? t('common:agentComposer.matchingSkills', { count: skillCommandResults.value.length, interpolation: { escapeValue: false } })
   : props.skillsLoading
-    ? 'Loading skill catalog'
+    ? t('common:agentComposer.loadingSkillCatalog')
     : props.skillsPartial
-      ? props.skills.length > 0 ? 'Skill catalog incomplete' : 'Skill catalog unavailable'
-      : 'No matching skills')
+      ? props.skills.length > 0 ? t('common:agentComposer.skillCatalogIncomplete') : t('common:agentComposer.skillCatalogUnavailable')
+      : t('common:agentComposer.noMatchingSkills'))
 const isCommandSkillDisabled = (versionId: string): boolean =>
   props.disabled || sendInProgress.value || isPreferred(versionId) || (!isSelected(versionId) && selectedSkillIds.value.length >= props.invocationLimit)
 const usableSkillCommandResults = computed(() => skillCommandResults.value.filter(skill => !isCommandSkillDisabled(skill.versionId)))
@@ -1247,7 +1250,7 @@ const submitDuringRecording = async (): Promise<void> => {
       // and surface the media composer's dictation message in the notice.
       draft.value = typedDraft
       const mediaMessage = mediaComposer.value?.dictationError as string | undefined
-      if (!error.value) error.value = mediaMessage || 'No speech was found. Try recording again.'
+      if (!error.value) error.value = mediaMessage || t('common:agentComposer.noSpeechWasFound')
       return
     }
     const content = [typedDraft.trim(), transcript].filter(Boolean).join(' ')
@@ -1328,7 +1331,7 @@ const setDraft = async (value: string): Promise<void> => {
 }
 const editImage = async (media: AgentMediaView) => {
   if (await mediaComposer.value?.editImage(media)) {
-    if (!draft.value.trim()) draft.value = 'Edit this image: '
+    if (!draft.value.trim()) draft.value = t('common:agentComposer.editImage')
     await focusInput()
   }
 }

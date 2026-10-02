@@ -4,6 +4,7 @@ import * as ts from 'typescript'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { WEBHOOK_EVENTS, isWebhookEventName } from '../../../shared/webhook-events.ts'
 import * as webhooksApi from '../../helpers/webhooks-api.ts'
+import { translateEnglish } from '../../test/english-translate.mts'
 const componentPath = 'client/components/admin/admin-webhooks.vue'
 const parsed = parse(fs.readFileSync(componentPath, 'utf8'), { filename: componentPath })
 if (parsed.errors.length || !parsed.descriptor.script || parsed.descriptor.scriptSetup) {
@@ -39,7 +40,7 @@ function harness({ fetchImpl = () => {}, transport = {} } = {}) {
     {},
     { location: { hash: '', href: 'https://example.test/a/webhooks' }, history: { replaceState() {} }, fetch: fetchImpl }
   )
-  const instance = { ...options.data(), $nextTick: vi.fn(), $refs: {} }
+  const instance = { ...options.data.call({ $t: translateEnglish }), $t: translateEnglish, $nextTick: vi.fn(), $refs: {} }
   for (const [key, fn] of Object.entries(options.methods)) instance[key] = fn.bind(instance)
   for (const [key, fn] of Object.entries(options.computed)) Object.defineProperty(instance, key, { get: fn.bind(instance) })
   instance.hooks = [hook]

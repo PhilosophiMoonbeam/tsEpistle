@@ -1,56 +1,56 @@
 <template>
   <section class="tool-workspace" aria-labelledby="tool-directory-title">
     <header>
-      <div class="tool-eyebrow">Capabilities & connections</div>
-      <h2 id="tool-directory-title">Tools & MCP</h2>
-      <p>See what this deployment can offer to the Wiki Agent and connected clients.</p>
+      <div class="tool-eyebrow">{{ $t('admin:agentAdminTools.capabilitiesConnections') }}</div>
+      <h2 id="tool-directory-title">{{ $t('admin:agentAdminTools.toolsMcp') }}</h2>
+      <p>{{ $t('admin:agentAdminTools.seeWhatDeploymentCan') }}</p>
     </header>
     <div class="mcp-connection">
       <div>
-        <h3>Connect another agent</h3>
-        <p>Use Streamable HTTP and an API key bound to this MCP resource. The key's group determines its page access.</p>
-        <v-chip size="small" :color="loaded ? mcpEnabled ? 'success' : 'warning' : undefined" variant="tonal">{{ !loaded ? 'State unavailable' : mcpEnabled ? 'MCP enabled in deployment' : 'MCP disabled in deployment' }}</v-chip>
+        <h3>{{ $t('admin:agentAdminTools.connectAnotherAgent') }}</h3>
+        <p>{{ $t('admin:agentAdminTools.useStreamableHttpApi') }}</p>
+        <v-chip size="small" :color="loaded ? mcpEnabled ? 'success' : 'warning' : undefined" variant="tonal">{{ !loaded ? $t('admin:agentAdminTools.stateUnavailable') : mcpEnabled ? $t('admin:agentAdminTools.mcpEnabledDeployment') : $t('admin:agentAdminTools.mcpDisabledDeployment') }}</v-chip>
       </div>
       <div class="mcp-connection__endpoint">
-        <span>MCP resource URL</span>
-        <div class="mcp-connection__url"><code id="agent-mcp-endpoint">{{ endpoint }}</code><v-btn icon="mdi-content-copy" size="small" variant="text" aria-label="Copy MCP resource URL" @click="copyEndpoint" /></div>
+        <span>{{ $t('admin:agentAdminTools.mcpResourceUrl') }}</span>
+        <div class="mcp-connection__url"><code id="agent-mcp-endpoint">{{ endpoint }}</code><v-btn icon="mdi-content-copy" size="small" variant="text" :aria-label="$t('admin:agentAdminTools.copyMcpResourceUrl')" @click="copyEndpoint" /></div>
         <span v-if="copyMessage" role="status">{{ copyMessage }}</span>
-        <a href="/a/api">Manage API keys and integration setup <v-icon size="16">mdi-arrow-right</v-icon></a>
+        <a href="/a/api">{{ $t('admin:agentAdminTools.manageApiKeysIntegration') }} <v-icon size="16">mdi-arrow-right</v-icon></a>
       </div>
     </div>
-    <div class="tool-toolbar" role="search" aria-label="Find agent tools">
-      <v-text-field v-model="query" label="Find a tool" prepend-inner-icon="mdi-magnify" clearable hide-details />
-      <v-select v-model="transport" label="Available to" :items="transports" hide-details />
-      <v-select v-model="state" label="Deployment state" :items="states" hide-details />
+    <div class="tool-toolbar" role="search" :aria-label="$t('admin:agentAdminTools.findAgentTools')">
+      <v-text-field v-model="query" :label="$t('admin:agentAdminTools.findTool')" prepend-inner-icon="mdi-magnify" clearable hide-details />
+      <v-select v-model="transport" :label="$t('admin:agentAdminTools.available')" :items="transports" hide-details />
+      <v-select v-model="state" :label="$t('admin:agentAdminTools.deploymentState')" :items="states" hide-details />
     </div>
-    <p class="tool-explanation">Deployment eligibility is only the first check. User permissions, page rules, selected skills, model capabilities and approvals still apply. This list does not test a client connection.</p>
+    <p class="tool-explanation">{{ $t('admin:agentAdminTools.deploymentEligibilityOnlyFirst') }}</p>
     <v-skeleton-loader v-if="!loaded && loading" type="list-item-three-line, list-item-three-line" />
-    <v-alert v-else-if="!loaded" type="info" variant="tonal">Tool policy could not be loaded. Use Refresh status to try again.</v-alert>
+    <v-alert v-else-if="!loaded" type="info" variant="tonal">{{ $t('admin:agentAdminTools.toolPolicyCouldNot') }}</v-alert>
     <template v-else>
-      <p class="tool-count" role="status">{{ filteredTools.length }} of {{ tools.length }} tools</p>
+      <p class="tool-count" role="status">{{ $t('admin:agentAdminTools.tools', { filteredToolsCount: filteredTools.length, toolsCount: tools.length, interpolation: { escapeValue: false } }) }}</p>
       <div class="tool-directory">
         <details v-for="tool in filteredTools" :key="tool.name" class="tool-record">
           <summary>
             <v-icon size="20">{{ tool.risk === 'read' ? 'mdi-book-search-outline' : tool.risk === 'open-world-read' ? 'mdi-web' : 'mdi-pencil-lock-outline' }}</v-icon>
             <span class="tool-record__name"><strong>{{ tool.title }}</strong><code>{{ tool.toolName }}</code></span>
-            <span class="tool-record__state">{{ eligible(tool) ? 'Eligible' : 'Deployment blocked' }}</span>
+            <span class="tool-record__state">{{ eligible(tool) ? $t('admin:agentAdminTools.eligible') : $t('admin:agentAdminTools.deploymentBlocked') }}</span>
             <v-icon size="18">mdi-chevron-down</v-icon>
           </summary>
           <div class="tool-record__details">
             <p>{{ tool.description }}</p>
             <dl>
-              <div><dt>Effect</dt><dd>{{ riskLabels[tool.risk] }}</dd></div>
-              <div><dt>Permissions</dt><dd>{{ tool.requiredPermissions.join(', ') || 'Authenticated access; resource rules apply' }}</dd></div>
-              <div><dt>Wiki Agent</dt><dd>{{ exposureDescription(tool.exposure.agent, tool.agentBlockers) }}</dd></div>
-              <div><dt>MCP clients</dt><dd>{{ exposureDescription(tool.exposure.mcp, tool.mcpBlockers) }}</dd></div>
+              <div><dt>{{ $t('admin:agentAdminTools.effect') }}</dt><dd>{{ riskLabels[tool.risk] }}</dd></div>
+              <div><dt>{{ $t('admin:agentAdminTools.permissions') }}</dt><dd>{{ tool.requiredPermissions.join(', ') || $t('admin:agentAdminTools.authenticatedAccessResourceRules') }}</dd></div>
+              <div><dt>{{ $t('admin:agentAdminTools.wikiAgent') }}</dt><dd>{{ exposureDescription(tool.exposure.agent, tool.agentBlockers) }}</dd></div>
+              <div><dt>{{ $t('admin:agentAdminTools.mcpClients') }}</dt><dd>{{ exposureDescription(tool.exposure.mcp, tool.mcpBlockers) }}</dd></div>
             </dl>
           </div>
         </details>
       </div>
       <div v-if="!filteredTools.length" class="tool-empty">
-        <h3>{{ tools.length ? 'No tools match these filters' : 'Tool inventory unavailable' }}</h3>
-        <p>{{ tools.length ? 'Try another capability, permission or deployment state.' : 'Refresh after the server and client have both been updated.' }}</p>
-        <v-btn v-if="tools.length" variant="tonal" @click="query = ''; transport = 'all'; state = 'all'">Clear filters</v-btn>
+        <h3>{{ tools.length ? $t('admin:agentAdminTools.noToolsMatchThese') : $t('admin:agentAdminTools.toolInventoryUnavailable') }}</h3>
+        <p>{{ tools.length ? $t('admin:agentAdminTools.tryAnotherCapabilityPermission') : $t('admin:agentAdminTools.refreshAfterServerClient') }}</p>
+        <v-btn v-if="tools.length" variant="tonal" @click="query = ''; transport = 'all'; state = 'all'">{{ $t('admin:agentAdminTools.clearFilters') }}</v-btn>
       </div>
     </template>
   </section>
@@ -59,6 +59,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { AgentAdminTool } from '../../../shared/agents/admin.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const { tools, loaded, loading, mcpEnabled } = defineProps<{ tools: AgentAdminTool[]; loaded: boolean; loading: boolean; mcpEnabled: boolean }>()
 const query = ref<string | null>('')
@@ -66,9 +69,9 @@ const transport = ref<'all' | 'agent' | 'mcp'>('all')
 const state = ref('all')
 const copyMessage = ref('')
 const endpoint = new URL('/mcp', window.location.origin).href
-const transports = [{ title: 'Either interface', value: 'all' }, { title: 'Wiki Agent', value: 'agent' }, { title: 'MCP clients', value: 'mcp' }]
-const states = [{ title: 'All states', value: 'all' }, { title: 'Eligible', value: 'eligible' }, { title: 'Deployment blocked', value: 'blocked' }]
-const riskLabels = { read: 'Read only', 'open-world-read': 'External browsing', proposal: 'Prepares a change for review', 'reversible-write': 'Changes stored data', 'destructive-write': 'Applies an approved change' }
+const transports = [{ title: t('admin:agentAdminTools.eitherInterface'), value: 'all' }, { title: t('admin:agentAdminTools.wikiAgent'), value: 'agent' }, { title: t('admin:agentAdminTools.mcpClients'), value: 'mcp' }]
+const states = [{ title: t('admin:agentAdminTools.allStates'), value: 'all' }, { title: t('admin:agentAdminTools.eligible'), value: 'eligible' }, { title: t('admin:agentAdminTools.deploymentBlocked'), value: 'blocked' }]
+const riskLabels = { read: t('admin:agentAdminTools.readOnly'), 'open-world-read': t('admin:agentAdminTools.externalBrowsing'), proposal: t('admin:agentAdminTools.preparesChangeReview'), 'reversible-write': t('admin:agentAdminTools.changesStoredData'), 'destructive-write': t('admin:agentAdminTools.appliesApprovedChange') }
 const eligible = (tool: AgentAdminTool) =>
   (transport.value !== 'mcp' && tool.exposure.agent && !tool.agentBlockers.length) ||
   (transport.value !== 'agent' && tool.exposure.mcp && !tool.mcpBlockers.length)
@@ -78,10 +81,10 @@ const filteredTools = computed(() => {
     (state.value === 'all' || eligible(tool) === (state.value === 'eligible')) &&
     terms.every(term => `${tool.title} ${tool.toolName} ${tool.description} ${tool.requiredPermissions.join(' ')}`.toLocaleLowerCase().includes(term)))
 })
-const exposureDescription = (exposed: boolean, blockers: readonly string[]) => !exposed ? 'Not exposed on this interface' : blockers.length ? `Enable ${blockers.join(', ')}` : 'Eligible, subject to request authorization'
+const exposureDescription = (exposed: boolean, blockers: readonly string[]) => !exposed ? t('admin:agentAdminTools.notExposedInterface') : blockers.length ? t('admin:agentAdminTools.enable', { blockers: blockers.join(', '), interpolation: { escapeValue: false } }) : t('admin:agentAdminTools.eligibleSubjectRequestAuthorization')
 async function copyEndpoint() {
-  try { await navigator.clipboard.writeText(endpoint); copyMessage.value = 'Resource URL copied' }
-  catch { copyMessage.value = 'Copy unavailable. Select and copy the resource URL above.' }
+  try { await navigator.clipboard.writeText(endpoint); copyMessage.value = t('admin:agentAdminTools.resourceUrlCopied') }
+  catch { copyMessage.value = t('admin:agentAdminTools.copyUnavailableSelectCopy') }
 }
 </script>
 

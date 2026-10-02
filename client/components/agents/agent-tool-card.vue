@@ -13,14 +13,14 @@
         <v-icon :icon="locallyExpired ? 'mdi-timer-alert-outline' : 'mdi-shield-key-outline'" size="20" />
       </span>
       <div class="agent-operation__heading">
-        <h3 :id="`agent-approval-title-${proposal.id}`" class="text-title-medium">{{ locallyExpired ? 'Approval expired' : approvalTitle }}</h3>
+        <h3 :id="`agent-approval-title-${proposal.id}`" class="text-title-medium">{{ locallyExpired ? $t('common:agentToolCard.approvalExpired') : approvalTitle }}</h3>
       </div>
       <v-chip
         :color="!locallyExpired && proposal.risk === 'destructive-write' ? 'error' : 'warning'"
         size="small"
         variant="tonal"
         :prepend-icon="locallyExpired ? 'mdi-timer-alert-outline' : 'mdi-pause-circle-outline'"
-      >{{ locallyExpired ? 'Expired' : 'Awaiting approval' }}</v-chip>
+      >{{ locallyExpired ? $t('common:agentToolCard.expired') : $t('common:agentToolCard.awaitingApproval') }}</v-chip>
     </header>
 
     <p class="agent-operation__summary text-body-medium">{{ proposal.summary }}</p>
@@ -38,18 +38,18 @@
     </div>
 
     <dl class="operation-facts">
-      <dt>Command</dt>
+      <dt>{{ $t('common:agentToolCard.command') }}</dt>
       <dd><code>{{ tool.actionName }}</code></dd>
       <template v-if="proposal.target">
-        <dt>Target</dt>
+        <dt>{{ $t('common:agentToolCard.target') }}</dt>
         <dd><code>{{ proposal.target.locale }}/{{ proposal.target.path }}</code></dd>
       </template>
-      <dt>Requested</dt>
+      <dt>{{ $t('common:agentToolCard.requested') }}</dt>
       <dd>
         <time :datetime="proposal.approval?.requestedAt">{{ formatTimestamp(proposal.approval?.requestedAt) }}</time>
         <span class="operation-facts__secondary"> · {{ locallyExpired ? 'waited' : 'waiting' }} {{ approvalDuration }}</span>
       </dd>
-      <dt>Deadline</dt>
+      <dt>{{ $t('common:agentToolCard.deadline') }}</dt>
       <dd>
         <time :datetime="proposal.expiresAt">{{ formatTimestamp(proposal.expiresAt) }}</time>
         <span class="operation-facts__secondary"> · {{ expiryLabel }}</span>
@@ -60,21 +60,21 @@
       <summary>
         <span>
           <v-icon icon="mdi-code-json" size="18" aria-hidden="true" />
-          Input and verification
+          {{ $t('common:agentToolCard.inputVerification') }}
         </span>
-        <small>Bounded review record</small>
+        <small>{{ $t('common:agentToolCard.boundedReviewRecord') }}</small>
       </summary>
       <dl class="operation-facts operation-facts--technical">
-        <dt>Tool call</dt><dd><code>{{ tool.id }}</code></dd>
-        <dt>Input digest</dt><dd><code>{{ proposal.inputHash }}</code></dd>
+        <dt>{{ $t('common:agentToolCard.toolCall') }}</dt><dd><code>{{ tool.id }}</code></dd>
+        <dt>{{ $t('common:agentToolCard.inputDigest') }}</dt><dd><code>{{ proposal.inputHash }}</code></dd>
         <template v-if="proposal.baseSourceRevision">
-          <dt>Base revision</dt><dd><code>{{ proposal.baseSourceRevision }}</code></dd>
+          <dt>{{ $t('common:agentToolCard.baseRevision') }}</dt><dd><code>{{ proposal.baseSourceRevision }}</code></dd>
         </template>
         <template v-if="proposal.patchSha256">
-          <dt>Patch digest</dt><dd><code>{{ proposal.patchSha256 }}</code></dd>
+          <dt>{{ $t('common:agentToolCard.patchDigest') }}</dt><dd><code>{{ proposal.patchSha256 }}</code></dd>
         </template>
         <template v-if="proposal.diffSha256">
-          <dt>Diff digest</dt><dd><code>{{ proposal.diffSha256 }}</code></dd>
+          <dt>{{ $t('common:agentToolCard.diffDigest') }}</dt><dd><code>{{ proposal.diffSha256 }}</code></dd>
         </template>
       </dl>
     </details>
@@ -83,24 +83,24 @@
       <summary>
         <span>
           <v-icon icon="mdi-file-compare" size="18" aria-hidden="true" />
-          Proposed output
+          {{ $t('common:agentToolCard.proposedOutput2') }}
         </span>
-        <small>{{ diffLines.length }} diff {{ diffLines.length === 1 ? 'line' : 'lines' }}</small>
+        <small>{{ $t('common:agentToolCard.diffLinesCount', { count: diffLines.length }) }}</small>
       </summary>
       <div class="proposal-diff">
-        <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="`Proposed output record for ${proposal.target?.path || actionLabel}`"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+        <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="$t('common:agentToolCard.proposedOutputRecord', { path: proposal.target?.path || actionLabel, interpolation: { escapeValue: false } })"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
         <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" :aria-controls="`agent-approval-diff-${proposal.id}`" :aria-expanded="expanded" @click="expanded = !expanded">
-          {{ expanded ? 'Show less' : `Show all ${diffLines.length} lines` }}
+          {{ expanded ? $t('common:agentToolCard.showLess') : $t('common:agentToolCard.showAllLines', { diffLinesCount: diffLines.length, interpolation: { escapeValue: false } }) }}
         </v-btn>
       </div>
     </details>
 
-    <p v-if="networkBlocked" class="agent-operation__network-note" role="status">Connection required to approve or deny this operation. Your review remains open until the workspace reconnects.</p>
+    <p v-if="networkBlocked" class="agent-operation__network-note" role="status">{{ $t('common:agentToolCard.connectionRequiredApproveDeny') }}</p>
     <div v-if="!locallyExpired && proposal.risk === 'destructive-write'" class="agent-operation__confirmation">
-      <p><strong>Deletion confirmation</strong> · This cannot be undone from the Agent conversation.</p>
+      <p><strong>{{ $t('common:agentToolCard.deletionConfirmation') }}</strong> {{ $t('common:agentToolCard.cannotUndoneAgentConversation') }}</p>
       <v-text-field
         v-model="confirmationPath"
-        label="Type the exact page path to enable deletion"
+        :label="$t('common:agentToolCard.typeExactPagePath')"
         :hint="proposal.target?.path || ''"
         persistent-hint
         autocomplete="off"
@@ -118,8 +118,8 @@
 
     <div v-if="!locallyExpired" class="agent-operation__decision">
       <div class="agent-operation__decision-copy">
-        <strong>Choose deliberately</strong>
-        <small>Deny leaves Wiki unchanged. {{ reviewDescription }}</small>
+        <strong>{{ $t('common:agentToolCard.chooseDeliberately') }}</strong>
+        <small>{{ $t('common:agentToolCard.denyLeavesWikiUnchanged', { reviewDescription, interpolation: { escapeValue: false } }) }}</small>
       </div>
       <div class="agent-operation__actions">
         <v-btn
@@ -129,7 +129,7 @@
           :disabled="!canDecide"
           :loading="decisionInFlight === 'denied'"
           @click="decide('denied')"
-        >Deny</v-btn>
+        >{{ $t('common:agentToolCard.deny') }}</v-btn>
         <v-btn
           ref="approveButton"
           :color="proposal.risk === 'destructive-write' ? 'error' : 'primary'"
@@ -142,7 +142,7 @@
     </div>
     <p v-else :id="`agent-approval-expired-${proposal.id}`" class="agent-operation__expired" role="status">
       <v-icon icon="mdi-timer-alert-outline" size="18" aria-hidden="true" />
-      Approval expired. Refresh the proposal before deciding.
+      {{ $t('common:agentToolCard.approvalExpiredRefreshProposal') }}
     </p>
     <p
       v-if="decisionInFlight && !locallyExpired"
@@ -173,22 +173,22 @@
     <div class="agent-operation-receipt__details">
       <p class="agent-operation-receipt__note">{{ receiptNote }}</p>
       <dl class="operation-facts">
-        <dt>Command</dt><dd><code>{{ tool.actionName }}</code></dd>
-        <dt>Summary</dt><dd>{{ proposal.summary }}</dd>
+        <dt>{{ $t('common:agentToolCard.command') }}</dt><dd><code>{{ tool.actionName }}</code></dd>
+        <dt>{{ $t('common:agentToolCard.summary') }}</dt><dd>{{ proposal.summary }}</dd>
         <template v-if="proposal.target">
-          <dt>Target</dt><dd><code>{{ proposal.target.locale }}/{{ proposal.target.path }}</code></dd>
+          <dt>{{ $t('common:agentToolCard.target') }}</dt><dd><code>{{ proposal.target.locale }}/{{ proposal.target.path }}</code></dd>
         </template>
-        <dt>Execution</dt><dd>{{ toolStateLabel }}</dd>
-        <dt>Duration</dt><dd>{{ toolDuration }}</dd>
+        <dt>{{ $t('common:agentToolCard.execution') }}</dt><dd>{{ toolStateLabel }}</dd>
+        <dt>{{ $t('common:agentToolCard.duration') }}</dt><dd>{{ toolDuration }}</dd>
         <template v-if="proposal.approval?.decidedAt">
-          <dt>Decision time</dt>
+          <dt>{{ $t('common:agentToolCard.decisionTime') }}</dt>
           <dd>
             <time :datetime="proposal.approval.decidedAt">{{ formatTimestamp(proposal.approval.decidedAt) }}</time>
-            <span class="operation-facts__secondary"> · {{ approvalDuration }} after request</span>
+            <span class="operation-facts__secondary"> {{ $t('common:agentToolCard.afterRequest', { approvalDuration, interpolation: { escapeValue: false } }) }}</span>
           </dd>
         </template>
         <template v-if="proposal.approval?.decisionNote">
-          <dt>Decision note</dt><dd>{{ proposal.approval.decisionNote }}</dd>
+          <dt>{{ $t('common:agentToolCard.decisionNote') }}</dt><dd>{{ proposal.approval.decisionNote }}</dd>
         </template>
       </dl>
 
@@ -196,16 +196,16 @@
         <summary>
           <span>
             <v-icon icon="mdi-fingerprint" size="18" aria-hidden="true" />
-            Verification record
+            {{ $t('common:agentToolCard.verificationRecord') }}
           </span>
-          <small>Hashes and identifiers</small>
+          <small>{{ $t('common:agentToolCard.hashesIdentifiers') }}</small>
         </summary>
         <dl class="operation-facts operation-facts--technical">
-          <dt>Tool call</dt><dd><code>{{ tool.id }}</code></dd>
-          <dt>Input digest</dt><dd><code>{{ proposal.inputHash }}</code></dd>
-          <template v-if="proposal.patchSha256"><dt>Patch digest</dt><dd><code>{{ proposal.patchSha256 }}</code></dd></template>
-          <template v-if="proposal.resultCanonicalSha256"><dt>Result digest</dt><dd><code>{{ proposal.resultCanonicalSha256 }}</code></dd></template>
-          <template v-if="proposal.diffSha256"><dt>Diff digest</dt><dd><code>{{ proposal.diffSha256 }}</code></dd></template>
+          <dt>{{ $t('common:agentToolCard.toolCall') }}</dt><dd><code>{{ tool.id }}</code></dd>
+          <dt>{{ $t('common:agentToolCard.inputDigest') }}</dt><dd><code>{{ proposal.inputHash }}</code></dd>
+          <template v-if="proposal.patchSha256"><dt>{{ $t('common:agentToolCard.patchDigest') }}</dt><dd><code>{{ proposal.patchSha256 }}</code></dd></template>
+          <template v-if="proposal.resultCanonicalSha256"><dt>{{ $t('common:agentToolCard.resultDigest') }}</dt><dd><code>{{ proposal.resultCanonicalSha256 }}</code></dd></template>
+          <template v-if="proposal.diffSha256"><dt>{{ $t('common:agentToolCard.diffDigest') }}</dt><dd><code>{{ proposal.diffSha256 }}</code></dd></template>
         </dl>
       </details>
 
@@ -213,14 +213,14 @@
         <summary>
           <span>
             <v-icon icon="mdi-file-compare" size="18" aria-hidden="true" />
-            Proposed output
+            {{ $t('common:agentToolCard.proposedOutput2') }}
           </span>
-          <small>{{ diffLines.length }} diff {{ diffLines.length === 1 ? 'line' : 'lines' }}</small>
+          <small>{{ $t('common:agentToolCard.diffLinesCount', { count: diffLines.length }) }}</small>
         </summary>
         <div class="proposal-diff">
-          <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="`Proposed output for ${proposal.target?.path || actionLabel}`"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+          <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="$t('common:agentToolCard.proposedOutput', { path: proposal.target?.path || actionLabel, interpolation: { escapeValue: false } })"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
           <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" :aria-controls="`agent-approval-diff-${proposal.id}`" :aria-expanded="expanded" @click="expanded = !expanded">
-            {{ expanded ? 'Show less' : `Show all ${diffLines.length} lines` }}
+            {{ expanded ? $t('common:agentToolCard.showLess') : $t('common:agentToolCard.showAllLines', { diffLinesCount: diffLines.length, interpolation: { escapeValue: false } }) }}
           </v-btn>
         </div>
       </details>
@@ -232,6 +232,9 @@
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import type { AgentProposalView, AgentToolCallView, AgentToolState } from '../../../shared/agents/contracts.ts'
 import { agentApprovalTitle, agentProposalReceiptLabel } from './agent-thread-presentation.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const props = defineProps<{ tool: AgentToolCallView; proposal: AgentProposalView; busy?: boolean; networkBlocked?: boolean }>()
 const emit = defineEmits<{ decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string] }>()
@@ -263,23 +266,23 @@ const locallyExpired = computed(() => {
 const approvalTitle = computed(() => agentApprovalTitle(props.proposal.actionName))
 const actionLabel = computed(() => approvalTitle.value.replace(/^Wiki Agent wants to /, '').replace(/^Wiki Agent needs your approval$/, 'review this action'))
 const approveLabel = computed(() => {
-  if (props.proposal.risk === 'destructive-write') return 'Delete page'
-  if (props.proposal.actionName === 'pages.preparePatch') return 'Apply edit'
-  if (props.proposal.actionName === 'pages.prepareMove') return 'Move page'
-  if (props.proposal.actionName === 'pages.prepareCreate') return 'Create page'
-  if (props.proposal.actionName === 'pages.prepareRestore') return 'Restore page'
-  return 'Approve action'
+  if (props.proposal.risk === 'destructive-write') return t('common:agentToolCard.deletePage')
+  if (props.proposal.actionName === 'pages.preparePatch') return t('common:agentToolCard.applyEdit')
+  if (props.proposal.actionName === 'pages.prepareMove') return t('common:agentToolCard.movePage')
+  if (props.proposal.actionName === 'pages.prepareCreate') return t('common:agentToolCard.createPage')
+  if (props.proposal.actionName === 'pages.prepareRestore') return t('common:agentToolCard.restorePage')
+  return t('common:agentToolCard.approveAction')
 })
-const riskLabel = computed(() => props.proposal.risk === 'destructive-write' ? 'High-risk destructive write' : 'Scoped Wiki write')
+const riskLabel = computed(() => props.proposal.risk === 'destructive-write' ? t('common:agentToolCard.highRiskDestructiveWrite') : t('common:agentToolCard.scopedWikiWrite'))
 const riskDescription = computed(() => props.proposal.risk === 'destructive-write'
-  ? 'Approval permanently authorizes deletion of the exact target named below.'
-  : 'Approval authorizes this proposal only; it does not grant ongoing write access.')
+  ? t('common:agentToolCard.approvalPermanentlyAuthorizesDeletion')
+  : t('common:agentToolCard.approvalAuthorizesProposalOnly'))
 const receiptLabel = computed(() => {
-  if (props.proposal.approval?.status === 'denied') return 'Change denied'
-  if (props.proposal.approval?.status === 'expired') return 'Approval expired'
-  if (props.proposal.approval?.status === 'cancelled' || props.proposal.status === 'cancelled' || props.tool.state === 'cancelled') return 'Change cancelled'
-  if (props.tool.state === 'omitted') return 'Result omitted'
-  if (props.tool.state === 'not_executed') return 'Not executed'
+  if (props.proposal.approval?.status === 'denied') return t('common:agentToolCard.changeDenied')
+  if (props.proposal.approval?.status === 'expired') return t('common:agentToolCard.approvalExpired')
+  if (props.proposal.approval?.status === 'cancelled' || props.proposal.status === 'cancelled' || props.tool.state === 'cancelled') return t('common:agentToolCard.changeCancelled')
+  if (props.tool.state === 'omitted') return t('common:agentToolCard.resultOmitted')
+  if (props.tool.state === 'not_executed') return t('common:agentToolCard.notExecuted')
   return agentProposalReceiptLabel(props.proposal.status)
 })
 const statusKey = computed<OperationStatus>(() => {
@@ -314,34 +317,34 @@ const statusIcon = computed(() => ({
   not_executed: 'mdi-minus-circle-outline'
 })[statusKey.value])
 const toolStateLabels: Readonly<Record<AgentToolState, string>> = {
-  preparing: 'Preparing',
-  running: 'Running',
-  awaitingApproval: 'Awaiting approval',
-  complete: 'Completed successfully',
-  failed: 'Failed',
-  denied: 'Denied',
-  cancelled: 'Cancelled',
-  omitted: 'Result omitted',
-  not_executed: 'Not executed'
+  preparing: t('common:agentToolCard.preparing'),
+  running: t('common:agentToolCard.running'),
+  awaitingApproval: t('common:agentToolCard.awaitingApproval'),
+  complete: t('common:agentToolCard.completedSuccessfully'),
+  failed: t('common:agentToolCard.failed'),
+  denied: t('common:agentToolCard.denied'),
+  cancelled: t('common:agentToolCard.cancelled'),
+  omitted: t('common:agentToolCard.resultOmitted'),
+  not_executed: t('common:agentToolCard.notExecuted')
 }
 const toolStateLabel = computed(() => toolStateLabels[props.tool.state])
 const receiptNote = computed(() => {
-  if (statusKey.value === 'success') return 'The approved operation completed. The verification record remains available below.'
-  if (statusKey.value === 'omitted') return 'The operation completed, but its result was omitted from the response context.'
-  if (statusKey.value === 'not_executed') return 'The operation was not executed because response context capacity was reached.'
-  if (statusKey.value === 'running') return 'Approval was recorded and the reviewed operation is now being applied.'
+  if (statusKey.value === 'success') return t('common:agentToolCard.approvedOperationCompletedVerification')
+  if (statusKey.value === 'omitted') return t('common:agentToolCard.operationCompletedButResult')
+  if (statusKey.value === 'not_executed') return t('common:agentToolCard.operationWasNotExecuted')
+  if (statusKey.value === 'running') return t('common:agentToolCard.approvalWasRecordedReviewed')
   if (statusKey.value === 'failed') return props.proposal.status === 'recovery_required'
-    ? 'The operation could not finish cleanly and requires recovery by an administrator.'
-    : 'The approved operation failed. No automatic retry was performed.'
-  if (statusKey.value === 'denied') return 'The proposal was denied; no authority was granted.'
-  if (statusKey.value === 'cancelled') return 'The operation was cancelled and no further work will run for this proposal.'
-  if (statusKey.value === 'expired') return 'No decision was recorded before the approval window closed.'
-  return 'This operation is waiting for a decision.'
+    ? t('common:agentToolCard.operationCouldNotFinish')
+    : t('common:agentToolCard.approvedOperationFailedNo')
+  if (statusKey.value === 'denied') return t('common:agentToolCard.proposalWasDeniedNo')
+  if (statusKey.value === 'cancelled') return t('common:agentToolCard.operationWasCancelledNo')
+  if (statusKey.value === 'expired') return t('common:agentToolCard.noDecisionWasRecorded')
+  return t('common:agentToolCard.operationWaitingDecision')
 })
 const expiryLabel = computed(() => {
   if (locallyExpired.value) return 'expired'
   const minutes = Math.ceil((new Date(props.proposal.expiresAt).valueOf() - Date.now()) / 60_000)
-  return minutes === 1 ? 'expires in 1 minute' : `expires in ${minutes} minutes`
+  return minutes === 1 ? t('common:agentToolCard.expires1Minute') : t('common:agentToolCard.expiresMinutes', { minutes, interpolation: { escapeValue: false } })
 })
 const canDecide = computed(() => approvalPending.value && !locallyExpired.value && !props.busy && !props.networkBlocked && !decisionInFlight.value)
 const diffLines = computed(() => {
@@ -358,23 +361,23 @@ const diffLines = computed(() => {
 })
 const reviewAdequate = computed(() => Boolean(props.proposal.target?.path.trim() || props.proposal.diff?.trim()))
 const reviewDescription = computed(() => reviewAdequate.value
-  ? 'Approve authorizes only the effect represented by the available target or proposed diff. The visible command, target, diff, and hashes are this bounded review record.'
-  : 'Approval is unavailable because neither a target nor proposed diff represents the effect.')
+  ? t('common:agentToolCard.approveAuthorizesOnlyEffect')
+  : t('common:agentToolCard.approvalUnavailableBecauseNeither'))
 const visibleDiff = computed(() => expanded.value ? diffLines.value : diffLines.value.slice(0, collapsedLineCount))
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-const formatTimestamp = (value: string | null | undefined): string => value ? dateFormatter.format(new Date(value)) : 'Not recorded'
+const formatTimestamp = (value: string | null | undefined): string => value ? dateFormatter.format(new Date(value)) : t('common:agentToolCard.notRecorded')
 const formatDuration = (start: string | null | undefined, end: string | null | undefined): string => {
-  if (!start) return 'Not recorded'
+  if (!start) return t('common:agentToolCard.notRecorded')
   if (!end) void expiryTick.value
   const milliseconds = Math.max(0, (end ? new Date(end).valueOf() : Date.now()) - new Date(start).valueOf())
   const seconds = Math.floor(milliseconds / 1000)
-  if (seconds < 1) return 'under 1 second'
-  if (seconds < 60) return `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`
+  if (seconds < 1) return t('common:agentToolCard.under1Second')
+  if (seconds < 60) return `${t('common:agentToolCard.secondsCount', { count: seconds })}`
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+  if (minutes < 60) return `${t('common:agentToolCard.minutesCount', { count: minutes })}`
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  return `${hours} ${hours === 1 ? 'hour' : 'hours'}${remainingMinutes ? ` ${remainingMinutes} min` : ''}`
+  return `${t('common:agentToolCard.hoursCount', { count: hours })}${remainingMinutes ? t('common:agentToolCard.min', { remainingMinutes, interpolation: { escapeValue: false } }) : ''}`
 }
 const approvalDuration = computed(() => {
   const end = props.proposal.approval?.decidedAt ?? (locallyExpired.value ? props.proposal.expiresAt : null)
@@ -421,7 +424,7 @@ watch(() => props.busy, busy => {
   const target = decisionInFlight.value && approvalPending.value
     ? decisionInFlight.value === 'approved' ? approveButton.value : denyButton.value
     : null
-  if (target) decisionMessage.value = 'The decision could not be completed. Review the request and try again.'
+  if (target) decisionMessage.value = t('common:agentToolCard.decisionCouldNotCompleted')
   decisionInFlight.value = null
   if (target) void nextTick(() => elementForRef(target)?.focus())
 })
@@ -437,11 +440,11 @@ const decide = (decision: 'approved' | 'denied'): void => {
   if (decision === 'approved' && !reviewAdequate.value) return
   if (decision === 'approved' && props.proposal.risk === 'destructive-write' && confirmationPath.value !== props.proposal.target?.path) return
   decisionInFlight.value = decision
-  decisionMessage.value = decision === 'approved' ? 'Submitting approval.' : 'Submitting denial.'
+  decisionMessage.value = decision === 'approved' ? t('common:agentToolCard.submittingApproval') : t('common:agentToolCard.submittingDenial')
   emit('decision', props.proposal.id, approval.id, decision, props.proposal.risk === 'destructive-write' ? confirmationPath.value : undefined)
   void nextTick(() => {
     if (props.busy || !approvalPending.value || decisionInFlight.value !== decision) return
-    decisionMessage.value = 'The decision could not be completed. Review the request and try again.'
+    decisionMessage.value = t('common:agentToolCard.decisionCouldNotCompleted')
     decisionInFlight.value = null
     const target = decision === 'approved' ? approveButton.value : denyButton.value
     void nextTick(() => elementForRef(target)?.focus())

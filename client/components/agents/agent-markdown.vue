@@ -14,6 +14,9 @@ import {
 import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
 import { createAgentCitationResolver } from './agent-citations.ts'
 import { wikiSourceSelectorFromHref, type WikiSourceSelector } from '../../../shared/wiki-source.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const {
   content,
@@ -59,8 +62,8 @@ interface RenderedDomState {
 const markdownRoot = useTemplateRef<HTMLElement>('markdownRoot')
 const resetTimers = new Map<HTMLButtonElement, CopyReset>()
 const resetCopyLabel = (button: HTMLButtonElement): void => {
-  button.textContent = 'Copy'
-  button.setAttribute('aria-label', 'Copy code to clipboard')
+  button.textContent = t('common:actions.copy')
+  button.setAttribute('aria-label', t('common:agentMarkdown.copyCodeClipboard'))
   button.removeAttribute('data-copy-state')
 }
 const scheduleCopyReset = (button: HTMLButtonElement, delay: number): void => {
@@ -212,7 +215,7 @@ const decorateRenderedHtml = (html: string): string => {
     if (!selector) continue
     anchor.dataset.sourcePreview = 'true'
     anchor.removeAttribute('target')
-    anchor.setAttribute('aria-label', `${anchor.getAttribute('aria-label') ?? 'Citation'} (preview source)`)
+    anchor.setAttribute('aria-label', t('common:agentMarkdown.previewSource', { getAttribute: anchor.getAttribute('aria-label') ?? 'Citation', interpolation: { escapeValue: false } }))
     anchor.querySelector('.agent-markdown__new-window')?.remove()
   }
 
@@ -238,13 +241,13 @@ const decorateRenderedHtml = (html: string): string => {
     sourceDisclosure.className = 'agent-markdown__diagram-source'
     sourceDisclosure.open = false
     const summary = document.createElement('summary')
-    summary.textContent = 'Mermaid source'
+    summary.textContent = t('common:agentMarkdown.mermaidSource')
     sourceDisclosure.append(summary, pre)
     shell.append(sourceDisclosure)
     const output = document.createElement('div')
     output.className = 'agent-markdown__diagram-output'
     output.setAttribute('aria-busy', 'true')
-    output.setAttribute('aria-label', 'Rendering Mermaid diagram')
+    output.setAttribute('aria-label', t('common:agentMarkdown.renderingMermaidDiagram'))
     shell.insertBefore(output, sourceDisclosure)
   }
   return template.innerHTML
@@ -300,7 +303,7 @@ const cancelDiagramJobs = (): void => {
 }
 
 const MERMAID_LIMIT_NOTICE_CLASS = 'content-extension-diagram__limit-notice'
-const MERMAID_LIMIT_NOTICE_MESSAGE = `Additional diagrams remain available as source because only ${MERMAID_MAX_DIAGRAMS_PER_ROOT} diagrams are rendered automatically per message.`
+const MERMAID_LIMIT_NOTICE_MESSAGE = t('common:agentMarkdown.additionalDiagramsRemainAvailable', { MERMAID_MAX_DIAGRAMS_PER_ROOT, interpolation: { escapeValue: false } })
 
 const showMermaidLimitNotice = (root: HTMLElement): void => {
   if (root.querySelector(`.${MERMAID_LIMIT_NOTICE_CLASS}`)) return
@@ -349,7 +352,7 @@ const enhanceMermaidDiagrams = (version: number): void => {
     shell.dataset.diagramState = 'pending'
     shell.setAttribute('aria-busy', 'true')
     output.setAttribute('aria-busy', 'true')
-    output.setAttribute('aria-label', 'Rendering Mermaid diagram')
+    output.setAttribute('aria-label', t('common:agentMarkdown.renderingMermaidDiagram'))
     const isCurrent = (): boolean =>
       !controller.signal.aborted &&
       renderVersion === version &&
@@ -364,7 +367,7 @@ const enhanceMermaidDiagrams = (version: number): void => {
     }).then(svg => {
       if (!isCurrent() || !svg) return
       svg.setAttribute('role', 'img')
-      if (!svg.getAttribute('aria-label')) svg.setAttribute('aria-label', 'Mermaid diagram')
+      if (!svg.getAttribute('aria-label')) svg.setAttribute('aria-label', t('common:agentMarkdown.mermaidDiagram'))
       output.replaceChildren(svg)
       output.removeAttribute('aria-busy')
       output.removeAttribute('aria-label')
@@ -375,7 +378,7 @@ const enhanceMermaidDiagrams = (version: number): void => {
       const status = root.ownerDocument.createElement('p')
       status.className = 'agent-markdown__diagram-error'
       status.setAttribute('role', 'alert')
-      status.textContent = 'Diagram could not be rendered safely. Mermaid source remains available below.'
+      status.textContent = t('common:agentMarkdown.diagramCouldNotRendered')
       output.replaceChildren(status)
       output.removeAttribute('aria-busy')
       output.removeAttribute('aria-label')
@@ -458,10 +461,10 @@ const copyCode = async (event: MouseEvent): Promise<void> => {
   try {
     await navigator.clipboard.writeText(code)
     const activeButton = currentButton()
-    if (activeButton) showCopyResult(activeButton, 'Copied', 'success')
+    if (activeButton) showCopyResult(activeButton, t('common:agentMarkdown.copied'), 'success')
   } catch {
     const activeButton = currentButton()
-    if (activeButton) showCopyResult(activeButton, 'Copy unavailable', 'error')
+    if (activeButton) showCopyResult(activeButton, t('common:agentMarkdown.copyUnavailable'), 'error')
   }
 }
 

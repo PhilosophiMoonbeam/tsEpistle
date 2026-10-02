@@ -5,6 +5,7 @@ import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 resetBody()
 setLocation('/wiki/page')
 
@@ -118,7 +119,7 @@ const testTranslations: Record<string, string> = {
 }
 
 const translate = (key: string, params?: Record<string, unknown>): string => {
-  const template = testTranslations[key] ?? (typeof params?.defaultValue === 'string' ? params.defaultValue : key)
+  const template = testTranslations[key] ?? (typeof params?.defaultValue === 'string' ? params.defaultValue : translateEnglish(key, params))
   return Object.entries(params ?? {}).reduce((translated, [name, value]) => translated.split(`{{${name}}}`).join(String(value)), template)
 }
 

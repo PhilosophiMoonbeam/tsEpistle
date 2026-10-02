@@ -3,13 +3,13 @@
     auth-shell.setup-shell(
       :title='product.name'
       heading-id='setup-title'
-      eyebrow='First-run setup'
+      :eyebrow='$t(`common:setup.firstRunSetup`)'
       logo-url='/_assets/svg/icon-tsepistle.svg'
       size='wide'
       :busy='loading'
     )
       template(#lead)
-        p Independent community fork derived from {{ product.upstreamBase }}
+        p {{ $t(`common:setup.independentCommunityForkDerived`, { upstreamBase: product.upstreamBase, interpolation: { escapeValue: false } }) }}
 
       v-alert.setup-alert(
         v-model='error'
@@ -28,9 +28,9 @@
         variant='tonal'
         icon='mdi-package-variant-closed'
       )
-        span You are installing #[strong {{ product.name }} {{ product.version }}].
+        span {{ $t(`common:setup.youInstalling`) }} #[strong {{ product.name }} {{ product.version }}].
         .text-body-small.mt-1
-          a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') View source at revision {{ product.revision.slice(0, 12) }}
+          a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') {{ $t(`common:setup.viewSourceRevision`, { revision: product.revision.slice(0, 12), interpolation: { escapeValue: false } }) }}
 
       form#setup-form.setup-form(@submit.prevent='install', :aria-busy='loading', novalidate)
         section.setup-section(aria-labelledby='setup-admin-title')
@@ -38,15 +38,15 @@
             .setup-section-icon(aria-hidden='true')
               v-icon(size='21') mdi-shield-account-outline
             div
-              h2#setup-admin-title Administrator account
-              p Create the account that will manage this wiki.
+              h2#setup-admin-title {{ $t(`common:setup.administratorAccount`) }}
+              p {{ $t(`common:setup.createAccountWillManage`) }}
           v-row
             v-col(cols='12')
               v-text-field(
                 variant='outlined'
                 v-model='conf.adminEmail'
-                label='Administrator email'
-                hint='The email address of the administrator account.'
+                :label='$t(`common:setup.administratorEmail`)'
+                :hint='$t(`common:setup.emailAddressAdministratorAccount`)'
                 persistent-hint
                 required
                 type='email'
@@ -62,7 +62,7 @@
                 ref='adminPassword'
                 counter
                 v-model='conf.adminPassword'
-                label='Password'
+                :label='$t(`common:setup.password`)'
                 :type="showPassword ? 'text' : 'password'"
                 autocomplete='new-password'
                 :hint='passwordHint'
@@ -74,7 +74,7 @@
                 prepend-inner-icon='mdi-lock-outline'
               )
                 template(v-slot:append-inner)
-                  password-visibility-toggle(v-model:visible='showPassword', field='administrator password', :disabled='loading')
+                  password-visibility-toggle(v-model:visible='showPassword', :field='$t(`common:setup.administratorPassword`)', :disabled='loading')
                 template(v-slot:loader)
                   password-strength(:model-value='conf.adminPassword')
             v-col(cols='12', sm='6')
@@ -83,10 +83,10 @@
                 ref='adminPasswordConfirm'
                 counter
                 v-model='conf.adminPasswordConfirm'
-                label='Confirm password'
+                :label='$t(`common:setup.confirmPassword`)'
                 :type="showPasswordConfirm ? 'text' : 'password'"
                 autocomplete='new-password'
-                hint='Enter the same password again.'
+                :hint='$t(`common:setup.enterSamePasswordAgain`)'
                 persistent-hint
                 required
                 :error-messages='fieldErrors.adminPasswordConfirm'
@@ -94,23 +94,23 @@
                 prepend-inner-icon='mdi-lock-check-outline'
               )
                 template(v-slot:append-inner)
-                  password-visibility-toggle(v-model:visible='showPasswordConfirm', field='password confirmation', :disabled='loading')
+                  password-visibility-toggle(v-model:visible='showPasswordConfirm', :field='$t(`common:setup.passwordConfirmation`)', :disabled='loading')
 
         section.setup-section(aria-labelledby='setup-address-title')
           .setup-section-heading
             .setup-section-icon(aria-hidden='true')
               v-icon(size='21') mdi-web
             div
-              h2#setup-address-title Public address
-              p Tell the wiki which URL visitors will use.
+              h2#setup-address-title {{ $t(`common:setup.publicAddress`) }}
+              p {{ $t(`common:setup.tellWikiWhichUrl`) }}
           v-text-field(
             variant='outlined'
             ref='adminSiteUrl'
             v-model='conf.siteUrl'
-            label='Site URL'
-            placeholder='https://wiki.example.com'
+            :label='$t(`common:setup.siteUrl`)'
+            :placeholder='$t(`common:setup.httpsWikiExampleCom`)'
             persistent-placeholder
-            hint='Full public URL without a trailing slash, for example https://wiki.example.com.'
+            :hint='$t(`common:setup.fullPublicUrlWithout`)'
             persistent-hint
             required
             type='url'
@@ -126,20 +126,20 @@
             .setup-section-icon(aria-hidden='true')
               v-icon(size='21') mdi-chart-box-outline
             div
-              h2#setup-telemetry-title Telemetry
-              p Share anonymous install data to help improve the project.
+              h2#setup-telemetry-title {{ $t(`common:setup.telemetry`) }}
+              p {{ $t(`common:setup.shareAnonymousInstallData`) }}
           v-switch(
             inset
             color='primary'
             v-model='conf.telemetry'
-            label='Allow anonymous telemetry'
+            :label='$t(`common:setup.allowAnonymousTelemetry`)'
             :disabled='loading'
             aria-describedby='setup-telemetry-details'
             hide-details
           )
           p#setup-telemetry-details.setup-telemetry-details
-            | At install and at each startup, the server sends its version, platform, operating system, CPU count, memory, database type and version, and a random install ID.
-            | It never sends pages, users or settings. You can turn this off later in Administration.
+            | {{ $t(`common:setup.installEachStartupServer`) }}
+            | {{ $t(`common:setup.neverSendsPagesUsers`) }}
 
       .setup-actions
         v-btn(
@@ -154,7 +154,7 @@
           block
         )
           v-icon(start) mdi-check
-          span Install {{ product.name }}
+          span {{ $t(`common:setup.install`, { name: product.name, interpolation: { escapeValue: false } }) }}
 
     v-dialog(:model-value='loading || success', width='420', persistent, aria-labelledby='setup-progress-title')
       v-card.setup-progress(variant='flat' :aria-busy='loading')
@@ -168,13 +168,13 @@
             )
           v-icon.setup-progress-success(v-else icon='mdi-check-circle-outline' size='56' color='success' aria-hidden='true')
           template(v-if='!success')
-            .setup-progress-title#setup-progress-title(role='status' aria-live='polite') Finalizing your installation...
-            .setup-progress-copy Just a moment
+            .setup-progress-title#setup-progress-title(role='status' aria-live='polite') {{ $t(`common:setup.finalizingInstallation`) }}
+            .setup-progress-copy {{ $t(`common:setup.justMoment`) }}
           template(v-else)
-            .setup-progress-title#setup-progress-title(role='status' aria-live='polite') Installation complete!
-            .setup-progress-copy(v-if='readinessChecking') Waiting for the server to be ready...
-            .setup-progress-copy(v-else-if='readinessTimedOut') The server is still starting. Click Continue to sign in to retry.
-            .setup-progress-copy(v-else) Taking you to sign in...
+            .setup-progress-title#setup-progress-title(role='status' aria-live='polite') {{ $t(`common:setup.installationComplete`) }}
+            .setup-progress-copy(v-if='readinessChecking') {{ $t(`common:setup.waitingServerReady`) }}
+            .setup-progress-copy(v-else-if='readinessTimedOut') {{ $t(`common:setup.serverStillStartingClick`) }}
+            .setup-progress-copy(v-else) {{ $t(`common:setup.takingYouSign`) }}
             v-btn.mt-4(
               color='primary'
               variant='flat'
@@ -182,7 +182,7 @@
               :loading='readinessChecking'
               :disabled='readinessChecking'
               @click='continueToLogin'
-            ) Continue to sign in
+            ) {{ $t(`common:setup.continueSign`) }}
 </template>
 
 <script lang='ts'>
@@ -272,7 +272,7 @@ export default {
       showPassword: false,
       showPasswordConfirm: false,
       // First-run setup has no policy endpoint yet; the server enforces the same minimum.
-      passwordHint: 'At least 12 characters; no more than 72 UTF-8 bytes.',
+      passwordHint: this.$t('common:setup.least12CharactersNo'),
       focusTimer: null as number | null,
       redirectTimer: null as number | null,
       readinessTimer: null as number | null,
@@ -363,7 +363,7 @@ export default {
           format: {
             pattern: '^(?!.*/$).*$',
             flags: 'i',
-            message: 'must not have a trailing slash'
+            message: this.$t('common:setup.mustNotHaveTrailing')
         }
         }
       }, {
@@ -406,7 +406,7 @@ export default {
 
         if (!resp.ok) {
           this.error = true
-          this.errorMessage = resp.error || 'Setup could not be completed. Please try again.'
+          this.errorMessage = resp.error || this.$t('common:setup.setupCouldNotCompleted')
           this.loading = false
           this.$nextTick(() => focusComponent(this.$refs.installButton))
           return

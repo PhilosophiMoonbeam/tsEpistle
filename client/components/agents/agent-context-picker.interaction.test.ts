@@ -15,6 +15,7 @@ if (!descriptor.template || !descriptor.scriptSetup) throw new Error('agent-cont
 
 import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 
 setLocation('/wiki/en/home')
 

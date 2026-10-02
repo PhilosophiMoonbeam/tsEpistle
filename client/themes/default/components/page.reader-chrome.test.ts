@@ -288,7 +288,7 @@ describe('page reader chrome rules', () => {
   })
 
   it('splits the author sentence around the name wherever the locale places it', () => {
-    const translate = (template: string) => (_key: string, options: { author: string }) => template.replace('{{author}}', options.author)
+    const translate = (template: string) => (key: string, options?: { author: string }) => key === 'common:page.author' ? 'AUTHOR_MARKER' : template.replace('{{author}}', options?.author ?? '')
     expect(call('authorAttribution', { $t: translate('by {{author}}') })).toEqual({ before: 'by ', after: '' })
     expect(call('authorAttribution', { $t: translate('{{author}} が編集') })).toEqual({ before: '', after: ' が編集' })
   })
@@ -333,6 +333,7 @@ describe('page reader chrome rules', () => {
   it('anchors utility tooltips to the card in the host it is teleported to', () => {
     const target = (vm: Record<string, unknown>) => {
       vm.pageToolsHost = call('pageToolsHost', vm)
+      vm.$t = (_key: string, options: { pageToolsHost: string }) => `${options.pageToolsHost} .page-tools-card`
       return call('utilityTooltipTarget', vm)
     }
     expect(target({ isTocMobile: false, winWidth: 1440 })).toBe('#page-desktop-rail .page-tools-card')

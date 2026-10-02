@@ -3,25 +3,25 @@
     <div class="wiki-source-preview" :class="themeClasses" @mousedown.self="emit('close')">
       <section ref="panel" class="wiki-source-preview__panel" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1" :aria-busy="loading">
         <header class="wiki-source-preview__header">
-          <div><p class="wiki-source-preview__eyebrow">Source notebook</p><h2 :id="titleId">{{ source?.title || 'Read a little closer' }}</h2></div>
-          <v-btn icon="mdi-close" variant="text" aria-label="Close source preview" @click="emit('close')" />
+          <div><p class="wiki-source-preview__eyebrow">{{ $t('common:wikiSourcePreview.sourceNotebook') }}</p><h2 :id="titleId">{{ source?.title || $t('common:wikiSourcePreview.readLittleCloser') }}</h2></div>
+          <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:wikiSourcePreview.closeSourcePreview')" @click="emit('close')" />
         </header>
-        <div class="wiki-source-preview__body" tabindex="0" role="region" aria-label="Source excerpt">
-          <div v-if="loading" class="wiki-source-preview__state" role="status"><v-progress-circular indeterminate size="24" width="2" /><p>Opening the source…</p></div>
-          <div v-else-if="error" class="wiki-source-preview__state" role="alert"><v-icon icon="mdi-file-hidden" size="30" /><p>{{ error }}</p><v-btn variant="tonal" @click="loadSource">Try again</v-btn></div>
+        <div class="wiki-source-preview__body" tabindex="0" role="region" :aria-label="$t('common:wikiSourcePreview.sourceExcerpt')">
+          <div v-if="loading" class="wiki-source-preview__state" role="status"><v-progress-circular indeterminate size="24" width="2" /><p>{{ $t('common:wikiSourcePreview.openingSource') }}</p></div>
+          <div v-else-if="error" class="wiki-source-preview__state" role="alert"><v-icon icon="mdi-file-hidden" size="30" /><p>{{ error }}</p><v-btn variant="tonal" @click="loadSource">{{ $t('common:wikiSourcePreview.tryAgain') }}</v-btn></div>
           <template v-else-if="source">
-            <div class="wiki-source-preview__metadata"><span>{{ source.locale.toUpperCase() }}</span><span v-if="source.visibility === 'private'">Private page</span><span>Revision {{ source.sourceRevision }}</span></div>
+            <div class="wiki-source-preview__metadata"><span>{{ source.locale.toUpperCase() }}</span><span v-if="source.visibility === 'private'">{{ $t('common:wikiSourcePreview.privatePage') }}</span><span>{{ $t('common:wikiSourcePreview.revision', { sourceRevision: source.sourceRevision, interpolation: { escapeValue: false } }) }}</span></div>
             <p class="wiki-source-preview__path">{{ source.path }}</p>
             <p v-if="source.description" class="wiki-source-preview__description">{{ source.description }}</p>
-            <div class="wiki-source-preview__caption"><span>{{ excerptParts.some(part => part.match) ? 'Passage matching your search' : 'From this page' }}</span><time :datetime="source.updatedAt">Updated {{ updated }}</time></div>
+            <div class="wiki-source-preview__caption"><span>{{ excerptParts.some(part => part.match) ? $t('common:wikiSourcePreview.passageMatchingSearch') : $t('common:wikiSourcePreview.page') }}</span><time :datetime="source.updatedAt">{{ $t('common:wikiSourcePreview.updated', { updated, interpolation: { escapeValue: false } }) }}</time></div>
             <p v-if="source.excerpt" class="wiki-source-preview__excerpt"><template v-for="(part, index) in excerptParts" :key="index"><mark v-if="part.match">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></p>
-            <p v-else class="wiki-source-preview__empty">This page has no preview text yet. Open the page to read its contents.</p>
-            <p v-if="source.excerptTruncated" class="wiki-source-preview__footnote">An excerpt from the current page. Open the source for the full context.</p>
+            <p v-else class="wiki-source-preview__empty">{{ $t('common:wikiSourcePreview.pageHasNoPreview') }}</p>
+            <p v-if="source.excerptTruncated" class="wiki-source-preview__footnote">{{ $t('common:wikiSourcePreview.excerptCurrentPageOpen') }}</p>
           </template>
         </div>
         <footer v-if="source && !loading && !error" class="wiki-source-preview__actions">
-          <v-btn :href="wikiSourceHref(source)" target="_blank" rel="noopener noreferrer" variant="text" append-icon="mdi-open-in-new">Open page<span class="sr-only"> in a new tab</span></v-btn>
-          <v-btn v-if="canAsk" class="wiki-source-preview__ask" variant="tonal" prepend-icon="mdi-text-box-plus-outline" @click="emit('ask', source)">Ask about this page</v-btn>
+          <v-btn :href="wikiSourceHref(source)" target="_blank" rel="noopener noreferrer" variant="text" append-icon="mdi-open-in-new">{{ $t('common:wikiSourcePreview.openPage') }}<span class="sr-only"> {{ $t('common:wikiSourcePreview.newTab') }}</span></v-btn>
+          <v-btn v-if="canAsk" class="wiki-source-preview__ask" variant="tonal" prepend-icon="mdi-text-box-plus-outline" @click="emit('ask', source)">{{ $t('common:wikiSourcePreview.askAboutPage') }}</v-btn>
         </footer>
       </section>
     </div>
@@ -34,6 +34,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplate
 import { wikiSourceHref, type WikiSource, type WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
 import { createModalFocusScope, type ModalFocusScope } from './modal-focus-scope.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const props = defineProps<{ selector: WikiSourceSelector; query?: string; canAsk?: boolean }>()
 const emit = defineEmits<{ close: []; ask: [source: WikiSource] }>()
 const { themeClasses } = useTheme()
@@ -61,7 +64,7 @@ const loadSource = async (): Promise<void> => {
   error.value = ''
   loading.value = true
   try { const result = await fetchWikiSource(props.selector, props.query ?? '', current.signal); if (!current.signal.aborted) source.value = result }
-  catch (value) { if (!current.signal.aborted) error.value = value instanceof Error ? value.message : 'Source unavailable.' }
+  catch (value) { if (!current.signal.aborted) error.value = value instanceof Error ? value.message : t('common:wikiSourcePreview.sourceUnavailable') }
   finally { if (!current.signal.aborted) loading.value = false }
 }
 watch(() => [props.selector, props.query], () => void loadSource())

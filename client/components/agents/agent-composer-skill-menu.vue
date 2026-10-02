@@ -8,8 +8,8 @@
     :aria-labelledby="headingId"
     :aria-describedby="descriptionId"
   >
-    <v-card-title :id="headingId" class="text-body-large">Skills</v-card-title>
-    <v-card-subtitle :id="descriptionId">Select for the next message or always load in conversations.</v-card-subtitle>
+    <v-card-title :id="headingId" class="text-body-large">{{ $t('common:agentComposerSkillMenu.skills') }}</v-card-title>
+    <v-card-subtitle :id="descriptionId">{{ $t('common:agentComposerSkillMenu.selectNextMessageAlways') }}</v-card-subtitle>
     <div
       v-if="skillsPartial"
       class="agent-composer-skill-menu__load-state"
@@ -23,11 +23,11 @@
         <span>{{ skillLoadMessage }}</span>
       </div>
       <v-btn v-if="skillsLoadError" prepend-icon="mdi-refresh" size="small" variant="tonal" :loading="skillsLoading" :disabled="skillsLoading || networkBlocked" @click="retrySkills">
-        Retry
+        {{ $t('common:agentComposerSkillMenu.retry') }}
       </v-btn>
     </div>
-    <v-progress-linear v-if="skillsLoading" indeterminate color="primary" aria-label="Loading skill catalog" />
-    <v-list v-if="items.length > 0" aria-label="Available skills" density="compact" max-height="320" class="overflow-y-auto">
+    <v-progress-linear v-if="skillsLoading" indeterminate color="primary" :aria-label="$t('common:agentComposerSkillMenu.loadingSkillCatalog')" />
+    <v-list v-if="items.length > 0" :aria-label="$t('common:agentComposerSkillMenu.availableSkills')" density="compact" max-height="320" class="overflow-y-auto">
       <v-list-item
         v-for="skill in items"
         :key="skill.versionId"
@@ -38,16 +38,16 @@
         <template #prepend>
           <v-checkbox-btn
             :model-value="isSelected(skill.versionId) || isPreferred(skill.versionId)"
-            :aria-label="`${skill.name}: ${isSelected(skill.versionId) || isPreferred(skill.versionId) ? 'selected' : 'not selected'}`"
+            :aria-label="`${skill.name}: ${isSelected(skill.versionId) || isPreferred(skill.versionId) ? 'selected' : $t('common:agentComposerSkillMenu.notSelected')}`"
             :disabled="disabled || sendInProgress || isPreferred(skill.versionId) || (!isSelected(skill.versionId) && selectedSkillVersionIds.length >= invocationLimit)"
             @click.stop="toggle(skill.versionId)"
           />
         </template>
         <v-list-item-title>{{ skill.name }}</v-list-item-title>
-        <v-list-item-subtitle>{{ isPreferred(skill.versionId) ? 'Always loaded in conversations' : skill.description }}</v-list-item-subtitle>
+        <v-list-item-subtitle>{{ isPreferred(skill.versionId) ? $t('common:agentComposerSkillMenu.alwaysLoadedConversations') : skill.description }}</v-list-item-subtitle>
         <template #append>
           <div class="d-flex align-center ga-1">
-            <v-chip v-if="skill.exposureMode === 'owner'" size="x-small" variant="tonal">Mine</v-chip>
+            <v-chip v-if="skill.exposureMode === 'owner'" size="x-small" variant="tonal">{{ $t('common:agentComposerSkillMenu.mine') }}</v-chip>
             <v-btn
               class="agent-composer-skill-menu__pin"
               :class="{ 'agent-composer-skill-menu__pin--active': isPreferred(skill.versionId) }"
@@ -56,26 +56,29 @@
               :variant="isPreferred(skill.versionId) ? 'tonal' : 'text'"
               size="small"
               :disabled="disabled || sendInProgress || networkBlocked || (!isPreferred(skill.versionId) && invocationLimit === 0)"
-              :aria-label="isPreferred(skill.versionId) ? `Stop always loading ${skill.name}` : `Always load ${skill.name} in conversations`"
+              :aria-label="isPreferred(skill.versionId) ? $t('common:agentComposerSkillMenu.stopAlwaysLoading', { name: skill.name, interpolation: { escapeValue: false } }) : $t('common:agentComposerSkillMenu.alwaysLoadConversations', { name: skill.name, interpolation: { escapeValue: false } })"
               :aria-pressed="isPreferred(skill.versionId)"
-              :title="isPreferred(skill.versionId) ? `Pinned: ${skill.name} always loads` : `Pin ${skill.name} to always load`"
+              :title="isPreferred(skill.versionId) ? $t('common:agentComposerSkillMenu.pinnedAlwaysLoads', { name: skill.name, interpolation: { escapeValue: false } }) : $t('common:agentComposerSkillMenu.pinAlwaysLoad', { name: skill.name, interpolation: { escapeValue: false } })"
               @click.stop="emit('togglePreference', skill.versionId)"
             />
           </div>
         </template>
       </v-list-item>
     </v-list>
-    <v-card-text v-else-if="!skillsPartial" class="text-medium-emphasis">No skills are available yet.</v-card-text>
-    <v-card-text v-if="invocationLimit === 0" class="pt-0 text-body-small text-medium-emphasis">You have the maximum 8 automatically loaded skills. Remove one to make room.</v-card-text>
+    <v-card-text v-else-if="!skillsPartial" class="text-medium-emphasis">{{ $t('common:agentComposerSkillMenu.noSkillsAvailableYet') }}</v-card-text>
+    <v-card-text v-if="invocationLimit === 0" class="pt-0 text-body-small text-medium-emphasis">{{ $t('common:agentComposerSkillMenu.youHaveMaximum8') }}</v-card-text>
     <v-divider />
     <v-card-actions>
-      <v-btn prepend-icon="mdi-file-document-edit-outline" variant="text" :disabled="sendInProgress" @click="manageSkills">Manage my skills</v-btn>
+      <v-btn prepend-icon="mdi-file-document-edit-outline" variant="text" :disabled="sendInProgress" @click="manageSkills">{{ $t('common:agentComposerSkillMenu.manageMySkills') }}</v-btn>
     </v-card-actions>
   </v-card>
 </template>
 
 <script setup lang="ts">
 import { computed, useId } from 'vue'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 /**
  * Presentational skill picker card shared by the composer's inline Skills
@@ -130,13 +133,13 @@ const isSelected = (versionId: string): boolean => selectedSkillVersionIdSet.val
 const isPreferred = (versionId: string): boolean => preferredVersionIdSet.value.has(versionId)
 
 const skillLoadTitle = computed(() => props.skillsLoadError
-  ? props.skillsCount > 0 ? 'Skill catalog incomplete' : 'Skill catalog unavailable'
-  : 'Loading skill catalog')
+  ? props.skillsCount > 0 ? t('common:agentComposerSkillMenu.skillCatalogIncomplete') : t('common:agentComposerSkillMenu.skillCatalogUnavailable')
+  : t('common:agentComposerSkillMenu.loadingSkillCatalog'))
 const skillLoadMessage = computed(() => props.skillsLoadError
   ? props.skillsCount > 0
-    ? `Showing the last-loaded catalog. ${props.skillsLoadError}`
+    ? t('common:agentComposerSkillMenu.showingLastLoadedCatalog', { skillsLoadError: props.skillsLoadError, interpolation: { escapeValue: false } })
     : props.skillsLoadError
-  : 'Available skills are still being loaded.')
+  : t('common:agentComposerSkillMenu.availableSkillsStillBeing'))
 
 const toggle = (versionId: string): void => {
   if (props.disabled || props.sendInProgress) return

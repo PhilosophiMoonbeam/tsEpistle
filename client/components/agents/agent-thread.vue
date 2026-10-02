@@ -1,5 +1,5 @@
 <template>
-  <section class="agent-thread" aria-label="Agent conversation">
+  <section class="agent-thread" :aria-label="$t('common:agentThread.agentConversation')">
     <div :key="liveSummaryRevision" class="sr-status" aria-live="polite" aria-atomic="true">{{ liveSummary }}</div>
     <template v-for="entry in threadProjection.orderedMessages" :key="entry.message.id">
       <article
@@ -16,7 +16,7 @@
         </div>
         <header v-else class="agent-message__identity agent-message__identity--user">
           <div class="agent-message__user-details">
-            <span class="agent-message__role">You</span>
+            <span class="agent-message__role">{{ $t('common:agentThread.you') }}</span>
             <time
               class="agent-message__time"
               :datetime="entry.message.createdAt"
@@ -58,7 +58,7 @@
         </header>
         <div class="agent-message__content">
           <header v-if="entry.message.role === 'assistant'" class="agent-message__meta text-body-small">
-            <span class="agent-message__role">Wiki Agent</span>
+            <span class="agent-message__role">{{ $t('common:agentThread.wikiAgent') }}</span>
             <time
               class="agent-message__time"
               :datetime="entry.message.createdAt"
@@ -102,34 +102,34 @@
                 <span />
                 <span />
               </span>
-              <span>{{ entry.message.role === 'user' ? 'Sending message' : 'Composing response' }}</span>
+              <span>{{ entry.message.role === 'user' ? $t('common:agentThread.sendingMessage') : $t('common:agentThread.composingResponse') }}</span>
             </div>
             <p v-else-if="entry.message.status === 'complete' && !entry.message.media?.length" class="agent-message__terminal-copy">
-              No response content was returned.
+              {{ $t('common:agentThread.noResponseContentWas') }}
             </p>
-            <div v-if="entry.message.media?.length" class="agent-message__media" aria-label="Message attachments">
+            <div v-if="entry.message.media?.length" class="agent-message__media" :aria-label="$t('common:agentThread.messageAttachments')">
               <figure v-for="media in entry.message.media" :key="media.id">
-                <a v-if="media.available && media.mimeType.startsWith('image/')" :href="agentMediaContentUrl(media.id)" target="_blank" rel="noopener" :aria-label="`Open ${media.filename}`">
-                  <img :src="agentMediaContentUrl(media.id)" :alt="media.kind === 'generated-image' ? 'Image created by Wiki Agent' : media.filename" loading="lazy" />
+                <a v-if="media.available && media.mimeType.startsWith('image/')" :href="agentMediaContentUrl(media.id)" target="_blank" rel="noopener" :aria-label="$t('common:agentThread.open', { filename: media.filename, interpolation: { escapeValue: false } })">
+                  <img :src="agentMediaContentUrl(media.id)" :alt="media.kind === 'generated-image' ? $t('common:agentThread.imageCreatedWikiAgent') : media.filename" loading="lazy" />
                 </a>
                 <video v-if="media.available && media.kind === 'generated-video'" :src="agentMediaContentUrl(media.id)" controls preload="metadata" playsinline :aria-label="media.filename" />
                 <audio v-if="media.available && media.kind === 'generated-audio'" :src="agentMediaContentUrl(media.id)" controls preload="metadata" :aria-label="media.filename" />
                 <figcaption>
-                  <span v-if="!media.available">{{ media.filename }} · No longer available</span>
+                  <span v-if="!media.available">{{ $t('common:agentThread.noLongerAvailable', { filename: media.filename, interpolation: { escapeValue: false } }) }}</span>
                   <template v-else-if="media.detached && media.kind === 'attachment'">
                     <span class="agent-message__media-detached">
                       <v-icon icon="mdi-file-remove-outline" size="16" aria-hidden="true" />
-                      <span>{{ media.filename }} · Detached from context</span>
+                      <span>{{ $t('common:agentThread.detachedContext', { filename: media.filename, interpolation: { escapeValue: false } }) }}</span>
                     </span>
                     <template v-if="reattachConfirmId === media.id">
-                      <span class="agent-message__media-confirm">Add this file to the next message again?</span>
-                      <v-btn variant="text" size="small" color="primary" prepend-icon="mdi-paperclip-plus" @click="confirmReattach(media)">Re-attach</v-btn>
-                      <v-btn variant="text" size="small" @click="cancelReattach">Cancel</v-btn>
+                      <span class="agent-message__media-confirm">{{ $t('common:agentThread.addFileNextMessage') }}</span>
+                      <v-btn variant="text" size="small" color="primary" prepend-icon="mdi-paperclip-plus" @click="confirmReattach(media)">{{ $t('common:agentThread.reAttach') }}</v-btn>
+                      <v-btn variant="text" size="small" @click="cancelReattach">{{ $t('common:actions.cancel') }}</v-btn>
                     </template>
-                    <v-btn v-else variant="text" size="small" prepend-icon="mdi-paperclip-plus" @click="requestReattach(media)">Re-attach</v-btn>
+                    <v-btn v-else variant="text" size="small" prepend-icon="mdi-paperclip-plus" @click="requestReattach(media)">{{ $t('common:agentThread.reAttach') }}</v-btn>
                   </template>
-                  <a v-else :href="agentMediaContentUrl(media.id)" :download="media.filename">{{ media.filename }} <span>· Download</span></a>
-                  <v-btn v-if="media.kind === 'generated-image' && media.available && imageEditingEnabled" variant="text" size="small" prepend-icon="mdi-image-edit-outline" :disabled="canSubmit === false || networkBlocked" @click="emit('editImage', media)">Edit image</v-btn>
+                  <a v-else :href="agentMediaContentUrl(media.id)" :download="media.filename">{{ media.filename }} <span>{{ $t('common:agentThread.download') }}</span></a>
+                  <v-btn v-if="media.kind === 'generated-image' && media.available && imageEditingEnabled" variant="text" size="small" prepend-icon="mdi-image-edit-outline" :disabled="canSubmit === false || networkBlocked" @click="emit('editImage', media)">{{ $t('common:agentThread.editImage') }}</v-btn>
                 </figcaption>
               </figure>
             </div>
@@ -154,19 +154,19 @@
                 prepend-icon="mdi-reload"
                 @click="emit('suggest', entry.retryPrompt)"
               >
-                Try again
+                {{ $t('common:agentThread.tryAgain') }}
               </v-btn>
             </aside>
-            <div v-if="entry.message.role === 'user' && entry.message.knowledgeContext" class="agent-message__source-context" aria-label="Source context used for this message">
-              <span>Search: {{ entry.message.knowledgeContext.scope.kind === 'selected' ? 'selected pages' : entry.message.knowledgeContext.scope.kind === 'section' ? entry.message.knowledgeContext.scope.path : entry.message.knowledgeContext.scope.kind === 'locale' ? entry.message.knowledgeContext.scope.locale.toUpperCase() : 'All Wiki' }}</span>
-              <v-btn v-for="source in entry.message.knowledgeContext.sources" :key="source.id" size="x-small" variant="text" prepend-icon="mdi-file-document-outline" :aria-label="`Preview ${source.title}, selected revision ${source.sourceRevision}`" @click="previewSelector = { id: source.id }">{{ source.title }} · revision {{ source.sourceRevision }}</v-btn>
+            <div v-if="entry.message.role === 'user' && entry.message.knowledgeContext" class="agent-message__source-context" :aria-label="$t('common:agentThread.sourceContextUsedMessage')">
+              <span>{{ $t('common:agentThread.search', { value: entry.message.knowledgeContext.scope.kind === 'selected' ? $t('common:agentThread.selectedPages') : entry.message.knowledgeContext.scope.kind === 'section' ? entry.message.knowledgeContext.scope.path : entry.message.knowledgeContext.scope.kind === 'locale' ? entry.message.knowledgeContext.scope.locale.toUpperCase() : $t('common:agentThread.allWiki'), interpolation: { escapeValue: false } }) }}</span>
+              <v-btn v-for="source in entry.message.knowledgeContext.sources" :key="source.id" size="x-small" variant="text" prepend-icon="mdi-file-document-outline" :aria-label="$t('common:agentThread.previewSelectedRevision', { title: source.title, sourceRevision: source.sourceRevision, interpolation: { escapeValue: false } })" @click="previewSelector = { id: source.id }">{{ $t('common:agentThread.revision', { title: source.title, sourceRevision: source.sourceRevision, interpolation: { escapeValue: false } }) }}</v-btn>
             </div>
             <AgentAnswerActions v-if="entry.message.role === 'assistant' && entry.message.status === 'complete' && entry.message.content" :content="entry.message.content" :citations="entry.message.citations" :google-search-grounding="entry.message.googleSearchGrounding" />
-            <details v-if="entry.googleSearchCitations?.length" class="agent-sources agent-web-sources mt-3" aria-label="Google Search sources">
+            <details v-if="entry.googleSearchCitations?.length" class="agent-sources agent-web-sources mt-3" :aria-label="$t('common:agentThread.googleSearchSources')">
               <summary class="agent-sources__heading">
                 <v-icon icon="mdi-web" size="18" aria-hidden="true" />
-                <strong>Web sources</strong>
-                <span class="agent-sources__origin">Google Search</span>
+                <strong>{{ $t('common:agentThread.webSources') }}</strong>
+                <span class="agent-sources__origin">{{ $t('common:agentThread.googleSearch') }}</span>
                 <span class="agent-sources__count">{{ entry.googleSearchCitations?.length }}</span>
               </summary>
               <ol class="agent-web-sources__list">
@@ -175,7 +175,7 @@
                     <span class="agent-sources__number">{{ index + 1 }}</span>
                     <strong>{{ item.citation.title }}</strong>
                     <v-icon icon="mdi-open-in-new" size="14" aria-hidden="true" />
-                    <span class="agent-sources__new-window"> (opens in a new tab)</span>
+                    <span class="agent-sources__new-window"> {{ $t('common:agentThread.opensNewTab') }}</span>
                   </a>
                   <span v-else>
                     <span class="agent-sources__number">{{ index + 1 }}</span>
@@ -185,10 +185,10 @@
                 </li>
               </ol>
             </details>
-            <details v-if="entry.message.citations.length" class="agent-sources mt-3" aria-label="Sources">
+            <details v-if="entry.message.citations.length" class="agent-sources mt-3" :aria-label="$t('common:agentThread.sources')">
               <summary class="agent-sources__heading">
                 <v-icon icon="mdi-book-open-page-variant-outline" size="18" aria-hidden="true" />
-                <strong>Sources</strong>
+                <strong>{{ $t('common:agentThread.sources') }}</strong>
                 <span class="agent-sources__count">{{ entry.message.citations.length }}</span>
               </summary>
               <ol class="agent-sources__groups">
@@ -203,16 +203,16 @@
                     class="agent-sources__page"
                     :href="group.safeHref"
                     :target="group.safeHref && !group.previewSelector ? '_blank' : undefined"
-                    :rel="group.safeHref ? 'noopener noreferrer' : undefined"
+                    :rel="group.safeHref ? $t('common:agentThread.noopenerNoreferrer') : undefined"
                     @click="previewCitation($event, group.previewSelector)"
                   >
                     <span v-if="group.pageCitation" class="agent-sources__number">{{ group.pageCitation.number }}</span>
                     <v-icon v-else icon="mdi-file-document-outline" size="18" aria-hidden="true" />
                     <strong>{{ group.pageLabel }}</strong>
                     <v-icon v-if="group.safeHref" :icon="group.previewSelector ? 'mdi-text-box-search-outline' : 'mdi-open-in-new'" size="15" aria-hidden="true" />
-                    <span v-if="group.safeHref" class="agent-sources__new-window">{{ group.previewSelector ? ' (preview source)' : ' (opens in a new tab)' }}</span>
+                    <span v-if="group.safeHref" class="agent-sources__new-window">{{ group.previewSelector ? ` ${$t('common:agentThread.previewSource')}` : ` ${$t('common:agentThread.opensNewTab')}` }}</span>
                   </component>
-                  <v-btn v-if="group.previewSelector" class="agent-sources__preview" size="small" variant="text" prepend-icon="mdi-text-box-search-outline" :aria-label="`Preview ${group.pageLabel}`" @click="previewSelector = group.previewSelector">Preview source</v-btn>
+                  <v-btn v-if="group.previewSelector" class="agent-sources__preview" size="small" variant="text" prepend-icon="mdi-text-box-search-outline" :aria-label="$t('common:agentThread.preview', { pageLabel: group.pageLabel, interpolation: { escapeValue: false } })" @click="previewSelector = group.previewSelector">{{ $t('common:agentThread.previewSource2') }}</v-btn>
                   <ol v-if="group.sections.length" class="agent-sources__sections">
                     <li
                       v-for="citationEntry in group.sections"
@@ -223,8 +223,8 @@
                         :is="citationEntry.safeHref ? 'a' : 'span'"
                         :href="citationEntry.safeHref"
                         :target="citationEntry.safeHref && !citationEntry.previewSelector ? '_blank' : undefined"
-                        :rel="citationEntry.safeHref ? 'noopener noreferrer' : undefined"
-                        :aria-label="`Citation ${citationEntry.number}: ${citationEntry.citation.label}${citationEntry.previewSelector ? ' (preview source)' : citationEntry.safeHref ? ' (opens in a new tab)' : ''}`"
+                        :rel="citationEntry.safeHref ? $t('common:agentThread.noopenerNoreferrer') : undefined"
+                        :aria-label="$t('common:agentThread.citation', { number: citationEntry.number, label: citationEntry.citation.label, value: citationEntry.previewSelector ? ' (preview source)' : citationEntry.safeHref ? ' (opens in a new tab)' : '', interpolation: { escapeValue: false } })"
                         @click="previewCitation($event, citationEntry.previewSelector)"
                       >
                         <span class="agent-sources__number">{{ citationEntry.number }}</span>
@@ -243,14 +243,14 @@
             <nav
               v-if="entry.message.role === 'assistant' && entry.run?.pageLinks.length"
               class="agent-page-links mt-3"
-              aria-label="Changed pages"
+              :aria-label="$t('common:agentThread.changedPages')"
             >
               <component
                 :is="link.safeHref ? 'a' : 'span'"
                 v-for="link in entry.run?.pageLinks"
                 :key="link.href"
                 :href="link.safeHref"
-                :title="link.safeHref ? `Open ${link.label}` : undefined"
+                :title="link.safeHref ? $t('common:agentThread.open2', { label: link.label, interpolation: { escapeValue: false } }) : undefined"
               >
                 <v-icon icon="mdi-file-link-outline" size="18" aria-hidden="true" />
                 <span>{{ link.label }}</span>
@@ -277,7 +277,7 @@
             <AgentArtifactGrid
               v-if="artifactPlacement.byMessage.get(entry.message.id)?.length"
               :artifacts="artifactPlacement.byMessage.get(entry.message.id) ?? []"
-              label="Browser screenshots from this response"
+              :label="$t('common:agentThread.browserScreenshotsResponse')"
               :format-time="artifactTimeLabel"
             />
           </div>
@@ -298,10 +298,10 @@
     <AgentArtifactGrid
       v-if="artifactPlacement.unplaced.length"
       :artifacts="artifactPlacement.unplaced"
-      label="Browser screenshots"
+      :label="$t('common:agentThread.browserScreenshots')"
       :format-time="artifactTimeLabel"
     />
-    <div v-if="thread.suggestions.length" class="agent-suggestions" role="group" aria-label="Follow-up suggestions">
+    <div v-if="thread.suggestions.length" class="agent-suggestions" role="group" :aria-label="$t('common:agentThread.followUpSuggestions')">
       <v-btn
         v-for="suggestion in thread.suggestions"
         :key="suggestion.id"
@@ -341,6 +341,9 @@ import {
   type AgentRunPresentation,
   type AgentThreadPresentation
 } from './agent-thread-presentation.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const props = defineProps<{
   thread: AgentThreadState
@@ -516,15 +519,15 @@ const threadProjection = computed<ThreadProjection>(() => {
   }
 })
 const stateLabels: Record<AgentToolState, string> = {
-  preparing: 'Preparing',
-  running: 'Running',
-  awaitingApproval: 'Awaiting approval',
-  complete: 'Complete',
-  failed: 'Failed',
-  denied: 'Denied',
-  cancelled: 'Cancelled',
-  omitted: 'Result omitted',
-  not_executed: 'Not executed'
+  preparing: t('common:agentThread.preparing'),
+  running: t('common:agentThread.running'),
+  awaitingApproval: t('common:agentThread.awaitingApproval'),
+  complete: t('common:agentThread.complete'),
+  failed: t('common:agentThread.failed'),
+  denied: t('common:agentThread.denied'),
+  cancelled: t('common:agentThread.cancelled'),
+  omitted: t('common:agentThread.resultOmitted'),
+  not_executed: t('common:agentThread.notExecuted')
 }
 const stateIcons: Record<AgentToolState, string> = {
   preparing: 'mdi-dots-horizontal',
@@ -547,7 +550,7 @@ const toolStateColor = (state: AgentToolState): string | undefined => {
 }
 const currentLiveAnnouncement = computed(() => {
   if (props.connection === 'reconnecting') {
-    return { key: 'connection:reconnecting', message: 'Connection interrupted. Reconnecting.' }
+    return { key: 'connection:reconnecting', message: t('common:agentThread.connectionInterruptedReconnecting') }
   }
   return agentLiveAnnouncement(props.thread.messages, props.thread.tools, props.thread.session.currentRun)
 })

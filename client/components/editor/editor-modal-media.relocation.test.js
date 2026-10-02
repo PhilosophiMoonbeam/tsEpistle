@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 const componentPath = path.join(process.cwd(), 'client/components/editor/editor-modal-media.vue')
 
 const readMediaScript = () => {
@@ -80,8 +81,8 @@ const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {
   })
   const asset = { id: 7, filename: 'old.png', folderId: 0 }
   const context = {
-    ...component.data(),
-    $t: key => key,
+    ...component.data.call({ $t: translateEnglish }),
+    $t: translateEnglish,
     actionMenuAssetId: 7,
     assets: [asset],
     currentAsset: asset,
@@ -123,8 +124,8 @@ describe('editor media relocation admission state', () => {
     expect(harness.context.relocationReceipt).toEqual(pending)
     expect(harness.context.isAssetActionable(7)).toBe(false)
     expect(harness.notifications).toEqual([
-      { message: 'editor:assets.relocationSubmitted', style: 'info', icon: 'clock-outline' },
-      { message: 'editor:assets.relocationPendingRetry', style: 'warning', icon: 'clock-outline' }
+      { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' },
+      { message: 'Relocation is still pending. Open the receipt to inspect its status; no automatic retry will be attempted.', style: 'warning', icon: 'clock-outline' }
     ])
     expect(harness.relocationCalls).toHaveLength(1)
 
@@ -178,7 +179,7 @@ describe('editor media relocation admission state', () => {
     expect(harness.context.isAssetActionable(7)).toBe(false)
     expect(harness.errors).toEqual([workerError])
     expect(harness.notifications).toEqual([
-      { message: 'editor:assets.relocationSubmitted', style: 'info', icon: 'clock-outline' }
+      { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' }
     ])
     expect(harness.relocationCalls).toHaveLength(1)
   })
@@ -198,8 +199,8 @@ describe('editor media relocation admission state', () => {
     expect(harness.context.currentFileId).toBeNull()
     expect(harness.context.assets[0].filename).toBe('new.png')
     expect(harness.notifications).toEqual([
-      { message: 'editor:assets.relocationSubmitted', style: 'info', icon: 'clock-outline' },
-      { message: 'editor:assets.relocationSuccess', style: 'success', icon: 'check' }
+      { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' },
+      { message: 'Relocation completed on all participating storage targets.', style: 'success', icon: 'check' }
     ])
 
     const refreshError = new Error('canonical asset refresh unavailable')
@@ -220,7 +221,7 @@ describe('editor media relocation admission state', () => {
     expect(failedRefresh.context.isAssetActionable(7)).toBe(false)
     expect(failedRefresh.errors).toEqual([refreshError])
     expect(failedRefresh.notifications).toEqual([
-      { message: 'editor:assets.relocationSubmitted', style: 'info', icon: 'clock-outline' }
+      { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' }
     ])
   })
 })

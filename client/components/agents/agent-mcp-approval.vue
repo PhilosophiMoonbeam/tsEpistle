@@ -5,9 +5,9 @@
         <v-icon icon="mdi-lan-connect" size="24" />
       </span>
       <div>
-        <p class="approval-masthead__eyebrow">MCP authorization checkpoint</p>
-        <h1 :id="approvalTitleId">Review external Wiki operation</h1>
-        <p>Verify the visible command, target, proposed diff, and hashes that make up this bounded review record before deciding.</p>
+        <p class="approval-masthead__eyebrow">{{ $t('common:agentMcpApproval.mcpAuthorizationCheckpoint') }}</p>
+        <h1 :id="approvalTitleId">{{ $t('common:agentMcpApproval.reviewExternalWikiOperation') }}</h1>
+        <p>{{ $t('common:agentMcpApproval.verifyVisibleCommandTarget') }}</p>
       </div>
       <v-chip
         v-if="proposal"
@@ -23,7 +23,7 @@
       class="approval-loading-bar"
       indeterminate
       color="primary"
-      aria-label="Loading proposal"
+      :aria-label="$t('common:agentMcpApproval.loadingProposal')"
     />
 
     <div v-if="loading && !proposal" class="approval-loading" role="status">
@@ -31,8 +31,8 @@
         <v-progress-circular indeterminate color="primary" size="24" width="2" />
       </span>
       <span>
-        <strong>Retrieving the authorization record</strong>
-        <small>Decision controls remain unavailable until the validated proposal record is loaded.</small>
+        <strong>{{ $t('common:agentMcpApproval.retrievingAuthorizationRecord') }}</strong>
+        <small>{{ $t('common:agentMcpApproval.decisionControlsRemainUnavailable') }}</small>
       </span>
     </div>
 
@@ -44,7 +44,7 @@
       role="status"
       icon="mdi-cloud-off-outline"
     >
-      Connection required to decide this request. Retry connection in the Agent workspace before choosing.
+      {{ $t('common:agentMcpApproval.connectionRequiredDecideRequest') }}
     </v-alert>
 
     <v-alert
@@ -56,7 +56,7 @@
       role="alert"
       tabindex="-1"
     >
-      <template #title>Operation could not continue</template>
+      <template #title>{{ $t('common:agentMcpApproval.operationCouldNotContinue') }}</template>
       <div class="approval-error__content">
         <span>{{ error }}</span>
         <v-btn
@@ -67,7 +67,7 @@
           :loading="loading"
           :disabled="loading || networkBlocked"
           @click="load"
-        >Retry</v-btn>
+        >{{ $t('common:agentMcpApproval.retry') }}</v-btn>
       </div>
     </v-alert>
 
@@ -84,18 +84,18 @@
         <span class="operation-review__elapsed">{{ decisionDuration }}</span>
       </div>
 
-      <ol class="approval-sequence" aria-label="Authorization stages">
+      <ol class="approval-sequence" :aria-label="$t('common:agentMcpApproval.authorizationStages')">
         <li class="approval-sequence__step approval-sequence__step--complete">
           <v-icon icon="mdi-check-circle-outline" size="17" aria-hidden="true" />
-          <span><strong>Request</strong><small>Received</small></span>
+          <span><strong>{{ $t('common:agentMcpApproval.request') }}</strong><small>{{ $t('common:agentMcpApproval.received') }}</small></span>
         </li>
         <li class="approval-sequence__step approval-sequence__step--complete">
           <v-icon icon="mdi-check-circle-outline" size="17" aria-hidden="true" />
-          <span><strong>Proposal</strong><small>Ready to inspect</small></span>
+          <span><strong>{{ $t('common:agentMcpApproval.proposal') }}</strong><small>{{ $t('common:agentMcpApproval.readyInspect') }}</small></span>
         </li>
         <li class="approval-sequence__step" :class="`approval-sequence__step--${statusKey}`">
           <v-icon :icon="statusIcon" size="17" aria-hidden="true" />
-          <span><strong>Decision</strong><small>{{ decisionStageLabel }}</small></span>
+          <span><strong>{{ $t('common:agentMcpApproval.decision') }}</strong><small>{{ decisionStageLabel }}</small></span>
         </li>
       </ol>
 
@@ -116,29 +116,29 @@
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">01</span>
             <div>
-              <h3 :id="requestRecordTitleId">Request record</h3>
-              <p>Who asked, what will run, and when the authority expires.</p>
+              <h3 :id="requestRecordTitleId">{{ $t('common:agentMcpApproval.requestRecord') }}</h3>
+              <p>{{ $t('common:agentMcpApproval.whoAskedWhatWill') }}</p>
             </div>
           </div>
           <dl class="proposal-facts">
-            <dt>Command</dt><dd><code>{{ proposal.actionName }}</code></dd>
-            <dt>Summary</dt><dd>{{ proposal.summary }}</dd>
+            <dt>{{ $t('common:agentMcpApproval.command') }}</dt><dd><code>{{ proposal.actionName }}</code></dd>
+            <dt>{{ $t('common:agentMcpApproval.summary') }}</dt><dd>{{ proposal.summary }}</dd>
             <template v-if="proposal.path">
-              <dt>Target path</dt><dd><code>{{ proposal.path }}</code></dd>
+              <dt>{{ $t('common:agentMcpApproval.targetPath') }}</dt><dd><code>{{ proposal.path }}</code></dd>
             </template>
             <template v-else-if="proposal.pageId">
-              <dt>Target page ID</dt><dd><code>{{ proposal.pageId }}</code></dd>
+              <dt>{{ $t('common:agentMcpApproval.targetPageId') }}</dt><dd><code>{{ proposal.pageId }}</code></dd>
             </template>
-            <dt>Requested</dt>
+            <dt>{{ $t('common:agentMcpApproval.requested') }}</dt>
             <dd><time :datetime="proposal.approval.requestedAt">{{ formatTimestamp(proposal.approval.requestedAt) }}</time></dd>
-            <dt>Expires</dt>
+            <dt>{{ $t('common:agentMcpApproval.expires') }}</dt>
             <dd><time :datetime="proposal.expiresAt">{{ formatTimestamp(proposal.expiresAt) }}</time></dd>
             <template v-if="proposal.approval.decidedAt">
-              <dt>Decided</dt>
+              <dt>{{ $t('common:agentMcpApproval.decided') }}</dt>
               <dd><time :datetime="proposal.approval.decidedAt">{{ formatTimestamp(proposal.approval.decidedAt) }}</time></dd>
             </template>
             <template v-if="proposal.baseSourceRevision">
-              <dt>Base revision</dt><dd><code>{{ proposal.baseSourceRevision }}</code></dd>
+              <dt>{{ $t('common:agentMcpApproval.baseRevision') }}</dt><dd><code>{{ proposal.baseSourceRevision }}</code></dd>
             </template>
           </dl>
 
@@ -146,15 +146,15 @@
             <summary>
               <span>
                 <v-icon icon="mdi-fingerprint" size="18" aria-hidden="true" />
-                Input and verification
+                {{ $t('common:agentMcpApproval.inputVerification') }}
               </span>
-              <small>Bounded review record</small>
+              <small>{{ $t('common:agentMcpApproval.boundedReviewRecord') }}</small>
             </summary>
             <dl class="proposal-facts proposal-facts--technical">
-              <dt>Proposal ID</dt><dd><code>{{ proposal.id }}</code></dd>
-              <dt>Input digest</dt><dd><code>{{ proposal.inputHash }}</code></dd>
-              <template v-if="proposal.patchHash"><dt>Patch digest</dt><dd><code>{{ proposal.patchHash }}</code></dd></template>
-              <template v-if="proposal.diffHash"><dt>Diff digest</dt><dd><code>{{ proposal.diffHash }}</code></dd></template>
+              <dt>{{ $t('common:agentMcpApproval.proposalId') }}</dt><dd><code>{{ proposal.id }}</code></dd>
+              <dt>{{ $t('common:agentMcpApproval.inputDigest') }}</dt><dd><code>{{ proposal.inputHash }}</code></dd>
+              <template v-if="proposal.patchHash"><dt>{{ $t('common:agentMcpApproval.patchDigest') }}</dt><dd><code>{{ proposal.patchHash }}</code></dd></template>
+              <template v-if="proposal.diffHash"><dt>{{ $t('common:agentMcpApproval.diffDigest') }}</dt><dd><code>{{ proposal.diffHash }}</code></dd></template>
             </dl>
           </details>
         </section>
@@ -163,17 +163,17 @@
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">02</span>
             <div>
-              <h3 :id="proposalOutputTitleId">Proposed output record</h3>
-              <p>The diff below is the proposed-output portion of this bounded review record.</p>
+              <h3 :id="proposalOutputTitleId">{{ $t('common:agentMcpApproval.proposedOutputRecord') }}</h3>
+              <p>{{ $t('common:agentMcpApproval.diffBelowProposedOutput') }}</p>
             </div>
           </div>
           <div v-if="proposal.diff" class="proposal-output">
             <div class="proposal-output__legend">
-              <span class="proposal-output__addition">Added</span>
-              <span class="proposal-output__deletion">Removed</span>
-              <span>{{ diffLines.length }} {{ diffLines.length === 1 ? 'line' : 'lines' }}</span>
+              <span class="proposal-output__addition">{{ $t('common:agentMcpApproval.added') }}</span>
+              <span class="proposal-output__deletion">{{ $t('common:agentMcpApproval.removed') }}</span>
+              <span>{{ $t('common:agentMcpApproval.linesCount', { count: diffLines.length }) }}</span>
             </div>
-            <pre :id="proposalDiffId" class="proposal-diff" tabindex="0" aria-label="Proposed output diff"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+            <pre :id="proposalDiffId" class="proposal-diff" tabindex="0" :aria-label="$t('common:agentMcpApproval.proposedOutputDiff')"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
             <v-btn
               v-if="diffLines.length > collapsedLineCount"
               class="proposal-output__expand"
@@ -182,13 +182,13 @@
               :aria-expanded="expanded"
               :aria-controls="proposalDiffId"
               @click="expanded = !expanded"
-            >{{ expanded ? 'Show fewer lines' : `Show all ${diffLines.length} lines` }}</v-btn>
+            >{{ expanded ? $t('common:agentMcpApproval.showFewerLines') : $t('common:agentMcpApproval.showAllLines', { diffLinesCount: diffLines.length, interpolation: { escapeValue: false } }) }}</v-btn>
           </div>
           <div v-else class="proposal-output__empty">
             <v-icon icon="mdi-file-hidden" size="20" aria-hidden="true" />
             <span>
-              <strong>No textual diff supplied</strong>
-              <small>Review the visible command and target above. Approval is unavailable if neither a target nor diff represents the effect.</small>
+              <strong>{{ $t('common:agentMcpApproval.noTextualDiffSupplied') }}</strong>
+              <small>{{ $t('common:agentMcpApproval.reviewVisibleCommandTarget') }}</small>
             </span>
           </div>
         </section>
@@ -201,16 +201,16 @@
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">03</span>
             <div>
-              <h3 :id="decisionTitleId">Authorization decision</h3>
-              <p>Deny stops this proposal. {{ decisionReviewCopy }}</p>
+              <h3 :id="decisionTitleId">{{ $t('common:agentMcpApproval.authorizationDecision') }}</h3>
+              <p>{{ $t('common:agentMcpApproval.denyStopsProposal', { decisionReviewCopy, interpolation: { escapeValue: false } }) }}</p>
             </div>
           </div>
 
           <v-textarea
             v-model="decisionNote"
             class="decision-zone__note"
-            label="Decision note (optional)"
-            hint="Stored with this approval record"
+            :label="$t('common:agentMcpApproval.decisionNoteOptional')"
+            :hint="$t('common:agentMcpApproval.storedApprovalRecord')"
             persistent-hint
             maxlength="4000"
             counter
@@ -220,11 +220,11 @@
           <div v-if="proposal.risk === 'destructive-write'" class="decision-zone__confirmation">
             <v-icon icon="mdi-delete-alert-outline" size="20" aria-hidden="true" />
             <div>
-              <strong>Confirm the destructive target</strong>
-              <p>Type <code>{{ proposal.confirmationPath }}</code> exactly. Pasting or typing the path does not approve the request; the deletion button remains a separate decision.</p>
+              <strong>{{ $t('common:agentMcpApproval.confirmDestructiveTarget') }}</strong>
+              <p>{{ $t('common:agentMcpApproval.type') }} <code>{{ proposal.confirmationPath }}</code> {{ $t('common:agentMcpApproval.exactlyPastingTypingPath') }}</p>
               <v-text-field
                 v-model="confirmationPath"
-                label="Exact page path"
+                :label="$t('common:agentMcpApproval.exactPagePath')"
                 :hint="proposal.confirmationPath ?? ''"
                 persistent-hint
                 autocomplete="off"
@@ -243,8 +243,8 @@
                 :disabled="Boolean(pendingDecision) || networkBlocked || !decisionReady"
                 :loading="pendingDecision === 'denied'"
                 @click="decide('denied')"
-              >Deny request</v-btn>
-              <small>Wiki remains unchanged.</small>
+              >{{ $t('common:agentMcpApproval.denyRequest') }}</v-btn>
+              <small>{{ $t('common:agentMcpApproval.wikiRemainsUnchanged') }}</small>
             </div>
             <div class="approval-actions__choice approval-actions__choice--approve">
               <v-btn
@@ -254,7 +254,7 @@
                 :disabled="Boolean(pendingDecision) || networkBlocked || !decisionReady || !reviewAdequate || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.confirmationPath)"
                 @click="decide('approved')"
               >{{ approveLabel }}</v-btn>
-              <small>Authorizes this proposal once.</small>
+              <small>{{ $t('common:agentMcpApproval.authorizesProposalOnce') }}</small>
             </div>
           </div>
         </section>
@@ -263,8 +263,8 @@
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">03</span>
             <div>
-              <h3 :id="decisionReceiptTitleId">Decision receipt</h3>
-              <p>The authorization checkpoint is closed.</p>
+              <h3 :id="decisionReceiptTitleId">{{ $t('common:agentMcpApproval.decisionReceipt') }}</h3>
+              <p>{{ $t('common:agentMcpApproval.authorizationCheckpointClosed') }}</p>
             </div>
           </div>
           <v-alert
@@ -289,6 +289,9 @@
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 import type { AgentRefreshResult } from '../../store/agents.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const props = defineProps<{ csrfToken: string; proposalId: string; networkBlocked?: boolean }>()
 const instanceId = useId()
@@ -359,22 +362,22 @@ const statusColors: Readonly<Record<ApprovalSurfaceStatus, string | undefined>> 
 }
 
 const actionLabels: Partial<Record<McpAgentProposal['actionName'], string>> = {
-  'pages.prepareCreate': 'Create Wiki page',
-  'pages.preparePatch': 'Edit Wiki page',
-  'pages.prepareMove': 'Move Wiki page',
-  'pages.prepareRestore': 'Restore Wiki page',
-  'pages.prepareDelete': 'Delete Wiki page'
+  'pages.prepareCreate': t('common:agentMcpApproval.createWikiPage'),
+  'pages.preparePatch': t('common:agentMcpApproval.editWikiPage'),
+  'pages.prepareMove': t('common:agentMcpApproval.moveWikiPage'),
+  'pages.prepareRestore': t('common:agentMcpApproval.restoreWikiPage'),
+  'pages.prepareDelete': t('common:agentMcpApproval.deleteWikiPage')
 }
 const proposalStatusLabels: Record<McpAgentProposal['status'], string> = {
-  pending: 'Awaiting decision',
-  approved: 'Approved · waiting to apply',
-  denied: 'Denied',
-  expired: 'Expired',
-  applying: 'Applying approved change',
-  applied: 'Applied successfully',
-  failed: 'Operation failed',
-  cancelled: 'Cancelled',
-  recovery_required: 'Recovery required'
+  pending: t('common:agentMcpApproval.awaitingDecision'),
+  approved: t('common:agentMcpApproval.approvedWaitingApply'),
+  denied: t('common:agentMcpApproval.denied'),
+  expired: t('common:agentMcpApproval.expired'),
+  applying: t('common:agentMcpApproval.applyingApprovedChange'),
+  applied: t('common:agentMcpApproval.appliedSuccessfully'),
+  failed: t('common:agentMcpApproval.operationFailed'),
+  cancelled: t('common:agentMcpApproval.cancelled'),
+  recovery_required: t('common:agentMcpApproval.recoveryRequired')
 }
 const captureIdentity = (proposalId = props.proposalId): ApprovalIdentity => ({
   csrfToken: props.csrfToken,
@@ -402,8 +405,8 @@ const acceptedDecisionForProposal = computed(() => {
   if (!decision || decision.proposalId !== props.proposalId || decision.csrfToken !== props.csrfToken) return null
   return decision
 })
-const actionLabel = computed(() => proposal.value ? actionLabels[proposal.value.actionName] ?? 'Review Wiki operation' : 'Review Wiki operation')
-const approveLabel = computed(() => proposal.value?.risk === 'destructive-write' ? 'Approve page deletion' : 'Approve reviewed proposal')
+const actionLabel = computed(() => proposal.value ? actionLabels[proposal.value.actionName] ?? t('common:agentMcpApproval.reviewWikiOperation') : t('common:agentMcpApproval.reviewWikiOperation'))
+const approveLabel = computed(() => proposal.value?.risk === 'destructive-write' ? t('common:agentMcpApproval.approvePageDeletion') : t('common:agentMcpApproval.approveReviewedProposal'))
 const hasExpired = (expiresAt: string): boolean => new Date(expiresAt).valueOf() <= Date.now()
 const locallyExpired = computed(() => {
   void clockTick.value
@@ -427,13 +430,13 @@ const statusKey = computed<ApprovalSurfaceStatus>(() => {
   return 'pending'
 })
 const statusLabel = computed(() => {
-  if (!proposal.value) return 'Loading request'
-  if (proposal.value.approval.status === 'denied') return 'Denied'
-  if (proposal.value.approval.status === 'cancelled') return 'Cancelled'
-  if (proposal.value.approval.status === 'expired' || locallyExpired.value) return 'Expired'
-  if (acceptedDecisionForProposal.value?.decision === 'denied') return 'Denied'
-  if (acceptedDecisionForProposal.value?.decision === 'approved' && proposal.value.status === 'pending') return 'Approved'
-  if (proposal.value.approval.status === 'approved' && proposal.value.status === 'pending') return 'Approved'
+  if (!proposal.value) return t('common:agentMcpApproval.loadingRequest')
+  if (proposal.value.approval.status === 'denied') return t('common:agentMcpApproval.denied')
+  if (proposal.value.approval.status === 'cancelled') return t('common:agentMcpApproval.cancelled')
+  if (proposal.value.approval.status === 'expired' || locallyExpired.value) return t('common:agentMcpApproval.expired')
+  if (acceptedDecisionForProposal.value?.decision === 'denied') return t('common:agentMcpApproval.denied')
+  if (acceptedDecisionForProposal.value?.decision === 'approved' && proposal.value.status === 'pending') return t('common:agentMcpApproval.approved')
+  if (proposal.value.approval.status === 'approved' && proposal.value.status === 'pending') return t('common:agentMcpApproval.approved')
   return proposalStatusLabels[proposal.value.status]
 })
 const statusIcon = computed(() => statusIcons[statusKey.value])
@@ -446,17 +449,17 @@ const decisionAlertType = computed<'success' | 'error' | 'warning' | 'info'>(() 
 })
 const settledCopy = computed(() => {
   if (!proposal.value) return ''
-  if (statusKey.value === 'success') return 'The approved proposal was applied. Return to the MCP client to continue.'
-  if (statusKey.value === 'running') return 'Approval is saved. Return to the MCP client while the authorized operation continues.'
-  if (statusKey.value === 'denied') return 'This proposal was denied. No authority remains for the MCP client to apply it.'
-  if (statusKey.value === 'cancelled') return 'This proposal was cancelled. No further operation will run under this authorization record.'
-  if (statusKey.value === 'expired') return 'The approval window closed without active authority. Request a new proposal from the MCP client.'
-  return 'The authorized operation failed. Return to the MCP client for failure details; no automatic retry was approved.'
+  if (statusKey.value === 'success') return t('common:agentMcpApproval.approvedProposalWasApplied')
+  if (statusKey.value === 'running') return t('common:agentMcpApproval.approvalSavedReturnMcp')
+  if (statusKey.value === 'denied') return t('common:agentMcpApproval.proposalWasDeniedNo')
+  if (statusKey.value === 'cancelled') return t('common:agentMcpApproval.proposalWasCancelledNo')
+  if (statusKey.value === 'expired') return t('common:agentMcpApproval.approvalWindowClosedWithout')
+  return t('common:agentMcpApproval.authorizedOperationFailedReturn')
 })
-const riskLabel = computed(() => proposal.value?.risk === 'destructive-write' ? 'High-risk destructive operation' : 'Scoped write authorization')
+const riskLabel = computed(() => proposal.value?.risk === 'destructive-write' ? t('common:agentMcpApproval.highRiskDestructiveOperation') : t('common:agentMcpApproval.scopedWriteAuthorization'))
 const riskDescription = computed(() => proposal.value?.risk === 'destructive-write'
-  ? 'This approval permanently authorizes deletion of the named page. The change cannot be undone from this screen.'
-  : 'This checkpoint grants one-time authority for this reviewed proposal. It does not grant the MCP client ongoing write access.')
+  ? t('common:agentMcpApproval.approvalPermanentlyAuthorizesDeletion')
+  : t('common:agentMcpApproval.checkpointGrantsOneTime'))
 const diffLines = computed(() => (proposal.value?.diff ?? '').split('\n').map((text, index) => ({
   key: `${proposal.value?.id ?? 'proposal'}:${index}`,
   text,
@@ -489,35 +492,35 @@ const decisionReady = computed(() => {
   )
 })
 const decisionStageLabel = computed(() => statusKey.value === 'pending'
-  ? (decisionReady.value ? 'Awaiting you' : 'Refresh required')
+  ? (decisionReady.value ? t('common:agentMcpApproval.awaitingYou') : t('common:agentMcpApproval.refreshRequired'))
   : statusLabel.value)
 const decisionReviewCopy = computed(() => reviewAdequate.value
-  ? 'Approve authorizes only the effect represented by the available target or proposed diff. The visible command, target, diff, and hashes are this bounded review record.'
-  : 'Approval is unavailable because neither a target nor proposed diff represents the effect.')
+  ? t('common:agentMcpApproval.approveAuthorizesOnlyEffect')
+  : t('common:agentMcpApproval.approvalUnavailableBecauseNeither'))
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const formatTimestamp = (value: string): string => dateFormatter.format(new Date(value))
 const formatDuration = (start: string, end: string | null): string => {
   if (!end) void clockTick.value
   const milliseconds = Math.max(0, (end ? new Date(end).valueOf() : Date.now()) - new Date(start).valueOf())
   const seconds = Math.floor(milliseconds / 1000)
-  if (seconds < 1) return 'under 1 second'
-  if (seconds < 60) return `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`
+  if (seconds < 1) return t('common:agentMcpApproval.under1Second')
+  if (seconds < 60) return `${t('common:agentMcpApproval.secondsCount', { count: seconds })}`
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+  if (minutes < 60) return `${t('common:agentMcpApproval.minutesCount', { count: minutes })}`
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  return `${hours} ${hours === 1 ? 'hour' : 'hours'}${remainingMinutes ? ` ${remainingMinutes} min` : ''}`
+  return `${t('common:agentMcpApproval.hoursCount', { count: hours })}${remainingMinutes ? ` ${t('common:agentMcpApproval.min', { remainingMinutes, interpolation: { escapeValue: false } })}` : ''}`
 }
 const decisionDuration = computed(() => {
   const current = proposal.value
   if (!current) return ''
   if (current.approval.decidedAt) {
-    return `Decided after ${formatDuration(current.approval.requestedAt, current.approval.decidedAt)}`
+    return t('common:agentMcpApproval.decidedAfter', { decidedAt: formatDuration(current.approval.requestedAt, current.approval.decidedAt), interpolation: { escapeValue: false } })
   }
   if (statusKey.value === 'expired') {
-    return `Expired after ${formatDuration(current.approval.requestedAt, current.expiresAt)}`
+    return t('common:agentMcpApproval.expiredAfter', { expiresAt: formatDuration(current.approval.requestedAt, current.expiresAt), interpolation: { escapeValue: false } })
   }
-  return `Open for ${formatDuration(current.approval.requestedAt, null)}`
+  return t('common:agentMcpApproval.open', { null: formatDuration(current.approval.requestedAt, null), interpolation: { escapeValue: false } })
 })
 const stopClockTimer = (): void => {
   if (clockTimer !== null) window.clearInterval(clockTimer)
@@ -598,7 +601,7 @@ const load = async (requestedIdentity?: ApprovalIdentity): Promise<AgentRefreshR
   error.value = ''
   invalidateDecisionReadiness()
   if (!proposalId) {
-    const invalid = new Error('Proposal URL is invalid.')
+    const invalid = new Error(t('common:agentMcpApproval.proposalUrlInvalid'))
     error.value = invalid.message
     await focusError(identity)
     if (!isTransportIdentityCurrent(identity) || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
@@ -607,7 +610,7 @@ const load = async (requestedIdentity?: ApprovalIdentity): Promise<AgentRefreshR
   try {
     const nextProposal = await getMcpAgentProposal(window.fetch.bind(window), identity.csrfToken, proposalId, controller.signal)
     if (!isTransportIdentityCurrent(identity) || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
-    if (nextProposal.id !== proposalId) throw new Error('Proposal response did not match the requested record.')
+    if (nextProposal.id !== proposalId) throw new Error(t('common:agentMcpApproval.proposalResponseDidNot'))
     proposal.value = nextProposal
     proposalReadAccepted.value = true
     acceptedReadStateKey.value = proposalReadStateKeyFor(nextProposal)
@@ -622,7 +625,7 @@ const load = async (requestedIdentity?: ApprovalIdentity): Promise<AgentRefreshR
     acceptedReadStateKey.value = ''
     acceptedReadIdentity.value = null
     decisionNeedsReconciliation.value = true
-    error.value = value instanceof Error ? value.message : 'Proposal could not be loaded.'
+    error.value = value instanceof Error ? value.message : t('common:agentMcpApproval.proposalCouldNotLoaded')
     await focusError(identity)
     if (!isTransportIdentityCurrent(identity) || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
     return rejectedRefresh(value, true)
@@ -675,7 +678,7 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
       proposalReadAccepted.value = false
       acceptedReadStateKey.value = ''
       acceptedReadIdentity.value = null
-      error.value = 'Decision saved, but the proposal could not be refreshed. Do not submit another decision until it is reconciled.'
+      error.value = t('common:agentMcpApproval.decisionSavedButProposal')
       await focusError(identity)
       return
     }
@@ -686,14 +689,14 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
     if (!isDecisionCurrent(identity, generation)) return
     acceptedDecision.value = null
     invalidateDecisionReadiness()
-    const outcomeMessage = value instanceof Error ? value.message : 'Decision outcome is unknown.'
+    const outcomeMessage = value instanceof Error ? value.message : t('common:agentMcpApproval.decisionOutcomeUnknown')
     const reconciliation = await load(identity)
     if (!isDecisionCurrent(identity, generation)) return
     if (reconciliation.current && reconciliation.accepted) return
     if (!reconciliation.current) return
     invalidateDecisionReadiness()
     const refreshMessage = reconciliation.error instanceof Error ? ` ${reconciliation.error.message}` : ''
-    error.value = `${outcomeMessage} Refresh the proposal before trying again.${refreshMessage}`
+    error.value = t('common:agentMcpApproval.refreshProposalBeforeTrying', { outcomeMessage, refreshMessage, interpolation: { escapeValue: false } })
     await focusError(identity)
   } finally {
     if (isDecisionCurrent(identity, generation)) pendingDecision.value = null

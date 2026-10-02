@@ -4,27 +4,27 @@
       .editor-code-sidebar
         v-tooltip(location="right")
           template(v-slot:activator='{ props }')
-            v-btn.mt-3(icon, rounded='0', v-bind='props', aria-label='Insert assets', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
+            v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorCode.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `primary` : undefined') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right")
             template(v-slot:activator='{ props }')
-              v-btn.mt-3(icon, rounded='0', v-bind='props', aria-label='Toggle distraction-free mode', @click='toggleFullscreen').mx-0
+              v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorCode.toggleDistractionFreeMode`)', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-code-editor
-        div(ref='cm', role='region', aria-label='Code editor')
+        div(ref='cm', role='region', :aria-label='$t(`editor:editorCode.codeEditor`)')
     v-system-bar.editor-status-bar.editor-code-sysbar(absolute)
       .text-body-small.editor-code-sysbar-locale {{locale.toUpperCase()}}
       .editor-status-path /{{path}}
         v-tooltip(activator='parent', location='top') /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
-        .text-body-small Code
+        .text-body-small {{ $t(`editor:editorCode.code`) }}
         v-spacer
-        .text-body-small Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}
+        .text-body-small {{ $t(`editor:editorCode.lnCol`, { line: cursorPos.line + 1, ch: cursorPos.ch + 1, interpolation: { escapeValue: false } }) }}
 </template>
 
 <script lang='ts'>
@@ -112,7 +112,7 @@ export default defineComponent({
         case 'IMAGE': {
           if (typeof opts.path !== 'string') break
           const text = typeof opts.text === 'string' ? opts.text : ''
-          let img = `<img src="${escapeHtml(opts.path)}" alt="${escapeHtml(text)}"`
+          let img = this.$t('editor:editorCode.imgSrcAlt', { path: escapeHtml(opts.path), text: escapeHtml(text), interpolation: { escapeValue: false } })
           if (typeof opts.align === 'string' && IMAGE_ALIGNMENTS.has(opts.align)) {
             img += ` class="align-${opts.align}"`
           }
@@ -126,14 +126,14 @@ export default defineComponent({
           if (typeof opts.path !== 'string') break
           const text = typeof opts.text === 'string' && opts.text.length > 0 ? opts.text : opts.path
           this.insertAtCursor({
-            content: `<a href="${escapeHtml(opts.path)}" title="${escapeHtml(text)}">${escapeHtml(text)}</a>`
+            content: this.$t('editor:editorCode.hrefTitle', { path: escapeHtml(opts.path), text: escapeHtml(text), text2: escapeHtml(text), interpolation: { escapeValue: false } })
           })
           break
         }
       }
     },
     editor(): TextEditorHandle {
-      if (!this.cm) throw new Error('CodeMirror editor is not initialized')
+      if (!this.cm) throw new Error(this.$t('editor:editorCode.codemirrorEditorNotInitialized'))
       return this.cm
     },
     /**
@@ -182,16 +182,16 @@ export default defineComponent({
     wikiStore.editor.editorKey = 'code'
 
     if (this.mode === 'create') {
-      wikiStore.editor.content = '<h1>Title</h1>\n\n<p>Some text here</p>'
+      wikiStore.editor.content = this.$t('editor:editorCode.h1TitleH1P')
     }
 
     const parent = this.$refs.cm
     if (!(parent instanceof HTMLElement)) {
-      throw new Error('CodeMirror editor host is unavailable')
+      throw new Error(this.$t('editor:editorCode.codemirrorEditorHostUnavailable'))
     }
     const cm = new TextEditor({
       parent,
-      ariaLabel: 'HTML source',
+      ariaLabel: this.$t('editor:editorCode.htmlSource'),
       dark: this.$vuetify.theme.current.dark,
       value: wikiStore.editor.content,
       language: html(),

@@ -6,7 +6,7 @@
       :id='swatchId'
       v-model='swatchColor'
       type='color'
-      :aria-label='`${label} color picker`'
+      :aria-label='$t(`admin:themeColorField.colorPicker`, { label, interpolation: { escapeValue: false } })'
     )
     v-text-field(
       :id='textFieldId'
@@ -24,6 +24,9 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue'
 import { isHexThemeColor } from '../../../shared/theme-colors.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 defineProps<{ label: string }>()
 const model = defineModel<string>({ required: true })
@@ -31,7 +34,7 @@ const id = useId()
 const swatchId = `${id}-swatch`
 const textFieldId = `${id}-hex`
 const textFieldLabelId = `${textFieldId}-label`
-const colorRules = [(value: string) => isHexThemeColor(value) || 'Use a six-digit hex color, for example #1867C0.']
+const colorRules = [(value: string) => isHexThemeColor(value) || t('admin:themeColorField.useSixDigitHex')]
 const swatchColor = computed({
   get: () => isHexThemeColor(model.value) ? model.value : '#000000',
   set: (value: string) => { model.value = value.toUpperCase() }

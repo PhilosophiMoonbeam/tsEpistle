@@ -33,7 +33,7 @@
                   v-list-item-title {{ $t('editor:markup.paragraph') }}
                 v-list-item(v-for='level in 6', :key='level', :active='currentBlock.level === level', @click='setHeading(level)')
                   template(v-slot:prepend)
-                    v-icon mdi-format-header-{{level}}
+                    v-icon {{ $t(`editor:editor.mdiFormatHeader`, { level, interpolation: { escapeValue: false } }) }}
                   v-list-item-title {{ $t('editor:markup.heading', { level }) }}
             v-menu(v-else-if='toolId === `codeBlock`')
               template(v-slot:activator='{ props: menuProps }')
@@ -120,9 +120,9 @@
         v-card.editor-tiptap-glyph-menu(elevation='5', width='420')
           .editor-tiptap-glyph-header
             div
-              #editor-tiptap-glyph-title.text-body-large.font-weight-bold Icons & emoji
-              .text-body-small Search by name, meaning, or a close spelling
-            v-btn.wiki-close-control.wiki-purpose-control(icon, size='small', data-purpose='error', variant='text', aria-label='Close icon and emoji picker', @click='glyphMenuOpen = false')
+              #editor-tiptap-glyph-title.text-body-large.font-weight-bold {{ $t(`editor:editor.iconsEmoji`) }}
+              .text-body-small {{ $t(`editor:editor.searchNameMeaningClose`) }}
+            v-btn.wiki-close-control.wiki-purpose-control(icon, size='small', data-purpose='error', variant='text', :aria-label='$t(`editor:editor.closeIconEmojiPicker`)', @click='glyphMenuOpen = false')
               v-icon mdi-close
           v-card-text.editor-tiptap-glyph-body
             v-text-field.editor-tiptap-glyph-search(
@@ -132,8 +132,8 @@
               density='compact'
               hide-details
               prepend-inner-icon='mdi-magnify'
-              placeholder='Try “celebrte”, “deploy”, or “secure”'
-              aria-label='Search icons and emoji'
+              :placeholder='$t(`editor:editor.tryCelebrteDeploySecure`)'
+              :aria-label='$t(`editor:editor.searchIconsEmoji`)'
               variant='outlined'
             )
             v-btn-toggle.editor-tiptap-glyph-filters.mt-3(
@@ -142,22 +142,22 @@
               divided
               mandatory
               variant='outlined'
-              aria-label='Icon or emoji category'
+              :aria-label='$t(`editor:editor.iconEmojiCategory`)'
             )
-              v-btn.wiki-purpose-control(data-purpose='success', value='all') All
+              v-btn.wiki-purpose-control(data-purpose='success', value='all') {{ $t(`editor:editor.all`) }}
               v-btn.wiki-purpose-control(data-purpose='success', value='icon')
                 v-icon(start) mdi-shape-outline
-                | Icons
+                | {{ $t(`editor:editor.icons`) }}
               v-btn.wiki-purpose-control(data-purpose='success', value='emoji')
                 v-icon(start) mdi-emoticon-outline
-                | Emoji
+                | {{ $t(`editor:editor.emoji`) }}
             .editor-tiptap-glyph-grid.mt-3(v-if='filteredGlyphs.length > 0')
               v-btn.editor-tiptap-glyph-button.wiki-purpose-control(
                 v-for='glyph in filteredGlyphs'
                 :key='`${glyph.category}:${glyph.label}`'
                 icon
                 variant='text'
-                :aria-label='`Insert ${glyph.label}`'
+                :aria-label='$t(`editor:editor.insert`, { label: glyph.label, interpolation: { escapeValue: false } })'
                 :title='glyph.label'
                 @click='insertGlyph(glyph)'
                 data-purpose='success'
@@ -165,11 +165,11 @@
                 span {{glyph.value}}
             .editor-tiptap-glyph-empty(v-else)
               v-icon(size='32') mdi-emoticon-sad-outline
-              .text-body-medium No matching icons or emoji
-              .text-body-small Try a shorter word or another meaning.
+              .text-body-medium {{ $t(`editor:editor.noMatchingIconsEmoji`) }}
+              .text-body-small {{ $t(`editor:editor.tryShorterWordAnother`) }}
           .editor-tiptap-glyph-footer
-            span {{filteredGlyphs.length}} of {{glyphs.length}}
-            span Fuzzy search
+            span {{ $t(`editor:editor.of`, { filteredGlyphsCount: filteredGlyphs.length, glyphsCount: glyphs.length, interpolation: { escapeValue: false } }) }}
+            span {{ $t(`editor:editor.fuzzySearch`) }}
     .editor-tiptap-page-canvas.editor-page-canvas
       editor-content.contents(:editor='editor ?? undefined')
     .v-system-bar.editor-status-bar.editor-tiptap-sysbar
@@ -178,19 +178,19 @@
         v-tooltip(activator='parent', location='top') /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
-        .text-body-small {{definition.label}} · Tiptap
+        .text-body-small {{ $t(`editor:editor.tiptap`, { label: definition.label, interpolation: { escapeValue: false } }) }}
         v-spacer
         .text-body-small {{$t('editor:ckeditor.stats', { chars: stats.characters, words: stats.words })}}
     editor-conflict(v-model='isConflict', v-if='isConflict')
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
     v-dialog(v-model='admonitionDialog', max-width='620', persistent, aria-labelledby='editor-tiptap-admonition-title')
       v-card
-        v-card-title#editor-tiptap-admonition-title Insert admonition
+        v-card-title#editor-tiptap-admonition-title {{ $t(`editor:editor.insertAdmonition`) }}
         v-card-text
           v-form(@submit.prevent='insertAdmonition')
-            v-select(v-model='admonitionKind', :items='admonitionKinds', label='Type')
-            v-text-field.mt-3(v-model='admonitionTitle', label='Title', counter='120', required)
-            v-textarea.mt-3(v-model='admonitionBody', label='Content', rows='5', auto-grow, counter='5000', required)
+            v-select(v-model='admonitionKind', :items='admonitionKinds', :label='$t(`editor:editor.type`)')
+            v-text-field.mt-3(v-model='admonitionTitle', :label='$t(`editor:editor.title`)', counter='120', required)
+            v-textarea.mt-3(v-model='admonitionBody', :label='$t(`editor:editor.content`)', rows='5', auto-grow, counter='5000', required)
             v-alert.mt-3(v-if='admonitionError', type='error', variant='tonal') {{admonitionError}}
         v-card-actions
           v-spacer
@@ -198,10 +198,10 @@
           v-btn(color='primary', variant='flat', :disabled='!isAdmonitionValid', @click='insertAdmonition') {{ $t('common:actions.insert') }}
     v-dialog(v-model='sourceDialog', max-width='760', persistent, aria-labelledby='editor-tiptap-source-title')
       v-card
-        v-card-title#editor-tiptap-source-title Edit preserved {{sourceKind}} source
+        v-card-title#editor-tiptap-source-title {{ $t(`editor:editor.editPreservedSource`, { sourceKind, interpolation: { escapeValue: false } }) }}
         v-card-text
-          .text-body-small.mb-3 This construct is stored verbatim because it has no lossless rich-text representation.
-          v-textarea(v-model='sourceValue', rows='12', auto-grow, spellcheck='false', label='Source')
+          .text-body-small.mb-3 {{ $t(`editor:editor.constructStoredVerbatimBecause`) }}
+          v-textarea(v-model='sourceValue', rows='12', auto-grow, spellcheck='false', :label='$t(`editor:editor.source`)')
         v-card-actions
           v-spacer
           v-btn(variant='text', @click='sourceDialog = false') {{ $t('common:actions.cancel') }}
@@ -373,7 +373,7 @@ export default defineComponent({
       glyphMenuOpen: false,
       glyphQuery: '',
       glyphCategory: 'all' as VisualMarkdownGlyphFilter,
-      codeBlockLanguages: CODE_BLOCK_LANGUAGES,
+      codeBlockLanguages: CODE_BLOCK_LANGUAGES.map(item => ({ ...item, label: this.$t(`editor:tiptapEditor.language_${item.value}`) })),
       glyphMenuActivatorProps: GLYPH_MENU_ACTIVATOR_PROPS,
       glyphMenuContentProps: GLYPH_MENU_CONTENT_PROPS
     }
@@ -563,7 +563,7 @@ export default defineComponent({
         this.admonitionTitle = ''
         this.admonitionBody = ''
       } catch (err) {
-        this.admonitionError = err instanceof Error ? err.message : 'The admonition could not be inserted.'
+        this.admonitionError = err instanceof Error ? err.message : this.$t('editor:editor.admonitionCouldNotInserted')
       }
     },
     insertDefinitionList () {
@@ -577,7 +577,7 @@ export default defineComponent({
         this.glyphQuery = ''
       } catch (err) {
         wikiStore.showNotification({
-          message: err instanceof Error ? err.message : 'The icon or emoji could not be inserted.',
+          message: err instanceof Error ? err.message : this.$t('editor:editor.iconEmojiCouldNot'),
           style: 'warning',
           icon: 'warning'
         })
@@ -677,7 +677,7 @@ export default defineComponent({
               this.insertCodeDocument('wiki-extension', contentExtensionFenceBody(opts.text))
             } catch (err) {
               wikiStore.showNotification({
-                message: err instanceof Error ? err.message : 'The content extension could not be inserted.',
+                message: err instanceof Error ? err.message : this.$t('editor:editor.contentExtensionCouldNot'),
                 style: 'warning',
                 icon: 'warning'
               })
@@ -719,7 +719,7 @@ export default defineComponent({
       editorProps: {
         attributes: {
           role: 'textbox',
-          'aria-label': `${this.definition.label} document editor`,
+          'aria-label': this.$t('editor:editor.documentEditor', { label: this.definition.label, interpolation: { escapeValue: false } }),
           'aria-multiline': 'true'
         },
         handleKeyDown: (_view, event) => {

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-memory-manager.vue')
 const source = fs.readFileSync(componentPath, 'utf8')
@@ -88,6 +89,7 @@ const loadManager = (view, overrides = {}) => {
   }
   const evaluate = new Function(
     'computed',
+    'useTranslate',
     'nextTick',
     'onBeforeUnmount',
     'onWatcherCleanup',
@@ -115,6 +117,7 @@ const loadManager = (view, overrides = {}) => {
         return getter()
       }
     }),
+    () => translateEnglish,
     () => Promise.resolve(),
     callback => beforeUnmount.push(callback),
     onWatcherCleanup,

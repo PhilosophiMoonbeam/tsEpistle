@@ -2,16 +2,16 @@
   v-container(fluid)
     AdminHero(
       icon='mdi-chart-box-outline'
-      title='Statistics'
-      description='Useful information about your wiki'
+      :title='$t(`admin:stats.title`)'
+      :description='$t(`admin:stats.usefulInformationAboutWiki`)'
       heading-id='admin-stats-title'
     )
     v-row
       v-col(cols='12')
         async-state(
           state='empty'
-          title='Statistics are not available'
-          message='This statistics view is not connected to a data source yet.'
+          :title='$t(`admin:stats.statisticsNotAvailable`)'
+          :message='$t(`admin:stats.statisticsViewNotConnected`)'
         )
 </template>
 

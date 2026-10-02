@@ -2,41 +2,41 @@
   <div class="tls-workspace">
     <div :inert="dialog || undefined">
       <admin-hero
-        title="HTTPS & certificates"
-        description="Know where encryption begins. Keep every connection and certificate change accountable."
-        eyebrow="Operations"
+        :title="$t('admin:ssl.httpsCertificates')"
+        :description="$t('admin:ssl.knowWhereEncryptionBegins')"
+        :eyebrow="$t('admin:ssl.operations')"
         icon="mdi-certificate-outline"
       >
         <template #actions>
-          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload certificate evidence</v-tooltip></v-btn>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:ssl.reloadCertificateEvidence') }}</v-tooltip></v-btn>
         </template>
       </admin-hero>
       <v-alert v-if="error" type="error" variant="tonal" class="mb-4" role="alert">{{ error }}</v-alert>
       <v-alert v-if="notice" type="info" variant="tonal" class="mb-4" role="status">{{ notice }}</v-alert>
       <div v-if="!workspace" class="tls-empty">
-        <v-progress-circular v-if="loading" indeterminate aria-label="Loading HTTPS workspace" />
-        <h2>{{ loading ? 'Reading the connection landscape…' : 'HTTPS evidence is unavailable' }}</h2>
-        <p>Certificate and policy information appears after the workspace loads.</p>
+        <v-progress-circular v-if="loading" indeterminate :aria-label="$t('admin:ssl.loadingHttpsWorkspace')" />
+        <h2>{{ loading ? $t('admin:ssl.readingConnectionLandscape') : $t('admin:ssl.httpsEvidenceUnavailable') }}</h2>
+        <p>{{ $t('admin:ssl.certificatePolicyInformationAppears') }}</p>
       </div>
       <template v-else>
         <div class="tls-summary">
           <div>
-            <span>Public address</span>
-            <strong>{{ workspace.publicUrl || 'Not configured' }}</strong>
+            <span>{{ $t('admin:ssl.publicAddress') }}</span>
+            <strong>{{ workspace.publicUrl || $t('admin:ssl.notConfigured') }}</strong>
           </div>
           <div>
-            <span>Encryption boundary</span>
+            <span>{{ $t('admin:ssl.encryptionBoundary') }}</span>
             <strong>{{ boundary }}</strong>
           </div>
           <div>
-            <span>Redirect policy</span>
+            <span>{{ $t('admin:ssl.redirectPolicy') }}</span>
             <strong>
-              {{ workspace.redirection.enabled ? 'Enabled' : 'Disabled' }}
-              <small>{{ workspace.runtimeRedirection.settingsCurrent ? '· applied' : '· process differs' }}</small>
+              {{ workspace.redirection.enabled ? $t('admin:ssl.enabled') : $t('admin:ssl.providerDisabled') }}
+              <small>{{ workspace.runtimeRedirection.settingsCurrent ? $t('admin:ssl.applied') : $t('admin:ssl.processDiffers') }}</small>
             </strong>
           </div>
         </div>
-        <nav class="tls-nav" aria-label="HTTPS workspace sections">
+        <nav class="tls-nav" :aria-label="$t('admin:ssl.httpsWorkspaceSections')">
           <button v-for="item in sections" :key="item.id" :aria-current="section === item.id ? 'page' : undefined" @click="selectSection(item.id)">
             <span>{{ item.number }}</span>
             {{ item.label }}
@@ -45,97 +45,97 @@
         <section v-if="section === 'connections'" aria-labelledby="tls-connections">
           <div class="tls-section-heading">
             <div>
-              <p class="tls-eyebrow">01 / Connection path</p>
-              <h2 id="tls-connections">Follow the encrypted connection.</h2>
-              <p>Public HTTPS and the application listener are independent observations.</p>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.n01ConnectionPath') }}</p>
+              <h2 id="tls-connections">{{ $t('admin:ssl.followEncryptedConnection') }}</h2>
+              <p>{{ $t('admin:ssl.publicHttpsApplicationListener') }}</p>
             </div>
-            <v-btn color="primary" :disabled="locked || workspace.offline" @click="runCheck('public-check')">Check public HTTPS</v-btn>
+            <v-btn color="primary" :disabled="locked || workspace.offline" @click="runCheck('public-check')">{{ $t('admin:ssl.checkPublicHttps') }}</v-btn>
           </div>
           <div class="tls-path">
             <div>
               <span class="tls-step">01</span>
-              <h3>Public endpoint</h3>
+              <h3>{{ $t('admin:ssl.publicEndpoint') }}</h3>
               <p class="tls-mono">{{ workspace.publicUrl }}</p>
-              <p>{{ publicCheck ? publicCheck.summary : 'No handshake has been recorded.' }}</p>
+              <p>{{ publicCheck ? publicCheck.summary : $t('admin:ssl.noHandshakeHasBeen') }}</p>
             </div>
             <div>
               <span class="tls-step">02</span>
-              <h3>{{ workspace.redirection.trustedProxy ? 'Trusted reverse proxy' : 'Direct ingress' }}</h3>
+              <h3>{{ workspace.redirection.trustedProxy ? $t('admin:ssl.trustedReverseProxy') : $t('admin:ssl.directIngress') }}</h3>
               <p>
                 {{
                   workspace.redirection.trustedProxy
-                    ? 'Forwarded connection information is trusted by this process.'
-                    : 'Forwarded HTTPS claims are not trusted.'
+                    ? $t('admin:ssl.forwardedConnectionInformationTrusted')
+                    : $t('admin:ssl.forwardedHttpsClaimsNot')
                 }}
               </p>
               <router-link to="/security">
-                Review proxy trust
+                {{ $t('admin:ssl.reviewProxyTrust') }}
                 <v-icon size="16">mdi-arrow-top-right</v-icon>
               </router-link>
             </div>
             <div>
               <span class="tls-step">03</span>
-              <h3>Application listeners</h3>
+              <h3>{{ $t('admin:ssl.applicationListeners') }}</h3>
               <p>
-                HTTP
+                {{ $t('admin:ssl.http') }}
                 <strong>{{ port(workspace.listeners.httpPort) }}</strong>
               </p>
               <p>
-                HTTPS
+                {{ $t('admin:ssl.https') }}
                 <strong>{{ port(workspace.listeners.httpsPort) }}</strong>
               </p>
               <v-btn size="small" variant="outlined" :disabled="locked || !workspace.listeners.httpsPort" @click="runCheck('native-check')">
-                Check native HTTPS
+                {{ $t('admin:ssl.checkNativeHttps') }}
               </v-btn>
             </div>
           </div>
           <div class="tls-columns">
             <article class="tls-panel">
-              <p class="tls-eyebrow">Public observation</p>
-              <h3>{{ publicConnection ? (publicConnection.connected ? 'Handshake observed' : 'Connection unsuccessful') : 'Awaiting a check' }}</h3>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.publicObservation') }}</p>
+              <h3>{{ publicConnection ? (publicConnection.connected ? $t('admin:ssl.handshakeObserved') : $t('admin:ssl.connectionUnsuccessful')) : $t('admin:ssl.awaitingCheck') }}</h3>
               <template v-if="publicConnection">
                 <dl class="tls-facts">
                   <div>
-                    <dt>Certificate trust</dt>
+                    <dt>{{ $t('admin:ssl.certificateTrust') }}</dt>
                     <dd>{{ verdict(publicConnection.trusted) }}</dd>
                   </div>
                   <div>
-                    <dt>Hostname match</dt>
+                    <dt>{{ $t('admin:ssl.hostnameMatch') }}</dt>
                     <dd>{{ verdict(publicConnection.hostnameMatches) }}</dd>
                   </div>
                   <div>
-                    <dt>Protocol / cipher</dt>
-                    <dd>{{ publicConnection.protocol || 'Unknown' }} / {{ publicConnection.cipher || 'Unknown' }}</dd>
+                    <dt>{{ $t('admin:ssl.protocolCipher') }}</dt>
+                    <dd>{{ publicConnection.protocol || $t('admin:ssl.unknown') }} / {{ publicConnection.cipher || $t('admin:ssl.unknown') }}</dd>
                   </div>
                   <div>
-                    <dt>Observed</dt>
+                    <dt>{{ $t('admin:ssl.observed') }}</dt>
                     <dd>{{ date(publicConnection.observedAt) }}</dd>
                   </div>
                   <div>
-                    <dt>Certificate expires</dt>
-                    <dd>{{ publicConnection.certificate ? date(publicConnection.certificate.validUntil) : 'Not observed' }}</dd>
+                    <dt>{{ $t('admin:ssl.certificateExpires') }}</dt>
+                    <dd>{{ publicConnection.certificate ? date(publicConnection.certificate.validUntil) : $t('admin:ssl.notObserved') }}</dd>
                   </div>
                 </dl>
-                <v-btn variant="text" @click="openReceipt(publicCheck!)">Inspect receipt &amp; chain</v-btn>
+                <v-btn variant="text" @click="openReceipt(publicCheck!)">{{ $t('admin:ssl.inspectReceiptChain') }}</v-btn>
               </template>
               <p v-else>
-                A check opens a TLS handshake from the wiki server. It sends no page request and does not measure every user's network path.
+                {{ $t('admin:ssl.checkOpensTlsHandshake') }}
               </p>
             </article>
             <aside class="tls-panel tls-aside">
-              <p class="tls-eyebrow">Deployment context</p>
-              <h3>{{ workspace.listeners.httpsPort ? 'Native TLS is running' : 'The application serves HTTP' }}</h3>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.deploymentContext') }}</p>
+              <h3>{{ workspace.listeners.httpsPort ? $t('admin:ssl.nativeTlsRunning') : $t('admin:ssl.applicationServesHttp') }}</h3>
               <p>
                 {{
                   workspace.listeners.httpsPort
-                    ? 'The native certificate can be inspected separately from any certificate presented by a proxy.'
-                    : 'A reverse proxy can provide public HTTPS while this process serves HTTP. Native TLS being disabled does not mean the public site is unencrypted.'
+                    ? $t('admin:ssl.nativeCertificateCanInspected')
+                    : $t('admin:ssl.reverseProxyCanProvide')
                 }}
               </p>
-              <p>Listener ports, provider and certificate sources come from deployment configuration. Proxy certificates are managed by the proxy.</p>
-              <p v-if="workspace.offline">External checks and certificate issuance are paused by offline mode.</p>
+              <p>{{ $t('admin:ssl.listenerPortsProviderCertificate') }}</p>
+              <p v-if="workspace.offline">{{ $t('admin:ssl.externalChecksCertificateIssuance') }}</p>
               <router-link to="/general">
-                Review public address
+                {{ $t('admin:ssl.reviewPublicAddress') }}
                 <v-icon size="16">mdi-arrow-top-right</v-icon>
               </router-link>
             </aside>
@@ -144,190 +144,187 @@
         <section v-else-if="section === 'certificates'" aria-labelledby="tls-certificates">
           <div class="tls-section-heading">
             <div>
-              <p class="tls-eyebrow">02 / Certificate lifecycle</p>
-              <h2 id="tls-certificates">Validate. Review. Put into service.</h2>
-              <p>A saved certificate becomes active only when it is applied to the native listener.</p>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.n02CertificateLifecycle') }}</p>
+              <h2 id="tls-certificates">{{ $t('admin:ssl.validateReviewPutInto') }}</h2>
+              <p>{{ $t('admin:ssl.savedCertificateBecomesActive') }}</p>
             </div>
           </div>
           <div class="tls-certificate-strip">
             <div>
-              <span>Provider</span>
-              <strong>{{ workspace.deployment.provider || 'No native provider' }}</strong>
+              <span>{{ $t('admin:ssl.provider') }}</span>
+              <strong>{{ workspace.deployment.provider || $t('admin:ssl.noNativeProvider') }}</strong>
             </div>
             <div>
-              <span>Material</span>
+              <span>{{ $t('admin:ssl.material') }}</span>
               <strong>{{ (workspace.deployment.format || 'PEM').toUpperCase() }} · {{ workspace.deployment.source }}</strong>
             </div>
             <div>
-              <span>Domain</span>
-              <strong>{{ workspace.deployment.domain || 'Not configured' }}</strong>
+              <span>{{ $t('admin:ssl.domain') }}</span>
+              <strong>{{ workspace.deployment.domain || $t('admin:ssl.notConfigured') }}</strong>
             </div>
           </div>
           <div class="tls-columns">
             <article class="tls-panel">
-              <p class="tls-eyebrow">In service / native listener</p>
-              <h3>{{ workspace.listeners.material?.certificate?.subject || 'No native certificate is active' }}</h3>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.serviceNativeListener') }}</p>
+              <h3>{{ workspace.listeners.material?.certificate?.subject || $t('admin:ssl.noNativeCertificateActive') }}</h3>
               <dl v-if="workspace.listeners.material" class="tls-facts">
                 <div>
-                  <dt>Applied</dt>
+                  <dt>{{ $t('admin:ssl.applied2') }}</dt>
                   <dd>{{ date(workspace.listeners.material.appliedAt) }}</dd>
                 </div>
                 <div>
-                  <dt>Expires</dt>
+                  <dt>{{ $t('admin:ssl.expires') }}</dt>
                   <dd>
                     {{
                       workspace.listeners.material.certificate
                         ? date(workspace.listeners.material.certificate.validUntil)
-                        : 'Run a native handshake to inspect'
+                        : $t('admin:ssl.runNativeHandshakeInspect')
                     }}
                   </dd>
                 </div>
                 <div>
-                  <dt>Replacement method</dt>
+                  <dt>{{ $t('admin:ssl.replacementMethod') }}</dt>
                   <dd>
                     {{
-                      workspace.listeners.replacementMode === 'listener-restart' ? 'Listener restart · connections interrupted' : 'TLS context reload'
+                      workspace.listeners.replacementMode === 'listener-restart' ? $t('admin:ssl.listenerRestartConnectionsInterrupted') : $t('admin:ssl.tlsContextReload')
                     }}
                   </dd>
                 </div>
               </dl>
-              <p v-else>Public HTTPS may be supplied by a reverse proxy. Its certificate cannot be replaced here.</p>
+              <p v-else>{{ $t('admin:ssl.publicHttpsMaySupplied') }}</p>
             </article>
             <article class="tls-panel">
-              <p class="tls-eyebrow">Saved / certificate authority</p>
-              <h3>{{ workspace.savedCertificate?.subject || 'No saved ACME certificate' }}</h3>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.savedCertificateAuthority') }}</p>
+              <h3>{{ workspace.savedCertificate?.subject || $t('admin:ssl.noSavedAcmeCertificate') }}</h3>
               <p v-if="workspace.savedCertificate">
-                {{ workspace.savedCertificate.validity }} · expires {{ date(workspace.savedCertificate.validUntil) }}
+                {{ $t('admin:ssl.expires2', { validity: workspace.savedCertificate.validity, validUntil: date(workspace.savedCertificate.validUntil), interpolation: { escapeValue: false } }) }}
               </p>
               <p v-if="workspace.savedCertificateIssue">{{ workspace.savedCertificateIssue }}</p>
-              <p>Issuance saves the new material. It does not replace the running listener.</p>
+              <p>{{ $t('admin:ssl.issuanceSavesNewMaterial') }}</p>
               <v-btn
                 variant="outlined"
                 :disabled="locked || workspace.offline || !workspace.deployment.enabled || workspace.deployment.provider !== 'letsencrypt'"
                 @click="review('renew-certificate')"
               >
-                Review certificate issuance
+                {{ $t('admin:ssl.reviewCertificateIssuance') }}
               </v-btn>
             </article>
           </div>
           <article class="tls-panel tls-validation">
             <div>
-              <p class="tls-eyebrow">Replacement readiness</p>
-              <h3>{{ materialCheck?.state === 'succeeded' ? 'Material validated' : 'Validate the configured material' }}</h3>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.replacementReadiness') }}</p>
+              <h3>{{ materialCheck?.state === 'succeeded' ? $t('admin:ssl.materialValidated') : $t('admin:ssl.validateConfiguredMaterial') }}</h3>
               <p>
                 {{
                   materialCheck?.summary ||
-                  'Check the certificate, private key and validity without changing the listener. File paths and private material stay on the server.'
+                  $t('admin:ssl.checkCertificatePrivateKey')
                 }}
               </p>
               <p v-if="materialCheck?.result?.material">
-                {{ materialCheck.result.material.certificate.subject }} · expires {{ date(materialCheck.result.material.certificate.validUntil) }}
+                {{ $t('admin:ssl.expires3', { subject: materialCheck.result.material.certificate.subject, validUntil: date(materialCheck.result.material.certificate.validUntil), interpolation: { escapeValue: false } }) }}
               </p>
             </div>
             <div class="tls-actions">
               <v-btn variant="outlined" :disabled="locked || !workspace.deployment.enabled" @click="runCheck('validate-material')">
-                Validate material
+                {{ $t('admin:ssl.validateMaterial') }}
               </v-btn>
               <v-btn
                 color="primary"
                 :disabled="locked || !workspace.listeners.httpsPort || materialCheck?.state !== 'succeeded'"
                 @click="review('apply-certificate')"
               >
-                Review replacement
+                {{ $t('admin:ssl.reviewReplacement') }}
               </v-btn>
             </div>
           </article>
           <p class="tls-footnote">
-            Let’s Encrypt requires a reachable HTTP challenge endpoint for the configured domain. Startup checks renew certificates within five days
-            of expiry; there is no periodic renewal scheduler. Monitor expiry and request renewal when needed.
+            {{ $t('admin:ssl.letsEncryptRequiresReachable') }}
           </p>
         </section>
         <section v-else-if="section === 'policy'" aria-labelledby="tls-policy">
           <div class="tls-section-heading">
             <div>
-              <p class="tls-eyebrow">03 / Redirect policy</p>
-              <h2 id="tls-policy">Make the secure route the default.</h2>
-              <p>Review the destination and trust boundary before redirecting HTTP traffic.</p>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.n03RedirectPolicy') }}</p>
+              <h2 id="tls-policy">{{ $t('admin:ssl.makeSecureRouteDefault') }}</h2>
+              <p>{{ $t('admin:ssl.reviewDestinationTrustBoundary') }}</p>
             </div>
           </div>
           <div class="tls-columns">
             <article class="tls-panel">
-              <h3>HTTP → HTTPS</h3>
+              <h3>{{ $t('admin:ssl.httpHttps') }}</h3>
               <v-switch
                 v-model="draftEnabled"
-                label="Redirect HTTP requests to the public HTTPS address"
+                :label="$t('admin:ssl.redirectHttpRequestsPublic')"
                 color="primary"
                 hide-details
                 :disabled="busy || unconfirmedPolicy"
               />
               <dl class="tls-facts">
                 <div>
-                  <dt>Destination</dt>
+                  <dt>{{ $t('admin:ssl.destination') }}</dt>
                   <dd>{{ workspace.publicUrl }}</dd>
                 </div>
                 <div>
-                  <dt>Saved policy</dt>
-                  <dd>{{ workspace.redirection.enabled ? 'Enabled' : 'Disabled' }}</dd>
+                  <dt>{{ $t('admin:ssl.savedPolicy') }}</dt>
+                  <dd>{{ workspace.redirection.enabled ? $t('admin:ssl.enabled') : $t('admin:ssl.providerDisabled') }}</dd>
                 </div>
                 <div>
-                  <dt>Running process</dt>
-                  <dd>{{ workspace.runtimeRedirection.enabled ? 'Enabled' : 'Disabled' }}</dd>
+                  <dt>{{ $t('admin:ssl.runningProcess') }}</dt>
+                  <dd>{{ workspace.runtimeRedirection.enabled ? $t('admin:ssl.enabled') : $t('admin:ssl.providerDisabled') }}</dd>
                 </div>
                 <div>
-                  <dt>Eligible route</dt>
-                  <dd>{{ workspace.redirection.eligible ? 'Available' : workspace.redirection.reason }}</dd>
+                  <dt>{{ $t('admin:ssl.eligibleRoute') }}</dt>
+                  <dd>{{ workspace.redirection.eligible ? $t('admin:ssl.available') : workspace.redirection.reason }}</dd>
                 </div>
               </dl>
               <v-textarea
                 v-model="policyReason"
-                label="Reason for this policy change"
+                :label="$t('admin:ssl.reasonPolicyChange')"
                 rows="2"
                 counter="1000"
                 maxlength="1000"
                 :disabled="busy || unconfirmedPolicy"
               />
               <v-btn v-if="!workspace.runtimeRedirection.settingsCurrent" variant="outlined" :disabled="locked" @click="review('apply-policy')">
-                Review saved policy application
+                {{ $t('admin:ssl.reviewSavedPolicyApplication') }}
               </v-btn>
             </article>
             <aside class="tls-panel tls-aside">
-              <h3>Verify before redirecting</h3>
+              <h3>{{ $t('admin:ssl.verifyBeforeRedirecting') }}</h3>
               <p>
-                Enabling requires a successful public check from the last 15 minutes for the current settings: trusted certificate, matching hostname
-                and valid dates.
+                {{ $t('admin:ssl.enablingRequiresSuccessfulPublic') }}
               </p>
-              <p>{{ workspace.redirection.reason || 'The deployment has a supported HTTPS route.' }}</p>
-              <v-btn variant="outlined" :disabled="locked || workspace.offline" @click="runCheck('public-check')">Check public HTTPS</v-btn>
+              <p>{{ workspace.redirection.reason || $t('admin:ssl.deploymentHasSupportedHttps') }}</p>
+              <v-btn variant="outlined" :disabled="locked || workspace.offline" @click="runCheck('public-check')">{{ $t('admin:ssl.checkPublicHttps') }}</v-btn>
               <p>
-                Trusted proxy requests already marked HTTPS pass through without a redirect loop. Disabling remains available if the destination needs
-                repair.
+                {{ $t('admin:ssl.trustedProxyRequestsAlready') }}
               </p>
               <div class="tls-actions">
-                <router-link to="/general">Public address</router-link>
-                <router-link to="/security">Proxy trust</router-link>
+                <router-link to="/general">{{ $t('admin:ssl.publicAddress') }}</router-link>
+                <router-link to="/security">{{ $t('admin:ssl.proxyTrust') }}</router-link>
               </div>
             </aside>
           </div>
           <div v-if="dirty" class="tls-savebar">
-            <span>Unsaved redirect policy</span>
+            <span>{{ $t('admin:ssl.unsavedRedirectPolicy') }}</span>
             <div class="tls-actions">
-              <v-btn variant="text" :disabled="busy" @click="resetDraft">Reset</v-btn>
+              <v-btn variant="text" :disabled="busy" @click="resetDraft">{{ $t('admin:ssl.reset') }}</v-btn>
               <v-btn
                 color="primary"
                 :disabled="busy || unconfirmedPolicy || policyReason.trim().length < 3 || (draftEnabled && !workspace.redirection.eligible)"
                 @click="review('save-policy')"
               >
-                Review policy
+                {{ $t('admin:ssl.reviewPolicy') }}
               </v-btn>
             </div>
           </div>
           <article class="tls-panel mt-5">
-            <h3>Policy history</h3>
-            <p v-if="!workspace.history.length">No policy changes have been recorded.</p>
+            <h3>{{ $t('admin:ssl.policyHistory') }}</h3>
+            <p v-if="!workspace.history.length">{{ $t('admin:ssl.noPolicyChangesHave') }}</p>
             <ol v-else class="tls-history">
               <li v-for="event in workspace.history" :key="event.id">
                 <div>
-                  <strong>{{ event.enabled ? 'Redirection enabled' : 'Redirection disabled' }}</strong>
+                  <strong>{{ event.enabled ? $t('admin:ssl.redirectionEnabled') : $t('admin:ssl.redirectionDisabled') }}</strong>
                   <p>{{ event.reason }}</p>
                 </div>
                 <span>{{ date(event.createdAt) }} · {{ actor(event) }}</span>
@@ -338,19 +335,19 @@
         <section v-else aria-labelledby="tls-operations">
           <div class="tls-section-heading">
             <div>
-              <p class="tls-eyebrow">04 / Operation register</p>
-              <h2 id="tls-operations">An inspectable record of every action.</h2>
-              <p>Refresh reads existing receipts. It never repeats an issuance or replacement.</p>
+              <p class="tls-eyebrow">{{ $t('admin:ssl.n04OperationRegister') }}</p>
+              <h2 id="tls-operations">{{ $t('admin:ssl.inspectableRecordEveryAction') }}</h2>
+              <p>{{ $t('admin:ssl.refreshReadsExistingReceipts') }}</p>
             </div>
-            <v-btn variant="outlined" :disabled="!workspace.operations.length" @click="exportEvidence">Export evidence</v-btn>
+            <v-btn variant="outlined" :disabled="!workspace.operations.length" @click="exportEvidence">{{ $t('admin:ssl.exportEvidence') }}</v-btn>
           </div>
           <v-alert v-if="unconfirmedId" type="warning" variant="tonal" class="mb-4">
-            The response for {{ unconfirmedId }} was not confirmed.
-            <v-btn variant="text" :disabled="busy" @click="recoverReceipt">Read receipt</v-btn>
+            {{ $t('admin:ssl.responseWasNotConfirmed', { unconfirmedId, interpolation: { escapeValue: false } }) }}
+            <v-btn variant="text" :disabled="busy" @click="recoverReceipt">{{ $t('admin:ssl.readReceipt') }}</v-btn>
           </v-alert>
           <div class="tls-register">
             <div>
-              <p v-if="!workspace.operations.length" class="tls-empty">No HTTPS operations recorded yet.</p>
+              <p v-if="!workspace.operations.length" class="tls-empty">{{ $t('admin:ssl.noHttpsOperationsRecorded') }}</p>
               <button
                 v-for="operation in workspace.operations"
                 :key="operation.id"
@@ -372,89 +369,89 @@
                 <p>{{ selected.summary }}</p>
                 <dl class="tls-facts">
                   <div>
-                    <dt>Requested by</dt>
+                    <dt>{{ $t('admin:ssl.requested') }}</dt>
                     <dd>{{ actor(selected) }}</dd>
                   </div>
                   <div>
-                    <dt>Reason</dt>
-                    <dd>{{ selected.reason || 'Diagnostic check' }}</dd>
+                    <dt>{{ $t('admin:ssl.reason') }}</dt>
+                    <dd>{{ selected.reason || $t('admin:ssl.diagnosticCheck') }}</dd>
                   </div>
                   <div>
-                    <dt>Started / completed</dt>
-                    <dd>{{ date(selected.createdAt) }} / {{ selected.completedAt ? date(selected.completedAt) : 'Pending' }}</dd>
+                    <dt>{{ $t('admin:ssl.startedCompleted') }}</dt>
+                    <dd>{{ date(selected.createdAt) }} / {{ selected.completedAt ? date(selected.completedAt) : $t('admin:ssl.pending') }}</dd>
                   </div>
                   <div>
-                    <dt>Receipt</dt>
+                    <dt>{{ $t('admin:ssl.receipt') }}</dt>
                     <dd class="tls-mono">{{ selected.id }}</dd>
                   </div>
                 </dl>
                 <template v-if="selected.result?.connection">
-                  <h4>Connection evidence</h4>
+                  <h4>{{ $t('admin:ssl.connectionEvidence') }}</h4>
                   <p>
                     {{ selected.result.connection.endpoint.host }}:{{ selected.result.connection.endpoint.port }} ·
                     {{ selected.result.connection.protocol }}
                   </p>
                   <p>
-                    Trust: {{ verdict(selected.result.connection.trusted) }} · Hostname: {{ verdict(selected.result.connection.hostnameMatches) }}
+                    {{ $t('admin:ssl.trustHostname', { trusted: verdict(selected.result.connection.trusted), hostnameMatches: verdict(selected.result.connection.hostnameMatches), interpolation: { escapeValue: false } }) }}
                   </p>
                 </template>
                 <div v-for="(cert, index) in selectedCertificates" :key="cert.fingerprint256" class="tls-chain">
-                  <h4>{{ index === 0 ? 'Certificate' : 'Chain certificate ' + (index + 1) }}</h4>
+                  <h4>{{ index === 0 ? $t('admin:ssl.certificate') : $t('admin:ssl.chainCertificate', { value: (index + 1), interpolation: { escapeValue: false } }) }}</h4>
                   <dl class="tls-facts">
                     <div>
-                      <dt>Subject</dt>
+                      <dt>{{ $t('admin:ssl.subject') }}</dt>
                       <dd>{{ cert.subject }}</dd>
                     </div>
                     <div>
-                      <dt>Issuer</dt>
+                      <dt>{{ $t('admin:ssl.issuer') }}</dt>
                       <dd>{{ cert.issuer }}</dd>
                     </div>
                     <div>
-                      <dt>Names</dt>
+                      <dt>{{ $t('admin:ssl.names') }}</dt>
                       <dd>{{ cert.subjectAlternativeNames }}</dd>
                     </div>
                     <div>
-                      <dt>Valid from / until</dt>
+                      <dt>{{ $t('admin:ssl.validUntil') }}</dt>
                       <dd>{{ date(cert.validFrom) }} / {{ date(cert.validUntil) }}</dd>
                     </div>
                     <div>
-                      <dt>Key</dt>
+                      <dt>{{ $t('admin:ssl.key') }}</dt>
                       <dd>{{ cert.key }}</dd>
                     </div>
                     <div>
-                      <dt>SHA-256 fingerprint</dt>
+                      <dt>{{ $t('admin:ssl.sha256Fingerprint') }}</dt>
                       <dd class="tls-mono">{{ cert.fingerprint256 }}</dd>
                     </div>
                   </dl>
                 </div>
               </template>
               <template v-else>
-                <h3>Select an operation</h3>
-                <p>Inspect its outcome, attribution and public certificate evidence.</p>
+                <h3>{{ $t('admin:ssl.selectOperation') }}</h3>
+                <p>{{ $t('admin:ssl.inspectOutcomeAttributionPublic') }}</p>
               </template>
             </article>
           </div>
         </section>
         <footer class="tls-footer">
-          <span>Workspace observed {{ date(workspace.observedAt) }}</span>
-          <span>Certificate checks are point-in-time evidence.</span>
+          <span>{{ $t('admin:ssl.workspaceObserved', { observedAt: date(workspace.observedAt), interpolation: { escapeValue: false } }) }}</span>
+          <span>{{ $t('admin:ssl.certificateChecksPointTime') }}</span>
         </footer>
       </template>
     </div>
     <v-dialog v-model="dialog" max-width="620" :persistent="busy" aria-labelledby="tls-review-title">
       <v-card class="pa-6">
-        <p class="tls-eyebrow">Review change</p>
+        <p class="tls-eyebrow">{{ $t('admin:ssl.reviewChange') }}</p>
         <h2 id="tls-review-title">{{ reviewTitle }}</h2>
         <p class="my-4">{{ reviewDescription }}</p>
         <p v-if="action === 'save-policy'">
-          Destination: {{ workspace?.publicUrl }}
+          {{ $t('admin:ssl.destination2', { publicUrl: workspace?.publicUrl, interpolation: { escapeValue: false } }) }}
           <br />
-          Reason: {{ policyReason }}
+          {{ $t('admin:ssl.reason2', { policyReason, interpolation: { escapeValue: false } }) }}
         </p>
         <v-textarea
           v-if="certificateMutation"
           v-model="operationReason"
-          label="Reason for this certificate change"
+          :label="$t('admin:ssl.reasonCertificateChange')"
           rows="2"
           maxlength="1000"
           counter="1000"
@@ -463,30 +460,30 @@
         <v-checkbox
           v-if="action === 'apply-certificate' && workspace?.listeners.replacementMode === 'listener-restart'"
           v-model="restartAck"
-          label="I understand that active HTTPS connections will be interrupted."
+          :label="$t('admin:ssl.iUnderstandActiveHttps')"
           :disabled="busy"
           hide-details
         />
         <v-checkbox
           v-if="action === 'renew-certificate'"
           v-model="issuanceAck"
-          label="Request a certificate from Let’s Encrypt for the configured domain and subscriber."
+          :label="$t('admin:ssl.requestCertificateLetsEncrypt')"
           :disabled="busy"
           hide-details
         />
         <v-checkbox
           v-if="certificateMutation && uncertainMutation"
           v-model="uncertainAck"
-          :label="'I reviewed the uncertain ' + kindLabel(uncertainMutation.kind).toLowerCase() + ' receipt and accept the risk of a new change.'"
+          :label="$t('admin:ssl.iReviewedUncertainReceipt', { kindLabel: kindLabel(uncertainMutation.kind).toLowerCase(), interpolation: { escapeValue: false } })"
           :disabled="busy"
           hide-details
         />
         <v-alert v-if="dialogError" type="error" variant="tonal" class="my-3">{{ dialogError }}</v-alert>
         <v-card-actions class="px-0 pt-5">
           <v-spacer />
-          <v-btn :disabled="busy" @click="closeReview">Cancel</v-btn>
+          <v-btn :disabled="busy" @click="closeReview">{{ $t('common:actions.cancel') }}</v-btn>
           <v-btn color="primary" variant="flat" :loading="busy" :disabled="!reviewReady" @click="confirmReview">
-            {{ action === 'renew-certificate' ? 'Request certificate' : action === 'apply-certificate' ? 'Apply certificate' : 'Apply policy' }}
+            {{ action === 'renew-certificate' ? $t('admin:ssl.requestCertificate') : action === 'apply-certificate' ? $t('admin:ssl.applyCertificate') : $t('admin:ssl.applyPolicy') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -499,13 +496,16 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import type { TlsOperation, TlsOperationKind, TlsWorkspace } from '../../../shared/tls-workspace.ts'
 import { applyTlsPolicy, fetchTlsOperation, fetchTlsWorkspace, saveTlsPolicy, startTlsOperation } from '../../helpers/tls-workspace-api.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const route = useRoute(),
   router = useRouter()
 const sections = [
-  { id: 'connections', number: '01', label: 'Connections' },
-  { id: 'certificates', number: '02', label: 'Certificates' },
-  { id: 'policy', number: '03', label: 'Redirect policy' },
-  { id: 'operations', number: '04', label: 'Operations' }
+  { id: 'connections', number: '01', label: t('admin:ssl.connections') },
+  { id: 'certificates', number: '02', label: t('admin:ssl.certificates') },
+  { id: 'policy', number: '03', label: t('admin:ssl.redirectPolicy') },
+  { id: 'operations', number: '04', label: t('admin:ssl.operations') }
 ]
 const section = computed(() => (sections.some((item) => item.id === route.query.section) ? String(route.query.section) : 'connections'))
 const workspace = ref<TlsWorkspace | null>(null),
@@ -542,10 +542,10 @@ const uncertainMutation = computed(() => {
 const certificateMutation = computed(() => action.value === 'apply-certificate' || action.value === 'renew-certificate')
 const boundary = computed(() =>
   workspace.value?.redirection.trustedProxy
-    ? 'Reverse proxy'
+    ? t('admin:ssl.reverseProxy')
     : workspace.value?.listeners.httpsPort
-      ? 'Native HTTPS'
-      : 'External ingress · unverified'
+      ? t('admin:ssl.nativeHttps')
+      : t('admin:ssl.externalIngressUnverified')
 )
 const selectedCertificates = computed(() => {
   const result = selected.value?.result
@@ -559,27 +559,27 @@ const selectedCertificates = computed(() => {
 })
 const kindLabel = (kind: string) =>
   ({
-    'public-check': 'Public HTTPS check',
-    'native-check': 'Native HTTPS check',
-    'validate-material': 'Material validation',
-    'apply-certificate': 'Certificate replacement',
-    'renew-certificate': 'Certificate issuance'
+    'public-check': t('admin:ssl.publicHttpsCheck'),
+    'native-check': t('admin:ssl.nativeHttpsCheck'),
+    'validate-material': t('admin:ssl.materialValidation'),
+    'apply-certificate': t('admin:ssl.certificateReplacement'),
+    'renew-certificate': t('admin:ssl.certificateIssuance')
   })[kind] || kind
 const reviewTitle = computed(() =>
   action.value === 'save-policy'
     ? draftEnabled.value
-      ? 'Enable HTTPS redirection'
-      : 'Disable HTTPS redirection'
+      ? t('admin:ssl.enableHttpsRedirection')
+      : t('admin:ssl.disableHttpsRedirection')
     : action.value === 'apply-policy'
-      ? 'Apply the saved redirect policy'
+      ? t('admin:ssl.applySavedRedirectPolicy')
       : kindLabel(action.value)
 )
 const reviewDescription = computed(() =>
   action.value === 'renew-certificate'
-    ? `Request and save a certificate for ${workspace.value?.deployment.domain || 'the configured domain'} using ${workspace.value?.deployment.subscriberEmail || 'the configured subscriber'}. Issuance contacts the certificate authority and may be subject to its limits. Validate and apply the result separately.`
+    ? t('admin:ssl.requestSaveCertificateUsing', { domain: workspace.value?.deployment.domain || 'the configured domain', subscriberEmail: workspace.value?.deployment.subscriberEmail || 'the configured subscriber', interpolation: { escapeValue: false } })
     : action.value === 'apply-certificate'
-      ? 'Replace the native listener certificate with the material you validated. Changed files or settings require a new validation. Verify the native handshake after replacement.'
-      : 'Apply this redirect policy to the running process. Public address and proxy trust settings must match their saved values.'
+      ? t('admin:ssl.replaceNativeListenerCertificate')
+      : t('admin:ssl.applyRedirectPolicyRunning')
 )
 const reviewReady = computed(
   () =>
@@ -591,13 +591,13 @@ const reviewReady = computed(
 )
 const date = (value: string) => {
   const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? 'Unknown' : parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  return Number.isNaN(parsed.getTime()) ? t('admin:ssl.unknown') : parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 const actor = (value: { actorId: number | null; apiKeyId: number | null }) =>
-  value.apiKeyId ? `API key ${value.apiKeyId}` : value.actorId ? `User ${value.actorId}` : 'System'
-const port = (value: number | null) => (value ? `Port ${value}` : 'Not running')
-const verdict = (value: boolean | null) => (value === null ? 'Not observed' : value ? 'Verified' : 'Not verified')
-const message = (value: unknown) => (value instanceof Error ? value.message : 'The request could not be confirmed.')
+  value.apiKeyId ? t('admin:ssl.apiKey', { apiKeyId: value.apiKeyId, interpolation: { escapeValue: false } }) : value.actorId ? t('admin:ssl.user', { actorId: value.actorId, interpolation: { escapeValue: false } }) : t('admin:ssl.system')
+const port = (value: number | null) => (value ? t('admin:ssl.port', { value, interpolation: { escapeValue: false } }) : t('admin:ssl.notRunning'))
+const verdict = (value: boolean | null) => (value === null ? t('admin:ssl.notObserved') : value ? t('admin:ssl.verified') : t('admin:ssl.notVerified'))
+const message = (value: unknown) => (value instanceof Error ? value.message : t('admin:ssl.requestCouldNotConfirmed'))
 let disposed = false,
   generation = 0,
   poll: ReturnType<typeof setTimeout> | undefined
@@ -743,8 +743,8 @@ const confirmReview = async () => {
             })
           : await applyTlsPolicy(reviewFingerprint.value)
       notice.value = result.applied
-        ? 'Redirect policy saved and applied to this process.'
-        : 'Policy is saved. Reconcile public address and proxy trust before applying it.'
+        ? t('admin:ssl.redirectPolicySavedApplied')
+        : t('admin:ssl.policySavedReconcilePublic')
       dialog.value = false
       await refresh()
     }
@@ -759,7 +759,7 @@ const confirmReview = async () => {
       if (status && [400, 403, 409].includes(status)) unconfirmedPolicy.value = false
       else if (!certificateMutation.value) {
         dialog.value = false
-        error.value = message(cause) + ' Refresh evidence to recover the saved policy.'
+        error.value = t('admin:ssl.refreshEvidenceRecoverSaved', { cause: message(cause), interpolation: { escapeValue: false } })
       }
     }
   } finally {
@@ -779,7 +779,7 @@ const exportEvidence = () => {
 onBeforeRouteLeave(async () => {
   if (busy.value) return false
   if (!dirty.value) return true
-  return confirmDiscard('Leave unsaved policy?', 'Your redirect policy draft will be discarded. Recorded operations continue on the server.', 'Discard draft')
+  return confirmDiscard(t('admin:ssl.leaveUnsavedPolicy'), t('admin:ssl.redirectPolicyDraftWill'), t('admin:ssl.discardDraft'))
 })
 const beforeUnload = (event: BeforeUnloadEvent) => {
   if (dirty.value || busy.value) {

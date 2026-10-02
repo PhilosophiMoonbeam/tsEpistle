@@ -8,194 +8,194 @@
               .d-flex
                 v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat, height='44')
                   v-icon.mr-3(color='teal') mdi-information-variant
-                  h2#markdown-help-title.text-body-medium.text-teal Markdown Reference
-              h3.text-body-medium.mt-3 Bold
+                  h2#markdown-help-title.text-body-medium.text-teal {{ $t(`editor:help.markdownReference`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.bold`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div **Lorem ipsum**
+                      div {{ $t(`editor:help.loremIpsum`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small: strong Lorem ipsum
-              h3.text-body-medium.mt-3 Italic
+                      .text-body-small: strong {{ $t(`editor:help.loremIpsum2`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.italic`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div *Lorem ipsum*
+                      div {{ $t(`editor:help.loremIpsum3`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small: em Lorem ipsum
-              h3.text-body-medium.mt-3 Strikethrough
+                      .text-body-small: em {{ $t(`editor:help.loremIpsum2`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.strikethrough`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div ~~Lorem ipsum~~
+                      div {{ $t(`editor:help.loremIpsum4`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small(style='text-decoration: line-through;') Lorem ipsum
-              h3.text-body-medium.mt-3 Headers
+                      .text-body-small(style='text-decoration: line-through;') {{ $t(`editor:help.loremIpsum2`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.headers`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div # Header 1
-                      div ## Header 2
-                      div ### Header 3
-                      div #### Header 4
-                      div ##### Header 5
-                      div ###### Header 6
+                      div {{ $t(`editor:help.header1`) }}
+                      div {{ $t(`editor:help.header2`) }}
+                      div {{ $t(`editor:help.header3`) }}
+                      div {{ $t(`editor:help.header4`) }}
+                      div {{ $t(`editor:help.header5`) }}
+                      div {{ $t(`editor:help.header6`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      div(style='font-weight: 700; font-size: 24px;') Header 1
-                      div(style='font-weight: 700; font-size: 22px;') Header 2
-                      div(style='font-weight: 700; font-size: 20px;') Header 3
-                      div(style='font-weight: 700; font-size: 18px;') Header 4
-                      div(style='font-weight: 700; font-size: 16px;') Header 5
-                      div(style='font-weight: 700; font-size: 14px;') Header 6
-              h3.text-body-medium.mt-3 Unordered Lists
-              .text-body-small.text-medium-emphasis: em You can also use the asterisk symbol instead of the dash.
+                      div(style='font-weight: 700; font-size: 24px;') {{ $t(`editor:help.header12`) }}
+                      div(style='font-weight: 700; font-size: 22px;') {{ $t(`editor:help.header22`) }}
+                      div(style='font-weight: 700; font-size: 20px;') {{ $t(`editor:help.header32`) }}
+                      div(style='font-weight: 700; font-size: 18px;') {{ $t(`editor:help.header42`) }}
+                      div(style='font-weight: 700; font-size: 16px;') {{ $t(`editor:help.header52`) }}
+                      div(style='font-weight: 700; font-size: 14px;') {{ $t(`editor:help.header62`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.unorderedLists`) }}
+              .text-body-small.text-medium-emphasis: em {{ $t(`editor:help.youCanAlsoUse`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div - Unordered List Item 1
-                      div - Unordered List Item 2
-                      div - Unordered List Item 3
+                      div {{ $t(`editor:help.unorderedListItem1`) }}
+                      div {{ $t(`editor:help.unorderedListItem2`) }}
+                      div {{ $t(`editor:help.unorderedListItem3`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       ul
-                        li Unordered List Item 1
-                        li Unordered List Item 2
-                        li Unordered List Item 3
-              h3.text-body-medium.mt-3 Ordered Lists
-              .text-body-small.text-medium-emphasis: em Even though we prefix all lines with #[strong 1.], the output will be correctly numbered automatically.
+                        li {{ $t(`editor:help.unorderedListItem12`) }}
+                        li {{ $t(`editor:help.unorderedListItem22`) }}
+                        li {{ $t(`editor:help.unorderedListItem32`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.orderedLists`) }}
+              .text-body-small.text-medium-emphasis: em {{ $t(`editor:help.evenThoughWePrefix`) }} #[strong 1.]{{ $t(`editor:help.outputWillCorrectlyNumbered`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div 1. Ordered List Item 1
-                      div 1. Ordered List Item 2
-                      div 1. Ordered List Item 3
+                      div {{ $t(`editor:help.n1OrderedListItem`) }}
+                      div {{ $t(`editor:help.n1OrderedListItem2`) }}
+                      div {{ $t(`editor:help.n1OrderedListItem3`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       ol
-                        li Ordered List Item 1
-                        li Ordered List Item 2
-                        li Ordered List Item 3
-              h3.text-body-medium.mt-3 Images
+                        li {{ $t(`editor:help.orderedListItem1`) }}
+                        li {{ $t(`editor:help.orderedListItem2`) }}
+                        li {{ $t(`editor:help.orderedListItem3`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.images`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div ![Caption Text](/path/to/image.jpg)
+                      div {{ $t(`editor:help.captionTextPathImage`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .editor-markdown-help-image-example Caption Text
+                      .editor-markdown-help-image-example {{ $t(`editor:help.captionText`) }}
         v-col(cols='12', lg='6', xl='4')
           v-card.radius-7
             v-card-text
               .d-flex
                 v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat, height='44')
                   v-icon.mr-3(color='teal') mdi-information-variant
-                  h2.text-body-medium.text-teal Markdown Reference
-              h3.text-body-medium.mt-3 Links
+                  h2.text-body-medium.text-teal {{ $t(`editor:help.markdownReference`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.links`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div [Link Text](https://wiki.js.org)
+                      div {{ $t(`editor:help.linkTextHttpsWiki`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small: a(href='https://wiki.js.org', target='_blank', rel='noopener') Link Text
-              h3.text-body-medium.mt-3 Superscript
+                      .text-body-small: a(href='https://wiki.js.org', target='_blank', rel='noopener') {{ $t(`editor:help.linkText`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.superscript`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div Lorem ^ipsum^
+                      div {{ $t(`editor:help.loremIpsum5`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small Lorem #[sup ipsum]
-              h3.text-body-medium.mt-3 Subscript
+                      .text-body-small {{ $t(`editor:help.lorem`) }} #[sup {{ $t(`editor:help.ipsum`) }}]
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.subscript`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div Lorem ~ipsum~
+                      div {{ $t(`editor:help.loremIpsum6`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small Lorem #[sub ipsum]
-              h3.text-body-medium.mt-3 Horizontal Line
+                      .text-body-small {{ $t(`editor:help.lorem`) }} #[sub {{ $t(`editor:help.ipsum`) }}]
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.horizontalLine`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div Lorem ipsum
+                      div {{ $t(`editor:help.loremIpsum2`) }}
                       div ---
-                      div Dolor sit amet
+                      div {{ $t(`editor:help.dolorSitAmet`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small Lorem ipsum
+                      .text-body-small {{ $t(`editor:help.loremIpsum2`) }}
                       v-divider.my-2
-                      .text-body-small Dolor sit amet
-              h3.text-body-medium.mt-3 Inline Code
+                      .text-body-small {{ $t(`editor:help.dolorSitAmet`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.inlineCode`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div Lorem `ipsum dolor sit` amet
+                      div {{ $t(`editor:help.loremIpsumDolorSit`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small Lorem #[code ipsum dolor sit] amet
-              h3.text-body-medium.mt-3 Abbreviations
+                      .text-body-small {{ $t(`editor:help.lorem`) }} #[code ipsum dolor sit] {{ $t(`editor:help.amet`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.abbreviations`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div *[HTML]: HyperText Markup Language
-                      div.mt-2 HTML
+                      div {{ $t(`editor:help.htmlHypertextMarkupLanguage`) }}
+                      div.mt-2 {{ $t(`editor:help.html`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small: abbr(title='HyperText Markup Language') HTML
-              h3.text-body-medium.mt-3 Code Blocks
-              .text-body-small.text-medium-emphasis: em In the example below, #[strong js] defines the syntax highlighting language to use. It can be omitted.
-              .text-body-small.text-medium-emphasis.mt-1 Add #[code title="example.js"] for a caption, #[code linesStart="30"] to renumber, and #[code linesHighlight="31,33-35"] to mark lines.
+                      .text-body-small: abbr(:title='$t(`editor:help.hypertextMarkupLanguage`)') {{ $t(`editor:help.html`) }}
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.codeBlocks`) }}
+              .text-body-small.text-medium-emphasis: em {{ $t(`editor:help.exampleBelow`) }} #[strong {{ $t(`editor:help.js`) }}] {{ $t(`editor:help.definesSyntaxHighlightingLanguage`) }}
+              .text-body-small.text-medium-emphasis.mt-1 {{ $t(`common:actions.add`) }} #[code title="example.js"] {{ $t(`editor:help.caption`) }} #[code linesStart="30"] {{ $t(`editor:help.renumber`) }} #[code linesHighlight="31,33-35"] {{ $t(`editor:help.markLines`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div ```js
-                      div function main () {
-                      div.pl-3 echo 'Lorem ipsum'
+                      div {{ $t(`editor:help.js2`) }}
+                      div {{ $t(`editor:help.functionMain`) }}
+                      div.pl-3 {{ $t(`editor:help.echoLoremIpsum`) }}
                       div }
                       div ```
                 v-icon mdi-chevron-right
@@ -204,71 +204,71 @@
                     v-card-text.contents
                       pre.prismjs.line-numbers.language-js
                         code.language-js
-                          span.token.keyword function
-                          span.token.function  main
+                          span.token.keyword {{ $t(`editor:help.function`) }}
+                          span.token.function  {{ $t(`editor:help.main`) }}
                           span.token.punctuation  (
                           span.token.punctuation )
                           span.token.punctuation  {#[br]
-                          |   echo
-                          span.token.string  'Lorem ipsum'#[br]
+                          |   {{ $t(`editor:help.echo`) }}
+                          span.token.string  {{ $t(`editor:help.loremIpsum7`) }}#[br]
                           span.token.punctuation }
                           span.line-numbers-rows(aria-hidden='true')
                             span
                             span
                             span
-              h3.text-body-medium.mt-3 Blockquotes
+              h3.text-body-medium.mt-3 {{ $t(`editor:help.blockquotes`) }}
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
                     v-card-text
-                      div &gt; Lorem ipsum
-                      div &gt; dolor sit amet
-                      div &gt; consectetur adipiscing elit
+                      div {{ $t(`editor:help.loremIpsum8`) }}
+                      div {{ $t(`editor:help.dolorSitAmet2`) }}
+                      div {{ $t(`editor:help.consecteturAdipiscingElit`) }}
                 v-icon mdi-chevron-right
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      blockquote.editor-markdown-help-blockquote Lorem ipsum#[br]dolor sit amet#[br]consectetur adipiscing elit
+                      blockquote.editor-markdown-help-blockquote {{ $t(`editor:help.loremIpsum2`) }}#[br]{{ $t(`editor:help.dolorSitAmet3`) }}#[br]{{ $t(`editor:help.consecteturAdipiscingElit2`) }}
 
         v-col(cols='12', xl='4')
           v-card.radius-7
             v-card-text
               v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat)
                 v-icon.mr-3(color='teal') mdi-keyboard
-                h2.text-body-medium.text-teal.ma-0 Keyboard Shortcuts
+                h2.text-body-medium.text-teal.ma-0 {{ $t(`editor:help.keyboardShortcuts`) }}
               v-list.editor-markdown-help-kbd(lines="two", density="compact")
                 v-list-item
-                  v-list-item-title.text-body-medium Bold
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.bold`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd B]
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Italic
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.italic`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd I]
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Increase Header Level
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.increaseHeaderLevel`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + #[kbd Right]
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Decrease Header Level
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.decreaseHeaderLevel`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + #[kbd Left]
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Save
+                  v-list-item-title.text-body-medium {{ $t(`common:actions.save`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd S]
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Undo
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.undo`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd Z]
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Redo
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.redo`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut
                       kbd {{ctrlKey}}
@@ -279,8 +279,8 @@
                       kbd {{isApplePlatform ? 'Z' : 'Y'}}
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Distraction Free Mode
-                  v-list-item-subtitle Press <kbd>Esc</kbd> to exit.
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.distractionFreeMode`) }}
+                  v-list-item-subtitle {{ $t(`editor:help.pressKbdEscKbd`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd F11]
 
@@ -288,20 +288,20 @@
             v-card-text
               v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat)
                 v-icon.mr-3(color='teal') mdi-mouse
-                h2.text-body-medium.text-teal.ma-0 Multi-Selection
+                h2.text-body-medium.text-teal.ma-0 {{ $t(`editor:help.multiSelection`) }}
               v-list.editor-markdown-help-kbd(lines="two", density="compact")
                 v-list-item
-                  v-list-item-title.text-body-medium Multiple Cursors
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.multipleCursors`) }}
                   template(v-slot:append)
-                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + Left Click
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] {{ $t(`editor:help.leftClick`) }}
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Select Region
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.selectRegion`) }}
                   template(v-slot:append)
-                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + Left Click
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] {{ $t(`editor:help.leftClick`) }}
                 v-divider
                 v-list-item
-                  v-list-item-title.text-body-medium Deselect
+                  v-list-item-title.text-body-medium {{ $t(`editor:help.deselect`) }}
                   template(v-slot:append)
                     span.editor-markdown-help-shortcut #[kbd Esc]
 </template>
@@ -314,8 +314,8 @@ export default {
   data () {
     return {
       isApplePlatform,
-      ctrlKey: isApplePlatform ? 'Cmd' : 'Ctrl',
-      altKey: isApplePlatform ? 'Option' : 'Alt'
+      ctrlKey: isApplePlatform ? this.$t('editor:help.cmd') : this.$t('editor:help.ctrl'),
+      altKey: isApplePlatform ? this.$t('editor:help.option') : 'Alt'
     }
   }
 }

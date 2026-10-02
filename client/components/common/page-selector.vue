@@ -31,7 +31,7 @@
             v-spacer
             v-tooltip(location='top')
               template(v-slot:activator='{ props }')
-                v-btn(v-bind='props' icon rounded='0' href='https://docs.requarks.io/guide/pages#folders' target='_blank' rel='noopener noreferrer' aria-label='Open virtual folders help')
+                v-btn(v-bind='props' icon rounded='0' href='https://docs.requarks.io/guide/pages#folders' target='_blank' rel='noopener noreferrer' :aria-label='$t(`common:pageSelector.openVirtualFoldersHelp`)')
                   v-icon mdi-help-box-outline
               span {{$t('common:pageSelector.virtualFolders')}}
           div.page-selector__scroller(role='region' :aria-labelledby='foldersId' :aria-busy='searchLoading ? `true` : undefined')
@@ -48,17 +48,17 @@
                   type='error'
                   variant='tonal'
                   density='compact'
-                  :title='`Could not load ${failure.item.title}`'
+                  :title='$t(`common:pageSelector.couldNotLoadPage`, { title: failure.item.title, interpolation: { escapeValue: false } })'
                   :text='failure.message'
                 )
                   template(v-slot:append)
                     v-btn(
                       variant='text'
                       size='small'
-                      :aria-label='`Try loading ${failure.item.title} again`'
+                      :aria-label='$t(`common:pageSelector.tryLoadingAgain`, { title: failure.item.title, interpolation: { escapeValue: false } })'
                       :loading='isFolderRetrying(failure)'
                       @click='retryFolderLoad(failure)'
-                    ) Try again
+                    ) {{$t('common:pageSelector.tryAgain')}}
               v-treeview.page-selector__tree(
                 :key='`pageTree-` + treeViewCacheId'
                 v-model:activated='currentNode'
@@ -76,7 +76,7 @@
                 hoverable
               )
                 template(v-slot:prepend='{ isOpen }')
-                  v-icon(aria-hidden='true') mdi-{{ isOpen ? 'folder-open' : 'folder' }}
+                  v-icon(aria-hidden='true') {{ $t(`common:pageSelector.mdi`, { value: isOpen ? 'folder-open' : 'folder', interpolation: { escapeValue: false } }) }}
         v-col.page-selector__pane.page-selector__pages-pane(cols='12' md='7')
           v-toolbar.page-selector__pane-toolbar(color='surface-variant' density='compact' flat)
             h3.text-body-medium(:id='pagesId') {{$t('common:pageSelector.pages')}}
@@ -89,14 +89,14 @@
               aria-live='polite'
               aria-atomic='true'
             )
-              v-icon(:color='currentPage ? `primary` : `on-surface-variant`' size='16' aria-hidden='true') mdi-{{ currentPage ? 'check-circle-outline' : 'cursor-default-click-outline' }}
-              span(v-if='currentPage') Page selected
-              span(v-else) Select a page to continue.
+              v-icon(:color='currentPage ? `primary` : `on-surface-variant`' size='16' aria-hidden='true') {{ $t(`common:pageSelector.mdi`, { value: currentPage ? 'check-circle-outline' : 'cursor-default-click-outline', interpolation: { escapeValue: false } }) }}
+              span(v-if='currentPage') {{$t('common:pageSelector.pageSelected')}}
+              span(v-else) {{$t('common:pageSelector.selectPageToContinue')}}
             async-state.page-selector__state(
               v-if='currentFolderLoading && currentPages.length === 0'
               state='loading'
-              title='Loading pages'
-              message='Loading pages in the selected folder.'
+              :title='$t(`common:pageSelector.loadingPages`)'
+              :message='$t(`common:pageSelector.loadingPagesSelectedFolder`)'
             )
             v-list.page-selector__pages-list.py-0(
               v-else-if='currentPages.length > 0'
@@ -113,14 +113,14 @@
                   :class="{ 'page-selector__page--selected': currentPage?.id === page.id, 'page-selector__page--current': page.path === path && currentLocale === locale }"
                   :aria-current='page.path === path && currentLocale === locale ? `page` : undefined'
                 )
-                  template(v-slot:prepend): v-icon aria-hidden='true' mdi-text-box-outline
+                  template(v-slot:prepend): v-icon {{ $t(`common:pageSelector.ariaHiddenTrueMdi`) }}
                   v-list-item-title {{page.title}}
             async-state.page-selector__state(
               v-else-if='currentFolderFailure'
               state='error'
-              :title='`Could not load ${currentFolderFailure.item.title}`'
+              :title='$t(`common:pageSelector.couldNotLoadPage`, { title: currentFolderFailure.item.title, interpolation: { escapeValue: false } })'
               :message='currentFolderFailure.message'
-              retry-label='Try again'
+              :retry-label='$t(`common:pageSelector.tryAgain`)'
               :announce='false'
               @retry='retryCurrentFolderLoad'
             )
@@ -138,30 +138,30 @@
             :aria-describedby='moveLinkHelpId'
             :disabled='sourceVisibility !== `public` || !canReviewIncomingLinks || isSubmitting || moveReceipt !== null || moveOutcomeUncertain'
           )
-          span Update supported incoming links
+          span {{$t('common:pageSelector.updateSupportedIncomingLinks')}}
         p.page-selector__repair-help(:id='moveLinkHelpId')
-          | Review exact source edits first. Supported Markdown inline links, enabled wikilinks, and quoted HTML anchor hrefs only. Selected supported occurrences on public-namespace pages are updated; other links may need manual repair. Public pages need not be published or searchable. At most 20 referrer pages can be selected.
+          | {{$t('common:pageSelector.repairHelpReviewEdits')}}
         p.page-selector__repair-help(v-if='sourceVisibility === `private`')
-          | Incoming-link repair is available only for public-namespace pages. You can still move this private page without repair.
+          | {{$t('common:pageSelector.repairHelpPrivateSource')}}
         p.page-selector__repair-help(v-else-if='!canReviewIncomingLinks')
-          | Incoming-link review is unavailable until this page identity and source revision are ready. You can still move it without repair.
+          | {{$t('common:pageSelector.repairHelpUnavailable')}}
       section.page-selector__link-review(
         v-if='mode === `move` && updateIncomingLinks && moveReviewStage === `candidates`'
         :aria-labelledby='moveCandidatesId'
         :aria-busy='moveReviewLoading ? `true` : undefined'
       )
-        h3(:id='moveCandidatesId' tabindex='-1') Incoming-link candidates
+        h3(:id='moveCandidatesId' tabindex='-1') {{$t('common:pageSelector.incomingLinkCandidates')}}
         p.page-selector__repair-help
-          | This is a bounded review, not an exhaustive inventory. Unselected pages and unsupported link syntax remain unchanged. Pages with active collaboration drafts or approval workflows require manual handling.
+          | {{$t('common:pageSelector.boundedReviewNote')}}
         p.page-selector__coverage(v-if='moveReviewCoverageNotice' role='note') {{moveReviewCoverageNotice}}
         v-alert(v-if='moveReviewError' type='error' variant='tonal' density='compact' role='alert') {{moveReviewError}}
         async-state(
           v-if='moveReviewLoading && moveReviewItems.length === 0'
           state='loading'
-          title='Loading incoming-link candidates'
-          message='Only pages whose source you can read are included.'
+          :title='$t(`common:pageSelector.loadingIncomingLinkCandidates`)'
+          :message='$t(`common:pageSelector.onlyReadableSourcesIncluded`)'
         )
-        p.page-selector__selection-count(v-else role='status' aria-live='polite') {{selectedMovePageIds.length}} of 20 referrer pages selected
+        p.page-selector__selection-count(v-else role='status' aria-live='polite') {{$t('common:pageSelector.referrerPagesSelected', { count: selectedMovePageIds.length, interpolation: { escapeValue: false } })}}
         .page-selector__candidate-list(v-if='moveReviewItems.length')
           article.page-selector__candidate(v-for='item in moveReviewItems' :key='item.id')
             label.page-selector__candidate-heading
@@ -170,23 +170,23 @@
                 type='checkbox'
                 :checked='isMovePageSelected(item.id)'
                 :disabled='!isMovePageSelected(item.id) && selectedMovePageIds.length >= 20 || moveReviewLoading || moveReviewNeedsRefresh'
-                :aria-label='`Select ${item.title}, ${item.locale}/${item.path}`'
+                :aria-label='$t(`common:pageSelector.selectCandidatePage`, { title: item.title, locale: item.locale, path: item.path, interpolation: { escapeValue: false } })'
                 @change='setMovePageSelected(item.id, $event)'
               )
               span.page-selector__candidate-title {{item.title}}
-              span.page-selector__candidate-location {{item.locale}} / {{item.path}} · revision {{item.sourceRevision}}
-            p.page-selector__candidate-reason(v-if='item.id === sourcePageId') Automatically included self-link changes are bundled with this move and are not a separately selected page.
+              span.page-selector__candidate-location {{$t('common:pageSelector.candidateLocation', { locale: item.locale, path: item.path, revision: item.sourceRevision, interpolation: { escapeValue: false } })}}
+            p.page-selector__candidate-reason(v-if='item.id === sourcePageId') {{$t('common:pageSelector.selfLinkBundled')}}
             p.page-selector__candidate-reason(v-if='!item.eligible && item.reason') {{item.reason}}
-            p.page-selector__candidate-reason(v-if='!item.eligible && !item.reason') This page requires manual repair.
+            p.page-selector__candidate-reason(v-if='!item.eligible && !item.reason') {{$t('common:pageSelector.manualRepairRequired')}}
             dl.page-selector__diff(v-if='(isMovePageSelected(item.id) || item.id === sourcePageId) && item.changes.length')
               template(v-for='(change, index) in item.changes' :key='`${item.id}-${index}`')
-                dt Before
+                dt {{$t('common:pageSelector.before')}}
                 dd: code {{change.before}}
-                dt After
+                dt {{$t('common:pageSelector.after')}}
                 dd: code {{change.after}}
-            p.page-selector__candidate-reason(v-else-if='item.eligible && (isMovePageSelected(item.id) || item.id === sourcePageId)') No supported source occurrence is available to change.
-        p.page-selector__empty(v-else-if='!moveReviewLoading && !moveReviewError') No candidates were returned for this review window. This does not mean that no incoming links exist.
-        p.page-selector__candidate-reason(v-if='hasAutomaticSelfLinkChanges') Moved-page self-link changes are included automatically and do not use a referrer-page selection.
+            p.page-selector__candidate-reason(v-else-if='item.eligible && (isMovePageSelected(item.id) || item.id === sourcePageId)') {{$t('common:pageSelector.noSupportedOccurrence')}}
+        p.page-selector__empty(v-else-if='!moveReviewLoading && !moveReviewError') {{$t('common:pageSelector.noCandidatesReturned')}}
+        p.page-selector__candidate-reason(v-if='hasAutomaticSelfLinkChanges') {{$t('common:pageSelector.selfLinkAutomatic')}}
         .page-selector__review-actions
           v-btn(
             v-if='moveReviewNextCursor'
@@ -194,50 +194,49 @@
             :disabled='moveReviewLoading || moveReviewNeedsRefresh'
             :loading='moveReviewLoading'
             @click='loadMoreMoveCandidates'
-          ) Load more candidates
+          ) {{$t('common:pageSelector.loadMoreCandidates')}}
           v-btn(
             variant='text'
             :disabled='moveReviewLoading'
             @click='refreshMoveCandidates'
-          ) Refresh candidates
+          ) {{$t('common:pageSelector.refreshCandidates')}}
       section.page-selector__link-review(
         v-if='mode === `move` && updateIncomingLinks && moveReviewStage === `confirm` && selectedMoveReview'
         :aria-labelledby='moveConfirmId'
       )
-        h3(:id='moveConfirmId' tabindex='-1') Review exact source edits
-        p.page-selector__repair-help Only these selected, reviewed edits will be committed atomically with the move. The candidate inventory is not exhaustive; unselected pages and unsupported occurrences remain unchanged.
+        h3(:id='moveConfirmId' tabindex='-1') {{$t('common:pageSelector.reviewExactSourceEdits')}}
+        p.page-selector__repair-help {{$t('common:pageSelector.reviewConfirmNote')}}
         p.page-selector__coverage(role='note') {{selectedMoveReview.coverageNotice}}
         v-alert(v-if='moveReviewError' type='error' variant='tonal' density='compact' role='alert') {{moveReviewError}}
         article.page-selector__candidate(v-for='item in selectedMoveReview.items' :key='item.id')
           h4.page-selector__candidate-title {{item.title}}
-          p.page-selector__candidate-location {{item.locale}} / {{item.path}} · revision {{item.sourceRevision}}
-          p.page-selector__candidate-reason(v-if='item.id === sourcePageId') Automatically included self-link changes are bundled with this move and are not a separately selected page.
-          p.page-selector__candidate-reason(v-if='!item.eligible') {{item.reason || 'This page requires manual repair.'}}
+          p.page-selector__candidate-reason(v-if='item.id === sourcePageId') {{$t('common:pageSelector.selfLinkBundled')}}
+          p.page-selector__candidate-reason(v-if='!item.eligible') {{item.reason || $t('common:pageSelector.manualRepairRequired')}}
           dl.page-selector__diff(v-if='item.changes.length')
             template(v-for='(change, index) in item.changes' :key='`${item.id}-${index}`')
-              dt Before
+              dt {{ $t(`common:pageSelector.before`) }}
               dd: code {{change.before}}
-              dt After
+              dt {{ $t(`common:pageSelector.after`) }}
               dd: code {{change.after}}
-        p.page-selector__candidate-reason(v-if='selectedReviewHasNoChanges') Selected pages with no supported edits will not receive a source update.
+        p.page-selector__candidate-reason(v-if='selectedReviewHasNoChanges') {{$t('common:pageSelector.selectedPagesNoChanges')}}
         .page-selector__review-actions
-          v-btn(variant='text' :disabled='moveReviewLoading || isSubmitting' @click='refreshMoveCandidates') Refresh review
+          v-btn(variant='text' :disabled='moveReviewLoading || isSubmitting' @click='refreshMoveCandidates') {{$t('common:pageSelector.refreshReview')}}
       section.page-selector__link-review.page-selector__move-result(
         v-if='mode === `move` && moveReviewStage === `result` && moveReceipt'
         :aria-labelledby='moveResultId'
         role='status'
         aria-live='polite'
       )
-        h3(:id='moveResultId' tabindex='-1') Canonical move and selected source updates committed
-        p Page {{moveReceipt.pageId}} is now at source revision {{moveReceipt.sourceRevision}}.
+        h3(:id='moveResultId' tabindex='-1') {{$t('common:pageSelector.moveCommitted')}}
+        p {{$t('common:pageSelector.pageNowAtRevision', { pageId: moveReceipt.pageId, sourceRevision: moveReceipt.sourceRevision, interpolation: { escapeValue: false } })}}
         ul(v-if='moveReceipt.updated.length')
           li(v-for='updated in moveReceipt.updated' :key='updated.id')
-            | {{moveItemTitle(updated.id)}} · committed source revision {{updated.sourceRevision}}
-        p.page-selector__projection-notice Rendering, search, and knowledge projections are pending. This receipt does not confirm that every storage mirror has synchronized.
+            | {{$t('common:pageSelector.committedSourceRevision', { title: moveItemTitle(updated.id), sourceRevision: updated.sourceRevision, interpolation: { escapeValue: false } })}}
+        p.page-selector__projection-notice {{$t('common:pageSelector.projectionsPending')}}
       section.page-selector__link-review(v-if='mode === `move` && moveOutcomeUncertain' :aria-labelledby='moveUncertainId' role='alert')
-        h3(:id='moveUncertainId' tabindex='-1') Move outcome could not be confirmed
-        p The request may have committed. Refresh to verify the canonical page state; do not automatically retry this move or link repair.
-        v-btn(variant='outlined' @click='refreshCurrentPage') Refresh page
+        h3(:id='moveUncertainId' tabindex='-1') {{$t('common:pageSelector.moveOutcomeUncertain')}}
+        p {{$t('common:pageSelector.moveOutcomeUncertainNote')}}
+        v-btn(variant='outlined' @click='refreshCurrentPage') {{$t('common:pageSelector.refreshPage')}}
       v-card-actions.page-selector__options.pa-2(v-if='!mustExist || allowLocaleChange')
         v-select(
           v-model='currentLocale'
@@ -247,8 +246,8 @@
           hide-details
           single-line
           :items='namespaces'
-          label='Locale'
-          aria-label='Page locale'
+          :label='$t(`common:pageSelector.localeLabel`)'
+          :aria-label='$t(`common:pageSelector.pageLocaleLabel`)'
           :disabled='isSubmitting || moveReceipt !== null'
         )
         v-text-field(
@@ -257,8 +256,8 @@
           variant='solo'
           hide-details
           prefix='/'
-          label='Page path'
-          aria-label='Page path'
+          :label='$t(`common:pageSelector.pagePathLabel`)'
+          :aria-label='$t(`common:pageSelector.pagePathLabel`)'
           flat
           :readonly='mustExist'
           clearable
@@ -278,24 +277,24 @@
           :disabled='(selectedMovePageIds.length === 0 && !hasAutomaticSelfLinkChanges) || moveReviewLoading || moveReviewNeedsRefresh'
           :loading='moveReviewLoading'
           @click='reviewSelectedMovePages'
-        ) {{selectedMovePageIds.length === 0 ? 'Review self-link changes' : 'Review selected changes'}}
+        ) {{selectedMovePageIds.length === 0 ? $t('common:pageSelector.reviewSelfLinkChanges') : $t('common:pageSelector.reviewSelectedChanges')}}
         v-btn(
           v-else-if='mode === `move` && updateIncomingLinks && moveReviewStage === `confirm`'
           color='primary'
           :disabled='!selectedMoveReview || moveReviewLoading || isSubmitting'
           :loading='isSubmitting'
           @click='confirmReviewedMove'
-        ) Move and update selected links
+        ) {{$t('common:pageSelector.moveAndUpdateSelectedLinks')}}
         v-btn(
           v-else-if='mode === `move` && moveReceipt'
           color='primary'
           @click='acknowledgeMove'
-        ) Done
+        ) {{$t('common:pageSelector.done')}}
         v-btn(
           v-else-if='mode === `move` && moveOutcomeUncertain'
           color='primary'
           @click='refreshCurrentPage'
-        ) Refresh page
+        ) {{$t('common:pageSelector.refreshPage')}}
         v-btn(
           v-else
           color='primary'
@@ -303,16 +302,17 @@
           :loading='isSubmitting || moveReviewLoading'
           @click='open'
           :disabled='!isValidPath || isSubmitting || moveReviewLoading || !canReviewIncomingLinks && mode === `move` && updateIncomingLinks'
-        ) {{mode === `move` && updateIncomingLinks ? 'Find incoming links' : $t('common:actions.select')}}
+        ) {{mode === `move` && updateIncomingLinks ? $t('common:pageSelector.findIncomingLinks') : $t('common:actions.select')}}
         v-btn(
           v-if='mode === `move` && updateIncomingLinks && moveReceipt === null && !moveOutcomeUncertain'
           variant='outlined'
           :disabled='isSubmitting || moveReviewLoading'
           @click='moveWithoutRepair'
-        ) Move without link repair
+        ) {{$t('common:pageSelector.moveWithoutLinkRepair')}}
 </template>
 
 <script lang='ts'>
+import { translate } from '@/modules/localization.ts'
 import { defineComponent, markRaw, type PropType, useId } from 'vue'
 import {
   fetchMoveLinkReview,
@@ -346,7 +346,7 @@ function createRootNode (locale: string, treeId: number): PageTreeItem {
   return {
     id: 0,
     path: '',
-    title: '/ (root)',
+    title: translate('common:pageSelector.root'),
     isFolder: true,
     pageId: null,
     parent: 0,
@@ -663,17 +663,17 @@ export default defineComponent({
               this.selectedMoveReview = null
               this.moveReviewStage = 'candidates'
               this.moveReviewNeedsRefresh = true
-              this.moveReviewError = 'The move was not started. Refresh candidates before reopening the review.'
+              this.moveReviewError = this.$t('common:pageSelector.moveNotStartedRefreshCandidates')
               this.focusMoveReviewHeading(this.moveCandidatesId)
             } else {
-              this.submissionError = 'The move was not started. Refresh authorization and try again.'
+              this.submissionError = this.$t('common:pageSelector.moveNotStartedRefreshAuthorization')
             }
           }
           return
         }
         if (reviewToken !== undefined) {
           if (!isMovePageReceipt(result) || result.pageId !== this.sourcePageId)
-            throw new Error('The move receipt could not be verified.')
+            throw new Error(this.$t('common:pageSelector.moveReceiptNotVerified'))
           this.moveReceipt = result
           this.committedMoveDestination = Object.freeze({
             locale: destinationLocale,
@@ -703,10 +703,10 @@ export default defineComponent({
           this.selectedMoveReview = null
           this.moveReviewStage = 'candidates'
           this.moveReviewNeedsRefresh = true
-          this.moveReviewError = 'This review is stale or no longer eligible. Refresh the candidates before reviewing again.'
+          this.moveReviewError = this.$t('common:pageSelector.reviewStaleReviewingAgain')
           this.focusMoveReviewHeading(this.moveCandidatesId)
         } else {
-          this.submissionError = getErrorMessage(error) || 'The page selection could not be completed.'
+          this.submissionError = getErrorMessage(error) || this.$t('common:pageSelector.pageSelectionNotCompleted')
         }
       } finally {
         if (requestId === this.submissionRequestId) this.isSubmitting = false
@@ -741,7 +741,7 @@ export default defineComponent({
             expectedSourceRevision: sourceRevision,
             ...(cursor === null ? {} : { cursor })
           },
-          'Incoming-link review is unavailable'
+          this.$t('common:pageSelector.incomingLinkReviewUnavailable')
         )
         if (
           requestId !== this.moveReviewRequestId ||
@@ -758,7 +758,7 @@ export default defineComponent({
         this.focusMoveReviewHeading(this.moveCandidatesId)
       } catch {
         if (requestId === this.moveReviewRequestId) {
-          this.moveReviewError = 'Unable to load the incoming-link review. Refresh candidates or continue with a normal move.'
+          this.moveReviewError = this.$t('common:pageSelector.unableLoadIncomingLinkReview')
           this.focusMoveReviewHeading(this.moveCandidatesId)
         }
       } finally {
@@ -817,7 +817,7 @@ export default defineComponent({
             expectedSourceRevision: sourceRevision,
             selectedPageIds: selectedIds
           },
-          'Selected incoming-link review is unavailable'
+          this.$t('common:pageSelector.selectedIncomingLinkReviewUnavailable')
         )
         if (
           requestId !== this.moveReviewRequestId ||
@@ -834,12 +834,12 @@ export default defineComponent({
           reviewedReferrers.some(item => !expectedIds.has(item.id)) ||
           response.items.some(item => item.id === this.sourcePageId && item.changes.length > 0 && !item.eligible)
         )
-          throw new Error('Selected review changed.')
+          throw new Error(this.$t('common:pageSelector.selectedReviewChanged'))
         if (
           selectedIds.length === 0 &&
           !response.items.some(item => item.id === this.sourcePageId && item.changes.length > 0)
         )
-          throw new Error('No reviewed self-link change.')
+          throw new Error(this.$t('common:pageSelector.noReviewedSelfLinkChange'))
         this.selectedMoveReview = response
         this.moveReviewCoverageNotice = response.coverageNotice
         this.focusMoveReviewHeading(this.moveConfirmId)
@@ -849,7 +849,7 @@ export default defineComponent({
           this.selectedMoveReview = null
           this.moveReviewStage = 'candidates'
           this.moveReviewNeedsRefresh = true
-          this.moveReviewError = 'This review is stale or no longer eligible. Refresh the candidates before continuing.'
+          this.moveReviewError = this.$t('common:pageSelector.reviewStaleContinuing')
           this.focusMoveReviewHeading(this.moveCandidatesId)
         }
       } finally {
@@ -864,7 +864,7 @@ export default defineComponent({
     moveItemTitle(pageId: number): string {
       const item = this.selectedMoveReview?.items.find(candidate => candidate.id === pageId) ??
         this.moveReviewItems.find(candidate => candidate.id === pageId)
-      return item?.title ?? (pageId === this.sourcePageId ? 'Moved page' : `Page ${pageId}`)
+      return item?.title ?? (pageId === this.sourcePageId ? this.$t('common:pageSelector.movedPage') : this.$t('common:pageSelector.pageWithId', { pageId, interpolation: { escapeValue: false } }))
     },
     resetMoveLinkReview(): void {
       if (this.moveReceipt !== null) return
@@ -919,7 +919,7 @@ export default defineComponent({
       void this.fetchFolders(failure.item)
     },
     async fetchFolders (item: unknown): Promise<void> {
-      if (!isPageTreeItem(item)) throw new TypeError('Invalid page tree item')
+      if (!isPageTreeItem(item)) throw new TypeError(this.$t('common:pageSelector.invalidPageTreeItem'))
       const requestLocale = this.currentLocale
       const requestTreeId = item.treeId
       if (requestTreeId !== this.treeViewCacheId) return
@@ -957,7 +957,7 @@ export default defineComponent({
           this.folderLoadFailures[requestKey] = {
             key: requestKey,
             item,
-            message: getErrorMessage(err) || 'Pages could not be loaded.',
+            message: getErrorMessage(err) || this.$t('common:pageSelector.pagesCouldNotLoaded'),
             requestId
           }
         }

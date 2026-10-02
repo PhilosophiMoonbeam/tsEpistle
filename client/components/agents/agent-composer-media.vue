@@ -2,9 +2,9 @@
   <div v-if="capabilities?.attachments || generationOptions.length || capabilities?.transcription" class="agent-media-composer">
     <!-- Recording, upload, and transcription controls live in the composer action bar (agent-composer.vue).
          This component owns the capture/transcription pipeline and renders pending attachments only. -->
-    <input ref="fileInput" class="agent-media-composer__file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple aria-label="Choose images or PDFs" :disabled="locked || attachments.length >= 4" @change="chooseFiles" />
-    <p v-if="generationOptions.length && generationToolsEnabled === false" class="agent-media-composer__hint">Creation tools are available in conversations that support tool use.</p>
-    <p v-else-if="generationOptions.length && !capabilities?.attachments" class="agent-media-composer__hint">Image references need PDF and image attachments enabled for this provider.</p>
+    <input ref="fileInput" class="agent-media-composer__file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple :aria-label="$t('common:agentComposerMedia.chooseImagesPdfs')" :disabled="locked || attachments.length >= 4" @change="chooseFiles" />
+    <p v-if="generationOptions.length && generationToolsEnabled === false" class="agent-media-composer__hint">{{ $t('common:agentComposerMedia.creationToolsAvailableConversations') }}</p>
+    <p v-else-if="generationOptions.length && !capabilities?.attachments" class="agent-media-composer__hint">{{ $t('common:agentComposerMedia.imageReferencesNeedPdf') }}</p>
     <slot
       name="attachments"
       :attachments="attachments"
@@ -23,6 +23,9 @@ import { AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, 
 import AgentAssetPicker from './agent-asset-picker.vue'
 import type { Asset } from '../../helpers/assets-api.ts'
 import { validateAgentAttachment, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const props = defineProps<{
   csrfToken: string
   session: AgentThreadState['session'] | null
@@ -38,9 +41,9 @@ const attachments = ref<AgentMediaView[]>([])
 type GenerationTool = 'image' | 'video' | 'music'
 const selectedGenerationTools = ref<GenerationTool[]>([])
 const generationOptions = computed(() => [
-  { value: 'image' as const, enabled: props.capabilities?.imageGeneration, title: 'Images', icon: 'mdi-image-outline' },
-  { value: 'video' as const, enabled: props.capabilities?.videoGeneration, title: 'Video', icon: 'mdi-movie-open-outline' },
-  { value: 'music' as const, enabled: props.capabilities?.musicGeneration, title: 'Music', icon: 'mdi-music-note-outline' }
+  { value: 'image' as const, enabled: props.capabilities?.imageGeneration, title: t('common:agentComposerMedia.images'), icon: 'mdi-image-outline' },
+  { value: 'video' as const, enabled: props.capabilities?.videoGeneration, title: t('common:agentComposerMedia.video'), icon: 'mdi-movie-open-outline' },
+  { value: 'music' as const, enabled: props.capabilities?.musicGeneration, title: t('common:agentComposerMedia.music'), icon: 'mdi-music-note-outline' }
 ].filter(option => option.enabled))
 watch(generationOptions, (options, previous = []) => {
   const previousIds = new Set(previous.map(option => option.value))
@@ -229,7 +232,7 @@ const cancelDictation = () => {
   dictationIntent.value = 'insert'
   dictationSendResolve?.(null)
   dictationSendResolve = null
-  dictationError.value = 'Dictation was canceled. Your typed message was kept.'
+  dictationError.value = t('common:agentComposerMedia.dictationWasCanceledTyped')
   if (transcriptionRunId) {
     const id = transcriptionRunId
     transcriptionRunId = null
@@ -251,13 +254,13 @@ const removeAttachment = async (item: AgentMediaView) => {
   try {
     await deleteAgentMedia(fetcher, props.csrfToken, item.id)
     if (!disposed) attachments.value = attachments.value.filter(candidate => candidate.id !== item.id)
-  } catch (value) { if (!disposed) error.value = value instanceof Error ? value.message : 'The attachment could not be removed.' }
+  } catch (value) { if (!disposed) error.value = value instanceof Error ? value.message : t('common:agentComposerMedia.attachmentCouldNotRemoved') }
   finally { if (!disposed) uploading.value = false }
 }
 const addFiles = async (files: readonly File[]) => {
   if (locked.value || !props.capabilities?.attachments || !props.session) return false
   error.value = ''
-  if (attachments.value.length + files.length > 4) { error.value = 'Attach up to 4 files per message.'; return }
+  if (attachments.value.length + files.length > 4) { error.value = t('common:agentComposerMedia.attachUp4Files'); return }
   for (const file of files) {
     const problem = validateAgentAttachment(file)
     if (problem) { error.value = problem; return false }
@@ -278,7 +281,7 @@ const addFiles = async (files: readonly File[]) => {
     }
     return true
   } catch (value) {
-    if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : 'The attachment could not be uploaded.'
+    if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : t('common:agentComposerMedia.attachmentCouldNotUploaded')
   } finally {
     if (uploadController === controller) { uploadController = null; uploading.value = false }
   }
@@ -318,7 +321,7 @@ const attachAsset = async (asset: Asset) => {
     attachments.value = [...attachments.value, media]
     closeAssetPicker()
   } catch (value) {
-    if (!disposed && !controller.signal.aborted) error.value = value instanceof AgentApiError && value.status === 403 ? 'You no longer have access to this Wiki asset. Choose another file or upload a copy.' : value instanceof Error ? value.message : 'The Wiki asset could not be attached.'
+    if (!disposed && !controller.signal.aborted) error.value = value instanceof AgentApiError && value.status === 403 ? t('common:agentComposerMedia.youNoLongerHave') : value instanceof Error ? value.message : t('common:agentComposerMedia.wikiAssetCouldNot')
   } finally {
     if (uploadController === controller) { uploadController = null; uploading.value = false }
   }
@@ -333,12 +336,12 @@ const editImage = async (media: AgentMediaView): Promise<boolean> => {
   let file: File
   try {
     const response = await fetcher(agentMediaContentUrl(media.id), { credentials: 'same-origin', signal: controller.signal })
-    if (!response.ok) throw new Error('The image is no longer available. Try attaching it again.')
+    if (!response.ok) throw new Error(t('common:agentComposerMedia.imageNoLongerAvailable'))
     const blob = await response.blob()
     if (disposed || controller.signal.aborted || props.session?.id !== sessionId) return false
     file = new File([blob], media.filename, { type: media.mimeType })
   } catch (value) {
-    if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : 'The image could not be attached.'
+    if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : t('common:agentComposerMedia.imageCouldNotAttached')
     return false
   } finally {
     if (uploadController === controller) { uploadController = null; uploading.value = false }
@@ -359,12 +362,12 @@ const reattachMedia = async (media: AgentMediaView): Promise<boolean> => {
   let file: File
   try {
     const response = await fetcher(agentMediaContentUrl(media.id), { credentials: 'same-origin', signal: controller.signal })
-    if (!response.ok) throw new Error('The attachment copy is no longer available. Try attaching the file again.')
+    if (!response.ok) throw new Error(t('common:agentComposerMedia.attachmentCopyNoLonger'))
     const blob = await response.blob()
     if (disposed || controller.signal.aborted || props.session?.id !== sessionId) return false
     file = new File([blob], media.filename, { type: media.mimeType })
   } catch (value) {
-    if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : 'The attachment could not be re-attached.'
+    if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : t('common:agentComposerMedia.attachmentCouldNotRe')
     return false
   } finally {
     if (uploadController === controller) { uploadController = null; uploading.value = false }
@@ -429,7 +432,7 @@ const monitorSpeech = () => {
     speechVotes = 0
     if (now - preRollStartedAt >= PRE_SPEECH_LIMIT_MS) {
       cancelDictation()
-      dictationError.value = 'No speech was detected. Dictation was canceled.'
+      dictationError.value = t('common:agentComposerMedia.noSpeechWasDetected')
     }
     return
   }
@@ -444,7 +447,7 @@ const startRecording = async () => {
   if (locked.value || !props.session || !props.capabilities?.transcription) return
   dictationError.value = ''
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-    dictationError.value = 'This browser does not support dictation. You can still type your message.'
+    dictationError.value = t('common:agentComposerMedia.browserDoesNotSupport')
     return
   }
   const current = ++generation
@@ -476,10 +479,10 @@ const startRecording = async () => {
     captureRecorder.ondataavailable = event => {
       if (current !== generation) return
       byteLength += event.data.size
-      if (byteLength > 10 * 1024 * 1024) { dictationError.value = 'Recording exceeded 10 MB. Please record a shorter message.'; cancelDictation(); return }
+      if (byteLength > 10 * 1024 * 1024) { dictationError.value = t('common:agentComposerMedia.recordingExceeded10Mb'); cancelDictation(); return }
       chunks.push(event.data)
     }
-    captureRecorder.onerror = () => { if (current !== generation) return; cancelDictation(); dictationError.value = 'Recording failed. Please try again.' }
+    captureRecorder.onerror = () => { if (current !== generation) return; cancelDictation(); dictationError.value = t('common:agentComposerMedia.recordingFailedPleaseTry') }
     captureRecorder.onstop = () => {
       if (current !== generation || disposed) return
       const type = captureRecorder.mimeType || 'audio/webm'
@@ -501,7 +504,7 @@ const startRecording = async () => {
   } catch (value) {
     if (current === generation && !disposed) {
       cancelDictation()
-      dictationError.value = value instanceof Error ? value.message : 'Microphone access was not available.'
+      dictationError.value = value instanceof Error ? value.message : t('common:agentComposerMedia.microphoneAccessWasNot')
     }
   }
 }
@@ -533,7 +536,7 @@ const transcribe = async (file: File, session: AgentThreadState['session'], csrf
           if (dictationIntent.value === 'send') dictationSendResolve?.(transcript)
           else emit('dictation', transcript)
         } else {
-          dictationError.value = 'No speech was found. Try recording again.'
+          dictationError.value = t('common:agentComposerMedia.noSpeechWasFound')
           if (dictationIntent.value === 'send') dictationSendResolve?.(null)
           else emit('dictationFailed', dictationError.value)
         }
@@ -542,17 +545,17 @@ const transcribe = async (file: File, session: AgentThreadState['session'], csrf
         transcriptionRunId = null
         return
       }
-      if (!['queued', 'running'].includes(result.status)) throw new Error('Dictation could not be transcribed. Please try again.')
+      if (!['queued', 'running'].includes(result.status)) throw new Error(t('common:agentComposerMedia.dictationCouldNotTranscribed'))
       await new Promise<void>(resolve => {
         const finish = () => { clearTimeout(timeout); controller.signal.removeEventListener('abort', finish); resolve() }
         const timeout = setTimeout(finish, 800)
         controller.signal.addEventListener('abort', finish, { once: true })
       })
     }
-    if (!controller.signal.aborted) throw new Error('Transcription took too long. Please try again.')
+    if (!controller.signal.aborted) throw new Error(t('common:agentComposerMedia.transcriptionTookTooLong'))
   } catch (value) {
     if (!disposed && current === generation && !controller.signal.aborted) {
-      dictationError.value = value instanceof Error ? value.message : 'Dictation could not be transcribed.'
+      dictationError.value = value instanceof Error ? value.message : t('common:agentComposerMedia.dictationCouldNotTranscribed2')
       emit('dictationFailed', dictationError.value)
     }
     if (current === generation && dictationSendResolve) {
@@ -587,7 +590,7 @@ watch(() => props.capabilities, () => {
   if (!props.capabilities?.attachments && attachments.value.length) {
     for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
     attachments.value = []
-    error.value = 'Attachments were removed because this provider no longer supports them.'
+    error.value = t('common:agentComposerMedia.attachmentsWereRemovedBecause')
   }
 }, { deep: true })
 onBeforeUnmount(() => {

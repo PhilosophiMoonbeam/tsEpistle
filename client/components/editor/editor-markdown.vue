@@ -30,7 +30,7 @@
                 v-list.py-0(density='compact')
                   v-list-item(v-for='n in 6', :key='n', :active='formatState.headingLevel === n', @click='setHeaderLine(n)')
                     template(v-slot:prepend)
-                      v-icon mdi-format-header-{{n}}
+                      v-icon {{ $t(`editor:editorMarkdown.mdiFormatHeader`, { n, interpolation: { escapeValue: false } }) }}
                     v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-menu(v-else-if='toolId === `blockquote`', :open-on-hover='$vuetify.display.mdAndUp')
                 template(v-slot:activator='{ props: menuProps }')
@@ -183,10 +183,10 @@
           span {{collaborationLabel}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
-        .text-body-small.editor-markdown-sysbar-mode Markdown
+        .text-body-small.editor-markdown-sysbar-mode {{ $t(`editor:editorMarkdown.markdown`) }}
         v-spacer
         .text-body-small.editor-markdown-sysbar-format(v-if='formatSummary', :aria-label='$t(`editor:markup.formatAtCursor`, { format: formatSummary })') {{ formatSummary }}
-        .text-body-small.editor-markdown-sysbar-position Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}
+        .text-body-small.editor-markdown-sysbar-position {{ $t(`editor:editorMarkdown.lnCol`, { line: cursorPos.line + 1, ch: cursorPos.ch + 1, interpolation: { escapeValue: false } }) }}
 
     markdown-help(v-if='helpShown')
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
@@ -1144,7 +1144,7 @@ export default defineComponent({
     wikiStore.editor.editorKey = 'markdown'
 
     if (this.mode === 'create' && !wikiStore.editor.content) {
-      wikiStore.editor.content = '# Header\nYour content here'
+      wikiStore.editor.content = this.$t('editor:editorMarkdown.headerContentHere')
     }
 
 
@@ -1259,7 +1259,7 @@ export default defineComponent({
       collaborations.delete(this)
       this.collaborationAbortController?.abort()
       this.collaborationAbortController = null
-      throw new Error('Markdown editor hosts are unavailable')
+      throw new Error(this.$t('editor:editorMarkdown.markdownEditorHostsUnavailable'))
     }
     const cm = new TextEditor({
       parent: container,

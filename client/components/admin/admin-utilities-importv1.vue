@@ -1,45 +1,45 @@
 <template lang="pug">
 v-card
-  v-card-title Content import
-  v-card-subtitle Bring documents and assets into this workspace from a Git repository or local folder.
+  v-card-title {{ $t(`admin:utilitiesImportv1.contentImport`) }}
+  v-card-subtitle {{ $t(`admin:utilitiesImportv1.bringDocumentsAssetsInto`) }}
   v-card-text
     v-alert(color='warning' variant='tonal' icon='mdi-alert-outline')
-      .text-body-medium Import can create pages and assets. Take a verified backup and complete each source once before starting another operation.
-    h2.text-title-medium Content source
-    v-list.mb-4(density='compact' aria-label='Import target availability')
-      v-list-item(:prepend-icon='importTargets.git.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.git.available ? `Git import available` : `Git import unavailable`' :subtitle='targetAvailability(importTargets.git)')
-      v-list-item(:prepend-icon='importTargets.disk.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.disk.available ? `Local-folder import available` : `Local-folder import unavailable`' :subtitle='targetAvailability(importTargets.disk)')
-    p.text-body-medium.mt-2 Content import saves the reviewed disk or Git storage configuration, activates it, then imports its documents and assets. Git credentials are secret fields and never enter receipts or review details.
-    v-radio-group(v-model='contentMode' inline label='Source' :disabled='busy')
-      v-radio(value='git' label='Git repository' :disabled='!importTargets.git.available')
-      v-radio(value='disk' label='Local folder' :disabled='!importTargets.disk.available')
+      .text-body-medium {{ $t(`admin:utilitiesImportv1.importCanCreatePages`) }}
+    h2.text-title-medium {{ $t(`admin:utilitiesImportv1.contentSource`) }}
+    v-list.mb-4(density='compact' :aria-label='$t(`admin:utilitiesImportv1.importTargetAvailability`)')
+      v-list-item(:prepend-icon='importTargets.git.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.git.available ? $t(`admin:utilitiesImportv1.gitImportAvailable`) : $t(`admin:utilitiesImportv1.gitImportUnavailable`)' :subtitle='targetAvailability(importTargets.git)')
+      v-list-item(:prepend-icon='importTargets.disk.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.disk.available ? $t(`admin:utilitiesImportv1.localFolderImportAvailable`) : $t(`admin:utilitiesImportv1.localFolderImportUnavailable`)' :subtitle='targetAvailability(importTargets.disk)')
+    p.text-body-medium.mt-2 {{ $t(`admin:utilitiesImportv1.contentImportSavesReviewed`) }}
+    v-radio-group(v-model='contentMode' inline :label='$t(`admin:utilitiesImportv1.source`)' :disabled='busy')
+      v-radio(value='git' :label='$t(`admin:utilitiesImportv1.gitRepository`)' :disabled='!importTargets.git.available')
+      v-radio(value='disk' :label='$t(`admin:utilitiesImportv1.localFolder`)' :disabled='!importTargets.disk.available')
     v-alert.mb-4(v-if='!selectedTarget.available' color='warning' variant='tonal' density='compact') {{ selectedTargetMessage }}
     template(v-if='contentMode === `disk`')
-      v-text-field(v-model='diskPath' label='Content folder path' variant='outlined' :disabled='busy || !importTargets.disk.available' :error-messages='diskError' @blur='touched.disk = true')
+      v-text-field(v-model='diskPath' :label='$t(`admin:utilitiesImportv1.contentFolderPath`)' variant='outlined' :disabled='busy || !importTargets.disk.available' :error-messages='diskError' @blur='touched.disk = true')
     template(v-else)
       v-row
         v-col(cols='12' md='8')
-          v-text-field(v-model='git.repoUrl' label='Repository URL' variant='outlined' :disabled='busy || !importTargets.git.available' :error-messages='gitError' @blur='touched.repo = true')
+          v-text-field(v-model='git.repoUrl' :label='$t(`admin:utilitiesImportv1.repositoryUrl`)' variant='outlined' :disabled='busy || !importTargets.git.available' :error-messages='gitError' @blur='touched.repo = true')
         v-col(cols='12' md='4')
-          v-text-field(v-model='git.branch' label='Branch' variant='outlined' :disabled='busy || !importTargets.git.available')
+          v-text-field(v-model='git.branch' :label='$t(`admin:utilitiesImportv1.branch`)' variant='outlined' :disabled='busy || !importTargets.git.available')
         v-col(cols='12' md='4')
-          v-select(v-model='git.authType' :items='authTypes' item-title='title' item-value='value' label='Authentication' variant='outlined' :disabled='busy || !importTargets.git.available')
+          v-select(v-model='git.authType' :items='authTypes' item-title='title' item-value='value' :label='$t(`admin:utilitiesImportv1.authentication`)' variant='outlined' :disabled='busy || !importTargets.git.available')
         v-col(cols='12' md='8')
-          v-switch(v-model='git.verifySSL' label='Verify HTTPS certificate' color='primary' hide-details :disabled='busy || !importTargets.git.available')
+          v-switch(v-model='git.verifySSL' :label='$t(`admin:utilitiesImportv1.verifyHttpsCertificate`)' color='primary' hide-details :disabled='busy || !importTargets.git.available')
         v-col(v-if='git.authType === `ssh`' cols='12')
-          v-textarea(v-model='git.privateKey' label='SSH private key contents' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='privateKeyError' @blur='touched.key = true')
+          v-textarea(v-model='git.privateKey' :label='$t(`admin:utilitiesImportv1.sshPrivateKeyContents`)' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='privateKeyError' @blur='touched.key = true')
         template(v-else)
           v-col(cols='12' md='6')
-            v-text-field(v-model='git.username' label='Username' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available')
+            v-text-field(v-model='git.username' :label='$t(`admin:utilitiesImportv1.username`)' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available')
           v-col(cols='12' md='6')
-            v-text-field(v-model='git.password' type='password' label='Password or access token' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='passwordError' @blur='touched.password = true')
+            v-text-field(v-model='git.password' type='password' :label='$t(`admin:utilitiesImportv1.passwordAccessToken`)' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='passwordError' @blur='touched.password = true')
         v-col(cols='12' md='6')
-          v-text-field(v-model='git.defaultName' label='Fallback author name' variant='outlined' :disabled='busy || !importTargets.git.available')
+          v-text-field(v-model='git.defaultName' :label='$t(`admin:utilitiesImportv1.fallbackAuthorName`)' variant='outlined' :disabled='busy || !importTargets.git.available')
         v-col(cols='12' md='6')
-          v-text-field(v-model='git.defaultEmail' label='Fallback author email' variant='outlined' :disabled='busy || !importTargets.git.available')
+          v-text-field(v-model='git.defaultEmail' :label='$t(`admin:utilitiesImportv1.fallbackAuthorEmail`)' variant='outlined' :disabled='busy || !importTargets.git.available')
         v-col(cols='12')
-          v-text-field(v-model='git.localRepoPath' label='Local working-copy path' variant='outlined' :disabled='busy || !importTargets.git.available')
-    v-btn.mt-3(color='warning' variant='flat' :disabled='busy || !canImportContent' @click='openContentReview') Review content import
+          v-text-field(v-model='git.localRepoPath' :label='$t(`admin:utilitiesImportv1.localWorkingCopyPath`)' variant='outlined' :disabled='busy || !importTargets.git.available')
+    v-btn.mt-3(color='warning' variant='flat' :disabled='busy || !canImportContent' @click='openContentReview') {{ $t(`admin:utilitiesImportv1.reviewContentImport`) }}
   utility-review(
     v-model:open='review.open'
     :title='review.title'
@@ -63,6 +63,7 @@ import {
   type UtilityOperationKind
 } from '../../../shared/utilities-workspace.ts'
 import UtilityReview from './admin-utilities-review.vue'
+import type { Translate } from '../../helpers/use-translate.ts'
 
 type ImportKind = Extract<UtilityOperationKind, 'import-v1-content'>
 type GitDraft = {
@@ -87,12 +88,12 @@ type ReviewSnapshot = {
   payload: ImportPayload
 }
 
-const repositoryIdentity = (value: string): string => {
+const repositoryIdentity = (t: Translate, value: string): string => {
   try {
     const parsed = new URL(value)
     return `${parsed.protocol}//${parsed.host}${parsed.pathname || '/'}`
   } catch {
-    return 'Repository address supplied (credentials hidden)'
+    return t('admin:utilitiesImportv1.repositoryAddressSuppliedCredentials')
   }
 }
 
@@ -104,7 +105,7 @@ export default defineComponent({
     uncertainReceipt: { type: Object as PropType<UtilityOperation | null>, default: null }
   },
   emits: ['request', 'draft-state'],
-  data: () => ({
+  data: (vm) => ({
     touched: { disk: false, repo: false, key: false, password: false },
     contentMode: 'git' as 'git' | 'disk',
     diskPath: '',
@@ -121,8 +122,8 @@ export default defineComponent({
       verifySSL: true
     } as GitDraft,
     authTypes: [
-      { title: 'SSH private key', value: 'ssh' },
-      { title: 'HTTP basic or access token', value: 'basic' }
+      { title: vm.$t('admin:utilitiesImportv1.sshPrivateKey'), value: 'ssh' },
+      { title: vm.$t('admin:utilitiesImportv1.httpBasicAccessToken'), value: 'basic' }
     ],
     review: {
       open: false,
@@ -146,26 +147,26 @@ export default defineComponent({
     selectedTargetMessage(): string {
       return (
         this.selectedTarget.reason ??
-        'This import target is unavailable in the current deployment. Choose an available source before reviewing the import.'
+        this.$t('admin:utilitiesImportv1.importTargetUnavailableCurrent')
       )
     },
     diskError(): string {
       if (!this.touched.disk) return ''
-      return this.contentMode !== 'disk' || this.diskPath.trim().length > 0 ? '' : 'Enter a content folder path.'
+      return this.contentMode !== 'disk' || this.diskPath.trim().length > 0 ? '' : this.$t('admin:utilitiesImportv1.enterContentFolderPath')
     },
     gitError(): string {
       if (!this.touched.repo) return ''
-      return this.contentMode !== 'git' || this.git.repoUrl.trim().length > 0 ? '' : 'Enter a repository URL.'
+      return this.contentMode !== 'git' || this.git.repoUrl.trim().length > 0 ? '' : this.$t('admin:utilitiesImportv1.enterRepositoryUrl')
     },
     privateKeyError(): string {
       if (!this.touched.key) return ''
-      return this.contentMode !== 'git' || this.git.authType !== 'ssh' || this.git.privateKey.trim().length > 0 ? '' : 'Enter the SSH private key.'
+      return this.contentMode !== 'git' || this.git.authType !== 'ssh' || this.git.privateKey.trim().length > 0 ? '' : this.$t('admin:utilitiesImportv1.enterSshPrivateKey')
     },
     passwordError(): string {
       if (!this.touched.password) return ''
       return this.contentMode !== 'git' || this.git.authType !== 'basic' || (this.git.username.trim().length > 0 && this.git.password.length > 0)
         ? ''
-        : 'Enter a username and password or access token.'
+        : this.$t('admin:utilitiesImportv1.enterUsernamePasswordAccess')
     },
     canImportContent(): boolean {
       if (this.contentMode === 'disk') return this.importTargets.disk.available && this.diskPath.trim().length > 0
@@ -213,7 +214,7 @@ export default defineComponent({
   },
   methods: {
     targetAvailability(target: { available: boolean; reason: string | null }): string {
-      return target.available ? 'Ready for a reviewed import.' : (target.reason ?? 'Unavailable in the current deployment.')
+      return target.available ? this.$t('admin:utilitiesImportv1.readyReviewedImport') : (target.reason ?? this.$t('admin:utilitiesImportv1.unavailableCurrentDeployment'))
     },
     contentPayload(): ImportPayload {
       return this.contentMode === 'disk'
@@ -238,33 +239,33 @@ export default defineComponent({
       const parameters =
         this.contentMode === 'disk'
           ? [
-              { label: 'Content source', value: 'Local folder' },
-              { label: 'Content folder', value: this.diskPath.trim() }
+              { label: this.$t('admin:utilitiesImportv1.contentSource'), value: this.$t('admin:utilitiesImportv1.localFolder') },
+              { label: this.$t('admin:utilitiesImportv1.contentFolder'), value: this.diskPath.trim() }
             ]
           : [
-              { label: 'Content source', value: 'Git repository' },
-              { label: 'Repository', value: repositoryIdentity(this.git.repoUrl.trim()) },
-              { label: 'Branch', value: this.git.branch.trim() },
+              { label: this.$t('admin:utilitiesImportv1.contentSource'), value: this.$t('admin:utilitiesImportv1.gitRepository') },
+              { label: this.$t('admin:utilitiesImportv1.repository'), value: repositoryIdentity(this.$t, this.git.repoUrl.trim()) },
+              { label: this.$t('admin:utilitiesImportv1.branch'), value: this.git.branch.trim() },
               {
-                label: 'Authentication',
-                value: this.git.authType === 'ssh' ? 'SSH private key supplied; value hidden' : 'HTTP basic or access token supplied; values hidden'
+                label: this.$t('admin:utilitiesImportv1.authentication'),
+                value: this.git.authType === 'ssh' ? this.$t('admin:utilitiesImportv1.sshPrivateKeySupplied') : this.$t('admin:utilitiesImportv1.httpBasicAccessToken2')
               },
-              { label: 'HTTPS certificate verification', value: this.git.verifySSL ? 'Enabled' : 'Disabled' },
+              { label: this.$t('admin:utilitiesImportv1.httpsCertificateVerification'), value: this.git.verifySSL ? this.$t('admin:utilitiesImportv1.enabled') : this.$t('admin:utilitiesImportv1.disabled') },
               {
-                label: 'Fallback author',
+                label: this.$t('admin:utilitiesImportv1.fallbackAuthor'),
                 value:
                   this.git.defaultName || this.git.defaultEmail
-                    ? `${this.git.defaultName || 'Default name'} · ${this.git.defaultEmail || 'Default email'}`
-                    : 'Use the target’s configured default'
+                    ? `${this.git.defaultName || this.$t('admin:utilitiesImportv1.defaultName')} · ${this.git.defaultEmail || this.$t('admin:utilitiesImportv1.defaultEmail')}`
+                    : this.$t('admin:utilitiesImportv1.useTargetsConfiguredDefault')
               },
-              { label: 'Local working copy', value: this.git.localRepoPath.trim() }
+              { label: this.$t('admin:utilitiesImportv1.localWorkingCopy'), value: this.git.localRepoPath.trim() }
             ]
       this.review = {
         open: true,
         kind: 'import-v1-content',
-        title: 'Review content import',
+        title: this.$t('admin:utilitiesImportv1.reviewContentImport'),
         effect:
-          'This saves the selected storage target before activating it, then reads documents and assets from the reviewed source. Existing conflict and document-validation rules apply.',
+          this.$t('admin:utilitiesImportv1.savesSelectedStorageTarget'),
         confirmation: utilityOperationConfirmation('import-v1-content'),
         parameters,
         payload

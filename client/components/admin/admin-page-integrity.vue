@@ -1,9 +1,9 @@
 <template>
   <v-container class="page-integrity" fluid>
     <AdminHero
-      title="Page integrity"
-      description="Inspect bounded, revision-fenced evidence from native page and projection state. This scan never changes pages or repairs derived data."
-      eyebrow="System diagnostics"
+      :title="$t('admin:pageIntegrity.pageIntegrity')"
+      :description="$t('admin:pageIntegrity.inspectBoundedRevisionFenced')"
+      :eyebrow="$t('admin:pageIntegrity.systemDiagnostics')"
       icon="mdi-shield-search"
     >
       <template #actions>
@@ -14,7 +14,7 @@
           prepend-icon="mdi-stop-circle-outline"
           @click="cancelScan"
         >
-          Cancel scan
+          {{ $t('admin:pageIntegrity.cancelScan') }}
         </v-btn>
         <v-btn
           v-else
@@ -24,13 +24,13 @@
           :disabled="unmounted"
           @click="startScan"
         >
-          {{ scanState === 'complete' || scanState === 'cancelled' || scanState === 'error' ? 'Run a new scan' : 'Start scan' }}
+          {{ scanState === 'complete' || scanState === 'cancelled' || scanState === 'error' ? $t('admin:pageIntegrity.runNewScan') : $t('admin:pageIntegrity.startScan') }}
         </v-btn>
       </template>
     </AdminHero>
 
     <v-alert class="mt-5" color="info" variant="tonal" icon="mdi-information-outline">
-      This administrator-only inspection reads stored state only. It does not inspect remote storage, send page content to a model, rerender, retry effects, change permissions, or repair data. Findings contain page IDs and revisions only—never titles, paths, source, or credentials.
+      {{ $t('admin:pageIntegrity.administratorOnlyInspectionReads') }}
     </v-alert>
 
     <v-alert v-if="scanError" class="mt-4" color="error" variant="tonal" role="alert">
@@ -40,19 +40,19 @@
     <section class="integrity-summary mt-5" aria-labelledby="integrity-summary-title">
       <header class="integrity-section-heading">
         <div>
-          <p class="integrity-kicker">Bounded observation</p>
-          <h2 id="integrity-summary-title">Scan progress</h2>
-          <p v-if="scanState === 'idle'">Choose Start scan to capture a database upper watermark and inspect stable page-ID batches.</p>
+          <p class="integrity-kicker">{{ $t('admin:pageIntegrity.boundedObservation') }}</p>
+          <h2 id="integrity-summary-title">{{ $t('admin:pageIntegrity.scanProgress') }}</h2>
+          <p v-if="scanState === 'idle'">{{ $t('admin:pageIntegrity.chooseStartScanCapture') }}</p>
           <p v-else-if="scanState === 'running'" role="status" aria-live="polite">
-            Inspecting pages {{ pagesScanned.toLocaleString() }} through the captured upper watermark {{ upperWatermark.toLocaleString() }}. Newer pages are excluded.
+            {{ $t('admin:pageIntegrity.inspectingPagesThroughCaptured', { pagesScanned: pagesScanned.toLocaleString(), upperWatermark: upperWatermark.toLocaleString(), interpolation: { escapeValue: false } }) }}
           </p>
           <p v-else-if="scanState === 'complete'" role="status" aria-live="polite">
-            Completed at upper watermark {{ upperWatermark.toLocaleString() }} after inspecting {{ pagesScanned.toLocaleString() }} pages.
+            {{ $t('admin:pageIntegrity.completedUpperWatermarkAfter', { upperWatermark: upperWatermark.toLocaleString(), pagesScanned: pagesScanned.toLocaleString(), interpolation: { escapeValue: false } }) }}
           </p>
           <p v-else-if="scanState === 'cancelled'" role="status" aria-live="polite">
-            Cancelled after inspecting {{ pagesScanned.toLocaleString() }} pages. Partial observations are not a complete scan.
+            {{ $t('admin:pageIntegrity.cancelledAfterInspectingPages', { pagesScanned: pagesScanned.toLocaleString(), interpolation: { escapeValue: false } }) }}
           </p>
-          <p v-else-if="scanState === 'error'">The scan could not continue. No repair or retry was started automatically.</p>
+          <p v-else-if="scanState === 'error'">{{ $t('admin:pageIntegrity.scanCouldNotContinue') }}</p>
         </div>
         <v-chip
           v-if="scanState !== 'idle'"
@@ -63,15 +63,15 @@
           {{ scanStateLabel }}
         </v-chip>
       </header>
-      <v-progress-linear v-if="scanState === 'running'" indeterminate color="primary" aria-label="Page integrity scan running" />
+      <v-progress-linear v-if="scanState === 'running'" indeterminate color="primary" :aria-label="$t('admin:pageIntegrity.pageIntegrityScanRunning')" />
 
-      <div v-if="hasSummary" class="integrity-counts" aria-label="Observed check counts">
+      <div v-if="hasSummary" class="integrity-counts" :aria-label="$t('admin:pageIntegrity.observedCheckCounts')">
         <article v-for="item in countCards" :key="item.key" class="integrity-count">
           <span>{{ item.label }}</span>
           <strong>{{ outcomes[item.key].toLocaleString() }}</strong>
         </article>
         <article class="integrity-count integrity-count--watermark">
-          <span>Upper watermark</span>
+          <span>{{ $t('admin:pageIntegrity.upperWatermark') }}</span>
           <strong>{{ upperWatermark.toLocaleString() }}</strong>
         </article>
       </div>
@@ -80,21 +80,21 @@
     <section v-if="localStorage.length" class="integrity-storage mt-5" aria-labelledby="integrity-storage-title">
       <header class="integrity-section-heading">
         <div>
-          <p class="integrity-kicker">Recorded local state only</p>
-          <h2 id="integrity-storage-title">Local storage targets</h2>
-          <p>These statuses come from saved local disk/Git runtime observations. No storage target was contacted.</p>
+          <p class="integrity-kicker">{{ $t('admin:pageIntegrity.recordedLocalStateOnly') }}</p>
+          <h2 id="integrity-storage-title">{{ $t('admin:pageIntegrity.localStorageTargets') }}</h2>
+          <p>{{ $t('admin:pageIntegrity.theseStatusesComeSaved') }}</p>
         </div>
       </header>
       <div class="storage-targets">
         <article v-for="target in localStorage" :key="target.key" class="storage-target">
           <div>
-            <strong>{{ target.key === 'disk' ? 'Local disk' : 'Local Git working copy' }}</strong>
-            <p>{{ target.enabled ? 'Enabled' : 'Disabled' }} · {{ target.hasRecordedOperation ? 'Recorded operation available' : 'No recorded operation' }}</p>
+            <strong>{{ target.key === 'disk' ? $t('admin:pageIntegrity.localDisk') : $t('admin:pageIntegrity.localGitWorkingCopy') }}</strong>
+            <p>{{ target.enabled ? $t('admin:pageIntegrity.enabled') : $t('admin:pageIntegrity.disabled') }} · {{ target.hasRecordedOperation ? $t('admin:pageIntegrity.recordedOperationAvailable') : $t('admin:pageIntegrity.noRecordedOperation') }}</p>
           </div>
           <div class="storage-observation">
             <v-chip size="small" variant="tonal" :color="storageColor(target.status)">{{ target.status }}</v-chip>
             <time v-if="target.lastAttempt" :datetime="target.lastAttempt">{{ formatDate(target.lastAttempt) }}</time>
-            <span v-else>No recorded attempt</span>
+            <span v-else>{{ $t('admin:pageIntegrity.noRecordedAttempt') }}</span>
           </div>
         </article>
       </div>
@@ -103,20 +103,20 @@
     <section v-if="checks.length || omittedChecks > 0" class="integrity-results mt-5" aria-labelledby="integrity-results-title">
       <header class="integrity-section-heading">
         <div>
-          <p class="integrity-kicker">No source excerpts</p>
-          <h2 id="integrity-results-title">Observations</h2>
-          <p>Healthy checks are counted above. The list is capped at {{ maxVisibleChecks }} entries; totals continue to include every completed batch.</p>
+          <p class="integrity-kicker">{{ $t('admin:pageIntegrity.noSourceExcerpts') }}</p>
+          <h2 id="integrity-results-title">{{ $t('admin:pageIntegrity.observations') }}</h2>
+          <p>{{ $t('admin:pageIntegrity.healthyChecksCountedAbove', { maxVisibleChecks, interpolation: { escapeValue: false } }) }}</p>
         </div>
-        <v-chip v-if="omittedChecks" color="warning" variant="tonal" size="small">{{ omittedChecks.toLocaleString() }} additional observations not displayed</v-chip>
+        <v-chip v-if="omittedChecks" color="warning" variant="tonal" size="small">{{ $t('admin:pageIntegrity.additionalObservationsNotDisplayed', { omittedChecks: omittedChecks.toLocaleString(), interpolation: { escapeValue: false } }) }}</v-chip>
       </header>
       <v-alert v-if="checks.length === 0 && omittedChecks === 0" color="success" variant="tonal" icon="mdi-check-circle-outline">
-        No findings, stale observations, skipped checks, or errors were recorded in this scan.
+        {{ $t('admin:pageIntegrity.noFindingsStaleObservations') }}
       </v-alert>
-      <div v-else class="integrity-check-list" role="list" aria-label="Page integrity observations">
+      <div v-else class="integrity-check-list" role="list" :aria-label="$t('admin:pageIntegrity.pageIntegrityObservations')">
         <article v-for="(item, index) in checks" :key="`${item.pageId}-${item.checkCode}-${index}`" class="integrity-check" role="listitem">
           <div class="integrity-check-identity">
-            <span>Page #{{ item.pageId }}</span>
-            <small>Revision {{ item.sourceRevision || 'unavailable' }}</small>
+            <span>{{ $t('admin:pageIntegrity.page', { pageId: item.pageId, interpolation: { escapeValue: false } }) }}</span>
+            <small>{{ $t('admin:pageIntegrity.revision', { sourceRevision: item.sourceRevision || 'unavailable', interpolation: { escapeValue: false } }) }}</small>
           </div>
           <div class="integrity-check-main">
             <div class="integrity-check-heading">
@@ -167,10 +167,10 @@ export default defineComponent({
       return this.scanState !== 'idle'
     },
     scanStateLabel(): string {
-      return this.scanState === 'running' ? 'Scanning' : this.scanState === 'complete' ? 'Complete' : this.scanState === 'cancelled' ? 'Cancelled' : this.scanState === 'error' ? 'Unavailable' : 'Not started'
+      return this.scanState === 'running' ? this.$t('admin:pageIntegrity.scanning') : this.scanState === 'complete' ? this.$t('admin:pageIntegrity.complete') : this.scanState === 'cancelled' ? this.$t('admin:pageIntegrity.cancelled') : this.scanState === 'error' ? this.$t('admin:pageIntegrity.unavailable') : this.$t('admin:pageIntegrity.notStarted')
     },
     countCards(): Array<{ key: (typeof OUTCOMES)[number]; label: string }> {
-      return OUTCOMES.map(key => ({ key, label: key === 'healthy' ? 'Healthy checks' : key === 'finding' ? 'Findings' : key === 'changed' ? 'Changed during scan' : key === 'skipped' ? 'Skipped checks' : 'Errors' }))
+      return OUTCOMES.map(key => ({ key, label: key === 'healthy' ? this.$t('admin:pageIntegrity.healthyChecks') : key === 'finding' ? this.$t('admin:pageIntegrity.findings') : key === 'changed' ? this.$t('admin:pageIntegrity.changedDuringScan') : key === 'skipped' ? this.$t('admin:pageIntegrity.skippedChecks') : this.$t('admin:pageIntegrity.errors') }))
     }
   },
   beforeUnmount() {
@@ -207,11 +207,11 @@ export default defineComponent({
           if (!response.ok) {
             const message = payload && typeof payload === 'object' && !Array.isArray(payload) && typeof Reflect.get(payload, 'error') === 'string'
               ? String(Reflect.get(payload, 'error'))
-              : 'Page integrity scan is unavailable.'
+              : this.$t('admin:pageIntegrity.pageIntegrityScanUnavailable')
             throw new Error(message)
           }
           const parsed = PageIntegrityScanResponseSchema.safeParse(payload)
-          if (!parsed.success) throw new Error('The page integrity response was incomplete. Start a new scan before interpreting its observations.')
+          if (!parsed.success) throw new Error(this.$t('admin:pageIntegrity.pageIntegrityResponseWas'))
           const batch = parsed.data
           upperWatermark = batch.upperWatermark
           this.upperWatermark = batch.upperWatermark
@@ -231,7 +231,7 @@ export default defineComponent({
             this.scanState = 'complete'
             return
           }
-          if (batch.nextCursor === null) throw new Error('The scan cursor was not advanced. Start a new scan before interpreting its observations.')
+          if (batch.nextCursor === null) throw new Error(this.$t('admin:pageIntegrity.scanCursorWasNot'))
           cursor = batch.nextCursor
         }
         this.scanState = 'cancelled'
@@ -239,7 +239,7 @@ export default defineComponent({
         if (controller.signal.aborted) this.scanState = 'cancelled'
         else {
           this.scanState = 'error'
-          this.scanError = error instanceof Error ? error.message : 'Page integrity scan is unavailable.'
+          this.scanError = error instanceof Error ? error.message : this.$t('admin:pageIntegrity.pageIntegrityScanUnavailable')
         }
       } finally {
         if (this.controller === controller) this.controller = null
@@ -257,7 +257,7 @@ export default defineComponent({
     },
     formatDate(value: string): string {
       const date = new Date(value)
-      return Number.isFinite(date.valueOf()) ? date.toLocaleString() : 'Not recorded'
+      return Number.isFinite(date.valueOf()) ? date.toLocaleString() : this.$t('admin:pageIntegrity.notRecorded')
     }
   }
 })
@@ -266,7 +266,7 @@ export default defineComponent({
 <style scoped lang="scss">
 .page-integrity {
   --integrity-line: rgba(var(--v-theme-on-surface), 0.14);
-  --integrity-muted: rgba(var(--v-theme-on-surface), 0.68);
+  --integrity-muted: var(--wiki-text-muted);
   max-width: 1320px;
 }
 

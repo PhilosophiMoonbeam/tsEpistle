@@ -1,32 +1,31 @@
 <template>
-  <div class="navigation-specimen" aria-label="Menu preview">
+  <div class="navigation-specimen" :aria-label="$t('admin:navigationPreview.menuPreview')">
     <div class="navigation-specimen-brand">
       <v-icon icon="mdi-compass-outline" size="20" /><strong
-        >Your workspace</strong
+        >{{ $t('admin:navigationPreview.workspace') }}</strong
       >
     </div>
     <div v-if="mode === 'NONE'" class="navigation-specimen-empty">
-      <v-icon icon="mdi-dock-left" size="28" /><strong>Sidebar hidden</strong>
+      <v-icon icon="mdi-dock-left" size="28" /><strong>{{ $t('admin:navigationPreview.sidebarHidden') }}</strong>
       <p>
-        Readers can still use the page header and search. Your custom links are
-        retained.
+        {{ $t('admin:navigationPreview.readersCanStillUse') }}
       </p>
     </div>
     <template v-else>
       <div class="navigation-specimen-switch">
         <span v-if="mode !== 'TREE'"
-          ><v-icon icon="mdi-home-outline" size="18" /> Home</span
+          ><v-icon icon="mdi-home-outline" size="18" /> {{ $t('admin:navigationPreview.home') }}</span
         ><strong v-if="mode !== 'STATIC'">{{
-          mode === "TREE" ? "Browse" : "Main menu"
+          mode === "TREE" ? $t('admin:navigationPreview.browse') : $t('admin:navigationPreview.mainMenu')
         }}</strong
-        ><span v-if="mode === 'MIXED'">Browse</span>
+        ><span v-if="mode === 'MIXED'">{{ $t('admin:navigationPreview.browse') }}</span>
       </div>
       <div v-if="mode === 'TREE'" class="navigation-specimen-empty">
         <v-icon icon="mdi-file-tree-outline" size="28" /><strong
-          >Page directory</strong
+          >{{ $t('admin:navigationPreview.pageDirectory') }}</strong
         >
         <p>
-          Browse follows the workspace page hierarchy. Page permissions determine which destinations a reader can open.
+          {{ $t('admin:navigationPreview.browseFollowsWorkspacePage') }}
         </p>
       </div>
       <template v-else
@@ -48,12 +47,12 @@
           /></template>
         </div>
         <p v-if="!visible.length" class="navigation-specimen-empty">
-          No custom links are visible to this audience.
+          {{ $t('admin:navigationPreview.noCustomLinksVisible') }}
         </p></template
       >
     </template>
     <div class="navigation-specimen-caption">
-      {{ locale }} · Illustrative sidebar
+      {{ $t('admin:navigationPreview.illustrativeSidebar', { locale, interpolation: { escapeValue: false } }) }}
     </div>
   </div>
 </template>

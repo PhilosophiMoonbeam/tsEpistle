@@ -1,11 +1,11 @@
 <template>
   <v-container fluid class="pages-atlas">
-    <admin-hero title="Page atlas" description="See how knowledge is organized and connected." icon="mdi-graph-outline"><template #actions><v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">Page register</v-btn><v-btn variant="outlined" prepend-icon="mdi-refresh" :disabled="loading" @click="loadPages">Refresh</v-btn></template></admin-hero>
-    <section class="atlas-intro"><div><span class="atlas-kicker">Structure &amp; relationships</span><h2>Follow the shape of your knowledge.</h2><p>Folders reveal organization. Page links reveal connections. Explore a diagram or use the searchable connection directory.</p></div><dl><div><dt>Pages in {{ currentLocale }}</dt><dd>{{ pages.length }}</dd></div><div><dt>Links within this view</dt><dd>{{ internalLinkCount }}</dd></div></dl></section>
-    <div class="atlas-controls"><v-select v-model="currentLocale" :items="locales" item-value="code" item-title="name" label="Language" variant="outlined" density="compact" hide-details /><v-btn-toggle v-model="directory" mandatory color="primary" aria-label="Atlas view"><v-btn :value="false">Diagram</v-btn><v-btn :value="true">Connection directory</v-btn></v-btn-toggle><v-select v-if="!directory" v-model="graphMode" :items="[{ title: 'Folder tree', value: 'htree' }, { title: 'Radial folders', value: 'hradial' }, { title: 'Page relationships', value: 'rradial' }]" label="Diagram structure" variant="outlined" density="compact" hide-details /><v-btn v-if="!directory" variant="text" :disabled="loading" @click="redraw">Reset view</v-btn></div>
-    <async-state v-if="loading" state="loading" title="Loading the atlas" message="Fetching accessible page connections." /><async-state v-else-if="errorMessage" state="error" title="The atlas could not be loaded" :message="errorMessage" retry-label="Try again" @retry="loadPages" /><async-state v-else-if="!pages.length" state="empty" :title="`No pages for ${currentLocale}`" message="Choose another language or return to the page register." />
-    <template v-else><div v-show="!directory" class="atlas-diagram"><p>{{ graphMode === 'rradial' ? 'Focus a page label to highlight its incoming and outgoing links. Drag to pan and scroll to zoom.' : 'Page labels open their administration details. Folder nodes organize paths and do not represent pages.' }} Use Tab to focus a page, then Enter to open it.</p><div ref="svgContainer" class="admin-pages-visualize-svg" /></div><section v-show="directory" class="atlas-directory" aria-label="Page connection directory"><v-text-field v-model="search" label="Find a page or linked path" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable /><p role="status">{{ directoryPages.length }} pages</p><article v-for="page in directoryPages" :key="page.id"><div><router-link :to="`/pages/${page.id}`">{{ page.title }}</router-link><code>{{ page.path }}</code></div><div><span>{{ page.links.length }} {{ page.links.length === 1 ? 'outgoing link' : 'outgoing links' }}</span><ul v-if="page.links.length"><li v-for="link in page.links" :key="link"><router-link v-if="pages.some(item => item.path === link)" :to="`/pages/${pages.find(item => item.path === link)?.id}`">{{ link }}</router-link><code v-else>{{ link }}</code></li></ul><small v-else>No outgoing page links recorded.</small></div></article></section></template>
-    <p class="atlas-footnote">Only pages and links visible to your account are included. A linked path outside this view may belong to another language or a page you cannot access; this view does not infer whether it exists.</p>
+    <admin-hero :title="$t('admin:pagesVisualize.pageAtlas')" :description="$t('admin:pagesVisualize.seeHowKnowledgeOrganized')" icon="mdi-graph-outline"><template #actions><v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">{{ $t('admin:pagesVisualize.pageRegister') }}</v-btn><v-btn variant="outlined" prepend-icon="mdi-refresh" :disabled="loading" @click="loadPages">{{ $t('common:actions.refresh') }}</v-btn></template></admin-hero>
+    <section class="atlas-intro"><div><span class="atlas-kicker">{{ $t('admin:pagesVisualize.structureRelationships') }}</span><h2>{{ $t('admin:pagesVisualize.followShapeKnowledge') }}</h2><p>{{ $t('admin:pagesVisualize.foldersRevealOrganizationPage') }}</p></div><dl><div><dt>{{ $t('admin:pagesVisualize.pages', { currentLocale, interpolation: { escapeValue: false } }) }}</dt><dd>{{ pages.length }}</dd></div><div><dt>{{ $t('admin:pagesVisualize.linksWithinView') }}</dt><dd>{{ internalLinkCount }}</dd></div></dl></section>
+    <div class="atlas-controls"><v-select v-model="currentLocale" :items="locales" item-value="code" item-title="name" :label="$t('admin:pagesVisualize.language')" variant="outlined" density="compact" hide-details /><v-btn-toggle v-model="directory" mandatory color="primary" :aria-label="$t('admin:pagesVisualize.atlasView')"><v-btn :value="false">{{ $t('admin:pagesVisualize.diagram') }}</v-btn><v-btn :value="true">{{ $t('admin:pagesVisualize.connectionDirectory') }}</v-btn></v-btn-toggle><v-select v-if="!directory" v-model="graphMode" :items="[{ title: $t('admin:pagesVisualize.folderTree'), value: 'htree' }, { title: $t('admin:pagesVisualize.radialFolders'), value: 'hradial' }, { title: $t('admin:pagesVisualize.pageRelationships'), value: 'rradial' }]" :label="$t('admin:pagesVisualize.diagramStructure')" variant="outlined" density="compact" hide-details /><v-btn v-if="!directory" variant="text" :disabled="loading" @click="redraw">{{ $t('admin:pagesVisualize.resetView') }}</v-btn></div>
+    <async-state v-if="loading" state="loading" :title="$t('admin:pagesVisualize.loadingAtlas')" :message="$t('admin:pagesVisualize.fetchingAccessiblePageConnections')" /><async-state v-else-if="errorMessage" state="error" :title="$t('admin:pagesVisualize.atlasCouldNotLoaded')" :message="errorMessage" :retry-label="$t('admin:pagesVisualize.tryAgain')" @retry="loadPages" /><async-state v-else-if="!pages.length" state="empty" :title="$t('admin:pagesVisualize.noPages', { currentLocale, interpolation: { escapeValue: false } })" :message="$t('admin:pagesVisualize.chooseAnotherLanguageReturn')" />
+    <template v-else><div v-show="!directory" class="atlas-diagram"><p>{{ $t('admin:pagesVisualize.useTabFocusPage', { value: graphMode === 'rradial' ? $t('admin:pagesVisualize.focusPageLabelHighlight3') : $t('admin:pagesVisualize.pageLabelsOpenTheir'), interpolation: { escapeValue: false } }) }}</p><div ref="svgContainer" class="admin-pages-visualize-svg" /></div><section v-show="directory" class="atlas-directory" :aria-label="$t('admin:pagesVisualize.pageConnectionDirectory')"><v-text-field v-model="search" :label="$t('admin:pagesVisualize.findPageLinkedPath')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable /><p role="status">{{ $t('admin:pagesVisualize.pages2', { directoryPagesCount: directoryPages.length, interpolation: { escapeValue: false } }) }}</p><article v-for="page in directoryPages" :key="page.id"><div><router-link :to="`/pages/${page.id}`">{{ page.title }}</router-link><code>{{ page.path }}</code></div><div><span>{{ $t('admin:pagesVisualize.outgoingLinksCount', { count: page.links.length }) }}</span><ul v-if="page.links.length"><li v-for="link in page.links" :key="link"><router-link v-if="pages.some(item => item.path === link)" :to="`/pages/${pages.find(item => item.path === link)?.id}`">{{ link }}</router-link><code v-else>{{ link }}</code></li></ul><small v-else>{{ $t('admin:pagesVisualize.noOutgoingPageLinks') }}</small></div></article></section></template>
+    <p class="atlas-footnote">{{ $t('admin:pagesVisualize.onlyPagesLinksVisible') }}</p>
   </v-container>
 </template>
 <script lang='ts'>
@@ -133,7 +133,7 @@ export default defineComponent({
         const pages = await fetchPageLinks(
           (input, init) => fetchImpl(input, { ...init, signal: controller.signal }),
           locale,
-          'Page links response is invalid'
+          this.$t('admin:pagesVisualize.pageLinksResponseInvalid')
         )
         if (controller.signal.aborted || requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
           return
@@ -143,7 +143,7 @@ export default defineComponent({
         if (controller.signal.aborted || requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
           return
         }
-        this.errorMessage = getErrorMessage(err) || 'Unable to load pages.'
+        this.errorMessage = getErrorMessage(err) || this.$t('admin:pagesVisualize.unableLoadPages')
         wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-pages-refresh')
@@ -251,8 +251,8 @@ export default defineComponent({
 
       const svg = d3.create('svg')
         .attr('viewBox', [-this.width / 2, -this.width / 2, this.width, this.width])
-      svg.append('title').text('Interactive page relationship diagram')
-      svg.append('desc').text('Focus a page label to highlight incoming and outgoing links. Press Enter or Space to open the page.')
+      svg.append('title').text(this.$t('admin:pagesVisualize.interactivePageRelationshipDiagram'))
+      svg.append('desc').text(this.$t('admin:pagesVisualize.focusPageLabelHighlight'))
 
       const g = svg.append('g')
 
@@ -290,8 +290,8 @@ export default defineComponent({
         .attr('tabindex', 0)
         .attr('role', node => node.data.id === undefined ? 'img' : 'link')
         .attr('aria-label', node => node.data.id === undefined
-          ? `Inspect relationships for ${node.data.title}, ${node.data.path}`
-          : `Open ${node.data.title}, ${node.data.path}`)
+          ? this.$t('admin:pagesVisualize.inspectRelationships', { title: node.data.title, path: node.data.path, interpolation: { escapeValue: false } })
+          : this.$t('admin:pagesVisualize.open', { title: node.data.title, path: node.data.path, interpolation: { escapeValue: false } }))
         .text(node => node.data.title)
         .each(function (node: RelationPointNode) {
           node.text = this
@@ -302,9 +302,7 @@ export default defineComponent({
         .on('blur', outed)
         .on('click', (event: MouseEvent, node: RelationPointNode) => this.goToPage(event, node))
         .on('keydown', (event: KeyboardEvent, node: RelationPointNode) => this.goToPage(event, node))
-        .call(text => text.append('title').text(node => `${node.data.path}
-          ${node.outgoing.length} outgoing
-          ${node.incoming.length} incoming`))
+        .call(text => text.append('title').text(node => this.$t('admin:pagesVisualize.outgoingIncoming', { path: node.data.path, outgoingCount: node.outgoing.length, incomingCount: node.incoming.length, interpolation: { escapeValue: false } })))
         .clone(true).lower()
         .attr('aria-hidden', 'true')
         .attr('tabindex', -1)
@@ -370,8 +368,8 @@ export default defineComponent({
 
       const svg = d3.create('svg')
         .attr('viewBox', [0, 0, this.width, x1 - x0 + root.dx * 2])
-      svg.append('title').text('Interactive page hierarchy')
-      svg.append('desc').text('Focus a page label to highlight related links. Press Enter or Space to open the page.')
+      svg.append('title').text(this.$t('admin:pagesVisualize.interactivePageHierarchy'))
+      svg.append('desc').text(this.$t('admin:pagesVisualize.focusPageLabelHighlight2'))
 
       // this extra level is necessary because the element that we
       // apply the zoom tranform to must be above the element where
@@ -420,7 +418,7 @@ export default defineComponent({
         .attr('role', descendant => descendant.data.id === undefined ? null : 'link')
         .attr('aria-label', descendant => descendant.data.id === undefined
           ? null
-          : `Open ${descendant.data.title}, ${descendant.data.path}`)
+          : this.$t('admin:pagesVisualize.open', { title: descendant.data.title, path: descendant.data.path, interpolation: { escapeValue: false } }))
         .text(descendant => descendant.data.title)
         .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
           this.goToPage(event, descendant))
@@ -454,8 +452,8 @@ export default defineComponent({
       const svg = d3.create('svg')
         .style('font-family', 'inherit')
         .style('font-size', 'var(--wiki-font-size-label, 12px)')
-      svg.append('title').text('Interactive radial page hierarchy')
-      svg.append('desc').text('Focus a page label to highlight related links. Press Enter or Space to open the page.')
+      svg.append('title').text(this.$t('admin:pagesVisualize.interactiveRadialPageHierarchy'))
+      svg.append('desc').text(this.$t('admin:pagesVisualize.focusPageLabelHighlight2'))
 
       const g = svg.append('g')
       const zoom = d3.zoom<SVGSVGElement, undefined>()
@@ -505,7 +503,7 @@ export default defineComponent({
         .attr('role', descendant => descendant.data.id === undefined ? null : 'link')
         .attr('aria-label', descendant => descendant.data.id === undefined
           ? null
-          : `Open ${descendant.data.title}, ${descendant.data.path}`)
+          : this.$t('admin:pagesVisualize.open', { title: descendant.data.title, path: descendant.data.path, interpolation: { escapeValue: false } }))
         .text(descendant => descendant.data.title)
         .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
           this.goToPage(event, descendant))

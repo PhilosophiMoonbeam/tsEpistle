@@ -1,27 +1,27 @@
 <template>
   <v-container fluid class="recovery-workspace">
-    <admin-hero title="Page recovery" description="Restore a deleted page from its retained history without reopening a public route." icon="mdi-history">
+    <admin-hero :title="$t('admin:pagesRecycleBin.pageRecovery')" :description="$t('admin:pagesRecycleBin.restoreDeletedPageRetained')" icon="mdi-history">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">Page register</v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="listLoading" :disabled="listLoading || restoring" @click="loadFirstPage">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload deleted page records</v-tooltip></v-btn>
+        <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">{{ $t('admin:pagesRecycleBin.pageRegister') }}</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="listLoading" :disabled="listLoading || restoring" @click="loadFirstPage">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:pagesRecycleBin.reloadDeletedPageRecords') }}</v-tooltip></v-btn>
       </template>
     </admin-hero>
 
     <section class="recovery-intro" aria-labelledby="recovery-intro-title">
       <div>
-        <span class="recovery-kicker">Preserved history / administrator workspace</span>
-        <h2 id="recovery-intro-title">A careful return, not an undo.</h2>
-        <p>Each entry points to the exact deletion snapshot. Review its source and original access state before choosing where the page returns.</p>
+        <span class="recovery-kicker">{{ $t('admin:pagesRecycleBin.preservedHistoryAdministratorWorkspace') }}</span>
+        <h2 id="recovery-intro-title">{{ $t('admin:pagesRecycleBin.carefulReturnNotUndo') }}</h2>
+        <p>{{ $t('admin:pagesRecycleBin.eachEntryPointsExact') }}</p>
       </div>
       <aside class="recovery-limit">
         <v-icon icon="mdi-shield-lock-outline" aria-hidden="true" />
-        <p><strong>What recovery brings back</strong><br />Page source, original page identity, history, and retained metadata. It does not recreate comments, watcher subscriptions, or approval records.</p>
+        <p><strong>{{ $t('admin:pagesRecycleBin.whatRecoveryBringsBack') }}</strong><br />{{ $t('admin:pagesRecycleBin.pageSourceOriginalPage') }}</p>
       </aside>
     </section>
 
     <v-alert v-if="notice" type="success" variant="tonal" class="mb-5" role="status">
       {{ notice }}
-      <router-link v-if="restoredPageId" class="recovery-result-link" :to="`/pages/${restoredPageId}`">Open restored page administration</router-link>
+      <router-link v-if="restoredPageId" class="recovery-result-link" :to="`/pages/${restoredPageId}`">{{ $t('admin:pagesRecycleBin.openRestoredPageAdministration') }}</router-link>
     </v-alert>
     <v-alert v-if="errorMessage" type="error" variant="tonal" class="mb-5" role="alert">{{ errorMessage }}</v-alert>
 
@@ -29,19 +29,19 @@
       <section class="recovery-ledger" aria-labelledby="recovery-ledger-title">
         <div class="recovery-panel-heading">
           <div>
-            <span class="recovery-kicker">01 / Deleted records</span>
-            <h3 id="recovery-ledger-title">Choose a snapshot</h3>
+            <span class="recovery-kicker">{{ $t('admin:pagesRecycleBin.n01DeletedRecords') }}</span>
+            <h3 id="recovery-ledger-title">{{ $t('admin:pagesRecycleBin.chooseSnapshot') }}</h3>
           </div>
-          <span class="recovery-count" aria-live="polite">{{ items.length }} visible</span>
+          <span class="recovery-count" aria-live="polite">{{ $t('admin:pagesRecycleBin.visible', { itemsCount: items.length, interpolation: { escapeValue: false } }) }}</span>
         </div>
         <div v-if="listLoading && !items.length" class="recovery-empty" role="status">
           <v-progress-circular indeterminate color="primary" size="24" aria-hidden="true" />
-          <span>Reading retained deletion history…</span>
+          <span>{{ $t('admin:pagesRecycleBin.readingRetainedDeletionHistory') }}</span>
         </div>
         <div v-else-if="!items.length && !listLoading && !errorMessage" class="recovery-empty">
           <v-icon icon="mdi-archive-check-outline" size="34" aria-hidden="true" />
-          <strong>The recovery bin is clear.</strong>
-          <span>Only page deletions whose history is still retained can appear here.</span>
+          <strong>{{ $t('admin:pagesRecycleBin.recoveryBinClear') }}</strong>
+          <span>{{ $t('admin:pagesRecycleBin.onlyPageDeletionsWhose') }}</span>
         </div>
         <div v-else class="recovery-records">
           <button
@@ -55,78 +55,78 @@
           >
             <span class="record-mark" aria-hidden="true"><v-icon :icon="item.restoreMode === 'quarantine' ? 'mdi-lock-alert-outline' : 'mdi-file-restore-outline'" /></span>
             <span class="record-copy">
-              <strong>{{ item.title || 'Untitled page' }}</strong>
+              <strong>{{ item.title || $t('admin:pagesRecycleBin.untitledPage') }}</strong>
               <span class="record-location">{{ item.localeCode }} / {{ item.path }}</span>
-              <span class="record-meta">Page #{{ item.pageId }} · deletion version #{{ item.deletionVersionId }}</span>
+              <span class="record-meta">{{ $t('admin:pagesRecycleBin.pageDeletionVersion', { pageId: item.pageId, deletionVersionId: item.deletionVersionId, interpolation: { escapeValue: false } }) }}</span>
             </span>
             <span class="record-status" :class="item.restoreMode === 'quarantine' ? 'is-caution' : ''">
-              {{ item.restoreMode === 'quarantine' ? 'Quarantine' : item.protection.isProtected ? 'Password protected' : 'Access retained' }}
+              {{ item.restoreMode === 'quarantine' ? $t('admin:pagesRecycleBin.quarantine') : item.protection.isProtected ? $t('admin:pagesRecycleBin.passwordProtected') : $t('admin:pagesRecycleBin.accessRetained') }}
             </span>
           </button>
-          <v-btn v-if="hasMore" class="recovery-more" variant="text" :loading="olderLoading" :disabled="olderLoading || listLoading" prepend-icon="mdi-chevron-down" @click="loadOlder">Load older records</v-btn>
+          <v-btn v-if="hasMore" class="recovery-more" variant="text" :loading="olderLoading" :disabled="olderLoading || listLoading" prepend-icon="mdi-chevron-down" @click="loadOlder">{{ $t('admin:pagesRecycleBin.loadOlderRecords') }}</v-btn>
         </div>
-        <p class="recovery-footnote">The list contains only the latest deletion snapshot for each page identity. Restoring an older deletion version is rejected as stale.</p>
+        <p class="recovery-footnote">{{ $t('admin:pagesRecycleBin.listContainsOnlyLatest') }}</p>
       </section>
 
       <section class="recovery-inspector" aria-labelledby="recovery-inspector-title" :aria-busy="inspectLoading || restoring">
         <div class="recovery-panel-heading">
           <div>
-            <span class="recovery-kicker">02 / Source &amp; return plan</span>
-            <h3 id="recovery-inspector-title">Inspect before restoring</h3>
+            <span class="recovery-kicker">{{ $t('admin:pagesRecycleBin.n02SourceReturnPlan') }}</span>
+            <h3 id="recovery-inspector-title">{{ $t('admin:pagesRecycleBin.inspectBeforeRestoring') }}</h3>
           </div>
           <span v-if="inspected" class="snapshot-index">#{{ inspected.pageId }} / v{{ inspected.deletionVersionId }}</span>
         </div>
         <div v-if="inspectLoading" class="recovery-empty" role="status">
           <v-progress-circular indeterminate color="primary" size="24" aria-hidden="true" />
-          <span>Opening the selected historical source…</span>
+          <span>{{ $t('admin:pagesRecycleBin.openingSelectedHistoricalSource') }}</span>
         </div>
         <div v-else-if="!inspected" class="recovery-empty recovery-empty--selection">
           <v-icon icon="mdi-text-box-search-outline" size="36" aria-hidden="true" />
-          <strong>No snapshot selected</strong>
-          <span>Select a record to inspect its source, security state, and restore scope.</span>
+          <strong>{{ $t('admin:pagesRecycleBin.noSnapshotSelected') }}</strong>
+          <span>{{ $t('admin:pagesRecycleBin.selectRecordInspectSource') }}</span>
         </div>
         <template v-else>
           <v-alert v-if="inspected.restoreMode === 'quarantine'" type="warning" variant="tonal" density="comfortable" class="recovery-warning">
-            This deletion has no reliable retained password state. It can only return in quarantine: private, unpublished, and owned by the administrator restoring it.
+            {{ $t('admin:pagesRecycleBin.deletionHasNoReliable') }}
           </v-alert>
           <v-alert v-else-if="inspected.ownerResolutionRequired" type="warning" variant="tonal" density="comfortable" class="recovery-warning">
-            The former private-page owner no longer exists. Choose a valid account explicitly; ownership will not be assigned silently.
+            {{ $t('admin:pagesRecycleBin.formerPrivatePageOwner') }}
           </v-alert>
           <dl class="recovery-facts">
-            <div><dt>Deleted location</dt><dd>{{ inspected.localeCode }} / {{ inspected.path }}</dd></div>
-            <div><dt>Original identity</dt><dd>Page #{{ inspected.pageId }} · source revision {{ inspected.sourceRevision }}</dd></div>
-            <div><dt>Deleted</dt><dd>{{ inspected.deletedAt ? formatDate(inspected.deletedAt) : 'Deletion time not retained' }}</dd></div>
-            <div><dt>Access state</dt><dd>{{ accessDescription(inspected) }}</dd></div>
-            <div><dt>Tags</dt><dd>{{ inspected.tags.length ? inspected.tags.map(tag => `#${tag}`).join(' · ') : 'None recorded' }}</dd></div>
+            <div><dt>{{ $t('admin:pagesRecycleBin.deletedLocation') }}</dt><dd>{{ inspected.localeCode }} / {{ inspected.path }}</dd></div>
+            <div><dt>{{ $t('admin:pagesRecycleBin.originalIdentity') }}</dt><dd>{{ $t('admin:pagesRecycleBin.pageSourceRevision', { pageId: inspected.pageId, sourceRevision: inspected.sourceRevision, interpolation: { escapeValue: false } }) }}</dd></div>
+            <div><dt>{{ $t('admin:pagesRecycleBin.deleted') }}</dt><dd>{{ inspected.deletedAt ? formatDate(inspected.deletedAt) : $t('admin:pagesRecycleBin.deletionTimeNotRetained') }}</dd></div>
+            <div><dt>{{ $t('admin:pagesRecycleBin.accessState') }}</dt><dd>{{ accessDescription(inspected) }}</dd></div>
+            <div><dt>{{ $t('admin:pagesRecycleBin.tags') }}</dt><dd>{{ inspected.tags.length ? inspected.tags.map(tag => `#${tag}`).join(' · ') : $t('admin:pagesRecycleBin.noneRecorded') }}</dd></div>
           </dl>
           <details class="source-inspection">
-            <summary>Read retained page source <span>{{ inspected.content.length.toLocaleString() }} characters</span></summary>
+            <summary>{{ $t('admin:pagesRecycleBin.readRetainedPageSource') }} <span>{{ $t('admin:pagesRecycleBin.characters', { length: inspected.content.length.toLocaleString(), interpolation: { escapeValue: false } }) }}</span></summary>
             <pre>{{ inspected.content }}</pre>
           </details>
           <div class="recovery-plan">
             <div class="plan-heading">
-              <span class="recovery-kicker">03 / Destination</span>
-              <strong>Return the original page identity</strong>
+              <span class="recovery-kicker">{{ $t('admin:pagesRecycleBin.n03Destination') }}</span>
+              <strong>{{ $t('admin:pagesRecycleBin.returnOriginalPageIdentity') }}</strong>
             </div>
             <div class="plan-fields">
-              <v-text-field v-model="restorePath" label="Destination path" variant="outlined" density="comfortable" autocomplete="off" hide-details />
-              <v-text-field v-model="restoreLocale" label="Locale code" variant="outlined" density="comfortable" autocomplete="off" hide-details />
+              <v-text-field v-model="restorePath" :label="$t('admin:pagesRecycleBin.destinationPath')" variant="outlined" density="comfortable" autocomplete="off" hide-details />
+              <v-text-field v-model="restoreLocale" :label="$t('admin:pagesRecycleBin.localeCode')" variant="outlined" density="comfortable" autocomplete="off" hide-details />
               <v-text-field
                 v-if="inspected.ownerResolutionRequired"
                 v-model="ownerIdInput"
-                label="Recovery owner account ID"
+                :label="$t('admin:pagesRecycleBin.recoveryOwnerAccountId')"
                 type="number"
                 min="1"
                 step="1"
                 variant="outlined"
                 density="comfortable"
                 autocomplete="off"
-                hint="Use an existing account ID. The server verifies it before writing."
+                :hint="$t('admin:pagesRecycleBin.useExistingAccountId')"
                 persistent-hint
               />
             </div>
-            <p class="recovery-draft-note"><v-icon icon="mdi-eye-off-outline" size="18" aria-hidden="true" /> Restored pages remain unpublished. Publish later through the ordinary publication controls after reviewing the recovered page.</p>
-            <v-btn color="primary" variant="flat" prepend-icon="mdi-file-restore-outline" :disabled="restoring || inspectLoading" @click="openConfirmation">Review restore</v-btn>
+            <p class="recovery-draft-note"><v-icon icon="mdi-eye-off-outline" size="18" aria-hidden="true" /> {{ $t('admin:pagesRecycleBin.restoredPagesRemainUnpublished') }}</p>
+            <v-btn color="primary" variant="flat" prepend-icon="mdi-file-restore-outline" :disabled="restoring || inspectLoading" @click="openConfirmation">{{ $t('admin:pagesRecycleBin.reviewRestore') }}</v-btn>
           </div>
         </template>
       </section>
@@ -134,23 +134,23 @@
 
     <v-dialog v-model="confirmOpen" max-width="620" :persistent="restoring">
       <v-card class="recovery-confirm">
-        <v-card-title>Confirm page recovery</v-card-title>
+        <v-card-title>{{ $t('admin:pagesRecycleBin.confirmPageRecovery') }}</v-card-title>
         <v-card-text v-if="inspected">
-          <p>Restore page <strong>#{{ inspected.pageId }}</strong> from deletion version <strong>#{{ inspected.deletionVersionId }}</strong> at <code>{{ restoreLocale }} / {{ restorePath }}</code>?</p>
+          <p>{{ $t('admin:pagesRecycleBin.restorePage') }} <strong>#{{ inspected.pageId }}</strong> {{ $t('admin:pagesRecycleBin.deletionVersion') }} <strong>#{{ inspected.deletionVersionId }}</strong> {{ $t('admin:pagesRecycleBin.at') }} <code>{{ restoreLocale }} / {{ restorePath }}</code>?</p>
           <ul>
-            <li>The original page ID and retained history are preserved.</li>
-            <li>Existing comments, watchers, and approvals are not recreated.</li>
-            <li>The restored page stays unpublished until an administrator publishes it separately.</li>
-            <li v-if="inspected.restoreMode === 'quarantine'">This older snapshot returns private, unpublished, and owned by you.</li>
-            <li v-else-if="inspected.protection.isProtected">Its retained password protection is restored; prior unlock sessions are not.</li>
-            <li v-else>Its recorded visibility and ownership are retained, without a page password that was not present at deletion.</li>
+            <li>{{ $t('admin:pagesRecycleBin.originalPageIdRetained') }}</li>
+            <li>{{ $t('admin:pagesRecycleBin.existingCommentsWatchersApprovals') }}</li>
+            <li>{{ $t('admin:pagesRecycleBin.restoredPageStaysUnpublished') }}</li>
+            <li v-if="inspected.restoreMode === 'quarantine'">{{ $t('admin:pagesRecycleBin.olderSnapshotReturnsPrivate') }}</li>
+            <li v-else-if="inspected.protection.isProtected">{{ $t('admin:pagesRecycleBin.retainedPasswordProtectionRestored') }}</li>
+            <li v-else>{{ $t('admin:pagesRecycleBin.recordedVisibilityOwnershipRetained') }}</li>
           </ul>
-          <v-alert v-if="inspected.ownerResolutionRequired" type="info" variant="tonal" density="compact">Recovery owner account #{{ ownerIdInput || '—' }} will be assigned because the former owner is unavailable.</v-alert>
+          <v-alert v-if="inspected.ownerResolutionRequired" type="info" variant="tonal" density="compact">{{ $t('admin:pagesRecycleBin.recoveryOwnerAccountWill', { value: ownerIdInput || '—', interpolation: { escapeValue: false } }) }}</v-alert>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" :disabled="restoring" @click="confirmOpen = false">Cancel</v-btn>
-          <v-btn color="primary" variant="flat" :loading="restoring" :disabled="restoring" @click="restoreSelected">Restore as unpublished</v-btn>
+          <v-btn variant="text" :disabled="restoring" @click="confirmOpen = false">{{ $t('common:actions.cancel') }}</v-btn>
+          <v-btn color="primary" variant="flat" :loading="restoring" :disabled="restoring" @click="restoreSelected">{{ $t('admin:pagesRecycleBin.restoreUnpublished') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -158,6 +158,7 @@
 </template>
 
 <script lang="ts">
+import { translate } from '../../modules/localization.ts'
 import { defineComponent } from 'vue'
 import {
   DELETED_PAGE_RECOVERY_PAGE_SIZE,
@@ -210,7 +211,7 @@ const apiRequest = async (url: string, init: RequestInit = {}): Promise<unknown>
     if (typeof payload === 'object' && payload !== null && 'error' in payload && typeof Reflect.get(payload, 'error') === 'string') {
       throw new Error(Reflect.get(payload, 'error') as string)
     }
-    throw new Error('The recovery request could not be completed.')
+    throw new Error(translate('admin:pagesRecycleBin.recoveryRequestCouldNot'))
   }
   return payload
 }
@@ -250,9 +251,9 @@ export default defineComponent({
         : value
     },
     accessDescription(item: DeletedPageRecoveryItem): string {
-      if (item.restoreMode === 'quarantine') return 'Unknown historical protection · quarantine required'
-      const visibility = item.visibility === 'private' ? `Private · owner #${item.ownerId ?? 'missing'}` : 'Workspace visibility'
-      return item.protection.isProtected ? `${visibility} · password protection retained (v${item.protection.version})` : visibility
+      if (item.restoreMode === 'quarantine') return this.$t('admin:pagesRecycleBin.unknownHistoricalProtectionQuarantine')
+      const visibility = item.visibility === 'private' ? this.$t('admin:pagesRecycleBin.privateOwner', { ownerId: item.ownerId ?? 'missing', interpolation: { escapeValue: false } }) : this.$t('admin:pagesRecycleBin.workspaceVisibility')
+      return item.protection.isProtected ? this.$t('admin:pagesRecycleBin.passwordProtectionRetainedV', { visibility, version: item.protection.version, interpolation: { escapeValue: false } }) : visibility
     },
     async loadFirstPage(): Promise<void> {
       const request = ++this.listRequest
@@ -270,13 +271,13 @@ export default defineComponent({
       try {
         const payload = await apiRequest(`/_api/pages/deleted?limit=${DELETED_PAGE_RECOVERY_PAGE_SIZE}`)
         const parsed = DeletedPageRecoveryListSchema.safeParse(payload)
-        if (!parsed.success) throw new Error('The recovery bin returned invalid data.')
+        if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.recoveryBinReturnedInvalid'))
         if (request !== this.listRequest) return
         this.items = parsed.data.items
         this.hasMore = parsed.data.hasMore
         this.nextBeforeVersionId = parsed.data.nextBeforeVersionId
       } catch (error) {
-        if (request === this.listRequest) this.errorMessage = error instanceof Error ? error.message : 'The recovery bin could not be loaded.'
+        if (request === this.listRequest) this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.recoveryBinCouldNot')
       } finally {
         if (request === this.listRequest) this.listLoading = false
       }
@@ -289,13 +290,13 @@ export default defineComponent({
       try {
         const payload = await apiRequest(`/_api/pages/deleted?limit=${DELETED_PAGE_RECOVERY_PAGE_SIZE}&beforeVersionId=${this.nextBeforeVersionId}`)
         const parsed = DeletedPageRecoveryListSchema.safeParse(payload)
-        if (!parsed.success) throw new Error('The recovery bin returned invalid data.')
+        if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.recoveryBinReturnedInvalid'))
         if (request !== this.listRequest) return
         this.items = [...this.items, ...parsed.data.items]
         this.hasMore = parsed.data.hasMore
         this.nextBeforeVersionId = parsed.data.nextBeforeVersionId
       } catch (error) {
-        if (request === this.listRequest) this.errorMessage = error instanceof Error ? error.message : 'Older recovery records could not be loaded.'
+        if (request === this.listRequest) this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.olderRecoveryRecordsCould')
       } finally {
         this.olderLoading = false
       }
@@ -315,13 +316,13 @@ export default defineComponent({
       try {
         const payload = await apiRequest(`/_api/pages/deleted/${item.pageId}/${item.deletionVersionId}`)
         const parsed = DeletedPageRecoveryInspectSchema.safeParse(payload)
-        if (!parsed.success) throw new Error('The deleted page inspection returned invalid data.')
+        if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.deletedPageInspectionReturned'))
         if (request !== this.inspectRequest) return
         this.inspected = parsed.data
         this.restorePath = parsed.data.path
         this.restoreLocale = parsed.data.localeCode
       } catch (error) {
-        if (request === this.inspectRequest) this.errorMessage = error instanceof Error ? error.message : 'The deleted page could not be inspected.'
+        if (request === this.inspectRequest) this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot')
       } finally {
         if (request === this.inspectRequest) this.inspectLoading = false
       }
@@ -330,7 +331,7 @@ export default defineComponent({
       if (!this.inspected || this.restoring) return
       const ownerId = Number(this.ownerIdInput)
       if (this.inspected.ownerResolutionRequired && (!/^[1-9]\d*$/.test(this.ownerIdInput) || !Number.isSafeInteger(ownerId))) {
-        this.errorMessage = 'Enter a valid recovery owner account ID before continuing.'
+        this.errorMessage = this.$t('admin:pagesRecycleBin.enterValidRecoveryOwner')
         return
       }
       this.errorMessage = ''
@@ -352,22 +353,22 @@ export default defineComponent({
           })
         })
         const parsed = DeletedPageRecoveryResultSchema.safeParse(payload)
-        if (!parsed.success) throw new Error('The recovery operation returned invalid data.')
+        if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.recoveryOperationReturnedInvalid'))
         this.confirmOpen = false
         this.notice = parsed.data.quarantined
-          ? `Page #${parsed.data.pageId} was restored into private quarantine and remains unpublished.`
-          : `Page #${parsed.data.pageId} was restored with its retained access state and remains unpublished.`
+          ? this.$t('admin:pagesRecycleBin.pageWasRestoredInto', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
+          : this.$t('admin:pagesRecycleBin.pageWasRestoredRetained', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
         this.restoredPageId = parsed.data.pageId
         await this.loadFirstPage()
         this.notice = parsed.data.quarantined
-          ? `Page #${parsed.data.pageId} was restored into private quarantine and remains unpublished.`
-          : `Page #${parsed.data.pageId} was restored with its retained access state and remains unpublished.`
+          ? this.$t('admin:pagesRecycleBin.pageWasRestoredInto', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
+          : this.$t('admin:pagesRecycleBin.pageWasRestoredRetained', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
         this.restoredPageId = parsed.data.pageId
       } catch (error) {
-        this.errorMessage = error instanceof Error ? error.message : 'The deleted page could not be restored.'
+        this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot2')
         this.confirmOpen = false
         await this.loadFirstPage()
-        this.errorMessage = error instanceof Error ? error.message : 'The deleted page could not be restored.'
+        this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot2')
       } finally {
         this.restoring = false
       }

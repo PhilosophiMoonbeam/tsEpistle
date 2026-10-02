@@ -14,7 +14,7 @@
     /><v-select
       v-model="unit"
       :items="units"
-      :label="label + ' unit'"
+      :label="$t('admin:securityDuration.unit', { label, interpolation: { escapeValue: false } })"
       variant="outlined"
       :disabled="disabled"
     />
@@ -33,10 +33,10 @@ export default {
     return {
       unit: 1,
       units: [
-        { title: 'Seconds', value: 1 },
-        { title: 'Minutes', value: 60 },
-        { title: 'Hours', value: 3600 },
-        { title: 'Days', value: 86400 }
+        { title: this.$t('admin:securityDuration.seconds'), value: 1 },
+        { title: this.$t('admin:securityDuration.minutes'), value: 60 },
+        { title: this.$t('admin:securityDuration.hours'), value: 3600 },
+        { title: this.$t('admin:securityDuration.days'), value: 86400 }
       ]
     }
   },

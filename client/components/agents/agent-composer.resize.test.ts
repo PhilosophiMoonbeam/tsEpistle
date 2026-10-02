@@ -4,6 +4,8 @@ import path from 'node:path'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 interface Ref<T> {
   value: T
 }

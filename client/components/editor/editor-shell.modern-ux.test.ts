@@ -13,6 +13,7 @@ import { normalizePageFeatures } from '../../../shared/page-features.ts'
 import { getEditorComponentName } from '../../helpers/editor-key.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
 
 const shellSource = readFileSync(shellPath, 'utf8')
@@ -613,7 +614,7 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     submissionCaptureIdentity: null,
     progressShown: 0,
     progressHidden: 0,
-    $t: (key: string) => key
+    $t: translateEnglish
   } as unknown as ShellContext
 
   const syncAdapterSafety = () => {
@@ -1153,7 +1154,7 @@ describe('modern editor shell interaction contract', () => {
       setup: () => context,
       render: ownerUnsavedRender
     })
-    app.config.globalProperties.$t = (key: string) => key
+    app.config.globalProperties.$t = translateEnglish
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
     app.component('VCardChin', { render: cardRender })
     app.component('EditorModalUnsaved', { ...modalOptions, render: modalRender })
@@ -1172,7 +1173,7 @@ describe('modern editor shell interaction contract', () => {
     const app = Vue.createApp({
       render: () => Vue.h(Vue.resolveComponent('EditorModalUnsaved'), { modelValue: true, discarding: true })
     })
-    app.config.globalProperties.$t = (key: string) => key
+    app.config.globalProperties.$t = translateEnglish
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
     app.component('VCardChin', { render: cardRender })
     app.component('EditorModalUnsaved', { ...modalOptions, render: modalRender })
@@ -1181,9 +1182,9 @@ describe('modern editor shell interaction contract', () => {
     await Vue.nextTick()
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button'))
     expect(buttons.map(button => button.textContent?.trim())).toEqual([
-      'common:actions.discardChanges',
-      'common:actions.cancel',
-      'editor:save.saveAndClose'
+      'Discard Changes',
+      'Cancel',
+      'Save and close'
     ])
     expect(buttons[0]?.classList.contains('v-btn--loading')).toBe(true)
     expect(buttons[2]?.classList.contains('v-btn--loading')).toBe(false)

@@ -1,22 +1,22 @@
 <template>
   <v-container fluid class="admin-taxonomy">
-    <admin-hero title="Tags" description="A shared vocabulary for people and agents." icon="mdi-tag-multiple-outline">
+    <admin-hero :title="$t('admin:tags.title')" :description="$t('admin:tags.sharedVocabularyPeopleAgents')" icon="mdi-tag-multiple-outline">
       <template #actions>
-        <v-btn :aria-disabled="hasUnsavedChanges || undefined" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ hasUnsavedChanges ? 'Save or reset your tag changes before you reload.' : 'Reload saved tags' }}</v-tooltip></v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-plus" :disabled="busy" @click="openCreate">Create tag</v-btn>
+        <v-btn :aria-disabled="hasUnsavedChanges || undefined" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ hasUnsavedChanges ? $t('admin:tags.saveResetTagChanges') : $t('admin:tags.reloadSavedTags') }}</v-tooltip></v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-plus" :disabled="busy" @click="openCreate">{{ $t('admin:tags.createTag') }}</v-btn>
       </template>
     </admin-hero>
 
     <section class="taxonomy-intro" aria-labelledby="taxonomy-intro-title">
       <div>
-        <span class="taxonomy-kicker">Shared vocabulary</span>
-        <h2 id="taxonomy-intro-title">Give knowledge a common language.</h2>
-        <p>Define meaningful labels, understand their reach, and evolve the vocabulary without losing aliases, access context, or history.</p>
+        <span class="taxonomy-kicker">{{ $t('admin:tags.sharedVocabulary') }}</span>
+        <h2 id="taxonomy-intro-title">{{ $t('admin:tags.giveKnowledgeCommonLanguage') }}</h2>
+        <p>{{ $t('admin:tags.defineMeaningfulLabelsUnderstand') }}</p>
       </div>
       <dl>
-        <div><dt>Active tags</dt><dd>{{ tags.filter(t => state(t) === 'active').length }}</dd></div>
-        <div><dt>Aliases</dt><dd>{{ tags.filter(t => state(t) === 'alias').length }}</dd></div>
-        <div><dt>Unused active</dt><dd>{{ tags.filter(t => state(t) === 'active' && !t.pageCount).length }}</dd></div>
+        <div><dt>{{ $t('admin:tags.activeTags') }}</dt><dd>{{ tags.filter(t => state(t) === 'active').length }}</dd></div>
+        <div><dt>{{ $t('admin:tags.aliases') }}</dt><dd>{{ tags.filter(t => state(t) === 'alias').length }}</dd></div>
+        <div><dt>{{ $t('admin:tags.unusedActive') }}</dt><dd>{{ tags.filter(t => state(t) === 'active' && !t.pageCount).length }}</dd></div>
       </dl>
     </section>
 
@@ -24,94 +24,94 @@
     <v-alert v-for="warning in warnings" :key="warning" type="warning" variant="tonal" class="mb-4">{{ warning }}</v-alert>
     <v-alert v-if="loadError && tags.length" type="error" variant="tonal" class="mb-4">
       <span>{{ loadError }}</span>
-      <v-btn variant="text" size="small" class="ms-2" :disabled="busy || hasUnsavedChanges" @click="refresh">Retry reload</v-btn>
+      <v-btn variant="text" size="small" class="ms-2" :disabled="busy || hasUnsavedChanges" @click="refresh">{{ $t('admin:tags.retryReload') }}</v-btn>
     </v-alert>
 
-    <async-state v-if="loading && !tags.length" state="loading" title="Loading the vocabulary" message="Reading tag definitions, page usage and access rules." />
-    <async-state v-else-if="!tags.length && loadError" state="error" title="The vocabulary could not be loaded" :message="loadError" retry-label="Try again" @retry="refresh" />
+    <async-state v-if="loading && !tags.length" state="loading" :title="$t('admin:tags.loadingVocabulary')" :message="$t('admin:tags.readingTagDefinitionsPage')" />
+    <async-state v-else-if="!tags.length && loadError" state="error" :title="$t('admin:tags.vocabularyCouldNotLoaded')" :message="loadError" :retry-label="$t('admin:tags.tryAgain')" @retry="refresh" />
     <div v-else class="taxonomy-workspace">
-      <aside class="taxonomy-directory" aria-label="Tag directory" :aria-busy="loading">
-        <div class="taxonomy-directory-heading"><h3>Vocabulary</h3><span>{{ tags.length }} {{ tags.length === 1 ? 'name' : 'names' }}</span></div>
-        <v-text-field v-model="search" label="Find a tag or label" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable :disabled="busy" @update:model-value="pagination = 1" />
-        <v-select v-model="view" :items="views" label="Vocabulary view" variant="outlined" density="compact" hide-details :disabled="busy" @update:model-value="pagination = 1" />
-        <p class="taxonomy-directory-count" role="status">{{ filtered.length }} {{ filtered.length === 1 ? 'name' : 'names' }} in this view</p>
+      <aside class="taxonomy-directory" :aria-label="$t('admin:tags.tagDirectory')" :aria-busy="loading">
+        <div class="taxonomy-directory-heading"><h3>{{ $t('admin:tags.vocabulary') }}</h3><span>{{ $t('admin:tags.namesCount', { count: tags.length }) }}</span></div>
+        <v-text-field v-model="search" :label="$t('admin:tags.findTagLabel')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable :disabled="busy" @update:model-value="pagination = 1" />
+        <v-select v-model="view" :items="views" :label="$t('admin:tags.vocabularyView')" variant="outlined" density="compact" hide-details :disabled="busy" @update:model-value="pagination = 1" />
+        <p class="taxonomy-directory-count" role="status">{{ $t('admin:tags.view', { tValue: $t('admin:tags.namesCount', { count: filtered.length }), interpolation: { escapeValue: false } }) }}</p>
         <div v-if="!filtered.length" class="taxonomy-empty">
           <v-icon icon="mdi-tag-search-outline" size="30" aria-hidden="true" />
-          <h4>{{ tags.length ? 'No matching names' : 'Start a shared vocabulary' }}</h4>
-          <p>{{ tags.length ? 'Try another term or vocabulary view.' : 'Create a tag before assigning it to pages, or add one while editing a page.' }}</p>
-          <v-btn v-if="tags.length" size="small" variant="text" :disabled="busy" @click="search = ''; view = 'all'">Clear filters</v-btn>
+          <h4>{{ tags.length ? $t('admin:tags.noMatchingNames') : $t('admin:tags.startSharedVocabulary') }}</h4>
+          <p>{{ tags.length ? $t('admin:tags.tryAnotherTermVocabulary') : $t('admin:tags.createTagBeforeAssigning') }}</p>
+          <v-btn v-if="tags.length" size="small" variant="text" :disabled="busy" @click="search = ''; view = 'all'">{{ $t('admin:tags.clearFilters') }}</v-btn>
         </div>
         <div v-else class="taxonomy-records">
-          <button v-for="entry in visible" :key="entry.id" type="button" class="taxonomy-record" :class="{ 'is-selected': selectedId === entry.id }" :aria-pressed="selectedId === entry.id" :aria-label="`${entry.title || entry.tag}, ${state(entry)}${selectedId === entry.id ? ', selected' : ''}`" :disabled="mutationBusy" @click="select(entry.id)">
+          <button v-for="entry in visible" :key="entry.id" type="button" class="taxonomy-record" :class="{ 'is-selected': selectedId === entry.id }" :aria-pressed="selectedId === entry.id" :aria-label="`${entry.title || entry.tag}, ${state(entry)}${selectedId === entry.id ? $t('admin:tags.selected') : ''}`" :disabled="mutationBusy" @click="select(entry.id)">
             <v-icon :icon="selectedId === entry.id ? 'mdi-check' : state(entry) === 'alias' ? 'mdi-arrow-u-right-top' : state(entry) === 'archived' ? 'mdi-archive-outline' : 'mdi-pound'" size="18" aria-hidden="true" />
-            <span><strong><bdi>{{ entry.tag }}</bdi></strong><small><bdi>{{ entry.title || (state(entry) === 'alias' ? 'Alias' : 'No display label') }}</bdi></small></span>
+            <span><strong><bdi>{{ entry.tag }}</bdi></strong><small><bdi>{{ entry.title || (state(entry) === 'alias' ? $t('admin:tags.alias') : $t('admin:tags.noDisplayLabel')) }}</bdi></small></span>
             <span class="taxonomy-record-meta"><b>{{ entry.pageCount }}</b><small>{{ state(entry) === 'active' ? 'pages' : state(entry) }}</small></span>
           </button>
         </div>
-        <v-pagination v-if="pageCount > 1" v-model="pagination" :length="pageCount" :total-visible="3" density="compact" aria-label="Tag directory pages" :disabled="busy" />
-        <v-btn v-if="inspection" class="taxonomy-view-selected" variant="outlined" prepend-icon="mdi-eye-outline" :disabled="busy" @click="viewSelected">View selected tag</v-btn>
-        <p class="taxonomy-directory-note">Aliases keep old names useful. Archived names remain reserved for history.</p>
+        <v-pagination v-if="pageCount > 1" v-model="pagination" :length="pageCount" :total-visible="3" density="compact" :aria-label="$t('admin:tags.tagDirectoryPages')" :disabled="busy" />
+        <v-btn v-if="inspection" class="taxonomy-view-selected" variant="outlined" prepend-icon="mdi-eye-outline" :disabled="busy" @click="viewSelected">{{ $t('admin:tags.viewSelectedTag') }}</v-btn>
+        <p class="taxonomy-directory-note">{{ $t('admin:tags.aliasesKeepOldNames') }}</p>
       </aside>
 
       <section class="taxonomy-detail" aria-labelledby="taxonomy-selected-title" :aria-busy="detailLoading">
-        <h2 v-if="!inspection" id="taxonomy-selected-title" class="taxonomy-visually-hidden">Selected tag details</h2>
-        <async-state v-if="detailLoading" state="loading" title="Reading this tag" message="Gathering page assignments and access rule references." />
-        <async-state v-else-if="detailError" state="error" title="This tag could not be opened" :message="detailError" retry-label="Try again" @retry="loadDetail(selectedId)" />
+        <h2 v-if="!inspection" id="taxonomy-selected-title" class="taxonomy-visually-hidden">{{ $t('admin:tags.selectedTagDetails') }}</h2>
+        <async-state v-if="detailLoading" state="loading" :title="$t('admin:tags.readingTag')" :message="$t('admin:tags.gatheringPageAssignmentsAccess')" />
+        <async-state v-else-if="detailError" state="error" :title="$t('admin:tags.tagCouldNotOpened')" :message="detailError" :retry-label="$t('admin:tags.tryAgain')" @retry="loadDetail(selectedId)" />
         <div v-else-if="!inspection" class="taxonomy-welcome">
           <div class="taxonomy-welcome-mark" aria-hidden="true">#</div>
-          <span class="taxonomy-kicker">A vocabulary that can grow</span>
-          <h3>Choose a name. Understand its reach.</h3>
-          <p>Every tag has a definition, a set of page assignments and a place in your access rules. Select one to see the whole picture.</p>
+          <span class="taxonomy-kicker">{{ $t('admin:tags.vocabularyCanGrow') }}</span>
+          <h3>{{ $t('admin:tags.chooseNameUnderstandReach') }}</h3>
+          <p>{{ $t('admin:tags.everyTagHasDefinition') }}</p>
           <div class="taxonomy-principles">
-            <div><v-icon icon="mdi-tag-outline" aria-hidden="true" /><strong>Define</strong><p>Give each concept a clear, consistent name.</p></div>
-            <div><v-icon icon="mdi-source-merge" aria-hidden="true" /><strong>Consolidate</strong><p>Bring overlapping concepts together with an impact review.</p></div>
-            <div><v-icon icon="mdi-history" aria-hidden="true" /><strong>Preserve</strong><p>Keep historical labels as your vocabulary evolves.</p></div>
+            <div><v-icon icon="mdi-tag-outline" aria-hidden="true" /><strong>{{ $t('admin:tags.define') }}</strong><p>{{ $t('admin:tags.giveEachConceptClear') }}</p></div>
+            <div><v-icon icon="mdi-source-merge" aria-hidden="true" /><strong>{{ $t('admin:tags.consolidate') }}</strong><p>{{ $t('admin:tags.bringOverlappingConceptsTogether') }}</p></div>
+            <div><v-icon icon="mdi-history" aria-hidden="true" /><strong>{{ $t('admin:tags.preserve') }}</strong><p>{{ $t('admin:tags.keepHistoricalLabelsVocabulary') }}</p></div>
           </div>
         </div>
         <template v-else>
-          <p class="taxonomy-loaded-status" role="status">Loaded <bdi>{{ current.title || current.tag }}</bdi></p>
+          <p class="taxonomy-loaded-status" role="status">{{ $t('admin:tags.loaded') }} <bdi>{{ current.title || current.tag }}</bdi></p>
           <header class="taxonomy-identity">
             <div class="taxonomy-identity-mark" aria-hidden="true">#</div>
             <div class="taxonomy-identity-main">
-              <div class="taxonomy-identity-meta"><span class="taxonomy-kicker">{{ state(current) === 'alias' ? 'Historical name' : state(current) === 'archived' ? 'Archived vocabulary' : 'Canonical tag' }}</span><v-chip size="small" variant="outlined">{{ state(current) }}</v-chip></div>
+              <div class="taxonomy-identity-meta"><span class="taxonomy-kicker">{{ state(current) === 'alias' ? $t('admin:tags.historicalName') : state(current) === 'archived' ? $t('admin:tags.archivedVocabulary') : $t('admin:tags.canonicalTag') }}</span><v-chip size="small" variant="outlined">{{ state(current) }}</v-chip></div>
               <h2 id="taxonomy-selected-title" tabindex="-1"><bdi>{{ current.title || current.tag }}</bdi></h2>
               <p v-if="current.title && current.title !== current.tag" class="taxonomy-name"><bdi>{{ current.tag }}</bdi></p>
             </div>
           </header>
-          <div v-if="current.redirectToId" class="taxonomy-destination"><v-icon icon="mdi-arrow-u-right-top" size="18" aria-hidden="true" /><span>{{ current.isArchived ? 'Retired alias of' : 'Resolves to' }} <button type="button" :disabled="mutationBusy" @click="select(current.redirectToId!)"><bdi>{{ destination?.tag || `Tag #${current.redirectToId}` }}</bdi></button></span></div>
-          <dl class="taxonomy-facts"><div><dt>{{ current.redirectToId ? 'Destination pages' : 'Assigned pages' }}</dt><dd>{{ current.pageCount }}</dd></div><div><dt>Tag-based rules</dt><dd>{{ current.ruleCount }}</dd></div><div><dt>History references</dt><dd>{{ current.historyCount }}</dd></div></dl>
+          <div v-if="current.redirectToId" class="taxonomy-destination"><v-icon icon="mdi-arrow-u-right-top" size="18" aria-hidden="true" /><span>{{ current.isArchived ? $t('admin:tags.retiredAlias') : $t('admin:tags.resolves') }} <button type="button" :disabled="mutationBusy" @click="select(current.redirectToId!)"><bdi>{{ destination?.tag || $t('admin:tags.tag2', { redirectToId: current.redirectToId, interpolation: { escapeValue: false } }) }}</bdi></button></span></div>
+          <dl class="taxonomy-facts"><div><dt>{{ current.redirectToId ? $t('admin:tags.destinationPages') : $t('admin:tags.assignedPages') }}</dt><dd>{{ current.pageCount }}</dd></div><div><dt>{{ $t('admin:tags.tagBasedRules') }}</dt><dd>{{ current.ruleCount }}</dd></div><div><dt>{{ $t('admin:tags.historyReferences') }}</dt><dd>{{ current.historyCount }}</dd></div></dl>
 
-          <div class="taxonomy-tabs" role="tablist" aria-label="Tag sections">
+          <div class="taxonomy-tabs" role="tablist" :aria-label="$t('admin:tags.tagSections')">
             <button v-for="item in sections" :id="`taxonomy-tab-${item.value}`" :key="item.value" type="button" role="tab" :aria-selected="section === item.value" :aria-controls="`taxonomy-panel-${item.value}`" :tabindex="section === item.value ? 0 : -1" :disabled="busy" @click="setSection(item.value)" @keydown="tabKey($event, item.value)">{{ item.title }}</button>
           </div>
 
           <div v-show="section === 'definition'" id="taxonomy-panel-definition" class="taxonomy-panel" role="tabpanel" aria-labelledby="taxonomy-tab-definition" :aria-hidden="section !== 'definition'" :inert="section !== 'definition'">
-            <div class="taxonomy-section-heading"><h3>Definition</h3><p>A stable name for links, page assignments and agent tools. The display label adds a human-friendly title.</p></div>
+            <div class="taxonomy-section-heading"><h3>{{ $t('admin:tags.definition') }}</h3><p>{{ $t('admin:tags.stableNameLinksPage') }}</p></div>
             <form v-if="state(current) === 'active'" @submit.prevent="reviewEdit">
-              <v-text-field v-model="draft.tag" label="Tag name" variant="outlined" maxlength="255" counter="255" :disabled="busy" hint="Names are trimmed and saved in lowercase. Renaming preserves this name as an alias." persistent-hint />
-              <v-text-field v-model="draft.title" label="Display label" variant="outlined" maxlength="255" counter="255" :disabled="busy" hint="Optional. For example, agent-memory → Agent memory." persistent-hint class="mt-4" />
+              <v-text-field v-model="draft.tag" :label="$t('admin:tags.tagName')" variant="outlined" maxlength="255" counter="255" :disabled="busy" :hint="$t('admin:tags.namesTrimmedSavedLowercase')" persistent-hint />
+              <v-text-field v-model="draft.title" :label="$t('admin:tags.displayLabel')" variant="outlined" maxlength="255" counter="255" :disabled="busy" :hint="$t('admin:tags.optionalExampleAgentMemory')" persistent-hint class="mt-4" />
               <v-alert v-if="actionError" type="error" variant="tonal" class="mt-4">{{ actionError }}</v-alert>
-              <div class="taxonomy-save"><span role="status">{{ dirty ? 'Unsaved definition' : 'Matches the saved definition' }}</span><div><v-btn type="button" variant="text" :disabled="!dirty || busy" @click="resetDraft">Reset</v-btn><v-btn type="submit" variant="flat" color="primary" :disabled="!dirty || !validDefinition || busy" :loading="reviewing">Review changes</v-btn></div></div>
+              <div class="taxonomy-save"><span role="status">{{ dirty ? $t('admin:tags.unsavedDefinition') : $t('admin:tags.matchesSavedDefinition') }}</span><div><v-btn type="button" variant="text" :disabled="!dirty || busy" @click="resetDraft">{{ $t('admin:tags.reset') }}</v-btn><v-btn type="submit" variant="flat" color="primary" :disabled="!dirty || !validDefinition || busy" :loading="reviewing">{{ $t('admin:tags.reviewChanges') }}</v-btn></div></div>
             </form>
-            <v-alert v-else type="info" variant="tonal">{{ current.isArchived ? 'This name is retired. Restore it from Lifecycle before changing its definition or assigning it to pages.' : 'This is a preserved name. Edit the canonical destination to change the concept; retire the alias if this name should stop resolving.' }}</v-alert>
-            <div class="taxonomy-dates"><div><span>Created</span><time :datetime="current.createdAt">{{ date(current.createdAt) }}</time></div><div><span>Last changed</span><time :datetime="current.updatedAt">{{ date(current.updatedAt) }}</time></div></div>
+            <v-alert v-else type="info" variant="tonal">{{ current.isArchived ? $t('admin:tags.nameRetiredRestoreLifecycle') : $t('admin:tags.preservedNameEditCanonical') }}</v-alert>
+            <div class="taxonomy-dates"><div><span>{{ $t('admin:tags.created') }}</span><time :datetime="current.createdAt">{{ date(current.createdAt) }}</time></div><div><span>{{ $t('admin:tags.lastChanged') }}</span><time :datetime="current.updatedAt">{{ date(current.updatedAt) }}</time></div></div>
           </div>
 
           <div v-show="section === 'usage'" id="taxonomy-panel-usage" class="taxonomy-panel" role="tabpanel" aria-labelledby="taxonomy-tab-usage" :aria-hidden="section !== 'usage'" :inert="section !== 'usage'">
-            <div class="taxonomy-section-heading"><h3>Where this name reaches</h3><p>Page assignments, historical names and the groups whose tag-based rules reference this concept.</p></div>
-            <div class="taxonomy-subheading"><h4>Assigned pages <span>{{ inspection.pages.length }}</span></h4><v-btn v-if="inspection.pages.length" size="small" variant="text" :href="`/t/${encodeURIComponent(current.tag)}`" target="_blank" rel="noopener" append-icon="mdi-open-in-new">Open in wiki</v-btn></div>
-            <p v-if="!inspection.pages.length" class="taxonomy-muted">No current page assignments. {{ current.isArchived ? 'Restoring a name does not restore its former assignments.' : 'Use this tag when creating or editing a page.' }}</p>
-            <div v-else class="taxonomy-page-list"><router-link v-for="page in inspection.pages.slice(0, pageLimit)" :key="page.id" :to="`/pages/${page.id}`"><span><strong><bdi>{{ page.title || page.path }}</bdi></strong><small><bdi>{{ page.locale }} / {{ page.path }}</bdi></small></span><span>{{ page.visibility === 'private' ? 'Private' : 'Workspace' }}<v-icon icon="mdi-chevron-right" size="16" aria-hidden="true" /></span></router-link><v-btn v-if="inspection.pages.length > pageLimit" variant="text" @click="pageLimit += 25">Show more pages</v-btn></div>
-            <h4 class="mt-7">Preserved aliases <span>{{ inspection.aliases.length }}</span></h4><div v-if="inspection.aliases.length" class="taxonomy-aliases"><button v-for="alias in inspection.aliases" :key="alias.id" type="button" :disabled="mutationBusy" @click="select(alias.id)"><v-icon icon="mdi-arrow-u-right-top" size="16" aria-hidden="true" /><bdi>{{ alias.tag }}</bdi><small v-if="alias.isArchived">archived</small></button></div><p v-else class="taxonomy-muted">No other names have been preserved for this tag.</p>
-            <h4 class="mt-7">Access rule references <span>{{ inspection.rules.length }}</span></h4><p class="taxonomy-muted">Counts show public pages matched by each tag rule, including its language filter. Effective access also depends on group permissions, other rules and private-page ownership.</p>
-            <div v-if="inspection.rules.length" class="taxonomy-rule-list"><article v-for="(rule, i) in inspection.rules" :key="i"><div><router-link :to="`/groups/${rule.groupId}`">{{ rule.groupName }}</router-link><span class="taxonomy-rule-kind">{{ rule.deny ? 'Deny' : 'Allow' }} · #{{ rule.path }}</span></div><p>{{ rule.roles.join(', ') }} · {{ rule.locales.length ? rule.locales.join(', ') : 'All languages' }}</p><strong>{{ rule.before }} public {{ rule.before === 1 ? 'page matches' : 'pages match' }}</strong></article></div><p v-else class="taxonomy-muted">No group uses this name or its active aliases in a tag-based page rule.</p>
+            <div class="taxonomy-section-heading"><h3>{{ $t('admin:tags.whereNameReaches') }}</h3><p>{{ $t('admin:tags.pageAssignmentsHistoricalNames') }}</p></div>
+            <div class="taxonomy-subheading"><h4>{{ $t('admin:tags.assignedPages') }} <span>{{ inspection.pages.length }}</span></h4><v-btn v-if="inspection.pages.length" size="small" variant="text" :href="`/t/${encodeURIComponent(current.tag)}`" target="_blank" rel="noopener" append-icon="mdi-open-in-new">{{ $t('admin:tags.openWiki') }}</v-btn></div>
+            <p v-if="!inspection.pages.length" class="taxonomy-muted">{{ $t('admin:tags.noCurrentPageAssignments', { isArchived: current.isArchived ? $t('admin:tags.restoringNameDoesNot') : $t('admin:tags.useTagWhenCreating'), interpolation: { escapeValue: false } }) }}</p>
+            <div v-else class="taxonomy-page-list"><router-link v-for="page in inspection.pages.slice(0, pageLimit)" :key="page.id" :to="`/pages/${page.id}`"><span><strong><bdi>{{ page.title || page.path }}</bdi></strong><small><bdi>{{ page.locale }} / {{ page.path }}</bdi></small></span><span>{{ page.visibility === 'private' ? $t('admin:tags.private') : $t('admin:tags.workspace') }}<v-icon icon="mdi-chevron-right" size="16" aria-hidden="true" /></span></router-link><v-btn v-if="inspection.pages.length > pageLimit" variant="text" @click="pageLimit += 25">{{ $t('admin:tags.showMorePages') }}</v-btn></div>
+            <h4 class="mt-7">{{ $t('admin:tags.preservedAliases') }} <span>{{ inspection.aliases.length }}</span></h4><div v-if="inspection.aliases.length" class="taxonomy-aliases"><button v-for="alias in inspection.aliases" :key="alias.id" type="button" :disabled="mutationBusy" @click="select(alias.id)"><v-icon icon="mdi-arrow-u-right-top" size="16" aria-hidden="true" /><bdi>{{ alias.tag }}</bdi><small v-if="alias.isArchived">{{ $t('admin:tags.archived') }}</small></button></div><p v-else class="taxonomy-muted">{{ $t('admin:tags.noOtherNamesHave') }}</p>
+            <h4 class="mt-7">{{ $t('admin:tags.accessRuleReferences') }} <span>{{ inspection.rules.length }}</span></h4><p class="taxonomy-muted">{{ $t('admin:tags.countsShowPublicPages') }}</p>
+            <div v-if="inspection.rules.length" class="taxonomy-rule-list"><article v-for="(rule, i) in inspection.rules" :key="i"><div><router-link :to="`/groups/${rule.groupId}`">{{ rule.groupName }}</router-link><span class="taxonomy-rule-kind">{{ rule.deny ? $t('admin:tags.deny') : $t('admin:tags.allow') }} · #{{ rule.path }}</span></div><p>{{ rule.roles.join(', ') }} · {{ rule.locales.length ? rule.locales.join(', ') : $t('admin:tags.allLanguages') }}</p><strong>{{ $t('admin:tags.publicPagesMatchCount', { count: rule.before }) }}</strong></article></div><p v-else class="taxonomy-muted">{{ $t('admin:tags.noGroupUsesName') }}</p>
           </div>
 
           <div v-show="section === 'lifecycle'" id="taxonomy-panel-lifecycle" class="taxonomy-panel" role="tabpanel" aria-labelledby="taxonomy-tab-lifecycle" :aria-hidden="section !== 'lifecycle'" :inert="section !== 'lifecycle'">
-            <div class="taxonomy-section-heading"><h3>Let the vocabulary evolve</h3><p>Every lifecycle change includes a current impact review. Historical labels stay attached to their original page versions.</p></div>
-            <v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">Review or reset your definition changes before changing this tag’s lifecycle.</v-alert>
-            <section v-if="state(current) === 'active'" class="taxonomy-lifecycle-card"><v-icon icon="mdi-source-merge" size="26" aria-hidden="true" /><div><h4>Merge into another tag</h4><p>Consolidate page assignments under one canonical name. This name and its aliases will resolve to the destination. Tag-based rules can match more pages after a merge.</p><v-autocomplete v-model="mergeTarget" :items="mergeTargets" item-title="tag" item-value="id" label="Canonical destination" variant="outlined" density="compact" hide-details :disabled="busy || dirty" /><v-btn variant="outlined" class="mt-4" :disabled="!mergeTarget || busy || dirty" :loading="reviewing" @click="review({ action: 'merge', tagId: current.id, targetId: mergeTarget! })">Review merge</v-btn></div></section>
-            <section class="taxonomy-lifecycle-card"><v-icon :icon="current.isArchived ? 'mdi-archive-arrow-up-outline' : 'mdi-archive-outline'" size="26" aria-hidden="true" /><div><h4>{{ current.isArchived ? 'Restore this name' : 'Retire this name' }}</h4><p>{{ current.isArchived ? 'Make the name available again. Removed page assignments stay removed. An alias can be restored after its canonical destination is active.' : current.redirectToId ? 'Stop this alias from resolving. Its historical references remain. Rules using this name will stop matching its destination pages.' : 'Remove current page assignments and archive this tag and its aliases. Historical names remain reserved; access rule matches may change.' }}</p><v-btn variant="outlined" :disabled="busy || dirty" :loading="reviewing" @click="review({ action: current.isArchived ? 'restore' : 'archive', tagId: current.id })">{{ current.isArchived ? 'Review restoration' : 'Review retirement' }}</v-btn></div></section>
+            <div class="taxonomy-section-heading"><h3>{{ $t('admin:tags.letVocabularyEvolve') }}</h3><p>{{ $t('admin:tags.everyLifecycleChangeIncludes') }}</p></div>
+            <v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ $t('admin:tags.reviewResetDefinitionChanges') }}</v-alert>
+            <section v-if="state(current) === 'active'" class="taxonomy-lifecycle-card"><v-icon icon="mdi-source-merge" size="26" aria-hidden="true" /><div><h4>{{ $t('admin:tags.mergeIntoAnotherTag') }}</h4><p>{{ $t('admin:tags.consolidatePageAssignmentsUnder') }}</p><v-autocomplete v-model="mergeTarget" :items="mergeTargets" item-title="tag" item-value="id" :label="$t('admin:tags.canonicalDestination')" variant="outlined" density="compact" hide-details :disabled="busy || dirty" /><v-btn variant="outlined" class="mt-4" :disabled="!mergeTarget || busy || dirty" :loading="reviewing" @click="review({ action: 'merge', tagId: current.id, targetId: mergeTarget! })">{{ $t('admin:tags.reviewMerge') }}</v-btn></div></section>
+            <section class="taxonomy-lifecycle-card"><v-icon :icon="current.isArchived ? 'mdi-archive-arrow-up-outline' : 'mdi-archive-outline'" size="26" aria-hidden="true" /><div><h4>{{ current.isArchived ? $t('admin:tags.restoreName') : $t('admin:tags.retireName') }}</h4><p>{{ current.isArchived ? $t('admin:tags.makeNameAvailableAgain') : current.redirectToId ? $t('admin:tags.stopAliasResolvingHistorical') : $t('admin:tags.removeCurrentPageAssignments') }}</p><v-btn variant="outlined" :disabled="busy || dirty" :loading="reviewing" @click="review({ action: current.isArchived ? 'restore' : 'archive', tagId: current.id })">{{ current.isArchived ? $t('admin:tags.reviewRestoration') : $t('admin:tags.reviewRetirement') }}</v-btn></div></section>
             <v-alert v-if="actionError" type="error" variant="tonal" class="mt-4">{{ actionError }}</v-alert>
           </div>
         </template>
@@ -120,33 +120,33 @@
 
     <v-dialog :model-value="createOpen" max-width="560" :persistent="creating" aria-labelledby="create-taxonomy-title" @update:model-value="setCreateDialog">
       <v-card class="taxonomy-dialog">
-        <div class="taxonomy-dialog-heading"><span class="taxonomy-kicker">Build the vocabulary</span><h3 id="create-taxonomy-title">Create a tag</h3><p>Reserve a clear name now. Assign it to pages when the concept is ready to use.</p></div>
+        <div class="taxonomy-dialog-heading"><span class="taxonomy-kicker">{{ $t('admin:tags.buildVocabulary') }}</span><h3 id="create-taxonomy-title">{{ $t('admin:tags.createTag2') }}</h3><p>{{ $t('admin:tags.reserveClearNameNow') }}</p></div>
         <form @submit.prevent="create">
           <v-card-text class="taxonomy-dialog-body">
-            <v-text-field v-model="newTag.tag" label="New tag name" variant="outlined" autofocus maxlength="255" :disabled="creating" hint="Saved in lowercase. Existing and retired names are reserved." persistent-hint />
-            <v-text-field v-model="newTag.title" label="New display label" variant="outlined" class="mt-4" maxlength="255" :disabled="creating" hide-details />
+            <v-text-field v-model="newTag.tag" :label="$t('admin:tags.newTagName')" variant="outlined" autofocus maxlength="255" :disabled="creating" :hint="$t('admin:tags.savedLowercaseExistingRetired')" persistent-hint />
+            <v-text-field v-model="newTag.title" :label="$t('admin:tags.newDisplayLabel')" variant="outlined" class="mt-4" maxlength="255" :disabled="creating" hide-details />
             <v-alert v-if="createError" type="error" variant="tonal" class="mt-4">{{ createError }}</v-alert>
           </v-card-text>
-          <v-card-actions><v-spacer /><v-btn variant="text" :disabled="creating" @click="closeCreate">Cancel</v-btn><v-btn type="submit" variant="flat" color="primary" :disabled="!definitionValid(newTag) || creating" :loading="creating">Create tag</v-btn></v-card-actions>
+          <v-card-actions><v-spacer /><v-btn variant="text" :disabled="creating" @click="closeCreate">{{ $t('common:actions.cancel') }}</v-btn><v-btn type="submit" variant="flat" color="primary" :disabled="!definitionValid(newTag) || creating" :loading="creating">{{ $t('admin:tags.createTag') }}</v-btn></v-card-actions>
         </form>
       </v-card>
     </v-dialog>
 
     <v-dialog :model-value="reviewOpen" max-width="900" :persistent="applying || reviewing" aria-labelledby="taxonomy-review-title" @update:model-value="setReviewDialog">
       <v-card v-if="preview" class="taxonomy-dialog taxonomy-review">
-        <div class="taxonomy-dialog-heading"><span class="taxonomy-kicker">Review before applying</span><h3 id="taxonomy-review-title">{{ reviewTitle }}</h3><p><bdi>{{ preview.source.tag }}</bdi><template v-if="preview.destination"> → <bdi>{{ preview.destination.tag }}</bdi></template></p></div>
+        <div class="taxonomy-dialog-heading"><span class="taxonomy-kicker">{{ $t('admin:tags.reviewBeforeApplying') }}</span><h3 id="taxonomy-review-title">{{ reviewTitle }}</h3><p><bdi>{{ preview.source.tag }}</bdi><template v-if="preview.destination"> → <bdi>{{ preview.destination.tag }}</bdi></template></p></div>
         <v-card-text class="taxonomy-dialog-body">
-          <div class="taxonomy-review-summary"><div><strong>{{ preview.pageCount }}</strong><span>page assignments change</span></div><div><strong>{{ preview.aliases.length }}</strong><span>existing aliases considered</span></div><div><strong>{{ preview.rules.filter(r => r.added || r.removed).length }}</strong><span>access rules change matches</span></div></div>
+          <div class="taxonomy-review-summary"><div><strong>{{ preview.pageCount }}</strong><span>{{ $t('admin:tags.pageAssignmentsChange') }}</span></div><div><strong>{{ preview.aliases.length }}</strong><span>{{ $t('admin:tags.existingAliasesConsidered') }}</span></div><div><strong>{{ preview.rules.filter(r => r.added || r.removed).length }}</strong><span>{{ $t('admin:tags.accessRulesChangeMatches') }}</span></div></div>
           <p class="taxonomy-review-explanation">{{ reviewExplanation }}</p>
-          <dl v-if="preview.change.action === 'edit'" class="taxonomy-definition-review"><div><dt>Saved display label</dt><dd><bdi>{{ preview.source.title || 'None' }}</bdi></dd></div><div><dt>Proposed display label</dt><dd><bdi>{{ preview.change.title || 'None' }}</bdi></dd></div></dl>
-          <h4 v-if="preview.rules.length" class="mt-6">Tag-based access rule impact</h4><p v-if="preview.rules.length" class="taxonomy-muted">Public-page match counts include each rule’s language filter. These are rule matches, not a simulation of a person’s effective access.</p>
-          <div v-if="preview.rules.length" class="taxonomy-impact-table" tabindex="0" role="region" aria-label="Access rule impact"><table><thead><tr><th scope="col">Group &amp; rule</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Change</th></tr></thead><tbody><tr v-for="(rule, i) in preview.rules" :key="i"><td><strong><bdi>{{ rule.groupName }}</bdi></strong><small>{{ rule.deny ? 'Deny' : 'Allow' }} · #{{ rule.path }}</small><small>{{ rule.roles.join(', ') }} · {{ rule.locales.length ? rule.locales.join(', ') : 'All languages' }}</small></td><td>{{ rule.before }}</td><td>{{ rule.after }}</td><td>{{ rule.added || rule.removed ? `+${rule.added} / −${rule.removed}` : 'Unchanged' }}</td></tr></tbody></table></div>
-          <v-checkbox v-if="preview.accessChanges" v-model="acknowledgeAccess" label="I understand that these tag-based access rules will match different pages." hide-details class="mt-4" :disabled="applying || reviewing || reviewStale" />
-          <details v-if="preview.pages.length" class="taxonomy-review-pages"><summary>{{ preview.pages.length }} affected {{ preview.pages.length === 1 ? 'page' : 'pages' }}</summary><ul><li v-for="page in preview.pages" :key="page.id"><strong><bdi>{{ page.title || page.path }}</bdi></strong><span><bdi>{{ page.locale }} / {{ page.path }}</bdi> · {{ page.visibility }} · revision {{ page.sourceRevision }}</span></li></ul></details>
-          <v-alert v-if="reviewError || reviewStale" :type="reviewStale ? 'warning' : 'error'" variant="tonal" class="mt-5"><span v-if="reviewStale">This impact review is stale. Refresh it and acknowledge any access change again.</span><span v-if="reviewError"> {{ reviewError }}</span><div><v-btn size="small" variant="text" class="mt-2" :disabled="applying || reviewing" :loading="reviewing" @click="review(preview.change)">Refresh impact review</v-btn></div></v-alert>
-          <p class="taxonomy-muted mt-5">Page history and search/render updates are saved with assignment changes. If the reviewed data changes, you will be asked to review again.</p>
+          <dl v-if="preview.change.action === 'edit'" class="taxonomy-definition-review"><div><dt>{{ $t('admin:tags.savedDisplayLabel') }}</dt><dd><bdi>{{ preview.source.title || $t('admin:tags.none') }}</bdi></dd></div><div><dt>{{ $t('admin:tags.proposedDisplayLabel') }}</dt><dd><bdi>{{ preview.change.title || $t('admin:tags.none') }}</bdi></dd></div></dl>
+          <h4 v-if="preview.rules.length" class="mt-6">{{ $t('admin:tags.tagBasedAccessRule') }}</h4><p v-if="preview.rules.length" class="taxonomy-muted">{{ $t('admin:tags.publicPageMatchCounts') }}</p>
+          <div v-if="preview.rules.length" class="taxonomy-impact-table" tabindex="0" role="region" :aria-label="$t('admin:tags.accessRuleImpact')"><table><thead><tr><th scope="col">{{ $t('admin:tags.groupRule') }}</th><th scope="col">{{ $t('admin:tags.before') }}</th><th scope="col">{{ $t('admin:tags.after') }}</th><th scope="col">{{ $t('admin:tags.change') }}</th></tr></thead><tbody><tr v-for="(rule, i) in preview.rules" :key="i"><td><strong><bdi>{{ rule.groupName }}</bdi></strong><small>{{ rule.deny ? $t('admin:tags.deny') : $t('admin:tags.allow') }} · #{{ rule.path }}</small><small>{{ rule.roles.join(', ') }} · {{ rule.locales.length ? rule.locales.join(', ') : $t('admin:tags.allLanguages') }}</small></td><td>{{ rule.before }}</td><td>{{ rule.after }}</td><td>{{ rule.added || rule.removed ? `+${rule.added} / −${rule.removed}` : $t('admin:tags.unchanged') }}</td></tr></tbody></table></div>
+          <v-checkbox v-if="preview.accessChanges" v-model="acknowledgeAccess" :label="$t('admin:tags.iUnderstandTheseTag')" hide-details class="mt-4" :disabled="applying || reviewing || reviewStale" />
+          <details v-if="preview.pages.length" class="taxonomy-review-pages"><summary>{{ $t('admin:tags.affectedPagesCount', { count: preview.pages.length }) }}</summary><ul><li v-for="page in preview.pages" :key="page.id"><strong><bdi>{{ page.title || page.path }}</bdi></strong><span><bdi>{{ page.locale }} / {{ page.path }}</bdi> {{ $t('admin:tags.revision', { visibility: page.visibility, sourceRevision: page.sourceRevision, interpolation: { escapeValue: false } }) }}</span></li></ul></details>
+          <v-alert v-if="reviewError || reviewStale" :type="reviewStale ? 'warning' : 'error'" variant="tonal" class="mt-5"><span v-if="reviewStale">{{ $t('admin:tags.impactReviewStaleRefresh') }}</span><span v-if="reviewError"> {{ reviewError }}</span><div><v-btn size="small" variant="text" class="mt-2" :disabled="applying || reviewing" :loading="reviewing" @click="review(preview.change)">{{ $t('admin:tags.refreshImpactReview') }}</v-btn></div></v-alert>
+          <p class="taxonomy-muted mt-5">{{ $t('admin:tags.pageHistorySearchRender') }}</p>
         </v-card-text>
-        <v-card-actions><v-btn variant="text" :disabled="applying || reviewing" @click="cancelReview">Cancel</v-btn><v-spacer /><v-btn variant="flat" color="primary" :loading="applying" :disabled="applying || reviewing || reviewStale || (preview.accessChanges && !acknowledgeAccess)" @click="apply">Apply {{ preview.change.action === 'edit' ? 'changes' : preview.change.action === 'archive' ? 'retirement' : preview.change.action === 'restore' ? 'restoration' : 'merge' }}</v-btn></v-card-actions>
+        <v-card-actions><v-btn variant="text" :disabled="applying || reviewing" @click="cancelReview">{{ $t('common:actions.cancel') }}</v-btn><v-spacer /><v-btn variant="flat" color="primary" :loading="applying" :disabled="applying || reviewing || reviewStale || (preview.accessChanges && !acknowledgeAccess)" @click="apply">{{ $t('admin:tags.apply', { action: preview.change.action === 'edit' ? 'changes' : preview.change.action === 'archive' ? 'retirement' : preview.change.action === 'restore' ? 'restoration' : 'merge', interpolation: { escapeValue: false } }) }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
   </v-container>
@@ -211,16 +211,16 @@ export default {
       acknowledgeAccess: false,
       applying: false,
       views: [
-        { title: 'Active tags', value: 'active' },
-        { title: 'Unused active tags', value: 'unused' },
-        { title: 'Aliases', value: 'alias' },
-        { title: 'Archived names', value: 'archived' },
-        { title: 'All names', value: 'all' }
+        { title: this.$t('admin:tags.activeTags'), value: 'active' },
+        { title: this.$t('admin:tags.unusedActiveTags'), value: 'unused' },
+        { title: this.$t('admin:tags.aliases'), value: 'alias' },
+        { title: this.$t('admin:tags.archivedNames'), value: 'archived' },
+        { title: this.$t('admin:tags.allNames'), value: 'all' }
       ],
       sections: [
-        { title: 'Definition', value: 'definition' },
-        { title: 'Usage & access', value: 'usage' },
-        { title: 'Lifecycle', value: 'lifecycle' }
+        { title: this.$t('admin:tags.definition'), value: 'definition' },
+        { title: this.$t('admin:tags.usageAccess'), value: 'usage' },
+        { title: this.$t('admin:tags.lifecycle'), value: 'lifecycle' }
       ]
     }
   },
@@ -243,18 +243,18 @@ export default {
     pageCount(): number { return Math.ceil(this.filtered.length / 12) },
     visible(): TaxonomyTag[] { return this.filtered.slice((this.pagination - 1) * 12, this.pagination * 12) },
     mergeTargets(): TaxonomyTag[] { return this.tags.filter(t => this.state(t) === 'active' && t.id !== this.selectedId).sort((a, b) => a.tag.localeCompare(b.tag)) },
-    reviewTitle(): string { return this.preview?.change.action === 'merge' ? 'Bring two concepts together' : this.preview?.change.action === 'archive' ? 'Retire this name' : this.preview?.change.action === 'restore' ? 'Restore this name' : this.preview?.destination ? 'Rename this concept' : 'Update the display label' },
+    reviewTitle(): string { return this.preview?.change.action === 'merge' ? this.$t('admin:tags.bringTwoConceptsTogether') : this.preview?.change.action === 'archive' ? this.$t('admin:tags.retireName') : this.preview?.change.action === 'restore' ? this.$t('admin:tags.restoreName') : this.preview?.destination ? this.$t('admin:tags.renameConcept') : this.$t('admin:tags.updateDisplayLabel') },
     reviewExplanation(): string {
       const change = this.preview?.change
       return change?.action === 'merge'
-        ? 'Page assignments will move to the destination and duplicates will be consolidated. The source and its aliases will resolve to the destination; original labels remain in page history.'
+        ? this.$t('admin:tags.pageAssignmentsWillMove')
         : change?.action === 'archive'
-          ? 'The name will be archived and remain reserved. A canonical tag’s page assignments are removed and its aliases are archived. Historical page versions retain their original labels.'
+          ? this.$t('admin:tags.nameWillArchivedRemain')
           : change?.action === 'restore'
-            ? 'The name will become available again. Restoring an alias reconnects the old name to its active destination. Former page assignments are not restored.'
+            ? this.$t('admin:tags.nameWillBecomeAvailable')
             : this.preview?.destination
-              ? 'The new name becomes canonical. The old name remains an alias for links, page editing and tag-based rules. Historical labels are preserved.'
-              : 'Only the display label changes. Page assignments and tag names stay as they are.'
+              ? this.$t('admin:tags.newNameBecomesCanonical')
+              : this.$t('admin:tags.onlyDisplayLabelChanges')
     }
   },
   watch: {
@@ -288,7 +288,7 @@ export default {
       try {
         await this.$router.replace({ query: { ...this.$route.query, tag: String(id) } })
       } catch (error) {
-        if (!this.disposed) this.detailError = `The change was saved, but the selected tag could not be opened: ${getErrorMessage(error)}`
+        if (!this.disposed) this.detailError = this.$t('admin:tags.changeWasSavedBut', { error: getErrorMessage(error), interpolation: { escapeValue: false } })
       } finally {
         this.internalNavigation = false
       }
@@ -355,7 +355,7 @@ export default {
         const inspection = await inspectTaxonomy(id)
         if (this.disposed || sequence !== this.loadSequence) return false
         if (inspection.tag.id !== id) {
-          this.detailError = 'The selected tag changed while it was loading. Try again.'
+          this.detailError = this.$t('admin:tags.selectedTagChangedWhile')
           return false
         }
         this.inspection = inspection
@@ -369,7 +369,7 @@ export default {
       }
     },
     async openCreate() {
-      if (this.busy || !(await this.confirmUnsaved('Discard the unsaved tag changes and create a tag?')) || this.busy) return
+      if (this.busy || !(await this.confirmUnsaved(this.$t('admin:tags.discardUnsavedTagChanges'))) || this.busy) return
       this.resetDraft()
       this.newTag = emptyDefinition()
       this.createError = ''
@@ -384,7 +384,7 @@ export default {
     },
     async closeCreate(): Promise<boolean> {
       if (this.creating) return false
-      if (!(await this.confirmUnsaved('Discard the new tag draft?')) || this.creating) {
+      if (!(await this.confirmUnsaved(this.$t('admin:tags.discardNewTagDraft'))) || this.creating) {
         this.createOpen = true
         return false
       }
@@ -409,7 +409,7 @@ export default {
         if (this.disposed) return
         this.newTag = emptyDefinition()
         this.createOpen = false
-        this.success = 'Tag created. It is ready to assign to pages.'
+        this.success = this.$t('admin:tags.tagCreatedReadyAssign')
         this.view = 'active'
         this.search = ''
         this.pagination = 1
@@ -433,7 +433,7 @@ export default {
         const preview = await previewTaxonomy(change)
         if (this.disposed) return
         if (preview.change.action !== change.action || preview.change.tagId !== change.tagId || preview.source.id !== this.selectedId) {
-          const message = 'The selected tag changed while the impact review was loading. Refresh the tag and review again.'
+          const message = this.$t('admin:tags.selectedTagChangedWhile2')
           if (wasOpen) {
             this.reviewStale = true
             this.reviewError = message
@@ -476,7 +476,7 @@ export default {
       }
       // Keep the review visible behind the question; it closes only when discarded.
       this.reviewOpen = true
-      if (await confirmDiscard('Discard this impact review?')) this.cancelReview()
+      if (await confirmDiscard(this.$t('admin:tags.discardImpactReview'))) this.cancelReview()
     },
     async apply(): Promise<void> {
       if (!this.preview || this.applying || this.creating || this.reviewing || this.reviewStale || (this.preview.accessChanges && !this.acknowledgeAccess)) return
@@ -493,7 +493,7 @@ export default {
             this.reviewStale = true
             this.acknowledgeAccess = false
             this.reviewOpen = true
-            if (!isStaleReviewError(error)) this.reviewError = `${this.reviewError} Refresh the impact review before trying another write.`
+            if (!isStaleReviewError(error)) this.reviewError = this.$t('admin:tags.refreshImpactReviewBefore', { reviewError: this.reviewError, interpolation: { escapeValue: false } })
           }
           return
         }
@@ -503,7 +503,7 @@ export default {
         this.reviewStale = false
         this.acknowledgeAccess = false
         this.resetDraft()
-        this.success = 'Taxonomy updated. The change has been saved.'
+        this.success = this.$t('admin:tags.taxonomyUpdatedChangeHas')
         this.warnings = result.refreshWarnings
         await this.loadInventory()
         await this.selectAfterWrite(result.tagId)
@@ -520,18 +520,18 @@ export default {
   },
   async beforeRouteLeave() {
     if (this.applying || this.creating || this.reviewing) return false
-    const discardReview = this.reviewOpen && (await confirmDiscard('Discard the unapplied taxonomy review?'))
+    const discardReview = this.reviewOpen && (await confirmDiscard(this.$t('admin:tags.discardUnappliedTaxonomyReview')))
     if (this.reviewOpen && !discardReview) return false
-    if (!(await this.confirmUnsaved('Discard the unsaved tag changes?'))) return false
+    if (!(await this.confirmUnsaved(this.$t('admin:tags.discardUnsavedTagChanges2')))) return false
     if (discardReview) this.cancelReview()
     return true
   },
   async beforeRouteUpdate(to, from) {
     if (this.internalNavigation || queryValue(to.query.tag) === queryValue(from.query.tag)) return true
     if (this.applying || this.creating || this.reviewing) return false
-    const discardReview = this.reviewOpen && (await confirmDiscard('Discard the unapplied taxonomy review?'))
+    const discardReview = this.reviewOpen && (await confirmDiscard(this.$t('admin:tags.discardUnappliedTaxonomyReview')))
     if (this.reviewOpen && !discardReview) return false
-    if (!(await this.confirmUnsaved('Discard the unsaved tag changes?'))) return false
+    if (!(await this.confirmUnsaved(this.$t('admin:tags.discardUnsavedTagChanges2')))) return false
     if (discardReview) this.cancelReview()
     return true
   },
@@ -551,7 +551,7 @@ export default {
 .admin-taxonomy {
   --taxonomy-border: var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
   --taxonomy-border-strong: var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .28));
-  --taxonomy-muted: rgba(var(--v-theme-on-surface), .76);
+  --taxonomy-muted: var(--wiki-text-muted);
   min-width: 0;
   color: rgb(var(--v-theme-on-surface));
 }
@@ -1051,7 +1051,7 @@ export default {
 
 .taxonomy-muted {
   margin: 8px 0 16px;
-  color: var(--taxonomy-muted, rgba(var(--v-theme-on-surface), .76));
+  color: var(--taxonomy-muted, var(--wiki-text-muted));
   font-size: .875rem;
   line-height: 1.75;
   overflow-wrap: anywhere;
@@ -1219,7 +1219,7 @@ export default {
 
 .taxonomy-dialog {
   --taxonomy-border: var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
-  --taxonomy-muted: rgba(var(--v-theme-on-surface), .76);
+  --taxonomy-muted: var(--wiki-text-muted);
   max-width: 100%;
   max-height: calc(100dvh - 32px);
   border: 1px solid var(--taxonomy-border);

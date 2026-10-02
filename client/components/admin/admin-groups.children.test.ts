@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import { groupPermissions, normalizeGroupRulePath } from '../../../shared/group-policy.ts'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -24,7 +25,8 @@ function arrange(name: string, dependencies: Record<string, unknown> = {}, props
   Object.assign(bindings, confirmStubs(window))
   const component = new Function(...Object.keys(bindings), compiled + ';return component')(...Object.values(bindings))
   const state = {
-    ...component.data(),
+    ...component.data.call({ $t: translateEnglish }),
+    $t: translateEnglish,
     $emit: vi.fn(),
     $route: { query: {}, fullPath: '/groups?kind=empty' },
     $router: { replace: vi.fn(), push: vi.fn() },

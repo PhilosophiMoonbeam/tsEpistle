@@ -1,6 +1,6 @@
 .logging-workspace {
   --logging-line: rgba(var(--v-theme-on-surface), 0.13);
-  --logging-muted: rgba(var(--v-theme-on-surface), 0.72);
+  --logging-muted: var(--wiki-text-muted);
   --logging-soft: rgba(var(--v-theme-on-surface), 0.04);
   max-width: 1660px;
   padding-bottom: 72px;

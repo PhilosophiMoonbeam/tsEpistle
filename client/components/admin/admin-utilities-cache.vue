@@ -1,25 +1,25 @@
 <template lang="pug">
 v-card
-  v-card-title Cache maintenance
-  v-card-subtitle Clear a specific cache only when a cached result is the diagnosed problem.
+  v-card-title {{ $t(`admin:utilitiesCache.cacheMaintenance`) }}
+  v-card-subtitle {{ $t(`admin:utilitiesCache.clearSpecificCacheOnly`) }}
   v-card-text
     v-row
       v-col(cols='12' md='6')
         v-sheet.pa-4.rounded.border.h-100
-          h2.text-title-medium Pages and assets
-          p.text-body-medium.mt-2 Drop the local page and asset cache, then notify connected application processes to refresh their cache.
-          v-btn.mt-4(color='primary' variant='outlined' :disabled='busy' @click='openReview(`cache-pages`)') Review cache flush
+          h2.text-title-medium {{ $t(`admin:utilitiesCache.pagesAssets`) }}
+          p.text-body-medium.mt-2 {{ $t(`admin:utilitiesCache.dropLocalPageAsset`) }}
+          v-btn.mt-4(color='primary' variant='outlined' :disabled='busy' @click='openReview(`cache-pages`)') {{ $t(`admin:utilitiesCache.reviewCacheFlush`) }}
       v-col(cols='12' md='6')
         v-sheet.pa-4.rounded.border.h-100
-          h2.text-title-medium Temporary uploads
-          p.text-body-medium.mt-2 Delete temporary upload files. An upload that is still in progress can fail after this action.
-          v-alert.mt-3(color='warning' variant='tonal' density='compact') Confirm there are no active uploads before continuing.
-          v-btn.mt-4(color='error' variant='outlined' :disabled='busy' @click='openReview(`cache-temporary-uploads`)') Review deletion
+          h2.text-title-medium {{ $t(`admin:utilitiesCache.temporaryUploads`) }}
+          p.text-body-medium.mt-2 {{ $t(`admin:utilitiesCache.deleteTemporaryUploadFiles`) }}
+          v-alert.mt-3(color='warning' variant='tonal' density='compact') {{ $t(`admin:utilitiesCache.confirmThereNoActive`) }}
+          v-btn.mt-4(color='error' variant='outlined' :disabled='busy' @click='openReview(`cache-temporary-uploads`)') {{ $t(`admin:utilitiesCache.reviewDeletion`) }}
     v-divider.my-6
     v-sheet.pa-4.rounded.border
-      h2.text-title-medium This browser’s locale cache
-      p.text-body-medium.mt-2 Locale strings cached by this browser are separate from server cache and are not sent to the server.
-      v-btn.mt-3(variant='outlined' :disabled='busy' @click='clearLocaleCache') Clear this browser cache
+      h2.text-title-medium {{ $t(`admin:utilitiesCache.browsersLocaleCache`) }}
+      p.text-body-medium.mt-2 {{ $t(`admin:utilitiesCache.localeStringsCachedBrowser`) }}
+      v-btn.mt-3(variant='outlined' :disabled='busy' @click='clearLocaleCache') {{ $t(`admin:utilitiesCache.clearBrowserCache`) }}
   utility-review(
     v-model:open='review.open'
     :title='review.title'
@@ -82,23 +82,23 @@ export default defineComponent({
         kind === 'cache-pages'
           ? {
               kind,
-              title: 'Review cache flush',
-              effect: 'This clears shared in-process page and asset caches. It does not change pages or assets.',
+              title: this.$t('admin:utilitiesCache.reviewCacheFlush'),
+              effect: this.$t('admin:utilitiesCache.clearsSharedProcessPage'),
               confirmation: utilityOperationConfirmation(kind),
               parameters: [
-                { label: 'Cache', value: 'Pages and assets' },
-                { label: 'Effect', value: 'Clear shared in-process cache' }
+                { label: this.$t('admin:utilitiesCache.cache'), value: this.$t('admin:utilitiesCache.pagesAssets') },
+                { label: this.$t('admin:utilitiesCache.effect'), value: this.$t('admin:utilitiesCache.clearSharedProcessCache') }
               ],
               payload: {}
             }
           : {
               kind,
-              title: 'Review temporary-upload deletion',
-              effect: 'This permanently deletes temporary upload files. Active uploads can fail.',
+              title: this.$t('admin:utilitiesCache.reviewTemporaryUploadDeletion'),
+              effect: this.$t('admin:utilitiesCache.permanentlyDeletesTemporaryUpload'),
               confirmation: utilityOperationConfirmation(kind),
               parameters: [
-                { label: 'Cache', value: 'Temporary uploads' },
-                { label: 'Effect', value: 'Permanently delete temporary upload files' }
+                { label: this.$t('admin:utilitiesCache.cache'), value: this.$t('admin:utilitiesCache.temporaryUploads') },
+                { label: this.$t('admin:utilitiesCache.effect'), value: this.$t('admin:utilitiesCache.permanentlyDeleteTemporaryUpload') }
               ],
               payload: {}
             }
@@ -114,10 +114,10 @@ export default defineComponent({
           if (key?.startsWith('i18next_res') === true) keys.push(key)
         }
         for (const key of keys) storage.removeItem(key)
-        this.$emit('notice', { message: 'This browser’s locale cache was cleared.', color: 'success' })
+        this.$emit('notice', { message: this.$t('admin:utilitiesCache.browsersLocaleCacheWas'), color: 'success' })
       } catch {
         this.$emit('notice', {
-          message: 'This browser blocked access to its locale cache. No cache-cleared result can be confirmed.',
+          message: this.$t('admin:utilitiesCache.browserBlockedAccessLocale'),
           color: 'warning'
         })
       }

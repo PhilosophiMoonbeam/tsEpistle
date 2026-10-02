@@ -211,7 +211,7 @@ export default defineComponent({
       navError: '',
       currentParent: {
         id: 0,
-        title: '/ (root)'
+        title: this.$t('common:navSidebar.root')
       } as NavigationTreeItem,
       parents: [] as NavigationTreeItem[],
       loadedCache: [] as number[],

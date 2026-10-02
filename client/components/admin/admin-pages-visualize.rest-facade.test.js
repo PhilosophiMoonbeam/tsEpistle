@@ -8,6 +8,7 @@ import { fetchPageLinks } from '../../helpers/pages-api.ts'
 import _ from 'lodash'
 import * as d3 from 'd3'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 const Vue = await import('vue')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
@@ -61,6 +62,7 @@ const mountAtlas = () => {
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({ ...options, render })
+  app.config.globalProperties.$t = translateEnglish
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.component('admin-hero', { render: () => null })
   app.component('router-link', { render: () => null })
@@ -117,7 +119,8 @@ describe('admin pages visualize REST facade', () => {
       pageLoadRequestId: 0,
       pages: [],
       loading: false,
-      errorMessage: ''
+      errorMessage: '',
+      $t: translateEnglish
     }
     const staleLocaleAPages = [{ id: 1, path: 'a-old', title: 'Old Locale A', links: [] }]
     const staleLocaleBPages = [{ id: 2, path: 'b', title: 'Locale B', links: [] }]
@@ -152,7 +155,8 @@ describe('admin pages visualize REST facade', () => {
     const geometry = Object.getOwnPropertyDescriptor(prototype, 'getBBox')
     Object.defineProperty(prototype, 'getBBox', { configurable: true, value: () => ({ x: 0, y: 0, width: 800, height: 800 }) })
     const state = {
-      ...options.data(),
+      ...options.data.call({ $t: translateEnglish }),
+      $t: translateEnglish,
       graphMode,
       pages: [{ id: 7, path: 'en/docs/alpha', title: 'Alpha', links: [] }],
       $refs: { svgContainer: container },
