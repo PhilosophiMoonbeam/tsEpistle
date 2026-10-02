@@ -2,7 +2,7 @@
   <section class="skill-governance" :class="{ 'skill-governance--standalone': !embedded }" aria-labelledby="skill-governance-title">
     <header class="skill-governance__header">
       <div class="skill-governance__heading">
-        <span class="skill-governance__mark" aria-hidden="true"><v-icon size="22">mdi-shield-book-outline</v-icon></span>
+        <span class="skill-governance__mark" aria-hidden="true"><v-icon size="22">mdi-book-lock-outline</v-icon></span>
         <div>
           <div class="skill-eyebrow">Organization policy</div>
           <h2 id="skill-governance-title">{{ embedded ? 'Approved skill library' : 'Organization skill governance' }}</h2>

@@ -106,3 +106,16 @@ test('retains an omitted timezone and clears an explicit empty timezone to the l
   assert.equal(output.omitted, output.configured)
   assert.equal(output.cleared, '2024-01-01 04:00 -08:00')
 })
+
+test('formats ISO sync times in the chosen time zone and time format, not the browser zone', () => {
+  const output = runPresentation(`
+    moment.locale('en')
+    const iso = new Date().toISOString()
+    applyUserPresentation({ dateFormat: '', timeFormat: '24h', timezone: 'America/New_York' })
+    console.log(JSON.stringify({
+      formatted: helpers.formatMoment(iso, 'calendar'),
+      expected: 'Today at ' + moment.tz(iso, 'America/New_York').format('HH:mm')
+    }))
+  `)
+  assert.equal(output.formatted, output.expected)
+})

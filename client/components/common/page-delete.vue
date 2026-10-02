@@ -13,7 +13,7 @@
     )
     v-card
       .dialog-header.is-short.is-red
-        v-icon.me-2(color='white') mdi-file-document-box-remove-outline
+        v-icon.me-2(color='white') mdi-file-document-remove-outline
         span#page-delete-dialog-title {{$t('common:page.delete')}}
       v-card-text#page-delete-dialog-description.pt-5
         i18next.text-body-large(path='common:page.deleteTitle', tag='div')

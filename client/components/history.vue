@@ -1545,8 +1545,24 @@ export default {
     font-family: var(--wiki-font-mono);
   }
 
+  // Rows are tinted on their table cells. The line itself stays transparent
+  // and grows with its text, so the cell (and the whole row) spans the full
+  // scrollable width of its pane instead of stopping at the visible edge.
   .d2h-code-line,
-  .d2h-code-side-line,
+  .d2h-code-side-line {
+    width: auto;
+    background: transparent;
+    color: rgb(var(--v-theme-on-surface));
+  }
+
+  .d2h-code-line {
+    min-width: calc(100% - 16em);
+  }
+
+  .d2h-code-side-line {
+    min-width: calc(100% - 9em);
+  }
+
   .d2h-code-linenumber,
   .d2h-code-side-linenumber {
     border-color: var(--wiki-surface-border);

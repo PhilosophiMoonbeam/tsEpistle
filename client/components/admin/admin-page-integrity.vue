@@ -4,7 +4,7 @@
       title="Page integrity"
       description="Inspect bounded, revision-fenced evidence from native page and projection state. This scan never changes pages or repairs derived data."
       eyebrow="System diagnostics"
-      icon="mdi-shield-search-outline"
+      icon="mdi-shield-search"
     >
       <template #actions>
         <v-btn

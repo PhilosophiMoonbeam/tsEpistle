@@ -217,10 +217,12 @@
             :disabled='printView'
           )
             v-card.page-tools-card.mb-4(flat, role='group', :aria-label='$t(`common:page.pageTools`)')
+              //- Utility tooltips open above the row so they never cover the
+              //- Updated/author line directly below it.
               .page-tools-card__utilities(v-if='!printView')
                 v-menu(:location='isTocMobile ? `top end` : `bottom`', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(location='bottom')
+                    v-tooltip(location='top')
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn(
                           icon
@@ -241,7 +243,7 @@
                 //- can explain why; each handler refuses the action itself.
                 //- One bell: it starts watching, and once watching it opens the
                 //- watch settings (delivery switches and Stop watching).
-                v-tooltip(location='bottom', v-if='isAuthenticated && !pageWatched')
+                v-tooltip(location='top', v-if='isAuthenticated && !pageWatched')
                   template(v-slot:activator='{ props }')
                     v-btn.page-watch-control(
                       icon
@@ -261,7 +263,7 @@
                   span.page-tool-blocked-reason(v-if='pageWatchBlockedReason') {{ pageWatchBlockedReason }}
                 v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? `top end` : `bottom`', :close-on-content-click='false', min-width='260')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(location='bottom')
+                    v-tooltip(location='top')
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn.page-watch-control.page-watch-control--watching(
                           icon
@@ -308,7 +310,7 @@
                         @click='togglePageWatch'
                       ) {{$t('common:page.stopWatchingPage')}}
 
-                v-tooltip(location='bottom', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                v-tooltip(location='top', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn.page-approval-control(
                       icon
@@ -324,7 +326,7 @@
                       v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
                   span {{$t('common:page.approvalWorkflow')}}
                   span.page-tool-blocked-reason(v-if='!pageOnlineActionReady') {{ pageOnlineActionUnavailableReason }}
-                v-tooltip(location='bottom', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                v-tooltip(location='top', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn.page-protection-control(
                       icon
@@ -340,7 +342,7 @@
                       v-icon mdi-form-textbox-password
                   span {{$t('common:page.pagePasswordProtection')}}
                   span.page-tool-blocked-reason(v-if='pageProtectionBlockedReason') {{ pageProtectionBlockedReason }}
-                v-tooltip(location='bottom')
+                v-tooltip(location='top')
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
@@ -353,7 +355,7 @@
                     )
                       v-icon mdi-printer
                   span {{$t('common:page.printFormat')}}
-                v-tooltip(location='bottom', :open-on-click='offlineControl.blocked', max-width='280')
+                v-tooltip(location='top', :open-on-click='offlineControl.blocked', max-width='280')
                   template(v-slot:activator='{ props }')
                     v-btn.page-offline-control(
                       v-bind='props'
@@ -375,7 +377,7 @@
                   .page-offline-tooltip
                     strong.page-offline-tooltip__title {{ offlineControl.title }}
                     span.page-offline-tooltip__detail(v-if='offlineControl.detail') {{ offlineControl.detail }}
-                v-tooltip(location='bottom')
+                v-tooltip(location='top')
                   template(v-slot:activator='{ props }')
                     v-btn.page-focus-control(
                       v-bind='props'
@@ -390,7 +392,7 @@
                     )
                       v-icon(aria-hidden='true') mdi-book-open-page-variant-outline
                   span {{$t('common:page.focusReading')}}
-                v-tooltip(location='bottom', v-if='canViewHistory')
+                v-tooltip(location='top', v-if='canViewHistory')
                   template(v-slot:activator='{ props }')
                     v-btn.page-tools-history-link(
                       icon

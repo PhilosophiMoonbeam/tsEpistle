@@ -46,7 +46,7 @@
       v-list-item-title.px-3 Reddit
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.telegram)')
       template(v-slot:prepend)
-        v-icon.social-sharing__icon(size="small") mdi-telegram
+        v-icon.social-sharing__icon(size="small") mdi-send-circle-outline
       v-list-item-title.px-3 Telegram
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.x)')
       template(v-slot:prepend)

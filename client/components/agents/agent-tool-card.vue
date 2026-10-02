@@ -82,7 +82,7 @@
     <details v-if="diffLines.length" class="operation-disclosure operation-disclosure--output" open>
       <summary>
         <span>
-          <v-icon icon="mdi-file-compare-outline" size="18" aria-hidden="true" />
+          <v-icon icon="mdi-file-compare" size="18" aria-hidden="true" />
           Proposed output
         </span>
         <small>{{ diffLines.length }} diff {{ diffLines.length === 1 ? 'line' : 'lines' }}</small>
@@ -212,7 +212,7 @@
       <details v-if="diffLines.length" class="operation-disclosure operation-disclosure--output">
         <summary>
           <span>
-            <v-icon icon="mdi-file-compare-outline" size="18" aria-hidden="true" />
+            <v-icon icon="mdi-file-compare" size="18" aria-hidden="true" />
             Proposed output
           </span>
           <small>{{ diffLines.length }} diff {{ diffLines.length === 1 ? 'line' : 'lines' }}</small>
