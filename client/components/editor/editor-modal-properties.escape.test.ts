@@ -45,7 +45,7 @@ afterEach(() => {
   resetBody()
 })
 
-const escape = (init: KeyboardEventInit = {}): KeyboardEvent =>
+const escapeKey = (init: KeyboardEventInit = {}): KeyboardEvent =>
   new document.defaultView!.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...init })
 
 describe('Page Properties Esc', () => {
@@ -58,22 +58,22 @@ describe('Page Properties Esc', () => {
 
   test('Esc cancels like Cancel, but first closes an open branding picker', () => {
     const context = { brandingPickerShown: false, cancel: vi.fn(), closeBrandingPicker: vi.fn() }
-    const first = escape()
+    const first = escapeKey()
     handleDialogKeydown.call(context, first)
     expect(context.cancel).toHaveBeenCalledTimes(1)
     expect(first.defaultPrevented).toBe(true)
 
     context.brandingPickerShown = true
-    handleDialogKeydown.call(context, escape())
+    handleDialogKeydown.call(context, escapeKey())
     expect(context.closeBrandingPicker).toHaveBeenCalledTimes(1)
     expect(context.cancel).toHaveBeenCalledTimes(1)
   })
 
   test('ignores other keys, IME composition and Esc already handled by a child control', () => {
     const context = { brandingPickerShown: false, cancel: vi.fn(), closeBrandingPicker: vi.fn() }
-    handleDialogKeydown.call(context, escape({ key: 'Enter' }))
-    handleDialogKeydown.call(context, escape({ isComposing: true }))
-    const handled = escape()
+    handleDialogKeydown.call(context, escapeKey({ key: 'Enter' }))
+    handleDialogKeydown.call(context, escapeKey({ isComposing: true }))
+    const handled = escapeKey()
     handled.preventDefault()
     handleDialogKeydown.call(context, handled)
     expect(context.cancel).not.toHaveBeenCalled()
@@ -97,7 +97,7 @@ describe('Page Properties Esc', () => {
     const field = document.querySelector<HTMLElement>('.outer-field')
     if (!field) throw new Error('Dialog content did not render')
     field.focus()
-    field.dispatchEvent(escape())
+    field.dispatchEvent(escapeKey())
     expect(onKeydown).toHaveBeenCalledTimes(1)
 
     nestedOpen.value = true
@@ -105,7 +105,7 @@ describe('Page Properties Esc', () => {
     // Vuetify updates its overlay stack after a frame.
     await new Promise(resolve => setTimeout(resolve, 50))
     await settle()
-    field.dispatchEvent(escape())
+    field.dispatchEvent(escapeKey())
     expect(onKeydown).toHaveBeenCalledTimes(1)
   })
 })
