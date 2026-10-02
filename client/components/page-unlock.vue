@@ -44,16 +44,11 @@
                 :aria-invalid='error ? "true" : undefined'
               )
                 template(v-slot:append-inner)
-                  v-btn(
-                    icon
-                    variant='text'
-                    size='small'
-                    type='button'
-                    :aria-label='$t(`common:pageUnlock.showPassword`)'
-                    :aria-pressed='hidePassword ? `false` : `true`'
-                    @click='hidePassword = !hidePassword'
+                  password-visibility-toggle(
+                    :visible='!hidePassword'
+                    :field='$t(`common:pageUnlock.password`)'
+                    @update:visible='hidePassword = !$event'
                   )
-                    v-icon {{ hidePassword ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
               v-btn.mt-2(
                 type='submit'
                 color='primary'
@@ -74,8 +69,10 @@
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
+import PasswordVisibilityToggle from './common/password-visibility-toggle.vue'
 
 export default defineComponent({
+  components: { PasswordVisibilityToggle },
   data() {
     return {
       failedLogoUrl: null as string | null,

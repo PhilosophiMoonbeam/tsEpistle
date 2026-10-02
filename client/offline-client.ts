@@ -8,7 +8,9 @@ import Notify from './components/common/notify.vue'
 import { pinia } from './store/index.ts'
 import { createAppVuetify } from './helpers/app-vuetify.ts'
 import { installThemeSwitchGuard } from './helpers/theme.ts'
-import helpersPlugin from './helpers/index.ts'
+import moment from 'moment-timezone'
+import helpersPlugin, { applyUserPresentation } from './helpers/index.ts'
+import { savedReaderDates } from './helpers/offline-presentation.ts'
 import { fallbackLocalizationLabel } from './modules/localization.ts'
 import { applyReaderLayout } from './helpers/reader-layout.ts'
 import { preparePwaStartup, setReloadSafetyProvider } from './helpers/pwa.ts'
@@ -28,6 +30,11 @@ export async function mountOfflineApp(appearance: string): Promise<void> {
     resources: {},
     parseMissingKeyHandler: (key, fallback) => fallback ?? fallbackLocalizationLabel(key)
   })
+  // Saved pages show dates in the reader's last saved time zone. Without one,
+  // the offline library names the browser zone next to each time.
+  moment.locale(siteConfig.lang)
+  const readerDates = savedReaderDates()
+  if (readerDates) applyUserPresentation(readerDates)
   const app = createApp(OfflineApp)
   const vuetify = createAppVuetify(appearance)
   app.use(pinia).use(vuetify).use(helpersPlugin)

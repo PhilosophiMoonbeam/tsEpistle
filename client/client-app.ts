@@ -1,4 +1,4 @@
-import { rememberOfflinePresentation } from './helpers/offline-presentation.ts'
+import { forgetReaderDates, rememberOfflinePresentation, rememberReaderDates, savedReaderDates } from './helpers/offline-presentation.ts'
 import { applyReaderLayout } from './helpers/reader-layout.ts'
 import { createApp, shallowRef, watch } from 'vue'
 import type { AsyncComponentLoader } from 'vue'
@@ -318,7 +318,17 @@ const initializeClientApp = async (): Promise<void> => {
   window.boot = boot
 
   moment.locale(siteConfig.lang)
-  applyUserPresentation(wikiStore.user)
+  // Until the account loads (or when the server is unreachable), use the
+  // reader's last saved time zone and formats instead of the browser zone.
+  applyUserPresentation(savedReaderDates() ?? wikiStore.user)
+  watch(
+    () => [wikiStore.user.authenticated, wikiStore.user.timezone, wikiStore.user.dateFormat, wikiStore.user.timeFormat, wikiStore.authRefreshOutcome],
+    () => {
+      if (wikiStore.user.authenticated) rememberReaderDates(wikiStore.user)
+      else if (wikiStore.authRefreshOutcome === 'anonymous') forgetReaderDates()
+    },
+    { immediate: true }
+  )
 
   app.mount('#root')
   // Vuetify now owns the live canvas, including later system/preference changes.
@@ -330,6 +340,9 @@ const initializeClientApp = async (): Promise<void> => {
       applyUserPresentation(wikiStore.user)
       rememberOfflinePresentation(wikiStore.user.appearance)
       void vuetify.theme.change(resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode), false)
+    } else if (outcome === 'anonymous') {
+      // A confirmed guest uses the browser zone and locale formats.
+      applyUserPresentation(wikiStore.user)
     }
   })
 }

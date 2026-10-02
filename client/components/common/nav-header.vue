@@ -448,7 +448,9 @@
 
           v-menu(location="bottom end", transition='slide-y-transition', :close-on-content-click='false', @update:model-value='accountMenuVisibilityChanged')
             template(v-slot:activator='{ props: menuProps }')
-              v-tooltip(location="bottom")
+              //- Touch keeps the hover state after a tap; the tooltip must not
+              //- stay over the open menu.
+              v-tooltip(location="bottom", :model-value='accountTooltipOpen', @update:model-value='setAccountTooltip')
                 template(v-slot:activator='{ props: tooltipProps }')
                   v-btn.account-menu__trigger(
                     icon
@@ -699,6 +701,8 @@ export default defineComponent({
       isDevMode: false,
       failedLogoUrl: null as string | null,
       pageActionsAreOpen: false,
+      accountMenuOpen: false,
+      accountTooltipOpen: false,
       accountMenuTab: 'notifications' as AccountMenuTabId,
       failedAvatarUrl: null as string | null,
       pageActionsFocusFrame: null as number | null,
@@ -1197,7 +1201,12 @@ export default defineComponent({
       if (document.visibilityState === 'visible') this.refreshSiteNotifications()
     },
     accountMenuVisibilityChanged(open: boolean): void {
+      this.accountMenuOpen = open
+      if (open) this.accountTooltipOpen = false
       if (open) this.refreshSiteNotifications()
+    },
+    setAccountTooltip(open: boolean): void {
+      this.accountTooltipOpen = open && !this.accountMenuOpen
     },
     async pageActionsVisibilityChanged(open: boolean): Promise<void> {
       this.pageActionsAreOpen = open

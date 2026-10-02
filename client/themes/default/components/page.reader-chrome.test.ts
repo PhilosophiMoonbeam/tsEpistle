@@ -114,11 +114,12 @@ describe('page reader chrome template', () => {
     expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
   })
 
-  it('opens utility tooltips above the row so they never cover the metadata below', async () => {
-    const { document } = await renderTemplate(PAGE, baseState({ isAuthenticated: true }))
+  it('places every utility tooltip by one rule so none covers the metadata below the row', async () => {
+    const { document } = await renderTemplate(PAGE, baseState({ isAuthenticated: true, utilityTooltipLocation: 'end', utilityTooltipTarget: '#page-desktop-rail .page-tools-card' }))
     const tooltips = Array.from(document.querySelectorAll('.page-tools-card__utilities [data-stub="v-tooltip"]'))
     expect(tooltips.length).toBeGreaterThan(2)
-    expect(tooltips.map(tooltip => tooltip.getAttribute('location'))).toEqual(tooltips.map(() => 'top'))
+    expect(tooltips.map(tooltip => tooltip.getAttribute('location'))).toEqual(tooltips.map(() => 'end'))
+    expect(tooltips.map(tooltip => tooltip.getAttribute('target'))).toEqual(tooltips.map(() => '#page-desktop-rail .page-tools-card'))
   })
 
   it('renders an author placeholder in the middle of a translated sentence without moving the name', async () => {
@@ -216,7 +217,7 @@ if (!script) throw new Error('page.vue script block was not found')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   script.replace(/^import[\s\S]*?from\s+["'][^"']+["']\s*$/gm, '').replace('export default defineComponent({', 'const pageComponent = defineComponent({') + '\nreturn pageComponent'
 )
-const wikiStore = { user: { authenticated: true, id: 7, permissions: [] as string[] }, site: { logoUrl: '/_site-logo/abc/logo.png' } }
+const wikiStore = { user: { authenticated: true, id: 7, permissions: [] as string[] }, site: { logoUrl: '/_site-logo/abc/logo.png' }, authRefreshOutcome: 'authenticated' as string | null }
 type Rules = {
   computed: Record<string, (this: Record<string, unknown>) => unknown>
   methods: Record<string, (this: Record<string, unknown>, ...args: unknown[]) => unknown>
@@ -299,6 +300,45 @@ describe('page reader chrome rules', () => {
       { id: 5, label: 'Grace (@grace)', source: 'discussion' },
       { id: 9, label: 'User #9', source: 'manual' }
     ])
+  })
+
+  it('opens utility tooltips beside the desktop rail card and above the row elsewhere', () => {
+    const place = (vm: Record<string, unknown>) => {
+      vm.utilityTooltipsBeside = call('utilityTooltipsBeside', vm)
+      return [call('utilityTooltipLocation', vm), call('utilityTooltipTarget', vm)]
+    }
+    expect(place({ isTocMobile: false, winWidth: 1440, tocPosition: 'left' })).toEqual(['end', '#page-desktop-rail .page-tools-card'])
+    expect(place({ isTocMobile: false, winWidth: 1440, tocPosition: 'right' })).toEqual(['start', '#page-desktop-rail .page-tools-card'])
+    expect(place({ isTocMobile: false, winWidth: 1100, tocPosition: 'left' })).toEqual(['top', undefined])
+    expect(place({ isTocMobile: true, winWidth: 390, tocPosition: 'left' })).toEqual(['top', undefined])
+  })
+
+  it('names the browser time zone on Updated only when the account could not load and no zone is saved', () => {
+    const vmFor = (known: boolean) => {
+      const vm: Record<string, unknown> = {
+        updatedAt: '2026-01-02T03:04:05.000Z',
+        $t: (_key: string, options: { time: string; zone: string }) => `${options.time} (${options.zone})`,
+        $helpers: { formatMoment: () => 'Today at 3:04 AM', timeZoneKnown: () => known, timeZoneLabel: () => 'UTC' }
+      }
+      vm.withUpdatedZone = (time: string) => page.methods.withUpdatedZone!.call(vm, time)
+      return vm
+    }
+    try {
+      for (const [outcome, known, expected] of [
+        ['unavailable', false, 'Today at 3:04 AM (UTC)'],
+        ['unavailable', true, 'Today at 3:04 AM'],
+        ['authenticated', false, 'Today at 3:04 AM'],
+        ['anonymous', false, 'Today at 3:04 AM'],
+        [null, false, 'Today at 3:04 AM']
+      ] as const) {
+        wikiStore.authRefreshOutcome = outcome
+        const vm = vmFor(known)
+        vm.labelUpdatedZone = call('labelUpdatedZone', vm)
+        expect(call('formattedUpdatedAt', vm)).toBe(expected)
+      }
+    } finally {
+      wikiStore.authRefreshOutcome = 'authenticated'
+    }
   })
 
   it('labels the signed-in reviewer as You in the approval history', () => {
