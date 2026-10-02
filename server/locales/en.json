@@ -283,7 +283,12 @@
         "reasonNoSelector": "This page cannot be saved offline.",
         "reasonUnpublished": "Unpublished pages cannot be saved offline.",
         "reasonProtected": "Password-protected pages cannot be saved offline.",
-        "reasonEditor": "Pages from this editor cannot be saved offline."
+        "reasonEditor": "Pages from this editor cannot be saved offline.",
+        "reasonRenderPending": "The wiki has not rendered the latest version of this page yet.",
+        "reasonCustomContent": "Pages with scripts or custom content cannot be saved offline.",
+        "reasonTooLarge": "This page is too large to save offline.",
+        "deniedRemoveAction": "Select to remove it from your saved pages.",
+        "deniedRetryAction": "Select to try again."
       },
       "sync": {
         "running": "Syncing…",

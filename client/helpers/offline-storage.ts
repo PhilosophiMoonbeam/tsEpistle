@@ -44,6 +44,7 @@ import {
   type OfflineSnapshotProvenance,
   type OfflineSnapshotRecord,
   type OfflineSnapshotSelector,
+  type OfflineIneligibleReason,
   type OfflineStorageEstimate,
   type OfflineStorageFailureCode,
   type OfflineSyncDiagnostics
@@ -137,6 +138,11 @@ export type OfflineSnapshotWriteOptions = OfflineStorageGenerationOptions & {
 export type OfflineSnapshotOpenOptions = OfflineStorageGenerationOptions
 
 export type OfflinePolicyMutationOptions = OfflineStorageGenerationOptions
+
+export type OfflineIneligibilityOptions = OfflinePolicyMutationOptions & {
+  /** The server's refusal reason code, when it sent one. Never page content. */
+  reason?: OfflineIneligibleReason | null
+}
 
 export type OfflineSuccessfulPageEditOptions = OfflinePolicyMutationOptions & {
   editedAt?: string
@@ -327,12 +333,22 @@ const makePolicyPage = (
     availability: 'unknown' as const,
     ...overrides
   }
-  return OfflinePagePolicyRecordSchema.parse({ ...withoutSize, byteSize: encodedBytes(withoutSize) })
+  const normalized = withIneligibleReason(withoutSize)
+  return OfflinePagePolicyRecordSchema.parse({ ...normalized, byteSize: encodedBytes(normalized) })
+}
+
+/** A refusal reason is kept only while the page is ineligible; any other availability drops it. */
+const withIneligibleReason = <T extends { availability: OfflinePagePolicyRecord['availability']; ineligibleReason?: OfflineIneligibleReason | undefined }>(
+  page: T
+): Omit<T, 'ineligibleReason'> & { ineligibleReason?: OfflineIneligibleReason } => {
+  const { ineligibleReason, ...rest } = page
+  return page.availability === 'ineligible' && ineligibleReason ? { ...rest, ineligibleReason } : rest
 }
 
 const storePolicyPage = (value: OfflinePagePolicyRecord): OfflinePagePolicyRecord => {
   const { byteSize: _byteSize, ...withoutSize } = value
-  return OfflinePagePolicyRecordSchema.parse({ ...withoutSize, byteSize: encodedBytes(withoutSize) })
+  const normalized = withIneligibleReason(withoutSize)
+  return OfflinePagePolicyRecordSchema.parse({ ...normalized, byteSize: encodedBytes(normalized) })
 }
 
 const clonePolicyState = (state: OfflinePolicyState): OfflinePolicyState => ({
@@ -356,7 +372,8 @@ const policyPageFieldsChanged = (left: OfflinePagePolicyRecord, right: OfflinePa
   left.lastEditedAt !== right.lastEditedAt ||
   left.automaticSelectedAt !== right.automaticSelectedAt ||
   left.excluded !== right.excluded ||
-  left.availability !== right.availability
+  left.availability !== right.availability ||
+  left.ineligibleReason !== right.ineligibleReason
 
 const isPolicyPage = (value: OfflinePolicyRecord): value is OfflinePagePolicyRecord => value.recordType === 'page'
 
@@ -2159,7 +2176,7 @@ export class OfflineStorage {
     }
   }
 
-  async markPageIneligible(selector: OfflineSnapshotSelector, options: OfflinePolicyMutationOptions = {}): Promise<OfflinePagePolicyRecord> {
+  async markPageIneligible(selector: OfflineSnapshotSelector, options: OfflineIneligibilityOptions = {}): Promise<OfflinePagePolicyRecord> {
     this.assertOpen(true)
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
     if (options.readingHandle) return await this.markPrivatePageIneligible(options.readingHandle, parsedSelector, options)
@@ -2183,7 +2200,8 @@ export class OfflineStorage {
           automatic: false,
           automaticSelectedAt: null,
           lastEditedAt: null,
-          availability: 'ineligible' as const
+          availability: 'ineligible' as const,
+          ineligibleReason: options.reason ?? undefined
         })
         if (!storedKeys.has(previous.key) || policyPageFieldsChanged(previous, next)) {
           changedPages.push(next)
@@ -3284,13 +3302,13 @@ export class OfflineStorage {
   async markPrivatePageIneligible(
     handle: OfflineReadingHandleV1,
     selector: OfflineSnapshotSelector,
-    options?: OfflineStorageGenerationOptions
+    options?: OfflineIneligibilityOptions
   ): Promise<OfflinePagePolicyRecord>
   async markPrivatePageIneligible(keyId: string, pageId: number, options?: OfflineStorageGenerationOptions): Promise<number>
   async markPrivatePageIneligible(
     keyIdOrHandle: string | OfflineReadingHandleV1,
     pageIdOrSelector: number | OfflineSnapshotSelector,
-    options: OfflineStorageGenerationOptions = {}
+    options: OfflineIneligibilityOptions = {}
   ): Promise<number | OfflinePagePolicyRecord> {
     if (typeof keyIdOrHandle !== 'string') {
       const handle = keyIdOrHandle
@@ -3298,14 +3316,22 @@ export class OfflineStorage {
       const next = await this.mutatePrivatePolicy(handle, options, current => {
         const pages = current.pages.map(page =>
           page.pageId === selector.pageId
-            ? storePolicyPage({ ...page, automatic: false, automaticSelectedAt: null, lastEditedAt: null, availability: 'ineligible' as const })
+            ? storePolicyPage({
+                ...page,
+                automatic: false,
+                automaticSelectedAt: null,
+                lastEditedAt: null,
+                availability: 'ineligible' as const,
+                ineligibleReason: options.reason ?? undefined
+              })
             : page
         )
         const currentPage =
           pages.find(page => page.key === offlinePolicyPageKey(selector)) ??
           storePolicyPage({
             ...makePolicyPage(selector),
-            availability: 'ineligible' as const
+            availability: 'ineligible' as const,
+            ineligibleReason: options.reason ?? undefined
           })
         if (!pages.some(page => page.key === currentPage.key)) pages.push(currentPage)
         return {

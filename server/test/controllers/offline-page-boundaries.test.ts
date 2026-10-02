@@ -250,6 +250,22 @@ describe('offline snapshot transport boundary', () => {
     expect(next).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['a known reason', 'render-pending', { reason: 'render-pending' }],
+    ['an unknown reason', 'private page secret', {}],
+    ['no reason', null, {}]
+  ])('adds only a known machine-readable refusal reason for %s', async (_label: string, reason: unknown, extra: Record<string, string>) => {
+    const denial = Object.assign(new Error('page source was secret'), { status: 404, code: 'OFFLINE_PAGE_INELIGIBLE', reason })
+    pageOperations.getOfflineSnapshot.mockRejectedValueOnce(denial)
+    const res = response()
+
+    await getOfflineSnapshot({ params: { id: '7' } }, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'This page is not available for offline use.', code: 'OFFLINE_PAGE_INELIGIBLE', ...extra })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('secret')
+  })
+
   it('leaves infrastructure failures on the normal error path', async () => {
     const failure = Object.assign(new Error('database credentials leaked'), { status: 503 })
     pageOperations.getOfflineSnapshot.mockRejectedValueOnce(failure)
@@ -302,6 +318,19 @@ describe('offline private snapshot transport boundary', () => {
     expect(next).not.toHaveBeenCalled()
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
+  })
+
+  it('keeps the generic private denial and adds only a known refusal reason', async () => {
+    pageOperations.getOfflinePrivateSnapshot.mockRejectedValueOnce(
+      Object.assign(new Error('private page secret'), { code: 'OFFLINE_PAGE_INELIGIBLE', status: 404, reason: 'custom-content' })
+    )
+    const res = response()
+
+    await getOfflinePrivateSnapshot({ user: { id: 9, authVersion: 3 }, params: { id: '7' } }, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Offline snapshot is unavailable.', reason: 'custom-content' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('secret')
   })
 
   it.each([

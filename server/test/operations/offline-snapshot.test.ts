@@ -456,6 +456,79 @@ describe('offline snapshot admission operations', () => {
     if (_label === 'custom script projections') expect(String(error)).not.toContain('privateProjection')
   })
 
+  it.each([
+    ['a stale render', 'render-pending', () => { page.renderedSourceRevision = '7' }],
+    ['custom script content', 'custom-content', () => { page.extra = { js: 'window.privateProjection = true' } }],
+    ['active markup', 'custom-content', () => { page.render = '<p onclick="alert(1)">Active</p>' }],
+    ['an unpublished page', 'unpublished', () => { page.isPublished = false }],
+    ['an unsupported editor', 'editor', () => { page.editorKey = 'html' }]
+  ])('names the refusal reason for %s on a readable page', async (_label: string, reason: string, mutate: () => void) => {
+    mutate()
+
+    const error = await operations.getOfflineSnapshot({ id: 7 }).catch(value => value as Error)
+
+    expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE', reason })
+    expect(String(error)).not.toContain('privateProjection')
+  })
+
+  it.each([
+    [
+      'a private page on the public path',
+      () => {
+        page.visibility = 'private'
+        page.ownerId = 1
+      }
+    ],
+    [
+      'a rule-denied page',
+      () => {
+        loadPageRuleAuthority.mockImplementation(async requester => ({
+          requester,
+          permissions: ['read:pages'],
+          groups: [{ id: 1, pageRules: [{ match: 'TAG', path: 'safe', deny: true, roles: ['read:pages'] }] }],
+          tagAliases: { safe: 'safe' }
+        }))
+      }
+    ],
+    ['a protected page', () => { protectedPage = true }],
+    ['an absent page', () => { page = undefined as unknown as Record<string, unknown> }]
+  ])('withholds every refusal reason for %s', async (_label: string, mutate: () => void) => {
+    mutate()
+    // Each of these would otherwise carry a reason; access is checked first.
+    if (page) {
+      page.renderedSourceRevision = '7'
+      page.extra = { js: 'window.privateProjection = true' }
+      page.isPublished = false
+    }
+
+    const error = await operations.getOfflineSnapshot({ id: 7 }).catch(value => value as Error)
+
+    expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+    expect(Reflect.get(error, 'reason') ?? null).toBeNull()
+  })
+
+  it('names the refusal reason on the private path only after private read access is confirmed', async () => {
+    page.visibility = 'private'
+    page.ownerId = 7
+    page.renderedSourceRevision = '7'
+    const requester = { id: 7, authVersion: 3, permissions: ['read:pages'] }
+
+    await expect(operations.getOfflinePrivateSnapshot({ id: 7, requester })).rejects.toMatchObject({ code: 'OFFLINE_PAGE_INELIGIBLE', reason: 'render-pending' })
+
+    // A page this reader cannot read: no reason, even though its render is stale.
+    page.visibility = 'public'
+    page.ownerId = null
+    loadPageRuleAuthority.mockImplementation(async ruleRequester => ({
+      requester: ruleRequester,
+      permissions: ['read:pages'],
+      groups: [{ id: 1, pageRules: [{ match: 'TAG', path: 'safe', deny: true, roles: ['read:pages'] }] }],
+      tagAliases: { safe: 'safe' }
+    }))
+    const error = await operations.getOfflinePrivateSnapshot({ id: 7, requester }).catch(value => value as Error)
+    expect(error).toMatchObject({ code: 'OFFLINE_PAGE_INELIGIBLE' })
+    expect(Reflect.get(error, 'reason') ?? null).toBeNull()
+  })
+
   it('uses the same eligibility error for an absent page', async () => {
     page = undefined as unknown as Record<string, unknown>
 

@@ -27,6 +27,7 @@ import {
   type OfflineSavedPageOpenRequest
 } from '../../helpers/offline-routes.ts'
 import { renderOfflineHtmlFragment } from '../../helpers/offline-renderer.ts'
+import { offlineServerReasonDetail } from '../../helpers/offline-page-status.ts'
 import {
   createOfflineSyncUnavailableResult,
   OFFLINE_SYNC_COORDINATOR_KEY,
@@ -1677,6 +1678,7 @@ onBeforeUnmount(() => {
           <div class="missing-page-main">
             <strong>Page #{{ entry.page.pageId }} · {{ entry.page.locale }}</strong>
             <span class="missing-page-status" :data-state="entry.status">{{ missingPolicyStatusLabel(entry.status) }}</span>
+            <small v-if="entry.status === 'denied' && entry.page.ineligibleReason">{{ offlineServerReasonDetail(entry.page.ineligibleReason, $t) }}</small>
             <small>Saved via: {{ provenanceLabelForPolicy(entry.page) }}</small>
           </div>
           <div class="missing-page-actions">

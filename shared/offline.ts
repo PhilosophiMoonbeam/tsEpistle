@@ -179,6 +179,18 @@ export type OfflineSearchDocumentV1 = z.infer<typeof OfflineSearchDocumentV1Sche
 export const OFFLINE_POLICY_AVAILABILITY = ['unknown', 'available', 'ineligible', 'transient-failure'] as const
 export const OfflinePolicyAvailabilitySchema = z.enum(OFFLINE_POLICY_AVAILABILITY)
 export type OfflinePolicyAvailability = z.infer<typeof OfflinePolicyAvailabilitySchema>
+/**
+ * Why the server refused an offline copy of a page. The server sends a reason only
+ * after it has confirmed that the requester can read the page, so a reason never
+ * reveals anything about a page the requester cannot read. No reason means "unknown".
+ */
+export const OFFLINE_INELIGIBLE_REASONS = ['unpublished', 'render-pending', 'editor', 'custom-content', 'too-large'] as const
+export const OfflineIneligibleReasonSchema = z.enum(OFFLINE_INELIGIBLE_REASONS)
+export type OfflineIneligibleReason = z.infer<typeof OfflineIneligibleReasonSchema>
+export const offlineIneligibleReason = (value: unknown): OfflineIneligibleReason | null => {
+  const parsed = OfflineIneligibleReasonSchema.safeParse(value)
+  return parsed.success ? parsed.data : null
+}
 
 export const OFFLINE_SYNC_DIAGNOSTIC_STATUSES = ['idle', 'running', 'complete', 'partial', 'offline', 'error'] as const
 export const OfflineSyncDiagnosticStatusSchema = z.enum(OFFLINE_SYNC_DIAGNOSTIC_STATUSES)
@@ -241,6 +253,8 @@ export const OfflinePagePolicyRecordSchema = z
     automaticSelectedAt: isoDateTime.nullable(),
     excluded: z.boolean(),
     availability: OfflinePolicyAvailabilitySchema,
+    /** Server refusal reason; present only while availability is 'ineligible'. */
+    ineligibleReason: OfflineIneligibleReasonSchema.optional(),
     byteSize: nonnegativeSafeInteger
   })
   .strict()
