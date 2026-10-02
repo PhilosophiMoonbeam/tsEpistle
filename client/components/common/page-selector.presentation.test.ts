@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 import type { App, ComponentOptions, PropType, RenderFunction } from 'vue'
 import type { MoveLinkReviewInput, MoveLinkReviewResponse, PageTreeRow } from '../../helpers/pages-api.ts'
 
@@ -171,17 +172,7 @@ const mountSelector = async (initialRows: PageTreeRow[], selectorProps: Record<s
   app.component('v-list-item-title', passthrough('span'))
   app.component('v-tooltip', passthrough())
   app.component('v-treeview', passthrough())
-  app.config.globalProperties.$t = (key: string): string =>
-    ({
-      'common:actions.cancel': 'Cancel',
-      'common:actions.select': 'Select',
-      'common:pageSelector.createTitle': 'Select New Page Location',
-      'common:pageSelector.moveTitle': 'Move / Rename Page Location',
-      'common:pageSelector.pages': 'Pages',
-      'common:pageSelector.selectTitle': 'Select a Page',
-      'common:pageSelector.virtualFolders': 'Virtual Folders',
-      'common:pageSelector.folderEmptyWarning': 'This folder is empty.'
-    })[key] ?? key
+  app.config.globalProperties.$t = translateEnglish
   app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
   const instance = app.mount(host) as unknown as {
     currentLocale: string
