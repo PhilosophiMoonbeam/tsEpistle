@@ -34,6 +34,7 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   isTocCompact: false,
   isTocMobile: false,
   winWidth: 1440,
+  pageToolsHost: '#page-desktop-rail',
   tocDisclosureExpanded: true,
   isPublished: true,
   visibility: 'public',
@@ -91,7 +92,7 @@ describe('page reader chrome template', () => {
     expect(wide.querySelector('.page-toc-card .page-toc-toggle')).toBeNull()
     expect(wide.querySelector('.page-toc-card')?.textContent).toContain('common:page.onThisPage')
 
-    const compact = (await renderTemplate(PAGE, baseState({ isTocCompact: true, winWidth: 900, tocDisclosureExpanded: false }))).document
+    const compact = (await renderTemplate(PAGE, baseState({ isTocCompact: true, winWidth: 900, pageToolsHost: '#page-tablet-tools', tocDisclosureExpanded: false }))).document
     const toggle = compact.querySelector('.page-toc-card .page-toc-toggle')
     expect(toggle?.getAttribute('aria-expanded')).toBe('false')
     expect(toggle?.getAttribute('aria-controls')).toBe('page-toc-content')
@@ -114,12 +115,13 @@ describe('page reader chrome template', () => {
     expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
   })
 
-  it('places every utility tooltip by one rule so none covers the metadata below the row', async () => {
-    const { document } = await renderTemplate(PAGE, baseState({ isAuthenticated: true, utilityTooltipLocation: 'end', utilityTooltipTarget: '#page-desktop-rail .page-tools-card' }))
+  it('opens every utility tooltip below the whole card with a capped width, so none covers the title or the metadata', async () => {
+    const { document } = await renderTemplate(PAGE, baseState({ isAuthenticated: true, utilityTooltipTarget: '#page-desktop-rail .page-tools-card' }))
     const tooltips = Array.from(document.querySelectorAll('.page-tools-card__utilities [data-stub="v-tooltip"]'))
     expect(tooltips.length).toBeGreaterThan(2)
-    expect(tooltips.map(tooltip => tooltip.getAttribute('location'))).toEqual(tooltips.map(() => 'end'))
+    expect(tooltips.map(tooltip => tooltip.getAttribute('location'))).toEqual(tooltips.map(() => 'bottom'))
     expect(tooltips.map(tooltip => tooltip.getAttribute('target'))).toEqual(tooltips.map(() => '#page-desktop-rail .page-tools-card'))
+    expect(tooltips.map(tooltip => tooltip.getAttribute('max-width'))).toEqual(tooltips.map(() => '280'))
   })
 
   it('renders an author placeholder in the middle of a translated sentence without moving the name', async () => {
@@ -302,15 +304,14 @@ describe('page reader chrome rules', () => {
     ])
   })
 
-  it('opens utility tooltips beside the desktop rail card and above the row elsewhere', () => {
-    const place = (vm: Record<string, unknown>) => {
-      vm.utilityTooltipsBeside = call('utilityTooltipsBeside', vm)
-      return [call('utilityTooltipLocation', vm), call('utilityTooltipTarget', vm)]
+  it('anchors utility tooltips to the card in the host it is teleported to', () => {
+    const target = (vm: Record<string, unknown>) => {
+      vm.pageToolsHost = call('pageToolsHost', vm)
+      return call('utilityTooltipTarget', vm)
     }
-    expect(place({ isTocMobile: false, winWidth: 1440, tocPosition: 'left' })).toEqual(['end', '#page-desktop-rail .page-tools-card'])
-    expect(place({ isTocMobile: false, winWidth: 1440, tocPosition: 'right' })).toEqual(['start', '#page-desktop-rail .page-tools-card'])
-    expect(place({ isTocMobile: false, winWidth: 1100, tocPosition: 'left' })).toEqual(['top', undefined])
-    expect(place({ isTocMobile: true, winWidth: 390, tocPosition: 'left' })).toEqual(['top', undefined])
+    expect(target({ isTocMobile: false, winWidth: 1440 })).toBe('#page-desktop-rail .page-tools-card')
+    expect(target({ isTocMobile: false, winWidth: 1100 })).toBe('#page-tablet-tools .page-tools-card')
+    expect(target({ isTocMobile: true, winWidth: 390 })).toBe('#page-mobile-tools .page-tools-card')
   })
 
   it('names the browser time zone on Updated only when the account could not load and no zone is saved', () => {

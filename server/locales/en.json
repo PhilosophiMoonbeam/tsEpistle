@@ -239,7 +239,7 @@
         "sourceManual": "You saved this page.",
         "sourceTagNamed": "Saved with tag #{{tags}}.",
         "sourceTag": "Saved with a tag you save offline.",
-        "sourceAutomatic": "Saved automatically. Remove it to stop saving it automatically.",
+        "sourceAutomatic": "Saved automatically. Select to remove it.",
         "toggleLabel": "Save offline",
         "busyDetail": "Wait for the current offline change to finish.",
         "setupTitle": "Set up offline reading",
