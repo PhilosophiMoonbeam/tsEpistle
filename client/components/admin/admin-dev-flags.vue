@@ -1,6 +1,6 @@
 <template>
   <div class="developer-flags-workspace">
-    <div :inert="reviewOpen || discardOpen || undefined">
+    <div :inert="reviewOpen || undefined">
       <admin-hero
         title="Developer flags"
         description="Temporary diagnostic settings for investigating an active problem. Save a reviewed policy first, then explicitly reconcile it with this process."
@@ -327,22 +327,11 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-
-    <v-dialog v-model="discardOpen" max-width="460" aria-labelledby="developer-flags-discard-title">
-      <v-card class="pa-6">
-        <h2 id="developer-flags-discard-title">Discard this diagnostic draft?</h2>
-        <p class="mt-4">The saved policy and any process application are unchanged. Your pending draft and reason will be discarded.</p>
-        <v-card-actions class="px-0 pt-5">
-          <v-btn @click="keepEditing">Keep editing</v-btn>
-          <v-spacer />
-          <v-btn color="primary" @click="discardDraft">Discard draft</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AsyncState from '@/components/common/async-state.vue'
@@ -377,13 +366,11 @@ const notice = ref('')
 const stale = ref(false)
 const recoveryKind = ref<'save' | 'apply' | 'refresh' | ''>('')
 const reviewOpen = ref(false)
-const discardOpen = ref(false)
 const reviewKind = ref<'save' | 'apply'>('save')
 const reviewPolicy = shallowRef<DeveloperFlags | null>(null)
 const reviewFingerprint = ref('')
 const riskAcknowledged = ref(false)
 const reviewError = ref('')
-const pendingAction = shallowRef<(() => void) | null>(null)
 
 let disposed = false
 const savedSource = computed(() =>
@@ -394,7 +381,6 @@ const savedSource = computed(() =>
       : 'Effective deployment configuration'
 )
 let generation = 0
-let allowLeave = false
 
 const section = computed(() =>
   sections.some((item) => item.key === route.query.section) ? (route.query.section as (typeof sections)[number]['key']) : 'overview'
@@ -476,13 +462,14 @@ async function reloadWorkspace(preserveDraft = false): Promise<boolean> {
   }
 }
 
-function guarded(action: () => void) {
-  if (dirty.value) {
-    pendingAction.value = action
-    discardOpen.value = true
-  } else {
-    action()
-  }
+const discardTitle = 'Discard this diagnostic draft?',
+  discardMessage = 'The saved policy and any process application are unchanged. Your pending draft and reason will be discarded.'
+
+async function guarded(action: () => void) {
+  if (!dirty.value) return action()
+  if (!(await confirmDiscard(discardTitle, discardMessage, 'Discard draft'))) return
+  resetDraft()
+  action()
 }
 
 function refresh() {
@@ -574,19 +561,6 @@ async function confirmReview() {
   }
 }
 
-function keepEditing() {
-  discardOpen.value = false
-  pendingAction.value = null
-}
-
-function discardDraft() {
-  resetDraft()
-  discardOpen.value = false
-  const action = pendingAction.value
-  pendingAction.value = null
-  action?.()
-}
-
 function beforeUnload(event: BeforeUnloadEvent) {
   if (dirty.value || busy.value) {
     event.preventDefault()
@@ -594,16 +568,10 @@ function beforeUnload(event: BeforeUnloadEvent) {
   }
 }
 
-onBeforeRouteLeave((to) => {
-  if (allowLeave) return true
+onBeforeRouteLeave(async () => {
   if (busy.value) return false
   if (!dirty.value) return true
-  pendingAction.value = () => {
-    allowLeave = true
-    void router.push(to.fullPath)
-  }
-  discardOpen.value = true
-  return false
+  return !busy.value && (await confirmDiscard(discardTitle, discardMessage, 'Discard draft'))
 })
 
 onMounted(() => {
