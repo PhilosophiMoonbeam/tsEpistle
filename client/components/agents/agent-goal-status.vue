@@ -415,7 +415,7 @@ const budgetLabel = computed(() => {
 })
 const budgetAriaLabel = computed(() => t('common:agentGoalStatus.used', { value: budgetLabel.value, value2: Math.round(budgetPercent.value), interpolation: { escapeValue: false } }))
 const progressLabel = computed(() => {
-  if (goal.status === 'completed') return t('common:agentGoalStatus.completedRun', { continuationCount: goal.continuationCount + 1, continuationCount2: goal.continuationCount === 0 ? '' : 's', interpolation: { escapeValue: false } })
+  if (goal.status === 'completed') return t('common:agentGoalStatus.completedRun', { count: goal.continuationCount + 1, interpolation: { escapeValue: false } })
   if (goal.status === 'budget_limited') {
     return canRenewTokenBudget.value
       ? t('common:agentGoalStatus.tokenBudgetStoppedRun')

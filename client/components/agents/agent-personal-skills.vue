@@ -10,7 +10,7 @@
         </div>
         <div class="personal-skills__header-state">
           <v-chip size="small" variant="tonal" prepend-icon="mdi-account-lock-outline">{{ $t('common:agentPersonalSkills.ownerOnly') }}</v-chip>
-          <v-chip v-if="loaded" size="small" variant="outlined">{{ $t('common:agentPersonalSkills.skill', { skillsCount: skills.length, tValue: $t('common:agentPersonalSkills.sCount', { count: skills.length }), interpolation: { escapeValue: false } }) }}</v-chip>
+          <v-chip v-if="loaded" size="small" variant="outlined">{{ $t('common:agentPersonalSkills.skill', { count: skills.length, interpolation: { escapeValue: false } }) }}</v-chip>
         </div>
         <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:agentPersonalSkills.closePersonalSkills')" :disabled="saving" @click="requestClose" />
       </header>

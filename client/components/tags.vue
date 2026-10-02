@@ -414,7 +414,7 @@ export default {
       if (this.offlinePolicyError) return this.offlinePolicyError
       if (!this.offlineStorage) return this.$t('common:tags.offlineSavingUnavailableDevice')
       if (!this.offlineTags.length) return this.$t('common:tags.noTagsFollowedOffline')
-      return this.$t('common:tags.tagFollowedOfflineSaving', { offlineTagsCount: this.offlineTags.length, offlineTags: this.offlineTags.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
+      return this.$t('common:tags.tagFollowedOfflineSaving', { count: this.offlineTags.length, interpolation: { escapeValue: false } })
     },
     indexIsVisible (): boolean {
       return !this.hasSelection || this.indexExpanded || this.$vuetify.display.mdAndUp

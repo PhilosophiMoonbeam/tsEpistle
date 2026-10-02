@@ -16,6 +16,11 @@ const pluralCases = [
   ['common:agentMemoryManager.sectionWouldExceedLimit', 'character', 'characters'],
   ['common:agentMemoryManager.charactersWillRemainSection', 'character', 'characters'],
   ['common:agentComposer.matchingSkills', 'skill', 'skills'],
+  ['common:agentGoalStatus.completedRun', 'run', 'runs'],
+  ['common:agentPersonalSkills.skill', 'skill', 'skills'],
+  ['common:offlineSettings.localDraftProtectedReconnect', 'draft', 'drafts'],
+  ['common:tags.tagFollowedOfflineSaving', 'tag', 'tags'],
+  ['common:agentContextPicker.addSelectedSource', 'source', 'sources'],
   ['common:agentHistoryPanel.conversations2', 'conversation', 'conversations']
 ] as const
 
