@@ -257,7 +257,7 @@
               prepend-icon="mdi-creation-outline"
               append-icon="mdi-chevron-down"
               :aria-label="$t('common:agentComposer.chooseCreationTools')"
-              :title="selectedGenerationTools.length ? $t('common:agentComposer.creationToolEnabledAssistant', { selectedGenerationToolsCount: selectedGenerationTools.length, selectedGenerationTools: selectedGenerationTools.length === 1 ? '' : 's', interpolation: { escapeValue: false } }) : $t('common:agentComposer.chooseCreationTools')"
+              :title="selectedGenerationTools.length ? $t('common:agentComposer.creationToolEnabledAssistant', { count: selectedGenerationTools.length, interpolation: { escapeValue: false } }) : $t('common:agentComposer.chooseCreationTools')"
               :disabled="attachDisabled"
             >{{ $t('common:actions.create') }}</v-btn>
           </template>
@@ -1078,7 +1078,7 @@ const skillLoadMessage = computed(() => props.skillsLoadError
     : props.skillsLoadError
   : t('common:agentComposer.availableSkillsStillBeing'))
 const skillCommandStatus = computed(() => skillCommandResults.value.length
-  ? t('common:agentComposer.matchingSkills', { valueCount: skillCommandResults.value.length, interpolation: { escapeValue: false } })
+  ? t('common:agentComposer.matchingSkills', { count: skillCommandResults.value.length, interpolation: { escapeValue: false } })
   : props.skillsLoading
     ? t('common:agentComposer.loadingSkillCatalog')
     : props.skillsPartial

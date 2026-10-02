@@ -9,7 +9,7 @@
       <span class="sr-only" role="status" aria-live="polite">{{ memorySearchStatus }}</span>
     </div>
 
-    <v-progress-linear v-if="loading" indeterminate color="primary" :aria-label="$t('common:agentMemoryManager.loadingAgentMemory2')" />
+    <v-progress-linear v-if="loading" indeterminate color="primary" :aria-label="$t('common:agentMemoryManager.loadingAgentMemoryLabel')" />
     <v-alert v-if="networkBlocked" class="agent-memory__connection-warning" density="compact" type="warning" variant="tonal" role="status">
       {{ $t('common:agentMemoryManager.connectionRequiredChangeAgent') }}
     </v-alert>
@@ -38,7 +38,7 @@
             <header class="agent-memory__editor-header">
               <div>
                 <p class="agent-memory__eyebrow">{{ editing.id ? $t('common:agentMemoryManager.reviseRecord') : $t('common:agentMemoryManager.newRecord') }}</p>
-                <h3 id="agent-memory-editor-title" class="text-title-medium">{{ editing.id ? $t('common:agentMemoryManager.editMemory2') : $t('common:agentMemoryManager.addMemory') }}</h3>
+                <h3 id="agent-memory-editor-title" class="text-title-medium">{{ editing.id ? $t('common:agentMemoryManager.editMemoryAction') : $t('common:agentMemoryManager.addMemory') }}</h3>
               </div>
               <v-btn class="wiki-close-control" icon="mdi-close" size="small" variant="text" :aria-label="$t('common:agentMemoryManager.cancelMemoryEdit')" :disabled="saving" @click="cancelEdit" />
             </header>
@@ -160,7 +160,7 @@
     <v-card ref="removeDialogCard" class="agent-memory__dialog" rounded="xl">
       <v-card-title :id="removeDialogTitleId" class="agent-memory__dialog-title">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-archive-remove-outline" aria-hidden="true" /></v-avatar>
-        <span>{{ $t('common:agentMemoryManager.removeMemory2') }}</span>
+        <span>{{ $t('common:agentMemoryManager.removeMemoryQuestion') }}</span>
       </v-card-title>
       <v-card-text :id="removeDialogDescriptionId">
         <v-alert v-if="dialogError" class="agent-memory__dialog-error" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
@@ -170,7 +170,7 @@
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelRemove">{{ $t('common:agentMemoryManager.keepRecord') }}</v-btn>
-        <v-btn color="error" variant="tonal" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy) || networkBlocked" @click="remove">{{ $t('common:agentMemoryManager.removeMemory3') }}</v-btn>
+        <v-btn color="error" variant="tonal" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy) || networkBlocked" @click="remove">{{ $t('common:agentMemoryManager.removeMemoryAction') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -251,7 +251,7 @@ let disposed = false
 
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)
-const memoryCountLabel = computed(() => t('common:agentMemoryManager.saved', { value: memoryCount.value, memoryCount: memoryCount.value === 1 ? 'record' : 'records', interpolation: { escapeValue: false } }))
+const memoryCountLabel = computed(() => t('common:agentMemoryManager.saved', { count: memoryCount.value, interpolation: { escapeValue: false } }))
 const memoryEntrySeparatorLength = '\n§\n'.length
 const projectedStoreCharacters = computed(() => {
   const currentId = editing.value?.id
@@ -270,8 +270,8 @@ const projectedStoreCharacters = computed(() => {
 const draftOverLimit = computed(() => projectedStoreCharacters.value > targetLimit.value)
 const draftCapacityLabel = computed(() => {
   const difference = targetLimit.value - projectedStoreCharacters.value
-  if (difference < 0) return t('common:agentMemoryManager.sectionWouldExceedLimit', { abs: Math.abs(difference).toLocaleString(), interpolation: { escapeValue: false } })
-  return t('common:agentMemoryManager.charactersWillRemainSection', { difference: difference.toLocaleString(), interpolation: { escapeValue: false } })
+  if (difference < 0) return t('common:agentMemoryManager.sectionWouldExceedLimit', { count: Math.abs(difference), interpolation: { escapeValue: false } })
+  return t('common:agentMemoryManager.charactersWillRemainSection', { count: difference, interpolation: { escapeValue: false } })
 })
 
 const remainingCharacters = (store: MemoryStore): number => Math.max(0, store.limit - store.characters)
@@ -289,7 +289,7 @@ const addMemoryDisabledReason = computed<string | undefined>(() => {
 })
 const clearMemoryDisabledReason = computed<string | undefined>(() => {
   if (loading.value || !loaded.value) return t('common:agentMemoryManager.loadingAgentMemory')
-  if (stale.value) return t('common:agentMemoryManager.refreshAgentMemoryBefore2')
+  if (stale.value) return t('common:agentMemoryManager.refreshBeforeClearing')
   if (memoryCount.value === 0) return t('common:agentMemoryManager.noSavedMemoryClear')
   return undefined
 })
@@ -330,7 +330,7 @@ const sections = computed(() => [
 const visibleSections = computed(() => sections.value.map(section => ({
   ...section, entries: section.store.entries.filter(entry => !searchTerm.value || entry.content.toLocaleLowerCase().includes(searchTerm.value))
 })).filter(section => !searchTerm.value || section.entries.length > 0))
-const memorySearchStatus = computed(() => searchTerm.value ? t('common:agentMemoryManager.matchingMemories', { value: visibleSections.value.reduce((sum, section) => sum + section.entries.length, 0), interpolation: { escapeValue: false } }) : t('common:agentMemoryManager.allSavedMemories'))
+const memorySearchStatus = computed(() => searchTerm.value ? t('common:agentMemoryManager.matchingMemories', { count: visibleSections.value.reduce((sum, section) => sum + section.entries.length, 0), interpolation: { escapeValue: false } }) : t('common:agentMemoryManager.allSavedMemories'))
 const focusEditor = async (): Promise<void> => {
   await nextTick()
   // Optional call: test DOM stubs (and some embedding hosts) may not implement scrollIntoView.
@@ -358,11 +358,11 @@ const reconcileSelectedMemory = (nextMemories: AgentMemoryView): void => {
       dialogError.value = t('common:agentMemoryManager.memoryNoLongerAvailable')
     } else if (latest.version !== pendingRemoval.version) {
       removing.value = latest
-      dialogError.value = t('common:agentMemoryManager.memoryChangedWhileYou2')
+      dialogError.value = t('common:agentMemoryManager.memoryChangedBeforeRemoving')
     }
   }
   if (clearReviewCount.value !== null && clearReviewCount.value !== nextMemories.agent.entries.length + nextMemories.user.entries.length) {
-    clearError.value = t('common:agentMemoryManager.memoryChangedWhileYou3')
+    clearError.value = t('common:agentMemoryManager.memoryChangedBeforeClearing')
   }
 }
 const rejectedRefresh = (error?: unknown, current = false): AgentRefreshResult => ({
@@ -403,9 +403,9 @@ const load = async (committedMessage?: string): Promise<AgentRefreshResult> => {
   } catch (value) {
     if (disposed || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
     stale.value = loaded.value
-    const reason = message(value, loaded.value ? t('common:agentMemoryManager.agentMemoryCouldNot') : t('common:agentMemoryManager.agentMemoryCouldNot2'))
+    const reason = message(value, loaded.value ? t('common:agentMemoryManager.agentMemoryCouldNot') : t('common:agentMemoryManager.agentMemoryCouldNotLoad'))
     error.value = loaded.value
-      ? t('common:agentMemoryManager.showingLastLoadedMemory', { value: committedMessage ? `${committedMessage}, but memory could not be refreshed. ` : '', reason, interpolation: { escapeValue: false } })
+      ? t('common:agentMemoryManager.showingLastLoadedMemory', { prefix: committedMessage ? `${committedMessage}, but memory could not be refreshed. ` : '', reason, interpolation: { escapeValue: false } })
       : reason
     const result = rejectedRefresh(value, true)
     memoryRefreshResult.value = result
@@ -583,7 +583,7 @@ const clear = async (): Promise<void> => {
     if (draftRevision.value === draftRevisionAtStart) cancelEdit()
     await load(t('common:agentMemoryManager.agentMemoryWasCleared'))
   } catch (value) {
-    if (!disposed) clearError.value = message(value, t('common:agentMemoryManager.agentMemoryCouldNot3'))
+    if (!disposed) clearError.value = message(value, t('common:agentMemoryManager.agentMemoryCouldNotClear'))
   } finally {
     if (!disposed) {
       saving.value = false

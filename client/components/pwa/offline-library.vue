@@ -405,16 +405,16 @@ const unlockSavedPages = async (): Promise<void> => {
 
 const searchDetail = computed(() => {
   if (storageChecking.value || loading.value || !hasCorpus.value) return t('common:offlineLibrary.checkingSavedPagesDevice')
-  if (searching.value) return t('common:offlineLibrary.searchingSavedPage', { valueCount: activeRecords.value.length, activeRecords: activeRecords.value.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
+  if (searching.value) return t('common:offlineLibrary.searchingSavedPage', { count: activeRecords.value.length, interpolation: { escapeValue: false } })
   if (searchError.value) return t('common:offlineLibrary.searchCouldNotCompleted')
   if (searchQuery.value.trim()) {
     if (!resultRecords.value.length) return t('common:offlineLibrary.noSavedPagesMatch', { value: searchQuery.value.trim().slice(0, 120), interpolation: { escapeValue: false } })
     const more = searchHasMore.value ? ` ${t('common:offlineLibrary.moreMatchesAvailable')}` : ''
-    return t('common:offlineLibrary.matchingSavedPage', { valueCount: resultRecords.value.length, resultRecords: resultRecords.value.length === 1 ? '' : 's', more, interpolation: { escapeValue: false } })
+    return t('common:offlineLibrary.matchingSavedPage', { count: resultRecords.value.length, more, interpolation: { escapeValue: false } })
   }
   if (!activeRecords.value.length) return readingVaultLocked.value ? t('common:offlineLibrary.unlockPrivateReadingSee') : t('common:offlineLibrary.noSavedPagesYet')
   const more = searchHasMore.value ? ` ${t('common:offlineLibrary.showingFirst50')}` : ''
-  return t('common:offlineLibrary.savedPageDevice', { valueCount: activeRecords.value.length, activeRecords: activeRecords.value.length === 1 ? '' : 's', more, interpolation: { escapeValue: false } })
+  return t('common:offlineLibrary.savedPageDevice', { count: activeRecords.value.length, more, interpolation: { escapeValue: false } })
 })
 
 const libraryMessage = computed(() => {
@@ -1124,7 +1124,7 @@ const reconcileAfterCommittedRemoval = async (): Promise<void> => {
       emit('error', policyError.value)
     }
   } catch (error) {
-    syncFailure = t('common:offlineLibrary.savedPageRemovedLocally3', { 512: normalizeError(error, 'Offline synchronization could not be completed.').slice(0, 512), interpolation: { escapeValue: false } })
+    syncFailure = t('common:offlineLibrary.savedPageRemovedLocally3', { detail: normalizeError(error, 'Offline synchronization could not be completed.').slice(0, 512), interpolation: { escapeValue: false } })
     policyError.value = syncFailure
     emit('error', policyError.value)
   }

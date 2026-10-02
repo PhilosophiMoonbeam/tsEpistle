@@ -53,7 +53,7 @@ const unavailable = (asset: Asset): string | null => {
   if (!Number.isSafeInteger(asset.fileSize) || asset.fileSize < 0) return t('common:agentAssetPicker.fileUnavailable')
   return validateAgentAttachment({ type, size: asset.fileSize })
 }
-const formatSize = (size: number): string => size < 1024 * 1024 ? t('common:agentAssetPicker.kb', { 1: Math.max(1, Math.ceil(size / 1024)), interpolation: { escapeValue: false } }) : t('common:agentAssetPicker.mb', { value: (size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0), interpolation: { escapeValue: false } })
+const formatSize = (size: number): string => size < 1024 * 1024 ? t('common:agentAssetPicker.kb', { sizeKb: Math.max(1, Math.ceil(size / 1024)), interpolation: { escapeValue: false } }) : t('common:agentAssetPicker.mb', { value: (size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0), interpolation: { escapeValue: false } })
 const close = () => { controller?.abort(); emit('close') }
 const load = async () => {
   controller?.abort()

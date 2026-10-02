@@ -97,7 +97,7 @@ const storageDetail = computed(() => {
   const estimate = storageEstimate.value
   const capacity = estimate.usageBytes !== null && estimate.quotaBytes !== null
     ? ` ${t('common:offlineSettings.browserStorage', { usageBytes: formatBytes(estimate.usageBytes), quotaBytes: formatBytes(estimate.quotaBytes), interpolation: { escapeValue: false } })}` : ''
-  return t('common:offlineSettings.savedPageUsing', { snapshotCount: estimate.snapshotCount, snapshotCount2: estimate.snapshotCount === 1 ? '' : 's', managedBytes: formatBytes(estimate.managedBytes), capacity, interpolation: { escapeValue: false } })
+  return t('common:offlineSettings.savedPageUsing', { count: estimate.snapshotCount, managedBytes: formatBytes(estimate.managedBytes), capacity, interpolation: { escapeValue: false } })
 })
 
 function formatBytes(value: number): string {
