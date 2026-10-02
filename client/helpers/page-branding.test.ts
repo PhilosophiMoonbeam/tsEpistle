@@ -1,5 +1,5 @@
 import { describe, expect, it } from '../../server/test/bun-test.mts'
-import { normalizePageBrandingView, pageBrandingIdentity, resolvePageBrandingStyle } from './page-branding.ts'
+import { brandingDuplicatesSiteLogo, normalizePageBrandingView, pageBrandingIdentity, resolvePageBrandingStyle } from './page-branding.ts'
 import type { PageBrandingView } from '../../shared/page-branding.ts'
 
 const sourceSha256 = 'a'.repeat(64)
@@ -94,5 +94,18 @@ describe('page branding client helper', () => {
       expect(pageBrandingIdentity(changed)).not.toBe(identity)
       expect(resolvePageBrandingStyle(changed, identity)['--page-branding-rgb']).toBe('12 34 56')
     }
+  })
+})
+
+describe('brandingDuplicatesSiteLogo', () => {
+  it('matches the same file regardless of version query strings', () => {
+    expect(brandingDuplicatesSiteLogo('/assets/logo.png?v=abc', '/assets/logo.png')).toBe(true)
+    expect(brandingDuplicatesSiteLogo('/assets/a%20b.png?v=1', '/assets/a b.png?v=2')).toBe(true)
+  })
+
+  it('keeps distinct or missing images', () => {
+    expect(brandingDuplicatesSiteLogo('/assets/page.png?v=abc', '/_site-logo/abc/logo.png')).toBe(false)
+    expect(brandingDuplicatesSiteLogo(undefined, '/assets/logo.png')).toBe(false)
+    expect(brandingDuplicatesSiteLogo('/assets/logo.png', '')).toBe(false)
   })
 })

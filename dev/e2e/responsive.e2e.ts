@@ -696,7 +696,9 @@ test.describe('responsive UI quality matrix', () => {
         ...(editShortcuts as Record<string, unknown>),
         editMenuBar: true,
         editMenuBtn: true,
-        editMenuExternalBtn: false
+        editMenuExternalBtn: false,
+        // Small screens show one edit control; keep it the header button here.
+        editFab: false
       }
       const encodedEditShortcuts = Buffer.from(JSON.stringify(patchedEditShortcuts), 'utf8').toString('base64')
       const patchedRawPayload = {
@@ -3311,19 +3313,24 @@ test.describe('reader metadata rendering', () => {
       const geometry = await page.evaluate(() => {
         const card = document.querySelector<HTMLElement>('.page-tools-card')
         const date = card?.querySelector<HTMLElement>('.page-document-row--date')
+        const provenance = card?.querySelector<HTMLElement>('.page-tools-card__provenance')
         const history = card?.querySelector<HTMLElement>('.page-tools-history-link')
         const focus = card?.querySelector<HTMLElement>('.page-focus-control')
-        if (!date || !history || !focus) throw new Error('Reader tools are missing the date, history link, or Focus utility.')
+        if (!date || !provenance || !history || !focus) throw new Error('Reader tools are missing the date, history link, or Focus utility.')
         const historyIcon = history.querySelector<HTMLElement>('.v-icon')
         const focusIcon = focus.querySelector<HTMLElement>('.v-icon')
         const dateBounds = date.getBoundingClientRect()
+        const provenanceBounds = provenance.getBoundingClientRect()
         const historyBounds = history.getBoundingClientRect()
         const focusBounds = focus.getBoundingClientRect()
         return {
+          historyInUtilities: history.closest('.page-tools-card__utilities') !== null,
+          historyBottom: historyBounds.bottom,
           dateTop: dateBounds.top,
+          dateCenter: dateBounds.left + dateBounds.width / 2,
+          provenanceCenter: provenanceBounds.left + provenanceBounds.width / 2,
           historyTop: historyBounds.top,
-          historyRight: historyBounds.right,
-          focusRight: focusBounds.right,
+          focusTop: focusBounds.top,
           historyWidth: historyBounds.width,
           historyHeight: historyBounds.height,
           historyText: history.innerText.trim(),
@@ -3335,8 +3342,10 @@ test.describe('reader metadata rendering', () => {
           finePointer: window.matchMedia('(pointer: fine)').matches
         }
       })
-      expect(Math.abs(geometry.dateTop - geometry.historyTop), `The date and history utility share the top row at ${width}px`).toBeLessThanOrEqual(1)
-      expect(Math.abs(geometry.historyRight - geometry.focusRight), `The history utility aligns with Focus at ${width}px`).toBeLessThanOrEqual(1)
+      expect(geometry.historyInUtilities, `History is a page utility at ${width}px`).toBe(true)
+      expect(Math.abs(geometry.historyTop - geometry.focusTop), `History shares the utilities row with Focus at ${width}px`).toBeLessThanOrEqual(1)
+      expect(geometry.dateTop, `The update date sits below the utilities at ${width}px`).toBeGreaterThanOrEqual(geometry.historyBottom)
+      expect(Math.abs(geometry.dateCenter - geometry.provenanceCenter), `The update date is centered at ${width}px`).toBeLessThanOrEqual(2)
       expect(geometry.historyText, `The history utility is icon-only at ${width}px`).toBe('')
       expect(geometry.hasIcon, `The history utility exposes its icon at ${width}px`).toBe(true)
       expect(geometry.historyIconWidth, `The history icon renders at ${width}px`).toBeGreaterThan(0)
@@ -3601,14 +3610,18 @@ test.describe('focused reading', () => {
   test('keeps page position within bounds and excludes reader controls from print', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' })
     await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
-    const progress = page.getByRole('progressbar', { name: 'Page position', exact: true })
+    // The position bar is decorative, so it is hidden from assistive technology.
+    const progress = page.locator('.page-position')
     await expect(progress).toBeAttached()
-    const initial = Number(await progress.getAttribute('aria-valuenow'))
+    await expect(progress).toHaveAttribute('aria-hidden', 'true')
+    await expect(page.getByRole('progressbar', { name: 'Page position', exact: true })).toHaveCount(0)
+    const progressScale = () => progress.locator('.page-position-fill').evaluate(fill => new DOMMatrixReadOnly(getComputedStyle(fill).transform).a)
+    const initial = await progressScale()
     expect(initial).toBeGreaterThanOrEqual(0)
-    expect(initial).toBeLessThanOrEqual(100)
+    expect(initial).toBeLessThanOrEqual(1)
     await page.getByRole('button', { name: 'Focus', exact: true }).click()
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
-    await expect(progress).toHaveAttribute('aria-valuenow', '100')
+    await expect.poll(progressScale).toBeCloseTo(1, 2)
     await expectLocatorWithinViewport(page.locator('.page-reading-dock'), 'Exit focus at the end of the document')
     await page.emulateMedia({ media: 'print' })
     await expect(progress).toBeHidden()
