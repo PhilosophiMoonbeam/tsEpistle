@@ -19,9 +19,10 @@ type Translate = (key: string, options?: Record<string, unknown>) => string
 
 /**
  * One show/hide control for every password field.
- * The eye means "show"; the crossed eye means "hide". The label names the field
- * and the pressed state tells assistive technology whether the text is visible.
- * Works without i18n (first-run setup) by falling back to English.
+ * It is a toggle button: the name stays "Show <field>" and aria-pressed says
+ * whether the text is visible, so screen readers do not hear a changing name
+ * and a changing state at once. The icon follows the action: the eye shows,
+ * the crossed eye hides. Works without i18n (first-run setup).
  */
 export default defineComponent({
   props: {
@@ -33,9 +34,8 @@ export default defineComponent({
   computed: {
     label (): string {
       const translate = (this as unknown as { $t?: Translate }).$t
-      const key = this.visible ? 'common:password.hide' : 'common:password.show'
-      const fallback = `${this.visible ? 'Hide' : 'Show'} ${this.field}`
-      return typeof translate === 'function' ? translate(key, { field: this.field, defaultValue: fallback }) : fallback
+      const fallback = `Show ${this.field}`
+      return typeof translate === 'function' ? translate('common:password.show', { field: this.field, defaultValue: fallback }) : fallback
     }
   }
 })
