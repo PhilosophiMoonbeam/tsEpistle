@@ -588,20 +588,10 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-    <v-dialog v-model="discardOpen" max-width="480" aria-labelledby="analytics-discard-title">
-      <v-card class="analytics-dialog">
-        <v-card-title id="analytics-discard-title">Discard this draft?</v-card-title>
-        <v-card-text>There are unpublished analytics changes. Discard them to continue.</v-card-text>
-        <v-card-actions>
-          <v-btn @click="keepEditing">Keep editing</v-btn>
-          <v-spacer />
-          <v-btn color="primary" @click="discard">Discard draft</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </v-container>
 </template>
 <script setup lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AnimatedNumber from '@/components/common/animated-number.vue'
@@ -655,16 +645,13 @@ const search = ref(''),
   selected = ref(''),
   reviewOpen = ref(false),
   eraseOpen = ref(false),
-  discardOpen = ref(false),
   reason = ref(''),
   reviewError = ref(''),
   eraseConfirmation = ref(''),
   reviewDraft = shallowRef<{ policy: AnalyticsPolicy; providers: AnalyticsProviderDraft[]; fingerprint: string } | null>(null),
-  eraseFingerprint = ref(''),
-  pendingAction = shallowRef<(() => void) | null>(null)
+  eraseFingerprint = ref('')
 let sequence = 0,
-  disposed = false,
-  allowLeave = false
+  disposed = false
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 const section = computed(() => (sections.some((tab) => tab.key === route.query.section) ? String(route.query.section) : 'overview'))
 const draftProviders = (workspace: AnalyticsWorkspace) =>
@@ -893,27 +880,18 @@ async function selectWindow(days: number) {
     if (!disposed && id === sequence) loading.value = false
   }
 }
-function guarded(action: () => void) {
-  if (dirty.value) {
-    pendingAction.value = action
-    discardOpen.value = true
-  } else action()
+const discardTitle = 'Discard this draft?',
+  discardMessage = 'There are unpublished analytics changes. Discard them to continue.'
+async function guarded(action: () => void) {
+  if (!dirty.value) return action()
+  if (!(await confirmDiscard(discardTitle, discardMessage, 'Discard draft'))) return
+  reset()
+  action()
 }
 function reload() {
   guarded(() => {
     void load()
   })
-}
-function keepEditing() {
-  discardOpen.value = false
-  pendingAction.value = null
-}
-function discard() {
-  reset()
-  discardOpen.value = false
-  const action = pendingAction.value
-  pendingAction.value = null
-  action?.()
 }
 function selectSection(key: string) {
   clearChartPointer()
@@ -1031,16 +1009,10 @@ function beforeUnload(event: BeforeUnloadEvent) {
     event.returnValue = ''
   }
 }
-onBeforeRouteLeave((to) => {
-  if (allowLeave) return true
+onBeforeRouteLeave(async () => {
   if (busy.value) return false
   if (!dirty.value) return true
-  pendingAction.value = () => {
-    allowLeave = true
-    void router.push(to.fullPath)
-  }
-  discardOpen.value = true
-  return false
+  return !busy.value && (await confirmDiscard(discardTitle, discardMessage, 'Discard draft'))
 })
 onMounted(() => {
   void load()
