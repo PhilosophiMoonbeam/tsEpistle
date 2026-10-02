@@ -59,4 +59,18 @@ describe('authoring toolbars', () => {
       expect({ file, qr: markup.includes('mdi-qrcode') }).toEqual({ file, qr: false })
     }
   })
+
+  test('Page Properties keeps actions in the footer and one Visibility group', () => {
+    const $ = templateOf('client/components/editor/editor-modal-properties.vue')
+    const header = $('.dialog-header')
+    expect(header.find('v-btn').length).toBe(0)
+    const footer = $('v-card-actions.editor-properties-actions')
+    expect(footer.text()).toContain("common:actions.cancel")
+    expect(footer.text()).toContain("common:actions.apply")
+    expect($('.editor-properties-visibility v-switch').length).toBe(2)
+    expect($('v-switch[v-model="isPublished"]').length).toBe(1)
+    expect($('v-tab[v-if="hasScriptPermission"]').length).toBe(1)
+    expect($('v-tab[v-if="hasStylePermission"]').length).toBe(1)
+    expect($('v-tab[\\:disabled]').length).toBe(0)
+  })
 })
