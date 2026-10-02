@@ -2253,14 +2253,16 @@ test.describe('responsive UI quality matrix', () => {
       await expect.poll(distanceFromBottom, { message: 'Submitting a message immediately returns to the newest messages' }).toBeLessThanOrEqual(25)
       await readAtDistance(400)
       await expect.poll(() => opacity(footer)).toBeCloseTo(0.85, 2)
+      const earlierScrollTop = await transcript.evaluate(element => element.scrollTop)
       releaseResponse()
       releaseResponse = null
       await expect(agent.locator('.agent-message--assistant').last()).toContainText(
         'The final checkpoint keeps the newest response at the end of the conversation.'
       )
-      await expect
-        .poll(distanceFromBottom, { message: 'The arriving response leaves an intentional earlier reading position intact' })
-        .toBeCloseTo(400, 0)
+      await expect.poll(() => transcript.evaluate(element => element.scrollTop), {
+        message: 'The arriving response leaves the reader at the same earlier message'
+      }).toBeCloseTo(earlierScrollTop, 0)
+      await expect.poll(distanceFromBottom).toBeGreaterThan(400)
       await expect(latest).toBeVisible()
       await readAtDistance(400)
       await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'active', reducedMotion: 'reduce' })
