@@ -276,6 +276,9 @@
               role="region"
               :aria-label="$t('common:inlineAgentChat.conversationTranscript')"
               @scroll.passive="handleTranscriptScroll"
+              @wheel.passive="handleTranscriptEngagement"
+              @touchstart.passive="handleTranscriptEngagement"
+              @keydown="handleTranscriptEngagement"
               @pointerdown="handleTranscriptEngagement"
               @focusin="handleTranscriptEngagement"
             >
@@ -699,17 +702,20 @@ const waitingForConnection = ref(false)
 const offlineComposerDraft = ref('')
 const offlineSessionId = 'offline-agent-draft'
 const composerFocused = ref(false)
+let transcriptReadingIntent = false
 const handleComposerFocusIn = (): void => {
   composerFocused.value = true
+  transcriptReadingIntent = false
 }
 const handleComposerFocusOut = (event: FocusEvent): void => {
   const nextTarget = event.relatedTarget
   const currentTarget = event.currentTarget
   if (!(currentTarget instanceof HTMLElement) || !(nextTarget instanceof Node) || !currentTarget.contains(nextTarget)) composerFocused.value = false
 }
-const handleTranscriptEngagement = (event: FocusEvent | PointerEvent): void => {
+const handleTranscriptEngagement = (event: FocusEvent | PointerEvent | WheelEvent | TouchEvent | KeyboardEvent): void => {
   const target = event.target
   if (target instanceof Element && target.closest('.inline-agent__composer')) return
+  transcriptReadingIntent = true
   composerFocused.value = false
 }
 const transcriptFollowing = ref(true)
@@ -1094,6 +1100,7 @@ const sendPrompt = async (
     const initialized = await ensureInitialized()
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     if (!initialized || !canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
+    transcriptReadingIntent = false
     transcriptFollowing.value = true
     const success = await agents.send(prompt, invokedSkillVersionIds, mode, media)
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
@@ -1226,7 +1233,7 @@ const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLEl
 const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
   const direct = componentElement(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
   const panels = componentElement(panelMenuTrigger.value)
-  const usePanelMenu = window.matchMedia(mobilePanelQuery).matches
+  const usePanelMenu = kind === 'memory' && window.matchMedia(mobilePanelQuery).matches
   return (usePanelMenu ? [panels, direct] : [direct, panels]).find(isVisibleTrigger) ?? null
 }
 const openSkillManager = (): void => { if (networkActionAllowed()) skillManagerOpen.value = true }
@@ -1416,11 +1423,17 @@ const handleTranscriptScroll = (): void => {
   // Only a downward scroll (reading away) drops composer focus. A keyboard-open
   // viewport shrink raises the bottom distance without moving scrollTop.
   if (scrollTop > transcriptScrollTopMemory + 1 && distance > transcriptBottomDistance.value + 1) composerFocused.value = false
-  transcriptScrollTopMemory = scrollTop
   transcriptBottomDistance.value = distance
   const following = transcriptIsNearBottom(transcript.value)
-  transcriptFollowing.value = following
-  if (!following) transcriptFrameShouldFollow = false
+  // Content growth can increase the distance without moving the viewport. Only
+  // leaving the bottom by scrolling upward ends automatic following.
+  if (following) transcriptFollowing.value = true
+  else if (scrollTop < transcriptScrollTopMemory - 1) {
+    if (transcriptReadingIntent) transcriptFollowing.value = false
+    else if (transcriptFollowing.value) scheduleTranscriptReconcile()
+  }
+  transcriptScrollTopMemory = scrollTop
+  if (!transcriptFollowing.value) transcriptFrameShouldFollow = false
   updateApprovalJump()
 }
 const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> => {
@@ -1478,10 +1491,11 @@ watch(() => {
   const response = messages.findLast(message => message.role === 'assistant' && (message.content || message.media?.length))
   return [thread.value?.session.id, response?.id, response?.status === 'complete'] as const
 }, ([sessionId, responseId, complete], previous) => {
-  // Follow each new answer and its completion, but let readers scroll back during streaming.
+  // A new session starts at the latest answer. An arriving answer must not
+  // pull a reader away from earlier messages, including during streaming.
+  if (sessionId !== previous[0]) transcriptFollowing.value = true
   if (sessionId !== previous[0] || (responseId && (responseId !== previous[1] || (complete && !previous[2])))) {
-    transcriptFollowing.value = true
-    void reconcileTranscriptGrowth(true)
+    void reconcileTranscriptGrowth(transcriptFollowing.value)
   }
 }, { flush: 'post' })
 watch(networkPaused, paused => {
@@ -2128,6 +2142,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
      last message and diagram sources fully visible and clickable above it. */
   padding: var(--wiki-space-3) var(--wiki-space-1) 13rem;
   overflow-y: auto;
+  /* Streaming text changes can otherwise anchor the scrollport back to an old
+     message after the response follow-scroll, especially with mobile focus. */
+  overflow-anchor: none;
   outline: none;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
