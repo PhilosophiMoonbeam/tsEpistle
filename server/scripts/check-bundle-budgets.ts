@@ -68,8 +68,10 @@ const LOGIN_CSS_GZIP_DELTA_LIMIT = 2 * KiB
 const LOGO_SCENE_RAW_LIMIT = 1_565 * KiB
 const LOGO_SCENE_GZIP_LIMIT = 425 * KiB
 const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
-// The offline-only shell bundles exact English plus shared account controls without a locale API (measured 13,559.6 KiB raw).
-const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_562 * KiB
+// Same-toolchain QA comparison: 093473794 measured 13,559.5 KiB; corrected
+// ad7be80ad measured 13,563.7 KiB. Accept the 4.2 KiB correctness cost while
+// retaining a fixed aggregate ceiling and every initial-load/lazy budget.
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_564 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source
