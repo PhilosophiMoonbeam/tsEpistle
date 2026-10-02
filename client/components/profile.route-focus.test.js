@@ -35,14 +35,15 @@ const passthrough = (tag = 'div') =>
     }
   })
 
-// Each route replaces its heading, so focusing the outgoing view before the
-// render tick cannot accidentally satisfy the incoming-heading assertion.
-const RoutePage = Vue.defineComponent({
-  props: ['heading'],
-  setup(props) {
-    return () => Vue.h('section', props.heading ? Vue.h('h1', { key: props.heading }, props.heading) : Vue.h('p', 'Loading account settings'))
-  }
-})
+// Each route is its own view, as in the app, so the out-in transition replaces the
+// outgoing heading before focus moves; the old heading cannot satisfy the assertion.
+const routePage = heading =>
+  Vue.defineComponent({
+    name: `RoutePage${heading ?? 'Loading'}`,
+    setup() {
+      return () => Vue.h('section', heading ? Vue.h('h1', heading) : Vue.h('p', 'Loading account settings'))
+    }
+  })
 
 let app
 afterEach(() => {
@@ -52,9 +53,12 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
+// The out-in route transition finishes on animation frames, so wait past them.
 const settle = async () => {
-  await Vue.nextTick()
-  await Vue.nextTick()
+  for (let turn = 0; turn < 6; turn += 1) {
+    await Vue.nextTick()
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
 }
 
 const mountProfile = async () => {
@@ -63,9 +67,9 @@ const mountProfile = async () => {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/profile', component: RoutePage, props: { heading: 'Your profile' } },
-      { path: '/pages', component: RoutePage, props: { heading: 'Your pages' } },
-      { path: '/loading', component: RoutePage, props: { heading: null } }
+      { path: '/profile', component: routePage('Your profile') },
+      { path: '/pages', component: routePage('Your pages') },
+      { path: '/loading', component: routePage(null) }
     ]
   })
   app = Vue.createApp({ ...options, render })
@@ -107,6 +111,18 @@ describe('profile route accessibility', () => {
 
     expect(wikiStore.page.mode).toBe('profile')
     expect(host.querySelector('main').getAttribute('tabindex')).toBe('-1')
+    // The first load leaves focus alone; only in-app navigation moves it.
+    expect(document.activeElement).not.toBe(host.querySelector('main h1'))
+    expect(host.querySelector('main h1').hasAttribute('tabindex')).toBe(false)
+  })
+
+  it('names the shell once and offers a way back to the wiki', async () => {
+    const { host } = await mountProfile()
+
+    expect(host.textContent.split('profile:workspace')).toHaveLength(2)
+    expect(host.querySelector('nav').getAttribute('aria-label')).toBe('profile:nav.label')
+    const back = host.querySelector('a[href="/"]')
+    expect(back.textContent).toContain('profile:nav.backToWiki')
   })
 
   it('focuses the incoming route heading after rendering without scrolling', async () => {

@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import type { App, ComponentOptions, EffectScope, RenderFunction } from 'vue'
-import _ from 'lodash'
 import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, setLocation } from '../../test/browser-dom.mts'
 import { passwordPolicyMixin } from '../../helpers/password-policy.ts'
@@ -13,6 +12,7 @@ import type { Profile } from '../../helpers/users-api.ts'
 import { fetchLocales } from '../../helpers/locales-api.ts'
 import { resolveThemeName } from '../../helpers/theme.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store.ts'
+import * as draftModel from './profile-draft.ts'
 
 // Vue/Vuetify capture the document when loaded; the shared test DOM must exist first.
 const Vue = await import('vue')
@@ -38,15 +38,15 @@ const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(
 const evaluate = new Function(
   'passwordPolicyMixin', 'newPasswordIssue', 'AsyncState', 'PasswordStrength', 'wikiStore',
   'changeProfilePassword', 'fetchProfile', 'removeProfileAvatar', 'updateProfile',
-  'updateProfilePreferences', 'uploadProfileAvatar', 'fetchLocales', '_', 'validateValues',
-  'resolveThemeName', 'applyUserPresentation', 'getErrorMessage', executable
+  'updateProfilePreferences', 'uploadProfileAvatar', 'fetchLocales', 'validateValues',
+  'resolveThemeName', 'applyUserPresentation', 'getErrorMessage', 'changedProfileFields',
+  'PROFILE_DETAIL_FIELDS', 'PROFILE_PREFERENCE_FIELDS', 'profileDraftIssues', 'restoreProfileDraft',
+  'restoreProfileField', 'snapshotProfileDraft', 'timezoneOptions', executable
 )
 
 const translations: Record<string, string> = {
-  'common:actions.edit': 'Modifier',
-  'common:actions.save': 'Enregistrer',
-  'common:header.view': 'Afficher',
-  'common:actions.close': 'Masquer',
+  'auth:showPassword': 'Afficher le mot de passe',
+  'auth:hidePassword': 'Masquer le mot de passe',
   'profile:displayName': 'Nom affiché',
   'profile:mentionHandle': 'Identifiant de mention',
   'profile:location': 'Lieu',
@@ -59,32 +59,51 @@ const translations: Record<string, string> = {
   'profile:appearanceLight': 'Clair',
   'profile:appearanceDark': 'Sombre',
   'profile:appearanceSystem': 'Suivre l’appareil',
+  'profile:reduceMotion': 'Réduire les animations',
   'profile:auth.provider': 'Fournisseur d’authentification',
   'profile:auth.currentPassword': 'Mot de passe actuel',
   'profile:auth.newPassword': 'Nouveau mot de passe',
   'profile:auth.verifyPassword': 'Confirmer le mot de passe',
   'profile:avatar.upload': 'Importer un avatar',
   'profile:avatar.remove': 'Supprimer l’avatar',
-  'profile:avatar.help': 'PNG, JPEG ou WebP ; l’avatar du fournisseur revient à la prochaine connexion.'
+  'profile:avatar.help': 'PNG, JPEG ou WebP ; l’avatar du fournisseur revient à la prochaine connexion.',
+  'profile:dock.save': 'Enregistrer les modifications',
+  'profile:dock.reset': 'Réinitialiser',
+  'profile:dock.clean': 'Aucune modification',
+  'profile:dock.unsavedOne': '1 modification non enregistrée',
+  'profile:dock.unsavedMany': '{{count}} modifications non enregistrées',
+  'profile:dock.fixOne': 'Corrigez 1 champ avant d’enregistrer',
+  'profile:discard.confirm': 'Abandonner les modifications',
+  'profile:discard.keep': 'Continuer'
 }
-const translate = (key: string, options: { defaultValue?: string } = {}) => translations[key] ?? options.defaultValue ?? key
+const translate = (key: string, options: Record<string, unknown> = {}) =>
+  String(translations[key] ?? options.defaultValue ?? key).replace(/\{\{(\w+)\}\}/g, (_match, name) => String(options[name] ?? ''))
 const response = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), {
   status, headers: { 'Content-Type': 'application/json' }
 })
 const profile = (overrides: Partial<Profile> = {}): Profile => ({
   id: 73, email: 'reader@example.test', name: 'Example Reader', handle: 'reader',
   providerKey: 'local', providerName: 'Compte local', pictureUrl: 'https://provider.example/avatar.png',
-  isSystem: false, isVerified: true, location: '', jobTitle: '', timezone: '',
+  isSystem: false, isVerified: true, location: '', jobTitle: '', timezone: 'Europe/Paris',
   dateFormat: '', timeFormat: 'locale', appearance: 'light', reduceMotion: false,
   underlineLinks: false, contentTextSize: 'default', communicationLocale: null,
   createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z',
   lastLoginAt: '2026-09-03T00:00:00Z', groups: [], pagesTotal: 0, ...overrides
 })
 const placeholder = Vue.defineComponent({ render: () => Vue.h('div') })
+const AdminHero = Vue.defineComponent({
+  props: ['title', 'description', 'icon', 'eyebrow', 'headingId'],
+  setup(props, { slots }) {
+    return () => Vue.h('header', [Vue.h('h1', { id: props.headingId }, props.title), slots.extra?.(), slots.actions?.()])
+  }
+})
+type ProfileVm = {
+  loadProfile: () => Promise<boolean>
+  $options: ComponentOptions
+}
 let app: App | undefined
 let fixtureScope: EffectScope | undefined
 const restorers: Array<() => void> = []
-const focusTimers = new Set<number>()
 const observers = new Set<AvatarIntersectionObserver>()
 const ownProperty = (target: object, key: PropertyKey, value: unknown) => {
   const descriptor = Object.getOwnPropertyDescriptor(target, key)
@@ -136,8 +155,6 @@ afterEach(() => {
     app = undefined
     fixtureScope?.stop()
     fixtureScope = undefined
-    for (const timer of focusTimers) clearTimeout(timer)
-    focusTimers.clear()
     for (const observer of [...observers]) observer.disconnect()
     const currentStyle = document.querySelector('#vuetify-theme-stylesheet')
     if (themeStyle) themeStyle.textContent = themeStyleContent
@@ -173,55 +190,78 @@ const mount = async (initialProfile = profile()) => {
     throw new Error(`Unexpected profile request: ${url}`)
   })
   ownProperty(browserWindow, 'fetch', fetch)
+  const applyUserPresentation = vi.fn()
   const options = evaluate(
     passwordPolicyMixin, newPasswordIssue, placeholder, placeholder, store,
     usersApi.changeProfilePassword, usersApi.fetchProfile, usersApi.removeProfileAvatar,
     usersApi.updateProfile, usersApi.updateProfilePreferences, usersApi.uploadProfileAvatar,
-    fetchLocales, {
-      ..._,
-      delay: (callback: (...args: unknown[]) => unknown, wait: number, ...args: unknown[]) => {
-        const timer = _.delay(callback, wait, ...args)
-        focusTimers.add(timer)
-        return timer
-      }
-    }, validateValues, resolveThemeName,
-    vi.fn(), // Date/time presentation side effects are not a controls contract.
-    getErrorMessage
+    fetchLocales, validateValues, resolveThemeName, applyUserPresentation, getErrorMessage,
+    draftModel.changedProfileFields, draftModel.PROFILE_DETAIL_FIELDS, draftModel.PROFILE_PREFERENCE_FIELDS,
+    draftModel.profileDraftIssues, draftModel.restoreProfileDraft, draftModel.restoreProfileField,
+    draftModel.snapshotProfileDraft, draftModel.timezoneOptions
   ) as ComponentOptions
   app = Vue.createApp({ ...options, render })
   fixtureScope = Vue.effectScope()
   const vuetify = fixtureScope.run(() => {
     const installed = createVuetify({ components, directives, theme: { defaultTheme: 'dark' }, defaults: {
-      VMenu: { transition: false }, VSelect: { menuProps: { transition: false } }
+      VMenu: { transition: false }, VSelect: { menuProps: { transition: false } },
+      VAutocomplete: { menuProps: { transition: false } }, VDialog: { transition: false }
     } })
     app!.use(installed)
     return installed
   })!
-  app.component('v-card-chin', Vue.defineComponent({ setup(_props, { slots }) {
-    return () => Vue.h(components.VCardActions, {}, slots)
-  } }))
+  app.component('admin-hero', AdminHero)
+  const router = { push: vi.fn(async (_target: string) => undefined) }
+  app.config.globalProperties.$router = router
   app.config.globalProperties.$t = translate
   app.config.globalProperties.$helpers = { formatMoment: (date: string) => date }
   componentErrors = []
   app.config.errorHandler = error => componentErrors.push(error)
   const host = document.createElement('div')
   document.body.append(host)
-  const vm = app.mount(host) as unknown as {
-    loadProfile: () => Promise<boolean>
-  }
+  const vm = app.mount(host) as unknown as ProfileVm
   await settle()
-  return { host, vm, fetch, store, activeLoading, vuetify, componentErrors }
+  return { host, vm, fetch, store, activeLoading, vuetify, componentErrors, applyUserPresentation, router, options }
 }
 const button = (host: ParentNode, name: string) => {
-  const matches = [...host.querySelectorAll<HTMLButtonElement>('button')].filter(item => item.getAttribute('aria-label') === name)
+  const matches = [...host.querySelectorAll<HTMLButtonElement>('button')].filter(item =>
+    (item.getAttribute('aria-label') ?? item.textContent?.trim()) === name)
   expect(matches).toHaveLength(1)
   return matches[0]!
+}
+const field = (host: ParentNode, label: string) => {
+  const labels = [...host.querySelectorAll<HTMLLabelElement>('label[for]')].filter(item => item.textContent?.trim() === label)
+  expect(labels.length).toBeGreaterThan(0)
+  const input = document.getElementById(labels[0]!.htmlFor) as HTMLInputElement | null
+  expect(input).not.toBeNull()
+  return input!
 }
 const fill = async (input: HTMLInputElement, value: string) => {
   input.value = value
   input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
   await settle()
 }
+const press = async (target: Element, key: string) => {
+  const event = new browserWindow.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+  target.dispatchEvent(event)
+  await settle()
+  return event
+}
+const chooseOption = async (host: HTMLElement, label: string, option: string) => {
+  const combobox = field(host, label)
+  combobox.focus()
+  combobox.dispatchEvent(new browserWindow.MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true }))
+  await settle()
+  const menu = document.getElementById(combobox.getAttribute('aria-controls')!)
+  expect(menu?.classList.contains('v-overlay--active')).toBe(true)
+  const matches = [...menu!.querySelectorAll<HTMLElement>('[role="option"]')].filter(item => item.textContent?.trim() === option)
+  expect(matches).toHaveLength(1)
+  matches[0]!.click()
+  await settle()
+  return combobox
+}
+const dockText = (host: HTMLElement) => host.querySelector('.profile-save-dock__copy')?.textContent?.trim()
+const saveButton = (host: HTMLElement) => button(host, translations['profile:dock.save']!)
 const passwordInputs = (host: HTMLElement) => [...host.querySelectorAll<HTMLInputElement>('form input')]
 const fillPasswords = async (host: HTMLElement) => {
   const inputs = passwordInputs(host)
@@ -234,31 +274,195 @@ const deferred = () => {
   const promise = new Promise<Response>(yes => { resolve = yes })
   return { promise, resolve }
 }
+const requestsTo = (fetch: { mock: { calls: Array<[string, RequestInit?]> } }, url: string) =>
+  fetch.mock.calls.filter(([target, init]) => target === url && init?.method === 'PATCH')
 
-describe('profile controls contracts', () => {
-  test('localizes all eight field-specific edit names and hides the decorative provider mark', async () => {
+describe('profile workspace contracts', () => {
+  test('edits every account field inline with localized labels and hides the decorative provider mark', async () => {
     const { host } = await mount()
-    for (const field of ['displayName', 'mentionHandle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'timeFormat', 'appearance']) {
-      expect(button(host, `Modifier ${translations[`profile:${field}`]}`).disabled).toBe(false)
+    expect(host.querySelector('.v-menu, .v-toolbar')).toBeNull()
+    for (const key of ['displayName', 'mentionHandle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'timeFormat', 'appearance']) {
+      const input = field(host, translations[`profile:${key}`]!)
+      expect(input.disabled).toBe(false)
+      expect(input.readOnly).toBe(false)
     }
+    expect(field(host, translations['profile:displayName']!).value).toBe('Example Reader')
     const provider = host.querySelector('.profile-auth-provider')!
     expect(provider.textContent).toContain('Compte local')
     expect(provider.querySelector('.profile-auth-provider__mark .v-icon')?.getAttribute('aria-hidden')).toBe('true')
     expect(host.textContent).toContain(translations['profile:auth.provider'])
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    expect(saveButton(host).getAttribute('aria-disabled')).toBe('true')
+    expect(saveButton(host).getAttribute('aria-describedby')).toBe('profile-save-state')
   })
 
-  test('reveals and conceals each local password independently with localized names', async () => {
+  test('counts unsaved fields in one dock and Reset restores them and the theme preview', async () => {
+    const { host, fetch, vuetify, applyUserPresentation } = await mount()
+    await vuetify.theme.change('light')
+    await fill(field(host, translations['profile:displayName']!), 'Renamed Reader')
+    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
+    await chooseOption(host, translations['profile:appearance']!, translations['profile:appearanceDark']!)
+    expect(vuetify.theme.name.value).toBe('dark')
+    await chooseOption(host, translations['profile:dateFormat']!, 'YYYY-MM-DD')
+    expect(applyUserPresentation).toHaveBeenLastCalledWith(expect.objectContaining({ dateFormat: 'YYYY-MM-DD' }))
+    const reduceMotion = field(host, translations['profile:reduceMotion']!)
+    reduceMotion.click()
+    await settle()
+    expect(dockText(host)).toBe('4 modifications non enregistrées')
+    expect(saveButton(host).hasAttribute('aria-disabled')).toBe(false)
+    const requests = fetch.mock.calls.length
+    button(host, translations['profile:dock.reset']!).click()
+    await settle()
+    expect(fetch.mock.calls).toHaveLength(requests)
+    expect(field(host, translations['profile:displayName']!).value).toBe('Example Reader')
+    expect(reduceMotion.checked).toBe(false)
+    expect(vuetify.theme.name.value).toBe('light')
+    expect(applyUserPresentation).toHaveBeenLastCalledWith(expect.objectContaining({ dateFormat: '' }))
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    expect([...host.querySelectorAll('button')].some(item => item.textContent?.trim() === translations['profile:dock.reset'])).toBe(false)
+  })
+
+  test('Esc restores the saved value of the focused field and lets an open option list close first', async () => {
+    const { host, vuetify } = await mount()
+    const name = field(host, translations['profile:displayName']!)
+    const untouched = await press(name, 'Escape')
+    expect(untouched.defaultPrevented).toBe(false)
+    await fill(name, 'Typing a new name')
+    const revert = await press(name, 'Escape')
+    expect(revert.defaultPrevented).toBe(true)
+    expect(name.value).toBe('Example Reader')
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+
+    await vuetify.theme.change('light')
+    const appearance = await chooseOption(host, translations['profile:appearance']!, translations['profile:appearanceDark']!)
+    expect(vuetify.theme.name.value).toBe('dark')
+    appearance.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    await settle()
+    expect(appearance.getAttribute('aria-expanded')).toBe('true')
+    await press(appearance, 'Escape')
+    expect(appearance.getAttribute('aria-expanded')).toBe('false')
+    expect(vuetify.theme.name.value).toBe('dark')
+    await press(appearance, 'Escape')
+    expect(vuetify.theme.name.value).toBe('light')
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+  })
+
+  test('saves only the endpoints whose fields changed and keeps a failed part dirty', async () => {
+    const { host, fetch, store } = await mount()
+    await fill(field(host, translations['profile:mentionHandle']!), '  New_Handle ')
+    await fill(field(host, translations['profile:displayName']!), ' Renamed Reader ')
+    fetch.mockResolvedValueOnce(response({ message: 'Profile saved' }))
+    saveButton(host).click()
+    await settle()
+    expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(1)
+    expect(requestsTo(fetch, '/_api/users/profile/preferences')).toHaveLength(0)
+    const body = JSON.parse(requestsTo(fetch, '/_api/users/profile')[0]![1]!.body as string)
+    expect(body).toMatchObject({ name: ' Renamed Reader ', handle: '  New_Handle ', appearance: 'light', timezone: 'Europe/Paris' })
+    expect(field(host, translations['profile:mentionHandle']!).value).toBe('new_handle')
+    expect(store.user.name).toBe('Renamed Reader')
+    expect(store.refreshAuth).toHaveBeenCalledTimes(1)
+    expect(store.showNotification).toHaveBeenCalledWith(expect.objectContaining({ style: 'success' }))
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+
+    await fill(field(host, translations['profile:location']!), 'Lyon')
+    field(host, translations['profile:reduceMotion']!).click()
+    await settle()
+    expect(dockText(host)).toBe('2 modifications non enregistrées')
+    fetch.mockResolvedValueOnce(response({ message: 'Profile saved' }))
+    fetch.mockRejectedValueOnce(new Error('Preferences unavailable'))
+    store.showNotification.mockClear()
+    saveButton(host).click()
+    await settle()
+    expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(2)
+    expect(JSON.parse(requestsTo(fetch, '/_api/users/profile/preferences')[0]![1]!.body as string)).toEqual({
+      reduceMotion: true, underlineLinks: false, contentTextSize: 'default', communicationLocale: null
+    })
+    expect(store.showError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Preferences unavailable' }))
+    expect(store.showNotification).not.toHaveBeenCalled()
+    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
+    expect(saveButton(host).hasAttribute('aria-disabled')).toBe(false)
+  })
+
+  test('blocks saving an invalid mention handle and explains why in the dock', async () => {
+    const { host, fetch } = await mount()
+    const handle = field(host, translations['profile:mentionHandle']!)
+    await fill(handle, 'no spaces')
+    expect(dockText(host)).toBe(translations['profile:dock.fixOne'])
+    const save = saveButton(host)
+    expect(save.getAttribute('aria-disabled')).toBe('true')
+    expect(save.disabled).toBe(false)
+    const requests = fetch.mock.calls.length
+    save.click()
+    await settle()
+    expect(fetch.mock.calls).toHaveLength(requests)
+    expect(document.activeElement).toBe(handle)
+    expect(host.textContent).toContain('Use 3–32 letters, numbers, underscores or hyphens.')
+  })
+
+  test('guards leaving with unsaved changes and restores the saved theme on discard or unmount', async () => {
+    const { host, vm, vuetify, router, options, applyUserPresentation } = await mount()
+    const leave = options.beforeRouteLeave as (this: unknown, to: { fullPath: string }) => boolean
+    expect(leave.call(vm, { fullPath: '/pages' })).toBe(true)
+    await vuetify.theme.change('light')
+    await chooseOption(host, translations['profile:appearance']!, translations['profile:appearanceDark']!)
+    expect(leave.call(vm, { fullPath: '/pages' })).toBe(false)
+    await settle()
+    button(document, translations['profile:discard.keep']!).click()
+    await settle()
+    expect(router.push).not.toHaveBeenCalled()
+    expect(vuetify.theme.name.value).toBe('dark')
+
+    expect(leave.call(vm, { fullPath: '/pages' })).toBe(false)
+    await settle()
+    button(document, translations['profile:discard.confirm']!).click()
+    await settle()
+    expect(vuetify.theme.name.value).toBe('light')
+    expect(router.push).toHaveBeenCalledWith('/pages')
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+
+    const unload = new browserWindow.Event('beforeunload', { cancelable: true })
+    browserWindow.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(false)
+    await chooseOption(host, translations['profile:dateFormat']!, 'DD.MM.YYYY')
+    await chooseOption(host, translations['profile:appearance']!, translations['profile:appearanceDark']!)
+    const dirtyUnload = new browserWindow.Event('beforeunload', { cancelable: true })
+    browserWindow.dispatchEvent(dirtyUnload)
+    expect(dirtyUnload.defaultPrevented).toBe(true)
+    app!.unmount()
+    app = undefined
+    await settle()
+    expect(vuetify.theme.name.value).toBe('light')
+    expect(applyUserPresentation).toHaveBeenLastCalledWith(expect.objectContaining({ dateFormat: '', appearance: 'light' }))
+  })
+
+  test('filters the time zone list as the user types and previews the chosen zone', async () => {
+    const { host, applyUserPresentation } = await mount()
+    const timezone = field(host, translations['profile:timezone']!)
+    timezone.focus()
+    await settle()
+    await fill(timezone, 'kolk')
+    const menu = document.getElementById(timezone.getAttribute('aria-controls')!)
+    expect(menu?.classList.contains('v-overlay--active')).toBe(true)
+    const options = [...menu!.querySelectorAll<HTMLElement>('[role="option"]')].map(item => item.textContent?.trim())
+    expect(options).toEqual(['(GMT+05:30) Asia/Kolkata'])
+    ;[...menu!.querySelectorAll<HTMLElement>('[role="option"]')][0]!.click()
+    await settle()
+    expect(applyUserPresentation).toHaveBeenLastCalledWith(expect.objectContaining({ timezone: 'Asia/Kolkata' }))
+    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
+  })
+
+  test('reveals and conceals each local password independently with show/hide names', async () => {
     const { host } = await mount()
     const inputs = passwordInputs(host)
     expect(inputs).toHaveLength(3)
-    for (const [index, field] of ['currentPassword', 'newPassword', 'verifyPassword'].entries()) {
-      const name = translations[`profile:auth.${field}`]
+    for (const [index, key] of ['currentPassword', 'newPassword', 'verifyPassword'].entries()) {
+      const name = translations[`profile:auth.${key}`]
       expect(inputs[index]!.type).toBe('password')
-      button(host, `Afficher ${name}`).click()
+      button(host, `${translations['auth:showPassword']}: ${name}`).click()
       await settle()
       expect(inputs[index]!.type).toBe('text')
       for (const other of inputs.filter((_input, otherIndex) => otherIndex !== index)) expect(other.type).toBe('password')
-      button(host, `Masquer ${name}`).click()
+      button(host, `${translations['auth:hidePassword']}: ${name}`).click()
       await settle()
       expect(inputs[index]!.type).toBe('password')
     }
@@ -271,9 +475,10 @@ describe('profile controls contracts', () => {
     expect(host.querySelector('.profile-auth-provider')?.textContent).toContain('Identity provider')
   })
 
-  test('submits the associated password form once while busy and settles success and failure', async () => {
+  test('submits the password form on its own once while busy and settles success and failure', async () => {
     const { host, fetch, store, activeLoading } = await mount()
     await fillPasswords(host)
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
     const pending = deferred()
     fetch.mockImplementationOnce(() => pending.promise)
     const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!
@@ -289,9 +494,6 @@ describe('profile controls contracts', () => {
     expect(form.getAttribute('aria-busy')).toBe('true')
     expect(activeLoading.has('profile-changepassword')).toBe(true)
     for (const input of passwordInputs(host)) expect(input.disabled).toBe(true)
-    for (const field of ['currentPassword', 'newPassword', 'verifyPassword']) {
-      expect(button(host, `Afficher ${translations[`profile:auth.${field}`]}`).disabled).toBe(true)
-    }
     expect(submit.disabled).toBe(true)
     pending.resolve(response({ message: 'Password changed' }))
     await settle()
@@ -311,20 +513,18 @@ describe('profile controls contracts', () => {
     expect(store.showError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Password change denied' }))
     expect(store.showNotification).not.toHaveBeenCalled()
     expect(form.getAttribute('aria-busy')).toBe('false')
-    expect(activeLoading.has('profile-changepassword')).toBe(false)
     expect(submit.disabled).toBe(false)
-    for (const input of passwordInputs(host)) expect(input.disabled).toBe(false)
   })
 
-  test('uploads a selected avatar, revises its preview and permits only internal removal', async () => {
+  test('uploads a selected avatar, revises its preview and offers removal only for an uploaded avatar', async () => {
     const { host, fetch, activeLoading } = await mount()
     await intersectAvatar(host)
     expect(host.querySelector('.profile-avatar-preview img')?.getAttribute('src')).toBe('https://provider.example/avatar.png')
     const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
     expect(input.accept.split(',').map(value => value.trim()).sort()).toEqual(['image/jpeg', 'image/png', 'image/webp'])
     const upload = button(host, 'Importer un avatar')
-    const remove = button(host, 'Supprimer l’avatar')
-    expect(remove.disabled).toBe(true)
+    const removeButtons = () => [...host.querySelectorAll('button')].filter(item => item.getAttribute('aria-label') === 'Supprimer l’avatar')
+    expect(removeButtons()).toHaveLength(0)
     expect(host.querySelector('.profile-avatar-actions')?.textContent).toContain(translations['profile:avatar.help'])
     const picker = vi.spyOn(input, 'click')
     try {
@@ -343,29 +543,29 @@ describe('profile controls contracts', () => {
     expect(fetch.mock.calls.at(-1)?.[1]?.method).toBe('POST')
     expect(input.disabled).toBe(true)
     expect(upload.disabled).toBe(true)
-    expect(remove.disabled).toBe(true)
     expect(upload.getAttribute('aria-busy')).toBe('true')
     expect(activeLoading.has('profile-avatar')).toBe(true)
     pending.resolve(response({ message: 'Avatar uploaded', pictureUrl: 'internal' }))
     await settle()
     expect(host.querySelector('.profile-avatar-preview img')?.getAttribute('src')).toBe('/_userav/73?v=1')
     expect(host.querySelector('.profile-avatar-actions [role="status"]')).toBeTruthy()
-    expect(remove.disabled).toBe(false)
     expect(upload.disabled).toBe(false)
     expect(activeLoading.has('profile-avatar')).toBe(false)
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    const remove = button(host, 'Supprimer l’avatar')
+    expect(remove.disabled).toBe(false)
     const removal = deferred()
     fetch.mockImplementationOnce(() => removal.promise)
     remove.click()
     await settle()
     expect(input.disabled).toBe(true)
     expect(upload.disabled).toBe(true)
-    expect(remove.disabled).toBe(true)
     expect(remove.getAttribute('aria-busy')).toBe('true')
     removal.resolve(response({ message: 'Avatar removed', pictureUrl: null }))
     await settle()
     expect(fetch.mock.calls.at(-1)?.[1]?.method).toBe('DELETE')
     expect(host.querySelector('.profile-avatar-preview img')).toBeNull()
-    expect(remove.disabled).toBe(true)
+    expect(removeButtons()).toHaveLength(0)
     expect(host.querySelector('.profile-avatar-actions [role="status"]')).toBeTruthy()
     fetch.mockRejectedValueOnce(new Error('Image upload denied'))
     input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
@@ -380,58 +580,23 @@ describe('profile controls contracts', () => {
   test.each([
     ['Sombre', 'dark', 'dark', false], ['Clair', 'light', 'light', false],
     ['Suivre l’appareil', 'system', 'light', true], ['Par défaut', '', 'light', true]
-  ] as const)('applies the %s appearance to the installed app while keeping its editor active', async (label, appearance, expectedName, expectedSystem) => {
-    const { host, fetch, store, vuetify } = await mount()
+  ] as const)('previews the %s appearance on the installed app and saves it from the dock', async (label, appearance, expectedName, expectedSystem) => {
+    const { host, fetch, store, vuetify } = await mount(profile({ appearance: appearance === 'light' ? 'dark' : 'light' }))
     const decoy = fixtureScope!.run(() => createVuetify({ theme: { defaultTheme: 'dark' } }))!
     ownProperty(globalThis, 'WIKI', { $vuetify: decoy })
-    const edit = button(host, 'Modifier Apparence')
-    edit.click()
-    await settle()
-    expect(edit.getAttribute('aria-expanded')).toBe('true')
-    const editor = document.getElementById(edit.getAttribute('aria-controls')!)!
-    expect(editor?.classList.contains('v-overlay--active')).toBe(true)
-    const combobox = editor.querySelector<HTMLInputElement>('[role="combobox"]')!
-    expect(combobox).not.toBeNull()
-    combobox.focus()
-    if (appearance === 'dark' || appearance === 'system') {
-      combobox.dispatchEvent(new browserWindow.MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true }))
-    } else {
-      combobox.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
-    }
-    await settle()
-    expect(edit.getAttribute('aria-expanded')).toBe('true')
-    expect(combobox.getAttribute('aria-expanded')).toBe('true')
-    const selectMenu = document.getElementById(combobox.getAttribute('aria-controls')!)!
-    expect(selectMenu?.classList.contains('v-overlay--active')).toBe(true)
-    const listbox = selectMenu.querySelector<HTMLElement>('[role="listbox"]')!
-    expect(listbox).not.toBeNull()
-    const options = [...listbox.querySelectorAll<HTMLElement>('[role="option"]')]
-      .filter(item => item.textContent?.trim() === label)
-    expect(options).toHaveLength(1)
-    options[0]!.click()
-    await settle()
+    await chooseOption(host, translations['profile:appearance']!, label)
     expect(vuetify.theme.name.value).toBe(expectedName)
     expect(vuetify.theme.current.value.dark).toBe(expectedName === 'dark')
     expect(vuetify.theme.isSystem.value).toBe(expectedSystem)
     expect(decoy.theme.name.value).toBe('dark')
-    expect(edit.getAttribute('aria-expanded')).toBe('true')
-    expect(editor.classList.contains('v-overlay--active')).toBe(true)
-    expect(combobox.getAttribute('aria-expanded')).toBe('false')
-    edit.click()
-    await settle()
-    expect(edit.getAttribute('aria-expanded')).toBe('false')
-    const save = [...host.querySelectorAll<HTMLButtonElement>('button')]
-      .find(item => item.textContent?.trim() === translations['common:actions.save'])!
-    expect(save).toBeDefined()
+    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
     fetch.mockResolvedValueOnce(response({ message: 'Profile saved' }))
-    save.click()
+    saveButton(host).click()
     await settle()
-    const request = fetch.mock.calls.at(-1)!
-    expect(request[0]).toBe('/_api/users/profile')
-    expect(request[1]?.method).toBe('PATCH')
+    const request = requestsTo(fetch, '/_api/users/profile').at(-1)!
     expect(JSON.parse(request[1]?.body as string).appearance).toBe(appearance)
     expect(store.user.appearance).toBe(appearance)
-    expect(save.disabled).toBe(false)
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
   })
 
   test('does not replace the installed theme when a failed profile load clears the editor', async () => {
@@ -440,7 +605,7 @@ describe('profile controls contracts', () => {
     fetch.mockRejectedValueOnce(new Error('Profile access denied'))
     expect(await vm.loadProfile()).toBe(false)
     await settle()
-    expect(host.querySelector('button[aria-label="Modifier Apparence"]')).toBeNull()
+    expect(host.querySelector('.profile-save-dock')).toBeNull()
     expect(vuetify.theme.name.value).toBe('dark')
     expect(vuetify.theme.isSystem.value).toBe(false)
     expect(componentErrors).toEqual([])

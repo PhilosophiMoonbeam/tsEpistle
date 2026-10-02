@@ -365,6 +365,8 @@
     "outdatedBrowserWarning": "Your browser is outdated. Upgrade to a {{modernBrowser}}."
   },
   "auth": {
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
     "tfa": {
       "title": "Two Factor Authentication",
       "subtitle": "Security code required:",
@@ -1298,7 +1300,8 @@
       "changePassword": "Change Password",
       "verifyPassword": "Confirm New Password",
       "currentPassword": "Current Password",
-      "changePassSuccess": "Password changed successfully."
+      "changePassSuccess": "Password changed successfully.",
+      "changePasswordHint": "Saved on its own. Other profile changes are not affected."
     },
     "save": {
       "success": "Profile saved successfully."
@@ -1311,11 +1314,29 @@
       "headerTitle": "Title",
       "refreshSuccess": "Page list has been refreshed.",
       "headerCreatedAt": "Created",
-      "headerUpdatedAt": "Last Updated"
+      "headerUpdatedAt": "Last Updated",
+      "reload": "Reload pages",
+      "reloadShort": "Reload",
+      "find": "Find your pages",
+      "privateOnlyToggle": "Show private pages only",
+      "privateOnly": "Private only",
+      "resultCount": "{{count}} of {{total}} pages",
+      "loadError": "Pages could not be loaded",
+      "private": "Private",
+      "loading": "Loading pages",
+      "loadingMessage": "Fetching your contributions.",
+      "noContributions": "Pages you create or contribute to will appear here.",
+      "noMatches": "No matching pages",
+      "noMatchesMessage": "Try another title, description, path, or language, or clear your search.",
+      "noPrivateMatches": "No matching private pages",
+      "noPrivatePages": "No private pages yet",
+      "noPrivateMatchesMessage": "Try another title, description, path, or language, or clear your search or turn off Private only.",
+      "noPrivatePagesMessage": "Turn off Private only to see all your pages."
     },
     "title": "Profile",
     "groups": {
-      "title": "Groups"
+      "title": "Groups",
+      "empty": "No groups assigned"
     },
     "myInfo": "My Info",
     "activity": {
@@ -1348,13 +1369,71 @@
       "remove": "Remove avatar",
       "help": "PNG, JPEG, or WebP up to 1 MB. Provider avatars return after the next sign-in when removed.",
       "uploadSuccess": "Avatar uploaded successfully.",
-      "removeSuccess": "Avatar removed successfully."
+      "removeSuccess": "Avatar removed successfully.",
+      "saveHint": "Avatar changes save at once."
     },
     "appearanceDark": "Dark",
     "appearanceLight": "Light",
     "appearanceSystem": "Match Device",
     "appearanceDefault": "Site Default",
-    "viewPublicProfile": "View Public Profile"
+    "viewPublicProfile": "View Public Profile",
+    "workspace": "Your workspace",
+    "loading": "Loading profile",
+    "loadingMessage": "Fetching your account settings.",
+    "loadError": "Profile could not be loaded",
+    "myInfoHint": "Shown to other people on pages, mentions and Discussion.",
+    "mentionHandle": "Mention handle",
+    "mentionHandleHint": "3–32 lowercase letters, numbers, underscores or hyphens. Leave blank to disable mentions.",
+    "preferencesHint": "Changes preview at once. Save to keep them.",
+    "timezoneHint": "Type a city or region to filter.",
+    "timezoneNoMatch": "No matching time zone",
+    "readingPreferences": "Reading preferences",
+    "readingPreferencesHint": "Apply to articles after you save.",
+    "reduceMotion": "Reduce motion",
+    "reduceMotionHint": "Reduce decorative motion; device accessibility settings are always respected.",
+    "underlineLinks": "Underline article links",
+    "underlineLinksHint": "Keep article links underlined for easier recognition.",
+    "contentTextSize": "Article text size",
+    "contentTextSizeHint": "Change prose size without scaling application controls or code.",
+    "contentTextSizeDefault": "Default",
+    "contentTextSizeLarge": "Large",
+    "contentTextSizeLarger": "Larger",
+    "communicationLocale": "Communication language",
+    "communicationLocaleHint": "Choose an installed language for account messages, or use the site language.",
+    "communicationLocaleSiteDefault": "Site language ({{lang}})",
+    "hero": {
+      "eyebrow": "Account"
+    },
+    "nav": {
+      "label": "Profile sections",
+      "open": "Open profile navigation",
+      "close": "Close profile navigation",
+      "offline": "Offline access",
+      "backToWiki": "Back to wiki"
+    },
+    "issues": {
+      "nameRequired": "Enter a display name.",
+      "nameTooLong": "Use 255 characters or fewer.",
+      "handleInvalid": "Use 3–32 letters, numbers, underscores or hyphens."
+    },
+    "dock": {
+      "label": "Profile changes",
+      "clean": "No unsaved changes",
+      "saving": "Saving changes…",
+      "unsavedOne": "1 unsaved change",
+      "unsavedMany": "{{count}} unsaved changes",
+      "fixOne": "Fix 1 field before saving",
+      "fixMany": "Fix {{count}} fields before saving",
+      "reset": "Reset",
+      "save": "Save changes"
+    },
+    "discard": {
+      "title": "Discard unsaved changes?",
+      "messageOne": "You have 1 unsaved change. Theme and date previews return to your saved settings.",
+      "messageMany": "You have {{count}} unsaved changes. Theme and date previews return to your saved settings.",
+      "keep": "Keep editing",
+      "confirm": "Discard changes"
+    }
   },
   "tags": {
     "locale": "Locale",
