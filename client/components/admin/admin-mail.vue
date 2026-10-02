@@ -560,20 +560,10 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-    <v-dialog v-model="discardOpen" max-width="500" persistent aria-labelledby="mail-discard-title">
-      <v-card class="mail-dialog">
-        <v-card-title id="mail-discard-title">Discard this mail draft?</v-card-title>
-        <v-card-text>Unsaved settings and replacement credentials will be discarded.</v-card-text>
-        <v-card-actions>
-          <v-btn @click="cancelDiscard">Keep editing</v-btn>
-          <v-spacer />
-          <v-btn color="primary" @click="discard">Discard draft</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </v-container>
 </template>
 <script setup lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, toRaw, nextTick } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AsyncState from '@/components/common/async-state.vue'
@@ -627,7 +617,6 @@ const loading = ref(false),
   checks = ref<MailCheck[]>([])
 const reviewOpen = ref(false),
   testOpen = ref(false),
-  discardOpen = ref(false),
   reason = ref(''),
   reviewError = ref(''),
   testError = ref(''),
@@ -635,8 +624,7 @@ const reviewOpen = ref(false),
   confirmSend = ref(false),
   acknowledgeUncertain = ref(false)
 const receiptMissing = ref(false)
-const unconfirmed = ref<MailCheckRequest | null>(null),
-  pendingAction = shallowRef<(() => void) | null>(null)
+const unconfirmed = ref<MailCheckRequest | null>(null)
 const section = computed(() => (sections.some((item) => item.key === route.query.section) ? String(route.query.section) : 'transport'))
 const templateKey = computed(() =>
   MAIL_TEMPLATES.some((item) => item.key === route.query.template) ? String(route.query.template) : 'account-welcome'
@@ -648,8 +636,7 @@ const preview = shallowRef<{ html: string; subject: string } | null>(null),
 let disposed = false,
   sequence = 0,
   previewSequence = 0,
-  timer: ReturnType<typeof setTimeout> | undefined,
-  allowLeave = false
+  timer: ReturnType<typeof setTimeout> | undefined
 const labels: Record<string, string> = {
   enabled: 'Delivery',
   senderName: 'Sender name',
@@ -698,7 +685,7 @@ const changes = computed(() => {
 })
 const dirty = computed(() => changes.value.length > 0),
   locked = computed(() => busy.value || loading.value || stale.value),
-  dialogOpen = computed(() => reviewOpen.value || testOpen.value || discardOpen.value)
+  dialogOpen = computed(() => reviewOpen.value || testOpen.value)
 const issues = computed(() => {
   if (!policy.value || !saved.value) return []
   const presence = { ...saved.value.secrets },
@@ -822,21 +809,13 @@ function reload() {
     void load()
   })
 }
-function askDiscard(action: () => void) {
+const discardTitle = 'Discard this mail draft?',
+  discardMessage = 'Unsaved settings and replacement credentials will be discarded.'
+async function askDiscard(action: () => void) {
   if (!dirty.value) return action()
-  pendingAction.value = action
-  discardOpen.value = true
-}
-function cancelDiscard() {
-  discardOpen.value = false
-  pendingAction.value = null
-}
-function discard() {
-  const action = pendingAction.value
-  pendingAction.value = null
-  discardOpen.value = false
+  if (!(await confirmDiscard(discardTitle, discardMessage, 'Discard draft'))) return
   reset()
-  action?.()
+  action()
 }
 function selectSection(key: string) {
   void router.replace({ query: { ...route.query, section: key } })
@@ -1100,16 +1079,10 @@ function beforeUnload(event: BeforeUnloadEvent) {
     event.returnValue = ''
   }
 }
-onBeforeRouteLeave((to) => {
-  if (allowLeave) return true
+onBeforeRouteLeave(async () => {
   if (busy.value) return false
   if (!dirty.value) return true
-  pendingAction.value = () => {
-    allowLeave = true
-    void router.push(to.fullPath)
-  }
-  discardOpen.value = true
-  return false
+  return !busy.value && (await confirmDiscard(discardTitle, discardMessage, 'Discard draft'))
 })
 onMounted(() => {
   void load()
