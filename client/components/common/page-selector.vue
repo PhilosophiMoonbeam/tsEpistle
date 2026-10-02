@@ -76,7 +76,7 @@
                 hoverable
               )
                 template(v-slot:prepend='{ isOpen }')
-                  v-icon(aria-hidden='true') mdi-{{ isOpen ? 'folder-open' : 'folder' }}
+                  v-icon(aria-hidden='true') {{ $t(`common:pageSelector.mdi`, { value: isOpen ? 'folder-open' : 'folder', interpolation: { escapeValue: false } }) }}
         v-col.page-selector__pane.page-selector__pages-pane(cols='12' md='7')
           v-toolbar.page-selector__pane-toolbar(color='surface-variant' density='compact' flat)
             h3.text-body-medium(:id='pagesId') {{$t('common:pageSelector.pages')}}
@@ -89,7 +89,7 @@
               aria-live='polite'
               aria-atomic='true'
             )
-              v-icon(:color='currentPage ? `primary` : `on-surface-variant`' size='16' aria-hidden='true') mdi-{{ currentPage ? 'check-circle-outline' : 'cursor-default-click-outline' }}
+              v-icon(:color='currentPage ? `primary` : `on-surface-variant`' size='16' aria-hidden='true') {{ $t(`common:pageSelector.mdi`, { value: currentPage ? 'check-circle-outline' : 'cursor-default-click-outline', interpolation: { escapeValue: false } }) }}
               span(v-if='currentPage') {{$t('common:pageSelector.pageSelected')}}
               span(v-else) {{$t('common:pageSelector.selectPageToContinue')}}
             async-state.page-selector__state(
@@ -113,7 +113,7 @@
                   :class="{ 'page-selector__page--selected': currentPage?.id === page.id, 'page-selector__page--current': page.path === path && currentLocale === locale }"
                   :aria-current='page.path === path && currentLocale === locale ? `page` : undefined'
                 )
-                  template(v-slot:prepend): v-icon aria-hidden='true' mdi-text-box-outline
+                  template(v-slot:prepend): v-icon {{ $t(`common:pageSelector.ariaHiddenTrueMdi`) }}
                   v-list-item-title {{page.title}}
             async-state.page-selector__state(
               v-else-if='currentFolderFailure'
@@ -214,9 +214,9 @@
           p.page-selector__candidate-reason(v-if='!item.eligible') {{item.reason || $t('common:pageSelector.manualRepairRequired')}}
           dl.page-selector__diff(v-if='item.changes.length')
             template(v-for='(change, index) in item.changes' :key='`${item.id}-${index}`')
-              dt Before
+              dt {{ $t(`common:pageSelector.before`) }}
               dd: code {{change.before}}
-              dt After
+              dt {{ $t(`common:pageSelector.after`) }}
               dd: code {{change.after}}
         p.page-selector__candidate-reason(v-if='selectedReviewHasNoChanges') {{$t('common:pageSelector.selectedPagesNoChanges')}}
         .page-selector__review-actions
@@ -312,6 +312,7 @@
 </template>
 
 <script lang='ts'>
+import { translate } from '@/modules/localization.ts'
 import { defineComponent, markRaw, type PropType, useId } from 'vue'
 import {
   fetchMoveLinkReview,
@@ -345,7 +346,7 @@ function createRootNode (locale: string, treeId: number): PageTreeItem {
   return {
     id: 0,
     path: '',
-    title: '/ (root)',
+    title: translate('common:pageSelector.root'),
     isFolder: true,
     pageId: null,
     parent: 0,
@@ -918,7 +919,7 @@ export default defineComponent({
       void this.fetchFolders(failure.item)
     },
     async fetchFolders (item: unknown): Promise<void> {
-      if (!isPageTreeItem(item)) throw new TypeError('Invalid page tree item')
+      if (!isPageTreeItem(item)) throw new TypeError(this.$t('common:pageSelector.invalidPageTreeItem'))
       const requestLocale = this.currentLocale
       const requestTreeId = item.treeId
       if (requestTreeId !== this.treeViewCacheId) return

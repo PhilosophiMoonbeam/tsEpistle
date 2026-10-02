@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+globalThis.translate = translateEnglish
+;globalThis.useTranslate = () => translateEnglish
 import type { App, ComponentOptions, PropType, RenderFunction } from 'vue'
 import type { MoveLinkReviewInput, MoveLinkReviewResponse, PageTreeRow } from '../../helpers/pages-api.ts'
 

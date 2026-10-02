@@ -17,10 +17,10 @@
         aria-atomic="true"
       >{{ statusLabel }}</span>
       <span :id="goalCollapsedObjectiveId" class="agent-goal__collapsed-objective">{{ goal.objective }}</span>
-      <span class="agent-goal__collapsed-meta" aria-label="Goal run and peak resource use">
-        <span>Run {{ goal.continuationCount + 1 }}</span>
+      <span class="agent-goal__collapsed-meta" :aria-label="$t('common:agentGoalStatus.goalRunPeakResource')">
+        <span>{{ $t('common:agentGoalStatus.run', { continuationCount: goal.continuationCount + 1, interpolation: { escapeValue: false } }) }}</span>
         <span aria-hidden="true">·</span>
-        <span>{{ Math.round(budgetPercent) }}% peak</span>
+        <span>{{ $t('common:agentGoalStatus.peak', { budgetPercent: Math.round(budgetPercent), interpolation: { escapeValue: false } }) }}</span>
       </span>
       <button
         :id="goalToggleId"
@@ -32,7 +32,7 @@
         :style="goalToggleTargetStyle"
         @click="toggleExpanded"
       >
-        <span class="agent-goal__toggle-label">{{ expanded ? 'Hide details' : 'Show details' }}</span>
+        <span class="agent-goal__toggle-label">{{ expanded ? $t('common:agentGoalStatus.hideDetails') : $t('common:agentGoalStatus.showDetails') }}</span>
         <v-icon class="agent-goal__toggle-icon" icon="mdi-chevron-down" size="18" aria-hidden="true" />
       </button>
     </div>
@@ -48,21 +48,21 @@
         <div class="agent-goal__body">
         <header class="agent-goal__header">
           <div class="agent-goal__heading">
-            <p class="agent-goal__eyebrow">Durable goal</p>
+            <p class="agent-goal__eyebrow">{{ $t('common:agentGoalStatus.durableGoal') }}</p>
             <h2 :id="goalTitleId" class="agent-goal__title">{{ goal.objective }}</h2>
           </div>
           <v-chip class="agent-goal__status" :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
         </header>
 
-        <div class="agent-goal__continuity" role="group" aria-label="Goal continuity">
-          <span><v-icon icon="mdi-source-branch" size="15" /> Run {{ goal.continuationCount + 1 }} of {{ goal.maxContinuations + 1 }}</span>
+        <div class="agent-goal__continuity" role="group" :aria-label="$t('common:agentGoalStatus.goalContinuity')">
+          <span><v-icon icon="mdi-source-branch" size="15" /> {{ $t('common:agentGoalStatus.run2', { continuationCount: goal.continuationCount + 1, maxContinuations: goal.maxContinuations + 1, interpolation: { escapeValue: false } }) }}</span>
           <span><v-icon icon="mdi-calendar-clock-outline" size="15" /> {{ timelinePrefix }} <time :datetime="timelineAt">{{ timelineLabel }}</time></span>
         </div>
 
         <div class="agent-goal__progress">
           <div class="agent-goal__progress-heading">
-            <span>Resource use</span>
-            <strong>{{ Math.round(budgetPercent) }}% peak</strong>
+            <span>{{ $t('common:agentGoalStatus.resourceUse') }}</span>
+            <strong>{{ $t('common:agentGoalStatus.peak', { budgetPercent: Math.round(budgetPercent), interpolation: { escapeValue: false } }) }}</strong>
           </div>
           <div
             class="agent-goal__meter"
@@ -75,18 +75,18 @@
             aria-valuemin="0"
             aria-valuemax="100"
             :aria-valuetext="budgetAriaLabel"
-            aria-label="Peak goal resource use"
+            :aria-label="$t('common:agentGoalStatus.peakGoalResourceUse')"
           >
             <span :style="{ width: `${budgetPercent}%` }" />
           </div>
         </div>
 
-        <dl class="agent-goal__budgets" aria-label="Goal resource budgets">
+        <dl class="agent-goal__budgets" :aria-label="$t('common:agentGoalStatus.goalResourceBudgets')">
           <div v-for="metric in budgetMetrics" :key="metric.label" class="agent-goal__budget">
             <dt>{{ metric.label }}</dt>
             <dd>
               <span>{{ metric.value }}</span>
-              <small>of {{ metric.limit }}</small>
+              <small>{{ $t('common:agentGoalStatus.of', { limit: metric.limit, interpolation: { escapeValue: false } }) }}</small>
             </dd>
             <dd class="agent-goal__budget-track" aria-hidden="true">
               <span :style="{ width: `${metric.percent}%` }" />
@@ -102,39 +102,39 @@
         >
           <div class="agent-goal__renewal-heading">
             <v-icon icon="mdi-information-outline" size="19" aria-hidden="true" />
-            <h3 :id="goalBudgetTitleId">Budget limit details</h3>
+            <h3 :id="goalBudgetTitleId">{{ $t('common:agentGoalStatus.budgetLimitDetails') }}</h3>
           </div>
           <dl class="agent-goal__renewal-facts">
             <div>
-              <dt>Token tier</dt>
+              <dt>{{ $t('common:agentGoalStatus.tokenTier') }}</dt>
               <dd>{{ tokenTierLabel }}</dd>
             </div>
             <div>
-              <dt>{{ goal.budgetPolicyVersion === 2 ? 'Current cycle usage' : 'Lifetime token budget' }}</dt>
-              <dd>{{ formatBudgetValue(currentCycleTokens) }} of {{ formatBudgetValue(currentCycleTokenLimit) }} tokens</dd>
+              <dt>{{ goal.budgetPolicyVersion === 2 ? $t('common:agentGoalStatus.currentCycleUsage') : $t('common:agentGoalStatus.lifetimeTokenBudget') }}</dt>
+              <dd>{{ $t('common:agentGoalStatus.tokens', { currentCycleTokens: formatBudgetValue(currentCycleTokens), currentCycleTokenLimit: formatBudgetValue(currentCycleTokenLimit), interpolation: { escapeValue: false } }) }}</dd>
             </div>
             <div>
-              <dt>Lifetime usage</dt>
-              <dd>{{ formatBudgetValue(goal.consumedTokens) }} tokens</dd>
+              <dt>{{ $t('common:agentGoalStatus.lifetimeUsage') }}</dt>
+              <dd>{{ $t('common:agentGoalStatus.tokens2', { consumedTokens: formatBudgetValue(goal.consumedTokens), interpolation: { escapeValue: false } }) }}</dd>
             </div>
             <div>
-              <dt>Budget cycle</dt>
+              <dt>{{ $t('common:agentGoalStatus.budgetCycle') }}</dt>
               <dd>{{ goal.budgetCycle }}</dd>
             </div>
             <div>
-              <dt>Limiting reason</dt>
+              <dt>{{ $t('common:agentGoalStatus.limitingReason') }}</dt>
               <dd>{{ budgetLimitReasonLabel }}</dd>
             </div>
             <div>
-              <dt>Next cycle allowance</dt>
+              <dt>{{ $t('common:agentGoalStatus.nextCycleAllowance') }}</dt>
               <dd>{{ renewalAllowanceDescription }}</dd>
             </div>
           </dl>
           <p v-if="canRenewTokenBudget" class="agent-goal__renewal-copy" role="status">
-            Confirm one continuation with another {{ renewalAllowanceLabel }}-token cycle. Unused tokens from the current cycle do not roll over.
+            {{ $t('common:agentGoalStatus.confirmOneContinuationAnother', { renewalAllowanceLabel, interpolation: { escapeValue: false } }) }}
           </p>
           <p v-else class="agent-goal__renewal-copy" role="status">
-            This limit cannot be renewed from this goal.
+            {{ $t('common:agentGoalStatus.limitCannotRenewedGoal') }}
           </p>
           <v-btn
             v-if="canRenewTokenBudget"
@@ -145,7 +145,7 @@
             :loading="pendingAction === 'renew-budget' && busy"
             :disabled="busy || networkBlocked"
             @click="renewBudget"
-          >Continue with another {{ renewalAllowanceLabel }}-token cycle</v-btn>
+          >{{ $t('common:agentGoalStatus.continueAnotherTokenCycle', { renewalAllowanceLabel, interpolation: { escapeValue: false } }) }}</v-btn>
         </section>
 
         <p class="agent-goal__summary">{{ progressLabel }}</p>
@@ -158,25 +158,25 @@
         >
           <div class="agent-goal__blockers-heading">
             <v-icon :icon="goal.status === 'failed' ? 'mdi-alert-octagon-outline' : 'mdi-alert-circle-outline'" size="19" />
-            <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? 'Why this goal stopped' : 'Needs attention' }}</h3>
+            <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? $t('common:agentGoalStatus.whyGoalStopped') : $t('common:agentGoalStatus.needsAttention') }}</h3>
           </div>
           <ul>
             <li v-for="{ issue, key } in blockerEntries" :key="key">
               <span>{{ issue.message }}</span>
-              <span class="agent-goal__issue-state">{{ issue.retryable ? 'Can continue after review' : 'Not automatically retryable' }}</span>
+              <span class="agent-goal__issue-state">{{ issue.retryable ? $t('common:agentGoalStatus.canContinueAfterReview') : $t('common:agentGoalStatus.notAutomaticallyRetryable') }}</span>
             </li>
           </ul>
         </aside>
 
         <p v-if="networkBlocked" class="agent-goal__network-note" role="status" aria-live="polite">
-          Connection required to change this goal. Your progress is preserved until the workspace reconnects.
+          {{ $t('common:agentGoalStatus.connectionRequiredChangeGoal') }}
         </p>
         <p v-if="busy" class="agent-goal__pending" role="status" aria-live="polite">
           <v-progress-circular color="primary" indeterminate size="15" width="2" aria-hidden="true" />
           {{ pendingActionLabel }}
         </p>
 
-        <div v-if="canPause || canResume || canCancel" class="agent-goal__actions" role="group" aria-label="Goal actions">
+        <div v-if="canPause || canResume || canCancel" class="agent-goal__actions" role="group" :aria-label="$t('common:agentGoalStatus.goalActions')">
           <v-btn
             v-if="canPause"
             size="small"
@@ -185,7 +185,7 @@
             :loading="pendingAction === 'pause' && busy"
             :disabled="busy || networkBlocked"
             @click="runAction('pause')"
-          >Pause</v-btn>
+          >{{ $t('common:agentGoalStatus.pause') }}</v-btn>
           <v-btn
             v-if="canResume"
             size="small"
@@ -195,7 +195,7 @@
             :loading="pendingAction === 'resume' && busy"
             :disabled="busy || networkBlocked"
             @click="runAction('resume')"
-          >Resume goal</v-btn>
+          >{{ $t('common:agentGoalStatus.resumeGoal') }}</v-btn>
           <v-btn
             v-if="canCancel"
             size="small"
@@ -205,7 +205,7 @@
             :disabled="busy || networkBlocked"
             :loading="pendingAction === 'cancel' && busy"
             @click="cancelDialogOpen = true"
-          >Cancel goal</v-btn>
+          >{{ $t('common:agentGoalStatus.cancelGoal') }}</v-btn>
         </div>
       </div>
       </div>
@@ -215,15 +215,15 @@
       <v-card rounded="xl">
         <v-card-title class="agent-goal__dialog-title">
           <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-stop-circle-outline" /></v-avatar>
-          <span :id="cancelGoalTitleId">Cancel durable goal?</span>
+          <span :id="cancelGoalTitleId">{{ $t('common:agentGoalStatus.cancelDurableGoal') }}</span>
         </v-card-title>
         <v-card-text>
-          This will stop <strong>{{ goal.objective }}</strong> and prevent every future continuation. Completed work remains in this conversation, but the goal cannot be resumed.
+          {{ $t('common:agentGoalStatus.willStop') }} <strong>{{ goal.objective }}</strong> {{ $t('common:agentGoalStatus.preventEveryFutureContinuation') }}
         </v-card-text>
         <v-card-actions class="agent-goal__dialog-actions">
           <v-spacer />
-          <v-btn variant="text" :disabled="busy" @click="cancelDialogOpen = false">Keep goal</v-btn>
-          <v-btn color="error" variant="tonal" :loading="pendingAction === 'cancel' && busy" :disabled="busy || networkBlocked" @click="confirmCancel">Cancel goal</v-btn>
+          <v-btn variant="text" :disabled="busy" @click="cancelDialogOpen = false">{{ $t('common:agentGoalStatus.keepGoal') }}</v-btn>
+          <v-btn color="error" variant="tonal" :loading="pendingAction === 'cancel' && busy" :disabled="busy || networkBlocked" @click="confirmCancel">{{ $t('common:agentGoalStatus.cancelGoal') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -233,6 +233,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 const { goal, busy, runActive, networkBlocked } = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean; networkBlocked?: boolean }>()
 const expanded = defineModel<boolean>('expanded', { required: true })
@@ -247,7 +250,7 @@ const goalDetailsId = computed(() => `agent-goal-${goal.id}-details`)
 const goalBlockersTitleId = computed(() => `agent-goal-${goal.id}-blockers-title`)
 const cancelGoalTitleId = computed(() => `agent-goal-${goal.id}-cancel-title`)
 const goalBudgetTitleId = computed(() => `agent-goal-${goal.id}-budget-title`)
-const toggleAriaLabel = computed(() => `${expanded.value ? 'Hide' : 'Show'} durable goal details: ${goal.objective}`)
+const toggleAriaLabel = computed(() => t('common:agentGoalStatus.durableGoalDetails', { expanded: expanded.value ? 'Hide' : 'Show', objective: goal.objective, interpolation: { escapeValue: false } }))
 const goalToggleTargetStyle = {
   minHeight: 'max(44px, var(--wiki-control-height, 44px))',
   minWidth: 'max(44px, var(--wiki-control-height, 44px))'
@@ -280,13 +283,13 @@ const renewBudget = (): void => {
 }
 
 const statusPresentation = {
-  active: { label: 'In progress', icon: 'mdi-bullseye-arrow', color: 'success' },
-  paused: { label: 'Paused', icon: 'mdi-pause-circle-outline', color: 'warning' },
-  blocked: { label: 'Needs attention', icon: 'mdi-alert-circle-outline', color: 'warning' },
-  budget_limited: { label: 'Limit reached', icon: 'mdi-speedometer-slow', color: 'warning' },
-  completed: { label: 'Completed', icon: 'mdi-check-decagram-outline', color: 'success' },
-  cancelled: { label: 'Cancelled', icon: 'mdi-close-circle-outline', color: 'default' },
-  failed: { label: 'Failed', icon: 'mdi-alert-octagon-outline', color: 'error' }
+  active: { label: t('common:agentGoalStatus.progress'), icon: 'mdi-bullseye-arrow', color: 'success' },
+  paused: { label: t('common:agentGoalStatus.paused'), icon: 'mdi-pause-circle-outline', color: 'warning' },
+  blocked: { label: t('common:agentGoalStatus.needsAttention'), icon: 'mdi-alert-circle-outline', color: 'warning' },
+  budget_limited: { label: t('common:agentGoalStatus.limitReached'), icon: 'mdi-speedometer-slow', color: 'warning' },
+  completed: { label: t('common:agentGoalStatus.completed'), icon: 'mdi-check-decagram-outline', color: 'success' },
+  cancelled: { label: t('common:agentGoalStatus.cancelled'), icon: 'mdi-close-circle-outline', color: 'default' },
+  failed: { label: t('common:agentGoalStatus.failed'), icon: 'mdi-alert-octagon-outline', color: 'error' }
 } as const
 
 const presentation = computed(() => statusPresentation[goal.status])
@@ -314,34 +317,34 @@ const toolPercent = computed(() => goal.maxToolCalls > 0 ? (goal.consumedToolCal
 const continuationPercent = computed(() => goal.maxContinuations > 0 ? (goal.continuationCount / goal.maxContinuations) * 100 : 0)
 const budgetPercent = computed(() => Math.min(100, Math.max(0, Math.max(tokenPercent.value, toolPercent.value, continuationPercent.value))))
 const formatBudgetValue = (value: number): string => value.toLocaleString()
-const tokenTierLabel = computed(() => goal.tokenTier === 'small' ? 'Small' : goal.tokenTier === 'standard' ? 'Standard' : goal.tokenTier === 'extended' ? 'Extended' : 'Unavailable')
-const renewalAllowanceLabel = computed(() => goal.tokenAllowance === null ? 'Unavailable' : formatBudgetValue(goal.tokenAllowance))
-const renewalAllowanceDescription = computed(() => goal.tokenAllowance === null ? 'Unavailable' : `Exactly ${renewalAllowanceLabel.value} tokens`)
+const tokenTierLabel = computed(() => goal.tokenTier === 'small' ? t('common:agentGoalStatus.small') : goal.tokenTier === 'standard' ? t('common:agentGoalStatus.standard') : goal.tokenTier === 'extended' ? t('common:agentGoalStatus.extended') : t('common:agentGoalStatus.unavailable'))
+const renewalAllowanceLabel = computed(() => goal.tokenAllowance === null ? t('common:agentGoalStatus.unavailable') : formatBudgetValue(goal.tokenAllowance))
+const renewalAllowanceDescription = computed(() => goal.tokenAllowance === null ? t('common:agentGoalStatus.unavailable') : t('common:agentGoalStatus.exactlyTokens', { value: renewalAllowanceLabel.value, interpolation: { escapeValue: false } }))
 const budgetLimitReasonLabel = computed(() => {
-  if (goal.budgetLimitReason === 'tokens') return 'Token budget exhausted'
-  if (goal.budgetLimitReason === 'tool_calls') return 'Tool-call limit exhausted'
-  if (goal.budgetLimitReason === 'duration') return 'Time limit exhausted'
-  if (goal.budgetLimitReason === 'continuations') return 'Continuation limit exhausted'
-  if (goal.budgetLimitReason === 'quota') return 'Account quota exhausted'
-  if (goal.budgetLimitReason === 'accounting') return 'Usage accounting requires reconciliation'
-  if (goal.budgetLimitReason === 'authority') return 'Provider authority changed'
-  return 'No limiting reason recorded'
+  if (goal.budgetLimitReason === 'tokens') return t('common:agentGoalStatus.tokenBudgetExhausted')
+  if (goal.budgetLimitReason === 'tool_calls') return t('common:agentGoalStatus.toolCallLimitExhausted')
+  if (goal.budgetLimitReason === 'duration') return t('common:agentGoalStatus.timeLimitExhausted')
+  if (goal.budgetLimitReason === 'continuations') return t('common:agentGoalStatus.continuationLimitExhausted')
+  if (goal.budgetLimitReason === 'quota') return t('common:agentGoalStatus.accountQuotaExhausted')
+  if (goal.budgetLimitReason === 'accounting') return t('common:agentGoalStatus.usageAccountingRequiresReconciliation')
+  if (goal.budgetLimitReason === 'authority') return t('common:agentGoalStatus.providerAuthorityChanged')
+  return t('common:agentGoalStatus.noLimitingReasonRecorded')
 })
 const budgetMetrics = computed(() => [
   {
-    label: goal.budgetPolicyVersion === 2 ? 'Current cycle tokens' : 'Lifetime tokens',
+    label: goal.budgetPolicyVersion === 2 ? t('common:agentGoalStatus.currentCycleTokens') : t('common:agentGoalStatus.lifetimeTokens'),
     value: formatBudgetValue(currentCycleTokens.value),
     limit: formatBudgetValue(currentCycleTokenLimit.value),
     percent: Math.min(100, Math.max(0, tokenPercent.value))
   },
   {
-    label: 'Tool calls',
+    label: t('common:agentGoalStatus.toolCalls'),
     value: formatBudgetValue(goal.consumedToolCalls),
     limit: formatBudgetValue(goal.maxToolCalls),
     percent: Math.min(100, Math.max(0, toolPercent.value))
   },
   {
-    label: 'Continuations',
+    label: t('common:agentGoalStatus.continuations'),
     value: formatBudgetValue(goal.continuationCount),
     limit: formatBudgetValue(goal.maxContinuations),
     percent: Math.min(100, Math.max(0, continuationPercent.value))
@@ -360,7 +363,7 @@ const blockerMessages = computed(() => {
   if (goal.status === 'blocked' && issues.length === 0) {
     issues.push({
       code: 'GOAL_BLOCKED',
-      message: 'The goal cannot continue until its blocking condition is reviewed.',
+      message: t('common:agentGoalStatus.goalCannotContinueUntil'),
       retryable: true
     })
   }
@@ -390,39 +393,39 @@ const datedTimelineFormatter = new Intl.DateTimeFormat(undefined, {
   minute: '2-digit'
 })
 const timelineAt = computed(() => goal.completedAt ?? goal.deadlineAt)
-const timelinePrefix = computed(() => goal.completedAt ? 'Finished' : 'Due')
+const timelinePrefix = computed(() => goal.completedAt ? t('common:agentGoalStatus.finished') : t('common:agentGoalStatus.due'))
 const timelineLabel = computed(() => {
   const date = new Date(timelineAt.value)
   return (date.getFullYear() === currentYear ? timelineFormatter : datedTimelineFormatter).format(date)
 })
 const pendingActionLabel = computed(() => {
-  if (pendingAction.value === 'pause') return 'Pausing goal…'
-  if (pendingAction.value === 'resume') return 'Resuming goal…'
-  if (pendingAction.value === 'cancel') return 'Cancelling goal…'
-  if (pendingAction.value === 'renew-budget') return 'Starting another token allowance cycle…'
-  return 'Updating goal…'
+  if (pendingAction.value === 'pause') return t('common:agentGoalStatus.pausingGoal')
+  if (pendingAction.value === 'resume') return t('common:agentGoalStatus.resumingGoal')
+  if (pendingAction.value === 'cancel') return t('common:agentGoalStatus.cancellingGoal')
+  if (pendingAction.value === 'renew-budget') return t('common:agentGoalStatus.startingAnotherTokenAllowance')
+  return t('common:agentGoalStatus.updatingGoal')
 })
 const budgetLabel = computed(() => {
   const budgets = [
-    { label: 'token budget', percent: tokenPercent.value },
+    { label: t('common:agentGoalStatus.tokenBudget'), percent: tokenPercent.value },
     { label: 'tool-call budget', percent: toolPercent.value },
-    { label: 'continuation budget', percent: continuationPercent.value }
+    { label: t('common:agentGoalStatus.continuationBudget'), percent: continuationPercent.value }
   ]
   return budgets.reduce((highest, budget) => budget.percent > highest.percent ? budget : highest).label
 })
-const budgetAriaLabel = computed(() => `${budgetLabel.value} is ${Math.round(budgetPercent.value)}% used`)
+const budgetAriaLabel = computed(() => t('common:agentGoalStatus.used', { value: budgetLabel.value, value2: Math.round(budgetPercent.value), interpolation: { escapeValue: false } }))
 const progressLabel = computed(() => {
-  if (goal.status === 'completed') return `Completed in ${goal.continuationCount + 1} run${goal.continuationCount === 0 ? '' : 's'}.`
+  if (goal.status === 'completed') return t('common:agentGoalStatus.completedRun', { continuationCount: goal.continuationCount + 1, continuationCount2: goal.continuationCount === 0 ? '' : 's', interpolation: { escapeValue: false } })
   if (goal.status === 'budget_limited') {
     return canRenewTokenBudget.value
-      ? 'The token budget stopped this run. Confirm another allowance cycle below to continue once.'
-      : `${budgetLimitReasonLabel.value} stopped further work. This limit cannot be renewed from this goal.`
+      ? t('common:agentGoalStatus.tokenBudgetStoppedRun')
+      : t('common:agentGoalStatus.stoppedFurtherWorkLimit', { value: budgetLimitReasonLabel.value, interpolation: { escapeValue: false } })
   }
-  if (goal.status === 'cancelled') return 'No further work will run for this goal.'
-  if (goal.status === 'failed') return 'The goal stopped after a non-recoverable failure.'
-  if (goal.status === 'paused') return 'Future continuations are paused. Resume when you are ready for the agent to continue.'
-  if (goal.status === 'blocked') return 'Automatic work is paused until the blocking condition is resolved.'
-  return 'The agent will continue across runs until the objective is complete, needs review, or reaches a host-owned limit.'
+  if (goal.status === 'cancelled') return t('common:agentGoalStatus.noFurtherWorkWill')
+  if (goal.status === 'failed') return t('common:agentGoalStatus.goalStoppedAfterNon')
+  if (goal.status === 'paused') return t('common:agentGoalStatus.futureContinuationsPausedResume')
+  if (goal.status === 'blocked') return t('common:agentGoalStatus.automaticWorkPausedUntil')
+  return t('common:agentGoalStatus.agentWillContinueAcross')
 })
 </script>
 

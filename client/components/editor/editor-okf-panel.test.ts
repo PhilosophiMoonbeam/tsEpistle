@@ -3,6 +3,7 @@ import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import * as ts from 'typescript'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 import { browserWindow } from '../../test/browser-dom.mts'
 
 const panelPath = path.join(process.cwd(), 'client/components/editor/editor-okf-panel.vue')
@@ -92,6 +93,7 @@ const mountPanel = (store: PanelStore, retry?: { isAvailable: () => boolean; run
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({ ...options, render })
+  app.config.globalProperties.$t = translateEnglish
   if (retry) app.provide('okfLoadRetry', retry)
   app.use(createVuetify({ components, directives }))
   app.mount(host)
@@ -220,7 +222,7 @@ describe('Knowledge / OKF editor panel', () => {
     await edit(field(root, 'Extensions'), '{"__proto__":{}}')
     button(root, 'Apply extensions').click()
     await Vue.nextTick()
-    const extensionError = parseExtensionJson('{"__proto__":{}}').error!
+    const extensionError = translateEnglish(parseExtensionJson('{"__proto__":{}}').error!)
     expect(Array.from(editableMetadata.querySelectorAll('[role="alert"]'), alert => alert.textContent)).toEqual(expect.arrayContaining([expect.stringContaining(extensionError)]))
     expect(store.page.okf.authority.metadata).toBe(original)
     await edit(field(root, 'Extensions'), '{"custom":{"enabled":true}}')

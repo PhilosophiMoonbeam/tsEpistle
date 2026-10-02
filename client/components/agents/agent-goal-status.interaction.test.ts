@@ -13,6 +13,8 @@ import * as vuetifyComponents from 'vuetify/components'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentCompletionIssue, AgentGoalView } from '../../../shared/agents/contracts.ts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 interface Ref<T> {
   value: T
 }
@@ -182,6 +184,7 @@ const renderGoalStatus = async (goal: AgentGoalView, expanded = false): Promise<
   const component = goalStatusComponent(goal, loadGoal(goal, expanded))
   const app = createSSRApp(component)
   app.use(createVuetify({ components: vuetifyComponents }))
+  app.config.globalProperties.$t = translateEnglish
   return renderToString(app)
 }
 
@@ -289,6 +292,7 @@ describe('Agent goal status interaction', () => {
     document.body.append(host)
     const app = Vue.createApp(goalStatusComponent(renewableGoal, harness))
     app.use(createVuetify({ components: vuetifyComponents }))
+    app.config.globalProperties.$t = translateEnglish
     try {
       app.mount(host)
       const continueButton = host.querySelector<HTMLButtonElement>('.agent-goal__renewal button')
