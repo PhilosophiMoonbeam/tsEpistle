@@ -1,27 +1,27 @@
 <template>
   <div class="agent-answer-actions">
-    <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click="copyAnswer">{{ copied ? 'Copied' : 'Copy answer' }}</v-btn>
-    <v-btn size="small" variant="text" prepend-icon="mdi-file-document-plus-outline" @click="openDraft">Save as Wiki draft</v-btn>
+    <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click="copyAnswer">{{ copied ? $t('common:agentAnswerActions.copied') : $t('common:agentAnswerActions.copyAnswer') }}</v-btn>
+    <v-btn size="small" variant="text" prepend-icon="mdi-file-document-plus-outline" @click="openDraft">{{ $t('common:agentAnswerActions.saveWikiDraft') }}</v-btn>
     <span class="agent-answer-actions__feedback" role="status">{{ feedback }}</span>
     <v-dialog content-class="agent-owned-overlay" v-model="draftOpen" max-width="860" scrollable :persistent="saving" aria-labelledby="agent-save-draft-title">
       <v-card class="agent-answer-draft">
-        <v-card-title class="agent-answer-draft__heading"><div><span class="agent-answer-draft__eyebrow">From answer to knowledge</span><h2 id="agent-save-draft-title">Keep a useful thought.</h2></div><v-btn icon="mdi-close" variant="text" aria-label="Close Wiki draft review" :disabled="saving" @click="draftOpen = false" /></v-card-title>
+        <v-card-title class="agent-answer-draft__heading"><div><span class="agent-answer-draft__eyebrow">{{ $t('common:agentAnswerActions.answerKnowledge') }}</span><h2 id="agent-save-draft-title">{{ $t('common:agentAnswerActions.keepUsefulThought') }}</h2></div><v-btn icon="mdi-close" variant="text" :aria-label="$t('common:agentAnswerActions.closeWikiDraftReview')" :disabled="saving" @click="draftOpen = false" /></v-card-title>
         <v-card-text>
           <template v-if="savedHref">
-            <v-alert type="success" variant="tonal">Your private Wiki draft is ready. Its source links are included.</v-alert>
-            <v-btn class="mt-4" :href="savedHref" target="_blank" rel="noopener noreferrer" append-icon="mdi-open-in-new">Open draft<span class="sr-only"> in a new tab</span></v-btn>
+            <v-alert type="success" variant="tonal">{{ $t('common:agentAnswerActions.privateWikiDraftReady') }}</v-alert>
+            <v-btn class="mt-4" :href="savedHref" target="_blank" rel="noopener noreferrer" append-icon="mdi-open-in-new">{{ $t('common:agentAnswerActions.openDraft') }}<span class="sr-only"> {{ $t('common:agentAnswerActions.newTab') }}</span></v-btn>
           </template>
           <template v-else>
-            <p class="agent-answer-draft__intro">Review and edit this answer before creating a private, unpublished page. Source links stay with the text.</p>
-            <v-text-field v-model="title" label="Page title" variant="outlined" :disabled="saving" maxlength="255" />
-            <div class="agent-answer-draft__location"><v-text-field v-model="locale" label="Language code" variant="outlined" :disabled="saving" /><v-text-field v-model="path" label="Page path" hint="A new page; existing pages are never overwritten." persistent-hint variant="outlined" :disabled="saving" /></div>
-            <div class="agent-answer-draft__tabs" role="group" aria-label="Draft view"><v-btn size="small" :variant="preview ? 'tonal' : 'text'" :aria-pressed="preview" @click="preview = true">Preview</v-btn><v-btn size="small" :variant="!preview ? 'tonal' : 'text'" :aria-pressed="!preview" @click="preview = false">Edit Markdown</v-btn></div>
+            <p class="agent-answer-draft__intro">{{ $t('common:agentAnswerActions.reviewEditAnswerBefore') }}</p>
+            <v-text-field v-model="title" :label="$t('common:agentAnswerActions.pageTitle')" variant="outlined" :disabled="saving" maxlength="255" />
+            <div class="agent-answer-draft__location"><v-text-field v-model="locale" :label="$t('common:agentAnswerActions.languageCode')" variant="outlined" :disabled="saving" /><v-text-field v-model="path" :label="$t('common:agentAnswerActions.pagePath')" :hint="$t('common:agentAnswerActions.newPageExistingPages')" persistent-hint variant="outlined" :disabled="saving" /></div>
+            <div class="agent-answer-draft__tabs" role="group" :aria-label="$t('common:agentAnswerActions.draftView')"><v-btn size="small" :variant="preview ? 'tonal' : 'text'" :aria-pressed="preview" @click="preview = true">{{ $t('common:actions.preview') }}</v-btn><v-btn size="small" :variant="!preview ? 'tonal' : 'text'" :aria-pressed="!preview" @click="preview = false">{{ $t('common:agentAnswerActions.editMarkdown') }}</v-btn></div>
             <div v-if="preview" class="agent-answer-draft__preview"><AgentMarkdown :content="markdown" /></div>
-            <v-textarea v-else v-model="markdown" label="Draft Markdown" variant="outlined" rows="12" :disabled="saving" />
+            <v-textarea v-else v-model="markdown" :label="$t('common:agentAnswerActions.draftMarkdown')" variant="outlined" rows="12" :disabled="saving" />
             <v-alert v-if="saveError" type="error" variant="tonal" class="mt-3" role="alert">{{ saveError }}</v-alert>
           </template>
         </v-card-text>
-        <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="draftOpen = false">{{ savedHref ? 'Done' : 'Cancel' }}</v-btn><v-btn v-if="!savedHref" class="agent-answer-draft__create" variant="tonal" :loading="saving" :disabled="!title.trim() || !path.trim() || !markdown.trim() || !locale.trim()" prepend-icon="mdi-lock-outline" @click="saveDraft">Create private draft</v-btn></v-card-actions>
+        <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="draftOpen = false">{{ savedHref ? $t('common:agentAnswerActions.done') : $t('common:actions.cancel') }}</v-btn><v-btn v-if="!savedHref" class="agent-answer-draft__create" variant="tonal" :loading="saving" :disabled="!title.trim() || !path.trim() || !markdown.trim() || !locale.trim()" prepend-icon="mdi-lock-outline" @click="saveDraft">{{ $t('common:agentAnswerActions.createPrivateDraft') }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
   </div>
@@ -33,6 +33,9 @@ import { wikiSourceHref } from '../../../shared/wiki-source.ts'
 import { createPage } from '../../helpers/pages-api.ts'
 import { formatAgentCitationMarkers } from './agent-citations.ts'
 import AgentMarkdown from './agent-markdown.vue'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const props = defineProps<{ content: string; citations: readonly AgentCitation[]; googleSearchGrounding?: AgentGoogleSearchGrounding; defaultLocale?: string }>()
 const draftOpen = ref(false)
 const saving = ref(false)
@@ -76,15 +79,15 @@ const exportedAnswer = (): string => {
   ].join('\n\n')
 }
 const copyAnswer = async (): Promise<void> => {
-  try { await navigator.clipboard.writeText(exportedAnswer()); copied.value = true; feedback.value = 'Answer and source links copied.' }
-  catch { feedback.value = 'Copy is unavailable. Open the draft review to select the Markdown text.' }
+  try { await navigator.clipboard.writeText(exportedAnswer()); copied.value = true; feedback.value = t('common:agentAnswerActions.answerSourceLinksCopied') }
+  catch { feedback.value = t('common:agentAnswerActions.copyUnavailableOpenDraft') }
   clearTimeout(copyTimer)
   copyTimer = setTimeout(() => { copied.value = false; feedback.value = '' }, 3000)
 }
 const openDraft = (): void => {
   if (!markdown.value) {
     markdown.value = exportedAnswer()
-    title.value = props.content.split('\n').find(line => line.trim())?.replace(/^#+\s*/, '').replace(/\[\[cite:[^\]]+\]\]/g, '').slice(0, 100) || 'Agent notes'
+    title.value = props.content.split('\n').find(line => line.trim())?.replace(/^#+\s*/, '').replace(/\[\[cite:[^\]]+\]\]/g, '').slice(0, 100) || t('common:agentAnswerActions.agentNotes')
     locale.value = props.defaultLocale || document.documentElement.lang || 'en'
     path.value = `agent-notes/${title.value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 70) || 'note'}-${Date.now().toString(36)}`
   }
@@ -96,7 +99,7 @@ const saveDraft = async (): Promise<void> => {
   try {
     await createPage(window.fetch.bind(window), { content: markdown.value, title: title.value.trim(), description: '', editor: 'markdown', visibility: 'private', isPublished: false, locale: locale.value.trim(), path: path.value.trim(), publishStartDate: '', publishEndDate: '', scriptCss: '', scriptJs: '', tags: [] })
     savedHref.value = wikiSourceHref({ locale: locale.value.trim(), path: path.value.trim(), visibility: 'private' })
-  } catch (value) { saveError.value = value instanceof Error ? value.message : 'The draft could not be created.' }
+  } catch (value) { saveError.value = value instanceof Error ? value.message : t('common:agentAnswerActions.draftCouldNotCreated') }
   finally { saving.value = false }
 }
 onBeforeUnmount(() => clearTimeout(copyTimer))

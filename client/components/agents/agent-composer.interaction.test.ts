@@ -8,6 +8,7 @@ import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelecta
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
 
 interface Ref<T> {

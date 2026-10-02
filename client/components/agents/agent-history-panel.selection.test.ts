@@ -7,6 +7,8 @@ import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import type { AgentRefreshResult } from '../../store/agents.ts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 interface Ref<T> {
   value: T
 }

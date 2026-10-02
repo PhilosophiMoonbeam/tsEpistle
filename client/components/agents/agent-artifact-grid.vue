@@ -9,14 +9,14 @@
       >
         <img
           :src="`/_api/agents/artifacts/${artifact.id}/content`"
-          :alt="capturedLabel(artifact) ? `Browser screenshot, ${capturedLabel(artifact)}` : 'Browser screenshot'"
+          :alt="capturedLabel(artifact) ? $t('common:agentArtifactGrid.browserScreenshot', { artifact: capturedLabel(artifact), interpolation: { escapeValue: false } }) : $t('common:agentArtifactGrid.browserScreenshot2')"
           :width="artifact.width"
           :height="artifact.height"
           loading="lazy"
         >
       </a>
       <figcaption class="text-body-small text-medium-emphasis">
-        {{ artifact.available ? `Browser screenshot · ${artifact.width}×${artifact.height}` : 'Browser screenshot expired' }}
+        {{ artifact.available ? $t('common:agentArtifactGrid.browserScreenshot3', { width: artifact.width, height: artifact.height, interpolation: { escapeValue: false } }) : $t('common:agentArtifactGrid.browserScreenshotExpired') }}
       </figcaption>
     </figure>
   </section>
