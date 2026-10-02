@@ -114,11 +114,12 @@ describe('page reader chrome template', () => {
     expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
   })
 
-  it('opens utility tooltips above the row so they never cover the metadata below', async () => {
-    const { document } = await renderTemplate(PAGE, baseState({ isAuthenticated: true }))
+  it('places every utility tooltip by one rule so none covers the metadata below the row', async () => {
+    const { document } = await renderTemplate(PAGE, baseState({ isAuthenticated: true, utilityTooltipLocation: 'end', utilityTooltipTarget: '#page-desktop-rail .page-tools-card' }))
     const tooltips = Array.from(document.querySelectorAll('.page-tools-card__utilities [data-stub="v-tooltip"]'))
     expect(tooltips.length).toBeGreaterThan(2)
-    expect(tooltips.map(tooltip => tooltip.getAttribute('location'))).toEqual(tooltips.map(() => 'top'))
+    expect(tooltips.map(tooltip => tooltip.getAttribute('location'))).toEqual(tooltips.map(() => 'end'))
+    expect(tooltips.map(tooltip => tooltip.getAttribute('target'))).toEqual(tooltips.map(() => '#page-desktop-rail .page-tools-card'))
   })
 
   it('renders an author placeholder in the middle of a translated sentence without moving the name', async () => {
@@ -299,6 +300,17 @@ describe('page reader chrome rules', () => {
       { id: 5, label: 'Grace (@grace)', source: 'discussion' },
       { id: 9, label: 'User #9', source: 'manual' }
     ])
+  })
+
+  it('opens utility tooltips beside the desktop rail card and above the row elsewhere', () => {
+    const place = (vm: Record<string, unknown>) => {
+      vm.utilityTooltipsBeside = call('utilityTooltipsBeside', vm)
+      return [call('utilityTooltipLocation', vm), call('utilityTooltipTarget', vm)]
+    }
+    expect(place({ isTocMobile: false, winWidth: 1440, tocPosition: 'left' })).toEqual(['end', '#page-desktop-rail .page-tools-card'])
+    expect(place({ isTocMobile: false, winWidth: 1440, tocPosition: 'right' })).toEqual(['start', '#page-desktop-rail .page-tools-card'])
+    expect(place({ isTocMobile: false, winWidth: 1100, tocPosition: 'left' })).toEqual(['top', undefined])
+    expect(place({ isTocMobile: true, winWidth: 390, tocPosition: 'left' })).toEqual(['top', undefined])
   })
 
   it('names the browser time zone on Updated only when the account could not load and no zone is saved', () => {
