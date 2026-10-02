@@ -1,6 +1,6 @@
 .identity-workspace {
   --identity-line: rgba(var(--v-theme-on-surface), 0.14);
-  --identity-muted: rgba(var(--v-theme-on-surface), 0.72);
+  --identity-muted: var(--wiki-text-muted);
   color: rgb(var(--v-theme-on-surface));
   h2,
   h3,

@@ -1,7 +1,7 @@
 .storage-workspace,
 .storage-dialog {
   --storage-line: rgba(var(--v-theme-on-surface), .16);
-  --storage-muted: rgba(var(--v-theme-on-surface), .72);
+  --storage-muted: var(--wiki-text-muted);
   --storage-accent: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
   --storage-wash: rgba(var(--v-theme-on-surface), .035);
   color: rgb(var(--v-theme-on-surface));

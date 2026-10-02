@@ -721,7 +721,7 @@ export default {
 .logo-manager { --logo-manager-border: rgba(var(--v-border-color), var(--v-border-opacity)); }
 .logo-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
 .logo-preview-card { min-width: 0; padding: 1rem; border: 1px solid var(--logo-manager-border); border-radius: 12px; background: rgba(var(--v-theme-surface-variant), .24); }
-.logo-preview-heading { margin-bottom: .75rem; color: rgba(var(--v-theme-on-surface), .72); font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.logo-preview-heading { margin-bottom: .75rem; color: var(--wiki-text-muted); font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .logo-preview-frame { display: grid; width: 100%; height: 112px; place-items: center; overflow: hidden; border-radius: 8px; background-color: rgb(var(--v-theme-surface)); }
 .logo-preview-frame--dark { background: #202321; }
 .logo-preview-frame > .v-img { width: 100%; height: 100%; }

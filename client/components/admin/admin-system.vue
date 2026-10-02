@@ -746,7 +746,7 @@ onBeforeUnmount(() => {
       font-size: 1rem;
       line-height: 1.8;
       max-width: 65ch;
-      color: rgba(var(--v-theme-on-surface), 0.78);
+      color: var(--wiki-text-muted);
     }
   }
   .system-release {
@@ -800,7 +800,7 @@ onBeforeUnmount(() => {
       font-size: 0.82rem;
       line-height: 1.7;
       margin: 0.35rem 0 0;
-      color: rgba(var(--v-theme-on-surface), 0.74);
+      color: var(--wiki-text-muted);
     }
   }
   .system-positive {
@@ -855,7 +855,7 @@ onBeforeUnmount(() => {
       border-bottom: 1px solid var(--system-line);
     }
     dt {
-      color: rgba(var(--v-theme-on-surface), 0.7);
+      color: var(--wiki-text-muted);
       padding-right: 1rem;
     }
     dd {
@@ -870,7 +870,7 @@ onBeforeUnmount(() => {
   .system-note {
     font-size: 0.78rem;
     line-height: 1.75;
-    color: rgba(var(--v-theme-on-surface), 0.73);
+    color: var(--wiki-text-muted);
     margin: 1rem 0;
   }
   .system-table-wrap {
@@ -907,7 +907,7 @@ onBeforeUnmount(() => {
     small {
       display: block;
       font-size: 0.69rem;
-      color: rgba(var(--v-theme-on-surface), 0.7);
+      color: var(--wiki-text-muted);
       font-weight: 400;
       margin-top: 0.2rem;
     }
@@ -953,7 +953,7 @@ onBeforeUnmount(() => {
       font-size: 1rem;
       span {
         margin-left: 0.5rem;
-        color: rgba(var(--v-theme-on-surface), 0.6);
+        color: var(--wiki-text-muted);
       }
     }
     h4 {
@@ -1083,7 +1083,7 @@ onBeforeUnmount(() => {
       margin: 1.4rem 0;
     }
     dt {
-      color: rgba(var(--v-theme-on-surface), 0.73);
+      color: var(--wiki-text-muted);
     }
     dd {
       margin: 0;
@@ -1101,7 +1101,7 @@ onBeforeUnmount(() => {
     p {
       font-size: 0.77rem;
       line-height: 1.8;
-      color: rgba(var(--v-theme-on-surface), 0.73);
+      color: var(--wiki-text-muted);
     }
     a {
       display: flex;
