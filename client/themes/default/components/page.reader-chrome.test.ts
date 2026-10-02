@@ -345,6 +345,22 @@ describe('page reader chrome rules', () => {
   it('labels the signed-in reviewer as You in the approval history', () => {
     const vm = { $t: keyTranslator }
     expect(page.methods.approvalActorLabel!.call(vm, 7)).toBe('common:page.reviewerYou')
+    expect(page.methods.approvalActorLabel!.call(vm, 7, 'Ada Lovelace')).toBe('common:page.reviewerYou')
     expect(page.methods.approvalActorLabel!.call(vm, 3)).toBe('common:page.reviewerById(id=3)')
+  })
+
+  it('names other approval actors from the API and falls back to the user ID', () => {
+    const transitions = [
+      { id: 'a', fromStatus: null, toStatus: 'submitted', actorId: 3, actorName: '  Grace Hopper ', comment: null, createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'b', fromStatus: 'submitted', toStatus: 'changes-requested', actorId: 4, actorName: null, comment: 'x', createdAt: '2026-01-02T00:00:00Z' }
+    ]
+    const vm: Record<string, unknown> = { $t: keyTranslator, pageApproval: { transitions } }
+    vm.approvalActorNames = call('approvalActorNames', vm)
+    const label = (id: number, name?: unknown) => page.methods.approvalActorLabel!.call(vm, id, name)
+    expect(label(3, 'Grace Hopper')).toBe('Grace Hopper')
+    expect(label(4, null)).toBe('common:page.reviewerById(id=4)')
+    expect(label(5, '   ')).toBe('common:page.reviewerById(id=5)')
+    // A selected reviewer without a name argument reuses the name from the history.
+    expect(label(3)).toBe('Grace Hopper')
   })
 })

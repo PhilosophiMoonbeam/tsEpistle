@@ -678,7 +678,7 @@
                   v-list-item(v-for='transition in pageApproval.transitions', :key='transition.id')
                     v-list-item-title {{ approvalStatusLabel(transition.toStatus) }}
                     v-list-item-subtitle
-                      bdi {{ approvalActorLabel(transition.actorId) }}
+                      bdi {{ approvalActorLabel(transition.actorId, transition.actorName) }}
                       |  · 
                       time(:datetime='approvalTransitionIso(transition.createdAt)') {{ approvalTransitionDate(transition.createdAt) }}
                     v-list-item-subtitle(v-if='transition.comment') {{ transition.comment }}
@@ -896,6 +896,8 @@ type ApprovalTransition = {
   fromStatus: string | null
   toStatus: string
   actorId: number
+  // Display name from the approval API; null when the account has no name.
+  actorName?: string | null
   comment: string | null
   createdAt: string | number
 }
@@ -1815,6 +1817,14 @@ export default defineComponent({
       const index = sentence.indexOf(marker)
       if (index < 0) return { before: `${sentence} `, after: '' }
       return { before: sentence.slice(0, index), after: sentence.slice(index + marker.length) }
+    },
+    // Names the approval API returned for history actors, reused to label a selected reviewer.
+    approvalActorNames (): Map<number, string> {
+      const names = new Map<number, string>()
+      for (const transition of this.pageApproval?.transitions ?? []) {
+        if (typeof transition.actorName === 'string' && transition.actorName.trim()) names.set(transition.actorId, transition.actorName.trim())
+      }
+      return names
     },
     approvalReviewerItems (): ApprovalReviewerOption[] {
       const options = [...this.approvalReviewerOptions]
@@ -3585,9 +3595,10 @@ export default defineComponent({
         : this.$t('common:page.reviewerSearchHint')
       return prefix ? `${prefix} ${help}` : help
     },
-    approvalActorLabel (actorId: number): string {
+    approvalActorLabel (actorId: number, actorName?: unknown): string {
       if (wikiStore.user.authenticated && actorId === wikiStore.user.id) return this.$t('common:page.reviewerYou')
-      return this.$t('common:page.reviewerById', { id: actorId })
+      const name = typeof actorName === 'string' && actorName.trim() ? actorName.trim() : this.approvalActorNames?.get(actorId)
+      return name || this.$t('common:page.reviewerById', { id: actorId })
     },
     withUpdatedZone (time: string): string {
       if (!time || !this.labelUpdatedZone) return time
