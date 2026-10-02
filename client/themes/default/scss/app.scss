@@ -422,7 +422,7 @@
       padding-inline-start: var(--wiki-space-1, .25rem);
 
       &::marker {
-        color: color-mix(in srgb, var(--wiki-accent-warm, #d97706) 72%, var(--wiki-accent-spectral, #6366f1));
+        color: color-mix(in srgb, var(--wiki-primary-ink, #d97706) 72%, var(--wiki-accent-spectral, #6366f1));
         font-weight: 650;
       }
 
@@ -1190,7 +1190,7 @@
         background: color-mix(in srgb, var(--wiki-accent-warm) 7%, transparent);
 
         &::before {
-          color: var(--wiki-accent-warm, currentColor);
+          color: var(--wiki-primary-ink, currentColor);
         }
       }
 

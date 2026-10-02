@@ -1656,7 +1656,7 @@ export default defineComponent({
     background: color-mix(in srgb, rgb(var(--v-theme-primary)) 15%, rgb(var(--v-theme-surface)));
     border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 28%, transparent);
     border-radius: 1.15rem;
-    color: rgb(var(--v-theme-primary));
+    color: var(--wiki-primary-ink);
     display: flex;
     height: 4rem;
     justify-content: center;
@@ -1733,7 +1733,7 @@ export default defineComponent({
     background: color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, rgb(var(--v-theme-surface)));
     border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 22%, transparent);
     border-radius: .8rem;
-    color: rgb(var(--v-theme-primary));
+    color: var(--wiki-primary-ink);
     display: flex;
     height: 2.65rem;
     justify-content: center;

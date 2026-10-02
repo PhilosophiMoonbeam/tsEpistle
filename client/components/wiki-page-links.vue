@@ -329,7 +329,7 @@ onBeforeUnmount(() => {
 .wiki-page-links__title {
   width: fit-content;
   max-width: 100%;
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   font-weight: 600;
   overflow-wrap: anywhere;
   text-decoration: underline;

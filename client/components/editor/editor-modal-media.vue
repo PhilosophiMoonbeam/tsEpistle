@@ -1710,7 +1710,7 @@ export default defineComponent({
 
     .v-icon {
       flex: none;
-      color: rgb(var(--v-theme-primary));
+      color: var(--wiki-primary-ink);
     }
   }
 

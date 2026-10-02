@@ -312,7 +312,7 @@ export default {
 }
 
 .profile-page-link {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
   text-decoration: none;
 }
 
