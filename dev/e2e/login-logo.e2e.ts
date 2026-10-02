@@ -2530,7 +2530,7 @@ test.describe('managed login logo auth independence', () => {
     const siteTitle = (await page.locator('#login-site-title').textContent())?.trim()
     expect(siteTitle).toBeTruthy()
     const baselineButtonNames = await accessibleButtonNames(page)
-    expect(baselineButtonNames).toEqual(expect.arrayContaining(['Show Password', 'Log In']))
+    expect(baselineButtonNames).toEqual(expect.arrayContaining(['Show password', 'Log In']))
     const expectedAccessibility: LoginAccessibilityContract = {
       buttons: baselineButtonNames,
       headings: [siteTitle ?? '', 'Enter your credentials'],
