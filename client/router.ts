@@ -2,6 +2,7 @@ import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 import { wikiStore } from './store/index.ts'
 import { loadingStart, loadingStop, showNotification } from './helpers/root-ui-store'
+import { requestConfirmation } from './components/common/confirm-dialog.ts'
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
 const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
@@ -94,5 +95,13 @@ router.onError((_error, to) => {
     style: 'error',
     icon: 'refresh'
   })
-  if (window.confirm(`${message}\n\nReload now?`)) window.location.reload()
+  // The shell's themed confirm host asks; without a host the service falls back to the native prompt.
+  void requestConfirmation({
+    title: 'This section could not be loaded.',
+    message: 'Reload the page to try again.',
+    confirmLabel: 'Reload',
+    cancelLabel: 'Not now'
+  }).then(confirmed => {
+    if (confirmed) window.location.reload()
+  })
 })
