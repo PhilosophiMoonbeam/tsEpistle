@@ -230,7 +230,8 @@ type ShellContext = {
   savedState: SavedState
   navigationTimer: number | null
   dialogUnsaved: boolean
-  dialogProgress: boolean
+  saveFeedback: string
+  lastSavedAt: number | null
   exitConfirmed: boolean
   lifecycleGeneration: number
   editorInstanceKey: number
@@ -282,7 +283,8 @@ type ShellContext = {
   save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
   saveAndClose: () => Promise<boolean>
   saveUnsavedAndClose: () => Promise<void>
-  showProgressDialog: () => void
+  beginSaveFeedback: () => void
+  endSaveFeedback: (outcome: 'saved' | 'device' | 'failed' | 'idle') => void
 }
 type ShellBehavior = {
   computed: {
@@ -574,7 +576,9 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     savedState: {} as SavedState,
     navigationTimer: null,
     dialogUnsaved: false,
-    dialogProgress: false,
+    saveFeedback: 'idle',
+    lastSavedAt: null,
+    lastSaveKind: 'server',
     exitConfirmed: false,
     lifecycleGeneration: 0,
     editorInstanceKey: 0,
@@ -741,15 +745,15 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     get: () => behavior.computed.offlineDraftStatusText.call(context)
   })
 
-  const showProgressDialog = context.showProgressDialog
-  const hideProgressDialog = context.hideProgressDialog
-  context.showProgressDialog = () => {
+  const beginSaveFeedback = context.beginSaveFeedback
+  const endSaveFeedback = context.endSaveFeedback
+  context.beginSaveFeedback = () => {
     context.progressShown++
-    showProgressDialog()
+    beginSaveFeedback()
   }
-  context.hideProgressDialog = () => {
-    context.progressHidden++
-    hideProgressDialog()
+  context.endSaveFeedback = outcome => {
+    if (context.saveFeedback === 'saving') context.progressHidden++
+    endSaveFeedback(outcome)
   }
   context.setCurrentSavedState()
   return context
@@ -811,7 +815,7 @@ describe('modern editor shell interaction contract', () => {
     expect(shellSfc.errors).toEqual([])
     expect(surfaceStart).toBeGreaterThanOrEqual(0)
     expect(activeEditorStart).toBeGreaterThan(surfaceStart)
-    expect(template.slice(surfaceStart, activeEditorStart)).toContain('Keep as new draft')
+    expect(template.slice(surfaceStart, activeEditorStart)).toContain('editor:offline.keepAsNewDraft')
     expect(shellStyle).toMatch(/\.editor-active-editor\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1 1 auto;[\s\S]*min-width:\s*0;[\s\S]*min-height:\s*0;/)
   })
 
@@ -1192,6 +1196,41 @@ describe('modern editor shell interaction contract', () => {
     expect(testWindow.location.assigned).toEqual([])
   })
 
+  test('keeps the editor usable during an inline save and rejects a parallel save', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let releaseWrite: () => void = () => undefined
+    let writes = 0
+    const context = createShellHarness(store, testWindow, {
+      updatePage: async () => {
+        writes++
+        await new Promise<void>(resolve => {
+          releaseWrite = resolve
+        })
+        return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      }
+    })
+    store.editor.content = 'edited content'
+
+    const firstSave = context.save()
+    await Promise.resolve()
+    expect(context.isSaving).toBe(true)
+    expect(context.saveFeedback).toBe('saving')
+    // A second click, Ctrl+S or Save and close must not start another write.
+    expect(await context.save()).toBe(false)
+    expect(await context.saveAndClose()).toBe(false)
+    for (let attempt = 0; attempt < 20 && writes === 0; attempt++) await Promise.resolve()
+    releaseWrite()
+
+    expect(await firstSave).toBe(true)
+    expect(writes).toBe(1)
+    expect(context.isSaving).toBe(false)
+    expect(context.saveFeedback).toBe('saved')
+    expect(context.lastSavedAt).toBeGreaterThan(0)
+    expect(shellSfc.descriptor.template?.content ?? '').not.toContain('login-success-animation')
+    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/v-btn\.editor-save-action\([\s\S]*:loading='isSaving'/)
+  })
+
   test('records a successful create before Save and close navigates', async () => {
     const store = createStore('create')
     const testWindow = createTestWindow()
@@ -1374,7 +1413,7 @@ describe('modern editor shell interaction contract', () => {
     expect(context.savedState).toEqual(mutableSnapshot(store))
     expect(context.isDirty).toBe(false)
     expect(context.dialogUnsaved).toBe(false)
-    expect(context.dialogProgress).toBe(false)
+    expect(context.saveFeedback).toBe('saved')
     expect(store.notifications).toHaveLength(1)
     expect(store.notifications[0]?.style).toBe('success')
     expect(store.loadingOwners).toEqual([])
@@ -1403,7 +1442,7 @@ describe('modern editor shell interaction contract', () => {
     expect(context.isDirty).toBe(true)
     expect(context.dialogUnsaved).toBe(true)
     expect(context.exitConfirmed).toBe(false)
-    expect(context.dialogProgress).toBe(false)
+    expect(context.saveFeedback).toBe('failed')
     expect(store.notifications).toHaveLength(1)
     expect(store.notifications[0]?.style).toBe('error')
     expect(store.notifications[0]?.message).toBe('save rejected')
@@ -1454,7 +1493,7 @@ describe('modern editor shell interaction contract', () => {
     expect(store.editor.mode).toBe('update')
     expect(context.savedState).toEqual(mutableSnapshot(store))
     expect(context.dialogUnsaved).toBe(false)
-    expect(context.dialogProgress).toBe(false)
+    expect(context.saveFeedback).toBe('saved')
     expect(testWindow.location.assigned).toEqual(['/_private/fr/discarded-path'])
     expect(testWindow.scheduledTimers).toEqual([])
     expect(store.loadingOwners).toEqual([])
@@ -1581,7 +1620,7 @@ describe('modern editor shell interaction contract', () => {
     await missingContext.saveUnsavedAndClose()
     expect(missingContext.dialogUnsaved).toBe(true)
     expect(missingContext.exitConfirmed).toBe(false)
-    expect(missingContext.dialogProgress).toBe(false)
+    expect(missingContext.saveFeedback).toBe('idle')
     expect(missingWindow.location.assigned).toEqual([])
     expect(missingWindow.location.replaced).toEqual([])
     expect(missingWrites).toBe(0)
@@ -1610,7 +1649,7 @@ describe('modern editor shell interaction contract', () => {
     expect(store.notifications).toHaveLength(1)
     expect(store.notifications[0]?.style).toBe('warning')
     expect(shellSfc.descriptor.template?.content ?? '').toMatch(/offlineDraftStatus === `locked` \|\| !offlineDraftCoordinator/)
-    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-draft-review-actions\(v-if='offlineDraftCandidate'\)/)
+    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-draft-review-actions\(v-if='offlineDraftRows.length > 0'\)/)
     expect(shellSfc.descriptor.template?.content ?? '').not.toMatch(/editor-draft-recovery-actions\(v-if='offlineDraftStatus === `unavailable`'/)
   })
   test('requests the global identity boundary for a receiptless unauthorized save', async () => {
