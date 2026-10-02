@@ -333,6 +333,14 @@ describe('profile workspace contracts', () => {
     expect(name.value).toBe('Example Reader')
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
 
+    const reduceMotion = field(host, translations['profile:reduceMotion']!)
+    reduceMotion.click()
+    await settle()
+    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
+    expect((await press(reduceMotion, 'Escape')).defaultPrevented).toBe(true)
+    expect(reduceMotion.checked).toBe(false)
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+
     await vuetify.theme.change('light')
     const appearance = await chooseOption(host, translations['profile:appearance']!, translations['profile:appearanceDark']!)
     expect(vuetify.theme.name.value).toBe('dark')
