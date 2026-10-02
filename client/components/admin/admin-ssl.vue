@@ -1,6 +1,6 @@
 <template>
   <div class="tls-workspace">
-    <div :inert="dialog || leaveDialog || undefined">
+    <div :inert="dialog || undefined">
       <admin-hero
         title="HTTPS & certificates"
         description="Know where encryption begins. Keep every connection and certificate change accountable."
@@ -491,20 +491,11 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-    <v-dialog v-model="leaveDialog" max-width="460" aria-labelledby="tls-leave-title">
-      <v-card class="pa-6">
-        <h2 id="tls-leave-title">Leave unsaved policy?</h2>
-        <p class="my-4">Your redirect policy draft will be discarded. Recorded operations continue on the server.</p>
-        <v-card-actions>
-          <v-btn @click="stay">Keep editing</v-btn>
-          <v-btn color="primary" @click="leave">Discard draft</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { confirmDiscard } from '../common/confirm-dialog.ts'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import type { TlsOperation, TlsOperationKind, TlsWorkspace } from '../../../shared/tls-workspace.ts'
 import { applyTlsPolicy, fetchTlsOperation, fetchTlsWorkspace, saveTlsPolicy, startTlsOperation } from '../../helpers/tls-workspace-api.ts'
@@ -785,31 +776,10 @@ const exportEvidence = () => {
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
-const leaveDialog = ref(false)
-let resolveLeave: ((value: boolean) => void) | undefined
-watch(leaveDialog, (value) => {
-  if (!value) {
-    resolveLeave?.(false)
-    resolveLeave = undefined
-  }
-})
-const stay = () => {
-  leaveDialog.value = false
-  resolveLeave?.(false)
-  resolveLeave = undefined
-}
-const leave = () => {
-  leaveDialog.value = false
-  resolveLeave?.(true)
-  resolveLeave = undefined
-}
-onBeforeRouteLeave(() => {
+onBeforeRouteLeave(async () => {
   if (busy.value) return false
   if (!dirty.value) return true
-  leaveDialog.value = true
-  return new Promise<boolean>((resolve) => {
-    resolveLeave = resolve
-  })
+  return confirmDiscard('Leave unsaved policy?', 'Your redirect policy draft will be discarded. Recorded operations continue on the server.', 'Discard draft')
 })
 const beforeUnload = (event: BeforeUnloadEvent) => {
   if (dirty.value || busy.value) {
@@ -826,7 +796,6 @@ onBeforeUnmount(() => {
   generation++
   clearTimeout(poll)
   window.removeEventListener('beforeunload', beforeUnload)
-  resolveLeave?.(false)
 })
 </script>
 <style lang="scss" src="./tls-workspace.scss"></style>

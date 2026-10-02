@@ -244,6 +244,8 @@ export default defineComponent({
     wikiStore.page.mode = 'admin'
     this.loadInfo()
     this.syncOpenedSection()
+  },
+  mounted() {
     this.removeAfterEach = this.$router.afterEach((to, from, failure) => {
       // The initial navigation starts from a route with no matched records.
       if (failure || from.matched.length === 0 || to.path === from.path) return
