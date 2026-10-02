@@ -460,7 +460,6 @@ describe('offline snapshot admission operations', () => {
     ['a stale render', 'render-pending', () => { page.renderedSourceRevision = '7' }],
     ['custom script content', 'custom-content', () => { page.extra = { js: 'window.privateProjection = true' } }],
     ['active markup', 'custom-content', () => { page.render = '<p onclick="alert(1)">Active</p>' }],
-    ['an unpublished page', 'unpublished', () => { page.isPublished = false }],
     ['an unsupported editor', 'editor', () => { page.editorKey = 'html' }]
   ])('names the refusal reason for %s on a readable page', async (_label: string, reason: string, mutate: () => void) => {
     mutate()
@@ -505,6 +504,39 @@ describe('offline snapshot admission operations', () => {
 
     expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
     expect(Reflect.get(error, 'reason') ?? null).toBeNull()
+  })
+
+  it.each([
+    ['unpublished', () => { page.isPublished = false }],
+    ['scheduled', () => { page.publishStartDate = new Date(Date.now() + 60_000) }],
+    ['expired', () => { page.publishEndDate = new Date(Date.now() - 60_000) }]
+  ])('hides %s public draft existence and render state from the guest snapshot', async (_label: string, mutate: () => void) => {
+    mutate()
+    for (const renderedSourceRevision of ['8', '7']) {
+      page.renderedSourceRevision = renderedSourceRevision
+      for (const requester of [undefined, { id: 1, permissions: ['manage:system', 'write:pages'] }]) {
+        const error = await operations.getOfflineSnapshot({ id: 7, requester }).catch(value => value as Error)
+        expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+        expect(Reflect.get(error, 'reason') ?? null).toBeNull()
+      }
+    }
+  })
+
+  it('only names an unpublished private snapshot for a writer of that page', async () => {
+    page.isPublished = false
+    page.renderedSourceRevision = '7'
+    const requester = { id: 7, authVersion: 3, permissions: ['read:pages'] }
+    const readerError = await operations.getOfflinePrivateSnapshot({ id: 7, requester }).catch(value => value as Error)
+    expect(readerError).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+    expect(Reflect.get(readerError, 'reason') ?? null).toBeNull()
+
+    loadPageRuleAuthority.mockImplementation(async ruleRequester => ({
+      requester: ruleRequester, permissions: ['read:pages', 'write:pages'],
+      groups: [{ id: 1, pageRules: [{ match: 'TAG', path: 'safe', deny: false, roles: ['read:pages', 'write:pages'] }] }],
+      tagAliases: { safe: 'safe' }
+    }))
+    const writerError = await operations.getOfflinePrivateSnapshot({ id: 7, requester }).catch(value => value as Error)
+    expect(writerError).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE', reason: 'unpublished' })
   })
 
   it('names the refusal reason on the private path only after private read access is confirmed', async () => {

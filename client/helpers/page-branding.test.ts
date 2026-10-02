@@ -2,7 +2,6 @@ import { describe, expect, it } from '../../server/test/bun-test.mts'
 import {
   brandingDuplicatesSiteLogo,
   normalizePageBrandingView,
-  normalizeSiteLogoSourceSha256,
   pageBrandingIdentity,
   resolvePageBrandingStyle
 } from './page-branding.ts'
@@ -111,23 +110,16 @@ describe('brandingDuplicatesSiteLogo', () => {
     expect(brandingDuplicatesSiteLogo(branding('/assets/a%20b.png?v=1'), { logoUrl: '/assets/a b.png?v=2' })).toBe(true)
   })
 
-  it('matches the processed site logo by its uploaded source digest', () => {
-    const site = { logoUrl: `/_site-logo/${'c'.repeat(64)}/logo.png`, logoSourceSha256: sourceSha256 }
-    expect(brandingDuplicatesSiteLogo(branding(`/assets/home-mark.png?v=${sourceSha256}`), site)).toBe(true)
-    expect(brandingDuplicatesSiteLogo(branding(`/assets/other.png?v=${'d'.repeat(64)}`, 'd'.repeat(64)), site)).toBe(false)
+  it('does not disclose or compare original upload fingerprints', () => {
+    const site = { logoUrl: `/_site-logo/${'c'.repeat(64)}/logo.png` }
+    expect(brandingDuplicatesSiteLogo(branding(`/assets/home-mark.png?v=${sourceSha256}`), site)).toBe(false)
   })
 
   it('keeps distinct or missing images', () => {
     expect(brandingDuplicatesSiteLogo(branding('/assets/page.png?v=abc'), { logoUrl: '/_site-logo/abc/logo.png' })).toBe(false)
-    expect(brandingDuplicatesSiteLogo(undefined, { logoUrl: '/assets/logo.png', logoSourceSha256: sourceSha256 })).toBe(false)
+    expect(brandingDuplicatesSiteLogo(undefined, { logoUrl: '/assets/logo.png' })).toBe(false)
     expect(brandingDuplicatesSiteLogo(branding('/assets/logo.png'), { logoUrl: '' })).toBe(false)
     expect(brandingDuplicatesSiteLogo(branding('/assets/logo.png'), null)).toBe(false)
-    // A malformed site digest never matches, even when it equals the branding value.
-    expect(brandingDuplicatesSiteLogo(branding('/a.png', 'not-a-sha'), { logoUrl: '/b.png', logoSourceSha256: 'not-a-sha' })).toBe(false)
   })
 
-  it('accepts only a well-formed site logo source digest', () => {
-    expect(normalizeSiteLogoSourceSha256(sourceSha256)).toBe(sourceSha256)
-    for (const value of [undefined, null, '', 'A'.repeat(64), 'a'.repeat(63), 42]) expect(normalizeSiteLogoSourceSha256(value)).toBeNull()
-  })
 })
