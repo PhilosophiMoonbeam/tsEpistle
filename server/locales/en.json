@@ -1292,7 +1292,11 @@
       "relocationEffectUnknown": "Unknown",
       "uploadAssetsDropZone": "Browse or Drop files here...",
       "folderNameNamingRules": "Must follow the asset folder {{namingRules}}.",
-      "folderNameNamingRulesLink": "naming rules"
+      "folderNameNamingRulesLink": "naming rules",
+      "headerPreview": "Preview",
+      "uploadLimits": "Drop or browse files. Max 10 files, 5 MB each.",
+      "uploadReady": "Files ready to upload: {{count}}.",
+      "uploadCount": "Upload {{count}}"
     },
     "markup": {
       "abbreviationDefinition": "Definition",

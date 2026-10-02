@@ -224,3 +224,43 @@ describe('editor media relocation admission state', () => {
     ])
   })
 })
+
+describe('editor media upload and thumbnails', () => {
+  test('builds encoded thumbnail URLs, file icons and folder-aware insert paths', () => {
+    const { context } = createHarness()
+    context.folderTree = [{ id: 3, slug: 'brand kit' }]
+    context.currentFolderId = 3
+    expect(context.assetPath({ filename: 'logo mark.png' })).toBe('/brand kit/logo mark.png')
+    expect(context.assetUrl({ filename: 'logo mark.png' })).toBe('/brand%20kit/logo%20mark.png')
+    expect(context.assetIcon({ kind: 'BINARY', ext: '.PDF' })).toBe('mdi-file-pdf-box')
+    expect(context.assetIcon({ kind: 'BINARY', ext: '.bin' })).toBe('mdi-file-outline')
+    context.markThumbnailFailed(5)
+    context.markThumbnailFailed(5)
+    expect(context.failedThumbnailIds).toEqual([5])
+  })
+
+  test('counts staged files and runs one upload at a time', async () => {
+    const { context } = createHarness({ fetchAssets: async () => [], fetchAssetFolders: async () => [] })
+    context.syncQueuedFiles([{}, {}])
+    expect(context.queuedFileCount).toBe(2)
+    let release
+    let processCalls = 0
+    context.$refs = {
+      pond: {
+        getFiles: () => [{ setMetadata: () => undefined }],
+        processFiles: () => {
+          processCalls++
+          return new Promise(resolve => { release = resolve })
+        }
+      }
+    }
+    context.loadMedia = async () => true
+    const first = context.upload()
+    expect(context.uploading).toBe(true)
+    await context.upload()
+    expect(processCalls).toBe(1)
+    release([])
+    await first
+    expect(context.uploading).toBe(false)
+  })
+})

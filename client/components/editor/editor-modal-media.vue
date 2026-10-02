@@ -81,9 +81,20 @@
                   :aria-label='assetAriaLabel(props.item)'
                   @keydown.enter.space.prevent='isAssetActionable(props.item.id) && selectAsset(props.item.id)'
                   @click.left='isAssetActionable(props.item.id) && selectAsset(props.item.id)'
-                  @click.right.prevent=''
                 )
-                  td.text-body-small(v-if='$vuetify.display.smAndUp') {{ props.item.id }}
+                  td.editor-media-thumb-cell
+                    .editor-media-thumb(aria-hidden='true')
+                      img(
+                        v-if='props.item.kind === `IMAGE` && !failedThumbnailIds.includes(props.item.id)'
+                        :src='assetUrl(props.item)'
+                        alt=''
+                        width='40'
+                        height='40'
+                        loading='lazy'
+                        decoding='async'
+                        @error='markThumbnailFailed(props.item.id)'
+                      )
+                      v-icon(v-else, size='22') {{ assetIcon(props.item) }}
                   td.editor-media-filename
                     .text-body-medium: strong(:class='currentFileId === props.item.id ? `text-primary` : ``') {{ props.item.filename }}
                     .text-body-small.text-medium-emphasis {{ props.item.description }}
@@ -92,7 +103,7 @@
                       .text-label-small {{props.item.ext.toUpperCase().substring(1)}}
                   td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ prettyBytes(props.item.fileSize) }}
                   td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
-                  td(v-if='$vuetify.display.smAndUp')
+                  td.editor-media-actions-cell
                     v-menu(
                       :disabled='!isAssetActionable(props.item.id)'
                       :model-value='actionMenuAssetId === props.item.id'
@@ -187,11 +198,22 @@
               :instant-upload='false'
               :allow-revert='false'
               @processfile='onFileProcessed'
+              @updatefiles='syncQueuedFiles'
             )
           v-divider(v-if='!isPrivatePage')
           .editor-media-upload-footer(v-if='!isPrivatePage')
-            .text-body-small.text-medium-emphasis Max 10 files, 5 MB each
-            v-btn(color='primary', @click='upload') {{$t('common:actions.upload')}}
+            .text-body-small.text-medium-emphasis(:id='`editor-media-upload-hint`')
+              template(v-if='queuedFileCount > 0') {{ $t('editor:assets.uploadReady', { count: queuedFileCount }) }}
+              template(v-else) {{ $t('editor:assets.uploadLimits') }}
+            //- Staged upload: the primary button states how many dropped files are waiting.
+            v-btn.editor-media-upload-action(
+              color='primary'
+              :variant='queuedFileCount > 0 ? `flat` : `tonal`'
+              :loading='uploading'
+              :aria-disabled='queuedFileCount === 0 || uploading ? `true` : undefined'
+              aria-describedby='editor-media-upload-hint'
+              @click='upload'
+            ) {{ queuedFileCount > 0 ? $t('editor:assets.uploadCount', { count: queuedFileCount }) : $t('common:actions.upload') }}
 
 
         v-card.editor-media-panel.radius-7(v-if='!isBranding && currentAsset && currentAsset.kind === `IMAGE`')
@@ -671,6 +693,9 @@ export default defineComponent({
       resizeAnimationPolicies: RESIZE_ANIMATION_POLICIES,
       mediaLoadError: '',
       staleAssetIds: [] as number[],
+      failedThumbnailIds: [] as number[],
+      queuedFileCount: 0,
+      uploading: false,
       brandingView: null as PageBrandingView | null,
       brandingLoading: false,
       brandingLoadError: '',
@@ -738,14 +763,13 @@ export default defineComponent({
     },
     headers(): AssetTableHeader[] {
       const headers: AssetTableHeader[] = []
-      if (this.$vuetify.display.smAndUp) headers.push({ title: this.$t('editor:assets.headerId'), key: 'id', value: 'id', width: 80 })
+      // The internal asset ID stays out of the table; a thumbnail helps pick images instead.
+      headers.push({ title: this.$t('editor:assets.headerPreview'), key: 'thumbnail', value: 'thumbnail', width: 56, sortable: false })
       headers.push({ title: this.$t('editor:assets.headerFilename'), key: 'filename', value: 'filename' })
       if (this.$vuetify.display.lgAndUp) headers.push({ title: this.$t('editor:assets.headerType'), key: 'ext', value: 'ext', width: 90 })
       if (this.$vuetify.display.mdAndUp) headers.push({ title: this.$t('editor:assets.headerFileSize'), key: 'fileSize', value: 'fileSize', width: 110 })
       if (this.$vuetify.display.mdAndUp) headers.push({ title: this.$t('editor:assets.headerAdded'), key: 'createdAt', value: 'createdAt', width: 175 })
-      if (this.$vuetify.display.smAndUp) {
-        headers.push({ title: this.$t('editor:assets.headerActions'), key: 'actions', value: 'actions', width: 80, sortable: false, align: 'end' })
-      }
+      headers.push({ title: this.$t('editor:assets.headerActions'), key: 'actions', value: 'actions', width: 64, sortable: false, align: 'end' })
       return headers
     },
     isFolderNameValid() {
@@ -1119,15 +1143,36 @@ export default defineComponent({
         })
       }
     },
+    assetPath (asset: Asset): string {
+      const folderPath = (this.folderTree as AssetFolder[]).map((f: AssetFolder) => f.slug).join('/')
+      return this.currentFolderId > 0 ? `/${folderPath}/${asset.filename}` : `/${asset.filename}`
+    },
+    assetUrl (asset: Asset): string {
+      return encodeURI(this.assetPath(asset))
+    },
+    assetIcon (asset: Asset): string {
+      if (asset.kind === 'IMAGE') return 'mdi-image-outline'
+      const ext = asset.ext.toLowerCase()
+      if (ext === '.pdf') return 'mdi-file-pdf-box'
+      if (['.mp4', '.webm', '.mov', '.mkv'].includes(ext)) return 'mdi-file-video-outline'
+      if (['.mp3', '.wav', '.ogg', '.flac', '.m4a'].includes(ext)) return 'mdi-file-music-outline'
+      if (['.zip', '.gz', '.tar', '.7z', '.rar'].includes(ext)) return 'mdi-folder-zip-outline'
+      return 'mdi-file-outline'
+    },
+    markThumbnailFailed (assetId: number) {
+      if (!this.failedThumbnailIds.includes(assetId)) this.failedThumbnailIds.push(assetId)
+    },
+    syncQueuedFiles (files: unknown) {
+      this.queuedFileCount = Array.isArray(files) ? files.length : 0
+    },
     insert () {
       if (this.isBranding) return
       if (!this.isAssetActionable(this.currentFileId)) return
       const asset = _.find(this.assets, ['id', this.currentFileId])
       if (!asset) throw new Error('No asset selected for insertion.')
-      const assetPath = (this.folderTree as AssetFolder[]).map((f: AssetFolder) => f.slug).join('/')
       emitEditorInsert({
         kind: asset.kind,
-        path: this.currentFolderId > 0 ? `/${assetPath}/${asset.filename}` : `/${asset.filename}`,
+        path: this.assetPath(asset),
         text: asset.filename,
         align: this.imageAlignment
       })
@@ -1140,6 +1185,8 @@ export default defineComponent({
       if (this.isPrivatePage) {
         throw new Error('Assets are site-wide and cannot be uploaded as private page content.')
       }
+      // A second click while files are processing must not queue another upload.
+      if (this.uploading) return
       const files = (this.$refs.pond as FilePondRef).getFiles()
       if (files.length < 1) {
         return wikiStore.showNotification({
@@ -1153,7 +1200,13 @@ export default defineComponent({
           folderId: this.currentFolderId
         })
       }
-      const processed = await (this.$refs.pond as FilePondRef).processFiles()
+      this.uploading = true
+      let processed: unknown
+      try {
+        processed = await (this.$refs.pond as FilePondRef).processFiles()
+      } finally {
+        this.uploading = false
+      }
       const loaded = await this.loadMedia()
       if (!loaded || this.disposed) return
       const processedFiles = Array.isArray(processed) ? processed : isRecord(processed) ? [processed] : []
@@ -1710,6 +1763,36 @@ export default defineComponent({
     min-width: 8rem;
     max-width: 24rem;
     overflow-wrap: anywhere;
+  }
+
+  .editor-media-thumb-cell {
+    width: 56px;
+    padding-inline-end: 0 !important;
+  }
+
+  .editor-media-thumb {
+    align-items: center;
+    background: var(--wiki-surface-sunken);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-radius-xs);
+    color: var(--wiki-text-muted);
+    display: inline-flex;
+    height: 40px;
+    justify-content: center;
+    overflow: hidden;
+    width: 40px;
+
+    img {
+      display: block;
+      height: 100%;
+      object-fit: cover;
+      width: 100%;
+    }
+  }
+
+  .editor-media-actions-cell {
+    text-align: end;
+    width: 56px;
   }
 
   .editor-media-footer {
