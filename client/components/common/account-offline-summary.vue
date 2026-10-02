@@ -20,7 +20,7 @@ section.account-offline-summary(:aria-busy='loading ? `true` : `false`', :aria-l
         span {{ $t('common:offline.summary.sync', { defaultValue: 'Sync' }) }}
       dd
         span(:class='`account-offline-summary__tone--${syncState.tone}`') {{ syncLabel($t) }}
-        span.account-offline-summary__time(v-if='syncTime') {{ $t('common:offline.summary.lastSynced', { time: syncTime, defaultValue: 'Last synced {{time}}', interpolation: { escapeValue: false } }) }}
+        span.account-offline-summary__time(v-if='syncTime') {{ lastSyncedLabel($t) }}
   .account-offline-summary__actions
     v-btn(
       v-if='error'
@@ -51,7 +51,7 @@ section.account-offline-summary(:aria-busy='loading ? `true` : `false`', :aria-l
       :loading='installing'
       @click='installApp'
     ) {{ $t('common:offline.summary.installApp', { defaultValue: 'Install app' }) }}
-  p.account-offline-summary__note(v-if='canInstall') {{ $t('common:offline.summary.installHint', { site: siteTitle, defaultValue: 'Add {{site}} to your apps or home screen.', interpolation: { escapeValue: false } }) }}
+  p.account-offline-summary__note(v-if='canInstall') {{ installHintLabel($t) }}
   p.account-offline-summary__error(v-if='pwaState.installError', role='alert') {{ pwaState.installError }}
   v-list-item.account-offline-summary__link.account-offline-summary__saved(
     href='/p/offline#downloaded-pages-title'
@@ -116,6 +116,12 @@ const pageCountLabel = (t: OfflineTranslate): string =>
   pageCount.value === 1
     ? t('common:offline.summary.pageCountOne', { count: 1, defaultValue: '1 page on this device' })
     : t('common:offline.summary.pageCountOther', { count: pageCount.value, defaultValue: '{{count}} pages on this device' })
+
+// Kept in script: a `{{name}}` default inside a template mustache would end the interpolation.
+const lastSyncedLabel = (t: OfflineTranslate): string =>
+  t('common:offline.summary.lastSynced', { time: syncTime.value, defaultValue: 'Last synced {{time}}', interpolation: { escapeValue: false } })
+const installHintLabel = (t: OfflineTranslate): string =>
+  t('common:offline.summary.installHint', { site: siteTitle.value, defaultValue: 'Add {{site}} to your apps or home screen.', interpolation: { escapeValue: false } })
 
 const syncBlockedReason = (t: OfflineTranslate): string => {
   if (!syncService) return t('common:offline.summary.syncUnavailable', { defaultValue: 'Offline sync is not available in this browser.' })

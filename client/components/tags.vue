@@ -78,7 +78,7 @@
               span {{indexExpanded ? $t('tags:hideTags', { defaultValue: 'Hide tags' }) : $t('tags:showTags', { defaultValue: 'Show tags' })}}
               v-icon(size='20' aria-hidden='true') {{indexExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'}}
             .tags-follow-help#tags-follow-help
-              p Follow tags to save their public pages for offline reading on this device. Pages with any followed tag are included; following does not enable change notifications.
+              p {{ $t('tags:saveOfflineHelp', { defaultValue: 'Save a tag offline to keep its public pages on this device.' }) }}
               a(href='/p/offline') Offline preferences
               a.tags-offline-recovery(v-if='offlineBrowseUnavailable && (tagsError || pagesError)' href='/p/offline#downloaded-pages-title') Browse saved pages
             p.tags-follow-status(role='status' aria-live='polite' aria-atomic='true') {{offlinePolicyDetail}}
@@ -159,8 +159,8 @@
                           size='17'
                           aria-hidden='true'
                           :data-tag-color='tagColor(tag.tag)'
-                        ) {{isFollowed(tag.tag) ? 'mdi-bell-check-outline' : 'mdi-bell-outline'}}
-                        span {{isFollowed(tag.tag) ? 'Unfollow' : 'Follow'}}
+                        ) {{isFollowed(tag.tag) ? 'mdi-cloud-check' : 'mdi-cloud-download-outline'}}
+                        span {{ followTagVisibleLabel(tag.tag) }}
 
           section.tags-results(
             v-if='hasSelection'
@@ -623,8 +623,19 @@ export default {
         this.offlinePolicyLoading ||
         this.offlineActionLoading
     },
+    followTagVisibleLabel (tag: string): string {
+      return this.isFollowed(tag)
+        ? this.$t('tags:savedOffline', { defaultValue: 'Saved offline' })
+        : this.$t('tags:saveOffline', { defaultValue: 'Save offline' })
+    },
     followTagButtonLabel (tag: PageTagRow): string {
-      return `${this.isFollowed(tag.tag) ? 'Unfollow' : 'Follow'} ${this.tagButtonLabel(tag)} for offline saving on this device`
+      // The accessible name starts with the visible text; aria-pressed carries the state.
+      return this.$t('tags:saveOfflineLabel', {
+        action: this.followTagVisibleLabel(tag.tag),
+        tag: this.tagButtonLabel(tag),
+        defaultValue: '{{action}}: {{tag}}',
+        interpolation: { escapeValue: false }
+      })
     },
     animateFollowedTag (canonical: string): void {
       if (this.offlineFollowAnimationTimer !== null) window.clearTimeout(this.offlineFollowAnimationTimer)
