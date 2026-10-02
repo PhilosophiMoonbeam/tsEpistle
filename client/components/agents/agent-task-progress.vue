@@ -391,7 +391,7 @@ watchEffect(() => {
 .agent-tasks__meta,
 .agent-tasks__note,
 .agent-task-record summary small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .agent-tasks__count {
@@ -569,7 +569,7 @@ watchEffect(() => {
 }
 
 .agent-task-record__facts dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .055em;
@@ -628,7 +628,7 @@ watchEffect(() => {
   align-items: center;
   padding: var(--wiki-space-4);
   border-block-start: 1px solid var(--wiki-surface-border);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .agent-tasks__empty > span {

@@ -603,7 +603,7 @@ onBeforeUnmount(() => {
 .skill-governance__header p,
 .skill-dialog__header p {
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .78rem;
   line-height: 1.5;
 }
@@ -648,7 +648,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: var(--wiki-space-3);
   padding: var(--wiki-space-3) var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .75rem;
 }
 
@@ -740,7 +740,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   max-width: 100%;
   margin-top: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
   text-overflow: ellipsis;
@@ -778,7 +778,7 @@ onBeforeUnmount(() => {
 }
 
 .skill-record__trust small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   line-height: 1.45;
 }
@@ -803,7 +803,7 @@ onBeforeUnmount(() => {
 .skill-record__metadata dt,
 .review-metadata dt {
   margin-bottom: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .06em;
@@ -889,7 +889,7 @@ onBeforeUnmount(() => {
 .skill-empty p {
   max-width: 32rem;
   margin: var(--wiki-space-1) 0 var(--wiki-space-4);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .78rem;
   line-height: 1.55;
 }
@@ -974,7 +974,7 @@ onBeforeUnmount(() => {
 
 .skill-form-section__heading p {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .7rem;
 }
 
@@ -1020,7 +1020,7 @@ onBeforeUnmount(() => {
   min-width: 42rem;
   grid-template-columns: 1fr 1fr;
   border-bottom: 1px solid var(--wiki-surface-border-strong);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .06em;

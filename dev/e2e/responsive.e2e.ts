@@ -127,7 +127,7 @@ async function openContinuityAgent(page: Page, path?: string): Promise<Locator> 
 }
 
 async function closeContinuityAgent(page: Page): Promise<void> {
-  await page.getByRole('region', { name: 'Wiki Agent', exact: true }).getByRole('button', { name: 'Close chat panel', exact: true }).click()
+  await page.getByRole('region', { name: 'Wiki Agent', exact: true }).getByRole('button', { name: 'Close Wiki Agent', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Wiki Agent', exact: true })).toBeHidden()
 }
 
@@ -1841,7 +1841,7 @@ test.describe('responsive UI quality matrix', () => {
     await expect(agent).toBeVisible()
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
     const newChatButton = agent.getByRole('button', { name: 'New chat', exact: true })
-    const settingsButton = agent.getByRole('button', { name: 'Settings', exact: true })
+    const settingsButton = agent.getByRole('button', { name: 'More chat actions', exact: true })
     const pinnedIndicator = agent.getByRole('img', { name: 'Pinned conversation', exact: true })
     const settingsMenu = agent.locator('.v-menu.v-overlay--active')
     await expect(newChatButton).toBeVisible()
@@ -1894,8 +1894,7 @@ test.describe('responsive UI quality matrix', () => {
         expect(historyBounds.x + historyBounds.width).toBeLessThanOrEqual(historyCard.x)
       }
 
-      await settingsButton.click()
-      await settingsMenu.getByText('Agent memory', { exact: true }).click()
+      await agent.getByRole('button', { name: 'Memory', exact: true }).click()
       await expect(memoryPanel).toBeVisible()
       await expect(scrim).toHaveCount(0)
       await expect(memoryPanel).not.toHaveAttribute('aria-modal', 'true')
@@ -1943,7 +1942,7 @@ test.describe('responsive UI quality matrix', () => {
       await expect(panelFocusTarget).toBeFocused()
     }
 
-    const closeChatPanel = agent.getByRole('button', { name: 'Close chat panel', exact: true })
+    const closeChatPanel = agent.getByRole('button', { name: 'Close Wiki Agent', exact: true })
     await expect(closeChatPanel).toBeVisible()
     await closeChatPanel.click()
     await expect(agent).toBeHidden()
@@ -2168,11 +2167,12 @@ test.describe('responsive UI quality matrix', () => {
       await readAtDistance(400)
       await expect(latest).toBeVisible()
       await expect(face).toHaveText('Latest')
-      await expect.poll(() => opacity(footer)).toBeCloseTo(0.2, 2)
-      await expect.poll(() => opacity(latest)).toBeCloseTo(0.8, 2)
+      await expect.poll(() => opacity(footer)).toBeCloseTo(0.85, 2)
+      // Latest stays fully opaque whenever it is shown.
+      await expect.poll(() => opacity(latest)).toBeCloseTo(1, 2)
       await captureLayout('agent-reading-earlier-light')
       await page.emulateMedia({ colorScheme: 'dark' })
-      await expect.poll(() => opacity(footer)).toBeCloseTo(0.2, 2)
+      await expect.poll(() => opacity(footer)).toBeCloseTo(0.85, 2)
       await captureLayout('agent-reading-earlier-dark')
       await page.emulateMedia({ colorScheme: 'light' })
       const [latestBounds, faceBounds, footerBounds] = await Promise.all([latest.boundingBox(), face.boundingBox(), footer.boundingBox()])
@@ -2203,13 +2203,14 @@ test.describe('responsive UI quality matrix', () => {
       for (const distance of [140, 100, 60]) {
         await readAtDistance(distance)
         const expectedProgress = (distance - 24) / (160 - 24)
-        await expect.poll(() => opacity(footer)).toBeCloseTo(1 - 0.8 * expectedProgress, 1)
-        await expect.poll(() => opacity(latest)).toBeCloseTo(0.8 * expectedProgress, 1)
+        // The composer fades at most to 0.85 so its text keeps readable contrast.
+        await expect.poll(() => opacity(footer)).toBeCloseTo(1 - 0.15 * expectedProgress, 1)
+        await expect.poll(() => opacity(latest)).toBeCloseTo(1, 2)
         samples.push({ composer: await opacity(footer), latest: await opacity(latest) })
       }
       for (let index = 1; index < samples.length; index++) {
         expect(samples[index]!.composer).toBeGreaterThan(samples[index - 1]!.composer)
-        expect(samples[index]!.latest).toBeLessThan(samples[index - 1]!.latest)
+        expect(samples[index]!.latest).toBe(1)
       }
       await readAtDistance(20)
       await expect(latest).toBeHidden()
@@ -2234,7 +2235,7 @@ test.describe('responsive UI quality matrix', () => {
       await expect(agent.locator('.agent-message--user').last()).toContainText('Show another complete review')
       await expect.poll(distanceFromBottom, { message: 'Submitting a message immediately returns to the newest messages' }).toBeLessThanOrEqual(25)
       await readAtDistance(400)
-      await expect.poll(() => opacity(footer)).toBeCloseTo(0.2, 2)
+      await expect.poll(() => opacity(footer)).toBeCloseTo(0.85, 2)
       releaseResponse()
       releaseResponse = null
       await expect(agent.locator('.agent-message--assistant').last()).toContainText(
@@ -2417,7 +2418,7 @@ test.describe('responsive UI quality matrix', () => {
       const fixture = await installEnabledAgentFixture(page, { distinctSessionIds: true })
       try {
         let agent = await openContinuityAgent(page, '/agent-context-fixture-a')
-        const settingsButton = agent.getByRole('button', { name: 'Settings', exact: true })
+        const settingsButton = agent.getByRole('button', { name: 'More chat actions', exact: true })
         const settingsMenu = agent.locator('.v-menu.v-overlay--active')
         const pinnedIndicator = agent.getByRole('img', { name: 'Pinned conversation', exact: true })
         const setPinned = async (pinned: boolean): Promise<void> => {
@@ -2779,20 +2780,15 @@ test.describe('responsive UI quality matrix', () => {
         await panel.getByRole('button', { name: 'Close chat history' }).click()
       }
       await expect(panel).toBeHidden()
-      if (expectedMode === 'modal') await expect(width < 640 ? agent.getByRole('button', { name: 'Settings', exact: true }) : historyToggle).toBeFocused()
+      if (expectedMode === 'modal') await expect(width < 640 ? agent.getByRole('button', { name: 'More chat actions', exact: true }) : historyToggle).toBeFocused()
     }
 
     await page.setViewportSize({ width: 640, height: 420 })
-    const settingsButton = agent.locator('.inline-agent__more-menu')
-    await settingsButton.focus()
-    await settingsButton.press('Enter')
-    const settingsMenu = agent.locator('.v-menu.v-overlay--active')
-    const memoryMenuItem = settingsMenu.locator('.v-list-item').filter({ hasText: 'Agent memory' })
-    await expect(memoryMenuItem).toHaveCount(1)
-    await memoryMenuItem.focus()
-    await memoryMenuItem.press('Enter')
-    await expect(settingsButton).toHaveAttribute('aria-expanded', 'false')
-    await expect(settingsMenu).toBeHidden()
+    // From 640px up, Memory has its own toggle beside History instead of a menu entry.
+    const memoryToggle = agent.locator('.inline-agent__memory-toggle')
+    await memoryToggle.focus()
+    await memoryToggle.press('Enter')
+    await expect(memoryToggle).toHaveAttribute('aria-expanded', 'true')
 
     const memoryPanel = agent.getByRole('dialog', { name: 'Agent memory' })
     await expect(memoryPanel).toBeVisible()
@@ -2804,7 +2800,7 @@ test.describe('responsive UI quality matrix', () => {
     await expect(removeDialog).toBeHidden()
     await page.keyboard.press('Escape')
     await expect(memoryPanel).toBeHidden()
-    await expect(settingsButton).toBeFocused()
+    await expect(memoryToggle).toBeFocused()
     fixture.assertNoUnexpectedRequests()
     await fixture.dispose()
   })

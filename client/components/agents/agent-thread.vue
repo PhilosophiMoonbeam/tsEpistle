@@ -122,10 +122,11 @@
                       <span>{{ media.filename }} · Detached from context</span>
                     </span>
                     <template v-if="reattachConfirmId === media.id">
-                      <v-btn variant="text" size="small" color="warning" @click="confirmReattach(media)">Confirm re-attach?</v-btn>
+                      <span class="agent-message__media-confirm">Add this file to the next message again?</span>
+                      <v-btn variant="text" size="small" color="primary" prepend-icon="mdi-paperclip-plus" @click="confirmReattach(media)">Re-attach</v-btn>
                       <v-btn variant="text" size="small" @click="cancelReattach">Cancel</v-btn>
                     </template>
-                    <v-btn v-else variant="text" size="small" prepend-icon="mdi-paperclip-remove" @click="requestReattach(media)">Re-attach</v-btn>
+                    <v-btn v-else variant="text" size="small" prepend-icon="mdi-paperclip-plus" @click="requestReattach(media)">Re-attach</v-btn>
                   </template>
                   <a v-else :href="agentMediaContentUrl(media.id)" :download="media.filename">{{ media.filename }} <span>· Download</span></a>
                   <v-btn v-if="media.kind === 'generated-image' && media.available && imageEditingEnabled" variant="text" size="small" prepend-icon="mdi-image-edit-outline" :disabled="canSubmit === false || networkBlocked" @click="emit('editImage', media)">Edit image</v-btn>
@@ -157,8 +158,8 @@
               </v-btn>
             </aside>
             <div v-if="entry.message.role === 'user' && entry.message.knowledgeContext" class="agent-message__source-context" aria-label="Source context used for this message">
-              <span>Search: {{ entry.message.knowledgeContext.scope.kind === 'selected' ? 'selected pages' : entry.message.knowledgeContext.scope.kind === 'section' ? entry.message.knowledgeContext.scope.path : entry.message.knowledgeContext.scope.kind === 'locale' ? entry.message.knowledgeContext.scope.locale.toUpperCase() : 'all Wiki' }}</span>
-              <v-btn v-for="source in entry.message.knowledgeContext.sources" :key="source.id" size="x-small" variant="text" prepend-icon="mdi-file-document-outline" :aria-label="`Preview ${source.title}, selected revision ${source.sourceRevision}`" @click="previewSelector = { id: source.id }">{{ source.title }} · r{{ source.sourceRevision }}</v-btn>
+              <span>Search: {{ entry.message.knowledgeContext.scope.kind === 'selected' ? 'selected pages' : entry.message.knowledgeContext.scope.kind === 'section' ? entry.message.knowledgeContext.scope.path : entry.message.knowledgeContext.scope.kind === 'locale' ? entry.message.knowledgeContext.scope.locale.toUpperCase() : 'All Wiki' }}</span>
+              <v-btn v-for="source in entry.message.knowledgeContext.sources" :key="source.id" size="x-small" variant="text" prepend-icon="mdi-file-document-outline" :aria-label="`Preview ${source.title}, selected revision ${source.sourceRevision}`" @click="previewSelector = { id: source.id }">{{ source.title }} · revision {{ source.sourceRevision }}</v-btn>
             </div>
             <AgentAnswerActions v-if="entry.message.role === 'assistant' && entry.message.status === 'complete' && entry.message.content" :content="entry.message.content" :citations="entry.message.citations" :google-search-grounding="entry.message.googleSearchGrounding" />
             <details v-if="entry.googleSearchCitations?.length" class="agent-sources agent-web-sources mt-3" aria-label="Google Search sources">
@@ -273,6 +274,12 @@
                 </li>
               </ul>
             </details>
+            <AgentArtifactGrid
+              v-if="artifactPlacement.byMessage.get(entry.message.id)?.length"
+              :artifacts="artifactPlacement.byMessage.get(entry.message.id) ?? []"
+              label="Browser screenshots from this response"
+              :format-time="artifactTimeLabel"
+            />
           </div>
         </div>
       </article>
@@ -288,27 +295,12 @@
         />
       </template>
     </template>
-    <section v-if="thread.artifacts.length" class="artifact-grid mt-4" aria-label="Browser screenshots">
-      <figure v-for="artifact in thread.artifacts" :key="artifact.id" class="artifact-card">
-        <a
-          v-if="artifact.available"
-          :href="`/_api/agents/artifacts/${artifact.id}/content`"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img
-            :src="`/_api/agents/artifacts/${artifact.id}/content`"
-            :alt="`Browser screenshot captured ${artifact.createdAt}`"
-            :width="artifact.width"
-            :height="artifact.height"
-            loading="lazy"
-          >
-        </a>
-        <figcaption class="text-body-small text-medium-emphasis">
-          {{ artifact.available ? `Browser screenshot · ${artifact.width}×${artifact.height}` : 'Browser screenshot expired' }}
-        </figcaption>
-      </figure>
-    </section>
+    <AgentArtifactGrid
+      v-if="artifactPlacement.unplaced.length"
+      :artifacts="artifactPlacement.unplaced"
+      label="Browser screenshots"
+      :format-time="artifactTimeLabel"
+    />
     <div v-if="thread.suggestions.length" class="agent-suggestions" role="group" aria-label="Follow-up suggestions">
       <v-btn
         v-for="suggestion in thread.suggestions"
@@ -338,9 +330,11 @@ import WikiSourcePreview from '../common/wiki-source-preview.vue'
 import { wikiSourceSelectorFromHref, type WikiSource, type WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import AgentTaskProgress from './agent-task-progress.vue'
 import AgentToolCard from './agent-tool-card.vue'
+import AgentArtifactGrid from './agent-artifact-grid.vue'
 import {
   agentLiveAnnouncement,
   buildAgentThreadPresentation,
+  placeAgentArtifacts,
   type AgentCitationEntry,
   type AgentCitationGroup,
   type AgentMessagePresentation,
@@ -446,6 +440,12 @@ const threadPresentationCache = computed<CachedThreadPresentation>(previous => {
   }
 })
 const threadPresentation = computed(() => threadPresentationCache.value.presentation)
+/* Screenshots sit under the response that captured them instead of after the whole thread. */
+const artifactPlacement = computed(() => placeAgentArtifacts(props.thread.messages, props.thread.artifacts))
+const artifactTimeLabel = (createdAt: string): string => {
+  const metadata = temporalMetadataFor(createdAt)
+  return metadata.time ? metadata.timestamp : ''
+}
 type ProjectedCitationEntry = AgentCitationEntry & LinkPresentationMetadata
 type ProjectedCitationGroup = Omit<AgentCitationGroup, 'sections'> & LinkPresentationMetadata & {
   readonly sections: readonly ProjectedCitationEntry[]
@@ -575,7 +575,8 @@ watch(
 .agent-message__media audio { display: block; width: min(100%, 440px); }
 .agent-message__media figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: .8rem; overflow-wrap: anywhere; }
 .agent-message__media figcaption a { color: rgb(var(--v-theme-primary)); }
-.agent-message__media figcaption .agent-message__media-detached { align-items: center; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent); display: inline-flex; gap: 4px; }
+.agent-message__media figcaption .agent-message__media-detached { align-items: center; color: var(--wiki-text-muted); display: inline-flex; gap: 4px; }
+.agent-message__media figcaption .agent-message__media-confirm { color: var(--wiki-text-muted); }
 .agent-message__media figcaption .agent-message__media-reattach { color: rgb(var(--v-theme-on-surface-variant)); }
 
 .agent-thread {
@@ -601,7 +602,7 @@ watch(
 
 .agent-message__meta {
   align-items: center;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   display: flex;
   flex-wrap: wrap;
   gap: var(--wiki-space-2);
@@ -618,7 +619,7 @@ watch(
 }
 
 .agent-message__time {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
+  color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
   line-height: 1.35;
@@ -631,7 +632,7 @@ watch(
 
 .agent-message__status {
   align-items: center;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   display: inline-flex;
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
@@ -653,14 +654,14 @@ watch(
     opacity: 1;
   }
   88% {
-    filter: brightness(1.35) drop-shadow(0 0 7px color-mix(in srgb, #00bfff 70%, transparent));
+    filter: brightness(1.35) drop-shadow(0 0 7px color-mix(in srgb, var(--agent-mark-color) 70%, transparent));
     opacity: 1;
   }
   91% {
     opacity: .6;
   }
   95% {
-    filter: brightness(1.15) drop-shadow(0 0 3px color-mix(in srgb, #00bfff 45%, transparent));
+    filter: brightness(1.15) drop-shadow(0 0 3px color-mix(in srgb, var(--agent-mark-color) 45%, transparent));
     opacity: 1;
   }
 }
@@ -697,14 +698,16 @@ watch(
   --wiki-control-radius: 50%;
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
-  --wiki-beam-violet: #00bfff;
-  --wiki-beam-cool: color-mix(in srgb, #00bfff 62%, white);
+  /* Palette-aware agent identity: the theme info color, nudged toward the text color for contrast. */
+  --agent-mark-color: color-mix(in srgb, rgb(var(--v-theme-info)) 85%, rgb(var(--v-theme-on-surface)));
+  --wiki-beam-violet: var(--agent-mark-color);
+  --wiki-beam-cool: color-mix(in srgb, var(--agent-mark-color) 62%, rgb(var(--v-theme-surface)));
 }
 
 .agent-message__assistant-spark {
   position: relative;
   z-index: 1;
-  color: #00bfff !important;
+  color: var(--agent-mark-color);
   animation: agent-message-spark-shimmer 7s ease-in-out infinite;
 }
 
@@ -797,13 +800,13 @@ watch(
 }
 
 .agent-message__terminal-copy {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   margin: 0;
 }
 
 .agent-message__waiting {
   align-items: center;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   display: inline-flex;
   font-size: .86rem;
   gap: var(--wiki-space-2);
@@ -835,7 +838,7 @@ watch(
 .agent-message__recovery {
   align-items: center;
   border-block-start: 1px solid var(--wiki-surface-border);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  color: var(--wiki-text-muted);
   display: grid;
   gap: var(--wiki-space-3);
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -848,7 +851,7 @@ watch(
 }
 
 .agent-message--cancelled .agent-message__recovery > .v-icon {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .agent-message__recovery strong,
@@ -880,7 +883,7 @@ watch(
   align-items: center;
   background: color-mix(in srgb, var(--wiki-surface-raised) 84%, var(--wiki-surface-sunken));
   border-block-end: 1px solid var(--wiki-surface-border);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   cursor: pointer;
   display: flex;
   font-size: .78rem;
@@ -949,7 +952,7 @@ watch(
 
 .agent-web-sources__list blockquote {
   margin: var(--wiki-space-2) 0 0 calc(var(--wiki-space-6) + var(--wiki-space-1));
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .76rem;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -1012,8 +1015,7 @@ watch(
 .agent-sources__page:focus-visible,
 .agent-sources__sections a:focus-visible,
 .agent-page-links a:focus-visible,
-.agent-activity summary:focus-visible,
-.artifact-card a:focus-visible {
+.agent-activity summary:focus-visible {
   border-radius: var(--wiki-radius-xs);
   box-shadow: var(--wiki-focus-ring);
   outline: 2px solid var(--wiki-focus-color);
@@ -1113,7 +1115,7 @@ watch(
 .agent-activity summary {
   align-items: center;
   border-radius: var(--wiki-radius-xs);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, transparent);
+  color: var(--wiki-text-muted);
   cursor: pointer;
   display: flex;
   font-size: .82rem;
@@ -1155,7 +1157,7 @@ watch(
 }
 
 .agent-activity__list small {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  color: var(--wiki-text-muted);
   display: block;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -1174,34 +1176,6 @@ watch(
   width: 1px;
 }
 
-.artifact-grid {
-  display: grid;
-  gap: var(--wiki-space-4);
-  grid-template-columns: repeat(auto-fit, minmax(min(calc(var(--wiki-space-12) * 6), 100%), 1fr));
-  margin-block-start: var(--wiki-space-5) !important;
-}
-
-.artifact-card {
-  margin: 0;
-}
-
-.artifact-card a {
-  border-radius: var(--wiki-control-radius);
-  display: block;
-}
-
-.artifact-card img {
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  box-shadow: var(--wiki-shadow-xs);
-  display: block;
-  height: auto;
-  max-width: 100%;
-}
-
-.artifact-card figcaption {
-  margin-block-start: var(--wiki-space-2);
-}
 
 .agent-suggestions {
   display: flex;
@@ -1332,8 +1306,7 @@ watch(
   .agent-message__surface,
   .agent-message__recovery,
   .agent-sources,
-  .agent-page-links a,
-  .artifact-card img {
+  .agent-page-links a {
     background: Canvas;
     border-color: CanvasText;
     color: CanvasText;
@@ -1358,8 +1331,7 @@ watch(
   .agent-sources__page:focus-visible,
   .agent-sources__sections a:focus-visible,
   .agent-page-links a:focus-visible,
-  .agent-activity summary:focus-visible,
-  .artifact-card a:focus-visible {
+  .agent-activity summary:focus-visible {
     outline-color: Highlight;
   }
 }

@@ -4,6 +4,7 @@ import { compileScript, parse } from '@vue/compiler-sfc'
 import type { Component } from 'vue'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 
 resetBody()
 
@@ -154,6 +155,7 @@ const mountManager = async () => {
   })
   const app = VueRuntime.createApp(root)
   app.use(createVuetify({ components: vuetifyComponents }))
+  app.config.globalProperties.$t = translateEnglish
   app.mount(host)
   await settle()
   mountedApps.push(() => {
@@ -172,15 +174,11 @@ afterEach(() => {
 })
 
 describe('Agent memory manager rendered contract', () => {
-  it('blocks empty-store clearing while keeping both targets selectable with target-specific editor labels', async () => {
+  it('offers no Clear action for an empty store while keeping both targets selectable with target-specific editor labels', async () => {
     const { host, addMemory } = await mountManager()
-    const clearMemory = host.querySelector<HTMLButtonElement>('.agent-memory__clear')
-    if (!clearMemory) throw new Error('The mounted memory manager did not expose its clear action')
-    // Add is enabled after loading; Clear must be blocked by the empty-store branch, not a shared busy guard.
+    // Add is enabled after loading; with nothing saved, the destructive Clear action is not offered at all.
     expect(addMemory.disabled).toBe(false)
-    expect(clearMemory.disabled).toBe(true)
-    clearMemory.click()
-    await settle()
+    expect(host.querySelector('.agent-memory__clear')).toBeNull()
     expect(browserWindow.document.querySelector('.agent-memory__dialog')).toBeNull()
 
     addMemory.click()
