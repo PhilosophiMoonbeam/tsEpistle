@@ -1,26 +1,21 @@
 <template lang='pug'>
-  v-container(fluid)
+  v-container.profile-pages(fluid)
+    admin-hero(
+      :title='$t("profile:pages.title")'
+      :description='$t("profile:pages.subtitle")'
+      icon='mdi-file-document-multiple-outline'
+      heading-id='profile-pages-title'
+    )
+      template(#actions)
+        v-btn(
+          variant='outlined'
+          prepend-icon='mdi-refresh'
+          @click='refresh'
+          :loading='loading'
+          :disabled='loading'
+          :aria-label='$t("profile:pages.reload", { defaultValue: "Reload pages" })'
+        ) {{ $t('profile:pages.reloadShort', { defaultValue: 'Reload' }) }}
     v-row
-      v-col(cols='12')
-        .profile-header
-          .profile-header-icon-box
-            v-avatar(size='64', color='primary', variant='tonal')
-              v-icon(size='36', color='primary') mdi-file-document-multiple-outline
-          .profile-header-title
-            h1.text-headline-medium.font-weight-bold {{$t('profile:pages.title')}}
-            .text-body-large.text-medium-emphasis {{$t('profile:pages.subtitle')}}
-          v-spacer
-          v-btn(
-            icon
-            color='grey'
-            variant="outlined"
-            @click='refresh'
-            :loading='loading'
-            :disabled='loading'
-            rounded='lg'
-            :aria-label='$t("profile:pages.refresh", { defaultValue: "Refresh pages" })'
-          )
-            v-icon.text-grey mdi-refresh
       v-col(cols='12')
         v-card
           .profile-pages-toolbar(v-if='!errorMessage')
@@ -55,7 +50,7 @@
             state='error'
             :title='$t("profile:pages.loadError", { defaultValue: "Pages could not be loaded" })'
             :message='errorMessage'
-            :retry-label='$t("common:actions.retry", { defaultValue: "Try again" })'
+            :retry-label='$t("common:page.tryAgain")'
             @retry='loadPages'
           )
           v-data-table.profile-pages-table(
@@ -351,12 +346,5 @@ export default {
   gap: 4px;
   margin-top: 8px;
   overflow-wrap: anywhere;
-}
-
-.profile-header-icon-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
 }
 </style>

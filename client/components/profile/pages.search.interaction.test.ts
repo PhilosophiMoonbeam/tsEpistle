@@ -117,6 +117,10 @@ const mount = async (rows: PageListRow[], mobile = false) => {
   app = Vue.createApp({ ...options, render })
   for (const name of ['v-container', 'v-row', 'v-col', 'v-card', 'v-avatar', 'v-icon', 'v-spacer', 'v-chip']) app.component(name, passthrough())
   app.component('v-btn', passthrough('button'))
+  app.component('admin-hero', Vue.defineComponent({
+    props: ['title', 'description', 'icon', 'headingId'],
+    setup: (props, { slots }) => () => Vue.h('header', [Vue.h('h1', { id: props.headingId }, props.title), slots.actions?.()])
+  }))
   app.component('v-text-field', TextField)
   app.component('v-data-table', DataTable)
   app.component('v-pagination', Pagination)
@@ -243,7 +247,7 @@ describe('My Pages local search', () => {
     expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
     expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('0 of 1 pages')
     fetchPages.mockResolvedValue([])
-    await click(host, 'Refresh pages')
+    await click(host, 'Reload pages')
     expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
     expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('0 of 0 pages')
   })
@@ -261,7 +265,7 @@ describe('My Pages local search', () => {
     await click(host, 'Page 3')
     // Total rows still need three pages, but only sixteen match the current filter.
     fetchPages.mockResolvedValue([...rows.slice(0, 16), ...rows.slice(16).map(row => ({ ...row, title: 'Other' }))])
-    await click(host, 'Refresh pages')
+    await click(host, 'Reload pages')
     expect(host.querySelector('table')?.getAttribute('data-page')).toBe('2')
     expect(host.querySelectorAll('.profile-page-link')).toHaveLength(1)
     expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('16 of 32 pages')
