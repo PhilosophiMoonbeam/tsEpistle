@@ -1,6 +1,6 @@
 <template lang="pug">
   div.comments(v-intersect.once='onIntersect')
-    v-alert.mb-4(v-if='availability && (availability.closed || !availability.enabled)', type='info', variant='tonal') {{ availability.closed ? 'This discussion is closed to new comments.' : 'Discussions are currently unavailable.' }}
+    v-alert.mb-4(v-if='availability && (availability.closed || !availability.enabled)', type='info', variant='tonal') {{ availability.closed ? $t('common:comments.closed') : $t('common:comments.unavailable') }}
     v-alert.mb-4(v-if='readinessBlocked', type='warning', variant='tonal', role='status', aria-live='polite')
       .d-flex.align-center.ga-2
         span {{ readinessMessage }}
@@ -16,9 +16,12 @@
     )
       .comments-replying.d-flex.align-center.mb-3(v-if='replyTo > 0')
         v-icon.mr-2(size='18' aria-hidden='true') mdi-reply
-        span.text-body-small Replying to #[strong {{ replyAuthor }}]
+        span.text-body-small
+          | {{ replyingTo.before }}
+          strong {{ replyAuthor }}
+          | {{ replyingTo.after }}
         v-spacer
-        v-btn(icon size='x-small' variant='text' type='button' aria-label='Cancel reply' @click='cancelReply')
+        v-btn(icon size='x-small' variant='text' type='button' :aria-label='$t(`common:comments.cancelReply`)' @click='cancelReply')
           v-icon(size='18') mdi-close
       v-textarea#discussion-new.comments-composer-field(
         ref='newCommentField'
@@ -47,7 +50,7 @@
         required
       )
       v-card.comments-mentions(v-if='mentionCandidates.length > 0' variant='outlined')
-        v-list#comment-mention-options(density='compact', role='listbox', aria-label='Mention suggestions')
+        v-list#comment-mention-options(density='compact', role='listbox', :aria-label='$t(`common:comments.mentionSuggestions`)')
           v-list-item(
             v-for='(candidate, candidateIndex) of mentionCandidates'
             :id='`mention-option-${candidate.id}`'
@@ -153,7 +156,7 @@
                 icon
                 size='small'
                 variant='text'
-                :aria-label='`Reply to ${cm.authorName}`'
+                :aria-label='$t(`common:comments.replyTo`, { name: cm.authorName, interpolation: { escapeValue: false } })'
                 @click='startReply(cm)'
               ): v-icon(size="small") mdi-reply
               v-btn(
@@ -391,14 +394,22 @@ export default defineComponent({
     },
     readinessMessage(): string {
       if (this.connectionBlocked) {
-        if (this.pwaConnectionState === 'checking') return 'Checking the connection before loading comments.'
-        if (this.pwaConnectionState === 'server-unavailable') return 'Connection required. The server is unavailable right now.'
-        return 'Connection required to load or change comments.'
+        if (this.pwaConnectionState === 'checking') return this.$t('common:comments.checkingConnection')
+        if (this.pwaConnectionState === 'server-unavailable') return this.$t('common:comments.serverUnavailable')
+        return this.$t('common:comments.connectionRequiredChange')
       }
-      return this.authorityError || 'Comment access is not ready. Refresh before trying again.'
+      return this.authorityError || this.$t('common:comments.accessNotReady')
     },
     readinessRetryLabel(): string {
-      return this.connectionBlocked ? 'Retry connection' : 'Retry comments'
+      return this.connectionBlocked ? this.$t('common:comments.retryConnection') : this.$t('common:comments.retry')
+    },
+    // Keeps the author in its own <strong> wherever the locale puts {{name}}.
+    replyingTo(): { before: string; after: string } {
+      const marker = '\u2063NAME\u2063'
+      const sentence = String(this.$t('common:comments.replyingTo', { name: marker, interpolation: { escapeValue: false } }))
+      const index = sentence.indexOf(marker)
+      if (index < 0) return { before: `${sentence} `, after: '' }
+      return { before: sentence.slice(0, index), after: sentence.slice(index + marker.length) }
     },
     commentReady(): boolean {
       return this.authorityReady && !this.connectionBlocked && this.permissions.write && this.availability?.canPost === true
@@ -441,10 +452,10 @@ export default defineComponent({
           this.availability = null
           this.authorityErrorKind = 'transport'
           this.authorityError = state === 'server-unavailable'
-            ? 'Connection required. The server is unavailable right now.'
+            ? this.$t('common:comments.serverUnavailable')
             : state === 'checking'
-              ? 'Checking the connection before loading comments.'
-              : 'Connection required to load comments.'
+              ? this.$t('common:comments.checkingConnection')
+              : this.$t('common:comments.connectionRequired')
           this.fetchController?.abort()
           this.fetchController = null
           this.fetchGeneration += 1
@@ -756,10 +767,10 @@ export default defineComponent({
     },
     commentErrorMessage (error: unknown): string {
       const kind = this.commentErrorKind(error)
-      if (kind === 'auth') return 'Your session is no longer authorized to load or change comments. Sign in again, then retry.'
-      if (kind === 'permission' || kind === 'not-found') return 'Comments are unavailable for this page.'
-      if (kind === 'transport') return 'Connection required to load or change comments.'
-      if (kind === 'transport-unknown') return 'The comment request outcome is unknown. Refresh comments before trying again; it was not sent again.'
+      if (kind === 'auth') return this.$t('common:comments.sessionExpired')
+      if (kind === 'permission' || kind === 'not-found') return this.$t('common:comments.unavailableForPage')
+      if (kind === 'transport') return this.$t('common:comments.connectionRequiredChange')
+      if (kind === 'transport-unknown') return this.$t('common:comments.outcomeUnknown')
       return getErrorMessage(error)
     },
     setAuthorityFailure (error: unknown): void {
@@ -875,8 +886,8 @@ export default defineComponent({
           this.authorityReady = false
           this.authorityErrorKind = 'transport'
           this.authorityError = this.pwaConnectionState === 'server-unavailable'
-            ? 'Connection required. The server is unavailable right now.'
-            : 'Connection required to load comments.'
+            ? this.$t('common:comments.serverUnavailable')
+            : this.$t('common:comments.connectionRequired')
           this.fetchError = this.authorityError
           return
         }
@@ -1243,7 +1254,7 @@ export default defineComponent({
 
 .comments-format,
 .comments-posting-as {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: var(--wiki-text-muted);
 }
 
 .comments-loading,
@@ -1327,7 +1338,7 @@ export default defineComponent({
 
   &-date {
     margin-top: var(--wiki-space-1);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+    color: var(--wiki-text-muted);
   }
 
   &-content {
