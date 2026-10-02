@@ -40,7 +40,7 @@
         nav.profile-nav(:aria-label='$t("profile:nav.label", { defaultValue: "Profile sections" })')
           v-list.profile-nav__list(density='compact' nav)
             v-list-item.profile-nav__item(to='/profile' color='primary' rounded='lg')
-              template(v-slot:prepend): v-icon mdi-face-profile-outline
+              template(v-slot:prepend): v-icon mdi-card-account-details-outline
               v-list-item-title {{ $t('profile:title') }}
             v-list-item.profile-nav__item(to='/pages' color='primary' rounded='lg')
               template(v-slot:prepend): v-icon mdi-file-document-outline

@@ -46,6 +46,7 @@
                   :label='$t(`profile:displayName`)'
                   :error-messages='issueMessage(`name`)'
                   :readonly='saving'
+                  hide-details='auto'
                   variant='outlined'
                   density='comfortable'
                   autocomplete='name'
@@ -67,7 +68,6 @@
                   spellcheck='false'
                   variant='outlined'
                   density='comfortable'
-                  prepend-inner-icon='mdi-at'
                 )
               .profile-field(@keydown.esc.capture='revertField(`location`, $event)')
                 v-text-field(
@@ -96,7 +96,7 @@
               h2#profile-preferences-title.profile-section__title {{ $t('profile:preferences') }}
               p.profile-section__hint {{ $t('profile:preferencesHint', { defaultValue: 'Changes preview at once. Save to keep them.' }) }}
             .profile-section__body.profile-fields
-              .profile-field(@keydown.esc.capture='revertField(`timezone`, $event)')
+              .profile-field.profile-field--wide(@keydown.esc.capture='revertField(`timezone`, $event)')
                 v-autocomplete(
                   v-model='user.timezone'
                   v-model:menu='openMenus.timezone'
@@ -153,7 +153,7 @@
               h2#profile-reading-title.profile-section__title {{ $t('profile:readingPreferences', { defaultValue: 'Reading preferences' }) }}
               p.profile-section__hint {{ $t('profile:readingPreferencesHint', { defaultValue: 'Apply to articles after you save.' }) }}
             .profile-section__body
-              .profile-toggle-row
+              .profile-toggle-row(@keydown.esc.capture='revertField(`reduceMotion`, $event)')
                 v-switch(
                   v-model='user.reduceMotion'
                   :label='$t(`profile:reduceMotion`, { defaultValue: `Reduce motion` })'
@@ -164,7 +164,7 @@
                   inset
                 )
               v-divider
-              .profile-toggle-row
+              .profile-toggle-row(@keydown.esc.capture='revertField(`underlineLinks`, $event)')
                 v-switch(
                   v-model='user.underlineLinks'
                   :label='$t(`profile:underlineLinks`, { defaultValue: `Underline article links` })'
@@ -1118,6 +1118,11 @@ export default {
 
 .profile-field {
   min-width: 0;
+
+  // Long zone names stay readable instead of truncating in a half-width column.
+  &--wide {
+    grid-column: 1 / -1;
+  }
 }
 
 .profile-toggle-row {
@@ -1131,7 +1136,15 @@ export default {
 
   .v-label {
     color: rgb(var(--v-theme-on-surface));
+    font-size: .92rem;
     font-weight: 600;
+    opacity: 1;
+  }
+
+  // The default off track is a faint tint; give it a visible edge (WCAG 1.4.11).
+  .v-selection-control:not(.v-selection-control--dirty) .v-switch__track {
+    background-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, var(--wiki-surface-raised));
+    box-shadow: inset 0 0 0 1px var(--wiki-text-muted);
     opacity: 1;
   }
 
@@ -1265,6 +1278,13 @@ export default {
   border-radius: var(--profile-radius);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-sm);
+
+  // Pinned to the viewport only while there is something to save, so a clean
+  // dock does not cover content on small screens.
+  &:not(&--dirty) {
+    position: static;
+    box-shadow: none;
+  }
 
   &--dirty {
     border-color: color-mix(in srgb, rgb(var(--v-theme-warning)) 55%, var(--wiki-surface-border));
