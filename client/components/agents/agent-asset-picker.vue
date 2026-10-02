@@ -1,27 +1,27 @@
 <template>
-  <v-dialog :model-value="true" max-width="600" content-class="agent-owned-overlay agent-asset-picker-overlay" aria-label="Browse Wiki assets" :z-index="2800" @update:model-value="close" @after-enter="searchInput?.focus()">
+  <v-dialog :model-value="true" max-width="600" content-class="agent-owned-overlay agent-asset-picker-overlay" :aria-label="$t('common:agentAssetPicker.browseWikiAssets')" :z-index="2800" @update:model-value="close" @after-enter="searchInput?.focus()">
     <section class="agent-asset-picker">
       <header class="agent-asset-picker__header">
-        <div><h2>Browse Wiki assets</h2><p>A private copy stays with this conversation.</p></div>
-        <v-btn icon="mdi-close" variant="text" size="small" aria-label="Close asset picker" @click="close" />
+        <div><h2>{{ $t('common:agentAssetPicker.browseWikiAssets') }}</h2><p>{{ $t('common:agentAssetPicker.privateCopyStaysConversation') }}</p></div>
+        <v-btn icon="mdi-close" variant="text" size="small" :aria-label="$t('common:agentAssetPicker.closeAssetPicker')" @click="close" />
       </header>
-      <nav class="agent-asset-picker__breadcrumbs" aria-label="Asset folders">
-        <button type="button" :disabled="busy || !trail.length" @click="navigate(-1)">Wiki assets</button>
+      <nav class="agent-asset-picker__breadcrumbs" :aria-label="$t('common:agentAssetPicker.assetFolders')">
+        <button type="button" :disabled="busy || !trail.length" @click="navigate(-1)">{{ $t('common:agentAssetPicker.wikiAssets') }}</button>
         <template v-for="(folder, index) in trail" :key="folder.id"><span aria-hidden="true">/</span><button type="button" :disabled="busy || index === trail.length - 1" :aria-current="index === trail.length - 1 ? 'page' : undefined" @click="navigate(index)">{{ folder.name }}</button></template>
       </nav>
-      <label class="agent-asset-picker__search"><v-icon icon="mdi-magnify" size="20" aria-hidden="true" /><input ref="searchInput" v-model="query" type="search" aria-label="Search filenames in this folder" placeholder="Search this folder" :disabled="busy" /></label>
+      <label class="agent-asset-picker__search"><v-icon icon="mdi-magnify" size="20" aria-hidden="true" /><input ref="searchInput" v-model="query" type="search" :aria-label="$t('common:agentAssetPicker.searchFilenamesFolder')" :placeholder="$t('common:agentAssetPicker.searchFolder')" :disabled="busy" /></label>
       <div class="agent-asset-picker__body" :aria-busy="loading || busy">
-        <p v-if="loading" class="agent-asset-picker__state" role="status">Loading Wiki assets…</p>
-        <div v-else-if="error" class="agent-asset-picker__state" role="alert"><p>{{ error }}</p><v-btn variant="text" size="small" @click="load">Try again</v-btn></div>
+        <p v-if="loading" class="agent-asset-picker__state" role="status">{{ $t('common:agentAssetPicker.loadingWikiAssets') }}</p>
+        <div v-else-if="error" class="agent-asset-picker__state" role="alert"><p>{{ error }}</p><v-btn variant="text" size="small" @click="load">{{ $t('common:agentAssetPicker.tryAgain') }}</v-btn></div>
         <template v-else>
-          <ul class="agent-asset-picker__items" aria-label="Files and folders">
+          <ul class="agent-asset-picker__items" :aria-label="$t('common:agentAssetPicker.filesFolders')">
             <li v-for="folder in folders" :key="`folder-${folder.id}`"><button class="agent-asset-picker__row" type="button" :disabled="busy" @click="openFolder(folder)"><v-icon icon="mdi-folder-outline" aria-hidden="true" /><span class="agent-asset-picker__name">{{ folder.name }}</span><v-icon icon="mdi-chevron-right" size="18" aria-hidden="true" /></button></li>
-            <li v-for="asset in visibleAssets" :key="asset.id"><button class="agent-asset-picker__row" type="button" :disabled="busy || Boolean(unavailable(asset))" :aria-label="`Attach ${asset.filename}`" @click="select(asset)"><v-icon :icon="mimeType(asset) === 'application/pdf' ? 'mdi-file-pdf-box' : 'mdi-image-outline'" aria-hidden="true" /><span class="agent-asset-picker__name">{{ asset.filename }}<small v-if="unavailable(asset)">{{ unavailable(asset) }}</small></span><span class="agent-asset-picker__size">{{ formatSize(asset.fileSize) }}</span></button></li>
+            <li v-for="asset in visibleAssets" :key="asset.id"><button class="agent-asset-picker__row" type="button" :disabled="busy || Boolean(unavailable(asset))" :aria-label="$t('common:agentAssetPicker.attach', { filename: asset.filename, interpolation: { escapeValue: false } })" @click="select(asset)"><v-icon :icon="mimeType(asset) === 'application/pdf' ? 'mdi-file-pdf-box' : 'mdi-image-outline'" aria-hidden="true" /><span class="agent-asset-picker__name">{{ asset.filename }}<small v-if="unavailable(asset)">{{ unavailable(asset) }}</small></span><span class="agent-asset-picker__size">{{ formatSize(asset.fileSize) }}</span></button></li>
           </ul>
-          <p v-if="!visibleAssets.length" class="agent-asset-picker__state" role="status">{{ query.trim() ? 'No matching images or PDFs in this folder.' : folders.length ? 'Open a folder to find images and PDFs.' : 'No supported images or PDFs in this folder.' }}</p>
+          <p v-if="!visibleAssets.length" class="agent-asset-picker__state" role="status">{{ query.trim() ? $t('common:agentAssetPicker.noMatchingImagesPdfs') : folders.length ? $t('common:agentAssetPicker.openFolderFindImages') : $t('common:agentAssetPicker.noSupportedImagesPdfs') }}</p>
         </template>
       </div>
-      <footer class="agent-asset-picker__footer"><span v-if="busy" role="status">Attaching a private copy…</span><span v-else>{{ imageOnly ? 'PNG, JPEG or WebP · up to 10 MB' : 'Images up to 10 MB · PDFs up to 250 MB' }}</span><v-btn variant="text" size="small" @click="close">Cancel</v-btn></footer>
+      <footer class="agent-asset-picker__footer"><span v-if="busy" role="status">{{ $t('common:agentAssetPicker.attachingPrivateCopy') }}</span><span v-else>{{ imageOnly ? $t('common:agentAssetPicker.pngJpegWebpUp') : $t('common:agentAssetPicker.imagesUp10Mb') }}</span><v-btn variant="text" size="small" @click="close">{{ $t('common:actions.cancel') }}</v-btn></footer>
       <p v-if="attachmentError" class="agent-asset-picker__error" role="alert">{{ attachmentError }}</p>
     </section>
   </v-dialog>
@@ -30,6 +30,9 @@
 import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { fetchAssets, fetchAssetFolders, type Asset, type AssetFolder } from '../../helpers/assets-api.ts'
 import { validateAgentAttachment } from '../../helpers/agent-media.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const props = defineProps<{ imageOnly: boolean; busy: boolean; disabled: boolean; attachmentError: string }>()
 const emit = defineEmits<{ close: []; select: [asset: Asset] }>()
 const searchInput = useTemplateRef<HTMLInputElement>('searchInput')
@@ -46,11 +49,11 @@ const mimeType = (asset: Asset): string => mimeTypes[asset.ext.replace(/^\./, ''
 const visibleAssets = computed(() => assets.value.filter(asset => mimeType(asset) && asset.filename.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())))
 const unavailable = (asset: Asset): string | null => {
   const type = mimeType(asset)
-  if (props.imageOnly && type === 'application/pdf') return 'Images only in image mode'
-  if (!Number.isSafeInteger(asset.fileSize) || asset.fileSize < 0) return 'This file is unavailable'
+  if (props.imageOnly && type === 'application/pdf') return t('common:agentAssetPicker.imagesOnlyImageMode')
+  if (!Number.isSafeInteger(asset.fileSize) || asset.fileSize < 0) return t('common:agentAssetPicker.fileUnavailable')
   return validateAgentAttachment({ type, size: asset.fileSize })
 }
-const formatSize = (size: number): string => size < 1024 * 1024 ? `${Math.max(1, Math.ceil(size / 1024))} KB` : `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MB`
+const formatSize = (size: number): string => size < 1024 * 1024 ? t('common:agentAssetPicker.kb', { 1: Math.max(1, Math.ceil(size / 1024)), interpolation: { escapeValue: false } }) : t('common:agentAssetPicker.mb', { value: (size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0), interpolation: { escapeValue: false } })
 const close = () => { controller?.abort(); emit('close') }
 const load = async () => {
   controller?.abort()
@@ -75,7 +78,7 @@ const load = async () => {
     folders.value = nextFolders
   } catch {
     if (disposed || current.signal.aborted || controller !== current) return
-    error.value = denied ? 'You don’t have access to browse Wiki assets. You can upload a file instead.' : 'Wiki assets could not be loaded. Please try again.'
+    error.value = denied ? t('common:agentAssetPicker.youDontHaveAccess') : t('common:agentAssetPicker.wikiAssetsCouldNot')
     current.abort()
   } finally { if (controller === current) loading.value = false }
 }

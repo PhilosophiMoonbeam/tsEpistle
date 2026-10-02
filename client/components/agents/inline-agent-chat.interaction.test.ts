@@ -32,6 +32,7 @@ if (!composerDescriptor.template || !composerDescriptor.scriptSetup) throw new E
 
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 
 resetBody()
 

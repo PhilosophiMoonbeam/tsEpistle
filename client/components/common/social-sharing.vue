@@ -10,7 +10,7 @@
     )
       template(v-slot:prepend)
         v-icon(color='primary', size="small") mdi-share-variant
-      v-list-item-title.px-3 {{ offline ? 'Share excerpt and local link' : 'Share' }}
+      v-list-item-title.px-3 {{ offline ? $t(`common:socialSharing.shareExcerptLocalLink`) : $t(`common:socialSharing.share`) }}
     v-list-item(tag='button', type='button', role='button', @click='copyUrl')
       template(v-slot:prepend)
         v-icon(
@@ -19,19 +19,19 @@
           :color='copied ? "success" : undefined'
           size="small"
         ) {{ copied ? 'mdi-check-bold' : 'mdi-content-copy' }}
-      v-list-item-title.px-3 {{$t('common:actions.copy')}} URL
+      v-list-item-title.px-3 {{ $t(`common:socialSharing.copyUrl`) }}
     v-list-item(v-if='!offline' tag='button', type='button', role='button', @click='copySummary')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-text-box-outline
-      v-list-item-title.px-3 Copy page summary
+      v-list-item-title.px-3 {{ $t(`common:socialSharing.copyPageSummary`) }}
     v-list-item(v-else tag='button', type='button', role='button', @click='copyText')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-text-box-outline
-      v-list-item-title.px-3 Copy page text
+      v-list-item-title.px-3 {{ $t(`common:socialSharing.copyPageText`) }}
     v-list-item(:href='shareUrls.email')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-email-outline
-      v-list-item-title.px-3 Email
+      v-list-item-title.px-3 {{ $t(`common:socialSharing.email`) }}
     v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.facebook)')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-facebook
@@ -70,6 +70,7 @@
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
+import { translate } from '@/modules/localization.ts'
 
 type SharePayload = {
   title?: string
@@ -115,7 +116,7 @@ export default defineComponent({
     },
     title: {
       type: String,
-      default: 'Untitled Page'
+      default: () => translate('common:socialSharing.untitledPage')
     },
     description: {
       type: String,
@@ -179,7 +180,7 @@ export default defineComponent({
       if (!this.offline) return this.summaryText
       const content = (this.offlineText || this.description).trim()
       const parts = [this.title.trim(), content].filter(Boolean)
-      parts.push('This is a local copy saved on this device.')
+      parts.push(this.$t('common:socialSharing.localCopySavedDevice'))
       return parts.join('\n\n')
     },
     shareData (): SharePayload {
@@ -191,7 +192,7 @@ export default defineComponent({
       if (title) data.title = title
       if (text) data.text = text
       if (this.offline) {
-        data.text = [data.text, 'This is a local copy saved on this device.'].filter(Boolean).join('\n\n')
+        data.text = [data.text, this.$t('common:socialSharing.localCopySavedDevice')].filter(Boolean).join('\n\n')
       }
       const url = this.shareUrl
       if (url) data.url = url
@@ -275,7 +276,7 @@ export default defineComponent({
         })
       } catch {
         if (!this.isCurrentCopyOperation(operationId)) return
-        this.copyStatus = 'Failed to copy to clipboard'
+        this.copyStatus = this.$t('common:socialSharing.failedCopyClipboard')
         wikiStore.showNotification({
           style: 'red',
           message: this.copyStatus,
@@ -284,13 +285,13 @@ export default defineComponent({
       }
     },
     async copyUrl (): Promise<void> {
-      await this.copyValue(this.shareUrl, 'URL copied successfully')
+      await this.copyValue(this.shareUrl, this.$t('common:socialSharing.urlCopiedSuccessfully'))
     },
     async copySummary (): Promise<void> {
-      await this.copyValue(this.summaryText, 'Page summary copied successfully')
+      await this.copyValue(this.summaryText, this.$t('common:socialSharing.pageSummaryCopiedSuccessfully'))
     },
     async copyText (): Promise<void> {
-      await this.copyValue(this.shareText, 'Page text copied successfully')
+      await this.copyValue(this.shareText, this.$t('common:socialSharing.pageTextCopiedSuccessfully'))
     },
     async shareNative (): Promise<void> {
       const shareNavigator = getShareNavigator()
@@ -312,8 +313,8 @@ export default defineComponent({
           wikiStore.showNotification({
             style: 'red',
             message: this.offline
-              ? 'Unable to share the excerpt and local link. Use Copy URL or Copy page text instead.'
-              : 'Unable to share this page. Use Copy URL or Copy page summary instead.',
+              ? this.$t('common:socialSharing.unableShareExcerptLocal')
+              : this.$t('common:socialSharing.unableSharePageUse'),
             icon: 'alert'
           })
         }
@@ -344,7 +345,7 @@ export default defineComponent({
       } else {
         wikiStore.showNotification({
           style: 'red',
-          message: `Allow popups to share this page.`,
+          message: this.$t('common:socialSharing.allowPopupsSharePage'),
           icon: 'alert'
         })
       }

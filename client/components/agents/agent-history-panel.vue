@@ -5,7 +5,7 @@
     rounded="xl"
     :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
-    <AgentPanelHeader ref="historyCloseButton" title="Conversations" icon="mdi-history" close-label="Close chat history" :heading-id="headingId" :description-id="descriptionId" @close="closeHistory">
+    <AgentPanelHeader ref="historyCloseButton" :title="$t('common:agentHistoryPanel.conversations4')" icon="mdi-history" :close-label="$t('common:agentHistoryPanel.closeChatHistory')" :heading-id="headingId" :description-id="descriptionId" @close="closeHistory">
       {{ archiveCountDescription }}
     </AgentPanelHeader>
 
@@ -13,21 +13,21 @@
       <v-text-field
         ref="historySearchField"
         v-model="searchQuery"
-        aria-label="Search conversation history"
+        :aria-label="$t('common:agentHistoryPanel.searchConversationHistory')"
         clearable
         density="compact"
         hide-details
-        label="Search conversations"
+        :label="$t('common:agentHistoryPanel.searchConversations')"
         prepend-inner-icon="mdi-magnify"
         variant="outlined"
       />
       <span class="agent-history__search-status" role="status" aria-live="polite">{{ searchStatus }}</span>
     </div>
     <v-alert v-if="networkBlocked" class="mx-3 mb-3" density="compact" type="warning" variant="tonal" role="status">
-      Connection required to change conversation history. Retry connection in the Agent workspace before continuing.
+      {{ $t('common:agentHistoryPanel.connectionRequiredChangeConversation') }}
     </v-alert>
     <span id="agent-history-drag-instructions" class="agent-history__search-status">
-      Drag a conversation to Recent, a saved folder, or the new-folder area. Use its actions menu to move it with a keyboard.
+      {{ $t('common:agentHistoryPanel.dragConversationRecentSaved') }}
     </span>
     <span class="agent-history__search-status" role="status" aria-live="polite">{{ dragStatus }}</span>
 
@@ -37,27 +37,27 @@
     <v-alert v-if="sessionsRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
         <span>{{ sessionsRefreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions || networkBlocked" @click="refreshSessions()">Retry conversations</v-btn>
+        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions || networkBlocked" @click="refreshSessions()">{{ $t('common:agentHistoryPanel.retryConversations') }}</v-btn>
       </div>
     </v-alert>
     <v-alert v-if="foldersRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
         <span>{{ foldersRefreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders || networkBlocked" @click="refreshFolders()">Retry folders</v-btn>
+        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders || networkBlocked" @click="refreshFolders()">{{ $t('common:agentHistoryPanel.retryFolders') }}</v-btn>
       </div>
     </v-alert>
 
     <div v-if="loading && displaySessions.length === 0" class="agent-history__loading" role="status" aria-live="polite">
       <v-progress-circular color="primary" indeterminate size="22" width="2" />
-      <span>Opening the conversation archive…</span>
+      <span>{{ $t('common:agentHistoryPanel.openingConversationArchive') }}</span>
     </div>
 
     <div v-else class="agent-history__body">
       <div v-if="normalizedSearch && !hasSearchResults" class="agent-history__empty agent-history__empty--search">
         <v-icon icon="mdi-text-search" size="22" />
         <div>
-          <strong>No matching conversations</strong>
-          <span>Try a title or folder name.</span>
+          <strong>{{ $t('common:agentHistoryPanel.noMatchingConversations') }}</strong>
+          <span>{{ $t('common:agentHistoryPanel.tryTitleFolderName') }}</span>
         </div>
       </div>
 
@@ -77,11 +77,11 @@
         >
           <div class="agent-history__section-heading">
             <div>
-              <h3 id="agent-history-recent-title" class="agent-history__section-title">Recent</h3>
+              <h3 id="agent-history-recent-title" class="agent-history__section-title">{{ $t('common:agentHistoryPanel.recent') }}</h3>
               <div class="agent-history__section-copy">{{ $t('common:agentWorkspace.recentCopy') }}</div>
             </div>
             <div class="agent-history__section-actions">
-              <span class="agent-history__count" :aria-label="`${filteredRecentSessions.length} recent conversations`">{{ filteredRecentSessions.length }}</span>
+              <span class="agent-history__count" :aria-label="$t('common:agentHistoryPanel.recentConversations', { filteredRecentSessionsCount: filteredRecentSessions.length, interpolation: { escapeValue: false } })">{{ filteredRecentSessions.length }}</span>
               <!-- Destructive Clear lives with the list it empties, away from the panel's Close. -->
               <v-tooltip v-if="hasUnfiledSessions" location="bottom" :disabled="!clearHistoryDisabled" :text="networkBlocked ? networkRequiredMessage : $t('common:agentWorkspace.waitForUpdate')">
                 <template #activator="{ props: tooltipProps }">
@@ -102,8 +102,8 @@
 
           <template v-if="recentSessionGroups.length">
             <div v-for="group in recentSessionGroups" :key="group.label" class="agent-history__time-group">
-              <div class="agent-history__time-label">{{ group.label }}</div>
-              <v-list class="agent-history__list" density="compact" nav :aria-label="`${group.label} conversations`">
+              <div class="agent-history__time-label">{{ timeGroupTitle(group.label) }}</div>
+              <v-list class="agent-history__list" density="compact" nav :aria-label="$t('common:agentHistoryPanel.conversations', { label: timeGroupTitle(group.label), interpolation: { escapeValue: false } })">
                 <v-list-item
                   v-for="session in group.sessions"
                   :key="session.id"
@@ -111,8 +111,8 @@
                   :active="session.id === thread?.session.id"
                   :class="{ 'agent-history__session--dragging': draggedSessionId === session.id }"
                   :aria-current="session.id === thread?.session.id ? 'page' : undefined"
-                  :title="session.title || 'New conversation'"
-                  :subtitle="session.id === thread?.session.id ? `${sessionDateLabel(session.id)} · Current session` : sessionDateLabel(session.id)"
+                  :title="session.title || $t('common:agentHistoryPanel.newConversation')"
+                  :subtitle="session.id === thread?.session.id ? $t('common:agentHistoryPanel.currentSession', { id: sessionDateLabel(session.id), interpolation: { escapeValue: false } }) : sessionDateLabel(session.id)"
                   link
                   :disabled="sessionBusy(session.id)"
                   :draggable="canDragSession(session)"
@@ -123,7 +123,7 @@
                   @dragend="finishSessionDrag"
                 >
                   <template #prepend>
-                    <v-progress-circular v-if="openingSessionIds.has(session.id)" color="primary" indeterminate size="18" width="2" aria-label="Opening conversation" />
+                    <v-progress-circular v-if="openingSessionIds.has(session.id)" color="primary" indeterminate size="18" width="2" :aria-label="$t('common:agentHistoryPanel.openingConversation')" />
                     <v-icon v-else :icon="session.id === thread?.session.id ? 'mdi-message-text' : 'mdi-message-text-outline'" size="18" />
                   </template>
                   <template #append>
@@ -144,7 +144,7 @@
           </template>
           <div v-else class="agent-history__empty">
             <v-icon icon="mdi-message-outline" size="20" />
-            <span>Conversations that are not in a folder appear here.</span>
+            <span>{{ $t('common:agentHistoryPanel.conversationsNotFolderAppear') }}</span>
           </div>
 
             <div
@@ -154,12 +154,12 @@
             >
               <div v-if="sessionsLoadingMore" class="agent-history__pagination-status" role="status">
                 <v-progress-circular color="primary" indeterminate size="18" width="2" />
-                <span>Loading older conversations…</span>
+                <span>{{ $t('common:agentHistoryPanel.loadingOlderConversations') }}</span>
               </div>
               <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
                 <div class="agent-history__refresh-error">
                   <span>{{ sessionsLoadMoreError }}</span>
-                  <v-btn aria-label="Retry loading older conversations" size="small" variant="text" :disabled="networkBlocked" @click="loadMoreSessions">Retry</v-btn>
+                  <v-btn :aria-label="$t('common:agentHistoryPanel.retryLoadingOlderConversations')" size="small" variant="text" :disabled="networkBlocked" @click="loadMoreSessions">{{ $t('common:agentHistoryPanel.retry') }}</v-btn>
                 </div>
               </v-alert>
               <v-btn
@@ -170,7 +170,7 @@
                 :disabled="refreshingHistory || sessionsReloading || networkBlocked"
                 @click="loadMoreSessions"
               >
-                Load more
+                {{ $t('common:agentHistoryPanel.loadMore') }}
               </v-btn>
             </div>
         </section>
@@ -178,10 +178,10 @@
         <section class="agent-history__folders" aria-labelledby="agent-history-folders-title">
           <div class="agent-history__section-heading agent-history__section-heading--folders">
             <div>
-              <h3 id="agent-history-folders-title" class="agent-history__section-title">Saved folders</h3>
-              <div class="agent-history__section-copy">Kept without expiry</div>
+              <h3 id="agent-history-folders-title" class="agent-history__section-title">{{ $t('common:agentHistoryPanel.savedFolders') }}</h3>
+              <div class="agent-history__section-copy">{{ $t('common:agentHistoryPanel.keptWithoutExpiry') }}</div>
             </div>
-            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" aria-label="Create a conversation folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginCreateFolder">New folder</v-btn>
+            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" :aria-label="$t('common:agentHistoryPanel.createConversationFolder')" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginCreateFolder">{{ $t('common:agentHistoryPanel.newFolder') }}</v-btn>
           </div>
 
           <v-expansion-panels v-if="visibleFolderGroups.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
@@ -203,20 +203,20 @@
               <v-expansion-panel-title class="agent-history__folder-title">
                 <v-icon class="me-2 agent-history__folder-icon" icon="mdi-folder-outline" size="19" />
                 <span class="agent-history__folder-name">{{ group.folder.name }}</span>
-                <span class="agent-history__folder-count" :aria-label="`${group.sessions.length} conversations`">{{ group.sessions.length }}</span>
+                <span class="agent-history__folder-count" :aria-label="$t('common:agentHistoryPanel.conversations2', { sessionsCount: group.sessions.length, interpolation: { escapeValue: false } })">{{ group.sessions.length }}</span>
               </v-expansion-panel-title>
               <v-menu content-class="agent-owned-overlay" location="bottom end">
                 <template #activator="{ props: menuProps }">
-                  <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" />
+                  <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="$t('common:agentHistoryPanel.actions', { name: group.folder.name, interpolation: { escapeValue: false } })" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" />
                 </template>
-                <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
-                  <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginRenameFolder(group.folder)" />
+                <v-list density="compact" :aria-label="$t('common:agentHistoryPanel.folderActions', { name: group.folder.name, interpolation: { escapeValue: false } })">
+                  <v-list-item link prepend-icon="mdi-pencil-outline" :title="$t('common:agentHistoryPanel.renameFolder')" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginRenameFolder(group.folder)" />
                   <v-divider />
-                  <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginRemoveFolder(group.folder)" />
+                  <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" :title="$t('common:agentHistoryPanel.removeFolder2')" :subtitle="$t('common:agentHistoryPanel.conversationsReturnRecent')" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginRemoveFolder(group.folder)" />
                 </v-list>
               </v-menu>
               <v-expansion-panel-text>
-                <v-list v-if="group.sessions.length" class="agent-history__list agent-history__list--folder" density="compact" nav :aria-label="`${group.folder.name} conversations`">
+                <v-list v-if="group.sessions.length" class="agent-history__list agent-history__list--folder" density="compact" nav :aria-label="$t('common:agentHistoryPanel.conversations3', { name: group.folder.name, interpolation: { escapeValue: false } })">
                   <v-list-item
                     v-for="session in group.sessions"
                     :key="session.id"
@@ -224,8 +224,8 @@
                     :active="session.id === thread?.session.id"
                     :aria-current="session.id === thread?.session.id ? 'page' : undefined"
                     :class="{ 'agent-history__session--dragging': draggedSessionId === session.id }"
-                    :title="session.title || 'New conversation'"
-                    :subtitle="session.id === thread?.session.id ? `${sessionDateLabel(session.id)} · Current session` : sessionDateLabel(session.id)"
+                    :title="session.title || $t('common:agentHistoryPanel.newConversation')"
+                    :subtitle="session.id === thread?.session.id ? $t('common:agentHistoryPanel.currentSession', { id: sessionDateLabel(session.id), interpolation: { escapeValue: false } }) : sessionDateLabel(session.id)"
                     link
                     :disabled="sessionBusy(session.id)"
                     :draggable="canDragSession(session)"
@@ -236,7 +236,7 @@
                     @dragend="finishSessionDrag"
                   >
                     <template #prepend>
-                      <v-progress-circular v-if="openingSessionIds.has(session.id)" color="primary" indeterminate size="18" width="2" aria-label="Opening conversation" />
+                      <v-progress-circular v-if="openingSessionIds.has(session.id)" color="primary" indeterminate size="18" width="2" :aria-label="$t('common:agentHistoryPanel.openingConversation')" />
                       <v-icon v-else :icon="session.id === thread?.session.id ? 'mdi-message-text' : 'mdi-message-text-outline'" size="18" />
                     </template>
                     <template #append>
@@ -253,7 +253,7 @@
                     </template>
                   </v-list-item>
                 </v-list>
-                <div v-else class="agent-history__empty agent-history__empty--folder">Move a conversation here to keep it.</div>
+                <div v-else class="agent-history__empty agent-history__empty--folder">{{ $t('common:agentHistoryPanel.moveConversationHereKeep') }}</div>
               </v-expansion-panel-text>
             </v-expansion-panel>
           </v-expansion-panels>
@@ -266,7 +266,7 @@
             }"
             data-drop-target="new-folder"
             role="region"
-            aria-label="Create a folder for conversations worth keeping"
+            :aria-label="$t('common:agentHistoryPanel.createFolderConversationsWorth')"
             aria-describedby="agent-history-drag-instructions"
             @dragenter="setDropTarget($event, newFolderDropTarget)"
             @dragover="setDropTarget($event, newFolderDropTarget)"
@@ -275,13 +275,13 @@
           >
             <v-icon icon="mdi-folder-heart-outline" size="22" />
             <div>
-              <strong>Create a folder for conversations worth keeping</strong>
-              <span>Drop a conversation here to start a new folder.</span>
+              <strong>{{ $t('common:agentHistoryPanel.createFolderConversationsWorth') }}</strong>
+              <span>{{ $t('common:agentHistoryPanel.dropConversationHereStart') }}</span>
             </div>
           </div>
           <div v-else class="agent-history__empty agent-history__empty--folders">
             <v-icon icon="mdi-folder-heart-outline" size="22" />
-            <span>Create a folder for conversations worth keeping.</span>
+            <span>{{ $t('common:agentHistoryPanel.createFolderConversationsWorth2') }}</span>
           </div>
         </section>
       </template>
@@ -293,7 +293,7 @@
     <v-card rounded="xl">
       <v-card-title id="agent-history-folder-editor-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-folder-outline" aria-hidden="true" /></v-avatar>
-        {{ editingFolder ? 'Rename folder' : 'New folder' }}
+        {{ editingFolder ? $t('common:agentHistoryPanel.renameFolder') : $t('common:agentHistoryPanel.newFolder') }}
       </v-card-title>
       <v-card-text class="px-5 pt-4">
         <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
@@ -303,17 +303,17 @@
           class="agent-history__folder-input wiki-notched-field"
           autofocus
           counter="64"
-          label="Folder name"
+          :label="$t('common:agentHistoryPanel.folderName')"
           maxlength="64"
           variant="outlined"
           :disabled="folderWorkflowState === 'move-retry' || folderWorkflowState === 'create-unknown'"
           @keydown.enter.prevent="saveFolder"
         />
-        <p class="text-body-small text-medium-emphasis mb-0">Folders keep conversations beyond the history window.</p>
+        <p class="text-body-small text-medium-emphasis mb-0">{{ $t('common:agentHistoryPanel.foldersKeepConversationsBeyond') }}</p>
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="savingFolder" @click="cancelFolderEditor">Cancel</v-btn>
+        <v-btn variant="text" :disabled="savingFolder" @click="cancelFolderEditor">{{ $t('common:actions.cancel') }}</v-btn>
         <v-btn
           color="primary"
           variant="tonal"
@@ -321,7 +321,7 @@
           :loading="savingFolder"
           @click="saveFolder"
         >
-          {{ editingFolder ? 'Save name' : folderWorkflowState === 'move-retry' ? 'Retry move' : folderWorkflowState === 'create-unknown' ? 'Check folder status' : 'Create folder' }}
+          {{ editingFolder ? $t('common:agentHistoryPanel.saveName') : folderWorkflowState === 'move-retry' ? $t('common:agentHistoryPanel.retryMove') : folderWorkflowState === 'create-unknown' ? $t('common:agentHistoryPanel.checkFolderStatus') : $t('common:agentHistoryPanel.createFolder') }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -331,17 +331,17 @@
     <v-card rounded="xl">
       <v-card-title id="agent-history-session-editor-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-pencil-outline" aria-hidden="true" /></v-avatar>
-        Rename conversation
+        {{ $t('common:agentHistoryPanel.renameConversation') }}
       </v-card-title>
       <v-card-text class="px-5 pt-4">
         <v-alert v-if="sessionDialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ sessionDialogError }}</v-alert>
-        <v-text-field v-model="sessionRenameTitle" autofocus counter="255" label="Conversation title" maxlength="255" variant="outlined" :disabled="savingSessionTitle || sessionMutationBusy" @keydown.enter.prevent="saveSessionTitle" />
+        <v-text-field v-model="sessionRenameTitle" autofocus counter="255" :label="$t('common:agentHistoryPanel.conversationTitle')" maxlength="255" variant="outlined" :disabled="savingSessionTitle || sessionMutationBusy" @keydown.enter.prevent="saveSessionTitle" />
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="savingSessionTitle" @click="sessionEditorOpen = false">Cancel</v-btn>
+        <v-btn variant="text" :disabled="savingSessionTitle" @click="sessionEditorOpen = false">{{ $t('common:actions.cancel') }}</v-btn>
         <v-btn color="primary" variant="tonal" :disabled="loading || !sessionRenameTitle.trim() || savingSessionTitle || sessionMutationBusy || networkBlocked" :loading="savingSessionTitle" @click="saveSessionTitle">
-          Save title
+          {{ $t('common:agentHistoryPanel.saveTitle') }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -351,16 +351,16 @@
     <v-card ref="deleteDialogCard" rounded="xl">
       <v-card-title id="agent-history-delete-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-outline" aria-hidden="true" /></v-avatar>
-        Delete conversation?
+        {{ $t('common:agentHistoryPanel.deleteConversation') }}
       </v-card-title>
       <v-card-text class="px-5">
         <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
-        <strong>{{ deletingSession?.title || 'New conversation' }}</strong> and its messages will be permanently removed.
+        <strong>{{ deletingSession?.title || $t('common:agentHistoryPanel.newConversation') }}</strong> {{ $t('common:agentHistoryPanel.messagesWillPermanentlyRemoved') }}
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelDeleteSession">Cancel</v-btn>
-        <v-btn color="error" variant="flat" :loading="deleting" :disabled="deleting || sessionMutationBusy || networkBlocked" @click="deleteSession">Delete permanently</v-btn>
+        <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelDeleteSession">{{ $t('common:actions.cancel') }}</v-btn>
+        <v-btn color="error" variant="flat" :loading="deleting" :disabled="deleting || sessionMutationBusy || networkBlocked" @click="deleteSession">{{ $t('common:agentHistoryPanel.deletePermanently') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -369,17 +369,17 @@
     <v-card ref="removeFolderDialogCard" rounded="xl">
       <v-card-title id="agent-history-remove-folder-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="warning" size="38" variant="tonal"><v-icon icon="mdi-folder-remove-outline" aria-hidden="true" /></v-avatar>
-        Remove folder?
+        {{ $t('common:agentHistoryPanel.removeFolder') }}
       </v-card-title>
       <v-card-text class="px-5">
         <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
-        <p class="mb-2"><strong>{{ removingFolder?.name }}</strong> will be removed.</p>
-        <p class="mb-0">Its conversations return to Recent and each starts a fresh history retention window. No conversations are deleted.</p>
+        <p class="mb-2"><strong>{{ removingFolder?.name }}</strong> {{ $t('common:agentHistoryPanel.willRemoved') }}</p>
+        <p class="mb-0">{{ $t('common:agentHistoryPanel.conversationsReturnRecentEach') }}</p>
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelRemoveFolder">Cancel</v-btn>
-        <v-btn color="error" variant="tonal" :loading="deleting" :disabled="loading || deleting || sessionMutationBusy || networkBlocked" @click="deleteFolder">Remove folder</v-btn>
+        <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelRemoveFolder">{{ $t('common:actions.cancel') }}</v-btn>
+        <v-btn color="error" variant="tonal" :loading="deleting" :disabled="loading || deleting || sessionMutationBusy || networkBlocked" @click="deleteFolder">{{ $t('common:agentHistoryPanel.removeFolder2') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -395,13 +395,16 @@ import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import { useAgentsStore, type AgentRefreshResult } from '../../store/agents.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import AgentHistorySessionActions from './agent-history-session-actions.vue'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const props = defineProps<{ headingId: string; descriptionId: string; networkBlocked?: boolean }>()
 const emit = defineEmits<{ close: []; clear: [] }>()
 const { headingId, descriptionId } = props
 const agents = useAgentsStore()
 const { folders, loading, sessionMutationBusy, sessions, sessionsLoadMoreError, sessionsLoadingMore, sessionsNextCursor, sessionsReloading, thread } = storeToRefs(agents)
 const networkBlocked = computed(() => props.networkBlocked === true)
-const networkRequiredMessage = 'Connection required to change conversation history. Retry connection in the Agent workspace before continuing.'
+const networkRequiredMessage = t('common:agentHistoryPanel.connectionRequiredChangeConversation')
 const openFolderIds = ref<string[]>([])
 const localError = ref('')
 const folderEditorOpen = ref(false)
@@ -501,6 +504,8 @@ const rejectedRefresh = (error?: unknown): AgentRefreshResult => ({
 const normalizedSearch = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())
 type SessionTimeGroupLabel = 'Today' | 'Yesterday' | 'Previous 7 days' | 'Earlier'
 const sessionTimeGroupLabels: readonly SessionTimeGroupLabel[] = ['Today', 'Yesterday', 'Previous 7 days', 'Earlier']
+const sessionTimeGroupKeys: Record<SessionTimeGroupLabel, string> = { Today: 'today', Yesterday: 'yesterday', 'Previous 7 days': 'previous7Days', Earlier: 'earlier' }
+const timeGroupTitle = (label: SessionTimeGroupLabel): string => t(`common:agentHistoryPanel.timeGroups.${sessionTimeGroupKeys[label]}`)
 interface SessionTimeMetadata {
   readonly group: SessionTimeGroupLabel
   readonly displayDate: string
@@ -576,7 +581,7 @@ const historyPartition = computed<HistoryPartition>(() => {
     sessionsById.set(session.id, session)
     const time = sessionTimeMetadata(session.lastActivityAt, today, todayDate, yesterdayDate, currentYear)
     sessionDateLabels.set(session.id, time.displayDate)
-    const matchesSearch = !query || (session.title || 'New conversation').toLocaleLowerCase().includes(query)
+    const matchesSearch = !query || (session.title || t('common:agentHistoryPanel.newConversation')).toLocaleLowerCase().includes(query)
     if (session.folderId === null) {
       if (matchesSearch) {
         recentSessions.push(session)
@@ -638,13 +643,11 @@ const matchingConversationCount = computed(() => historyPartition.value.matching
 const hasSearchResults = computed(() => matchingConversationCount.value > 0)
 const archiveCountDescription = computed(() => {
   const count = matchingConversationCount.value
-  const noun = count === 1 ? 'conversation' : 'conversations'
-  const queryQualifier = normalizedSearch.value ? ' matching' : ''
-  const paginationQualifier = sessionsNextCursor.value ? ' loaded so far' : ''
-  return `${count}${queryQualifier} ${noun}${paginationQualifier}`
+  const variant = `${normalizedSearch.value ? 'matching' : 'all'}${sessionsNextCursor.value ? t('common:agentHistoryPanel.loaded') : ''}`
+  return t(`common:agentHistoryPanel.archiveCount.${variant}`, { count })
 })
 const searchStatus = computed(() => normalizedSearch.value
-  ? `${matchingConversationCount.value} matching ${matchingConversationCount.value === 1 ? 'conversation' : 'conversations'}`
+  ? t('common:agentHistoryPanel.archiveCount.matching', { count: matchingConversationCount.value })
   : '')
 const sessionDateLabel = (sessionId: string): string => historyPartition.value.sessionDateLabels.get(sessionId) ?? ''
 const message = (value: unknown, fallback: string): string => {
@@ -716,10 +719,10 @@ const beginSessionDrag = (event: DragEvent, session: AgentSessionSummary): void 
     event.dataTransfer.setData(sessionDragMime, token)
     event.dataTransfer.setData('text/plain', session.id)
   }
-  dragStatus.value = `Dragging ${session.title || 'New conversation'}. Drop it on Recent, a saved folder, or the new-folder area.`
+  dragStatus.value = t('common:agentHistoryPanel.draggingDropRecentSaved', { title: session.title || t('common:agentHistoryPanel.newConversation'), interpolation: { escapeValue: false } })
 }
 const finishSessionDrag = (): void => {
-  if (draggedSessionId.value) dragStatus.value = 'Conversation move cancelled.'
+  if (draggedSessionId.value) dragStatus.value = t('common:agentHistoryPanel.conversationMoveCancelled')
   clearDragState()
 }
 const setDropTarget = (event: DragEvent, folderId: string | null): void => {
@@ -734,9 +737,9 @@ const leaveDropTarget = (event: DragEvent, folderId: string | null): void => {
   if (isActiveDropTarget(folderId)) activeDropTarget.value = null
 }
 const dropDestinationName = (folderId: string | null): string =>
-  folderId === null ? 'Recent' : folders.value.find(folder => folder.id === folderId)?.name ?? 'the saved folder'
+  folderId === null ? t('common:agentHistoryPanel.recent') : folders.value.find(folder => folder.id === folderId)?.name ?? t('common:agentHistoryPanel.savedFolder')
 const sessionLocationName = (session: AgentSessionSummary): string =>
-  session.folderId === null ? 'Recent' : folders.value.find(folder => folder.id === session.folderId)?.name ?? 'its current folder'
+  session.folderId === null ? t('common:agentHistoryPanel.recent') : folders.value.find(folder => folder.id === session.folderId)?.name ?? t('common:agentHistoryPanel.currentFolder')
 const refreshHistoryBlocked = (): boolean =>
   disposed ||
   networkBlocked.value ||
@@ -748,7 +751,7 @@ const refreshHistoryBlocked = (): boolean =>
   Boolean(deletingSession.value) ||
   Boolean(removingFolder.value)
 const refreshResultMessage = (result: AgentRefreshResult, fallback: string): string =>
-  result.current ? message(result.error, fallback) : 'This history refresh no longer applies to the current workspace.'
+  result.current ? message(result.error, fallback) : t('common:agentHistoryPanel.historyRefreshNoLonger')
 const refreshSessions = async (identity: HistoryOperationIdentity = captureOperationIdentity()): Promise<AgentRefreshResult> => {
   if (loading.value || refreshingSessions.value || sessionMutationBusy.value || networkBlocked.value || !isOperationCurrent(identity)) return rejectedRefresh()
   refreshingSessions.value = true
@@ -757,12 +760,12 @@ const refreshSessions = async (identity: HistoryOperationIdentity = captureOpera
     const result = await agents.reloadSessions()
     if (!isOperationCurrent(identity)) return rejectedRefresh(result.error)
     if (!result.current || !result.accepted) {
-      sessionsRefreshError.value = `Showing last-loaded conversations. ${refreshResultMessage(result, 'Conversations could not be refreshed.')}`
+      sessionsRefreshError.value = t('common:agentHistoryPanel.showingLastLoadedConversations', { result: refreshResultMessage(result, t('common:agentHistoryPanel.conversationsCouldNotRefreshed')), interpolation: { escapeValue: false } })
       return result
     }
     if (sessionMutationBusy.value) {
-      const superseded = rejectedRefresh('A conversation mutation changed while history was refreshing.')
-      sessionsRefreshError.value = `Showing last-loaded conversations. ${message(superseded.error, 'Conversations could not be refreshed.')}`
+      const superseded = rejectedRefresh(t('common:agentHistoryPanel.conversationMutationChangedWhile'))
+      sessionsRefreshError.value = t('common:agentHistoryPanel.showingLastLoadedConversations2', { error: message(superseded.error, t('common:agentHistoryPanel.conversationsCouldNotRefreshed')), interpolation: { escapeValue: false } })
       return superseded
     }
     committedDeletedSessionIds.value = new Set()
@@ -772,7 +775,7 @@ const refreshSessions = async (identity: HistoryOperationIdentity = captureOpera
   } catch (value) {
     if (!isOperationCurrent(identity)) return rejectedRefresh(value)
     const result = rejectedRefresh(value)
-    sessionsRefreshError.value = `Showing last-loaded conversations. ${message(value, 'Conversations could not be refreshed.')}`
+    sessionsRefreshError.value = t('common:agentHistoryPanel.showingLastLoadedConversations3', { value: message(value, t('common:agentHistoryPanel.conversationsCouldNotRefreshed')), interpolation: { escapeValue: false } })
     return result
   } finally {
     if (!disposed) refreshingSessions.value = false
@@ -786,7 +789,7 @@ const refreshFolders = async (identity: HistoryOperationIdentity = captureOperat
     const result = await agents.reloadFolders()
     if (!isOperationCurrent(identity)) return rejectedRefresh(result.error)
     if (!result.current || !result.accepted) {
-      foldersRefreshError.value = `Showing last-loaded folders. ${refreshResultMessage(result, 'Folders could not be refreshed.')}`
+      foldersRefreshError.value = t('common:agentHistoryPanel.showingLastLoadedFolders', { result: refreshResultMessage(result, t('common:agentHistoryPanel.foldersCouldNotRefreshed')), interpolation: { escapeValue: false } })
       return result
     }
     localError.value = ''
@@ -794,7 +797,7 @@ const refreshFolders = async (identity: HistoryOperationIdentity = captureOperat
   } catch (value) {
     if (!isOperationCurrent(identity)) return rejectedRefresh(value)
     const result = rejectedRefresh(value)
-    foldersRefreshError.value = `Showing last-loaded folders. ${message(value, 'Folders could not be refreshed.')}`
+    foldersRefreshError.value = t('common:agentHistoryPanel.showingLastLoadedFolders2', { value: message(value, t('common:agentHistoryPanel.foldersCouldNotRefreshed')), interpolation: { escapeValue: false } })
     return result
   } finally {
     if (!disposed) refreshingFolders.value = false
@@ -870,7 +873,7 @@ const openSession = async (sessionId: string): Promise<void> => {
   try {
     await agents.openSession(sessionId)
   } catch (value) {
-    if (isOperationCurrent(identity)) localError.value = message(value, 'The conversation could not be opened.')
+    if (isOperationCurrent(identity)) localError.value = message(value, t('common:agentHistoryPanel.conversationCouldNotOpened'))
   } finally {
     if (!disposed) updatePendingSet(openingSessionIds, sessionId, false)
   }
@@ -900,12 +903,12 @@ const moveSession = async (
   )
     return false
   lastMoveRefresh.value = null
-  const title = session.title || 'New conversation'
+  const title = session.title || t('common:agentHistoryPanel.newConversation')
   const destination = dropDestinationName(folderId)
   const originalLocation = sessionLocationName(session)
   localError.value = ''
   agents.error = ''
-  dragStatus.value = `Moving ${title} to ${destination}.`
+  dragStatus.value = t('common:agentHistoryPanel.moving', { title, destination, interpolation: { escapeValue: false } })
   updatePendingSet(movingSessionIds, session.id, true)
   try {
     const projected = await agents.moveSessionToFolder(session.id, folderId)
@@ -916,10 +919,10 @@ const moveSession = async (
     if (refreshResult.accepted && refreshResult.current) {
       clearProjectedFolder(session.id)
     } else {
-      sessionsRefreshError.value = `Moved ${title} to ${destination}, but history could not be reconciled. ${refreshResultMessage(refreshResult, 'Refresh history before relying on the displayed location.')}`
+      sessionsRefreshError.value = t('common:agentHistoryPanel.movedButHistoryCould', { title, destination, refreshResult: refreshResultMessage(refreshResult, t('common:agentHistoryPanel.refreshHistoryBeforeRelying')), interpolation: { escapeValue: false } })
     }
     if (folderId && !openFolderIds.value.includes(folderId)) openFolderIds.value.push(folderId)
-    dragStatus.value = `Moved ${title} to ${destination}.`
+    dragStatus.value = t('common:agentHistoryPanel.moved', { title, destination, interpolation: { escapeValue: false } })
     return true
   } catch (value) {
     if (!isOperationCurrent(identity)) return false
@@ -930,12 +933,12 @@ const moveSession = async (
       const refreshed = sessions.value.find(candidate => candidate.id === session.id)
       if (refreshed?.folderId === folderId) {
         localError.value = ''
-        dragStatus.value = `Moved ${title} to ${destination}.`
+        dragStatus.value = t('common:agentHistoryPanel.moved', { title, destination, interpolation: { escapeValue: false } })
         return true
       }
     }
-    localError.value = message(value, 'The conversation could not be moved.')
-    dragStatus.value = `${title} could not be moved. It remains in ${originalLocation}. Refresh history, then retry the move.`
+    localError.value = message(value, t('common:agentHistoryPanel.conversationCouldNotMoved'))
+    dragStatus.value = t('common:agentHistoryPanel.couldNotMovedRemains', { title, originalLocation, interpolation: { escapeValue: false } })
     return false
   } finally {
     if (!disposed) updatePendingSet(movingSessionIds, session.id, false)
@@ -1014,7 +1017,7 @@ const saveSessionTitle = async (): Promise<void> => {
     await agents.renameSession(session.id, title)
     if (isOperationCurrent(identity)) sessionEditorOpen.value = false
   } catch (value) {
-    if (isOperationCurrent(identity)) sessionDialogError.value = message(value, 'The conversation could not be renamed.')
+    if (isOperationCurrent(identity)) sessionDialogError.value = message(value, t('common:agentHistoryPanel.conversationCouldNotRenamed'))
   } finally {
     if (!disposed) savingSessionTitle.value = false
   }
@@ -1081,7 +1084,7 @@ const completeCreatedFolderMove = (
   localError.value = ''
   dialogError.value = ''
   if (!openFolderIds.value.includes(folder.id)) openFolderIds.value.push(folder.id)
-  dragStatus.value = `Moved ${session.title || 'New conversation'} to ${folder.name}.`
+  dragStatus.value = t('common:agentHistoryPanel.moved2', { title: session.title || t('common:agentHistoryPanel.newConversation'), name: folder.name, interpolation: { escapeValue: false } })
   closeFolderEditorAfterCommit()
 }
 const moveCreatedFolder = async (
@@ -1123,8 +1126,8 @@ const moveCreatedFolder = async (
   }
   folderWorkflowState.value = 'move-retry'
   dialogError.value = lastMoveRefresh.value?.result.accepted
-    ? `Folder “${folder.name}” was created, but the conversation could not be moved. Retry the move.`
-    : `Folder “${folder.name}” was created, but the move outcome could not be confirmed. Refresh history, then retry the move.`
+    ? t('common:agentHistoryPanel.folderWasCreatedBut', { name: folder.name, interpolation: { escapeValue: false } })
+    : t('common:agentHistoryPanel.folderWasCreatedBut2', { name: folder.name, interpolation: { escapeValue: false } })
   return false
 }
 const retryFolderMove = async (): Promise<void> => {
@@ -1133,7 +1136,7 @@ const retryFolderMove = async (): Promise<void> => {
   const folder = folderWorkflowFolder.value ?? (folderId ? folders.value.find(candidate => candidate.id === folderId) ?? null : null)
   const identity = folderWorkflowIdentity.value
   if (!identity || !isOperationCurrent(identity) || !folderId || !source || !folder) {
-    if (!disposed) dialogError.value = 'The created folder is no longer available. Refresh folders before retrying.'
+    if (!disposed) dialogError.value = t('common:agentHistoryPanel.createdFolderNoLonger')
     return
   }
   await moveCreatedFolder(folder, identity)
@@ -1166,9 +1169,9 @@ const saveFolder = async (): Promise<void> => {
       if (reconciled) await moveCreatedFolder(reconciled, identity)
       else if (!foldersRefreshError.value) {
         folderWorkflowState.value = 'creating'
-        dialogError.value = 'No matching folder was found. You can create it now.'
+        dialogError.value = t('common:agentHistoryPanel.noMatchingFolderWas')
       } else {
-        dialogError.value = 'The folder creation result is still unknown. Refresh folders, then check again before retrying.'
+        dialogError.value = t('common:agentHistoryPanel.folderCreationResultStill')
       }
       return
     }
@@ -1182,14 +1185,14 @@ const saveFolder = async (): Promise<void> => {
         const refreshFailed = Boolean(foldersRefreshError.value)
         folderWorkflowState.value = refreshFailed ? 'create-unknown' : 'creating'
         dialogError.value = refreshFailed
-          ? 'The folder creation result is unknown. Refresh folders, then check again before retrying.'
-          : 'No matching folder was found. You can create it now.'
+          ? t('common:agentHistoryPanel.folderCreationResultUnknown')
+          : t('common:agentHistoryPanel.noMatchingFolderWas')
         return
       }
       await moveCreatedFolder(folder, identity)
     } catch (value) {
       if (!isOperationCurrent(identity)) return
-      const createError = message(value, 'The folder could not be saved.')
+      const createError = message(value, t('common:agentHistoryPanel.folderCouldNotSaved'))
       const reconciled = await reconcileFolderByName(name, identity)
       if (!isOperationCurrent(identity)) return
       if (reconciled) {
@@ -1199,7 +1202,7 @@ const saveFolder = async (): Promise<void> => {
       const refreshFailed = Boolean(foldersRefreshError.value)
       folderWorkflowState.value = refreshFailed ? 'create-unknown' : 'creating'
       dialogError.value = refreshFailed
-        ? 'The folder creation result is unknown. Refresh folders, then check again before retrying.'
+        ? t('common:agentHistoryPanel.folderCreationResultUnknown')
         : createError
     }
   } finally {
@@ -1236,10 +1239,10 @@ const deleteSession = async (): Promise<void> => {
     const refreshResult = await refreshSessions(identity)
     if (!isOperationCurrent(identity)) return
     if (!refreshResult.accepted || !refreshResult.current) {
-      sessionsRefreshError.value = `Conversation deleted, but history could not be reconciled. ${refreshResultMessage(refreshResult, 'Refresh history before relying on the displayed list.')}`
+      sessionsRefreshError.value = t('common:agentHistoryPanel.conversationDeletedButHistory', { refreshResult: refreshResultMessage(refreshResult, t('common:agentHistoryPanel.refreshHistoryBeforeRelying2')), interpolation: { escapeValue: false } })
     }
   } catch (value) {
-    if (isOperationCurrent(identity)) dialogError.value = message(value, 'The conversation could not be deleted.')
+    if (isOperationCurrent(identity)) dialogError.value = message(value, t('common:agentHistoryPanel.conversationCouldNotDeleted'))
   } finally {
     if (!disposed) deleting.value = false
   }
@@ -1266,7 +1269,7 @@ const deleteFolder = async (): Promise<void> => {
       const failedResource = !folderRefresh.accepted || !folderRefresh.current ? 'folders' : 'conversations'
       const failedResult = failedResource === 'folders' ? folderRefresh : sessionsRefresh
       const errorTarget = failedResource === 'folders' ? foldersRefreshError : sessionsRefreshError
-      errorTarget.value = `Folder removed, but ${failedResource} could not be reconciled. ${refreshResultMessage(failedResult, 'Refresh history before relying on the displayed location.')}`
+      errorTarget.value = t('common:agentHistoryPanel.folderRemovedButCould', { failedResource, failedResult: refreshResultMessage(failedResult, t('common:agentHistoryPanel.refreshHistoryBeforeRelying')), interpolation: { escapeValue: false } })
     }
   } catch (value) {
     if (!isOperationCurrent(identity)) return
@@ -1278,15 +1281,15 @@ const deleteFolder = async (): Promise<void> => {
         : null
       if (renewed) {
         removingFolder.value = renewed
-        dialogError.value = 'The folder changed while you were reviewing it. Review the updated folder, then remove it again.'
+        dialogError.value = t('common:agentHistoryPanel.folderChangedWhileYou')
       } else {
         dialogError.value = refreshed.accepted && refreshed.current
-          ? 'The folder is no longer available. Refresh folders before trying again.'
-          : 'The folder changed while you were reviewing it. Refresh folders, then review the confirmation again.'
+          ? t('common:agentHistoryPanel.folderNoLongerAvailable')
+          : t('common:agentHistoryPanel.folderChangedWhileYou2')
       }
       return
     }
-    dialogError.value = message(value, 'The folder could not be removed.')
+    dialogError.value = message(value, t('common:agentHistoryPanel.folderCouldNotRemoved'))
   } finally {
     if (!disposed) deleting.value = false
   }
@@ -1331,7 +1334,7 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
     folderWorkflowIdentity.value = null
     folderWorkflowSession.value = null
     folderWorkflowState.value = 'create-unknown'
-    dialogError.value = 'The active conversation changed. Close this folder editor and start the folder move again.'
+    dialogError.value = t('common:agentHistoryPanel.activeConversationChangedClose')
   }
   expandActiveFolder()
 })

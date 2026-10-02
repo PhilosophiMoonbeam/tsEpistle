@@ -24,6 +24,8 @@ if (parsedSfc.errors.length > 0) throw new Error(`Could not parse agent-thread.v
 if (!parsedSfc.descriptor.template || !parsedSfc.descriptor.scriptSetup) throw new Error('AgentThread template and setup script are required')
 
 import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 setLocation('https://wiki.test/')
 
 resetBody()
@@ -277,6 +279,7 @@ const mountThread = async (
       })
   })
   const app = Vue.createApp(harness)
+  app.config.globalProperties.$t = translateEnglish
   for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'StatusIndicator', 'AgentToolCard']) app.component(name, NullStub)
   app.component('v-avatar', AvatarStub)
   app.component('v-icon', IconStub)

@@ -3,6 +3,8 @@ import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import { fetchAssets, fetchAssetFolders } from '../../helpers/assets-api.ts'
 import { validateAgentAttachment } from '../../helpers/agent-media.ts'
+import { translateEnglish } from '../../test/english-translate.mts'
+;globalThis.useTranslate = () => translateEnglish
 const source = fs.readFileSync(new URL('./agent-asset-picker.vue', import.meta.url), 'utf8')
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Asset picker script missing')
