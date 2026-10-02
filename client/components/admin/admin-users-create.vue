@@ -72,7 +72,7 @@ export default {
 <style lang="scss">
 .account-create-dialog { --account-line:rgba(var(--v-theme-on-surface),.12); max-height:90dvh; .v-card-title { padding:26px 28px 14px; white-space:normal; h2 { font-size:1.6rem; line-height:1.3; font-weight:500; margin-top:7px; letter-spacing:-.02em; } } .v-card-text { padding:12px 28px 26px; overflow-y:auto; } .v-card-actions { padding:16px 22px; border-top:1px solid var(--account-line); flex-wrap:wrap; } }
 .account-create-kicker { font-size:.65rem; letter-spacing:.12em; font-weight:650; text-transform:uppercase; color:var(--wiki-text-muted); }
-.account-create-intro { color:rgba(var(--v-theme-on-surface),.72); font-size:.87rem; line-height:1.65; margin-bottom:24px; }
+.account-create-intro { color:var(--wiki-text-muted); font-size:.87rem; line-height:1.65; margin-bottom:24px; }
 .account-create-fields { display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; }
 .account-create-provider { display:flex; gap:14px; align-items:flex-start; background:rgba(var(--v-theme-on-surface),.035); padding:17px; border-radius:8px; margin:12px 0 22px; strong { font-size:.84rem; } p { font-size:.77rem; line-height:1.6; color:var(--wiki-text-muted); margin:5px 0 0; } }
 .account-create-section { margin:26px 0; padding-top:24px; border-top:1px solid var(--account-line); h3 { font-size:1rem; font-weight:600; } >p { margin:7px 0 16px; font-size:.8rem; line-height:1.65; color:var(--wiki-text-muted); } }

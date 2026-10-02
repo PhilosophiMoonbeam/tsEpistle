@@ -1,6 +1,6 @@
 .mail-workspace {
   --mail-line: rgba(var(--v-theme-on-surface), 0.13);
-  --mail-muted: rgba(var(--v-theme-on-surface), 0.72);
+  --mail-muted: var(--wiki-text-muted);
   --mail-soft: rgba(var(--v-theme-on-surface), 0.035);
   max-width: 1660px;
   padding-bottom: 72px;

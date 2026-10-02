@@ -551,7 +551,7 @@ export default {
 .admin-taxonomy {
   --taxonomy-border: var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
   --taxonomy-border-strong: var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .28));
-  --taxonomy-muted: rgba(var(--v-theme-on-surface), .76);
+  --taxonomy-muted: var(--wiki-text-muted);
   min-width: 0;
   color: rgb(var(--v-theme-on-surface));
 }
@@ -1051,7 +1051,7 @@ export default {
 
 .taxonomy-muted {
   margin: 8px 0 16px;
-  color: var(--taxonomy-muted, rgba(var(--v-theme-on-surface), .76));
+  color: var(--taxonomy-muted, var(--wiki-text-muted));
   font-size: .875rem;
   line-height: 1.75;
   overflow-wrap: anywhere;
@@ -1219,7 +1219,7 @@ export default {
 
 .taxonomy-dialog {
   --taxonomy-border: var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
-  --taxonomy-muted: rgba(var(--v-theme-on-surface), .76);
+  --taxonomy-muted: var(--wiki-text-muted);
   max-width: 100%;
   max-height: calc(100dvh - 32px);
   border: 1px solid var(--taxonomy-border);

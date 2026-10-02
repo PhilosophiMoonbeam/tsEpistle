@@ -1002,7 +1002,7 @@ onBeforeUnmount(() => {
   p,
   small {
     margin: 0;
-    color: rgba(var(--v-theme-on-surface), 0.68);
+    color: var(--wiki-text-muted);
   }
 }
 
@@ -1029,7 +1029,7 @@ onBeforeUnmount(() => {
   }
 
   small {
-    color: rgba(var(--v-theme-on-surface), 0.66);
+    color: var(--wiki-text-muted);
   }
 }
 
@@ -1054,7 +1054,7 @@ onBeforeUnmount(() => {
 
   p,
   small {
-    color: rgba(var(--v-theme-on-surface), 0.7);
+    color: var(--wiki-text-muted);
   }
 
   code {
@@ -1076,7 +1076,7 @@ onBeforeUnmount(() => {
     padding: 6px 10px;
     border: 1px solid rgba(var(--v-theme-on-surface), 0.13);
     border-radius: 999px;
-    color: rgba(var(--v-theme-on-surface), 0.74);
+    color: var(--wiki-text-muted);
   }
 }
 

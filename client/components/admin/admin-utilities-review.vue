@@ -134,7 +134,7 @@ export default defineComponent({
 
 <style lang="scss">
 .utility-review-card .v-counter {
-  color: rgba(var(--v-theme-on-surface), 0.78);
+  color: var(--wiki-text-muted);
   opacity: 1;
 }
 </style>

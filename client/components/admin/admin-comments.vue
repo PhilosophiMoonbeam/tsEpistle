@@ -106,7 +106,7 @@ export default {
 }
 </script>
 <style lang="scss" scoped>
-.discussion-workspace, .discussion-dialog { --discussion-line: rgba(var(--v-theme-on-surface), .12); --discussion-muted: rgba(var(--v-theme-on-surface), .7); }
+.discussion-workspace, .discussion-dialog { --discussion-line: rgba(var(--v-theme-on-surface), .12); --discussion-muted: var(--wiki-text-muted); }
 .discussion-workspace { max-width: 1660px; padding-bottom: 64px; }
 .discussion-workspace :is(h2,h3,h4,p) { margin: 0; } .discussion-workspace h2 { font-size: clamp(24px, 2.3vw, 34px); font-weight: 550; letter-spacing: -.8px; line-height: 1.2; } .discussion-workspace h3 { font-size: 21px; font-weight: 600; letter-spacing: -.35px; } .discussion-workspace p { color: var(--discussion-muted); line-height: 1.65; } .discussion-eyebrow { display: block; margin-bottom: 10px; font-size: 10px; letter-spacing: 1.9px; text-transform: uppercase; font-weight: 750; color: rgb(var(--v-theme-on-surface)); }
 .discussion-intro { display: grid; grid-template-columns: 1.2fr 1fr; align-items: center; gap: 40px; padding: 30px 0 36px; border-bottom: 1px solid var(--discussion-line); margin-bottom: 24px; } .discussion-intro p { max-width: 570px; margin-top: 12px; } .discussion-intro dl { display: grid; grid-template-columns: repeat(3,1fr); gap: 22px; } .discussion-intro dt { font-size: 11px; color: var(--discussion-muted); } .discussion-intro dd { font-size: 38px; letter-spacing: -1.3px; line-height: 1.5; font-weight: 500; }

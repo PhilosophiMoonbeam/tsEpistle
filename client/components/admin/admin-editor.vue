@@ -72,7 +72,7 @@ export default {
 }
 </script>
 <style lang="scss" scoped>
-.admin-authoring { --authoring-border:rgba(var(--v-theme-on-surface),.13); --authoring-muted:rgba(var(--v-theme-on-surface),.72); }
+.admin-authoring { --authoring-border:rgba(var(--v-theme-on-surface),.13); --authoring-muted:var(--wiki-text-muted); }
 .authoring-kicker { display:block; font-size:.65rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--authoring-muted); }
 .authoring-intro { display:flex; align-items:center; justify-content:space-between; gap:2rem; padding:1.8rem 0 2rem; h2 { font-size:clamp(1.4rem,2.3vw,1.9rem); font-weight:600; letter-spacing:-.04em; line-height:1.2; margin:.6rem 0; } p { font-size:.84rem; line-height:1.75; max-width:620px; color:var(--authoring-muted); margin:0; } dl { display:flex; gap:2rem; flex-shrink:0; } dt { font-size:.67rem; color:var(--authoring-muted); } dd { margin:.5rem 0 0; font-size:1.9rem; line-height:1; font-weight:550; } dd small { font-size:.8rem; color:var(--authoring-muted); } }
 .authoring-tabs-row { display:flex; align-items:center; gap:.8rem; border-block:1px solid var(--authoring-border); margin-bottom:1.7rem; }
@@ -103,7 +103,7 @@ export default {
 .authoring-preview-choices { padding:1.4rem 1.7rem 1.7rem; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.85rem; article { border:1px solid var(--authoring-border); border-radius:8px; padding:1.2rem; >div { display:flex; justify-content:space-between; gap:.5rem; align-items:center; } &.is-recommended { border-color:rgba(var(--v-theme-primary),.65); background:rgba(var(--v-theme-primary),.04); } h5 { font-size:.9rem; font-weight:600; margin:.75rem 0 .4rem; } p { font-size:.73rem; line-height:1.7; color:var(--authoring-muted); margin:0 0 .8rem; } small,span { font-size:.65rem; color:var(--authoring-muted); } } .authoring-template-preview { border-style:dashed; } }
 .authoring-direct-preview { text-align:center; padding:3.5rem 2rem; h4 { font-size:1.3rem; font-weight:600; margin:1rem 0 .6rem; } p { max-width:380px; margin:0 auto 1rem; font-size:.8rem; line-height:1.8; color:var(--authoring-muted); } }
 .authoring-preview-format { font-size:.7rem; border:1px solid var(--authoring-border); padding:.4rem .7rem; border-radius:5px; }
-.authoring-review { --authoring-border:rgba(var(--v-theme-on-surface),.13); --authoring-muted:rgba(var(--v-theme-on-surface),.72); .v-card-actions { padding:1rem 1.5rem; border-top:1px solid var(--authoring-border); } }
+.authoring-review { --authoring-border:rgba(var(--v-theme-on-surface),.13); --authoring-muted:var(--wiki-text-muted); .v-card-actions { padding:1rem 1.5rem; border-top:1px solid var(--authoring-border); } }
 .authoring-review-heading { padding:1.6rem 1.5rem 1rem; h3 { font-size:1.5rem; font-weight:600; letter-spacing:-.04em; margin:.6rem 0; } p { font-size:.8rem; color:var(--authoring-muted); line-height:1.8; margin:0; } }
 .authoring-review-diff { display:grid; grid-template-columns:1fr 1fr; gap:1.4rem; h4 { font-size:.8rem; font-weight:600; } ul { padding-left:1rem; font-size:.8rem; margin:.7rem 0 0; } li { padding:.3rem 0; } small { display:block; font-size:.68rem; color:var(--authoring-muted); margin-top:.3rem; } p { font-size:.73rem; color:var(--authoring-muted); margin:.7rem 0 0; } }
 .authoring-review-recommendation { display:grid; gap:.5rem; border-block:1px solid var(--authoring-border); padding:1rem 0; margin-top:1.4rem; span { font-size:.68rem; color:var(--authoring-muted); } strong { font-size:.9rem; font-weight:550; } }

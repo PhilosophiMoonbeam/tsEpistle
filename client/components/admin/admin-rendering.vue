@@ -347,7 +347,7 @@ export default {
 }
 </script>
 <style lang="scss" scoped>
-.rendering-workspace,.rendering-review { --render-border:rgba(var(--v-theme-on-surface),.13); --render-muted:rgba(var(--v-theme-on-surface),.72); }
+.rendering-workspace,.rendering-review { --render-border:rgba(var(--v-theme-on-surface),.13); --render-muted:var(--wiki-text-muted); }
 .rendering-eyebrow { display:block; font-size:.65rem; font-weight:650; letter-spacing:.13em; text-transform:uppercase; color:var(--render-muted); }
 .rendering-intro { display:flex; align-items:center; justify-content:space-between; gap:2rem; padding:1.8rem 0 2rem; h2 { font-size:clamp(1.4rem,2.3vw,1.9rem); line-height:1.2; font-weight:600; letter-spacing:-.04em; margin:.6rem 0; } p { max-width:580px; font-size:.84rem; line-height:1.75; color:var(--render-muted); margin:0; } dl { display:flex; flex-shrink:0; gap:2rem; } dt { font-size:.67rem; color:var(--render-muted); } dd { margin:.5rem 0 0; font-size:1.9rem; font-weight:550; line-height:1; } small { font-size:.8rem; color:var(--render-muted); } }
 .rendering-tabs-row { display:flex; align-items:center; border-block:1px solid var(--render-border); margin-bottom:1.6rem; }

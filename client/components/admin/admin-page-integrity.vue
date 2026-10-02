@@ -266,7 +266,7 @@ export default defineComponent({
 <style scoped lang="scss">
 .page-integrity {
   --integrity-line: rgba(var(--v-theme-on-surface), 0.14);
-  --integrity-muted: rgba(var(--v-theme-on-surface), 0.68);
+  --integrity-muted: var(--wiki-text-muted);
   max-width: 1320px;
 }
 
