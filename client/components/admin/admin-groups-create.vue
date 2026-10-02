@@ -11,6 +11,7 @@
   </v-dialog>
 </template>
 <script lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { groupPermissions, type GroupPolicyDraft } from '../../../shared/group-policy.ts'
 import { fetchGroupCreationOptions, createReviewedGroup, groupRequestStatus, type GroupCreationOptions } from '../../helpers/group-workspace-api.ts'
@@ -30,8 +31,8 @@ export default {
     async load() { const sequence = ++this.sequence; this.loading = true; this.loadError = ''; this.options = null; try { const options = await fetchGroupCreationOptions(); if (!this.disposed && sequence === this.sequence) { this.options = options; this.conflict = false; this.saveError = '' } } catch (error) { if (!this.disposed && sequence === this.sequence) this.loadError = getErrorMessage(error) } finally { if (!this.disposed && sequence === this.sequence) this.loading = false } },
     permissionTitle(key: string) { return groupPermissions.find(p => p.key === key)?.title ?? key },
     async create() { if (!this.valid || !this.options || this.saving || this.conflict || this.reason.trim().length < 3) return; this.saving = true; this.saveError = ''; try { const result = await createReviewedGroup(this.policy, this.reason.trim(), this.options.fingerprint); this.name = ''; this.description = ''; this.reason = ''; this.$emit('created', result.id); this.$emit('update:modelValue', false) } catch (error) { this.conflict = [0,401,403,409].includes(groupRequestStatus(error)); this.saveError = getErrorMessage(error) + (groupRequestStatus(error) === 0 ? ' The outcome is unconfirmed. Check the directory before creating this group again.' : '') } finally { this.saving = false } },
-    canLeave(): boolean { return !this.saving && ((!this.modelValue || (!this.name && !this.description && !this.reason)) || window.confirm('Discard the new group draft?')) },
-    close(value: boolean) { if (!value && this.canLeave()) this.$emit('update:modelValue', false) }, beforeUnload(event: BeforeUnloadEvent) { if (this.modelValue && (this.saving || this.name || this.description || this.reason)) { event.preventDefault(); event.returnValue = '' } }
+    async canLeave(): Promise<boolean> { return !this.saving && ((!this.modelValue || (!this.name && !this.description && !this.reason)) || await confirmDiscard('Discard the new group draft?')) },
+    async close(value: boolean) { if (!value && await this.canLeave()) this.$emit('update:modelValue', false) }, beforeUnload(event: BeforeUnloadEvent) { if (this.modelValue && (this.saving || this.name || this.description || this.reason)) { event.preventDefault(); event.returnValue = '' } }
   }
 }
 </script>

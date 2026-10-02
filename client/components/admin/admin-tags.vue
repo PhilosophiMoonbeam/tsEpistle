@@ -2,7 +2,7 @@
   <v-container fluid class="admin-taxonomy">
     <admin-hero title="Tags" description="A shared vocabulary for people and agents." icon="mdi-tag-multiple-outline">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || hasUnsavedChanges" @click="refresh">Refresh</v-btn>
+        <v-btn :aria-disabled="hasUnsavedChanges || undefined" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ hasUnsavedChanges ? 'Save or reset your tag changes before you reload.' : 'Reload saved tags' }}</v-tooltip></v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-plus" :disabled="busy" @click="openCreate">Create tag</v-btn>
       </template>
     </admin-hero>
@@ -152,6 +152,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { taxonomyState, type TaxonomyChange, type TaxonomyInspection, type TaxonomyPreview, type TaxonomyTag } from '../../../shared/taxonomy.ts'
 import { applyTaxonomy, createTaxonomyTag, fetchTaxonomy, inspectTaxonomy, previewTaxonomy } from '../../helpers/taxonomy-api.ts'
@@ -270,8 +271,8 @@ export default {
     date(value: string): string {
       return new Date(value).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     },
-    confirmDiscard(message: string): boolean {
-      return !this.hasUnsavedChanges || window.confirm(message)
+    async confirmUnsaved(message: string): Promise<boolean> {
+      return !this.hasUnsavedChanges || (await confirmDiscard(message))
     },
     select(id: number) {
       if (this.mutationBusy || id === this.selectedId) return
@@ -367,8 +368,8 @@ export default {
         if (!this.disposed && sequence === this.loadSequence) this.detailLoading = false
       }
     },
-    openCreate() {
-      if (this.busy || !this.confirmDiscard('Discard the unsaved tag changes and create a tag?')) return
+    async openCreate() {
+      if (this.busy || !(await this.confirmUnsaved('Discard the unsaved tag changes and create a tag?')) || this.busy) return
       this.resetDraft()
       this.newTag = emptyDefinition()
       this.createError = ''
@@ -381,9 +382,9 @@ export default {
       }
       this.closeCreate()
     },
-    closeCreate(): boolean {
+    async closeCreate(): Promise<boolean> {
       if (this.creating) return false
-      if (!this.confirmDiscard('Discard the new tag draft?')) {
+      if (!(await this.confirmUnsaved('Discard the new tag draft?')) || this.creating) {
         this.createOpen = true
         return false
       }
@@ -464,7 +465,7 @@ export default {
       this.reviewStale = false
       this.acknowledgeAccess = false
     },
-    setReviewDialog(value: boolean) {
+    async setReviewDialog(value: boolean) {
       if (value) {
         this.reviewOpen = true
         return
@@ -473,8 +474,9 @@ export default {
         this.reviewOpen = true
         return
       }
-      if (window.confirm('Discard this impact review?')) this.cancelReview()
-      else this.reviewOpen = true
+      // Keep the review visible behind the question; it closes only when discarded.
+      this.reviewOpen = true
+      if (await confirmDiscard('Discard this impact review?')) this.cancelReview()
     },
     async apply(): Promise<void> {
       if (!this.preview || this.applying || this.creating || this.reviewing || this.reviewStale || (this.preview.accessChanges && !this.acknowledgeAccess)) return
@@ -516,20 +518,20 @@ export default {
       }
     }
   },
-  beforeRouteLeave() {
+  async beforeRouteLeave() {
     if (this.applying || this.creating || this.reviewing) return false
-    const discardReview = this.reviewOpen && window.confirm('Discard the unapplied taxonomy review?')
+    const discardReview = this.reviewOpen && (await confirmDiscard('Discard the unapplied taxonomy review?'))
     if (this.reviewOpen && !discardReview) return false
-    if (!this.confirmDiscard('Discard the unsaved tag changes?')) return false
+    if (!(await this.confirmUnsaved('Discard the unsaved tag changes?'))) return false
     if (discardReview) this.cancelReview()
     return true
   },
-  beforeRouteUpdate(to, from) {
+  async beforeRouteUpdate(to, from) {
     if (this.internalNavigation || queryValue(to.query.tag) === queryValue(from.query.tag)) return true
     if (this.applying || this.creating || this.reviewing) return false
-    const discardReview = this.reviewOpen && window.confirm('Discard the unapplied taxonomy review?')
+    const discardReview = this.reviewOpen && (await confirmDiscard('Discard the unapplied taxonomy review?'))
     if (this.reviewOpen && !discardReview) return false
-    if (!this.confirmDiscard('Discard the unsaved tag changes?')) return false
+    if (!(await this.confirmUnsaved('Discard the unsaved tag changes?'))) return false
     if (discardReview) this.cancelReview()
     return true
   },

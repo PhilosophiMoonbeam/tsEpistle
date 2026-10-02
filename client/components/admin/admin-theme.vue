@@ -12,7 +12,7 @@
           :loading="loading"
           :disabled="busy || initializing"
           @click="reload"
-          >Reload settings</v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved theme settings</v-tooltip></v-btn
         >
         <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset"
           >Reset draft</v-btn
@@ -607,6 +607,7 @@
   </v-container>
 </template>
 <script setup lang="ts">
+import { confirmDiscard, requestConfirmation } from "../common/confirm-dialog.ts";
 import {
   computed,
   defineAsyncComponent,
@@ -851,12 +852,10 @@ async function load() {
   }
 }
 async function reload() {
-  if (
-    busy.value ||
-    initializing.value ||
-    (dirty.value && !window.confirm("Discard unsaved theme changes?"))
-  )
+  if (busy.value || initializing.value) return;
+  if (dirty.value && !(await confirmDiscard("Discard unsaved theme changes?")))
     return;
+  if (busy.value || initializing.value) return;
   await load();
 }
 function reset() {
@@ -890,13 +889,16 @@ function restorePalette() {
   if (!locked.value && palette.value && savedPalette.value)
     palette.value.colors = copy(savedPalette.value.colors);
 }
-function resetMode() {
-  if (
-    !locked.value &&
-    palette.value &&
-    window.confirm(`Reset ${mode.value} colors to the original palette?`)
-  )
-    palette.value.colors[mode.value] = { ...DEFAULT_THEME_COLORS[mode.value] };
+async function resetMode() {
+  if (locked.value || !palette.value) return;
+  const target = mode.value;
+  const confirmed = await requestConfirmation({
+    title: `Reset ${target} colors to the original palette?`,
+    confirmLabel: "Reset colors",
+    tone: "destructive",
+  });
+  if (confirmed && !locked.value && palette.value)
+    palette.value.colors[target] = { ...DEFAULT_THEME_COLORS[target] };
 }
 function deletePalette() {
   if (
@@ -1021,7 +1023,10 @@ async function confirm() {
 async function reloadReview() {
   if (
     busy.value ||
-    !window.confirm("Discard this review and load saved theme settings?")
+    !(await confirmDiscard(
+      "Discard this review and load saved theme settings?",
+    )) ||
+    busy.value
   )
     return;
   reviewing.value = false;
@@ -1054,11 +1059,11 @@ const displayValue = (value: unknown) =>
   typeof value === "string"
     ? value || "(empty)"
     : JSON.stringify(value, null, 2);
-const canLeave = () =>
+const canLeave = async () =>
   !busy.value &&
   !initializing.value &&
   ((!dirty.value && !(reviewing.value && reason.value)) ||
-    window.confirm("Discard unsaved theme changes?"));
+    (await confirmDiscard("Discard unsaved theme changes?")));
 function beforeUnload(event: BeforeUnloadEvent) {
   if (
     busy.value ||
@@ -1071,7 +1076,7 @@ function beforeUnload(event: BeforeUnloadEvent) {
   }
 }
 onBeforeRouteLeave(canLeave);
-onBeforeRouteUpdate((to, from) => to.path === from.path || canLeave());
+onBeforeRouteUpdate(async (to, from) => to.path === from.path || canLeave());
 onMounted(() => {
   void load();
   window.addEventListener("beforeunload", beforeUnload);

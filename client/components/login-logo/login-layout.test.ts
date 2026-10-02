@@ -176,12 +176,44 @@ const LoginLoaderStub = Vue.defineComponent({
   }
 })
 
+// The shared auth shell is rendered for real: the login layout contract is its DOM.
+const authShellPath = path.join(process.cwd(), 'client/components/common/auth-shell.vue')
+const authShellParsed = parse(fs.readFileSync(authShellPath, 'utf8'), { filename: authShellPath })
+if (authShellParsed.errors.length > 0 || !authShellParsed.descriptor.script || !authShellParsed.descriptor.template) {
+  throw new Error('auth-shell.vue script or template was not found')
+}
+const authShellScript = compileScript(authShellParsed.descriptor, { id: 'login-layout-auth-shell', genDefaultAs: '__authShell__' })
+const authShellTemplate = compileTemplate({
+  source: authShellParsed.descriptor.template.content,
+  filename: authShellPath,
+  id: 'login-layout-auth-shell',
+  preprocessLang: authShellParsed.descriptor.template.lang,
+  preprocessOptions: { doctype: 'html' },
+  transformAssetUrls: false,
+  compilerOptions: { bindingMetadata: authShellScript.bindings, expressionPlugins: ['typescript'] }
+})
+if (authShellTemplate.errors.length > 0) throw new Error(`Could not compile auth-shell.vue: ${authShellTemplate.errors.join(', ')}`)
+const authShellModule = await import(
+  'data:text/javascript;base64,' +
+    Buffer.from(
+      new Bun.Transpiler({ loader: 'ts' }).transformSync(
+        `${authShellScript.content}\n${authShellTemplate.code}\n__authShell__.render = render\nexport default __authShell__`
+      )
+    ).toString('base64')
+)
+const AuthShell = authShellModule.default as Vue.Component
+
 const components: Record<string, Vue.Component> = {
+  AuthShell,
   LoginParticleLogo: LoginParticleLogoStub,
   LoginSuccessAnimation: LoginSuccessAnimationStub,
   Loader: LoginLoaderStub,
   Notify: Vue.defineComponent({ setup: () => () => null }),
   PasswordStrength: Vue.defineComponent({ setup: () => () => null }),
+  PasswordVisibilityToggle: Vue.defineComponent({
+    props: { visible: { type: Boolean, default: false }, field: { type: String, default: '' } },
+    setup: props => () => Vue.h('button', { type: 'button', 'aria-pressed': String(props.visible) }, props.field)
+  }),
   VAlert: Vue.defineComponent({ setup: () => () => null }),
   VApp: passthrough('div'),
   VAvatar: VAvatarStub,
@@ -323,6 +355,9 @@ const loginBundle = await Bun.build({
     '../helpers/tfa-qr',
     './login-logo/LoginParticleLogo.vue',
     './login-success-animation.vue',
+    './common/auth-shell.vue',
+    './common/password-strength.vue',
+    './common/password-visibility-toggle.vue',
     './login-logo/particle-logo'
   ],
   format: 'cjs',
@@ -391,6 +426,9 @@ loginModuleFactory(
       return { __esModule: true, default: LoginSuccessAnimationStub }
     }
     if (specifier === './login-logo/particle-logo') return { isLogoEffectDescriptor }
+    if (specifier === './common/auth-shell.vue') return { __esModule: true, default: AuthShell }
+    if (specifier === './common/password-strength.vue') return { __esModule: true, default: components.PasswordStrength }
+    if (specifier === './common/password-visibility-toggle.vue') return { __esModule: true, default: components.PasswordVisibilityToggle }
   },
   compiledLoginModule,
   loginPath,
@@ -481,16 +519,18 @@ const createLoginHarness = (
           strategy: { useForm: true, usernameType: 'email', color: '', icon: '' }
         }
       ],
-      hideNewPassword: true,
-      hideNewPasswordVerify: true,
-      hidePassword: true,
+      showNewPassword: false,
+      showNewPasswordVerify: false,
+      showPassword: false,
+      showRegisterLink: true,
+      eyebrow: 'auth:signIn',
       isLoading: initialLoading,
       isTFASetupShown: false,
       isTFAShown: false,
       isUsernameEmail: true,
-      loaderColor: 'grey-darken-4',
+      loaderColor: 'surface',
       loaderTitle: initialLoaderTitle,
-      loginStyle: {},
+      backgroundUrl: '',
       logoEffect: effect,
       logoImageFailed: false,
       logoUrl: managedEffect.logoUrl,
@@ -516,6 +556,7 @@ const createLoginHarness = (
       username: ''
     }),
     methods: {
+      cancelContinuation: () => undefined,
       forgotPassword: () => undefined
     },
     render: renderLogin
@@ -595,7 +636,7 @@ describe('login personalized static-logo integration', () => {
     const dom = await renderLoginDom(managedEffect)
     const document = dom.window.document
     const login = document.querySelector<HTMLElement>('.login')
-    const card = document.querySelector<HTMLElement>('main.login-sd')
+    const card = document.querySelector<HTMLElement>('main.auth-shell__card')
     const field = document.querySelector<HTMLElement>('.login-particle-logo')
     if (!login || !card || !field) throw new Error('Managed login composition was not rendered')
 
@@ -605,11 +646,11 @@ describe('login personalized static-logo integration', () => {
     expect(field.parentElement).toBe(login)
     expect(field.closest('main, form, [role="dialog"], .login-dialog-card')).toBeNull()
     expect(card.contains(field)).toBe(false)
-    expect(document.querySelector('.login-brand')?.contains(field)).toBe(false)
+    expect(document.querySelector('.auth-shell__brand')?.contains(field)).toBe(false)
     expect(document.querySelector('.login-form')?.contains(field)).toBe(false)
     expect(document.querySelector('[role="dialog"]')?.contains(field) ?? false).toBe(false)
 
-    const ordinaryLogo = card.querySelector<HTMLImageElement>('.login-brand .login-logo img')
+    const ordinaryLogo = card.querySelector<HTMLImageElement>('.auth-shell__brand .auth-shell__logo img')
     const title = card.querySelector<HTMLElement>('#login-site-title')
     const username = card.querySelector<HTMLInputElement>('form.login-form input[name="username"]')
     const password = card.querySelector<HTMLInputElement>('form.login-form input[name="password"]')
@@ -623,7 +664,7 @@ describe('login personalized static-logo integration', () => {
     expect(ordinaryLogo?.getAttribute('alt')).toBe('')
     expect(title?.textContent).toBe('Example knowledge base')
     expect(card.compareDocumentPosition(field) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    const logoFrame = card.querySelector<HTMLElement>('.login-brand .login-logo')
+    const logoFrame = card.querySelector<HTMLElement>('.auth-shell__brand .auth-shell__logo')
     expect(logoFrame).not.toBeNull()
     expect(logoFrame?.querySelector('img')).toBe(ordinaryLogo)
 
@@ -653,11 +694,11 @@ describe('login personalized static-logo integration', () => {
   it('keeps the ordinary brand and authentication form when there is no managed effect', async () => {
     const dom = await renderLoginDom(null)
     const document = dom.window.document
-    const card = document.querySelector<HTMLElement>('main.login-sd')
+    const card = document.querySelector<HTMLElement>('main.auth-shell__card')
     if (!card) throw new Error('Login card was not rendered')
 
     expect(document.querySelector('.login-particle-logo')).toBeNull()
-    expect(card.querySelector<HTMLImageElement>('.login-brand .login-logo img')?.getAttribute('src')).toBe(managedEffect.logoUrl)
+    expect(card.querySelector<HTMLImageElement>('.auth-shell__brand .auth-shell__logo img')?.getAttribute('src')).toBe(managedEffect.logoUrl)
     expect(card.querySelector('#login-site-title')?.textContent).toBe('Example knowledge base')
     expect(card.querySelector('form.login-form input[name="username"]')).not.toBeNull()
     expect(card.querySelector('form.login-form input[name="password"]')).not.toBeNull()
@@ -771,5 +812,81 @@ describe('login particle decoration accessibility and privacy hardening', () => 
     )
     expect(enhancementSources).not.toMatch(/\b(?:analytics|telemetry|trackEvent|captureEvent)\b/i)
     expect(enhancementSources).not.toMatch(/\b(?:https?|wss?):\/\/|(?:^|['"`])\s*\/\/[^/'"`\s]|(?:data|javascript):/im)
+  })
+})
+
+describe('login account recovery and wayfinding', () => {
+  type CancelState = Record<string, unknown> & { $refs: Record<string, unknown>; $nextTick: (callback: () => void) => void }
+  const loginOptions = Login as unknown as {
+    methods: { cancelContinuation: (this: CancelState) => void; clearError: (this: CancelState) => void }
+  }
+  const isRedirectedToLogin = (compiledLoginModule.exports as { isRedirectedToLogin?: (cookie: string | undefined, search: string) => boolean }).isRedirectedToLogin
+
+  it('ends a pending two-factor step without keeping the continuation token, code, setup secret or password', () => {
+    const focused: string[] = []
+    const state: CancelState = {
+      isLoading: false,
+      focusTimer: null,
+      isTFAShown: false,
+      isTFASetupShown: true,
+      continuationToken: 'continuation-secret',
+      securityCode: '123456',
+      securityCodeError: 'Invalid code',
+      tfaQRImage: '<svg></svg>',
+      tfaSecret: 'JBSWY3DPEHPK3PXP',
+      tfaCopyStatus: 'Copied',
+      password: 'correct horse battery',
+      newPassword: 'draft',
+      newPasswordVerify: 'draft',
+      errorShown: true,
+      errorMessage: 'Old',
+      fieldErrors: {},
+      screen: 'changePwd',
+      selectedStrategy: { strategy: { useForm: true } },
+      $refs: { iptPassword: { focus: () => focused.push('password') } },
+      $nextTick: callback => callback()
+    }
+    state.clearError = loginOptions.methods.clearError.bind(state)
+    loginOptions.methods.cancelContinuation.call(state)
+    expect(state).toMatchObject({
+      isTFAShown: false,
+      isTFASetupShown: false,
+      continuationToken: '',
+      securityCode: '',
+      securityCodeError: '',
+      tfaQRImage: '',
+      tfaSecret: '',
+      password: '',
+      newPassword: '',
+      newPasswordVerify: '',
+      errorShown: false,
+      screen: 'login'
+    })
+    expect(focused).toEqual(['password'])
+  })
+
+  it('keeps a pending step while a verification request is still running', () => {
+    const state = { isLoading: true, isTFAShown: true, continuationToken: 'continuation-secret' } as unknown as CancelState
+    loginOptions.methods.cancelContinuation.call(state)
+    expect(state.isTFAShown).toBe(true)
+    expect(state.continuationToken).toBe('continuation-secret')
+  })
+
+  it('says "Login required" only when the visitor was redirected from a protected page', () => {
+    if (!isRedirectedToLogin) throw new Error('login.vue did not export isRedirectedToLogin')
+    expect(isRedirectedToLogin(undefined, '')).toBe(false)
+    expect(isRedirectedToLogin('/', '')).toBe(false)
+    expect(isRedirectedToLogin('/private/page', '')).toBe(true)
+    expect(isRedirectedToLogin(undefined, '?redirect=%2Fdocs')).toBe(true)
+    expect(isRedirectedToLogin(undefined, '?all')).toBe(false)
+  })
+
+  it('renders the registration link in the shared shell footer as one readable sentence', async () => {
+    const dom = await renderLoginDom(null)
+    const footer = dom.window.document.querySelector('main.auth-shell__card > footer.auth-shell__footer')
+    const link = footer?.querySelector('a')
+    expect(link?.getAttribute('href')).toBe('/register')
+    expect(link?.textContent).toBe('auth:switchToRegister.link')
+    expect(dom.window.document.querySelector('.auth-shell__eyebrow')?.textContent).toBe('auth:signIn')
   })
 })

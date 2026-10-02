@@ -2,7 +2,7 @@
   <v-container
     fluid
     class="storage-workspace"
-    :inert="reviewOpen || discardOpen"
+    :inert="reviewOpen"
   >
     <admin-hero
       title="Storage"
@@ -15,7 +15,7 @@
           prepend-icon="mdi-refresh"
           :disabled="busy || loading"
           @click="reload"
-        >Reload workspace</v-btn>
+        >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved storage settings</v-tooltip></v-btn>
         <v-btn
           v-if="dirty"
           variant="text"
@@ -701,21 +701,11 @@
             :aria-busy="busy"
             @click="submit(true)"
           >{{ busy ? 'Recording…' : reviewState?.kind === 'save' ? 'Save and apply' : reviewState?.kind === 'cancel' ? 'Cancel operation' : reviewState?.kind === 'resolve' ? 'Resolve operation' : 'Queue operation' }}</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog
-      v-model="discardOpen"
-      max-width="480"
-      aria-labelledby="storage-discard-title"
-    ><v-card class="storage-dialog"><v-card-title id="storage-discard-title">Discard unsaved
-          changes?</v-card-title><v-card-text>{{ stale ? 'The server outcome needs confirmation. Reload discards this local draft and reads saved state; it does not undo server changes.' : 'Your target draft has not been saved. Leaving or reloading will discard it.' }}</v-card-text><v-card-actions><v-btn
-            @click="discardOpen = false; pendingNavigation = null"
-          >Keep editing</v-btn><v-spacer /><v-btn
-            color="primary"
-            @click="discard"
-          >Discard draft</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
 </template>
 
 <script setup lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { vCredentialAutofill } from '../../helpers/credential-autofill.ts'
@@ -755,12 +745,10 @@ const saved = shallowRef<StorageWorkspace | null>(null),
   operationSearch = ref(''),
   operationFilter = ref('all')
 const reviewOpen = ref(false),
-  discardOpen = ref(false),
   reason = ref(''),
   confirmation = ref(''),
   reviewError = ref(''),
-  customIntervals = ref<string[]>([]),
-  pendingNavigation = shallowRef<(() => void) | null>(null)
+  customIntervals = ref<string[]>([])
 type Review = {
   kind: 'save' | 'enqueue' | 'cancel' | 'resolve'
   title: string
@@ -774,8 +762,7 @@ const reviewState = shallowRef<Review | null>(null)
 let disposed = false,
   sequence = 0,
   timer: ReturnType<typeof setTimeout> | undefined,
-  writeConfirmed = false,
-  leaving = false
+  writeConfirmed = false
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 const fromSaved = (value: StorageWorkspace): StorageTargetDraft[] =>
   value.targets.map(({ key, isEnabled, mode, syncInterval, config, secrets }) => ({
@@ -1092,23 +1079,24 @@ async function load(replace = true) {
     }
   }
 }
-function guarded(action: () => void) {
-  if (dirty.value && !writeConfirmed) {
-    pendingNavigation.value = action
-    discardOpen.value = true
-  } else action()
+const askDiscard = () =>
+  confirmDiscard(
+    'Discard unsaved changes?',
+    stale.value
+      ? 'The server outcome needs confirmation. Reload discards this local draft and reads saved state; it does not undo server changes.'
+      : 'Your target draft has not been saved. Leaving or reloading will discard it.',
+    'Discard draft'
+  )
+async function guarded(action: () => void) {
+  if (!dirty.value || writeConfirmed) return action()
+  if (!(await askDiscard())) return
+  reset()
+  action()
 }
 function reload() {
   guarded(() => {
     void load(true)
   })
-}
-function discard() {
-  const next = pendingNavigation.value
-  discardOpen.value = false
-  pendingNavigation.value = null
-  reset()
-  next?.()
 }
 function openReview(value: Review) {
   reviewState.value = clone(value)
@@ -1245,17 +1233,9 @@ function beforeUnload(event: BeforeUnloadEvent) {
     event.returnValue = ''
   }
 }
-onBeforeRouteLeave(to => {
-  if (leaving) return true
+onBeforeRouteLeave(async () => {
   if (busy.value) return false
-  if (dirty.value && !writeConfirmed) {
-    pendingNavigation.value = () => {
-      leaving = true
-      void router.push(to.fullPath)
-    }
-    discardOpen.value = true
-    return false
-  }
+  if (dirty.value && !writeConfirmed) return !busy.value && (await askDiscard())
   return true
 })
 watch(reviewOpen, value => {

@@ -186,7 +186,7 @@ test.describe('critical post-install workflows', () => {
     const siteUrl = new URL(page.url()).origin
     await page.getByLabel('Administrator Email').fill(adminEmail)
     await page.getByLabel('Password', { exact: true }).fill(adminPassword)
-    await page.getByLabel('Confirm Password', { exact: true }).fill(adminPassword)
+    await page.getByLabel('Confirm password', { exact: true }).fill(adminPassword)
     await page.getByLabel('Site URL').fill(siteUrl)
     const telemetry = page.getByRole('checkbox', { name: 'Allow anonymous telemetry' })
     await telemetry.uncheck()
@@ -1066,7 +1066,7 @@ test.describe('critical post-install workflows', () => {
     await expect(groupRow).toBeVisible()
     await groupRow.click()
     await page.getByRole('textbox', { name: 'Sign-in destination' }).fill('/en/home')
-    await page.getByRole('button', { name: 'Review policy' }).click()
+    await page.getByRole('button', { name: 'Review changes', exact: true }).click()
     const reviewPolicyDialog = page.getByRole('dialog', { name: 'Review group policy' })
     await reviewPolicyDialog.getByRole('textbox', { name: 'Administrative reason' }).fill('Browser group policy verification.')
     await reviewPolicyDialog.getByRole('button', { name: 'Save group policy' }).click()

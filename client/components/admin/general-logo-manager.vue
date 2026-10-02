@@ -12,7 +12,7 @@
             :alt='$t(`admin:general.logoActivePreviewAlt`)'
             :cover='false'
           )
-          v-icon(v-else size='42' color='grey' aria-hidden='true') mdi-image-off-outline
+          v-icon.text-medium-emphasis(v-else size='42' aria-hidden='true') mdi-image-off-outline
         .logo-preview-status(v-if='activeLogoUrl')
           v-chip(
             color='success'
@@ -33,7 +33,7 @@
             :alt='$t(`admin:general.logoCandidatePreviewAlt`)'
             :cover='false'
           )
-          v-icon(v-else size='42' color='grey' aria-hidden='true') mdi-image-sync-outline
+          v-icon.text-medium-emphasis(v-else size='42' aria-hidden='true') mdi-image-sync-outline
         .logo-candidate-status-line
           v-progress-circular(
             v-if='candidateIsProcessing'

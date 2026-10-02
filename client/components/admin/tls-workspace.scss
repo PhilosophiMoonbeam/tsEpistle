@@ -1,6 +1,6 @@
 .tls-workspace {
   --tls-line: rgba(var(--v-theme-on-surface), 0.14);
-  --tls-muted: rgba(var(--v-theme-on-surface), 0.73);
+  --tls-muted: var(--wiki-text-muted);
   max-width: 1660px;
   margin: 0 auto;
   padding: 26px 30px 36px;
@@ -47,22 +47,11 @@
   }
   .tls-eyebrow {
     text-transform: uppercase;
-    font-size: 10px;
+    font-size: var(--wiki-label-size);
     font-weight: 700;
     letter-spacing: 0.15em;
     color: var(--tls-muted);
     margin-bottom: 10px;
-  }
-  .tls-hero {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    margin-bottom: 32px;
-  }
-  .tls-intro {
-    max-width: 620px;
-    font-size: 15px;
   }
   .tls-summary,
   .tls-certificate-strip {
@@ -110,7 +99,7 @@
   }
   .tls-nav button span {
     margin-right: 9px;
-    font-size: 10px;
+    font-size: var(--wiki-label-size);
     opacity: 0.7;
   }
   .tls-nav button[aria-current] {
@@ -173,7 +162,7 @@
   }
   .tls-panel > .tls-eyebrow {
     margin-top: 0;
-    font-size: 10px;
+    font-size: var(--wiki-label-size);
   }
   .tls-aside {
     background: rgba(var(--v-theme-on-surface), 0.025);
@@ -312,10 +301,9 @@
     margin-top: 32px;
     padding-top: 16px;
     color: var(--tls-muted);
-    font-size: 10px;
+    font-size: var(--wiki-label-size);
   }
   @media (max-width: 1050px) {
-    .tls-hero,
     .tls-section-heading,
     .tls-validation {
       align-items: flex-start;

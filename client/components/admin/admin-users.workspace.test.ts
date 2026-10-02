@@ -5,6 +5,11 @@ import type { AccountWorkspace } from '../../../shared/account-policy.ts'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { document, resetBody } from '../../test/browser-dom.mts'
+// The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
+const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
+  confirmDiscard: async (title: string) => host.confirm(title),
+  requestConfirmation: async ({ title }: { title: string }) => host.confirm(title)
+})
 
 // Runtime imports must follow browser-dom: Vuetify snapshots browser capabilities during module evaluation.
 const Vue = await import('vue')
@@ -78,6 +83,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
     window,
     ...transport
   }
+  Object.assign(dependencies, confirmStubs(window))
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
   const state = { ...component.data(), passwordMinimum: 12, $route: { params: { id: '7' }, query: {}, hash: '' }, $router: { replace: vi.fn(), push: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
@@ -177,7 +183,7 @@ describe('account workspace review and recovery', () => {
     const pending = state.confirm()
     expect(state.busy).toBe(true)
     expect(state.profileLocked).toBe(true)
-    expect(state.canLeave()).toBe(false)
+    await expect(state.canLeave()).resolves.toBe(false)
     state.draft.location = 'Changed while pending'
     expect(transport.saveAccountProfile.mock.calls[0]?.[1]).toMatchObject({ location: '' })
     resolve({ ...snapshot, profile: { ...snapshot.profile, location: '' }, fingerprint: 'version-two' })
@@ -248,8 +254,8 @@ describe('account workspace review and recovery', () => {
     await state.reload()
     state.draft.name = 'Unsaved'
     window.confirm.mockReturnValue(false)
-    expect(component.beforeRouteLeave.call(state)).toBe(false)
-    expect(component.beforeRouteUpdate.call(state, { params: { id: '8' } }, { params: { id: '7' } })).toBe(false)
+    await expect(component.beforeRouteLeave.call(state)).resolves.toBe(false)
+    await expect(component.beforeRouteUpdate.call(state, { params: { id: '8' } }, { params: { id: '7' } })).resolves.toBe(false)
     expect(component.beforeRouteUpdate.call(state, { params: { id: '7' } }, { params: { id: '7' } })).toBe(true)
     component.watch['$route.hash'].handler.call(state, '#security')
     expect(state.section).toBe('security')

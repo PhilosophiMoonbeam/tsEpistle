@@ -1,156 +1,160 @@
 <template lang='pug'>
   v-app.setup
-    v-main.setup-main(aria-labelledby='setup-title')
-      v-container.setup-shell(fluid)
-        v-card.setup-card(:aria-busy='loading')
-          header.setup-intro
-            .setup-mark(aria-hidden='true')
-              img(src='/_assets/svg/icon-tsepistle.svg', alt='tsEpistle')
-            .setup-intro-copy
-              .setup-eyebrow First-run setup
-              h1#setup-title {{ product.name }}
-              p Independent community fork derived from {{ product.upstreamBase }}
+    auth-shell.setup-shell(
+      :title='product.name'
+      heading-id='setup-title'
+      eyebrow='First-run setup'
+      logo-url='/_assets/svg/icon-tsepistle.svg'
+      size='wide'
+      :busy='loading'
+    )
+      template(#lead)
+        p Independent community fork derived from {{ product.upstreamBase }}
 
-          v-alert.setup-alert(
-            v-model='error'
-            type='error'
-            variant='tonal'
-            icon='mdi-alert-circle-outline'
-            closable
-            role='alert'
-            tabindex='-1'
-            ref='setupAlert'
-          ) {{ errorMessage }}
-          v-alert.setup-alert(
-            v-if='!error'
-            :model-value='true'
-            color='primary'
-            variant='tonal'
-            icon='mdi-package-variant-closed'
-          )
-            span You are installing #[strong {{ product.name }} {{ product.version }}].
-            .text-body-small.mt-1
-              a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') View source at revision {{ product.revision.slice(0, 12) }}
+      v-alert.setup-alert(
+        v-model='error'
+        type='error'
+        variant='tonal'
+        icon='mdi-alert-circle-outline'
+        closable
+        role='alert'
+        tabindex='-1'
+        ref='setupAlert'
+      ) {{ errorMessage }}
+      v-alert.setup-alert(
+        v-if='!error'
+        :model-value='true'
+        color='primary'
+        variant='tonal'
+        icon='mdi-package-variant-closed'
+      )
+        span You are installing #[strong {{ product.name }} {{ product.version }}].
+        .text-body-small.mt-1
+          a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') View source at revision {{ product.revision.slice(0, 12) }}
 
-          form#setup-form.setup-form(@submit.prevent='install', :aria-busy='loading', novalidate)
-            section.setup-section
-              .setup-section-heading
-                .setup-section-icon
-                  v-icon(size='21') mdi-account-shield-outline
-                div
-                  h2 Administrator account
-                  p Create the account that will manage this wiki.
-              v-row
-                v-col(cols='12')
-                  v-text-field(
-                    variant='outlined'
-                    v-model='conf.adminEmail'
-                    label='Administrator Email'
-                    hint='The email address of the administrator account.'
-                    persistent-hint
-                    required
-                    type='email'
-                    autocomplete='email'
-                    :error-messages='fieldErrors.adminEmail'
-                    :disabled='loading'
-                    ref='adminEmailInput'
-                    prepend-inner-icon='mdi-email-outline'
-                  )
-                v-col(cols='12', sm='6')
-                  v-text-field(
-                    variant='outlined'
-                    ref='adminPassword'
-                    counter
-                    v-model='conf.adminPassword'
-                    label='Password'
-                    :type="pwdMode ? 'password' : 'text'"
-                    autocomplete='new-password'
-                    hint='At least 12 characters; no more than 72 UTF-8 bytes.'
-                    persistent-hint
-                    required
-                    :error-messages='fieldErrors.adminPassword'
-                    :disabled='loading'
-                    prepend-inner-icon='mdi-lock-outline'
-                  )
-                    template(v-slot:append-inner)
-                      v-btn(icon type='button' variant='text' size='small' :aria-label="pwdMode ? 'Show administrator password' : 'Hide administrator password'" :disabled='loading' @click='pwdMode = !pwdMode')
-                        v-icon(:icon="pwdMode ? 'mdi-eye-off' : 'mdi-eye'")
-                v-col(cols='12', sm='6')
-                  v-text-field(
-                    variant='outlined'
-                    ref='adminPasswordConfirm'
-                    counter
-                    v-model='conf.adminPasswordConfirm'
-                    label='Confirm Password'
-                    :type="pwdConfirmMode ? 'password' : 'text'"
-                    autocomplete='new-password'
-                    hint='Enter the same password again.'
-                    persistent-hint
-                    required
-                    :error-messages='fieldErrors.adminPasswordConfirm'
-                    :disabled='loading'
-                    prepend-inner-icon='mdi-lock-check-outline'
-                  )
-                    template(v-slot:append-inner)
-                      v-btn(icon type='button' variant='text' size='small' :aria-label="pwdConfirmMode ? 'Show password confirmation' : 'Hide password confirmation'" :disabled='loading' @click='pwdConfirmMode = !pwdConfirmMode')
-                        v-icon(:icon="pwdConfirmMode ? 'mdi-eye-off' : 'mdi-eye'")
-
-            section.setup-section
-              .setup-section-heading
-                .setup-section-icon
-                  v-icon(size='21') mdi-web
-                div
-                  h2 Public address
-                  p Tell the wiki which URL visitors will use.
+      form#setup-form.setup-form(@submit.prevent='install', :aria-busy='loading', novalidate)
+        section.setup-section(aria-labelledby='setup-admin-title')
+          .setup-section-heading
+            .setup-section-icon(aria-hidden='true')
+              v-icon(size='21') mdi-account-shield-outline
+            div
+              h2#setup-admin-title Administrator account
+              p Create the account that will manage this wiki.
+          v-row
+            v-col(cols='12')
               v-text-field(
                 variant='outlined'
-                ref='adminSiteUrl'
-                v-model='conf.siteUrl'
-                label='Site URL'
-                placeholder='https://wiki.example.com'
-                persistent-placeholder
-                hint='Full public URL without a trailing slash, for example https://wiki.example.com.'
+                v-model='conf.adminEmail'
+                label='Administrator email'
+                hint='The email address of the administrator account.'
                 persistent-hint
                 required
-                type='url'
-                inputmode='url'
-                autocomplete='url'
-                :error-messages='fieldErrors.siteUrl'
+                type='email'
+                autocomplete='email'
+                :error-messages='fieldErrors.adminEmail'
                 :disabled='loading'
-                prepend-inner-icon='mdi-link-variant'
+                ref='adminEmailInput'
+                prepend-inner-icon='mdi-email-outline'
               )
-
-            section.setup-section.setup-telemetry
-              .setup-section-heading
-                .setup-section-icon
-                  v-icon(size='21') mdi-chart-box-outline
-                div
-                  h2 Telemetry
-                  p Share anonymous usage data to help improve the project.
-              v-switch(
-                inset
-                color='primary'
-                v-model='conf.telemetry'
-                label='Allow anonymous telemetry'
+            v-col(cols='12', sm='6')
+              v-text-field(
+                variant='outlined'
+                ref='adminPassword'
+                counter
+                v-model='conf.adminPassword'
+                label='Password'
+                :type="showPassword ? 'text' : 'password'"
+                autocomplete='new-password'
+                :hint='passwordHint'
+                persistent-hint
+                required
+                loading
+                :error-messages='fieldErrors.adminPassword'
                 :disabled='loading'
-                hide-details
+                prepend-inner-icon='mdi-lock-outline'
               )
-              a.setup-learn(href='https://docs.requarks.io/telemetry', target='_blank', rel='noopener noreferrer') Learn more about telemetry
+                template(v-slot:append-inner)
+                  password-visibility-toggle(v-model:visible='showPassword', field='administrator password', :disabled='loading')
+                template(v-slot:loader)
+                  password-strength(:model-value='conf.adminPassword')
+            v-col(cols='12', sm='6')
+              v-text-field(
+                variant='outlined'
+                ref='adminPasswordConfirm'
+                counter
+                v-model='conf.adminPasswordConfirm'
+                label='Confirm password'
+                :type="showPasswordConfirm ? 'text' : 'password'"
+                autocomplete='new-password'
+                hint='Enter the same password again.'
+                persistent-hint
+                required
+                :error-messages='fieldErrors.adminPasswordConfirm'
+                :disabled='loading'
+                prepend-inner-icon='mdi-lock-check-outline'
+              )
+                template(v-slot:append-inner)
+                  password-visibility-toggle(v-model:visible='showPasswordConfirm', field='password confirmation', :disabled='loading')
 
-          v-card-actions.setup-actions
-            v-btn(
-              ref='installButton'
-              color='primary'
-              type='submit'
-              form='setup-form'
-              :disabled='loading'
-              :loading='loading'
-              size='large'
-              variant='flat'
-              block
-            )
-              v-icon(start) mdi-check
-              span Install {{ product.name }}
+        section.setup-section(aria-labelledby='setup-address-title')
+          .setup-section-heading
+            .setup-section-icon(aria-hidden='true')
+              v-icon(size='21') mdi-web
+            div
+              h2#setup-address-title Public address
+              p Tell the wiki which URL visitors will use.
+          v-text-field(
+            variant='outlined'
+            ref='adminSiteUrl'
+            v-model='conf.siteUrl'
+            label='Site URL'
+            placeholder='https://wiki.example.com'
+            persistent-placeholder
+            hint='Full public URL without a trailing slash, for example https://wiki.example.com.'
+            persistent-hint
+            required
+            type='url'
+            inputmode='url'
+            autocomplete='url'
+            :error-messages='fieldErrors.siteUrl'
+            :disabled='loading'
+            prepend-inner-icon='mdi-link-variant'
+          )
+
+        section.setup-section.setup-telemetry(aria-labelledby='setup-telemetry-title')
+          .setup-section-heading
+            .setup-section-icon(aria-hidden='true')
+              v-icon(size='21') mdi-chart-box-outline
+            div
+              h2#setup-telemetry-title Telemetry
+              p Share anonymous install data to help improve the project.
+          v-switch(
+            inset
+            color='primary'
+            v-model='conf.telemetry'
+            label='Allow anonymous telemetry'
+            :disabled='loading'
+            aria-describedby='setup-telemetry-details'
+            hide-details
+          )
+          p#setup-telemetry-details.setup-telemetry-details
+            | At install and at each startup, the server sends its version, platform, operating system, CPU count, memory, database type and version, and a random install ID.
+            | It never sends pages, users or settings. You can turn this off later in Administration.
+
+      .setup-actions
+        v-btn(
+          ref='installButton'
+          color='primary'
+          type='submit'
+          form='setup-form'
+          :disabled='loading'
+          :loading='loading'
+          size='large'
+          variant='flat'
+          block
+        )
+          v-icon(start) mdi-check
+          span Install {{ product.name }}
 
     v-dialog(:model-value='loading || success', width='420', persistent, aria-labelledby='setup-progress-title')
       v-card.setup-progress(variant='flat' :aria-busy='loading')
@@ -186,6 +190,9 @@ import { markRaw } from 'vue'
 import validateValues from '../../shared/validation'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
 import { BreedingRhombusSpinner } from 'epic-spinners'
+import AuthShell from './common/auth-shell.vue'
+import PasswordStrength from './common/password-strength.vue'
+import PasswordVisibilityToggle from './common/password-visibility-toggle.vue'
 import confetti from 'canvas-confetti'
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
@@ -236,7 +243,10 @@ function normalizeFinalizeResponse (payload: unknown): FinalizeResponse {
 }
 export default {
   components: {
-    BreedingRhombusSpinner
+    AuthShell,
+    BreedingRhombusSpinner,
+    PasswordStrength,
+    PasswordVisibilityToggle
   },
 
   data() {
@@ -259,8 +269,10 @@ export default {
         siteUrl: '',
         telemetry: true
       } as SetupConfig,
-      pwdMode: true,
-      pwdConfirmMode: true,
+      showPassword: false,
+      showPasswordConfirm: false,
+      // First-run setup has no policy endpoint yet; the server enforces the same minimum.
+      passwordHint: 'At least 12 characters; no more than 72 UTF-8 bytes.',
       focusTimer: null as number | null,
       redirectTimer: null as number | null,
       readinessTimer: null as number | null,
@@ -586,127 +598,8 @@ export default {
   font-family: var(--wiki-font-body);
 }
 
-.setup-main {
-  position: relative;
-  min-height: 100vh;
-  min-height: 100dvh;
-  overflow: hidden auto;
-  background:
-    radial-gradient(
-      circle at 14% 10%,
-      color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent),
-      transparent 32rem
-    ),
-    radial-gradient(
-      circle at 88% 86%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 14%, transparent),
-      transparent 36rem
-    ),
-    linear-gradient(
-      145deg,
-      var(--wiki-surface-sunken),
-      rgb(var(--v-theme-background))
-    );
-  isolation: isolate;
-
-  &::before {
-    position: absolute;
-    z-index: -1;
-    inset: 0;
-    background-image:
-      linear-gradient(var(--wiki-surface-border) 1px, transparent 1px),
-      linear-gradient(90deg, var(--wiki-surface-border) 1px, transparent 1px);
-    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
-    content: '';
-    mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-surface)), transparent 88%);
-    opacity: .48;
-    pointer-events: none;
-  }
-}
-
-.setup-shell {
-  display: grid;
-  width: min(100%, 61.25rem);
-  min-height: 100dvh;
-  margin: 0 auto;
-  padding: clamp(var(--wiki-space-6), 5vh, var(--wiki-space-12)) var(--wiki-page-gutter) !important;
-  place-items: center;
-}
-
-.setup-card {
-  width: 100%;
-  overflow: hidden;
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-hero-radius) !important;
-  background: color-mix(
-    in srgb,
-    rgb(var(--v-theme-surface)) 97%,
-    rgb(var(--v-theme-background))
-  ) !important;
-  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
-}
-
-.setup-intro {
-  display: flex;
-  gap: var(--wiki-space-5);
-  align-items: center;
-  padding: var(--wiki-space-8) var(--wiki-space-8) var(--wiki-space-6);
-}
-
-.setup-mark,
-.setup-section-icon {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
-  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
-  color: var(--wiki-accent-warm);
-}
-
-.setup-mark {
-  width: 4rem;
-  height: 4rem;
-  overflow: hidden;
-  border-radius: var(--wiki-panel-radius);
-  box-shadow: var(--wiki-shadow-sm);
-
-  img {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-}
-
-.setup-intro-copy {
-  min-width: 0;
-
-  h1 {
-    margin: var(--wiki-space-1) 0;
-    color: rgb(var(--v-theme-on-surface));
-    font-size: clamp(1.75rem, 4vw, 2.25rem);
-    font-weight: 740;
-    letter-spacing: -.045em;
-    line-height: var(--wiki-leading-heading);
-  }
-
-  p {
-    margin: 0;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
-    font-size: .875rem;
-  }
-}
-
-.setup-eyebrow {
-  color: var(--wiki-accent-warm);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .1em;
-  line-height: 1rem;
-  text-transform: uppercase;
-}
-
 .setup-alert {
-  margin: 0 var(--wiki-space-8) var(--wiki-space-4);
+  margin: 0 0 var(--wiki-space-4);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   box-shadow: none;
@@ -719,16 +612,16 @@ export default {
 }
 
 .setup-form {
+  margin-top: var(--wiki-space-2);
   border-top: 1px solid var(--wiki-surface-border);
 }
 
 .setup-section {
-  padding: var(--wiki-space-6) var(--wiki-space-8);
+  padding-block: var(--wiki-space-6);
 
   & + & {
     border-top: 1px solid var(--wiki-surface-border);
   }
-
 }
 
 .setup-section-heading {
@@ -747,56 +640,49 @@ export default {
 
   p {
     margin: var(--wiki-space-1) 0 0;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+    color: var(--wiki-text-muted);
     font-size: .8125rem;
   }
 }
 
 .setup-section-icon {
+  display: grid;
   width: 2.5rem;
   height: 2.5rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
   border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-ink);
 }
 
 .setup-telemetry {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  column-gap: var(--wiki-space-6);
-
-  .setup-section-heading {
-    grid-column: 1 / -1;
-  }
-
   .v-switch {
     max-width: 26.25rem;
   }
 }
 
-.setup-learn {
-  display: inline-block;
-  margin-bottom: var(--wiki-space-2);
-  color: var(--wiki-accent-warm);
+.setup-telemetry-details {
+  max-width: 65ch;
+  margin: var(--wiki-space-2) 0 0;
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
-  font-weight: 650;
-  text-decoration-thickness: .0625rem;
-  text-underline-offset: var(--wiki-space-1);
-
-  &:hover,
-  &:focus-visible {
-    text-decoration-thickness: .125rem;
-  }
+  line-height: 1.55;
 }
 
 .setup-actions {
+  margin: 0 calc(-1 * var(--wiki-space-8)) calc(-1 * var(--wiki-space-8));
   padding: var(--wiki-space-5) var(--wiki-space-8) var(--wiki-space-6);
   border-top: 1px solid var(--wiki-surface-border);
+  border-radius: 0 0 var(--wiki-hero-radius) var(--wiki-hero-radius);
   background: var(--wiki-surface-sunken);
 
   .v-btn {
     min-height: var(--wiki-control-height);
     border-radius: var(--wiki-control-radius);
     font-weight: 700;
+    text-transform: none;
   }
 }
 
@@ -832,57 +718,13 @@ export default {
 
 .setup-progress-copy {
   margin-top: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  color: var(--wiki-text-muted);
   font-size: .8125rem;
 }
 
 @media (max-width: 599px) {
-  .setup-main {
-    background: color-mix(
-      in srgb,
-      rgb(var(--v-theme-surface)) 96%,
-      rgb(var(--v-theme-background))
-    );
-  }
-
-  .setup-shell {
-    align-items: start;
-    padding: 0 !important;
-  }
-
-  .setup-card {
-    min-height: 100dvh;
-    border: 0;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-  }
-
-  .setup-intro {
-    gap: var(--wiki-space-3);
-    padding: var(--wiki-space-6) var(--wiki-space-5) var(--wiki-space-5);
-  }
-
-  .setup-mark {
-    width: 3.25rem;
-    height: 3.25rem;
-  }
-
-  .setup-intro-copy {
-    h1 {
-      font-size: 1.625rem;
-    }
-
-    p {
-      font-size: .8125rem;
-    }
-  }
-
-  .setup-alert {
-    margin: 0 var(--wiki-space-4) var(--wiki-space-3);
-  }
-
   .setup-section {
-    padding: var(--wiki-space-5);
+    padding-block: var(--wiki-space-5);
   }
 
   .setup-section-heading {
@@ -890,54 +732,14 @@ export default {
     margin-bottom: var(--wiki-space-4);
   }
 
-  .setup-telemetry {
-    display: block;
-  }
-
-  .setup-learn {
-    margin-top: var(--wiki-space-2);
-    margin-bottom: 0;
-  }
-
   .setup-actions {
+    margin: 0 calc(-1 * var(--wiki-space-5)) calc(-1 * var(--wiki-space-6));
     padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-5);
-  }
-}
-
-@media (max-height: 700px) and (min-width: 600px) {
-  .setup-shell {
-    align-items: start;
-    padding-block: var(--wiki-space-5) !important;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .setup *,
-  .setup *::before,
-  .setup *::after {
-    transition-duration: .01ms !important;
-    animation-duration: .01ms !important;
+    border-radius: 0;
   }
 }
 
 @media print {
-  .setup-main {
-    background: transparent !important;
-
-    &::before {
-      display: none;
-    }
-  }
-
-  .setup-shell {
-    padding: 0 !important;
-  }
-
-  .setup-card {
-    border: 0;
-    box-shadow: none !important;
-  }
-
   .setup-actions {
     display: none;
   }

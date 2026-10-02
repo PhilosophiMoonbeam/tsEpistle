@@ -2,7 +2,7 @@
   <v-container fluid class="rendering-workspace">
     <admin-hero title="Rendering" description="From authored source to the reading experience." icon="mdi-text-box-edit-outline">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || reviewOpen" @click="reload">Reload saved configuration</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || reviewOpen" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved rendering configuration</v-tooltip></v-btn>
         <v-btn color="primary" variant="flat" :disabled="!dirty || busy || loading || errors.length > 0" @click="openReview">Review changes</v-btn>
       </template>
     </admin-hero>
@@ -119,6 +119,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { buildRenderingPlan, formatTitle, rendererTitle, renderingIssues, renderingSettings, type RenderingModule, type RenderingOutput, type RenderingWorkspace } from '../../../shared/rendering-policy.ts'
 import { fetchRenderingOutput, fetchRenderingWorkspace, saveRenderingWorkspace } from '../../helpers/rendering-workspace-api.ts'
@@ -196,12 +197,14 @@ export default {
     reset() { if (this.saved) this.draft = copy(this.saved.modules); this.saveError = '' },
     resetModule() { const prior = this.saved?.modules.find(module => module.key === this.selectedKey), index = this.draft.findIndex(module => module.key === this.selectedKey); if (prior && index >= 0) this.draft.splice(index, 1, copy(prior)); this.saveError = '' },
     async reload() {
-      if (this.busy || this.loading || this.disposed || (this.dirty && !window.confirm('Discard all rendering drafts and reload saved configuration?'))) return
+      if (this.busy || this.loading || this.disposed) return
+      if (this.dirty && !(await confirmDiscard('Discard all rendering drafts and reload saved configuration?'))) return
+      if (this.busy || this.loading || this.disposed) return
       this.loading = true; this.loadError = ''
       try { const result = await fetchRenderingWorkspace(); if (this.disposed) return; this.saved = result; this.reset(); if (!this.current) this.selectedKey = this.draft[0]?.key || '' } catch (error) { if (!this.disposed) this.loadError = getErrorMessage(error) } finally { if (!this.disposed) this.loading = false }
     },
     openReview() { this.acknowledged = false; this.saveError = ''; this.reviewOpen = true },
-    async reloadReview() { if (this.busy || !window.confirm('Discard all rendering drafts and reload saved configuration?')) return; this.reviewOpen = false; this.reset(); await this.reload() },
+    async reloadReview() { if (this.busy || !(await confirmDiscard('Discard all rendering drafts and reload saved configuration?')) || this.busy) return; this.reviewOpen = false; this.reset(); await this.reload() },
     async save() {
       if (!this.saved || !this.dirty || this.busy || this.errors.length || (this.issues.length && !this.acknowledged)) return
       this.saving = true; this.saveError = ''
@@ -338,7 +341,7 @@ export default {
     '$route.query.format'(value: unknown) { if (typeof value === 'string' && this.formats.includes(value)) this.planFormat = value },
     '$route.query.page'(value: unknown) { const id = Number(value); const next = Number.isSafeInteger(id) && id > 0 ? id : null; if (next !== this.pageId && !this.rendering && !this.renderPending) { this.pageId = next; this.inspectOutput() } }
   },
-  beforeRouteLeave() { return !this.busy && !this.renderPending && (!this.dirty || window.confirm('Discard the unsaved rendering configuration?')) },
+  async beforeRouteLeave() { return !this.busy && !this.renderPending && (!this.dirty || await confirmDiscard('Discard the unsaved rendering configuration?')) },
   mounted() { const key = this.$route.hash.slice(1); if (this.tabs.some(tab => tab.key === key)) this.section = key; const selected = this.$route.query.module; if (typeof selected === 'string') this.selectedKey = selected; const format = this.$route.query.format; if (typeof format === 'string') this.planFormat = format; this.reload(); if (this.section === 'output') { this.loadPages(); const id = Number(this.$route.query.page); if (Number.isSafeInteger(id) && id > 0) { this.pageId = id; this.inspectOutput() } } window.addEventListener('beforeunload', this.beforeUnload) },
   beforeUnmount() { this.disposed = true; this.clearRenderPoll(); this.outputSequence++; window.removeEventListener('beforeunload', this.beforeUnload) }
 }
