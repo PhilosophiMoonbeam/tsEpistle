@@ -41,6 +41,10 @@
   --wiki-type-micro: .75rem;
   --wiki-type-label: .8125rem;
   --wiki-type-body-sm: .875rem;
+  // Secondary text that must stay readable (meets WCAG AA on standard surfaces).
+  --wiki-text-muted: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+  // Decorative or non-essential text only (dividers, placeholders); never for content.
+  --wiki-text-subtle: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
   --wiki-surface-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 13%, transparent);
   --wiki-surface-border-strong: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent);
   --wiki-surface-raised: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-surface-bright)) 6%);
