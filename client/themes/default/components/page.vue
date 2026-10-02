@@ -213,17 +213,17 @@
           //- (Tags jumped above the utilities). `:to` moves content in order.
           Teleport(
             defer
-            :to='isTocMobile ? `#page-mobile-tools` : winWidth < 1280 ? `#page-tablet-tools` : `#page-desktop-rail`'
+            :to='pageToolsHost'
             :disabled='printView'
           )
             v-card.page-tools-card.mb-4(flat, role='group', :aria-label='$t(`common:page.pageTools`)')
-              //- Utility tooltips never cover the Updated/author line below the
-              //- row or the top bar: in the desktop rail they open beside the
-              //- card, elsewhere (card below the title) above the row.
+              //- Utility tooltips open below the whole card, so they never cover
+              //- the top bar, the page title or the Updated/author line, and
+              //- their width is capped so long reasons wrap.
               .page-tools-card__utilities(v-if='!printView')
                 v-menu(:location='isTocMobile ? `top end` : `bottom`', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget')
+                    v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn(
                           icon
@@ -244,7 +244,7 @@
                 //- can explain why; each handler refuses the action itself.
                 //- One bell: it starts watching, and once watching it opens the
                 //- watch settings (delivery switches and Stop watching).
-                v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget', v-if='isAuthenticated && !pageWatched')
+                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', v-if='isAuthenticated && !pageWatched')
                   template(v-slot:activator='{ props }')
                     v-btn.page-watch-control(
                       icon
@@ -264,7 +264,7 @@
                   span.page-tool-blocked-reason(v-if='pageWatchBlockedReason') {{ pageWatchBlockedReason }}
                 v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? `top end` : `bottom`', :close-on-content-click='false', min-width='260')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget')
+                    v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn.page-watch-control.page-watch-control--watching(
                           icon
@@ -311,7 +311,7 @@
                         @click='togglePageWatch'
                       ) {{$t('common:page.stopWatchingPage')}}
 
-                v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn.page-approval-control(
                       icon
@@ -327,7 +327,7 @@
                       v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
                   span {{$t('common:page.approvalWorkflow')}}
                   span.page-tool-blocked-reason(v-if='!pageOnlineActionReady') {{ pageOnlineActionUnavailableReason }}
-                v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn.page-protection-control(
                       icon
@@ -343,7 +343,7 @@
                       v-icon mdi-form-textbox-password
                   span {{$t('common:page.pagePasswordProtection')}}
                   span.page-tool-blocked-reason(v-if='pageProtectionBlockedReason') {{ pageProtectionBlockedReason }}
-                v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget')
+                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
@@ -356,7 +356,7 @@
                     )
                       v-icon mdi-printer
                   span {{$t('common:page.printFormat')}}
-                v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget', :open-on-click='offlineControl.blocked', max-width='280')
+                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', :open-on-click='offlineControl.blocked')
                   template(v-slot:activator='{ props }')
                     v-btn.page-offline-control(
                       v-bind='props'
@@ -378,7 +378,7 @@
                   .page-offline-tooltip
                     strong.page-offline-tooltip__title {{ offlineControl.title }}
                     span.page-offline-tooltip__detail(v-if='offlineControl.detail') {{ offlineControl.detail }}
-                v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget')
+                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280')
                   template(v-slot:activator='{ props }')
                     v-btn.page-focus-control(
                       v-bind='props'
@@ -393,7 +393,7 @@
                     )
                       v-icon(aria-hidden='true') mdi-book-open-page-variant-outline
                   span {{$t('common:page.focusReading')}}
-                v-tooltip(:location='utilityTooltipLocation', :target='utilityTooltipTarget', v-if='canViewHistory')
+                v-tooltip(location='bottom', :target='utilityTooltipTarget', max-width='280', v-if='canViewHistory')
                   template(v-slot:activator='{ props }')
                     v-btn.page-tools-history-link(
                       icon
@@ -1930,17 +1930,14 @@ export default defineComponent({
       if (this.tocQuery?.trim()) return filterOutlineTree(this.tocTree, this.tocQuery)
       return this.tocTree
     },
-    utilityTooltipsBeside (): boolean {
-      return !this.isTocMobile && this.winWidth >= 1280
+    // The card moves between three hosts; utility tooltips anchor to the
+    // card in its current host and open below it (see the template).
+    pageToolsHost (): string {
+      if (this.isTocMobile) return '#page-mobile-tools'
+      return this.winWidth < 1280 ? '#page-tablet-tools' : '#page-desktop-rail'
     },
-    utilityTooltipLocation (): 'top' | 'start' | 'end' {
-      if (!this.utilityTooltipsBeside) return 'top'
-      return this.tocPosition === 'right' ? 'start' : 'end'
-    },
-    // In the desktop rail, anchor to the whole card: the tooltip then sits
-    // beside the rail and hides no other utility, header or metadata.
-    utilityTooltipTarget (): string | undefined {
-      return this.utilityTooltipsBeside ? '#page-desktop-rail .page-tools-card' : undefined
+    utilityTooltipTarget (): string {
+      return `${this.pageToolsHost} .page-tools-card`
     },
     // Signed-in readers whose account could not load and who have no saved
     // time zone see the browser zone; name it so the time is not misread.

@@ -81,7 +81,7 @@
             required
           )
             template(v-slot:append-inner)
-              password-visibility-toggle(v-model:visible='showPassword', :field='$t(`auth:fields.password`)', :disabled='isLoading')
+              password-visibility-toggle(v-model:visible='showPassword', :field='$t(`common:password.fields.password`)', :disabled='isLoading')
           v-btn.mt-2.text-none(
             width='100%'
             size="large"
@@ -169,7 +169,7 @@
             required
             )
             template(v-slot:append-inner)
-              password-visibility-toggle(v-model:visible='showNewPassword', :field='$t(`auth:changePwd.newPasswordPlaceholder`)', :disabled='isLoading')
+              password-visibility-toggle(v-model:visible='showNewPassword', :field='$t(`common:password.fields.newPassword`)', :disabled='isLoading')
             template(v-slot:loader)
               password-strength(:model-value='newPassword')
           v-text-field.mt-2(
@@ -188,7 +188,7 @@
             required
             )
             template(v-slot:append-inner)
-              password-visibility-toggle(v-model:visible='showNewPasswordVerify', :field='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)', :disabled='isLoading')
+              password-visibility-toggle(v-model:visible='showNewPasswordVerify', :field='$t(`common:password.fields.newPasswordConfirmation`)', :disabled='isLoading')
           v-btn.mt-2.text-none(
             width='100%'
             size='large'
@@ -219,7 +219,7 @@
             required
             )
             template(v-slot:append-inner)
-              password-visibility-toggle(v-model:visible='showNewPassword', :field='$t(`auth:changePwd.newPasswordPlaceholder`)', :disabled='isLoading')
+              password-visibility-toggle(v-model:visible='showNewPassword', :field='$t(`common:password.fields.newPassword`)', :disabled='isLoading')
             template(v-slot:loader)
               password-strength(:model-value='newPassword')
           v-text-field.mt-2(
@@ -238,7 +238,7 @@
             required
             )
             template(v-slot:append-inner)
-              password-visibility-toggle(v-model:visible='showNewPasswordVerify', :field='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)', :disabled='isLoading')
+              password-visibility-toggle(v-model:visible='showNewPasswordVerify', :field='$t(`common:password.fields.newPasswordConfirmation`)', :disabled='isLoading')
           v-btn.mt-2.text-none(
             width='100%'
             size='large'
