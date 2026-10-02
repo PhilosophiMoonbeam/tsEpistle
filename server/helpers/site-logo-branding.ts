@@ -20,6 +20,8 @@ export interface ActiveBranding {
   readonly logoUrl: string
   readonly logoEffect: SiteLogoEffectDescriptor | null
   readonly logoIcons: LogoIconDescriptor | null
+  /** SHA-256 of the uploaded source bytes; lets clients recognise the same image used elsewhere. */
+  readonly logoSourceSha256: string | null
 }
 
 interface SiteLogoObjectRecord {
@@ -32,6 +34,8 @@ interface SiteLogoObjectRecord {
 
 interface ActiveRevisionRow {
   readonly pipelineVersion: number | string
+  readonly sourceKind: string | null
+  readonly sourceHash: string | null
   readonly logoPngKind: string | null
   readonly logoPngHash: string | null
   readonly iconPngKind: string | null
@@ -193,8 +197,13 @@ const validMedianStroke = (value: number | string | null | undefined, maximum: n
   return Number.isFinite(parsed) && parsed > 0 && parsed <= maximum ? parsed : null
 }
 
-const freezeBranding = (logoUrl: string, logoEffect: SiteLogoEffectDescriptor | null, logoIcons: LogoIconDescriptor | null): ActiveBranding => {
-  const branding: ActiveBranding = { logoUrl, logoEffect, logoIcons }
+const freezeBranding = (
+  logoUrl: string,
+  logoEffect: SiteLogoEffectDescriptor | null,
+  logoIcons: LogoIconDescriptor | null,
+  logoSourceSha256: string | null = null
+): ActiveBranding => {
+  const branding: ActiveBranding = { logoUrl, logoEffect, logoIcons, logoSourceSha256 }
   return Object.freeze(branding)
 }
 
@@ -312,6 +321,8 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
     .andWhere('revision.status', 'ready')
     .first(
       'revision.pipelineVersion',
+      'revision.sourceKind',
+      'revision.sourceHash',
       'revision.logoPngKind',
       'revision.logoPngHash',
       'revision.iconPngKind',
@@ -348,5 +359,6 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
     pipelineVersion === 6 || pipelineVersion === 7 ? resolveIconDescriptor(knex, row) : Promise.resolve(null),
     resolveEffectDescriptor(knex, row, pipelineVersion, logoUrl)
   ])
-  return freezeBranding(logoUrl, logoEffect, logoIcons)
+  const logoSourceSha256 = row.sourceKind === 'source' && typeof row.sourceHash === 'string' && SHA256_PATTERN.test(row.sourceHash) ? row.sourceHash : null
+  return freezeBranding(logoUrl, logoEffect, logoIcons, logoSourceSha256)
 }

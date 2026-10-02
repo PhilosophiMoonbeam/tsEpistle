@@ -19,6 +19,7 @@ import {
   type UserTimeFormat
 } from '../../shared/user-presentation.ts'
 import type { PageBrandingAssignment, PageBrandingView } from '../../shared/page-branding.ts'
+import { normalizeSiteLogoSourceSha256 } from '../helpers/page-branding.ts'
 import { normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 export type Notification = {
   message: string
@@ -414,6 +415,7 @@ export const useWikiStore = defineStore('wiki', {
       mascot: true,
       title: window.siteConfig.title,
       logoUrl: window.siteConfig.logoUrl,
+      logoSourceSha256: normalizeSiteLogoSourceSha256(window.siteConfig.logoSourceSha256),
       product: window.siteConfig.product,
       search: '',
       searchMode: 'search' as 'search' | 'ask',

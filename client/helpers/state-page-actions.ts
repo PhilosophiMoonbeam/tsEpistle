@@ -36,3 +36,7 @@ export const searchQueryFromPath = (pathname: string, localeCodes: readonly stri
     .trim()
     .slice(0, 120)
 }
+
+/** Accepts only a same-origin editor route (`/e/...`); anything else gives ''. */
+export const safeEditorHref = (value: unknown): string =>
+  typeof value === 'string' && value.startsWith('/e/') && !/[\\\s]/.test(value) && !value.includes('//') ? value : ''

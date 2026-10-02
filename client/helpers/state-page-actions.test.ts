@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { browserWindow } from '../test/browser-dom.mts'
-import { goBackOrHome, searchQueryFromPath } from './state-page-actions.ts'
+import { goBackOrHome, safeEditorHref, searchQueryFromPath } from './state-page-actions.ts'
 
 describe('searchQueryFromPath', () => {
   it('turns a missing page path into search words', () => {
@@ -46,5 +46,14 @@ describe('goBackOrHome', () => {
     // jsdom cannot navigate; the fallback is location.assign('/') instead of history.back().
     goBackOrHome('/')
     expect(back).not.toHaveBeenCalled()
+  })
+})
+
+describe('safeEditorHref', () => {
+  it('keeps same-origin editor routes and drops anything else', () => {
+    expect(safeEditorHref('/e/en/guides/new%20page')).toBe('/e/en/guides/new%20page')
+    for (const value of [undefined, '', '/en/page', '//evil.example/e/x', '/e//evil.example', 'https://evil.example/e/x', '/e/en/a b', '/e/en\\x', 7]) {
+      expect(safeEditorHref(value)).toBe('')
+    }
   })
 })

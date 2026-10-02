@@ -34,7 +34,11 @@ beforeEach(async () => {
     pool: { min: 1, max: 1 },
     useNullAsDefault: true
   })
-  await knex.schema.createTable('users', table => table.integer('id').primary())
+  await knex.schema.createTable('users', table => {
+    table.integer('id').primary()
+    table.string('name').nullable()
+    table.string('email').nullable()
+  })
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
     table.string('title').notNullable()
@@ -63,7 +67,11 @@ beforeEach(async () => {
     table.string('action').notNullable()
     table.bigInteger('sourceRevision').notNullable()
   })
-  await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
+  await knex('users').insert([
+    { id: 7, name: 'Ada Submitter', email: 'ada@example.test' },
+    { id: 8, name: 'Bo Reviewer', email: 'bo@example.test' },
+    { id: 9, name: '  ', email: 'blank@example.test' }
+  ])
   await knex('pages').insert({
     id: 42,
     title: 'Review me',
@@ -200,6 +208,48 @@ describe('page approval workflow', () => {
       expect.objectContaining({ fromStatus: null, toStatus: 'submitted', actorId: 7, revisionId: revision, comment: 'Ready' })
     ])
     expect(await knex('outboxEvents').where({ aggregateId: submitted.id }).first()).toMatchObject({ type: 'approval.submitted' })
+  })
+
+  it('names approval history actors only for requesters who may see the history', async () => {
+    const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
+    const submitter = user(7, ['read:pages', 'write:pages'])
+    const reviewer = user(8, ['read:pages', 'manage:pages'])
+    const submitted = await operations.submitPageApproval({
+      requester: submitter,
+      pageId: 42,
+      sessionId: 'approval-session',
+      expectedSourceRevision: '1',
+      assigneeId: 8
+    })
+    await operations.transitionApproval({
+      requester: reviewer,
+      requestId: submitted.id,
+      sessionId: 'reviewer-session',
+      action: 'request-changes',
+      comment: 'Needs a summary'
+    })
+
+    const seenBySubmitter = await operations.getPageApproval({ requester: submitter, pageId: 42, sessionId: 'approval-session' })
+    expect(seenBySubmitter?.transitions).toEqual([
+      expect.objectContaining({ toStatus: 'submitted', actorId: 7, actorName: 'Ada Submitter' }),
+      expect.objectContaining({ toStatus: 'changes-requested', actorId: 8, actorName: 'Bo Reviewer' })
+    ])
+    expect(JSON.stringify(seenBySubmitter)).not.toContain('@example.test')
+
+    // A reader who is neither participant nor eligible reviewer gets no approval and therefore no names.
+    const outsider = user(9, ['read:pages'])
+    await expect(operations.getPageApproval({ requester: outsider, pageId: 42, sessionId: 'outsider-session' })).resolves.toBeNull()
+    await expect(operations.getPageApproval({ requester: user(9, []), pageId: 42, sessionId: 'outsider-session' })).rejects.toMatchObject({
+      status: 404
+    })
+  })
+
+  it('falls back to no actor name when the account has a blank name', async () => {
+    const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
+    const blankNamed = user(9, ['read:pages', 'write:pages'])
+    await operations.submitPageApproval({ requester: blankNamed, pageId: 42, sessionId: 'blank-session', expectedSourceRevision: '1' })
+    const approval = await operations.getPageApproval({ requester: blankNamed, pageId: 42, sessionId: 'blank-session' })
+    expect(approval?.transitions).toEqual([expect.objectContaining({ actorId: 9, actorName: null })])
   })
 
   it('requires the canonical current page source revision when submitting', async () => {

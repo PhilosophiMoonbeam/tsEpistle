@@ -124,6 +124,8 @@ describe('common page routing', () => {
       byId: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/i'))[1],
       admin: express.__router.get.mock.calls.find(([path]) => path === '/_admin/private/:id')[1],
       editor: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/e'))[1],
+      history: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/h'))[1],
+      source: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/s'))[1],
       view: express.__router.get.mock.calls.find(([path]) => path === '/{*pagePath}')[1]
     }
   }
@@ -156,6 +158,43 @@ describe('common page routing', () => {
     await byId(request({ id: 9, permissions: ['read:pages'] }), res)
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.render).toHaveBeenCalledWith('notfound', { action: 'view' })
+  })
+
+  it('offers Create this page on a missing-page 404 only to people who may write there', async () => {
+    const { history, source } = await handlers()
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue(undefined)
+    global.WIKI.auth.getEffectivePermissions.mockImplementation(req => ({
+      pages: { read: true, write: Boolean(req.user?.permissions?.includes('write:pages')), manage: false },
+      history: { read: true },
+      source: { read: true }
+    }))
+    const missing = (path, user) => ({ ...request(user), path })
+    const writer = { id: 5, permissions: ['read:pages', 'write:pages'] }
+    const reader = { id: 6, permissions: ['read:pages'] }
+
+    const writerHistory = response()
+    await history(missing('/h/en/guides/new-guide', writer), writerHistory)
+    expect(writerHistory.status).toHaveBeenCalledWith(404)
+    expect(writerHistory.render).toHaveBeenCalledWith('notfound', { action: 'history', createHref: '/e/en/guides/new-guide' })
+    expect(global.WIKI.auth.getEffectivePermissions).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ path: 'guides/new-guide', locale: 'en', tags: [] }),
+      expect.objectContaining({ requester: writer })
+    )
+
+    const writerSource = response()
+    await source(missing('/s/en/guides/new-guide', writer), writerSource)
+    expect(writerSource.render).toHaveBeenCalledWith('notfound', { action: 'source', createHref: '/e/en/guides/new-guide' })
+
+    const readerHistory = response()
+    await history(missing('/h/en/guides/new-guide', reader), readerHistory)
+    expect(readerHistory.status).toHaveBeenCalledWith(404)
+    expect(readerHistory.render).toHaveBeenCalledWith('notfound', { action: 'history' })
+    expect(readerHistory.render.mock.calls[0][1]).not.toHaveProperty('createHref')
+
+    const privateHistory = response()
+    await history(missing('/h/_private/en/notes', writer), privateHistory)
+    expect(privateHistory.render.mock.calls[0][1]).toEqual({ action: 'history' })
   })
 
   it('renders the by-ID inspection route only for system administrators', async () => {
