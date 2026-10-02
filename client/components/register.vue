@@ -106,7 +106,7 @@
             :loading='isLoading'
             :disabled='isLoading'
           ) {{ $t('auth:actions.register') }}
-    loader(v-model='isLoading', mode='loading', color='grey-darken-4', :title='$t(`auth:registering`)', :subtitle='$t(`auth:pleaseWait`)')
+    loader(v-model='isLoading', mode='loading', color='surface', :title='$t(`auth:registering`)', :subtitle='$t(`auth:pleaseWait`)')
     nav-footer
     notify.register-notify
 </template>

@@ -528,7 +528,7 @@ const createLoginHarness = (
       isTFASetupShown: false,
       isTFAShown: false,
       isUsernameEmail: true,
-      loaderColor: 'grey-darken-4',
+      loaderColor: 'surface',
       loaderTitle: initialLoaderTitle,
       backgroundUrl: '',
       logoEffect: effect,

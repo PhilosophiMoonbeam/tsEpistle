@@ -449,7 +449,7 @@ export default defineComponent({
       securityCodeError: '',
       continuationToken: '',
       isLoading: false,
-      loaderColor: 'grey-darken-4',
+      loaderColor: 'surface',
       loaderTitle: 'Working...',
       newPassword: '',
       newPasswordVerify: '',
@@ -649,7 +649,7 @@ export default defineComponent({
         this.errorShown = true
         focusComponent(this.$refs.iptPassword)
       } else {
-        this.loaderColor = 'grey-darken-4'
+        this.loaderColor = 'surface'
         this.loaderTitle = this.$t('auth:signingIn')
         this.isLoading = true
         try {
@@ -678,7 +678,7 @@ export default defineComponent({
         return
       }
 
-      this.loaderColor = 'grey-darken-4'
+      this.loaderColor = 'surface'
       this.loaderTitle = this.$t('auth:signingIn')
       this.isLoading = true
       try {
@@ -759,7 +759,7 @@ export default defineComponent({
       if (this.isLoading) return
       this.clearError()
       if (!this.validatePasswordPair()) return
-      this.loaderColor = 'grey-darken-4'
+      this.loaderColor = 'surface'
       this.loaderTitle = this.$t('auth:changePwd.loading')
       this.isLoading = true
       try {
@@ -791,7 +791,7 @@ export default defineComponent({
     async forgotPasswordSubmit () {
       if (this.isLoading) return
       this.clearError()
-      this.loaderColor = 'grey-darken-4'
+      this.loaderColor = 'surface'
       this.loaderTitle = this.$t('auth:forgotPasswordLoading')
       this.isLoading = true
       try {
@@ -808,7 +808,7 @@ export default defineComponent({
     async confirmEmail () {
       if (this.isLoading) return
       this.clearError()
-      this.loaderColor = 'grey-darken-4'
+      this.loaderColor = 'surface'
       this.loaderTitle = this.$t('auth:verifyEmail.loading')
       this.isLoading = true
       try {
@@ -827,7 +827,7 @@ export default defineComponent({
       if (this.isLoading) return
       this.clearError()
       if (!this.validatePasswordPair()) return
-      this.loaderColor = 'grey-darken-4'
+      this.loaderColor = 'surface'
       this.loaderTitle = this.$t('auth:changePwd.loading')
       this.isLoading = true
       try {
@@ -893,7 +893,7 @@ export default defineComponent({
           this.showError(this.$t('auth:genericError'))
           return
         }
-        this.loaderColor = 'green-darken-1'
+        this.loaderColor = 'success'
         this.loaderTitle = this.$t('auth:loginSuccess')
         if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
         this.redirectTimer = window.setTimeout(() => {

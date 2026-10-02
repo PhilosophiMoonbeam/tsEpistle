@@ -336,8 +336,7 @@
       "average": "Average",
       "veryWeak": "Very Weak",
       "veryStrong": "Very Strong",
-      "show": "Show {{field}}",
-      "hide": "Hide {{field}}"
+      "show": "Show {{field}}"
     },
     "confirm": {
       "discard": "Discard",
