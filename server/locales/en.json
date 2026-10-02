@@ -1805,6 +1805,58 @@
       "loadAutomaticallyWhenRelevant": "Load automatically when relevant",
       "exactPersonalSkillSource": "Exact personal skill source",
       "frontmatterMustIncludeExact": "Frontmatter must include this exact name and a description. Remote resources, active content, and likely secrets are rejected."
+    },
+    "draggableList": {
+      "sortableItem": "sortable item",
+      "reorderItem": "Reorder item",
+      "position": "Position {{value}} of {{valueCount}}",
+      "pickedUpItem": "Picked up item, {{pointerStartIndex}}",
+      "movedItem": "Moved item, {{targetIndex}}",
+      "droppedItem": "Dropped item, {{sourceIndex}}",
+      "cancelledReorder": "Cancelled reorder",
+      "pickedUpItem2": "Picked up item, {{index}}",
+      "droppedItem2": "Dropped item, {{keyboardIndex}}",
+      "droppedItem3": "Dropped item, {{targetIndex}}",
+      "pressSpaceEnterPick": "Press Space or Enter to pick up. Use Arrow Up and Arrow Down to move. Press Space or Enter to drop, or Escape to cancel."
+    },
+    "navHeader": {
+      "checkingAccount": "Checking account…",
+      "accountNotVerified": "Account not verified",
+      "confirmingSessionServer": "Confirming your session with the server.",
+      "reconnectVerifySessionOffline": "Reconnect to verify your session. Offline access is still available.",
+      "ctrlK": "Ctrl K",
+      "pageChangedBeforeMove": "The page changed before this move could be confirmed.",
+      "pageMoveFailed": "Page move failed",
+      "moveResponseCouldNot": "The move response could not be confirmed.",
+      "moveReceiptCouldNot": "The move receipt could not be verified.",
+      "globalPageAccountControls": "global page + account controls; only when the left cluster exists.",
+      "developmentVersion": "DEVELOPMENT VERSION",
+      "codeBaseNotProduction": "This code base is NOT for production use!"
+    },
+    "appearanceSelector": {
+      "appearance": "Appearance",
+      "oneToggleShowsCurrent": "One toggle: it shows your current theme and switches to the other. Matching your device returns you to System.",
+      "returnsYouDevicePreference": "This returns you to your device preference.",
+      "switchTheme": "Switch to {{next}} theme.{{restore}}",
+      "dark": "Dark",
+      "light": "Light",
+      "savingAppearance": "Saving {{nextEffective}} appearance.",
+      "appearanceUpdateFailed": "Appearance update failed",
+      "appearanceSaved": "{{nextEffective}} appearance saved.",
+      "appearanceCouldNotSaved": "Appearance could not be saved. The previous setting was restored.",
+      "followsDevice": "· follows device",
+      "override": "· override",
+      "savingAppearancePreference": "Saving appearance preference"
+    },
+    "durationPicker": {
+      "unitError": "Enter a whole number from 0 to 9,007,199,254,740,991."
+    },
+    "loader": {
+      "pleaseWait": "Please wait"
+    },
+    "history": {
+      "untitledPage": "Untitled Page",
+      "unknown": "Unknown"
     }
   },
   "auth": {
@@ -8527,6 +8579,34 @@
       "sourceId": "Source ID",
       "sourceTitle": "Source title",
       "extensions": "Extensions"
+    },
+    "editor": {
+      "offlinePageMetadataCould": "Offline page metadata could not be recorded: {{detail}}",
+      "offlinePageMetadataCould2": "Offline page metadata could not be recorded.",
+      "offlineDraftRecoveryLocked": "Offline draft recovery is locked. Verify this account online, then reload the editor before saving.",
+      "publishingUnavailableBecausePage": "Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.",
+      "offlineDraftRecoveryUnavailable": "Offline draft recovery is unavailable. Reload the editor before saving.",
+      "offlineEditorRecoveryNot": "Offline editor recovery is not ready. Reload the editor before saving.",
+      "accountSessionChangedWhile": "Your account session changed while saving. Retry with the current account.",
+      "editorStillInitializingRetry": "The editor is still initializing. Retry in a moment.",
+      "authoritativePageCouldNot": "The authoritative page could not be checked.",
+      "offlineEditorSessionWas": "Your offline editor session was locked. Unsaved plaintext was cleared. Verify this account online, then reload the editor to recover any encrypted draft.",
+      "offlineEditorSessionWas2": "Your offline editor session was locked. Unsaved plaintext was cleared.",
+      "changesCouldNotSaved": "Your changes could not be saved on this device.",
+      "savedDeviceReconnectReview": "Saved on this device. Reconnect to review and publish.",
+      "accountSessionCouldNot": "Your account session could not establish a safe local draft boundary. Retry while online.",
+      "editorChangedPagesWhile": "The editor changed pages while saving. Retry the save.",
+      "serverPublishingUnavailableWhile": "Server publishing is unavailable while disconnected.",
+      "pageRevisionUnavailableReload": "The page revision is unavailable. Reload before saving.",
+      "localRecoveryReceiptCould": "Local recovery receipt could not be committed; this online save is not available for offline recovery.",
+      "pageWasNotSubmitted": "The page was not submitted because the encrypted draft receipt could not be committed.",
+      "pageWasSavedBut": "The page was saved, but local submission finalization needs attention.",
+      "pageSavedBut": "Page saved, but {{postWriteError}}",
+      "publishingUnavailableBecausePage2": "Publishing is unavailable because the page may have been deleted or access may have been denied, but the local draft could not be retained.",
+      "localDraftCouldNot": "The local draft could not be discarded.",
+      "pageBrandingAssignmentInvalid": "Page branding assignment is invalid.",
+      "ctrlS": "{{saveActionLabel}} · Ctrl+S",
+      "untitledPage": "Untitled Page"
     }
   },
   "history": {

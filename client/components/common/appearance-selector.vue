@@ -15,15 +15,15 @@ section.appearance-selector(:aria-busy='saving ? `true` : `false`')
     @click='toggleAppearance'
   )
     v-icon(start, size='18') {{ effectiveTheme === `dark` ? `mdi-weather-night` : `mdi-white-balance-sunny` }}
-    span.appearance-selector__toggle-label {{ effectiveTheme === `dark` ? `Dark` : `Light` }}
-    span.appearance-selector__toggle-note {{ selectedAppearance === `system` ? `· follows device` : `· override` }}
+    span.appearance-selector__toggle-label {{ effectiveTheme === `dark` ? $t(`common:appearanceSelector.dark`) : $t(`common:appearanceSelector.light`) }}
+    span.appearance-selector__toggle-note {{ selectedAppearance === `system` ? $t(`common:appearanceSelector.followsDevice`) : $t(`common:appearanceSelector.override`) }}
   v-progress-linear(
     v-if='saving'
     indeterminate
     color='primary'
     height='2'
     class='appearance-selector__progress'
-    aria-label='Saving appearance preference'
+    :aria-label='$t(`common:appearanceSelector.savingAppearancePreference`)'
   )
   .appearance-selector__status(
     role='status'
@@ -38,14 +38,17 @@ import { useTheme } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 import { updateProfilePreferences } from '../../helpers/users-api.ts'
 import { resolveThemeName, type WikiThemeName } from '../../helpers/theme.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 /* global siteConfig */
 
 type Appearance = Extract<WikiThemeName, 'system' | 'light' | 'dark'>
 
 const {
-  label = 'Appearance',
-  description = 'One toggle: it shows your current theme and switches to the other. Matching your device returns you to System.'
+  label = t('common:appearanceSelector.appearance'),
+  description = t('common:appearanceSelector.oneToggleShowsCurrent')
 } = defineProps<{
   label?: string
   description?: string
@@ -69,8 +72,8 @@ const systemPrefersDark = (): boolean => {
 const toggleAriaLabel = computed(() => {
   const next = effectiveTheme.value === 'dark' ? 'light' : 'dark'
   const system = systemPrefersDark() ? 'dark' : 'light'
-  const restore = next === system ? ' This returns you to your device preference.' : ''
-  return `Switch to ${next} theme.${restore}`
+  const restore = next === system ? ` ${t('common:appearanceSelector.returnsYouDevicePreference')}` : ''
+  return t('common:appearanceSelector.switchTheme', { next, restore, interpolation: { escapeValue: false } })
 })
 
 function normalizeAppearance (value: string | null | undefined): Appearance {
@@ -85,9 +88,9 @@ async function toggleAppearance (): Promise<void> {
   const next: Appearance = nextEffective === (systemPrefersDark() ? 'dark' : 'light')
     ? 'system'
     : nextEffective
-  const nextLabel = nextEffective === 'dark' ? 'Dark' : 'Light'
+  const nextLabel = nextEffective === 'dark' ? t('common:appearanceSelector.dark') : t('common:appearanceSelector.light')
 
-  statusMessage.value = `Saving ${nextEffective.toLowerCase()} appearance.`
+  statusMessage.value = t('common:appearanceSelector.savingAppearance', { nextEffective: nextEffective.toLowerCase(), interpolation: { escapeValue: false } })
 
   const previousAppearance = selectedAppearance.value
   const previousStoreAppearance = wikiStore.user.appearance
@@ -99,16 +102,16 @@ async function toggleAppearance (): Promise<void> {
     await updateProfilePreferences(
       window.fetch.bind(window),
       { appearance: next },
-      'Appearance update failed'
+      t('common:appearanceSelector.appearanceUpdateFailed')
     )
     await wikiStore.refreshAuth()
     const effectiveAppearance = normalizeAppearance(wikiStore.user.appearance)
     await theme.change(effectiveAppearance, false)
-    statusMessage.value = `${nextEffective} appearance saved.`
+    statusMessage.value = t('common:appearanceSelector.appearanceSaved', { nextEffective, interpolation: { escapeValue: false } })
   } catch (error) {
     wikiStore.user.appearance = previousStoreAppearance
     await theme.change(resolveThemeName(previousAppearance, siteConfig.darkMode), false)
-    statusMessage.value = 'Appearance could not be saved. The previous setting was restored.'
+    statusMessage.value = t('common:appearanceSelector.appearanceCouldNotSaved')
     wikiStore.showError(error)
   } finally {
     wikiStore.stopLoading('profile-preferences-save')

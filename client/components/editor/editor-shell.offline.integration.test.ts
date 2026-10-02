@@ -25,6 +25,7 @@ import type {
 } from '../../helpers/offline-storage.ts'
 import { type PageWriteInput, updatePage } from '../../helpers/pages-api.ts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 const ORIGIN = 'https://wiki.example.test'
 const ACCOUNT_ID = 42
 const SESSION_GENERATION = 0
@@ -544,7 +545,7 @@ const createShellContext = (
     editorAdapterSafety: adapter.snapshot(),
     progressShown: 0,
     progressHidden: 0,
-    $t: (key: string) => key,
+    $t: translateEnglish,
     notifySafetyChanged() {
       const shell = this as unknown as ShellContext
       shell.safetyRevision += 1

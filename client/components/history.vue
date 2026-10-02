@@ -296,7 +296,7 @@ export default {
     },
     title: {
       type: String,
-      default: 'Untitled Page'
+      default: translate('common:history.untitledPage')
     },
     visibility: {
       type: String,
@@ -332,7 +332,7 @@ export default {
     },
     authorName: {
       type: String,
-      default: 'Unknown'
+      default: translate('common:history.unknown')
     },
     authorId: {
       type: Number,

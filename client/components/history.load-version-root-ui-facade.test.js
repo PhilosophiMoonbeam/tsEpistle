@@ -9,6 +9,8 @@ import englishLocale from '../../server/locales/en.json'
 import { formatRevisionTime, friendlyEditorName, translatedParts } from '../helpers/history-presentation.ts'
 import { afterEach, beforeEach } from '../../server/test/bun-test.mts'
 
+import { translateEnglish } from '../test/english-translate.mts'
+globalThis.translate = translateEnglish
 const fixtureSiteConfig = {
   company: '', contentLicense: '', footerOverride: '', banner: {},
   darkMode: false, tocPosition: 'left', title: 'Test', logoUrl: '',
