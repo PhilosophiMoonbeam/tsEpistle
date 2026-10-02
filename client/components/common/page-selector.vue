@@ -210,8 +210,7 @@
         v-alert(v-if='moveReviewError' type='error' variant='tonal' density='compact' role='alert') {{moveReviewError}}
         article.page-selector__candidate(v-for='item in selectedMoveReview.items' :key='item.id')
           h4.page-selector__candidate-title {{item.title}}
-          !target.matches(':disabled, [aria-disabled="true"]') &&
-          p.page-selector__candidate-reason(v-if='item.id === sourcePageId') Automatically included self-link changes are bundled with this move and are not a separately selected page.
+          p.page-selector__candidate-reason(v-if='item.id === sourcePageId') {{$t('common:pageSelector.selfLinkBundled')}}
           p.page-selector__candidate-reason(v-if='!item.eligible') {{item.reason || $t('common:pageSelector.manualRepairRequired')}}
           dl.page-selector__diff(v-if='item.changes.length')
             template(v-for='(change, index) in item.changes' :key='`${item.id}-${index}`')
