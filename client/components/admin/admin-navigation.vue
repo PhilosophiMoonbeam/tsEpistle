@@ -662,6 +662,7 @@
   </v-container>
 </template>
 <script setup lang="ts">
+import { confirmDiscard, requestConfirmation } from "../common/confirm-dialog.ts";
 import {
   computed,
   ref,
@@ -896,12 +897,13 @@ async function load() {
   }
 }
 async function reload() {
+  if (busy.value || initializing.value) return;
   if (
-    busy.value ||
-    initializing.value ||
-    (dirty.value && !window.confirm("Discard unsaved navigation changes?"))
+    dirty.value &&
+    !(await confirmDiscard("Discard unsaved navigation changes?"))
   )
     return;
+  if (busy.value || initializing.value) return;
   await load();
 }
 function reset() {
@@ -950,15 +952,15 @@ function duplicateItem() {
   setItems(items);
   selectedId.value = item.id;
 }
-function removeItem() {
-  if (
-    locked.value ||
-    !selected.value ||
-    !window.confirm(
-      `Remove ${selected.value.label || "this divider"} from the draft?`,
-    )
-  )
-    return;
+async function removeItem() {
+  if (locked.value || !selected.value) return;
+  const targetId = selectedId.value;
+  const confirmed = await requestConfirmation({
+    title: `Remove ${selected.value.label || "this divider"} from the draft?`,
+    confirmLabel: "Remove",
+    tone: "destructive",
+  });
+  if (!confirmed || locked.value || selectedId.value !== targetId) return;
   const index = selectedIndex.value;
   setItems(currentItems.value.filter((item) => item.id !== selectedId.value));
   selectedId.value =
@@ -982,15 +984,15 @@ function editLocale(code: string) {
   currentLocale.value = code;
   selectSection("structure");
 }
-function removeLocale(code: string) {
-  if (
-    locked.value ||
-    !draft.value ||
-    !window.confirm(
-      `Remove the custom menu for ${code} from this draft? The language itself remains installed.`,
-    )
-  )
-    return;
+async function removeLocale(code: string) {
+  if (locked.value || !draft.value) return;
+  const confirmed = await requestConfirmation({
+    title: `Remove the custom menu for ${code} from this draft?`,
+    message: "The language itself remains installed.",
+    confirmLabel: "Remove menu",
+    tone: "destructive",
+  });
+  if (!confirmed || locked.value || !draft.value) return;
   draft.value.tree = draft.value.tree.filter((tree) => tree.locale !== code);
 }
 function openCopy() {
@@ -1100,7 +1102,8 @@ async function confirm() {
 async function reloadReview() {
   if (
     busy.value ||
-    !window.confirm("Discard this review and load saved navigation?")
+    !(await confirmDiscard("Discard this review and load saved navigation?")) ||
+    busy.value
   )
     return;
   reviewing.value = false;
@@ -1151,11 +1154,11 @@ const date = (value: string) =>
     dateStyle: "medium",
     timeStyle: "short",
   });
-const canLeave = () =>
+const canLeave = async () =>
   !busy.value &&
   !initializing.value &&
   ((!dirty.value && !(reviewing.value && reason.value)) ||
-    window.confirm("Discard unsaved navigation changes?"));
+    (await confirmDiscard("Discard unsaved navigation changes?")));
 function beforeUnload(event: BeforeUnloadEvent) {
   if (
     busy.value ||

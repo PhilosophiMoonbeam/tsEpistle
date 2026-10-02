@@ -2,6 +2,11 @@ import fs from 'node:fs'
 import { groupPermissions } from '../../../shared/group-policy.ts'
 import { groupPolicyCopy, groupPolicySignature, emptyGroupPolicy } from '../../helpers/group-workspace-api.ts'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+// The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
+const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
+  confirmDiscard: async (title: string) => host.confirm(title),
+  requestConfirmation: async ({ title }: { title: string }) => host.confirm(title)
+})
 const source = fs.readFileSync('client/components/admin/admin-groups-edit.vue', 'utf8'),
   script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)![1]!
 const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .+$/gm, '').replace('export default', 'const component ='))
@@ -51,6 +56,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
     window,
     ...transport
   }
+  Object.assign(dependencies, confirmStubs(window))
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
   const state = {
     ...component.data(),
@@ -93,8 +99,8 @@ describe('group workspace review, recovery and navigation', () => {
     state.reason = 'Remove the outdated purpose'
     const pending = state.confirm()
     expect(state.busy).toBe(true)
-    expect(state.canLeave()).toBe(false)
-    expect(component.beforeRouteUpdate.call(state, { params: { id: '3' } }, { params: { id: '3' } })).toBe(false)
+    await expect(state.canLeave()).resolves.toBe(false)
+    await expect(component.beforeRouteUpdate.call(state, { params: { id: '3' } }, { params: { id: '3' } })).resolves.toBe(false)
     state.draft.description = 'Changed behind review'
     expect(transport.saveGroupPolicy.mock.calls[0]?.[1]).toMatchObject({ description: '' })
     transport.fetchGroupWorkspace.mockResolvedValue({ ...snapshot, description: '', fingerprint: 'version-two' })
@@ -211,15 +217,15 @@ describe('group workspace review, recovery and navigation', () => {
     transport.saveGroupPolicy.mockResolvedValue({ id: 3, sessionsEnded: 2, currentSessionEnded: true })
     await state.confirm()
     expect(window.location.assign).toHaveBeenCalledWith('/login')
-    expect(state.canLeave()).toBe(true)
+    await expect(state.canLeave()).resolves.toBe(true)
   })
   it('protects unsaved navigation, syncs fragments and validates destinations', async () => {
     const { state, component, window } = arrange()
     await state.load()
     state.draft.description = ''
     window.confirm.mockReturnValue(false)
-    expect(component.beforeRouteLeave.call(state)).toBe(false)
-    expect(component.beforeRouteUpdate.call(state, { params: { id: '4' } }, { params: { id: '3' } })).toBe(false)
+    await expect(component.beforeRouteLeave.call(state)).resolves.toBe(false)
+    await expect(component.beforeRouteUpdate.call(state, { params: { id: '4' } }, { params: { id: '3' } })).resolves.toBe(false)
     component.watch['$route.hash'].handler.call(state, '#rules')
     expect(state.section).toBe('rules')
     component.watch['$route.hash'].handler.call(state, '')

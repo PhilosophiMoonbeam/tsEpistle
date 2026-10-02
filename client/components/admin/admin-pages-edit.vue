@@ -39,6 +39,7 @@
   </v-container>
 </template>
 <script lang='ts'>
+import { confirmDiscard, requestConfirmation } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import _ from 'lodash'
@@ -169,8 +170,15 @@ export default {
     protectUnload(event: BeforeUnloadEvent) { if (this.publicationDirty || this.publicationBusy || this.pageFeatureDirty || this.pageFeatureBusy || this.accessOpen || this.accessBusy) { event.preventDefault(); event.returnValue = '' } },
     manageAccess(mode: string) { this.accessMode = mode; this.accessOpen = true },
     async accessChanged() { wikiStore.showNotification({ message: 'Page access updated.', style: 'success', icon: 'check' }); await this.loadPage() },
+    async canLeave(): Promise<boolean> {
+      if (this.pageFeatureBusy || this.publicationBusy || this.accessBusy) return false
+      if (this.accessOpen && !(await requestConfirmation({ title: 'Leave this access review?', confirmLabel: 'Leave review', cancelLabel: 'Stay' }))) return false
+      if (this.publicationDirty && !(await confirmDiscard('Discard unsaved publication changes?'))) return false
+      if (this.pageFeatureDirty && !(await confirmDiscard('Discard unsaved page feature changes?'))) return false
+      return !this.pageFeatureBusy && !this.publicationBusy && !this.accessBusy
+    },
     async refreshDetails() {
-      if ((this.publicationDirty || this.pageFeatureDirty) && !window.confirm('Discard unsaved publication and page feature changes and reload this page?')) return
+      if ((this.publicationDirty || this.pageFeatureDirty) && !(await confirmDiscard('Discard unsaved publication and page feature changes and reload this page?'))) return
       if (this.pageFeatureDirty) this.resetPageFeatures()
       await this.loadPage()
     },
@@ -280,8 +288,8 @@ export default {
     }
   },
   mounted() { const hash = this.$route.hash.slice(1); if (['overview', 'publication', 'knowledge'].includes(hash)) this.section = hash; window.addEventListener('beforeunload', this.protectUnload); this.clock = setInterval(() => { this.now = Date.now() }, 60000) },
-  beforeRouteLeave() { return !this.pageFeatureBusy && !this.publicationBusy && !this.accessBusy && (!this.accessOpen || window.confirm('Leave this access review?')) && (!this.publicationDirty || window.confirm('Discard unsaved publication changes?')) && (!this.pageFeatureDirty || window.confirm('Discard unsaved page feature changes?')) },
-  beforeRouteUpdate(to, from) { if (to.params.id === from.params.id) return true; return !this.pageFeatureBusy && !this.publicationBusy && !this.accessBusy && (!this.accessOpen || window.confirm('Leave this access review?')) && (!this.publicationDirty || window.confirm('Discard unsaved publication changes?')) && (!this.pageFeatureDirty || window.confirm('Discard unsaved page feature changes?')) },
+  beforeRouteLeave() { return this.canLeave() },
+  beforeRouteUpdate(to, from) { if (to.params.id === from.params.id) return true; return this.canLeave() },
   beforeUnmount () {
     window.removeEventListener('beforeunload', this.protectUnload)
     if (this.clock) clearInterval(this.clock)

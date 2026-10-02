@@ -110,6 +110,7 @@ v-container.admin-utilities(fluid)
 </template>
 
 <script lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import Cookies from 'js-cookie'
 import { defineAsyncComponent, defineComponent, markRaw, toRaw } from 'vue'
 import type { LocationQueryRaw } from 'vue-router'
@@ -269,10 +270,10 @@ export default defineComponent({
     if (this.poll !== null) window.clearTimeout(this.poll)
     window.removeEventListener('beforeunload', this.beforeUnload)
   },
-  beforeRouteLeave(): boolean {
+  beforeRouteLeave(): Promise<boolean> {
     return this.canLeave()
   },
-  beforeRouteUpdate(to: { path: string; query: Record<string, unknown> }, from: { path: string; query: Record<string, unknown> }): boolean {
+  async beforeRouteUpdate(to: { path: string; query: Record<string, unknown> }, from: { path: string; query: Record<string, unknown> }): Promise<boolean> {
     if (to.path === from.path && to.query.section === from.query.section) return true
     return this.canLeave()
   },
@@ -283,10 +284,11 @@ export default defineComponent({
         event.returnValue = ''
       }
     },
-    canLeave(): boolean {
+    async canLeave(): Promise<boolean> {
       if (this.busy || this.pendingRequest) return false
       if (!this.draftDirty) return true
-      if (!window.confirm('Discard the unsaved Utilities draft?')) return false
+      if (!(await confirmDiscard('Discard the unsaved Utilities draft?'))) return false
+      if (this.busy || this.pendingRequest) return false
       this.draftDirty = false
       return true
     },
@@ -396,9 +398,9 @@ export default defineComponent({
         if (!this.disposed && sequence === this.receiptSequence) this.receiptLoading = false
       }
     },
-    selectSection(section: ToolKey) {
+    async selectSection(section: ToolKey) {
       if (this.busy || this.pendingRequest || section === this.section) return
-      if (!this.canLeave()) {
+      if (!(await this.canLeave())) {
         const value = this.$route.query.section
         this.section = typeof value === 'string' && tools.some((tool) => tool.key === value) ? (value as ToolKey) : 'content'
         return

@@ -738,6 +738,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import AuthFields from './admin-auth-fields.vue'
 import type {
@@ -948,14 +949,14 @@ export default {
     this.sequence++
     window.removeEventListener('beforeunload', this.beforeUnload)
   },
-  beforeRouteLeave(): boolean {
+  beforeRouteLeave(): Promise<boolean> {
     return this.canLeave()
   },
-  beforeRouteUpdate(to, from): boolean {
+  async beforeRouteUpdate(to, from): Promise<boolean> {
     return (
       !this.busy &&
       !this.initializing &&
-      (to.path === from.path || this.canLeave())
+      (to.path === from.path || (await this.canLeave()))
     )
   },
   methods: {
@@ -1027,7 +1028,7 @@ export default {
       if (this.locked && !this.stale) return
       if (
         this.dirty &&
-        !window.confirm('Discard unsaved sign-in policy changes?')
+        !(await confirmDiscard('Discard unsaved sign-in policy changes?'))
       )
         return
       await this.load()
@@ -1328,9 +1329,9 @@ export default {
     async reloadReview() {
       if (
         this.busy ||
-        !window.confirm(
+        !(await confirmDiscard(
           'Discard this draft and load the current sign-in policy?'
-        )
+        ))
       )
         return
       this.reviewing = false
@@ -1356,12 +1357,12 @@ export default {
         this.initializing = false
       }
     },
-    canLeave(): boolean {
+    async canLeave(): Promise<boolean> {
       return (
         !this.busy &&
         !this.initializing &&
         ((!this.dirty && !(this.reviewing && this.reason)) ||
-          window.confirm('Discard unsaved sign-in policy changes?'))
+          (await confirmDiscard('Discard unsaved sign-in policy changes?')))
       )
     },
     beforeUnload(event: BeforeUnloadEvent) {

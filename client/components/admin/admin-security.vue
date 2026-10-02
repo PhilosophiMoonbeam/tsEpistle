@@ -659,6 +659,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { defineAsyncComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events.ts'
@@ -777,14 +778,14 @@ export default {
     this.sequence++
     window.removeEventListener('beforeunload', this.beforeUnload)
   },
-  beforeRouteLeave(): boolean {
+  beforeRouteLeave(): Promise<boolean> {
     return this.canLeave()
   },
-  beforeRouteUpdate(to, from): boolean {
+  async beforeRouteUpdate(to, from): Promise<boolean> {
     return (
       !this.busy &&
       !this.initializing &&
-      (to.path === from.path || this.canLeave())
+      (to.path === from.path || (await this.canLeave()))
     )
   },
   methods: {
@@ -814,7 +815,7 @@ export default {
       if (this.busy || this.initializing) return
       if (
         (this.dirty || this.endSessions) &&
-        !window.confirm('Discard unsaved security policy changes?')
+        !(await confirmDiscard('Discard unsaved security policy changes?'))
       )
         return
       await this.load()
@@ -965,9 +966,9 @@ export default {
     async reloadReview() {
       if (
         this.busy ||
-        !window.confirm(
+        !(await confirmDiscard(
           'Discard this review and load the saved security policy?'
-        )
+        ))
       )
         return
       this.reviewing = false
@@ -1004,14 +1005,14 @@ export default {
       this.backgroundError = false
       this.backgroundPreview = this.draft.authLoginBgUrl
     },
-    canLeave(): boolean {
+    async canLeave(): Promise<boolean> {
       return (
         !this.busy &&
         !this.initializing &&
         ((!this.dirty &&
           !this.endSessions &&
           !(this.reviewing && this.reason)) ||
-          window.confirm('Discard unsaved security policy changes?'))
+          (await confirmDiscard('Discard unsaved security policy changes?')))
       )
     },
     beforeUnload(event: BeforeUnloadEvent) {

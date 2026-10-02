@@ -54,7 +54,7 @@ export default {
     created(id: number) { this.creating = false; void this.$router.push(this.accountLink(id)) }
   },
   mounted() { void this.load() },
-  beforeRouteLeave() { return (this.$refs.createDialog as { canLeave: () => boolean } | undefined)?.canLeave() ?? true },
+  beforeRouteLeave() { return (this.$refs.createDialog as { canLeave: () => Promise<boolean> } | undefined)?.canLeave() ?? true },
   beforeUnmount() { this.disposed = true; this.sequence++; if (this.timer) clearTimeout(this.timer) }
 }
 </script>

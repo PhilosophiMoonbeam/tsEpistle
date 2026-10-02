@@ -29,6 +29,7 @@
   </v-container>
 </template>
 <script lang='ts'>
+import { requestConfirmation } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import AdminPagesPublication from './admin-pages-publication.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -96,7 +97,7 @@ export default {
     }
   },  mounted() { this.restoreFilters(); this.loadPages(); this.clock = setInterval(() => { this.now = Date.now() }, 60000) },
   watch: { '$route.query'() { this.restoreFilters() }, pageCount(value: number) { this.pagination = Math.max(1, Math.min(this.pagination, value)) } },
-  beforeRouteLeave() { if (this.bulkBusy) { wikiStore.showNotification({ message: 'Stop or finish the publication operation before leaving.', style: 'warning', icon: 'info' }); return false } return !this.bulkOpen || window.confirm('Leave this publication review? Completed changes are already saved.') },
+  async beforeRouteLeave() { if (this.bulkBusy) { wikiStore.showNotification({ message: 'Stop or finish the publication operation before leaving.', style: 'warning', icon: 'info' }); return false } return !this.bulkOpen || await requestConfirmation({ title: 'Leave this publication review?', message: 'Completed changes are already saved.', confirmLabel: 'Leave review', cancelLabel: 'Stay' }) },
   beforeUnmount() { this.loadRequestId++; if (this.clock) clearInterval(this.clock) }
 }
 </script>

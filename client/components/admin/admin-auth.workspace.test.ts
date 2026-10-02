@@ -4,6 +4,11 @@ import { NodeTypes, type ElementNode, type TemplateChildNode } from '@vue/compil
 import * as ts from 'typescript'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { authenticationDraft, authenticationSignature } from '../../helpers/authentication-workspace-api.ts'
+// The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
+const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
+  confirmDiscard: async (title: string) => host.confirm(title),
+  requestConfirmation: async ({ title }: { title: string }) => host.confirm(title)
+})
 
 const compileComponentOptions = (path: string): string => {
   const parsed = parse(fs.readFileSync(path, 'utf8'), { filename: path })
@@ -92,6 +97,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
       window,
       ...transport
     }
+  Object.assign(bindings, confirmStubs(window))
   const component = new Function(...Object.keys(bindings), compiled + ';return component')(...Object.values(bindings)),
     state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
@@ -139,7 +145,7 @@ describe('reviewed authentication workspace', () => {
     expect(state.saved.providers[0].description).toBe('Saved purpose')
     expect(state.dirty).toBe(true)
     window.confirm.mockReturnValue(false)
-    expect(state.canLeave()).toBe(false)
+    await expect(state.canLeave()).resolves.toBe(false)
     state.reset()
     expect(state.dirty).toBe(false)
     state.drafts[0].displayName += ' '
@@ -164,7 +170,7 @@ describe('reviewed authentication workspace', () => {
     const pending = state.confirm()
     state.drafts[0].secrets.clientSecret.value = 'changed-behind-review'
     expect(transport.saveAuthenticationWorkspace.mock.calls[0]?.[0][0].secrets.clientSecret.value).toBe('private-value')
-    expect(component.beforeRouteUpdate.call(state, { path: '/auth' }, { path: '/auth' })).toBe(false)
+    await expect(component.beforeRouteUpdate.call(state, { path: '/auth' }, { path: '/auth' })).resolves.toBe(false)
     release({ sessionsEnded: 2, currentSessionEnded: false, activation: 'applied' })
     await pending
     expect(state.reviewed).toEqual([])
@@ -276,7 +282,7 @@ describe('reviewed authentication workspace', () => {
     transport.saveAuthenticationWorkspace.mockResolvedValue({ sessionsEnded: 2, currentSessionEnded: true, activation: 'applied' })
     await state.confirm()
     expect(window.location.assign).toHaveBeenCalledWith('/login')
-    expect(state.canLeave()).toBe(true)
+    await expect(state.canLeave()).resolves.toBe(true)
     component.watch['$route.hash'].handler.call(state, '#provider=org&tab=enrollment')
     expect(state.providerSection).toBe('enrollment')
     component.watch['$route.hash'].handler.call(state, '#section=order')

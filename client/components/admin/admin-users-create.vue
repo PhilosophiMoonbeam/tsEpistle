@@ -29,6 +29,7 @@
   </v-dialog>
 </template>
 <script lang="ts">
+import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { passwordPolicyMixin } from '../../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import AsyncState from '@/components/common/async-state.vue'
@@ -59,8 +60,8 @@ export default {
     async reloadOptions() { this.reviewing = false; this.conflict = false; this.saveError = ''; await this.loadOptions() },
     review() { this.attempted = true; if (!this.issues.length) { this.reviewing = true; this.saveError = '' } },
     async save() { if (!this.options || this.saving || this.issues.length || this.reason.trim().length < 3) return; this.saving = true; this.saveError = ''; try { const result = await createAccount({ fingerprint: this.options.fingerprint, profile: JSON.parse(JSON.stringify(this.profile)) as AccountProfileDraft, providerKey: this.providerKey, ...(this.local ? { password: this.password } : {}), isVerified: this.isVerified, mustChangePassword: this.local && this.mustChangePassword, reason: this.reason.trim() }); this.password = ''; this.profile = emptyProfile(); this.reason = ''; this.$emit('created', result.id); this.$emit('update:modelValue', false) } catch (error) { this.conflict = accountRequestStatus(error) === 409; this.saveError = getErrorMessage(error) + (accountRequestStatus(error) === 0 ? ' The outcome is unconfirmed. Check the directory for this email before creating it again.' : '') } finally { this.saving = false } },
-    canLeave(): boolean { return !this.saving && (!this.modelValue || !this.modified || window.confirm('Discard this unsaved account?')) },
-    close() { if (this.canLeave()) { this.password = ''; this.$emit('update:modelValue', false) } },
+    async canLeave(): Promise<boolean> { return !this.saving && (!this.modelValue || !this.modified || await confirmDiscard('Discard this unsaved account?')) },
+    async close() { if (await this.canLeave()) { this.password = ''; this.$emit('update:modelValue', false) } },
     beforeUnload(event: BeforeUnloadEvent) { if (this.modelValue && (this.modified || this.saving)) { event.preventDefault(); event.returnValue = '' } }
   },
   mounted() { window.addEventListener('beforeunload', this.beforeUnload) },
