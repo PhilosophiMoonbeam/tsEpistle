@@ -343,7 +343,7 @@ const load = async (selectedId?: string, committedMessage?: string): Promise<boo
     if (!isCurrent(authority, ownerId, csrfToken) || generation !== loadGeneration || loadController !== controller || controller.signal.aborted) return false
     readAccepted.value = false
     const reason = caught instanceof Error ? caught.message : loaded.value ? t('common:agentPersonalSkills.personalSkillsCouldNot') : t('common:agentPersonalSkills.personalSkillsCouldNot2')
-    refreshError.value = loaded.value ? t('common:agentPersonalSkills.showingLastLoadedPersonal', { value: committedMessage ? `${committedMessage} ` : '', reason, interpolation: { escapeValue: false } }) : reason
+    refreshError.value = loaded.value ? t('common:agentPersonalSkills.showingLastLoadedPersonal', { prefix: committedMessage ? `${committedMessage} ` : '', reason, interpolation: { escapeValue: false } }) : reason
     return false
   } finally {
     if (isCurrent(authority, ownerId, csrfToken) && generation === loadGeneration && loadController === controller) {

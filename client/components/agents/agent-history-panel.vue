@@ -203,7 +203,7 @@
               <v-expansion-panel-title class="agent-history__folder-title">
                 <v-icon class="me-2 agent-history__folder-icon" icon="mdi-folder-outline" size="19" />
                 <span class="agent-history__folder-name">{{ group.folder.name }}</span>
-                <span class="agent-history__folder-count" :aria-label="$t('common:agentHistoryPanel.conversations2', { sessionsCount: group.sessions.length, interpolation: { escapeValue: false } })">{{ group.sessions.length }}</span>
+                <span class="agent-history__folder-count" :aria-label="$t('common:agentHistoryPanel.conversations2', { count: group.sessions.length, interpolation: { escapeValue: false } })">{{ group.sessions.length }}</span>
               </v-expansion-panel-title>
               <v-menu content-class="agent-owned-overlay" location="bottom end">
                 <template #activator="{ props: menuProps }">

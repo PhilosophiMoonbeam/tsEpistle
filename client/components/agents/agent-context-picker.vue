@@ -251,11 +251,11 @@ const scopeLabel = computed(() => props.draft.scope.kind === 'selected' ? t('com
 const attachedIds = computed(() => new Set(props.draft.sources.map(source => source.id)))
 const atCapacity = computed(() => props.draft.sources.length + selectedRows.value.length >= 8)
 const sourceStatus = computed(() => {
-  if (addingSources.value) return t('common:agentContextPicker.addingSource', { valueCount: selectedRows.value.length, selectedRows: selectedRows.value.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
+  if (addingSources.value) return t('common:agentContextPicker.addingSource', { count: selectedRows.value.length, interpolation: { escapeValue: false } })
   if (searchLoading.value) return t('common:agentContextPicker.searchingPages')
-  if (loadingMore.value) return t('common:agentContextPicker.loadingMoreResultsShown', { resultsCount: sourceResult.value.results.length, interpolation: { escapeValue: false } })
-  if (selectedRows.value.length) return t('common:agentContextPicker.sourcePendingResultShown', { valueCount: selectedRows.value.length, selectedRows: selectedRows.value.length === 1 ? '' : 's', resultsCount: sourceResult.value.results.length, results: sourceResult.value.results.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
-  if (sourceQuery.value.trim().length >= 2) return t('common:agentContextPicker.resultShown', { resultsCount: sourceResult.value.results.length, results: sourceResult.value.results.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
+  if (loadingMore.value) return t('common:agentContextPicker.loadingMoreResultsShown', { count: sourceResult.value.results.length, interpolation: { escapeValue: false } })
+  if (selectedRows.value.length) return t('common:agentContextPicker.sourcePendingResultShown', { count: selectedRows.value.length, resultSummary: t('common:agentContextPicker.resultShown', { count: sourceResult.value.results.length }), interpolation: { escapeValue: false } })
+  if (sourceQuery.value.trim().length >= 2) return t('common:agentContextPicker.resultShown', { count: sourceResult.value.results.length, interpolation: { escapeValue: false } })
   return t('common:agentContextPicker.noSourcesSelected')
 })
 
