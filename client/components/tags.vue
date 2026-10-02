@@ -894,7 +894,7 @@ export default {
   max-width: 100%;
   min-width: 0;
   margin: 0 auto;
-  padding: var(--wiki-space-8) var(--wiki-page-gutter) var(--wiki-space-2) !important;
+  padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-3) !important;
 }
 
 .tags-intro {
