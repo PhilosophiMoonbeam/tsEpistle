@@ -511,6 +511,7 @@ describe('search header affordances', () => {
       const mounted = await mountHeader({ hideSearch: false, xs: true, dense: false })
       expect(mounted.host.querySelector('.nav-header-mobile-actions')).not.toBeNull()
       expect(mounted.host.querySelector('.menu-stub__content [href="/t"]')).not.toBeNull()
+      expect(mounted.host.querySelector('.nav-header-menu__note')).toBeNull()
       expect(mounted.host.querySelector('[aria-label="Ouvrir l’agent"]')).toBeNull()
     } finally {
       globals.siteConfig = { ...globals.siteConfig, agentsEnabled: false }

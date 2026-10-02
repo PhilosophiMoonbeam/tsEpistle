@@ -323,7 +323,7 @@
               span {{ onlineActionReady ? $t('common:header.admin') : onlineActionUnavailableReason }}
             v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)')
               v-icon(start) mdi-exit-to-app
-          v-menu(v-if='hasMobilePageActions && $vuetify.display.smAndDown', location='bottom end', min-width='240')
+          v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-mobile-actions(
                 ref='mobileActions'
@@ -335,8 +335,6 @@
               )
                 v-icon mdi-dots-vertical
             v-list.nav-header-menu(nav)
-              v-list-subheader {{ $t('common:header.pageActions') }}
-              p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
               v-list-item(
                 v-if='$vuetify.display.xs && canEnterAgent'
                 role='button'
@@ -347,6 +345,7 @@
                 @click='openAgent'
               )
                 v-list-item-title {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
+              p.nav-header-menu__note(v-if='$vuetify.display.xs && !hideSearch && !transportVerified') {{ navigationUnavailableReason }}
               v-list-item(
                 v-if='$vuetify.display.xs && !hideSearch'
                 href='/t'
@@ -358,6 +357,9 @@
                 @click='guardHeaderNavigation'
               )
                 v-list-item-title {{ $t('common:header.browseTags') }}
+              v-divider(v-if='$vuetify.display.xs && !hideSearch && hasMobilePageActions')
+              v-list-subheader(v-if='hasMobilePageActions') {{ $t('common:header.pageActions') }}
+              p.nav-header-menu__note(v-if='hasMobilePageActions && !onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
               v-list-item(
                 role='button'
                 link
@@ -936,7 +938,6 @@ export default defineComponent({
     },
     hasMobilePageActions (): boolean {
       return Boolean(
-        (this.$vuetify.display.xs && !this.hideSearch) ||
         (this.path && (
           this.mode !== 'view' ||
           this.hasAnyPagePermissions ||
