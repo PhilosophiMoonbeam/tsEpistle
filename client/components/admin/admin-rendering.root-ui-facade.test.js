@@ -4,6 +4,7 @@ import { document } from '../../test/browser-dom.mts'
 import { compileTemplate } from '@vue/compiler-sfc'
 import { renderToString } from '@vue/server-renderer'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 const Vue = await import('vue')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
@@ -62,19 +63,20 @@ function arrange(overrides = {}) {
   }
   const all = { ...dependencies, ...transport }
   const component = new Function(...Object.keys(all), compiled + ';return component')(...Object.values(all))
-  const state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
+  const state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = method.bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => getter.call(state) })
   return { state, component, transport }
 }
 const renderWorkspace = async ({ component, state }) => {
-  const data = Object.fromEntries(Object.keys(component.data()).map(key => [key, state[key]]))
+  const data = Object.fromEntries(Object.keys(component.data.call({ $t: translateEnglish })).map(key => [key, state[key]]))
   const app = Vue.createSSRApp({
     ...component, data: () => data,
     render: compileRender(source, 'admin-rendering.vue')
   })
   app.config.globalProperties.$route = state.$route
   app.config.globalProperties.$router = state.$router
+  app.config.globalProperties.$t = translateEnglish
   app.use(createVuetify({ components: vuetifyComponents }))
   app.component('admin-hero', { render: () => null })
   const host = document.createElement('div')

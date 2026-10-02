@@ -1,43 +1,46 @@
 <template>
   <div class="api-connect">
-    <div class="connect-heading"><span class="connect-kicker">Integration workbench</span><h2>Choose your connection.</h2><p>REST for straightforward resource access, GraphQL for precise queries, and MCP for external agents. All three enforce the key’s permissions and page rules.</p></div>
-    <v-alert v-if="error" type="error" variant="tonal" class="mb-4">Connection settings could not be loaded. <v-btn variant="text" @click="$emit('retry')">Retry</v-btn></v-alert>
-    <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Loading connection settings" />
-    <v-radio-group v-model="protocol" inline label="Client protocol" color="primary"><v-radio label="REST v1" value="rest" /><v-radio label="GraphQL" value="graphql" /><v-radio label="MCP" value="mcp" /></v-radio-group>
+    <div class="connect-heading"><span class="connect-kicker">{{ $t('admin:apiConnect.integrationWorkbench') }}</span><h2>{{ $t('admin:apiConnect.chooseConnection') }}</h2><p>{{ $t('admin:apiConnect.restStraightforwardResourceAccess') }}</p></div>
+    <v-alert v-if="error" type="error" variant="tonal" class="mb-4">{{ $t('admin:apiConnect.connectionSettingsCouldNot') }} <v-btn variant="text" @click="$emit('retry')">{{ $t('admin:apiConnect.retry') }}</v-btn></v-alert>
+    <v-progress-linear v-if="loading" indeterminate color="primary" :aria-label="$t('admin:apiConnect.loadingConnectionSettings')" />
+    <v-radio-group v-model="protocol" inline :label="$t('admin:apiConnect.clientProtocol')" color="primary"><v-radio :label="$t('admin:apiConnect.restV1')" value="rest" /><v-radio :label="$t('admin:apiConnect.graphql')" value="graphql" /><v-radio :label="$t('admin:apiConnect.mcp')" value="mcp" /></v-radio-group>
     <div class="connect-grid">
-      <section class="connect-panel"><span class="connect-kicker">01 / Endpoint</span><h3>{{ protocolTitle }}</h3><code class="endpoint-value">{{ endpoint || 'Canonical MCP resource unavailable' }}</code>
-        <p v-if="protocol === 'mcp'">Use Streamable HTTP with a key issued for the exact resource above. A browser session cannot authenticate an MCP client.</p><p v-else>Authenticate each request with <code>Authorization: Bearer &lt;API_KEY&gt;</code>. Keep the credential in your client’s secret storage.</p>
-        <v-alert v-if="protocol === 'mcp' && connections && !connections.mcpEnabled" type="warning" variant="tonal">MCP is disabled in this deployment. Configure the runtime before creating an MCP credential.</v-alert><v-alert v-if="protocol === 'mcp' && connections?.mcpConfigurationError" type="error" variant="tonal">The configured public origin cannot produce a valid MCP resource. Review General settings and deployment configuration.</v-alert>
-        <dl class="connection-facts"><div><dt>API-key authentication</dt><dd>{{ enabled ? 'Enabled' : 'Disabled' }}</dd></div><div><dt>Authorization</dt><dd>Issued group’s current permissions and page rules</dd></div><div v-if="protocol === 'mcp'"><dt>MCP runtime</dt><dd>{{ connections ? connections.mcpEnabled ? 'Configured as enabled' : 'Disabled' : 'Not loaded' }}</dd></div></dl>
-        <p class="connection-note">Configuration is shown here; it is not a connection health check.</p><div class="connection-actions"><v-btn variant="outlined" prepend-icon="mdi-content-copy" :disabled="!endpoint" @click="copy(endpoint || '')">Copy endpoint</v-btn><v-btn variant="text" @click="$emit('create')">Create a key</v-btn></div>
+      <section class="connect-panel"><span class="connect-kicker">{{ $t('admin:apiConnect.n01Endpoint') }}</span><h3>{{ protocolTitle }}</h3><code class="endpoint-value">{{ endpoint || $t('admin:apiConnect.canonicalMcpResourceUnavailable') }}</code>
+        <p v-if="protocol === 'mcp'">{{ $t('admin:apiConnect.useStreamableHttpKey') }}</p><p v-else>{{ $t('admin:apiConnect.authenticateEachRequest') }} <code>Authorization: Bearer &lt;API_KEY&gt;</code>{{ $t('admin:apiConnect.keepCredentialClientsSecret') }}</p>
+        <v-alert v-if="protocol === 'mcp' && connections && !connections.mcpEnabled" type="warning" variant="tonal">{{ $t('admin:apiConnect.mcpDisabledDeploymentConfigure') }}</v-alert><v-alert v-if="protocol === 'mcp' && connections?.mcpConfigurationError" type="error" variant="tonal">{{ $t('admin:apiConnect.configuredPublicOriginCannot') }}</v-alert>
+        <dl class="connection-facts"><div><dt>{{ $t('admin:apiConnect.apiKeyAuthentication') }}</dt><dd>{{ enabled ? $t('admin:apiConnect.enabled') : $t('admin:apiConnect.disabled') }}</dd></div><div><dt>{{ $t('admin:apiConnect.authorization') }}</dt><dd>{{ $t('admin:apiConnect.issuedGroupsCurrentPermissions') }}</dd></div><div v-if="protocol === 'mcp'"><dt>{{ $t('admin:apiConnect.mcpRuntime') }}</dt><dd>{{ connections ? connections.mcpEnabled ? $t('admin:apiConnect.configuredEnabled') : $t('admin:apiConnect.disabled') : $t('admin:apiConnect.notLoaded') }}</dd></div></dl>
+        <p class="connection-note">{{ $t('admin:apiConnect.configurationShownHereNot') }}</p><div class="connection-actions"><v-btn variant="outlined" prepend-icon="mdi-content-copy" :disabled="!endpoint" @click="copy(endpoint || '')">{{ $t('admin:apiConnect.copyEndpoint') }}</v-btn><v-btn variant="text" @click="$emit('create')">{{ $t('admin:apiConnect.createKey') }}</v-btn></div>
       </section>
-      <section class="connect-example"><span class="connect-kicker">02 / First request</span><h3>{{ protocol === 'mcp' ? 'Configure your agent client' : 'Read a small page inventory' }}</h3><p>{{ protocol === 'mcp' ? 'Enter the endpoint and bearer credential in your client’s Streamable HTTP connection settings. Field names vary between clients.' : 'Set WIKI_API_KEY in your shell environment, then run this read-only example. The key needs read:pages or system-administrator access.' }}</p>
-        <pre tabindex="0" :aria-label="protocolTitle + ' connection example'">{{ example }}</pre><v-btn variant="text" prepend-icon="mdi-content-copy" :disabled="!endpoint" @click="copy(example)">Copy example</v-btn><p v-if="copied" class="connection-note" role="status">{{ copied }}</p>
-        <p v-if="protocol === 'mcp'" class="connection-note">MCP-capable keys also work with REST and GraphQL. Keys created without MCP access have no resource binding and cannot authenticate MCP requests. Create a replacement when the canonical resource changes.</p>
-        <a v-if="protocol === 'rest'" :href="openApiEndpoint" target="_blank" rel="noopener" class="reference-link">Open the OpenAPI contract <v-icon size="16">mdi-open-in-new</v-icon></a><a v-if="protocol === 'graphql'" href="/graphql" target="_blank" rel="noopener" class="reference-link">Open the GraphQL workspace <v-icon size="16">mdi-open-in-new</v-icon></a>
+      <section class="connect-example"><span class="connect-kicker">{{ $t('admin:apiConnect.n02FirstRequest') }}</span><h3>{{ protocol === 'mcp' ? $t('admin:apiConnect.configureAgentClient') : $t('admin:apiConnect.readSmallPageInventory') }}</h3><p>{{ protocol === 'mcp' ? $t('admin:apiConnect.enterEndpointBearerCredential') : $t('admin:apiConnect.setWikiApiKey') }}</p>
+        <pre tabindex="0" :aria-label="$t('admin:apiConnect.connectionExample', { protocolTitle, interpolation: { escapeValue: false } })">{{ example }}</pre><v-btn variant="text" prepend-icon="mdi-content-copy" :disabled="!endpoint" @click="copy(example)">{{ $t('admin:apiConnect.copyExample') }}</v-btn><p v-if="copied" class="connection-note" role="status">{{ copied }}</p>
+        <p v-if="protocol === 'mcp'" class="connection-note">{{ $t('admin:apiConnect.mcpCapableKeysAlso') }}</p>
+        <a v-if="protocol === 'rest'" :href="openApiEndpoint" target="_blank" rel="noopener" class="reference-link">{{ $t('admin:apiConnect.openOpenapiContract') }} <v-icon size="16">mdi-open-in-new</v-icon></a><a v-if="protocol === 'graphql'" href="/graphql" target="_blank" rel="noopener" class="reference-link">{{ $t('admin:apiConnect.openGraphqlWorkspace') }} <v-icon size="16">mdi-open-in-new</v-icon></a>
       </section>
     </div>
-    <section class="connection-checks"><h3>When a request does not work</h3><dl><div><dt>401 · Authentication</dt><dd>Check API-key enablement, expiry, revocation, and the bearer header. For MCP, also check the resource binding.</dd></div><div><dt>403 · Authorization</dt><dd>Review the key’s permission group and page rules. MCP also requires use:mcp or manage:system. GraphQL may report permission errors inside an HTTP 200 response.</dd></div><div><dt>Browser sessions</dt><dd>The internal <code>/_api</code> routes belong to the application and reject API keys. Use the public REST, GraphQL or MCP contract for integrations.</dd></div></dl></section>
+    <section class="connection-checks"><h3>{{ $t('admin:apiConnect.whenRequestDoesNot') }}</h3><dl><div><dt>{{ $t('admin:apiConnect.n401Authentication') }}</dt><dd>{{ $t('admin:apiConnect.checkApiKeyEnablement') }}</dd></div><div><dt>{{ $t('admin:apiConnect.n403Authorization') }}</dt><dd>{{ $t('admin:apiConnect.reviewKeysPermissionGroup') }}</dd></div><div><dt>{{ $t('admin:apiConnect.browserSessions') }}</dt><dd>{{ $t('admin:apiConnect.internal') }} <code>/_api</code> {{ $t('admin:apiConnect.routesBelongApplicationReject') }}</dd></div></dl></section>
   </div>
 </template>
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { apiAccessContract } from '../../../shared/api-access.ts'
 import type { ApiConnectionInfo } from '../../../shared/api-admin.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const { connections, loading, error, enabled } = defineProps<{ connections: ApiConnectionInfo | null; loading: boolean; error: boolean; enabled: boolean }>()
 defineEmits<{ retry: []; create: [] }>()
 const protocol = ref('rest')
 const copied = ref('')
-const protocolTitle = computed(() => ({ rest: 'REST v1', graphql: 'GraphQL', mcp: 'Model Context Protocol' })[protocol.value] || 'REST v1')
+const protocolTitle = computed(() => ({ rest: t('admin:apiConnect.restV1'), graphql: 'GraphQL', mcp: t('admin:apiConnect.modelContextProtocol') })[protocol.value] || t('admin:apiConnect.restV1'))
 const endpoint = computed(() => protocol.value === 'mcp' ? connections?.mcpResource : `${window.location.origin}${protocol.value === 'graphql' ? apiAccessContract.graphqlPath : apiAccessContract.externalRestPrefix}`)
 const openApiEndpoint = `${window.location.origin}${apiAccessContract.openApiPath}`
 const example = computed(() => {
-  if (protocol.value === 'mcp') return `Transport: Streamable HTTP\nURL: ${endpoint.value || '<canonical MCP resource>'}\nAuthorization: Bearer <API_KEY>`
+  if (protocol.value === 'mcp') return `Transport: Streamable HTTP\nURL: ${endpoint.value || t('admin:apiConnect.canonicalMcpResource')}\nAuthorization: Bearer <API_KEY>`
   const auth = '  --header "Authorization: Bearer $WIKI_API_KEY"'
   if (protocol.value === 'rest') return `curl '${endpoint.value}/pages?limit=10' \\\n${auth}`
   return `curl '${endpoint.value}' \\\n${auth} \\\n  --header 'Content-Type: application/json' \\\n  --data '{"query":"query { pages { list(limit: 10) { id title path locale } } }"}'`
 })
-async function copy(value: string) { try { await navigator.clipboard.writeText(value); copied.value = 'Copied to clipboard.' } catch { copied.value = 'Copy failed. Select the text and copy it manually.' } }
+async function copy(value: string) { try { await navigator.clipboard.writeText(value); copied.value = t('admin:apiConnect.copiedClipboard') } catch { copied.value = t('admin:apiConnect.copyFailedSelectText') } }
 </script>
 <style scoped>
 .connect-kicker { font-size: .7rem; letter-spacing: .09em; text-transform: uppercase; color: var(--wiki-accent-ink); }

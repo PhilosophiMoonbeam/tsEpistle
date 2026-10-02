@@ -7,6 +7,7 @@ import {
   securityChangedFields,
   securityEndsSessions
 } from '../../../shared/security-policy.ts'
+import { translateEnglish } from '../../test/english-translate.mts'
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -52,7 +53,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
   }
   Object.assign(dependencies, confirmStubs(window))
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
-  const state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
+  const state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
   return { state, transport, component, window, wikiStore }

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { generalPolicyDefaults, generalFieldLabels, validateGeneralPolicy, generalChangedFields, externalSourceUrl } from '../../../shared/general-policy.ts'
 import { siteBannerState } from '../../../shared/site-banner.ts'
+import { translateEnglish } from '../../test/english-translate.mts'
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -16,7 +17,7 @@ function arrange(overrides = {}) {
   const deps = { AsyncState: {}, SiteBanner: {}, GeneralLogoManager: {}, wikiStore, generalFieldLabels, validateGeneralPolicy, generalChangedFields, externalSourceUrl, siteBannerState, renderFooterMarkdown: (value: string) => value, getErrorMessage: (e: Error) => e.message, window, ...transport }
   Object.assign(deps, confirmStubs(window))
   const component = new Function(...Object.keys(deps), compiled + ';return component')(...Object.values(deps))
-  const state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() }, $t: (value: string) => value }
+  const state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
   return { state, transport, component, window, wikiStore }

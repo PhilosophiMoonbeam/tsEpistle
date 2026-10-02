@@ -1,33 +1,36 @@
 <template>
   <section class="search-evaluate" aria-labelledby="search-evaluate-title">
-    <header><div class="search-kicker">Query evaluation</div><h2 id="search-evaluate-title">Find out what comes back.</h2><p>Run the same search readers use, then inspect the matching fields and relative scores.</p></header>
+    <header><div class="search-kicker">{{ $t('admin:searchEvaluate.queryEvaluation') }}</div><h2 id="search-evaluate-title">{{ $t('admin:searchEvaluate.findOutWhatComes') }}</h2><p>{{ $t('admin:searchEvaluate.runSameSearchReaders') }}</p></header>
     <v-form class="query-form" @submit.prevent="evaluate()">
-      <v-text-field v-model="query" label="Search query" prepend-inner-icon="mdi-magnify" maxlength="1000" hide-details clearable />
-      <div class="query-scope"><v-text-field v-model="locale" label="Locale (optional)" hint="For example, en" persistent-hint maxlength="35" /><v-text-field v-model="path" label="Page path (optional)" hint="Limit the search to a page tree" persistent-hint maxlength="1024" /></div>
-      <div class="query-actions"><span>Uses saved configuration and your current page permissions.</span><v-btn type="submit" color="primary" prepend-icon="mdi-play-outline" :disabled="!query?.trim() || loading" :loading="loading">Evaluate query</v-btn></div>
+      <v-text-field v-model="query" :label="$t('admin:searchEvaluate.searchQuery')" prepend-inner-icon="mdi-magnify" maxlength="1000" hide-details clearable />
+      <div class="query-scope"><v-text-field v-model="locale" :label="$t('admin:searchEvaluate.localeOptional')" :hint="$t('admin:searchEvaluate.exampleEn')" persistent-hint maxlength="35" /><v-text-field v-model="path" :label="$t('admin:searchEvaluate.pagePathOptional')" :hint="$t('admin:searchEvaluate.limitSearchPageTree')" persistent-hint maxlength="1024" /></div>
+      <div class="query-actions"><span>{{ $t('admin:searchEvaluate.usesSavedConfigurationCurrent') }}</span><v-btn type="submit" color="primary" prepend-icon="mdi-play-outline" :disabled="!query?.trim() || loading" :loading="loading">{{ $t('admin:searchEvaluate.evaluateQuery') }}</v-btn></div>
     </v-form>
     <v-alert v-if="error" type="error" variant="tonal" class="mt-4" role="alert">{{ error }}</v-alert>
     <v-skeleton-loader v-if="loading && !result" type="list-item-three-line, list-item-three-line" class="mt-4" />
     <template v-if="result">
-      <div class="query-summary" role="status"><div><h3>Results for “{{ submitted.query }}”</h3><p>{{ rows.length }} shown · {{ elapsedMs }} ms round trip<span v-if="submitted.locale"> · {{ submitted.locale }}</span><span v-if="submitted.path"> · {{ submitted.path }}</span></p></div><span>Scores are relative to this query</span></div>
-      <v-alert v-if="result.windowTruncated" type="info" variant="tonal" density="compact">This search uses a bounded candidate window. Narrow the query or scope to evaluate more specific content.</v-alert>
-      <div v-if="result.suggestions.length" class="query-suggestions"><span>Try a spelling suggestion</span><v-btn v-for="suggestion in result.suggestions" :key="suggestion" variant="tonal" size="small" :disabled="loading" @click="query = suggestion; evaluate()">{{ suggestion }}</v-btn></div>
+      <div class="query-summary" role="status"><div><h3>{{ $t('admin:searchEvaluate.results', { query: submitted.query, interpolation: { escapeValue: false } }) }}</h3><p>{{ $t('admin:searchEvaluate.shownMsRoundTrip', { rowsCount: rows.length, elapsedMs, interpolation: { escapeValue: false } }) }}<span v-if="submitted.locale"> · {{ submitted.locale }}</span><span v-if="submitted.path"> · {{ submitted.path }}</span></p></div><span>{{ $t('admin:searchEvaluate.scoresRelativeQuery') }}</span></div>
+      <v-alert v-if="result.windowTruncated" type="info" variant="tonal" density="compact">{{ $t('admin:searchEvaluate.searchUsesBoundedCandidate') }}</v-alert>
+      <div v-if="result.suggestions.length" class="query-suggestions"><span>{{ $t('admin:searchEvaluate.trySpellingSuggestion') }}</span><v-btn v-for="suggestion in result.suggestions" :key="suggestion" variant="tonal" size="small" :disabled="loading" @click="query = suggestion; evaluate()">{{ suggestion }}</v-btn></div>
       <ol v-if="rows.length" class="query-results">
         <li v-for="(row, index) in rows" :key="row.id">
           <span class="query-rank">{{ String(index + 1).padStart(2, '0') }}</span>
-          <div class="query-result"><div class="query-result__title"><a :href="pageUrl(row)" target="_blank" rel="noopener">{{ row.title }}<v-icon size="14" aria-label="Opens in a new tab">mdi-open-in-new</v-icon></a><span>{{ row.score.toLocaleString(undefined, { maximumFractionDigits: 3 }) }}</span></div><code>{{ row.locale }}/{{ row.path }}</code><p v-if="row.description">{{ row.description }}</p><div class="query-evidence"><span>Matched</span><v-chip v-for="field in row.matchedFields" :key="field" size="x-small" variant="tonal">{{ matchFieldLabel(field) }}</v-chip><span v-if="!row.matchedFields.length">No field evidence reported</span><v-chip v-if="row.visibility === 'private'" size="x-small" prepend-icon="mdi-lock-outline" variant="outlined">Private</v-chip></div></div>
+          <div class="query-result"><div class="query-result__title"><a :href="pageUrl(row)" target="_blank" rel="noopener">{{ row.title }}<v-icon size="14" :aria-label="$t('admin:searchEvaluate.opensNewTab')">mdi-open-in-new</v-icon></a><span>{{ row.score.toLocaleString(undefined, { maximumFractionDigits: 3 }) }}</span></div><code>{{ row.locale }}/{{ row.path }}</code><p v-if="row.description">{{ row.description }}</p><div class="query-evidence"><span>{{ $t('admin:searchEvaluate.matched') }}</span><v-chip v-for="field in row.matchedFields" :key="field" size="x-small" variant="tonal">{{ matchFieldLabel(field) }}</v-chip><span v-if="!row.matchedFields.length">{{ $t('admin:searchEvaluate.noFieldEvidenceReported') }}</span><v-chip v-if="row.visibility === 'private'" size="x-small" prepend-icon="mdi-lock-outline" variant="outlined">{{ $t('admin:searchEvaluate.private') }}</v-chip></div></div>
         </li>
       </ol>
-      <div v-else class="query-empty"><v-icon size="32">mdi-text-search</v-icon><h3>No matching pages</h3><p>Try a broader query or remove a scope filter. Unpublished and inaccessible pages may be excluded by the search service.</p></div>
-      <v-btn v-if="result.nextCursor" class="mt-4" variant="outlined" :loading="loading" :disabled="loading" @click="evaluate(result.nextCursor)">Load more results</v-btn>
+      <div v-else class="query-empty"><v-icon size="32">mdi-text-search</v-icon><h3>{{ $t('admin:searchEvaluate.noMatchingPages') }}</h3><p>{{ $t('admin:searchEvaluate.tryBroaderQueryRemove') }}</p></div>
+      <v-btn v-if="result.nextCursor" class="mt-4" variant="outlined" :loading="loading" :disabled="loading" @click="evaluate(result.nextCursor)">{{ $t('admin:searchEvaluate.loadMoreResults') }}</v-btn>
     </template>
-    <div v-else-if="!loading && !error" class="query-empty"><v-icon size="32">mdi-text-box-search-outline</v-icon><h3>Start with a real question</h3><p>Try a page title, a subject your readers ask about, or a phrase you expect the wiki to contain.</p></div>
+    <div v-else-if="!loading && !error" class="query-empty"><v-icon size="32">mdi-text-box-search-outline</v-icon><h3>{{ $t('admin:searchEvaluate.startRealQuestion') }}</h3><p>{{ $t('admin:searchEvaluate.tryPageTitleSubject') }}</p></div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { onBeforeUnmount, ref, shallowRef } from 'vue'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 const query = ref<string | null>('')
 const locale = ref('')
 const path = ref('')
@@ -39,7 +42,7 @@ const rows = shallowRef<PageSearchRow[]>([])
 const elapsedMs = ref(0)
 let controller: AbortController | null = null
 const pageUrl = (row: PageSearchRow) => `/${encodeURIComponent(row.locale)}/${row.path.split('/').map(encodeURIComponent).join('/')}`
-const matchFieldLabel = (field: PageSearchRow['matchedFields'][number]): string => field === 'knowledge' ? 'knowledge hints' : field
+const matchFieldLabel = (field: PageSearchRow['matchedFields'][number]): string => field === 'knowledge' ? t('admin:searchEvaluate.knowledgeHints') : field
 async function evaluate(cursor?: string | null) {
   if (loading.value) return
   const input = cursor ? submitted.value : { query: query.value?.trim() || '', locale: locale.value.trim(), path: path.value.trim() }
@@ -57,7 +60,7 @@ async function evaluate(cursor?: string | null) {
     elapsedMs.value = Math.round(performance.now() - started)
     result.value = response
     rows.value = cursor ? [...rows.value, ...response.results.filter(row => !rows.value.some(existing => String(existing.id) === String(row.id)))] : response.results
-  } catch (value) { if (!request.signal.aborted) error.value = value instanceof Error ? value.message : 'Search could not be evaluated.' }
+  } catch (value) { if (!request.signal.aborted) error.value = value instanceof Error ? value.message : t('admin:searchEvaluate.searchCouldNotEvaluated') }
   finally { if (controller === request) loading.value = false }
 }
 onBeforeUnmount(() => controller?.abort())

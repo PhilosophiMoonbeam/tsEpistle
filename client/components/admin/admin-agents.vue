@@ -3,15 +3,15 @@ v-container.admin-agents(fluid)
   AgentAdmin(v-if='agentsEnabled' :csrf-token='csrfToken' embedded)
   section.admin-agents__disabled(v-else aria-labelledby='agents-disabled-title')
     AdminHero(
-      title='Agents are not enabled'
-      description='This deployment has the Agent feature turned off. Provider profiles and browser targets remain unavailable until an operator enables the Agent feature and restarts Wiki.'
+      :title='$t(`admin:agents.agentsNotEnabled`)'
+      :description='$t(`admin:agents.deploymentHasAgentFeature`)'
       icon='mdi-robot-off-outline'
-      eyebrow='Deployment feature control'
+      :eyebrow='$t(`admin:agents.deploymentFeatureControl`)'
       heading-id='agents-disabled-title'
     )
       template(#status)
-        v-chip(color='warning' variant='tonal' size='small' prepend-icon='mdi-pause-circle-outline') Feature disabled
-    v-alert.admin-agents__disabled-note(type='info' variant='tonal' density='compact' icon='mdi-cog-refresh-outline') Enable the Agent deployment setting through the normal configuration rollout. This page cannot override a deployment kill switch.
+        v-chip(color='warning' variant='tonal' size='small' prepend-icon='mdi-pause-circle-outline') {{ $t(`admin:agents.featureDisabled`) }}
+    v-alert.admin-agents__disabled-note(type='info' variant='tonal' density='compact' icon='mdi-cog-refresh-outline') {{ $t(`admin:agents.enableAgentDeploymentSetting`) }}
 </template>
 
 <script setup lang="ts">

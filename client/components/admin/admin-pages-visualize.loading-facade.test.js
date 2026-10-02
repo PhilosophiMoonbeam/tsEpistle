@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { translateEnglish } from '../../test/english-translate.mts'
 
 describe('admin-pages-visualize stale locale loading behavior', () => {
   const componentPath = path.join(process.cwd(), 'client/components/admin/admin-pages-visualize.vue')
@@ -45,7 +46,8 @@ describe('admin-pages-visualize stale locale loading behavior', () => {
       pageLoadRequestId: 0,
       pages: [],
       loading: false,
-      errorMessage: ''
+      errorMessage: '',
+      $t: translateEnglish
     }
 
     const localeARequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)

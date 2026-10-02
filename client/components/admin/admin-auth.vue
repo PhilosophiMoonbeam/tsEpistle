@@ -4,14 +4,14 @@
       icon="mdi-shield-account-outline"
       :title="
         selected
-          ? selected.displayName || 'New sign-in method'
-          : 'Authentication'
+          ? selected.displayName || $t('admin:auth.newSignMethod')
+          : $t('admin:auth.title')
       "
       :description="
         selected
           ? selected.description ||
-            'Configure how this identity provider connects people to the workspace.'
-          : 'Manage sign-in methods and how new accounts join.'
+            $t('admin:auth.configureHowIdentityProvider')
+          : $t('admin:auth.manageSignMethodsHow')
       "
     >
       <template #actions
@@ -21,42 +21,42 @@
           prepend-icon="mdi-arrow-left"
           :disabled="busy"
           @click="selectProvider('')"
-          >All providers</v-btn
+          >{{ $t('admin:auth.allProviders') }}</v-btn
         ><v-btn
           variant="text"
           prepend-icon="mdi-refresh"
           :disabled="busy"
           :loading="loading"
           @click="reload"
-          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">Reload saved sign-in policy</v-tooltip></v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:auth.reloadSavedSignPolicy') }}</v-tooltip></v-btn
         ><v-btn v-if="dirty" variant="text" :disabled="busy" @click="reset"
-          >Reset draft</v-btn
+          >{{ $t('admin:auth.resetDraft') }}</v-btn
         ><v-btn
           color="primary"
           variant="flat"
           prepend-icon="mdi-check"
           :disabled="!dirty || locked"
           @click="review"
-          >Review changes</v-btn
+          >{{ $t('admin:auth.reviewChanges') }}</v-btn
         ></template
       >
     </admin-hero>
     <async-state
       v-if="!saved && loading"
       state="loading"
-      title="Loading sign-in policy"
+      :title="$t('admin:auth.loadingSignPolicy')"
     /><async-state
       v-else-if="!saved && loadError"
       state="error"
-      title="Authentication is unavailable"
+      :title="$t('admin:auth.authenticationUnavailable')"
       :message="loadError"
-      retry-label="Try again"
+      :retry-label="$t('admin:auth.tryAgain')"
       @retry="load"
     />
     <template v-if="saved">
       <v-alert v-if="loadError" type="error" variant="tonal" class="mt-5"
         >{{ loadError
-        }}<v-btn variant="text" @click="load">Try again</v-btn></v-alert
+        }}<v-btn variant="text" @click="load">{{ $t('admin:auth.tryAgain') }}</v-btn></v-alert
       ><v-alert
         v-if="notice"
         :type="attention ? 'warning' : 'success'"
@@ -66,14 +66,14 @@
       >
       <div class="identity-status">
         <span>{{
-          dirty ? 'Unsaved policy draft' : 'Showing saved sign-in policy'
+          dirty ? $t('admin:auth.unsavedPolicyDraft') : $t('admin:auth.showingSavedSignPolicy')
         }}</span
-        ><span>{{ enabledCount }} enabled · {{ accountCount }} accounts</span>
+        ><span>{{ $t('admin:auth.enabledAccounts', { enabledCount, accountCount, interpolation: { escapeValue: false } }) }}</span>
       </div>
       <nav
         v-if="!selected"
         class="identity-tabs"
-        aria-label="Authentication sections"
+        :aria-label="$t('admin:auth.authenticationSections')"
       >
         <button
           v-for="item in sections"
@@ -89,11 +89,10 @@
       <template v-if="!selected && section === 'providers'">
         <div class="identity-heading">
           <div>
-            <span class="identity-kicker">Identity & access</span>
-            <h2>Sign-in methods</h2>
+            <span class="identity-kicker">{{ $t('admin:auth.identityAccess') }}</span>
+            <h2>{{ $t('admin:auth.signMethods') }}</h2>
             <p>
-              Keep everyday access simple, with a dependable local recovery
-              route.
+              {{ $t('admin:auth.keepEverydayAccessSimple') }}
             </p>
           </div>
           <v-btn
@@ -101,13 +100,13 @@
             prepend-icon="mdi-plus"
             :disabled="locked"
             @click="catalog = true"
-            >Add provider</v-btn
+            >{{ $t('admin:auth.addProvider') }}</v-btn
           >
         </div>
         <form class="identity-search" @submit.prevent>
           <v-text-field
             v-model="search"
-            label="Find a provider by name or purpose"
+            :label="$t('admin:auth.findProviderNamePurpose')"
             variant="outlined"
             prepend-inner-icon="mdi-magnify"
             hide-details
@@ -127,13 +126,13 @@
             </div>
             <div class="identity-provider-copy">
               <button type="button" @click="selectProvider(provider.key)">
-                {{ provider.displayName || 'Untitled provider' }}
+                {{ provider.displayName || $t('admin:auth.untitledProvider') }}
               </button>
               <p>
                 {{
                   provider.description ||
                   definition(provider.strategyKey)?.description ||
-                  'Provider definition unavailable.'
+                  $t('admin:auth.providerDefinitionUnavailable')
                 }}
               </p>
               <div class="identity-meta">
@@ -141,11 +140,11 @@
                   definition(provider.strategyKey)?.title ||
                   provider.strategyKey
                 }}</span
-                ><span v-if="provider.key === 'local'">Recovery route</span
+                ><span v-if="provider.key === 'local'">{{ $t('admin:auth.recoveryRoute') }}</span
                 ><span>{{
                   provider.selfRegistration
-                    ? 'New accounts allowed'
-                    : 'Existing accounts only'
+                    ? $t('admin:auth.newAccountsAllowed')
+                    : $t('admin:auth.existingAccountsOnly')
                 }}</span>
               </div>
             </div>
@@ -153,7 +152,7 @@
               <strong>{{
                 savedProvider(provider.key)?.accountCount ?? 0
               }}</strong
-              ><span>accounts</span>
+              ><span>{{ $t('admin:auth.accounts') }}</span>
             </div>
             <span
               class="identity-runtime"
@@ -162,7 +161,7 @@
             ><v-btn
               variant="text"
               icon="mdi-arrow-right"
-              :aria-label="'Configure ' + provider.displayName"
+              :aria-label="$t('admin:auth.configure', { displayName: provider.displayName, interpolation: { escapeValue: false } })"
               @click="selectProvider(provider.key)"
             />
           </li>
@@ -170,33 +169,30 @@
         <async-state
           v-else
           state="empty"
-          title="No matching providers"
-          message="Try another name or clear the search."
+          :title="$t('admin:auth.noMatchingProviders')"
+          :message="$t('admin:auth.tryAnotherNameClear')"
         />
         <div class="identity-boundary">
           <v-icon icon="mdi-information-outline" size="19" />
           <p>
-            Initialization confirms that a sign-in method loaded in this
-            application. Complete a real sign-in with your identity provider to
-            verify the full connection.
+            {{ $t('admin:auth.initializationConfirmsSignMethod') }}
           </p>
           <v-btn
             variant="text"
             :disabled="dirty || locked"
             :loading="initializing"
             @click="initialize"
-            >Retry initialization</v-btn
+            >{{ $t('admin:auth.retryInitialization') }}</v-btn
           >
         </div>
       </template>
       <template v-else-if="!selected && section === 'order'">
         <div class="identity-heading">
           <div>
-            <span class="identity-kicker">The arrival experience</span>
-            <h2>Login order</h2>
+            <span class="identity-kicker">{{ $t('admin:auth.arrivalExperience') }}</span>
+            <h2>{{ $t('admin:auth.loginOrder') }}</h2>
             <p>
-              Put the method most people use first. Changes remain in your
-              policy draft until reviewed.
+              {{ $t('admin:auth.putMethodMostPeople') }}
             </p>
           </div>
         </div>
@@ -208,31 +204,31 @@
                 <strong>{{ provider.displayName }}</strong
                 ><small>{{
                   provider.isEnabled
-                    ? 'Shown on the sign-in page'
-                    : 'Disabled · hidden from sign-in'
+                    ? $t('admin:auth.shownSignPage')
+                    : $t('admin:auth.disabledHiddenSign')
                 }}</small>
               </div>
               <v-btn
                 icon="mdi-arrow-up"
                 size="small"
                 variant="text"
-                :aria-label="'Move ' + provider.displayName + ' up'"
+                :aria-label="$t('admin:auth.moveUp', { displayName: provider.displayName, interpolation: { escapeValue: false } })"
                 :disabled="locked || index === 0"
                 @click="move(index, -1)"
               /><v-btn
                 icon="mdi-arrow-down"
                 size="small"
                 variant="text"
-                :aria-label="'Move ' + provider.displayName + ' down'"
+                :aria-label="$t('admin:auth.moveDown', { displayName: provider.displayName, interpolation: { escapeValue: false } })"
                 :disabled="locked || index === drafts.length - 1"
                 @click="move(index, 1)"
               />
             </li>
           </ol>
           <aside class="identity-preview">
-            <span class="identity-kicker">Sign-in choices preview</span>
-            <h3>Welcome back</h3>
-            <p>Choose how to sign in.</p>
+            <span class="identity-kicker">{{ $t('admin:auth.signChoicesPreview') }}</span>
+            <h3>{{ $t('admin:auth.welcomeBack') }}</h3>
+            <p>{{ $t('admin:auth.chooseHowSign') }}</p>
             <div
               v-for="provider in drafts.filter((p) => p.isEnabled)"
               :key="provider.key"
@@ -248,8 +244,7 @@
               />{{ provider.displayName }}
             </div>
             <small
-              >A preview of enabled methods and their order. Provider forms and
-              your theme appear on the actual sign-in page.</small
+              >{{ $t('admin:auth.previewEnabledMethodsTheir') }}</small
             >
           </aside>
         </div>
@@ -257,18 +252,18 @@
       <template v-else-if="!selected && section === 'activity'">
         <div class="identity-heading">
           <div>
-            <span class="identity-kicker">Administrative record</span>
-            <h2>Policy activity</h2>
+            <span class="identity-kicker">{{ $t('admin:auth.administrativeRecord') }}</span>
+            <h2>{{ $t('admin:auth.policyActivity') }}</h2>
             <p>
-              The latest 50 reviewed changes. Credentials are never included.
+              {{ $t('admin:auth.latest50ReviewedChanges') }}
             </p>
           </div>
         </div>
         <async-state
           v-if="!saved.history.length"
           state="empty"
-          title="No recorded policy changes"
-          message="Reviewed saves will appear here."
+          :title="$t('admin:auth.noRecordedPolicyChanges')"
+          :message="$t('admin:auth.reviewedSavesWillAppear')"
         />
         <ol v-else class="identity-activity">
           <li v-for="event in saved.history" :key="event.id">
@@ -279,8 +274,8 @@
             <p>
               {{
                 event.actorId
-                  ? 'Account #' + event.actorId
-                  : 'API administrator'
+                  ? $t('admin:auth.account', { actorId: event.actorId, interpolation: { escapeValue: false } })
+                  : $t('admin:auth.apiAdministrator')
               }}
             </p>
             <ul>
@@ -294,7 +289,7 @@
                       .join(', ')
                   }}</span
                 ><span v-if="change.sessionsEnded">
-                  · {{ change.sessionsEnded }} account sessions ended</span
+                  {{ $t('admin:auth.accountSessionsEnded', { sessionsEnded: change.sessionsEnded, interpolation: { escapeValue: false } }) }}</span
                 >
               </li>
             </ul>
@@ -302,7 +297,7 @@
         </ol>
       </template>
       <template v-else-if="selected">
-        <nav class="identity-tabs" aria-label="Provider settings">
+        <nav class="identity-tabs" :aria-label="$t('admin:auth.providerSettings')">
           <button
             v-for="item in providerSections"
             :key="item.key"
@@ -322,11 +317,11 @@
                   <span class="identity-kicker">{{
                     selectedDefinition?.title || selected.strategyKey
                   }}</span>
-                  <h2>Connection</h2>
+                  <h2>{{ $t('admin:auth.connection') }}</h2>
                   <p>
                     {{
                       selectedDefinition?.description ||
-                      'This provider definition is unavailable. Its stored configuration is retained.'
+                      $t('admin:auth.providerDefinitionUnavailableStored')
                     }}
                   </p>
                 </div>
@@ -334,23 +329,23 @@
               <div class="identity-fields">
                 <v-text-field
                   v-model="selected.displayName"
-                  label="Sign-in display name"
+                  :label="$t('admin:auth.signDisplayName')"
                   maxlength="255"
                   variant="outlined"
                   :disabled="locked"
                 /><v-textarea
                   v-model="selected.description"
-                  label="Purpose"
+                  :label="$t('admin:auth.purpose')"
                   maxlength="1000"
                   rows="2"
                   auto-grow
                   variant="outlined"
                   :disabled="locked"
-                  hint="Help administrators understand who this connection serves."
+                  :hint="$t('admin:auth.helpAdministratorsUnderstandWho')"
                   persistent-hint
                 /><v-switch
                   v-model="selected.isEnabled"
-                  label="Enable this sign-in method"
+                  :label="$t('admin:auth.enableSignMethod')"
                   color="primary"
                   inset
                   :disabled="
@@ -360,8 +355,8 @@
                   "
                   :hint="
                     selected.key === 'local'
-                      ? 'Local sign-in stays enabled for recovery.'
-                      : 'Enable after configuring the connection. Saving initializes the provider.'
+                      ? $t('admin:auth.localSignStaysEnabled')
+                      : $t('admin:auth.enableAfterConfiguringConnection')
                   "
                   persistent-hint
                 />
@@ -379,10 +374,9 @@
                     @click="advanced = !advanced"
                   >
                     <span
-                      ><strong>Advanced protocol settings</strong
+                      ><strong>{{ $t('admin:auth.advancedProtocolSettings') }}</strong
                       ><small
-                        >Signing, transport, assertions and provider-specific
-                        options.</small
+                        >{{ $t('admin:auth.signingTransportAssertionsProvider') }}</small
                       ></span
                     ><v-icon
                       :icon="advanced ? 'mdi-chevron-up' : 'mdi-chevron-down'"
@@ -408,25 +402,24 @@
               <div class="identity-heading">
                 <div>
                   <span class="identity-kicker"
-                    >Who joins, and with what access</span
+                    >{{ $t('admin:auth.whoJoinsWhatAccess') }}</span
                   >
-                  <h2>Account enrollment</h2>
+                  <h2>{{ $t('admin:auth.accountEnrollment') }}</h2>
                   <p>
-                    These settings govern new accounts. Existing accounts retain
-                    their membership unless directory mapping is enabled.
+                    {{ $t('admin:auth.theseSettingsGovernNew') }}
                   </p>
                 </div>
               </div>
               <v-switch
                 v-model="selected.selfRegistration"
-                label="Allow new accounts through this provider"
+                :label="$t('admin:auth.allowNewAccountsThrough')"
                 color="primary"
                 inset
                 :disabled="locked"
                 :hint="
                   selected.key === 'local'
-                    ? 'People may register a local account. Email verification remains part of local registration.'
-                    : 'A successful provider sign-in may create a workspace account.'
+                    ? $t('admin:auth.peopleMayRegisterLocal')
+                    : $t('admin:auth.successfulProviderSignMay')
                 "
                 persistent-hint
               />
@@ -436,33 +429,33 @@
               >
                 <v-combobox
                   v-model="selected.domainWhitelist"
-                  label="Allowed email domains"
+                  :label="$t('admin:auth.allowedEmailDomains')"
                   variant="outlined"
                   multiple
                   chips
                   closable-chips
                   :disabled="locked"
-                  hint="Exact domains, such as example.org. Leave empty to accept any email domain."
+                  :hint="$t('admin:auth.exactDomainsSuchExample')"
                   persistent-hint
                 /><v-autocomplete
                   v-model="selected.autoEnrollGroups"
                   :items="enrollmentGroups"
                   item-title="name"
                   item-value="id"
-                  label="Initial groups"
+                  :label="$t('admin:auth.initialGroups')"
                   variant="outlined"
                   multiple
                   chips
                   closable-chips
                   :disabled="locked"
-                  hint="New accounts receive these groups. System identities and script authority are excluded."
+                  :hint="$t('admin:auth.newAccountsReceiveThese')"
                   persistent-hint
                 />
                 <p class="identity-note">
                   {{
                     selected.autoEnrollGroups.length
-                      ? 'Review the permissions of each selected group before opening enrollment.'
-                      : 'New accounts will start without group permissions.'
+                      ? $t('admin:auth.reviewPermissionsEachSelected')
+                      : $t('admin:auth.newAccountsWillStart')
                   }}
                 </p>
               </div>
@@ -474,21 +467,16 @@
                 "
                 class="identity-mapping"
               >
-                <h3>Directory group mapping</h3>
+                <h3>{{ $t('admin:auth.directoryGroupMapping') }}</h3>
                 <v-switch
                   v-model="selected.config.mapGroups"
-                  label="Synchronize groups from the identity provider"
+                  :label="$t('admin:auth.synchronizeGroupsIdentityProvider')"
                   color="primary"
                   inset
                   :disabled="locked"
                 />
                 <p class="identity-note">
-                  When a group claim is present, names are matched exactly to
-                  workspace groups. Matching memberships are added and other
-                  memberships are removed at sign-in. This can include
-                  administrative groups. Missing claims leave memberships
-                  unchanged; an empty claim removes them. Older account sessions
-                  end when membership changes.
+                  {{ $t('admin:auth.whenGroupClaimPresent') }}
                 </p>
                 <auth-fields
                   v-if="selected.config.mapGroups"
@@ -506,48 +494,47 @@
               <div class="identity-heading">
                 <div>
                   <span class="identity-kicker"
-                    >Connect the identity service</span
+                    >{{ $t('admin:auth.connectIdentityService') }}</span
                   >
-                  <h2>Integration details</h2>
+                  <h2>{{ $t('admin:auth.integrationDetails') }}</h2>
                   <p>
-                    Use the configured public workspace address when setting up
-                    your provider.
+                    {{ $t('admin:auth.useConfiguredPublicWorkspace') }}
                   </p>
                 </div>
               </div>
               <dl class="identity-integration">
                 <div>
-                  <dt>Workspace origin</dt>
+                  <dt>{{ $t('admin:auth.workspaceOrigin') }}</dt>
                   <dd>
-                    {{ origin || 'Set the public workspace URL in General.' }}
+                    {{ origin || $t('admin:auth.setPublicWorkspaceUrl') }}
                   </dd>
                 </div>
                 <div v-if="!selectedDefinition?.useForm">
-                  <dt>Callback URL</dt>
+                  <dt>{{ $t('admin:auth.callbackUrl2') }}</dt>
                   <dd>
                     {{
                       origin
                         ? origin + '/login/' + selected.key + '/callback'
-                        : 'Workspace URL required'
+                        : $t('admin:auth.workspaceUrlRequired')
                     }}
                   </dd>
                 </div>
                 <div>
-                  <dt>Sign-in page</dt>
+                  <dt>{{ $t('admin:auth.signPage') }}</dt>
                   <dd>
-                    {{ origin ? origin + '/login' : 'Workspace URL required' }}
+                    {{ origin ? origin + '/login' : $t('admin:auth.workspaceUrlRequired') }}
                   </dd>
                 </div>
                 <div>
-                  <dt>Provider identifier</dt>
+                  <dt>{{ $t('admin:auth.providerIdentifier') }}</dt>
                   <dd>{{ selected.key }}</dd>
                 </div>
               </dl>
               <p class="identity-note">
                 {{
                   selectedDefinition?.useForm
-                    ? 'This provider uses a sign-in form in the workspace. A redirect callback is not required for the form.'
-                    : 'Allow this exact callback in your identity provider. Follow its protocol-specific configuration for client credentials, assertions, claims and logout behavior.'
+                    ? $t('admin:auth.providerUsesSignForm')
+                    : $t('admin:auth.allowExactCallbackIdentity')
                 }}
               </p>
               <v-btn
@@ -558,41 +545,41 @@
                 rel="noopener noreferrer"
                 variant="outlined"
                 append-icon="mdi-open-in-new"
-                >Provider reference</v-btn
+                >{{ $t('admin:auth.providerReference') }}</v-btn
               ><v-btn class="mt-5 ml-2" to="/general" variant="text"
-                >Workspace URL settings</v-btn
+                >{{ $t('admin:auth.workspaceUrlSettings') }}</v-btn
               >
             </template>
           </section>
           <aside class="identity-aside">
             <div class="identity-panel">
-              <span class="identity-kicker">Saved provider</span>
+              <span class="identity-kicker">{{ $t('admin:auth.savedProvider') }}</span>
               <h3>{{ statusTitle(runtime(selected.key).state) }}</h3>
               <p class="identity-note">
                 {{
                   savedProvider(selected.key)
-                    ? 'Initialization reflects this application’s last observed saved revision.'
-                    : 'This new provider exists only in your draft.'
+                    ? $t('admin:auth.initializationReflectsApplicationsLast')
+                    : $t('admin:auth.newProviderExistsOnly')
                 }}
               </p>
               <dl class="identity-facts">
                 <div>
-                  <dt>Accounts</dt>
+                  <dt>{{ $t('admin:auth.accounts2') }}</dt>
                   <dd>{{ savedProvider(selected.key)?.accountCount ?? 0 }}</dd>
                 </div>
                 <div>
-                  <dt>Active accounts</dt>
+                  <dt>{{ $t('admin:auth.activeAccounts') }}</dt>
                   <dd>
                     {{ savedProvider(selected.key)?.activeAccountCount ?? 0 }}
                   </dd>
                 </div>
                 <div>
-                  <dt>Last initialization</dt>
+                  <dt>{{ $t('admin:auth.lastInitialization') }}</dt>
                   <dd>
                     {{
                       runtime(selected.key).checkedAt
                         ? date(runtime(selected.key).checkedAt!)
-                        : 'Not observed'
+                        : $t('admin:auth.notObserved')
                     }}
                   </dd>
                 </div>
@@ -602,16 +589,16 @@
                 :disabled="dirty || locked"
                 :loading="initializing"
                 @click="initialize"
-                >Retry initialization</v-btn
+                >{{ $t('admin:auth.retryInitialization') }}</v-btn
               >
             </div>
             <div v-if="selected.key !== 'local'" class="identity-panel">
-              <h3>Retire this connection</h3>
+              <h3>{{ $t('admin:auth.retireConnection') }}</h3>
               <p class="identity-note">
                 {{
                   savedProvider(selected.key)?.accountCount
-                    ? 'This provider has accounts. Disable sign-in or resolve those accounts before removing the provider.'
-                    : 'Removal is staged in your policy draft and takes effect after review.'
+                    ? $t('admin:auth.providerHasAccountsDisable')
+                    : $t('admin:auth.removalStagedPolicyDraft')
                 }}
               </p>
               <v-btn
@@ -622,7 +609,7 @@
                   locked || Boolean(savedProvider(selected.key)?.accountCount)
                 "
                 @click="removeProvider"
-                >Remove provider</v-btn
+                >{{ $t('admin:auth.removeProvider') }}</v-btn
               >
             </div>
           </aside>
@@ -636,20 +623,20 @@
       aria-labelledby="identity-catalog-title"
       ><v-card class="identity-dialog"
         ><div class="identity-dialog-heading">
-          <h2 id="identity-catalog-title">Add a sign-in provider</h2>
-          <p>Choose a connection, configure it, then enable it when ready.</p>
+          <h2 id="identity-catalog-title">{{ $t('admin:auth.addSignProvider') }}</h2>
+          <p>{{ $t('admin:auth.chooseConnectionConfigureThen') }}</p>
         </div>
         <v-card-text
           ><v-text-field
             v-model="catalogSearch"
-            label="Search provider catalog"
+            :label="$t('admin:auth.searchProviderCatalog')"
             variant="outlined"
             prepend-inner-icon="mdi-magnify"
             clearable /><async-state
             v-if="!catalogItems.length"
             state="empty"
-            title="No matching connections"
-            message="Try a provider name or protocol, such as OpenID Connect or LDAP." />
+            :title="$t('admin:auth.noMatchingConnections')"
+            :message="$t('admin:auth.tryProviderNameProtocol')" />
           <div v-else class="identity-catalog">
             <button
               v-for="item in catalogItems"
@@ -662,13 +649,13 @@
                 ><strong>{{ item.title }}</strong
                 ><small>{{ item.description }}</small
                 ><em v-if="!item.available"
-                  >Unavailable in this deployment</em
+                  >{{ $t('admin:auth.unavailableDeployment') }}</em
                 ></span
               ><v-icon icon="mdi-plus" size="20" />
             </button></div></v-card-text
         ><v-card-actions
           ><v-spacer /><v-btn variant="text" @click="catalog = false"
-            >Cancel</v-btn
+            >{{ $t('common:actions.cancel') }}</v-btn
           ></v-card-actions
         ></v-card
       ></v-dialog
@@ -681,10 +668,9 @@
       aria-labelledby="identity-review-title"
       ><v-card class="identity-dialog"
         ><div class="identity-dialog-heading">
-          <h2 id="identity-review-title">Review sign-in policy</h2>
+          <h2 id="identity-review-title">{{ $t('admin:auth.reviewSignPolicy') }}</h2>
           <p>
-            Confirm the changes to connection settings, enrollment and login
-            order.
+            {{ $t('admin:auth.confirmChangesConnectionSettings') }}
           </p>
         </div>
         <v-card-text
@@ -702,11 +688,10 @@
             type="warning"
             variant="tonal"
             class="my-5"
-            >Connection or enablement changes end existing sessions for
-            {{ reviewedSessions }} account(s). They must sign in again.</v-alert
+            >{{ $t('admin:auth.connectionEnablementChangesEnd', { reviewedSessions, interpolation: { escapeValue: false } }) }}</v-alert
           ><v-textarea
             v-model="reason"
-            label="Administrative reason"
+            :label="$t('admin:auth.administrativeReason')"
             variant="outlined"
             rows="2"
             maxlength="1000"
@@ -718,19 +703,19 @@
               variant="text"
               :disabled="busy"
               @click="reloadReview"
-              >Reload saved policy</v-btn
+              >{{ $t('admin:auth.reloadSavedPolicy') }}</v-btn
             ></v-alert
           ></v-card-text
         ><v-card-actions
           ><v-btn variant="text" :disabled="busy" @click="reviewing = false"
-            >Keep editing</v-btn
+            >{{ $t('admin:auth.keepEditing') }}</v-btn
           ><v-spacer /><v-btn
             color="primary"
             variant="flat"
             :disabled="reason.trim().length < 3 || conflict || stale"
             :loading="busy"
             @click="confirm"
-            >Save sign-in policy</v-btn
+            >{{ $t('admin:auth.saveSignPolicy') }}</v-btn
           ></v-card-actions
         ></v-card
       ></v-dialog
@@ -756,23 +741,23 @@ import {
 } from '../../helpers/authentication-workspace-api.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store.ts'
 const sections = [
-    { key: 'providers', title: 'Providers' },
-    { key: 'order', title: 'Login order' },
-    { key: 'activity', title: 'Activity' }
+    { key: 'providers', title: 'admin:auth.providers' },
+    { key: 'order', title: 'admin:auth.loginOrder' },
+    { key: 'activity', title: 'admin:auth.activity' }
   ],
   providerSections = [
-    { key: 'connection', title: 'Connection' },
-    { key: 'enrollment', title: 'Enrollment' },
-    { key: 'integration', title: 'Integration' }
+    { key: 'connection', title: 'admin:auth.connection' },
+    { key: 'enrollment', title: 'admin:auth.enrollment' },
+    { key: 'integration', title: 'admin:auth.integration' }
   ]
 const labels: Record<string, string> = {
-  displayName: 'Sign-in display name',
-  description: 'Purpose',
-  isEnabled: 'Sign-in availability',
-  selfRegistration: 'New-account admission',
-  domainWhitelist: 'Allowed email domains',
-  autoEnrollGroups: 'Initial groups',
-  order: 'Login order'
+  displayName: 'admin:auth.signDisplayName',
+  description: 'admin:auth.purpose',
+  isEnabled: 'admin:auth.signAvailability',
+  selfRegistration: 'admin:auth.newAccountAdmission',
+  domainWhitelist: 'admin:auth.allowedEmailDomains',
+  autoEnrollGroups: 'admin:auth.initialGroups',
+  order: 'admin:auth.loginOrder'
 }
 export default {
   components: { AsyncState, AuthFields },
@@ -794,8 +779,8 @@ export default {
       section: 'providers',
       selectedKey: '',
       providerSection: 'connection',
-      sections,
-      providerSections,
+      sections: sections.map((item) => ({ ...item, title: this.$t(item.title) })),
+      providerSections: providerSections.map((item) => ({ ...item, title: this.$t(item.title) })),
       catalog: false,
       catalogSearch: '',
       advanced: false,
@@ -858,20 +843,20 @@ export default {
       return [
         {
           key: 'service',
-          title: 'Service connection',
+          title: this.$t('admin:auth.serviceConnection'),
           description:
-            'The addresses and credentials used to establish sign-in.',
+            this.$t('admin:auth.addressesCredentialsUsedEstablish'),
           fields: basic
         },
         {
           key: 'profile',
-          title: 'Account profile',
-          description: 'How the provider identifies and describes each person.',
+          title: this.$t('admin:auth.accountProfile'),
+          description: this.$t('admin:auth.howProviderIdentifiesDescribes'),
           fields: profile
         },
         {
           key: 'advanced',
-          title: 'Advanced protocol settings',
+          title: this.$t('admin:auth.advancedProtocolSettings'),
           description: '',
           fields: fields.filter(
             (field) => !basic.includes(field) && !profile.includes(field)
@@ -979,11 +964,11 @@ export default {
       return (
         (
           {
-            ready: 'Initialized',
-            failed: 'Needs attention',
-            disabled: 'Disabled',
-            unavailable: 'Unavailable',
-            pending: 'Not initialized'
+            ready: this.$t('admin:auth.initialized'),
+            failed: this.$t('admin:auth.needsAttention'),
+            disabled: this.$t('admin:auth.disabled'),
+            unavailable: this.$t('admin:auth.unavailable'),
+            pending: this.$t('admin:auth.notInitialized')
           } as Record<string, string>
         )[state] ?? state
       )
@@ -1001,7 +986,7 @@ export default {
         ? (this.definition(provider?.strategyKey ?? '')?.fields.find(
             (p) => p.key === field.slice(7)
           )?.title ?? field.slice(7))
-        : (labels[field] ?? field)
+        : (labels[field] ? this.$t(labels[field]!) : field)
     },
     async load() {
       if (this.busy) return
@@ -1028,7 +1013,7 @@ export default {
       if (this.locked && !this.stale) return
       if (
         this.dirty &&
-        !(await confirmDiscard('Discard unsaved sign-in policy changes?'))
+        !(await confirmDiscard(this.$t('admin:auth.discardUnsavedSignPolicy')))
       )
         return
       await this.load()
@@ -1115,27 +1100,27 @@ export default {
 
     reviewValue(provider: AuthenticationProviderDraft, key: string): string {
       if (key === 'isEnabled')
-        return provider.isEnabled ? 'Enabled' : 'Disabled'
+        return provider.isEnabled ? this.$t('admin:auth.enabled') : this.$t('admin:auth.disabled')
       if (key === 'selfRegistration')
         return provider.selfRegistration
-          ? 'New accounts allowed'
-          : 'Existing accounts only'
+          ? this.$t('admin:auth.newAccountsAllowed')
+          : this.$t('admin:auth.existingAccountsOnly')
       if (key === 'domainWhitelist')
         return provider.domainWhitelist.length
           ? provider.domainWhitelist.join(', ')
-          : 'Any email domain'
+          : this.$t('admin:auth.anyEmailDomain')
       if (key === 'autoEnrollGroups')
         return provider.autoEnrollGroups.length
           ? provider.autoEnrollGroups
               .map(
                 (id) =>
                   this.saved?.groups.find((g) => g.id === id)?.name ??
-                  'Group #' + id
+                  this.$t('admin:auth.group', { id, interpolation: { escapeValue: false } })
               )
               .join(', ')
-          : 'No initial groups'
+          : this.$t('admin:auth.noInitialGroups')
       if (key === 'displayName') return provider.displayName
-      return provider.description || 'No purpose specified'
+      return provider.description || this.$t('admin:auth.noPurposeSpecified')
     },
     review() {
       if (this.locked || !this.dirty || !this.saved) return
@@ -1150,7 +1135,7 @@ export default {
       )
       if (invalid) {
         this.notice =
-          'Complete the provider name and any replacement credentials before reviewing.'
+          this.$t('admin:auth.completeProviderNameAny')
         this.attention = true
         this.selectProvider(invalid.key)
         return
@@ -1164,21 +1149,20 @@ export default {
           fields: string[] = []
         if (!current) {
           fields.push(
-            p.isEnabled ? 'Sign-in will be enabled' : 'Starts disabled',
+            p.isEnabled ? this.$t('admin:auth.signWillEnabled') : this.$t('admin:auth.startsDisabled'),
             p.selfRegistration
-              ? 'New accounts allowed'
-              : 'Existing accounts only'
+              ? this.$t('admin:auth.newAccountsAllowed')
+              : this.$t('admin:auth.existingAccountsOnly')
           )
           if (p.selfRegistration)
             fields.push(
-              'Allowed email domains · ' +
-                this.reviewValue(p, 'domainWhitelist'),
-              'Initial groups · ' + this.reviewValue(p, 'autoEnrollGroups')
+              this.$t('admin:auth.allowedEmailDomains2', { p: this.reviewValue(p, 'domainWhitelist'), interpolation: { escapeValue: false } }),
+              this.$t('admin:auth.initialGroups2', { p: this.reviewValue(p, 'autoEnrollGroups'), interpolation: { escapeValue: false } })
             )
           for (const [key, secret] of Object.entries(p.secrets))
             if (secret.action === 'replace')
               fields.push(
-                this.fieldTitle(p.key, 'config.' + key) + ' · new credential'
+                this.$t('admin:auth.newCredential', { key: this.fieldTitle(p.key, 'config.' + key), interpolation: { escapeValue: false } })
               )
         } else {
           for (const key of Object.keys(labels) as Array<
@@ -1189,10 +1173,10 @@ export default {
                 this.saved.providers.findIndex((row) => row.key === p.key) !==
                 index
               )
-                fields.push(labels[key]! + ' · position ' + (index + 1))
+                fields.push(this.$t('admin:auth.position', { tValue: this.$t(labels[key]!), value: (index + 1), interpolation: { escapeValue: false } }))
             } else if (JSON.stringify(current[key]) !== JSON.stringify(p[key]))
               fields.push(
-                labels[key] +
+                this.$t(labels[key]!) +
                   ' · ' +
                   this.reviewValue(current, key) +
                   ' → ' +
@@ -1208,8 +1192,8 @@ export default {
                 this.fieldTitle(p.key, 'config.' + key) +
                   ' · ' +
                   (secret.action === 'clear'
-                    ? 'clear credential'
-                    : 'replace credential')
+                    ? this.$t('admin:auth.clearCredential')
+                    : this.$t('admin:auth.replaceCredential'))
               )
           if (
             current.isEnabled !== p.isEnabled ||
@@ -1222,7 +1206,7 @@ export default {
           this.reviewedChanges.push({
             key: p.key,
             name: p.displayName,
-            description: current ? 'Update saved provider' : 'Create provider',
+            description: current ? this.$t('admin:auth.updateSavedProvider') : this.$t('admin:auth.createProvider'),
             fields
           })
       }
@@ -1231,7 +1215,7 @@ export default {
           this.reviewedChanges.push({
             key: p.key,
             name: p.displayName,
-            description: 'Remove provider',
+            description: this.$t('admin:auth.removeProvider'),
             fields: []
           })
       this.reason = ''
@@ -1288,13 +1272,11 @@ export default {
         this.drafts = providers.map(authenticationDraft)
         this.reviewed = []
         this.notice =
-          'Sign-in policy saved.' +
-          (result.sessionsEnded
-            ? ` Existing sessions ended for ${result.sessionsEnded} account(s).`
-            : '') +
-          (result.activation === 'needs-attention'
+          this.$t('admin:auth.signPolicySaved', { value: (result.sessionsEnded
+            ? ` ${this.$t('admin:auth.sessionsEndedSentence', { count: result.sessionsEnded })}`
+            : ''), activation: (result.activation === 'needs-attention'
             ? ' Some sign-in methods need initialization attention.'
-            : '')
+            : ''), interpolation: { escapeValue: false } })
         this.attention = result.activation === 'needs-attention'
         if (result.currentSessionEnded) {
           window.location.assign('/login')
@@ -1313,13 +1295,13 @@ export default {
           if (this.conflict) {
             this.stale = true
             this.notice =
-              'Reload the saved policy before reviewing another change. Your draft is retained.'
+              this.$t('admin:auth.reloadSavedPolicyBefore')
             this.attention = true
           }
           this.saveError =
             getErrorMessage(error) +
             (!status
-              ? ' The outcome is unconfirmed. Reload before repeating this save.'
+              ? ` ${this.$t('admin:auth.outcomeUnconfirmedReloadBefore')}`
               : '')
         }
       } finally {
@@ -1330,7 +1312,7 @@ export default {
       if (
         this.busy ||
         !(await confirmDiscard(
-          'Discard this draft and load the current sign-in policy?'
+          this.$t('admin:auth.discardDraftLoadCurrent')
         ))
       )
         return
@@ -1346,8 +1328,8 @@ export default {
         )
         this.notice =
           result.activation === 'applied'
-            ? 'Enabled sign-in methods initialized.'
-            : 'Initialization needs attention. Review the provider states and server diagnostics.'
+            ? this.$t('admin:auth.enabledSignMethodsInitialized')
+            : this.$t('admin:auth.initializationNeedsAttentionReview')
         this.attention = result.activation !== 'applied'
         await this.load()
       } catch (error) {
@@ -1362,7 +1344,7 @@ export default {
         !this.busy &&
         !this.initializing &&
         ((!this.dirty && !(this.reviewing && this.reason)) ||
-          (await confirmDiscard('Discard unsaved sign-in policy changes?')))
+          (await confirmDiscard(this.$t('admin:auth.discardUnsavedSignPolicy'))))
       )
     },
     beforeUnload(event: BeforeUnloadEvent) {

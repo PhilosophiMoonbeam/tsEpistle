@@ -6,6 +6,7 @@ import { compileTemplate } from '@vue/compiler-sfc'
 import { fetchPageList as realFetchPageList } from '../../helpers/pages-api.ts'
 import { applyPublication, inspectPublication, publicationState } from '../../helpers/admin-pages.ts'
 
+import { translateEnglish } from '../../test/english-translate.mts'
 const Vue = await import('vue')
 const { compile } = Vue
 const { createVuetify } = await import('vuetify')
@@ -157,6 +158,7 @@ describe('admin-pages root UI facade migration guard', () => {
     const host = document.createElement('div')
     document.body.append(host)
     const app = Vue.createApp({ ...options, render })
+    app.config.globalProperties.$t = translateEnglish
     app.use(router)
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives, defaults: { VDialog: { transition: false } } }))
     app.component('admin-hero', { render: () => null })
@@ -229,13 +231,14 @@ describe('admin-pages root UI facade migration guard', () => {
   test('limits page selection to 25 pages and disables only unselected checkboxes at capacity', () => {
     const options = createComponentOptions({ fetchPageList: async () => [], wikiStore: {} })
     const pages = Array.from({ length: 27 }, (_, index) => ({ id: index + 1 }))
-    const viewModel = { ...options.data(), visiblePages: pages }
+    const viewModel = { ...options.data.call({ $t: translateEnglish }), $t: translateEnglish, visiblePages: pages }
     const renderPageCheckbox = id =>
       renderCheckbox(
         {
           page: pages[id - 1],
           selectedIds: viewModel.selectedIds,
           bulkOpen: false,
+          $t: translateEnglish,
           toggleSelected: selectedId => options.methods.toggleSelected.call(viewModel, selectedId)
         },
         []
@@ -342,7 +345,7 @@ describe('admin-pages root UI facade migration guard', () => {
   test('refresh notifies only after a successful page-list load and invalidates requests on unmount', async () => {
     const wiki = createWikiStore()
     const refresh = compileMethod(refreshSource, { wikiStore: wiki.store })
-    const viewModel = { loadPages: async () => false }
+    const viewModel = { loadPages: async () => false, $t: translateEnglish }
 
     await refresh.call(viewModel)
     expect(wiki.notifications).toEqual([])
@@ -356,7 +359,7 @@ describe('admin-pages root UI facade migration guard', () => {
       fetchPageList: () => pendingRequest.promise,
       wikiStore: wiki.store
     })
-    const unmountedViewModel = options.data()
+    const unmountedViewModel = options.data.call({ $t: translateEnglish })
     const pendingLoad = options.methods.loadPages.call(unmountedViewModel)
     options.beforeUnmount.call(unmountedViewModel)
     pendingRequest.resolve([{ id: 4, title: 'Unmounted' }])
