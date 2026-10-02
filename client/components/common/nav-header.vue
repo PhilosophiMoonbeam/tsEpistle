@@ -2063,7 +2063,7 @@ export default defineComponent({
 }
 
 .nav-header-menu.account-menu {
-  width: min(calc(100vw - (var(--wiki-space-4) * 2)), 22rem);
+  width: min(calc(100vw - (var(--wiki-space-4) * 2)), 24rem);
   max-height: min(82dvh, 44rem);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -2149,17 +2149,19 @@ export default defineComponent({
   scrollbar-gutter: stable;
 }
 
+// Tabs size to their full label and share the leftover width. A narrow
+// menu or a longer translation wraps them onto a second row; labels are
+// never cut off.
 .account-menu__tabs {
-  display: grid;
-  grid-auto-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--wiki-space-1);
   padding: var(--wiki-space-1) var(--wiki-space-2);
 }
 
 .account-menu__tab {
   display: inline-flex;
-  min-width: 0;
+  flex: 1 0 auto;
   min-height: 36px;
   align-items: center;
   justify-content: center;
@@ -2176,8 +2178,6 @@ export default defineComponent({
   transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease), color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
   > span:first-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
