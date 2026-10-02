@@ -12,6 +12,7 @@ import moment from 'moment-timezone'
 import helpersPlugin, { applyUserPresentation } from './helpers/index.ts'
 import { savedReaderDates } from './helpers/offline-presentation.ts'
 import { fallbackLocalizationLabel } from './modules/localization.ts'
+import { offlineEnglish } from './helpers/offline-english.ts'
 import { applyReaderLayout } from './helpers/reader-layout.ts'
 import { preparePwaStartup, setReloadSafetyProvider } from './helpers/pwa.ts'
 
@@ -27,7 +28,7 @@ export async function mountOfflineApp(appearance: string): Promise<void> {
   await i18next.init({
     lng: siteConfig.lang,
     fallbackLng: 'en',
-    resources: {},
+    resources: { en: { common: offlineEnglish } },
     parseMissingKeyHandler: (key, fallback) => fallback ?? fallbackLocalizationLabel(key)
   })
   // Saved pages show dates in the reader's last saved time zone. Without one,
@@ -39,11 +40,7 @@ export async function mountOfflineApp(appearance: string): Promise<void> {
   const vuetify = createAppVuetify(appearance)
   app.use(pinia).use(vuetify).use(helpersPlugin)
   app.config.globalProperties.$i18n = i18next
-  app.config.globalProperties.$t = (key, options) => {
-    const text = typeof options?.defaultValue === 'string' ? options.defaultValue : fallbackLocalizationLabel(key)
-    // Bundled defaults use i18next placeholders such as {{count}}.
-    return options ? text.replace(/\{\{\s*(\w+)\s*\}\}/gu, (match, name: string) => (name in options ? String(options[name]) : match)) : text
-  }
+  app.config.globalProperties.$t = (key, options) => i18next.t(key, options)
   app.component('NavHeader', NavHeader)
   app.component('SearchResults', SearchResults)
   app.component('PageSelector', PageSelector)

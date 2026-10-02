@@ -66,7 +66,7 @@ async function waitForOfflineSettings(page: Page): Promise<void> {
   // The online shell renders the nav header; the offline application renders without it.
   await expect(page.locator('.nav-header, .offline-application').first()).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.offline-settings')).toBeVisible({ timeout: 30_000 })
-  await expect(page.getByRole('heading', { name: 'Offline Access', level: 1, exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Offline access', level: 1, exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Saved pages', exact: true })).toBeVisible()
   await expect(page.getByRole('searchbox', { name: 'Search saved pages', exact: true })).toBeVisible()
 }
