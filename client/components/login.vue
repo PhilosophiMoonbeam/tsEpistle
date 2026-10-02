@@ -1126,7 +1126,7 @@ export default defineComponent({
     // QR contrast is independent of the site's primary foreground color.
     background: #fff;
 
-    :deep(svg) {
+    svg {
       fill: #000;
     }
   }
