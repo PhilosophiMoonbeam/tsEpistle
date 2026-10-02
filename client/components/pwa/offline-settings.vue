@@ -18,6 +18,9 @@ import { wikiStore } from '../../store/index.ts'
 import type { OfflineStorageEstimate } from '../../../shared/offline.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope.ts'
 import { notifyReloadSafetyChanged, setReloadSafetyProvider } from '../../helpers/pwa.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+
+const t = useTranslate()
 
 type StorageState = 'uninspected' | 'checking' | 'available' | 'unavailable' | 'unsupported-schema' | 'blocked-upgrade' | 'quota'
 const browserAvailable = typeof window !== 'undefined' && typeof navigator !== 'undefined'
@@ -25,7 +28,7 @@ const offlineSyncService = inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_K
 const offlineStorage = shallowRef<OfflineStorage | null>(null)
 const storageEstimate = shallowRef<OfflineStorageEstimate | null>(null)
 const storageState = ref<StorageState>('uninspected')
-const storageMessage = ref('Offline storage has not been checked yet.')
+const storageMessage = ref(t('common:offlineSettings.offlineStorageHasNot'))
 const storageBusy = ref(false)
 type ReadingState = 'setup-required' | 'locked' | 'unlocked' | 'unavailable'
 const readingState = ref<ReadingState>('unavailable')
@@ -65,16 +68,16 @@ const verifiedAccount = computed(() => {
   return { accountId: wikiStore.user.id, authVersion: wikiStore.user.authVersion }
 })
 const readingStateLabel = computed(() => ({
-  'setup-required': 'Not set up',
-  locked: 'Locked',
-  unlocked: 'Unlocked',
-  unavailable: 'Unavailable'
+  'setup-required': t('common:offlineSettings.notSetUp'),
+  locked: t('common:offlineSettings.locked'),
+  unlocked: t('common:offlineSettings.unlocked'),
+  unavailable: t('common:offlineSettings.unavailable')
 }[readingState.value]))
 const readingStateDescription = computed(() => ({
-  'setup-required': 'Enable private offline reading after the server verifies your account.',
-  locked: 'A private vault is saved on this device. Enter its secret to unlock private pages.',
-  unlocked: 'Private offline pages are available in this browser until you lock them.',
-  unavailable: 'Private offline reading is unavailable until this device can open offline storage.'
+  'setup-required': t('common:offlineSettings.enablePrivateOfflineReading'),
+  locked: t('common:offlineSettings.privateVaultSavedDevice'),
+  unlocked: t('common:offlineSettings.privateOfflinePagesAvailable'),
+  unavailable: t('common:offlineSettings.privateOfflineReadingUnavailable')
 }[readingState.value]))
 const libraryBusy = ref(false)
 let safetyRevision = 0
@@ -93,12 +96,12 @@ const storageDetail = computed(() => {
   if (storageState.value !== 'available' || !storageEstimate.value) return storageMessage.value
   const estimate = storageEstimate.value
   const capacity = estimate.usageBytes !== null && estimate.quotaBytes !== null
-    ? ` Browser storage: ${formatBytes(estimate.usageBytes)} of ${formatBytes(estimate.quotaBytes)}.` : ''
-  return `${estimate.snapshotCount} saved page${estimate.snapshotCount === 1 ? '' : 's'} using ${formatBytes(estimate.managedBytes)}.${capacity}`
+    ? ` ${t('common:offlineSettings.browserStorage', { usageBytes: formatBytes(estimate.usageBytes), quotaBytes: formatBytes(estimate.quotaBytes), interpolation: { escapeValue: false } })}` : ''
+  return t('common:offlineSettings.savedPageUsing', { snapshotCount: estimate.snapshotCount, snapshotCount2: estimate.snapshotCount === 1 ? '' : 's', managedBytes: formatBytes(estimate.managedBytes), capacity, interpolation: { escapeValue: false } })
 })
 
 function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return 'unknown size'
+  if (!Number.isFinite(value) || value < 0) return t('common:offlineSettings.unknownSize')
   if (value < 1024) return `${Math.round(value)} B`
   const units = ['KiB', 'MiB', 'GiB']
   let amount = value / 1024
@@ -113,13 +116,13 @@ function formatBytes(value: number): string {
 function storageFailure(error: unknown): { state: StorageState; message: string } {
   const code = error instanceof OfflineStorageError ? error.code : ''
   if (code === 'unsupported-schema')
-    return { state: 'unsupported-schema', message: 'Your saved data needs a newer version of tsEpistle. Update the app to access it; your data has been preserved.' }
+    return { state: 'unsupported-schema', message: t('common:offlineSettings.savedDataNeedsNewer') }
   if (code === 'blocked-upgrade')
-    return { state: 'blocked-upgrade', message: 'Another tab is holding the offline database open. Close that tab or try again.' }
-  if (code === 'quota') return { state: 'quota', message: 'The browser declined local storage because its quota is full. No records were evicted silently.' }
+    return { state: 'blocked-upgrade', message: t('common:offlineSettings.anotherTabHoldingOffline') }
+  if (code === 'quota') return { state: 'quota', message: t('common:offlineSettings.browserDeclinedLocalStorage') }
   return {
     state: 'unavailable',
-    message: error instanceof Error && error.message.trim() ? error.message : 'This browser could not open offline storage. Downloaded pages remain on the server.'
+    message: error instanceof Error && error.message.trim() ? error.message : t('common:offlineSettings.browserCouldNotOpen')
   }
 }
 
@@ -165,7 +168,7 @@ async function refreshReadingState(): Promise<void> {
   } catch {
     if (offlineStorage.value !== storage) return
     readingState.value = 'unavailable'
-    readingMessage.value = 'Private offline reading is unavailable on this device.'
+    readingMessage.value = t('common:offlineSettings.privateOfflineReadingUnavailable2')
   }
 }
 
@@ -207,10 +210,10 @@ async function beginEnrollment(): Promise<void> {
         })
     })
     if (controller.signal.aborted || enrollmentController !== controller) return
-    enrollmentNotice.value = 'Private offline reading is enabled on this device.'
+    enrollmentNotice.value = t('common:offlineSettings.privateOfflineReadingEnabled')
     readingState.value = 'unlocked'
   } catch {
-    if (!controller.signal.aborted) enrollmentNotice.value = 'Private offline reading could not be enabled.'
+    if (!controller.signal.aborted) enrollmentNotice.value = t('common:offlineSettings.privateOfflineReadingCould')
     await refreshReadingState()
   } finally {
     result?.secret.fill(0)
@@ -226,7 +229,7 @@ async function beginEnrollment(): Promise<void> {
 function confirmEnrollment(): void {
   if (!enrollmentResolver) return
   if (enrollmentConfirmation.value !== enrollmentSecret.value) {
-    enrollmentNotice.value = 'The confirmation could not be accepted.'
+    enrollmentNotice.value = t('common:offlineSettings.confirmationCouldNotAccepted')
     return
   }
   const resolver = enrollmentResolver
@@ -249,10 +252,10 @@ async function unlockReading(): Promise<void> {
     secret = decodeOfflineReadingSecret(entered)
     await unlockOfflineReading(storage, secret, controller.signal)
     readingState.value = 'unlocked'
-    readingMessage.value = 'Private offline reading is unlocked in this browser.'
+    readingMessage.value = t('common:offlineSettings.privateOfflineReadingUnlocked')
   } catch {
     if (!controller.signal.aborted) {
-      readingMessage.value = 'The private offline vault could not be unlocked.'
+      readingMessage.value = t('common:offlineSettings.privateOfflineVaultCould')
       await refreshReadingState()
     }
   } finally {
@@ -266,7 +269,7 @@ function lockReading(): void {
   lockOfflineReading()
   unlockSecret.value = ''
   readingState.value = 'locked'
-  readingMessage.value = 'Private offline reading is locked.'
+  readingMessage.value = t('common:offlineSettings.privateOfflineReadingLocked')
 }
 
 async function openStorage(): Promise<void> {
@@ -278,7 +281,7 @@ async function openStorage(): Promise<void> {
   storageEstimate.value = null
   previous?.close()
   storageState.value = 'checking'
-  storageMessage.value = 'Opening offline storage…'
+  storageMessage.value = t('common:offlineSettings.openingOfflineStorage')
   try {
     const opened = await openOfflineStorage()
     if (token !== storageOpenToken) {
@@ -288,7 +291,7 @@ async function openStorage(): Promise<void> {
     offlineStorage.value = opened
     const storageAvailable = await refreshStorageStatus()
     if (token === storageOpenToken && offlineStorage.value === opened && storageAvailable) {
-      storageMessage.value = 'Changes are saved automatically on this device.'
+      storageMessage.value = t('common:offlineSettings.changesSavedAutomaticallyDevice')
       libraryRefreshToken.value += 1
       await refreshReadingState()
     }
@@ -306,14 +309,14 @@ async function requestPersistence(): Promise<void> {
   const storage = offlineStorage.value
   if (!storage || persistenceBusy.value) return
   persistenceBusy.value = true
-  storageMessage.value = 'Requesting persistent storage…'
+  storageMessage.value = t('common:offlineSettings.requestingPersistentStorage')
   try {
     const granted = await storage.requestPersistence()
     const storageAvailable = await refreshStorageStatus()
     if (storageAvailable) {
       storageMessage.value = granted
-        ? 'Persistent storage is granted or was accepted by the browser.'
-        : 'Persistent storage was not granted. The browser may still retain your saved pages.'
+        ? t('common:offlineSettings.persistentStorageGrantedWas')
+        : t('common:offlineSettings.persistentStorageWasNot')
     }
   } catch (error) {
     const failure = storageFailure(error)
@@ -346,15 +349,15 @@ async function removeDownloadedPages(): Promise<void> {
     }
     const syncResult = offlineSyncService
       ? await offlineSyncService.reconcile('manual')
-      : createOfflineSyncUnavailableResult('Synchronization will resume when the app reconnects.')
+      : createOfflineSyncUnavailableResult(t('common:offlineSettings.synchronizationWillResumeWhen'))
     if (syncResult.outcome === 'error') {
-      removeNotice.value = syncResult.diagnostics?.lastError ?? 'Saved pages were removed, but local synchronization reported an error.'
+      removeNotice.value = syncResult.diagnostics?.lastError ?? t('common:offlineSettings.savedPagesWereRemoved')
     } else if (syncResult.outcome === 'unavailable') {
-      removeNotice.value = `Saved pages were removed, but local synchronization is unavailable: ${syncResult.error}`
+      removeNotice.value = t('common:offlineSettings.savedPagesWereRemoved2', { error: syncResult.error, interpolation: { escapeValue: false } })
     } else if (syncResult.outcome === 'offline') {
-      removeNotice.value = 'Saved pages were removed. Local synchronization will resume when the server is reachable.'
+      removeNotice.value = t('common:offlineSettings.savedPagesWereRemoved3')
     } else {
-      removeNotice.value = 'Saved pages were removed. Locked drafts and submission recovery were not changed.'
+      removeNotice.value = t('common:offlineSettings.savedPagesWereRemoved4')
     }
     libraryRefreshToken.value += 1
     await refreshStorageStatus()
@@ -423,7 +426,7 @@ async function confirmClearDeviceData(): Promise<void> {
   // Vue applies the disabled button state after synchronous focus restoration.
   clearBusy.value = true
   closeClearDialog()
-  clearNotice.value = 'Clearing saved pages, locked drafts, and submission recovery…'
+  clearNotice.value = t('common:offlineSettings.clearingSavedPagesLocked')
   // Invalidate all local projections before the strict generation-fenced clear.
   lockOfflineReading()
   clearDeviceToken.value += 1
@@ -432,7 +435,7 @@ async function confirmClearDeviceData(): Promise<void> {
     libraryRefreshToken.value += 1
     await refreshStorageStatus()
     await refreshReadingState()
-    clearNotice.value = 'Offline data was cleared on this device. Your server data was not deleted.'
+    clearNotice.value = t('common:offlineSettings.offlineDataWasCleared')
   } catch (error) {
     const failure = storageFailure(error)
     storageState.value = failure.state
@@ -515,8 +518,8 @@ onBeforeUnmount(() => {
     <header class="offline-settings__heading">
       <v-avatar size="56" color="primary" variant="tonal"><v-icon size="30">mdi-cloud-check-outline</v-icon></v-avatar>
       <div>
-        <h1 class="text-headline-medium font-weight-bold">Offline access</h1>
-        <p class="text-body-large text-medium-emphasis">Keep reading when your connection drops. These preferences apply to this browser and device.</p>
+        <h1 class="text-headline-medium font-weight-bold">{{ $t('common:offlineSettings.offlineAccess') }}</h1>
+        <p class="text-body-large text-medium-emphasis">{{ $t('common:offlineSettings.keepReadingWhenConnection') }}</p>
       </div>
     </header>
     <div class="offline-settings__layout">
@@ -535,19 +538,19 @@ onBeforeUnmount(() => {
         />
         <p v-if="libraryNotice" class="offline-settings__notice" role="alert">{{ libraryNotice }}</p>
       </v-card>
-      <aside class="offline-settings__utilities" aria-label="Device settings">
+      <aside class="offline-settings__utilities" :aria-label="$t('common:offlineSettings.deviceSettings')">
         <v-card class="offline-settings__reading" variant="flat">
           <div class="offline-settings__reading-heading">
-            <h2 class="text-title-large">Private offline reading</h2>
+            <h2 class="text-title-large">{{ $t('common:offlineSettings.privateOfflineReading') }}</h2>
             <v-chip size="small" :color="readingState === 'unlocked' ? 'success' : 'default'" variant="tonal">{{ readingStateLabel }}</v-chip>
           </div>
           <p>{{ readingStateDescription }}</p>
           <p v-if="readingMessage" class="offline-settings__notice" role="status">{{ readingMessage }}</p>
           <template v-if="readingState === 'setup-required' && !enrollmentConfirming">
-            <p v-if="!verifiedAccount" class="text-medium-emphasis">Sign in and reconnect once to enable private offline reading. Public saved pages remain available.</p>
+            <p v-if="!verifiedAccount" class="text-medium-emphasis">{{ $t('common:offlineSettings.signReconnectOnceEnable') }}</p>
             <div class="offline-settings__actions">
               <v-btn variant="tonal" color="primary" :disabled="!verifiedAccount || readingBusy" :loading="readingBusy" @click="beginEnrollment">
-                Set up private reading
+                {{ $t('common:offlineSettings.setUpPrivateReading') }}
               </v-btn>
             </div>
           </template>
@@ -555,7 +558,7 @@ onBeforeUnmount(() => {
             <v-text-field
               v-model="unlockSecret"
               class="offline-settings__secret-field"
-              label="Unlock secret"
+              :label="$t('common:offlineSettings.unlockSecret')"
               type="password"
               autocomplete="off"
               spellcheck="false"
@@ -563,67 +566,67 @@ onBeforeUnmount(() => {
               @keyup.enter="unlockReading"
             />
             <div class="offline-settings__actions">
-              <v-btn variant="tonal" color="primary" :disabled="readingBusy || !unlockSecret" :loading="readingBusy" @click="unlockReading">Unlock private pages</v-btn>
+              <v-btn variant="tonal" color="primary" :disabled="readingBusy || !unlockSecret" :loading="readingBusy" @click="unlockReading">{{ $t('common:offlineSettings.unlockPrivatePages') }}</v-btn>
             </div>
           </template>
           <template v-else-if="readingState === 'unlocked'">
-            <p class="text-medium-emphasis">Private pages stay in encrypted local storage and are not sent in URLs or logs.</p>
+            <p class="text-medium-emphasis">{{ $t('common:offlineSettings.privatePagesStayEncrypted') }}</p>
             <div class="offline-settings__actions">
-              <v-btn variant="outlined" :disabled="readingBusy" @click="lockReading">Lock private pages</v-btn>
+              <v-btn variant="outlined" :disabled="readingBusy" @click="lockReading">{{ $t('common:offlineSettings.lockPrivatePages') }}</v-btn>
             </div>
           </template>
           <template v-if="enrollmentConfirming">
             <v-alert type="warning" variant="tonal" role="alert">
-              Save this secret somewhere safe. It is shown once and cannot be recovered.
+              {{ $t('common:offlineSettings.saveSecretSomewhereSafe') }}
               <code class="offline-settings__secret">{{ enrollmentSecret }}</code>
             </v-alert>
             <v-text-field
               v-model="enrollmentConfirmation"
-              label="Re-enter secret exactly"
+              :label="$t('common:offlineSettings.reEnterSecretExactly')"
               autocomplete="off"
               spellcheck="false"
               :disabled="!readingBusy"
               @keyup.enter="confirmEnrollment"
             />
             <div class="offline-settings__actions">
-              <v-btn variant="tonal" color="primary" :disabled="!enrollmentConfirmation || !readingBusy" @click="confirmEnrollment">Confirm and save</v-btn>
-              <v-btn variant="text" :disabled="!readingBusy" @click="cancelEnrollment">Cancel</v-btn>
+              <v-btn variant="tonal" color="primary" :disabled="!enrollmentConfirmation || !readingBusy" @click="confirmEnrollment">{{ $t('common:offlineSettings.confirmSave') }}</v-btn>
+              <v-btn variant="text" :disabled="!readingBusy" @click="cancelEnrollment">{{ $t('common:actions.cancel') }}</v-btn>
             </div>
           </template>
           <p v-if="enrollmentNotice" class="offline-settings__notice" role="status">{{ enrollmentNotice }}</p>
         </v-card>
         <PwaStatus :show-links="false" />
         <v-card class="offline-settings__storage" variant="flat">
-          <h2 class="text-title-large">Device storage</h2>
+          <h2 class="text-title-large">{{ $t('common:offlineSettings.deviceStorage') }}</h2>
           <p>{{ storageDetail }}</p>
           <p v-if="storageEstimate?.persisted !== null && storageEstimate?.persisted !== undefined" class="text-medium-emphasis">
-            {{ storageEstimate.persisted ? 'Persistent storage is enabled.' : 'Persistent storage has not been granted by your browser.' }}
+            {{ storageEstimate.persisted ? $t('common:offlineSettings.persistentStorageEnabled') : $t('common:offlineSettings.persistentStorageHasNot') }}
           </p>
           <div class="offline-settings__actions">
-            <v-btn variant="outlined" :loading="storageBusy" :disabled="clearBusy || persistenceBusy" @click="openStorage">Refresh storage</v-btn>
-            <v-btn variant="tonal" :disabled="!offlineStorage || clearBusy" :loading="persistenceBusy" @click="requestPersistence">Keep storage on this device</v-btn>
+            <v-btn variant="outlined" :loading="storageBusy" :disabled="clearBusy || persistenceBusy" @click="openStorage">{{ $t('common:offlineSettings.refreshStorage') }}</v-btn>
+            <v-btn variant="tonal" :disabled="!offlineStorage || clearBusy" :loading="persistenceBusy" @click="requestPersistence">{{ $t('common:offlineSettings.keepStorageDevice') }}</v-btn>
           </div>
           <p v-if="storageMessage && storageState === 'available' && !storageBusy" class="text-medium-emphasis" role="status">{{ storageMessage }}</p>
           <v-divider class="my-4" />
-          <h3 class="text-title-medium">Remove local data</h3>
-          <p>Removing saved pages leaves your local drafts and submission recovery intact. Server data is unchanged.</p>
+          <h3 class="text-title-medium">{{ $t('common:offlineSettings.removeLocalData') }}</h3>
+          <p>{{ $t('common:offlineSettings.removingSavedPagesLeaves') }}</p>
           <div class="offline-settings__actions">
-            <v-btn variant="text" :disabled="!offlineStorage || clearBusy || persistenceBusy || storageEstimate?.snapshotCount === 0" @click="removeDownloadedPages">Remove saved pages</v-btn>
-            <v-btn color="error" variant="text" :disabled="!offlineStorage || clearBusy || persistenceBusy" @click="beginClearDeviceData">Clear offline data on this device</v-btn>
+            <v-btn variant="text" :disabled="!offlineStorage || clearBusy || persistenceBusy || storageEstimate?.snapshotCount === 0" @click="removeDownloadedPages">{{ $t('common:offlineSettings.removeSavedPages') }}</v-btn>
+            <v-btn color="error" variant="text" :disabled="!offlineStorage || clearBusy || persistenceBusy" @click="beginClearDeviceData">{{ $t('common:offlineSettings.clearOfflineDataDevice') }}</v-btn>
           </div>
           <p v-if="removeNotice" class="offline-settings__notice" role="status">{{ removeNotice }}</p>
           <p v-if="clearNotice" class="offline-settings__notice" role="status">{{ clearNotice }}</p>
-          <p v-if="storageEstimate?.lockedDraftCount" class="text-medium-emphasis">{{ storageEstimate.lockedDraftCount }} local draft{{ storageEstimate.lockedDraftCount === 1 ? '' : 's' }} protected. Reconnect with the same account to access them.</p>
+          <p v-if="storageEstimate?.lockedDraftCount" class="text-medium-emphasis">{{ $t('common:offlineSettings.localDraftProtectedReconnect', { lockedDraftCount: storageEstimate.lockedDraftCount, tValue: $t('common:offlineSettings.sCount', { count: storageEstimate.lockedDraftCount }), interpolation: { escapeValue: false } }) }}</p>
         </v-card>
       </aside>
     </div>
     <div v-if="clearDialogOpen" class="offline-settings__backdrop" role="presentation" @keydown.esc.prevent="cancelClearDeviceData">
       <section ref="clearDialog" class="offline-settings__dialog" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="clear-device-title" aria-describedby="clear-device-description">
-        <h2 id="clear-device-title" class="text-title-large">Clear offline data on this device?</h2>
-        <p id="clear-device-description">This removes saved pages, local drafts, and unresolved submission recovery from this browser. It does not delete anything from the server.</p>
+        <h2 id="clear-device-title" class="text-title-large">{{ $t('common:offlineSettings.clearOfflineDataDevice2') }}</h2>
+        <p id="clear-device-description">{{ $t('common:offlineSettings.removesSavedPagesLocal') }}</p>
         <div class="offline-settings__actions">
-          <v-btn variant="outlined" :disabled="clearBusy" @click="cancelClearDeviceData">Cancel</v-btn>
-          <v-btn color="error" variant="flat" :disabled="clearBusy" @click="confirmClearDeviceData">Clear offline data</v-btn>
+          <v-btn variant="outlined" :disabled="clearBusy" @click="cancelClearDeviceData">{{ $t('common:actions.cancel') }}</v-btn>
+          <v-btn color="error" variant="flat" :disabled="clearBusy" @click="confirmClearDeviceData">{{ $t('common:offlineSettings.clearOfflineData') }}</v-btn>
         </div>
       </section>
     </div>

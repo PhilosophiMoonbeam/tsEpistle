@@ -79,8 +79,8 @@
               v-icon(size='20' aria-hidden='true') {{indexExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'}}
             .tags-follow-help#tags-follow-help
               p {{ $t('tags:saveOfflineHelp', { defaultValue: 'Save a tag offline to keep its public pages on this device.' }) }}
-              a(href='/p/offline') Offline preferences
-              a.tags-offline-recovery(v-if='offlineBrowseUnavailable && (tagsError || pagesError)' href='/p/offline#downloaded-pages-title') Browse saved pages
+              a(href='/p/offline') {{ $t(`common:tags.offlinePreferences`) }}
+              a.tags-offline-recovery(v-if='offlineBrowseUnavailable && (tagsError || pagesError)' href='/p/offline#downloaded-pages-title') {{ $t(`common:tags.browseSavedPages`) }}
             p.tags-follow-status(role='status' aria-live='polite' aria-atomic='true') {{offlinePolicyDetail}}
             .tags-index-panel#tags-index-panel(v-show='indexIsVisible')
               p.tags-index-status(role='status') {{tagIndexStatus}}
@@ -410,11 +410,11 @@ export default {
       return pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable'
     },
     offlinePolicyDetail (): string {
-      if (this.offlinePolicyLoading) return 'Loading offline preferences…'
+      if (this.offlinePolicyLoading) return this.$t('common:tags.loadingOfflinePreferences')
       if (this.offlinePolicyError) return this.offlinePolicyError
-      if (!this.offlineStorage) return 'Offline saving is unavailable on this device.'
-      if (!this.offlineTags.length) return 'No tags followed for offline saving yet.'
-      return `${this.offlineTags.length} tag${this.offlineTags.length === 1 ? '' : 's'} followed for offline saving.`
+      if (!this.offlineStorage) return this.$t('common:tags.offlineSavingUnavailableDevice')
+      if (!this.offlineTags.length) return this.$t('common:tags.noTagsFollowedOffline')
+      return this.$t('common:tags.tagFollowedOfflineSaving', { offlineTagsCount: this.offlineTags.length, offlineTags: this.offlineTags.length === 1 ? '' : 's', interpolation: { escapeValue: false } })
     },
     indexIsVisible (): boolean {
       return !this.hasSelection || this.indexExpanded || this.$vuetify.display.mdAndUp
@@ -451,8 +451,8 @@ export default {
         const known = this.tags.find((entry: PageTagRow) => entry.tag === tag)
         return {
           tag,
-          label: known ? this.tagLabel(known) : (tag || 'Unnamed tag'),
-          canonical: tag || 'Unnamed tag'
+          label: known ? this.tagLabel(known) : (tag || this.$t('common:tags.unnamedTag')),
+          canonical: tag || this.$t('common:tags.unnamedTag')
         }
       })
     },
@@ -615,7 +615,7 @@ export default {
         if (this.disposed || sequence !== this.offlinePolicySequence) return
         const nextError = error instanceof Error && error.message.trim()
           ? error.message
-          : 'Followed tags could not be read from this device.'
+          : this.$t('common:tags.followedTagsCouldNot')
         if (!preserveError || !this.offlinePolicyError) this.offlinePolicyError = nextError
       } finally {
         if (sequence === this.offlinePolicySequence && !this.disposed) this.offlinePolicyLoading = false
@@ -687,21 +687,21 @@ export default {
         }
         const syncResult: OfflineSyncResult = this.offlineSyncService
           ? await this.offlineSyncService.reconcile('tags')
-          : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+          : createOfflineSyncUnavailableResult(this.$t('common:tags.offlineSynchronizationUnavailable'))
         if (!this.disposed) {
           const localAnnouncement = followed
-            ? `Stopped following ${label} for offline saving.`
-            : `Following ${label} for offline saving on this device.`
+            ? this.$t('common:tags.stoppedFollowingOfflineSaving', { label, interpolation: { escapeValue: false } })
+            : this.$t('common:tags.followingOfflineSavingDevice', { label, interpolation: { escapeValue: false } })
           if (syncResult.outcome === 'error') {
-            const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization reported an error.')
-            this.offlinePolicyError = `The followed-tag setting was saved locally, but offline sync failed: ${detail}`
-            this.selectionAnnouncement = `${localAnnouncement} Offline sync reported an error; the saved setting remains on this device.`
+            const detail = offlineSyncResultDetail(syncResult, this.$t('common:tags.offlineSynchronizationReportedError'))
+            this.offlinePolicyError = this.$t('common:tags.followedTagSettingWas', { detail, interpolation: { escapeValue: false } })
+            this.selectionAnnouncement = this.$t('common:tags.offlineSyncReportedError', { localAnnouncement, interpolation: { escapeValue: false } })
           } else if (syncResult.outcome === 'unavailable') {
-            const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization is unavailable.')
-            this.offlinePolicyError = `The followed-tag setting was saved locally, but offline sync is unavailable: ${detail}`
-            this.selectionAnnouncement = `${localAnnouncement} Offline sync is unavailable; the saved setting remains on this device.`
+            const detail = offlineSyncResultDetail(syncResult, this.$t('common:tags.offlineSynchronizationUnavailable'))
+            this.offlinePolicyError = this.$t('common:tags.followedTagSettingWas2', { detail, interpolation: { escapeValue: false } })
+            this.selectionAnnouncement = this.$t('common:tags.offlineSyncUnavailableSaved', { localAnnouncement, interpolation: { escapeValue: false } })
           } else if (syncResult.outcome === 'offline') {
-            this.selectionAnnouncement = `${localAnnouncement} Offline sync will resume when a connection is available.`
+            this.selectionAnnouncement = this.$t('common:tags.offlineSyncWillResume', { localAnnouncement, interpolation: { escapeValue: false } })
           } else {
             this.selectionAnnouncement = localAnnouncement
           }
@@ -712,12 +712,12 @@ export default {
         if (this.disposed) return
         const detail = error instanceof Error && error.message.trim()
           ? error.message.trim().slice(0, 512)
-          : 'The followed-tag setting could not be changed.'
+          : this.$t('common:tags.followedTagSettingCould')
         if (policyMutationCommitted) {
-          this.offlinePolicyError = `The followed-tag setting was saved locally, but offline sync failed: ${detail}`
+          this.offlinePolicyError = this.$t('common:tags.followedTagSettingWas', { detail, interpolation: { escapeValue: false } })
           this.selectionAnnouncement = followed
-            ? `Stopped following ${label} for offline saving. Offline sync failed; the saved setting remains on this device.`
-            : `Following ${label} for offline saving on this device. Offline sync failed; the saved setting remains on this device.`
+            ? this.$t('common:tags.stoppedFollowingOfflineSaving2', { label, interpolation: { escapeValue: false } })
+            : this.$t('common:tags.followingOfflineSavingDevice2', { label, interpolation: { escapeValue: false } })
         } else {
           this.offlinePolicyError = detail
         }
@@ -733,7 +733,7 @@ export default {
     },
     tagLabel (tag: PageTagRow): string {
       const title = typeof tag.title === 'string' ? tag.title.trim() : ''
-      return title || tag.tag || 'Unnamed tag'
+      return title || tag.tag || this.$t('common:tags.unnamedTag')
     },
     tagColor (canonicalTag: string) {
       return tagColorBucket(canonicalTag)
@@ -747,7 +747,7 @@ export default {
       return label === tag.tag || !tag.tag ? label : `${label} (${tag.tag})`
     },
     removeTagLabel (selected: SelectedTag): string {
-      return `Remove ${selected.label}${selected.canonical !== selected.label ? ` (${selected.canonical})` : ''}`
+      return this.$t('common:tags.remove', { label: selected.label, value: selected.canonical !== selected.label ? ` (${selected.canonical})` : '', interpolation: { escapeValue: false } })
     },
     isSelected (tag: string): boolean {
       return this.selection.includes(tag)
@@ -759,7 +759,7 @@ export default {
       }
       this.selection = [...this.selection, tag]
       this.pagination.page = 1
-      this.selectionAnnouncement = `Added ${tag || 'unnamed tag'}. All selected tags must match.`
+      this.selectionAnnouncement = this.$t('common:tags.addedAllSelectedTags', { value: tag || 'unnamed tag', interpolation: { escapeValue: false } })
       this.rebuildURL()
     },
     removeTag (tag: string): void {
@@ -767,7 +767,7 @@ export default {
       if (index < 0) return
       this.selection = this.selection.filter((selectedTag: string) => selectedTag !== tag)
       this.pagination.page = 1
-      this.selectionAnnouncement = `Removed ${tag || 'unnamed tag'}.`
+      this.selectionAnnouncement = this.$t('common:tags.removed', { value: tag || 'unnamed tag', interpolation: { escapeValue: false } })
       this.rebuildURL()
       this.$nextTick(() => this.focusAfterTagRemoval(index))
     },
@@ -775,7 +775,7 @@ export default {
       this.selection = []
       this.pagination.page = 1
       this.indexExpanded = true
-      this.selectionAnnouncement = 'Selection cleared.'
+      this.selectionAnnouncement = this.$t('common:tags.selectionCleared')
       this.rebuildURL()
       this.$nextTick(() => this.focusTagIndex())
     },
@@ -834,7 +834,7 @@ export default {
         this.tags = markRaw(tags)
       } catch (err) {
         if (this.disposed || sequence !== this.tagsLoadSequence) return
-        this.tagsError = err instanceof Error ? err.message : 'Unable to load tags.'
+        this.tagsError = err instanceof Error ? err.message : this.$t('common:tags.unableLoadTags')
       } finally {
         if (sequence === this.tagsLoadSequence && !this.disposed) this.tagsLoading = false
         setLoading(wikiStore, loadingKey, false)
@@ -861,14 +861,14 @@ export default {
         this.pages = markRaw(pages)
       } catch (err) {
         if (this.disposed || sequence !== this.pagesLoadSequence) return
-        this.pagesError = err instanceof Error ? err.message : 'Unable to load tagged pages.'
+        this.pagesError = err instanceof Error ? err.message : this.$t('common:tags.unableLoadTaggedPages')
       } finally {
         if (sequence === this.pagesLoadSequence && !this.disposed) this.isLoading = false
         setLoading(wikiStore, loadingKey, false)
       }
     },
     pageTitle (page: PageListRow): string {
-      return page.title?.trim() || page.path || 'Untitled page'
+      return page.title?.trim() || page.path || this.$t('common:tags.untitledPage')
     },
     pageHref (page: PageListRow): string {
       return buildPageHref(page)

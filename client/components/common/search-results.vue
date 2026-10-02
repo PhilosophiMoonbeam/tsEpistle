@@ -1026,7 +1026,7 @@ export default defineComponent({
       this.previewSelector = null
       this.searchMode = 'ask'
       await this.$nextTick()
-      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.preparePrompt(this.normalizedSearch || `Help me understand “${source.title}”.`, source, this.agentSearchScope())
+      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.preparePrompt(this.normalizedSearch || this.$t('common:searchResults.helpMeUnderstand', { title: source.title, interpolation: { escapeValue: false } }), source, this.agentSearchScope())
     },
     async sendAskPrompt(prompt: string): Promise<void> {
       if (!prompt || this.directPromptHandoffPending) return
@@ -1364,7 +1364,7 @@ export default defineComponent({
           this.offlinePrivateSearchCorpusSessionGeneration = sessionGeneration
         }
         const preparedPublic = this.offlineSearchCorpus
-        if (!preparedPublic) throw new Error('Downloaded search corpus is unavailable.')
+        if (!preparedPublic) throw new Error(this.$t('common:searchResults.downloadedSearchCorpusUnavailable'))
         const mergeCorpora = typeof mergeOfflineSearchCorpora === 'function'
           ? mergeOfflineSearchCorpora
           : (publicCorpus: OfflineSearchCorpus, _privateCorpus: OfflineSearchCorpus | null): OfflineSearchCorpus => publicCorpus
