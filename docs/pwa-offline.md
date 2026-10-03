@@ -227,6 +227,10 @@ Capture and restore are wired explicitly through `client/components/editor.vue`,
 
 The editor host keeps its draft coordinator outside Vue's deep reactivity so durable capture, publishing, and unknown-outcome notifications retain their owning instance identity. Status and retained receipts remain visible for explicit recovery; callbacks queued by a replaced coordinator cannot overwrite the current editor's recovery or reload-safety state.
 
+For an existing page, **Keep server version**, discarding a saved draft, and deleting a receipt reload the normal server-authorized editor only after the chosen record is durably deleted. The old coordinator is fenced before reload, so clearing its detached text cannot create an empty draft; other saved drafts and receipts remain intact. The normal editor bootstrap loads the complete authoritative source and metadata instead of treating a local record deletion as a replacement server document. New-page draft deletion retains its normal clear-source behavior.
+
+An explicit recovery record ID selects only that draft or receipt. If it does not name a draft candidate, it must never fall back to the sole unrelated draft; resolving a submission leaves every other envelope byte-identical.
+
 Transitions:
 
 1. An already-open, online-authorized eligible editor records a base revision and obtains the in-memory key only after same-account verification.

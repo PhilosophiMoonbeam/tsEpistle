@@ -939,8 +939,9 @@ export class OfflineEditorDraftCoordinator {
   }
 
   private selectedCandidate(recordId?: string): OfflineDraftRecovery | null {
+    if (recordId !== undefined) return this.draftState.candidates.find(item => item.recordId === recordId) ?? null
     return (
-      (recordId === undefined ? this.draftState.candidate : this.draftState.candidates.find(item => item.recordId === recordId)) ??
+      this.draftState.candidate ??
       (this.draftState.candidates.length === 1 ? this.draftState.candidates[0]! : null)
     )
   }

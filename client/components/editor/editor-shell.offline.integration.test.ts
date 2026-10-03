@@ -138,6 +138,7 @@ type Adapter = {
   snapshot: () => AdapterSafety
   markPersisted: (editVersion?: number) => void
   noteTextChange: () => void
+  clear: () => void
 }
 
 type ShellBehavior = {
@@ -177,6 +178,9 @@ type ShellContext = {
   save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
   setupOfflineDraftCoordinator: () => void
   initializeOfflineDrafts: () => Promise<void>
+  resolveOfflineSubmission: (resolution: 'discard' | 'continue') => Promise<void>
+  discardOfflineDraft: (recordId: string) => Promise<void>
+  deleteOfflineSubmission: (recordId: string) => Promise<void>
 }
 
 const evaluateShellBehavior = (
@@ -498,6 +502,11 @@ const createShellContext = (
     noteTextChange: () => {
       editVersion += 1
       nonPersisted = true
+    },
+    clear: () => {
+      store.editor.content = ''
+      editVersion += 1
+      nonPersisted = true
     }
   }
   const context = {
@@ -729,6 +738,51 @@ describe('composed editor offline submission boundary', () => {
       payload: { content: 'A', state: 'outcome-unknown' }
     }])
   })
+
+  for (const action of ['keep-server', 'discard-draft', 'delete-receipt'] as const) {
+    test(`${action} deletes only the chosen record and cannot persist the cleared editor as an empty draft`, async () => {
+      const storage = new ComposedDraftStorage()
+      const testWindow = createTestWindow(keyFetchImpl)
+      installWindow(testWindow)
+      const creator = createReactiveShellContext(createStore(), testWindow, storage)
+      creator.setupOfflineDraftCoordinator()
+      await creator.initializeOfflineDrafts()
+      const original = creator.offlineDraftCoordinator!
+      const prepared = await original.prepareSubmission({ editVersion: 0 })
+      expect(prepared).not.toBeNull()
+      expect(await original.completeSubmission(prepared!, { kind: 'unknown', reason: 'Transport lost after dispatch' })).toBe(true)
+      original.destroy()
+
+      const serverStore = createStore()
+      serverStore.editor.content = 'server baseline'
+      const shell = createReactiveShellContext(serverStore, testWindow, storage)
+      shell.setupOfflineDraftCoordinator()
+      await shell.initializeOfflineDrafts()
+      const coordinator = shell.offlineDraftCoordinator!
+      const targetId = action === 'discard-draft' ? prepared!.sourceEnvelope!.recordId : prepared!.recordId
+      const survivorId = action === 'discard-draft' ? prepared!.recordId : prepared!.sourceEnvelope!.recordId
+      const survivor = cloneEnvelope(storage.records.get(survivorId)!)
+      if (action === 'keep-server') {
+        shell.offlineReconcilePrompt = { recordId: targetId, kind: 'update', revision: '2' }
+        await shell.resolveOfflineSubmission('discard')
+      } else if (action === 'discard-draft') {
+        await shell.discardOfflineDraft(targetId)
+      } else {
+        await shell.deleteOfflineSubmission(targetId)
+      }
+      // A queued text watcher from detachedClear must not commit an empty fork
+      // while the normal server editor bootstrap loads the authoritative baseline.
+      expect(await coordinator.captureThrough(shell.editorAdapter.snapshot().editVersion)).toBe(false)
+      expect(storage.records.has(targetId)).toBe(false)
+      expect(storage.records.size).toBe(1)
+      expect(sameEnvelope(storage.records.get(survivorId)!, survivor)).toBe(true)
+      const handle = await requestDraftKey(keyFetchImpl, {
+        expectedAccountId: ACCOUNT_ID,
+        expectedSessionGeneration: SESSION_GENERATION
+      })
+      expect((await decryptOfflineDraft(handle, storage.records.get(survivorId)!)).content).toBe('A')
+    })
+  }
 
   test('freezes A for the network request and receipt while preserving B for a fresh verified consumer', async () => {
     const storage = new ComposedDraftStorage()
