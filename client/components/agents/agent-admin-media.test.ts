@@ -60,10 +60,10 @@ const executable = (start: string, end: string): string =>
   new Bun.Transpiler({ loader: 'ts' }).transformSync(source.slice(source.indexOf(start), source.indexOf(end)))
 
 describe('provider editor interactions', () => {
-  it('preserves customized connection values while resetting protocol-derived capabilities', () => {
+  it('preserves customized endpoints but applies authentication required by the destination protocol', () => {
     const profileDraft = {
-      ...agentProviderProtocolDefaults('openai-chat'),
-      transportKind: 'openai-chat',
+      ...agentProviderProtocolDefaults('legacy-completions'),
+      transportKind: 'legacy-completions',
       baseUrl: 'https://api.example.com/v1',
       authMode: 'api-key-header',
       agentReasoningEffort: 'high',
@@ -75,10 +75,14 @@ describe('provider editor interactions', () => {
       'isAgentProviderTransport',
       `${executable('const selectProtocol =', 'const selectToolCalling =')}; return selectProtocol`
     )(profileDraft, agentProviderProtocolDefaults, isAgentProviderTransport)
+    selectProtocol('legacy-completions')
+    expect(profileDraft.authMode).toBe('api-key-header')
     selectProtocol('openresponses')
+    expect(profileDraft.baseUrl).toBe('https://api.example.com/v1')
+    expect(profileDraft.authMode).toBe('bearer')
     selectProtocol('openai-chat')
     expect(profileDraft.baseUrl).toBe('https://api.example.com/v1')
-    expect(profileDraft.authMode).toBe('api-key-header')
+    expect(profileDraft.authMode).toBe('bearer')
     expect(profileDraft.agentReasoningEffort).toBeNull()
     expect(profileDraft.mediaAttachments).toBe(false)
     Object.assign(profileDraft, agentProviderProtocolDefaults('openai-chat'))

@@ -1176,6 +1176,17 @@ describe('Agent composer three-section layout', () => {
       await Vue.nextTick()
       expect(textarea.value).toBe('Do not lose this draft')
       expect(root.querySelector('[role="alert"]')?.textContent).toBe(translateEnglish(key))
+      const mixedPaste = new browserWindow.Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(mixedPaste, 'clipboardData', { value: { files: [file], getData: () => ' and pasted text' } })
+      textarea.dispatchEvent(mixedPaste)
+      expect(mixedPaste.defaultPrevented).toBe(false)
+      // Native insertion follows the paste event; jsdom does not perform that default action.
+      textarea.value = 'Do not lose this draft and pasted text'
+      textarea.dispatchEvent(new browserWindow.InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: ' and pasted text' }))
+      await Vue.nextTick()
+      expect(textarea.value).toBe('Do not lose this draft and pasted text')
+      expect(root.querySelector('[role="alert"]')?.textContent).toBe(translateEnglish(key))
+      expect(mounted.uploads).toEqual([])
     }
   })
 
