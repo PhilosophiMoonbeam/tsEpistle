@@ -771,8 +771,8 @@ describe('composed editor offline submission boundary', () => {
         await shell.deleteOfflineSubmission(targetId)
       }
       expect(serverStore.editor.content).toBe('server baseline')
-      // A queued capture must not recreate discarded data while the authoritative editor reloads.
-      expect(await coordinator.captureThrough(shell.editorAdapter.snapshot().editVersion)).toBe(false)
+      // Only an explicit server-version choice replaces the live editor.
+      if (action === 'keep-server') expect(await coordinator.captureThrough(shell.editorAdapter.snapshot().editVersion)).toBe(false)
       expect(storage.records.has(targetId)).toBe(false)
       expect(storage.records.size).toBe(1)
       expect(sameEnvelope(storage.records.get(survivorId)!, survivor)).toBe(true)
@@ -783,6 +783,71 @@ describe('composed editor offline submission boundary', () => {
       expect((await decryptOfflineDraft(handle, storage.records.get(survivorId)!)).content).toBe('A')
     })
   }
+
+  test('deleting the live unknown receipt unblocks publishing newer source without deleting it', async () => {
+    const storage = new ComposedDraftStorage()
+    const testWindow = createTestWindow(keyFetchImpl)
+    installWindow(testWindow)
+    const store = createStore()
+    const shell = createReactiveShellContext(store, testWindow, storage)
+    shell.setupOfflineDraftCoordinator()
+    await shell.initializeOfflineDrafts()
+    const coordinator = shell.offlineDraftCoordinator!
+    const prepared = await coordinator.prepareSubmission({ editVersion: 0 })
+    expect(prepared).not.toBeNull()
+    expect(await coordinator.completeSubmission(prepared!, { kind: 'unknown', reason: 'Transport lost' })).toBe(true)
+    store.editor.content = 'newer source'
+    shell.editorAdapter.noteTextChange()
+    expect(await coordinator.captureThrough(shell.editorAdapter.snapshot().editVersion)).toBe(true)
+    await shell.deleteOfflineSubmission(prepared!.recordId)
+    expect(coordinator.hasUnresolvedSubmission).toBe(false)
+    expect(store.editor.content).toBe('newer source')
+    expect(storage.records.has(prepared!.recordId)).toBe(false)
+    const next = await coordinator.prepareSubmission({ editVersion: shell.editorAdapter.snapshot().editVersion })
+    expect(next).not.toBeNull()
+    expect(next!.payload.content).toBe('newer source')
+  })
+
+  test('server-version recovery preserves edits made while the chosen receipt is being deleted', async () => {
+    const storage = new ComposedDraftStorage()
+    const testWindow = createTestWindow(keyFetchImpl)
+    installWindow(testWindow)
+    const store = createStore()
+    const shell = createReactiveShellContext(store, testWindow, storage)
+    shell.setupOfflineDraftCoordinator()
+    await shell.initializeOfflineDrafts()
+    const coordinator = shell.offlineDraftCoordinator!
+    const prepared = await coordinator.prepareSubmission({ editVersion: 0 })
+    expect(prepared).not.toBeNull()
+    expect(await coordinator.completeSubmission(prepared!, { kind: 'unknown', reason: 'Transport lost' })).toBe(true)
+    shell.offlineReconcilePrompt = { recordId: prepared!.recordId, kind: 'update', revision: '2' }
+    let release!: () => void
+    let started!: () => void
+    const deleting = new Promise<void>(resolve => { started = resolve })
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const deleteDraft = storage.deleteDraft.bind(storage)
+    storage.deleteDraft = async (...args: Parameters<typeof storage.deleteDraft>) => {
+      started()
+      await resume
+      return deleteDraft(...args)
+    }
+    const resolving = shell.resolveOfflineSubmission('discard')
+    await deleting
+    store.editor.content = 'edited during recovery'
+    shell.editorAdapter.noteTextChange()
+    release()
+    await resolving
+    expect(store.editor.content).toBe('edited during recovery')
+    expect(shell.offlineDraftCoordinator).toBe(coordinator)
+    expect(storage.records.has(prepared!.recordId)).toBe(false)
+    expect(await coordinator.captureThrough(shell.editorAdapter.snapshot().editVersion)).toBe(true)
+    const handle = await requestDraftKey(keyFetchImpl, {
+      expectedAccountId: ACCOUNT_ID,
+      expectedSessionGeneration: SESSION_GENERATION
+    })
+    const saved = await Promise.all([...storage.records.values()].map(envelope => decryptOfflineDraft(handle, envelope)))
+    expect(saved.some(payload => payload.content === 'edited during recovery')).toBe(true)
+  })
 
   test('freezes A for the network request and receipt while preserving B for a fresh verified consumer', async () => {
     const storage = new ComposedDraftStorage()
