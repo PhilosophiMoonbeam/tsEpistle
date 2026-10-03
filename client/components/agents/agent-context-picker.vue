@@ -129,9 +129,9 @@
             @keydown.enter.prevent="queueSourceSearch(true)"
           />
           <p class="agent-context__search-scope" role="note"><v-icon icon="mdi-earth" size="15" aria-hidden="true" /> {{ $t('common:agentContextPicker.attachmentsDiscoveredAcrossAll', { scopeLabel, interpolation: { escapeValue: false } }) }}</p>
-          <p class="agent-context__status" role="status" aria-live="polite" aria-atomic="true">{{ sourceStatus }}</p>
-          <v-alert v-if="searchError || attachmentError" class="agent-context__error" type="error" variant="tonal" density="compact" role="alert">
-            {{ attachmentError || searchError }}
+          <p v-if="!searchError" class="agent-context__status" role="status" aria-live="polite" aria-atomic="true">{{ sourceStatus }}</p>
+          <v-alert v-if="attachmentError" class="agent-context__error" type="error" variant="tonal" density="compact" role="alert">
+            {{ attachmentError }}
           </v-alert>
 
           <section v-if="selectedRows.length" class="agent-context__pending" aria-labelledby="agent-sources-pending-title">
@@ -148,6 +148,10 @@
 
           <div class="agent-context__results" :aria-label="$t('common:agentContextPicker.pageSearchResults')">
             <div v-if="searchLoading" class="agent-context__results-state" role="status"><v-progress-circular indeterminate size="20" width="2" aria-hidden="true" /> {{ $t('common:agentContextPicker.searchingPages') }}</div>
+            <v-alert v-else-if="searchError" class="agent-context__error agent-context__search-error" type="error" variant="tonal" density="compact" role="alert">
+              <p>{{ searchError }}</p>
+              <v-btn variant="text" :disabled="addingSources || disabled || connectionBlocked" type="button" @click="queueSourceSearch(true)">{{ $t('common:agentContextPicker.retrySearch') }}</v-btn>
+            </v-alert>
             <div v-else-if="!sourceQuery.trim() || sourceQuery.trim().length < 2" class="agent-context__results-state">{{ $t('common:agentContextPicker.enterLeastTwoCharacters') }}</div>
             <div v-else-if="!sourceResult.results.length" class="agent-context__results-state">{{ $t('common:agentContextPicker.noAccessiblePagesMatched') }}</div>
             <ul v-else class="agent-context__result-list">
@@ -418,9 +422,9 @@ const runSearch = async (query: string, generation: number): Promise<void> => {
     )
     if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
     sourceResult.value = { ...response, results: dedupeRows(response.results) }
-  } catch (value) {
+  } catch {
     if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
-    searchError.value = value instanceof Error ? value.message : t('common:agentContextPicker.pageSearchCouldNot')
+    searchError.value = t('common:agentContextPicker.pageSearchCouldNot')
   } finally {
     if (searchController === controller) searchController = null
     if (generation === requestGeneration) searchLoading.value = false
@@ -681,6 +685,9 @@ onBeforeUnmount(() => {
 .agent-context__search-scope { display: flex; align-items: center; gap: .35rem; margin: .25rem 0 0; color: var(--wiki-text-muted); font-size: .72rem; line-height: 1.4; }
 .agent-context__status { min-height: 1.15rem; margin: .5rem 0 .35rem; color: var(--wiki-text-muted); font-size: .74rem; line-height: 1.4; }
 .agent-context__error { margin: .45rem 0; }
+.agent-context__search-error { margin: 0; }
+.agent-context__search-error p { margin: 0 0 var(--wiki-space-2); }
+.agent-context__search-error .v-btn { min-height: 44px; }
 .agent-context__pending { margin: .6rem 0 .75rem; padding: .65rem .75rem; border: 1px solid color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 30%, var(--wiki-surface-border)); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 6%, var(--wiki-surface-raised)); }
 .agent-context__pending-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: rgb(var(--v-theme-on-surface)); font-size: .76rem; }
 .agent-context__pending-heading h3 { margin: 0; font-size: inherit; font-weight: 700; }

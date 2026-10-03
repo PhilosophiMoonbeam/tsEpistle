@@ -1,6 +1,6 @@
 <template>
   <section class="artifact-grid" :aria-label="label">
-    <figure v-for="artifact in artifacts" :key="artifact.id" class="artifact-card">
+    <figure v-for="artifact in artifacts" :key="artifact.id" class="artifact-card" :class="{ 'artifact-card--unavailable': !artifact.available }">
       <a
         v-if="artifact.available"
         :href="`/_api/agents/artifacts/${artifact.id}/content`"
@@ -13,8 +13,14 @@
           :width="artifact.width"
           :height="artifact.height"
           loading="lazy"
+          decoding="async"
+          fetchpriority="low"
         >
       </a>
+      <div v-else class="artifact-card__unavailable">
+        <v-icon icon="mdi-image-off-outline" size="32" aria-hidden="true" />
+        <strong>{{ $t('common:agentArtifactGrid.browserScreenshotExpired') }}</strong>
+      </div>
       <figcaption class="text-body-small text-medium-emphasis">
         {{ artifact.available ? $t('common:agentArtifactGrid.browserScreenshot3', { width: artifact.width, height: artifact.height, interpolation: { escapeValue: false } }) : $t('common:agentArtifactGrid.browserScreenshotExpired') }}
       </figcaption>
@@ -46,6 +52,21 @@ const capturedLabel = (artifact: AgentArtifactView): string => props.formatTime(
   margin: 0;
 }
 
+.artifact-card__unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wiki-space-2);
+  min-height: 10rem;
+  padding: var(--wiki-space-4);
+  border: 1px dashed var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  color: var(--wiki-text-muted);
+  text-align: center;
+}
+
 .artifact-card a {
   border-radius: var(--wiki-control-radius);
   display: block;
@@ -72,6 +93,11 @@ const capturedLabel = (artifact: AgentArtifactView): string => props.formatTime(
 }
 
 @media (forced-colors: active) {
+  .artifact-card__unavailable {
+    background: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
+  }
   .artifact-card img {
     background: Canvas;
     border-color: CanvasText;

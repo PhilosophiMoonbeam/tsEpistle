@@ -38,7 +38,7 @@
         <template #prepend>
           <v-checkbox-btn
             :model-value="isSelected(skill.versionId) || isPreferred(skill.versionId)"
-            :aria-label="`${skill.name}: ${isSelected(skill.versionId) || isPreferred(skill.versionId) ? 'selected' : $t('common:agentComposerSkillMenu.notSelected')}`"
+            :aria-label="`${skill.name}: ${isSelected(skill.versionId) || isPreferred(skill.versionId) ? $t('common:agentComposerSkillMenu.selected') : $t('common:agentComposerSkillMenu.notSelected')}`"
             :disabled="disabled || sendInProgress || isPreferred(skill.versionId) || (!isSelected(skill.versionId) && selectedSkillVersionIds.length >= invocationLimit)"
             @click.stop="toggle(skill.versionId)"
           />

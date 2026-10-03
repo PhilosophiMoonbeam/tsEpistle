@@ -292,10 +292,13 @@
               </div>
 
               <section v-if="!hasConversation && (thread || (!loading && connectionBlocked))" class="inline-agent__welcome" :aria-label="$t('common:agentWorkspace.startConversation')">
-                <p class="inline-agent__welcome-title">
-                  <span class="inline-agent__welcome-line">{{ welcomeGreeting.first }}</span>
-                  <em class="inline-agent__welcome-line">{{ welcomeGreeting.second }}</em>
-                </p>
+                <div class="inline-agent__welcome-intro">
+                  <p class="inline-agent__welcome-title">
+                    <span class="inline-agent__welcome-line">{{ $t('common:agentWorkspace.welcomeIdentity') }}</span>
+                    <em class="inline-agent__welcome-line">{{ $t('common:agentWorkspace.welcomeUtility') }}</em>
+                  </p>
+                  <p class="inline-agent__welcome-subtitle">{{ $t('common:agentWorkspace.welcomeSources') }}</p>
+                </div>
                 <div
                   class="inline-agent__starters"
                   role="group"
@@ -524,6 +527,35 @@
 
   <v-dialog
     content-class="agent-owned-overlay"
+    :model-value="discardDraftOpen"
+    :retain-focus="false"
+    max-width="30rem"
+    :aria-labelledby="discardDraftTitleId"
+    :aria-describedby="discardDraftDescriptionId"
+    @update:model-value="value => { if (!value) resolveDraftDiscard(false) }"
+  >
+    <v-card ref="discardDraftCard" rounded="xl">
+      <v-card-title class="pt-5 px-5">
+        <h2 :id="discardDraftTitleId" class="text-title-medium">{{ $t('common:agentWorkspace.discardDraftTitle') }}</h2>
+      </v-card-title>
+      <v-card-text class="px-5">
+        <p :id="discardDraftDescriptionId">{{ $t('common:agentWorkspace.discardDraftBody') }}</p>
+      </v-card-text>
+      <v-card-actions class="px-5 pb-4">
+        <v-spacer />
+        <v-btn variant="text" @click="resolveDraftDiscard(false)">{{ $t('common:actions.cancel') }}</v-btn>
+        <v-btn
+          color="primary"
+          variant="flat"
+          :disabled="sessionMutationBusy || connectionBlocked || !workspaceReady"
+          @click="resolveDraftDiscard(true)"
+        >{{ $t('common:agentWorkspace.discardDraftConfirm') }}</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog
+    content-class="agent-owned-overlay"
     v-model="clearUnfiledHistoryOpen"
     max-width="30rem"
     aria-labelledby="clear-unfiled-history-title"
@@ -604,29 +636,6 @@ import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
 
-const welcomeGreetings = [
-  { first: t('common:inlineAgentChat.pipelineLooksHealthy'), second: t('common:inlineAgentChat.budgetFeelsNervous') },
-  { first: t('common:inlineAgentChat.calendarLooksSpacious'), second: t('common:inlineAgentChat.meetingsFeelEndless') },
-  { first: t('common:inlineAgentChat.forecastBringsSunshine'), second: t('common:inlineAgentChat.spreadsheetBringsRain') },
-  { first: t('common:inlineAgentChat.salesNotesAlign'), second: t('common:inlineAgentChat.calendarsDisagree') },
-  { first: t('common:inlineAgentChat.clientsSeemCharmed'), second: t('common:inlineAgentChat.contractsSeemHaunted') },
-  { first: t('common:inlineAgentChat.reportsLookCheerful'), second: t('common:inlineAgentChat.footnotesKnowBetter') },
-  { first: t('common:inlineAgentChat.targetsWearTies'), second: t('common:inlineAgentChat.budgetsWearFrowns') },
-  { first: t('common:inlineAgentChat.inboxFeelsLighter'), second: t('common:inlineAgentChat.feelsSuspicious') },
-  { first: t('common:inlineAgentChat.strategyFeelsSolid'), second: t('common:inlineAgentChat.tacticsNeedCoffee') },
-  { first: t('common:inlineAgentChat.goodNewsPending'), second: t('common:inlineAgentChat.legalWantsEdits') },
-  { first: t('common:inlineAgentChat.salesKeepsMomentum'), second: t('common:inlineAgentChat.financeHasConcerns') },
-  { first: t('common:inlineAgentChat.revenueStaysSocial'), second: t('common:inlineAgentChat.expensesStayBashful') },
-  { first: t('common:inlineAgentChat.paperworkFeelsBrave'), second: t('common:inlineAgentChat.signaturesFeelShy') },
-  { first: t('common:inlineAgentChat.meetingNotesBloom'), second: t('common:inlineAgentChat.actionItemsMigrate') },
-  { first: t('common:inlineAgentChat.freshLeadsArrived'), second: t('common:inlineAgentChat.oldTabsCelebrated') },
-  { first: t('common:inlineAgentChat.roadmapLooksBrave'), second: t('common:inlineAgentChat.deadlineLooksBraver') },
-  { first: t('common:inlineAgentChat.clientCallPending'), second: t('common:inlineAgentChat.smallTalkLoading') },
-  { first: t('common:inlineAgentChat.briefingStartsSoon'), second: t('common:inlineAgentChat.coffeeStartsSooner') },
-  { first: t('common:inlineAgentChat.pipelineNearlySings'), second: t('common:inlineAgentChat.budgetNearlyAgrees') },
-  { first: t('common:inlineAgentChat.revenueSeemsCheerful'), second: t('common:inlineAgentChat.expenseReportsGiggle') }
-] as const
-
 const props = defineProps<{
   csrfToken: string
   ownerId: number
@@ -645,14 +654,12 @@ const emit = defineEmits<{
   (event: 'close'): void
   (event: 'return-search'): void
 }>()
-const welcomeGreeting = welcomeGreetings[Math.floor(Math.random() * welcomeGreetings.length)] ?? welcomeGreetings[0]
-
 const agents = useAgentsStore()
 const userPicture = computed(() => resolveUserPicture(wikiStore.user))
 const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchPending, googleSearchSuggestions, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
-const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean> }>('composer')
+const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean>; hasUnsentMedia: () => boolean; isMediaBusy: () => boolean }>('composer')
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
 const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
@@ -660,16 +667,23 @@ const panelMenuTrigger = useTemplateRef<ComponentRoot | HTMLElement>('panelMenuT
 const historyPanel = useTemplateRef<HTMLElement>('historyPanel')
 const memoryPanel = useTemplateRef<HTMLElement>('memoryPanel')
 const panelScrim = useTemplateRef<HTMLElement>('panelScrim')
+const discardDraftCard = useTemplateRef<ComponentRoot>('discardDraftCard')
 const panelIdPrefix = useId()
 const workspaceTitleId = `${panelIdPrefix}-workspace-title`
 const historyHeadingId = `${panelIdPrefix}-history-title`
 const historyDescriptionId = `${panelIdPrefix}-history-description`
 const memoryHeadingId = `${panelIdPrefix}-memory-title`
 const memoryDescriptionId = `${panelIdPrefix}-memory-description`
+const discardDraftTitleId = `${panelIdPrefix}-discard-draft-title`
+const discardDraftDescriptionId = `${panelIdPrefix}-discard-draft-description`
 const goalExpanded = ref(false)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
 const clearUnfiledHistoryOpen = ref(false)
+const discardDraftOpen = ref(false)
+let draftDiscardResolver: ((discard: boolean) => void) | null = null
+let draftDiscardFocusScope: ModalFocusScope | null = null
+let restoreDiscardDraftFocus = false
 const clearingUnfiledHistory = ref(false)
 const clearUnfiledError = ref('')
 const clearUnfiledCommitted = ref(false)
@@ -1194,29 +1208,70 @@ const keepConversation = async (): Promise<void> => {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) keepingConversation.value = false
   }
 }
+const mediaReplacementAllowed = (): boolean => {
+  if (!composer.value?.isMediaBusy()) return true
+  panelMenuOpen.value = false
+  setSessionNotice(t('common:agentWorkspace.waitForMediaBeforeNewChat'))
+  return false
+}
+const hasDisposableDraft = (): boolean => {
+  const current = thread.value
+  if (!current || current.messages.length > 0 || current.session.currentRun || current.goal || current.session.folderId) return false
+  const draft = activeDraft.value
+  return Boolean(
+    draft.text || offlineComposerDraft.value || draft.sources.length || draft.skillVersionIds.length ||
+    draft.mode !== 'message' || draft.scope.kind !== 'all' || !draft.includeCurrentPage || composer.value?.hasUnsentMedia()
+  )
+}
+const resolveDraftDiscard = (discard: boolean, restoreFocus = true): void => {
+  if (discard && (sessionMutationBusy.value || !networkActionAllowed() || !mediaReplacementAllowed())) return
+  const resolve = draftDiscardResolver
+  draftDiscardResolver = null
+  restoreDiscardDraftFocus = !discard && restoreFocus
+  discardDraftOpen.value = false
+  resolve?.(discard)
+}
+const confirmDraftDiscard = (): Promise<boolean> => new Promise(resolve => {
+  panelMenuOpen.value = false
+  restoreDiscardDraftFocus = false
+  draftDiscardResolver = resolve
+  discardDraftOpen.value = true
+})
 const createSession = async (retention: 'saved' | 'temporary'): Promise<void> => {
   if (!networkActionAllowed()) return
   if (sessionMutationBusy.value || creatingRetention.value) return
-  const generation = actionGeneration
+  if (!mediaReplacementAllowed()) return
+  const generation = componentGeneration
+  const action = actionGeneration
   const ownerId = props.ownerId
+  const workspaceVersion = agents.workspaceVersion
+  const ownerGeneration = agents.ownerGeneration
+  const sessionId = thread.value?.session.id ?? null
+  const isCreateContextCurrent = (): boolean =>
+    isComponentCurrent(generation, ownerId) && actionGeneration === action &&
+    agents.workspaceVersion === workspaceVersion && agents.ownerGeneration === ownerGeneration &&
+    (thread.value?.session.id ?? null) === sessionId
   creatingRetention.value = retention
-  clearSessionNotice()
   try {
+    if (hasDisposableDraft() && !await confirmDraftDiscard()) return
+    if (!isCreateContextCurrent() || sessionMutationBusy.value || !networkActionAllowed() || !mediaReplacementAllowed()) return
     const initialized = await ensureInitialized()
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation || !initialized || sessionMutationBusy.value || !networkActionAllowed()) return
+    if (!isCreateContextCurrent() || !initialized || sessionMutationBusy.value || !networkActionAllowed() || !mediaReplacementAllowed()) return
+    clearSessionNotice()
     const created = await agents.newSession(retention)
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== action) return
     if (created && thread.value?.session.retention === retention) {
+      offlineComposerDraft.value = ''
       await nextTick()
-      if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+      if (!isComponentCurrent(generation, ownerId) || actionGeneration !== action) return
       await composer.value?.focusInput()
     }
   } catch (value) {
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== action) return
     const kind = retention === 'temporary' ? t('common:inlineAgentChat.temporaryConversation') : t('common:inlineAgentChat.newSavedConversation')
     agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.couldNotCreated', { kind, interpolation: { escapeValue: false } })
   } finally {
-    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) creatingRetention.value = null
+    if (isComponentCurrent(generation, ownerId) && actionGeneration === action) creatingRetention.value = null
   }
 }
 const newTemporarySession = (): Promise<void> => createSession('temporary')
@@ -1517,6 +1572,7 @@ watch(() => props.ownerId, (ownerId, previousOwnerId) => {
   retryGeneration += 1
   promptGeneration += 1
   actionGeneration += 1
+  resolveDraftDiscard(false, false)
   connectionRetrying.value = false
   promptSubmissionPending.value = false
   keepingConversation.value = false
@@ -1544,12 +1600,12 @@ watch(currentPage, (page, previous) => {
   retryGeneration += 1
   promptGeneration += 1
   actionGeneration += 1
+  resolveDraftDiscard(false, false)
   promptSubmissionPending.value = false
   connectionRetrying.value = false
   keepingConversation.value = false
   creatingRetention.value = null
   clearingUnfiledHistory.value = false
-  offlineComposerDraft.value = ''
   void ensureInitialized({ forceFresh: true })
 }, { flush: 'post' })
 const handlePageHide = (): void => { agents.closeWorkspace() }
@@ -1572,6 +1628,31 @@ const handleComposerWake = (): void => {
 document.addEventListener('visibilitychange', handleComposerWake)
 watch(skillManagerOpen, (open, wasOpen) => {
   if (!open && wasOpen) void nextTick(() => composer.value?.focusSkillsTrigger())
+})
+watch(discardDraftOpen, async (open, _previous, onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
+  await nextTick()
+  if (cancelled || disposed) return
+  if (!open) {
+    draftDiscardFocusScope?.deactivate({ restoreFocus: restoreDiscardDraftFocus })
+    draftDiscardFocusScope = null
+    restoreDiscardDraftFocus = false
+    return
+  }
+  const root = componentElement(discardDraftCard.value)
+  if (!root) return
+  draftDiscardFocusScope?.deactivate({ restoreFocus: false })
+  draftDiscardFocusScope = createModalFocusScope({
+    root,
+    restoreTarget: () => inlineAgentRoot.value?.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea') ?? null,
+    additionalRoots: () => {
+      // The native scrim owns backdrop dismissal; do not inert it with the background.
+      const scrim = root.closest('.v-overlay')?.querySelector<HTMLElement>(':scope > .v-overlay__scrim')
+      return scrim ? [scrim] : []
+    },
+    onEscape: () => resolveDraftDiscard(false)
+  })
 })
 watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode]) => {
   const kind = history ? 'history' : memory ? 'memory' : null
@@ -1609,7 +1690,11 @@ watch([historyOpen, memoryOpen], ([history, memory]) => {
   triggerForPanel(restoreKind)?.focus({ preventScroll: true })
 }, { flush: 'post' })
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
-  if (sessionId !== previousSessionId) { goalExpanded.value = false; clearSessionNotice() }
+  if (sessionId !== previousSessionId) {
+    resolveDraftDiscard(false, false)
+    goalExpanded.value = false
+    clearSessionNotice()
+  }
   if (!sessionId || !previousSessionId || sessionId === previousSessionId) return
   const restoreWorkspaceFocus = !clearUnfiledHistoryOpen.value
   if (historyOpen.value) {
@@ -1665,6 +1750,8 @@ onBeforeUnmount(() => {
   retryGeneration += 1
   promptGeneration += 1
   actionGeneration += 1
+  resolveDraftDiscard(false, false)
+  draftDiscardFocusScope?.deactivate({ restoreFocus: false })
   initializationEpoch += 1
   initialization = null
   initializationKey = ''
@@ -2366,8 +2453,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 /* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
 
-.inline-agent__welcome-title {
+.inline-agent__welcome-intro {
   grid-row: 2;
+}
+
+.inline-agent__welcome-title {
   position: relative;
   isolation: isolate;
   margin: 0;
@@ -2419,6 +2509,16 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   font-style: italic;
   font-weight: inherit;
   color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+}
+
+.inline-agent__welcome-subtitle {
+  position: relative;
+  max-width: 34rem;
+  margin: var(--wiki-space-3) auto 0;
+  color: var(--wiki-text-muted);
+  font-size: .875rem;
+  line-height: 1.5;
+  text-wrap: balance;
 }
 
 .inline-agent__starters {

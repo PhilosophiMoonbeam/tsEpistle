@@ -47,7 +47,7 @@
       <dt>{{ $t('common:agentToolCard.requested') }}</dt>
       <dd>
         <time :datetime="proposal.approval?.requestedAt">{{ formatTimestamp(proposal.approval?.requestedAt) }}</time>
-        <span class="operation-facts__secondary"> · {{ locallyExpired ? 'waited' : 'waiting' }} {{ approvalDuration }}</span>
+        <span class="operation-facts__secondary"> · {{ locallyExpired ? $t('common:agentToolCard.waited') : $t('common:agentToolCard.waiting') }} {{ approvalDuration }}</span>
       </dd>
       <dt>{{ $t('common:agentToolCard.deadline') }}</dt>
       <dd>
@@ -100,6 +100,7 @@
       <p><strong>{{ $t('common:agentToolCard.deletionConfirmation') }}</strong> {{ $t('common:agentToolCard.cannotUndoneAgentConversation') }}</p>
       <v-text-field
         v-model="confirmationPath"
+        maxlength="1024"
         :label="$t('common:agentToolCard.typeExactPagePath')"
         :hint="proposal.target?.path || ''"
         persistent-hint
@@ -142,7 +143,7 @@
     </div>
     <p v-else :id="`agent-approval-expired-${proposal.id}`" class="agent-operation__expired" role="status">
       <v-icon icon="mdi-timer-alert-outline" size="18" aria-hidden="true" />
-      {{ $t('common:agentToolCard.approvalExpiredRefreshProposal') }}
+      {{ $t('common:agentToolCard.approvalWindowClosed') }}
     </p>
     <p
       v-if="decisionInFlight && !locallyExpired"

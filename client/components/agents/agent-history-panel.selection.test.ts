@@ -8,7 +8,7 @@ import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import type { AgentRefreshResult } from '../../store/agents.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 interface Ref<T> {
   value: T
 }
@@ -52,10 +52,12 @@ interface PanelHarness {
   folderWorkflowState: Ref<string>
   foldersRefreshError: Ref<string>
   initialRefreshPending: Ref<boolean>
+  folders: Ref<AgentConversationFolderView[]>
   loading: Ref<boolean>
   localError: Ref<string>
   moveSession: (session: AgentSessionSummary, folderId: string | null) => Promise<boolean>
   openFolderIds: Ref<string[]>
+  ownerContext: Ref<{ ownerId: number | null; ownerGeneration: number; workspaceVersion: number }>
   refreshFolders: () => Promise<boolean>
   refreshHistory: () => Promise<boolean>
   refreshSessions: () => Promise<boolean>
@@ -64,6 +66,9 @@ interface PanelHarness {
   saveFolder: () => Promise<void>
   saveSessionTitle: () => Promise<void>
   searchQuery: Ref<string | null>
+  sessions: Ref<AgentSessionSummary[]>
+  sessionsNextCursor: Ref<string | null>
+  showLoadedHistorySearchScope: Ref<boolean>
   sessionEditorOpen: Ref<boolean>
   sessionRenameTitle: Ref<string>
   removingFolder: Ref<AgentConversationFolderView | null>
@@ -71,6 +76,8 @@ interface PanelHarness {
   openSession: (sessionId: string) => Promise<void>
   sessionsRefreshError: Ref<string>
   setDropTarget: (event: DragEvent, folderId: string | null) => void
+  thread: Ref<{ session: { id: string } }>
+  updateOpenFolderIds: (ids: string[]) => void
   unmount: () => void
 }
 
@@ -134,6 +141,7 @@ const loadPanel = (
   const emit = vi.fn()
   const unmountCallbacks: Array<() => void> = []
   let currentCleanupRegistrar: ((cleanup: WatchCleanup) => void) | null = null
+  let collectingDependencies: Set<ReactiveRef<unknown>> | null = null
   const onWatcherCleanup = (cleanup: WatchCleanup): void => {
     currentCleanupRegistrar?.(cleanup)
   }
@@ -142,6 +150,7 @@ const loadPanel = (
     const watchers: Array<{ callback: WatchCallback; cleanup?: WatchCleanup }> = []
     return {
       get value() {
+        collectingDependencies?.add(this as ReactiveRef<unknown>)
         return value
       },
       set value(nextValue: T) {
@@ -179,11 +188,17 @@ const loadPanel = (
   const sessionsNextCursor = ref<string | null>(null)
   const sessionsReloading = ref(false)
   const thread = ref({ session: { id: '00000000-0000-4000-8000-000000000001' } })
+  const ownerContext = ref({ ownerId: 1 as number | null, ownerGeneration: 0, workspaceVersion: 0 })
   const store = {
     reloadSessions: vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult),
     reloadFolders: vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult),
     ...agents
   }
+  Object.defineProperties(store, {
+    pinOwnerId: { get: () => ownerContext.value.ownerId },
+    ownerGeneration: { get: () => ownerContext.value.ownerGeneration },
+    workspaceVersion: { get: () => ownerContext.value.workspaceVersion }
+  })
   const evaluate = new Function(
     'computed',
     'nextTick',
@@ -243,14 +258,18 @@ const loadPanel = (
       sessionMutationBusy,
       saveSessionTitle,
       searchQuery,
+      sessions,
+      sessionsNextCursor,
+      showLoadedHistorySearchScope,
       sessionEditorOpen,
       sessionRenameTitle,
       removingFolder,
       requestClear,
       sessionsRefreshError,
-      setDropTarget
+      setDropTarget,
+      updateOpenFolderIds
     }`
-  ) as (...dependencies: unknown[]) => Omit<PanelHarness, 'emit' | 'unmount'>
+  ) as (...dependencies: unknown[]) => Omit<PanelHarness, 'emit' | 'unmount' | 'folders' | 'ownerContext' | 'thread'>
   const panel = evaluate(
     (getter: () => unknown) => ({
       get value() {
@@ -269,16 +288,25 @@ const loadPanel = (
     (source: unknown, callback: WatchCallback, options?: { immediate?: boolean }) => {
       const isArraySource = Array.isArray(source)
       const sources = isArraySource ? source : [source]
+      const readSource = (candidate: unknown): unknown =>
+        typeof candidate === 'function' ? (candidate as () => unknown)() : (candidate as Ref<unknown>)?.value
+      const readValue = (): unknown => (isArraySource ? sources.map(readSource) : readSource(sources[0]))
+      const dependencies = new Set<ReactiveRef<unknown>>()
+      collectingDependencies = dependencies
+      let previous = readValue()
+      collectingDependencies = null
       const notify = (): void => {
-        const value = isArraySource ? sources.map(candidate => (candidate as Ref<unknown>).value) : (sources[0] as Ref<unknown>)?.value
-        callback(value, undefined, () => {})
+        const value = readValue()
+        const changed = isArraySource
+          ? (value as unknown[]).some((item, index) => !Object.is(item, (previous as unknown[])[index]))
+          : !Object.is(value, previous)
+        if (!changed) return
+        const oldValue = previous
+        previous = value
+        callback(value, oldValue, () => {})
       }
-      for (const candidate of sources) {
-        if (candidate && typeof (candidate as ReactiveRef<unknown>).subscribe === 'function') {
-          ;(candidate as ReactiveRef<unknown>).subscribe(() => notify())
-        }
-      }
-      if (options?.immediate) notify()
+      for (const dependency of dependencies) dependency.subscribe(notify)
+      if (options?.immediate) callback(previous, undefined, () => {})
     },
     () => ({
       folders,
@@ -311,6 +339,9 @@ const loadPanel = (
   return {
     ...panel,
     emit,
+    folders,
+    ownerContext,
+    thread,
     unmount: () => {
       for (const callback of unmountCallbacks) callback()
     }
@@ -359,6 +390,132 @@ const makeDragEvent = (): {
 describe('Agent history session selection', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('reveals search matches and restores the prior compact folder layout after clearing', () => {
+    const roadmap = makeFolder()
+    const release = makeFolder({ id: 'release', name: 'Release archive' })
+    const support = makeFolder({ id: 'support', name: 'Support archive' })
+    const panel = loadPanel(
+      {
+        openSession: vi.fn().mockResolvedValue(false),
+        cancelSessionReadTransition: vi.fn()
+      },
+      true,
+      [makeSession({ folderId: release.id })],
+      [roadmap, release, support]
+    )
+    panel.updateOpenFolderIds([roadmap.id])
+
+    panel.searchQuery.value = 'Release'
+    expect(panel.openFolderIds.value).toEqual([roadmap.id, release.id])
+    panel.searchQuery.value = 'Support'
+    expect(panel.openFolderIds.value).toContain(support.id)
+    panel.searchQuery.value = null
+    expect(panel.openFolderIds.value).toEqual([roadmap.id])
+
+    panel.searchQuery.value = 'Release'
+    panel.searchQuery.value = '   '
+    expect(panel.openFolderIds.value).toEqual([roadmap.id])
+  })
+
+  it('preserves manual folder choices across search refinements and clearing', () => {
+    const active = makeFolder({ name: 'Roadmap archive' })
+    const release = makeFolder({ id: 'release', name: 'Release archive' })
+    const panel = loadPanel(
+      {
+        openSession: vi.fn().mockResolvedValue(false),
+        cancelSessionReadTransition: vi.fn()
+      },
+      true,
+      [makeSession({ id: '00000000-0000-4000-8000-000000000001', folderId: active.id })],
+      [active, release]
+    )
+    panel.searchQuery.value = 'archive'
+    panel.updateOpenFolderIds([release.id])
+    panel.updateOpenFolderIds([])
+    panel.updateOpenFolderIds([release.id])
+    panel.searchQuery.value = 'Release'
+    panel.searchQuery.value = ''
+    expect(panel.openFolderIds.value).toEqual([release.id])
+    panel.searchQuery.value = 'archive'
+    panel.searchQuery.value = null
+    expect(panel.openFolderIds.value).toEqual([release.id])
+  })
+
+  it('does not reopen a search folder manually collapsed before refining the query', () => {
+    const release = makeFolder({ name: 'Release archive' })
+    const panel = loadPanel(
+      {
+        openSession: vi.fn().mockResolvedValue(false),
+        cancelSessionReadTransition: vi.fn()
+      },
+      true,
+      [],
+      [release]
+    )
+    panel.searchQuery.value = 'Release'
+    panel.updateOpenFolderIds([])
+    panel.searchQuery.value = 'archive'
+    expect(panel.openFolderIds.value).toEqual([])
+    panel.searchQuery.value = ''
+    expect(panel.openFolderIds.value).toEqual([])
+  })
+
+  it('drops deleted folders from the restored layout and reveals the newly active folder', () => {
+    const deleted = makeFolder()
+    const release = makeFolder({ id: 'release', name: 'Release archive' })
+    const panel = loadPanel(
+      {
+        openSession: vi.fn().mockResolvedValue(false),
+        cancelSessionReadTransition: vi.fn()
+      },
+      true,
+      [makeSession({ folderId: release.id })],
+      [deleted, release]
+    )
+    panel.updateOpenFolderIds([deleted.id])
+    panel.searchQuery.value = 'Release'
+    panel.folders.value = [release]
+    panel.thread.value = { session: { id: makeSession().id } }
+    panel.searchQuery.value = ''
+    expect(panel.openFolderIds.value).toEqual([release.id])
+  })
+
+  it.each([
+    { ownerId: 2, ownerGeneration: 0, workspaceVersion: 0 },
+    { ownerId: 1, ownerGeneration: 1, workspaceVersion: 0 },
+    { ownerId: 1, ownerGeneration: 0, workspaceVersion: 1 }
+  ])('does not restore prior search expansion across an owner/workspace change: %j', context => {
+    const roadmap = makeFolder()
+    const release = makeFolder({ id: 'release', name: 'Release archive' })
+    const panel = loadPanel(
+      {
+        openSession: vi.fn().mockResolvedValue(false),
+        cancelSessionReadTransition: vi.fn()
+      },
+      true,
+      [],
+      [roadmap, release]
+    )
+    panel.updateOpenFolderIds([roadmap.id])
+    panel.searchQuery.value = 'Release'
+    panel.ownerContext.value = context
+    panel.searchQuery.value = ''
+    expect(panel.openFolderIds.value).toEqual([])
+  })
+
+  it('offers older-history search guidance only while searching with an unexhausted cursor', () => {
+    const panel = loadPanel({
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn()
+    })
+    panel.sessionsNextCursor.value = 'next-page'
+    expect(panel.showLoadedHistorySearchScope.value).toBe(false)
+    panel.searchQuery.value = 'Release'
+    expect(panel.showLoadedHistorySearchScope.value).toBe(true)
+    panel.sessionsNextCursor.value = null
+    expect(panel.showLoadedHistorySearchScope.value).toBe(false)
   })
 
   it('does nothing when choosing the displayed session', async () => {
@@ -1111,7 +1268,8 @@ describe('Agent history session selection', () => {
   })
 
   it('keeps workspace errors through an explicit archive retry', async () => {
-    const reloadSessions = vi.fn()
+    const reloadSessions = vi
+      .fn()
       .mockResolvedValueOnce({ accepted: true, current: true } satisfies AgentRefreshResult)
       .mockRejectedValueOnce(new Error('Retry unavailable'))
     const reloadFolders = vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult)

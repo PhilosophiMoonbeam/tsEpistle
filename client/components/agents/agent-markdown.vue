@@ -12,6 +12,7 @@ import {
   selectMermaidRenderHosts
 } from '../../helpers/content-extension-runtimes/mermaid.ts'
 import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
+import { copyTextToClipboard } from '../../helpers/clipboard.ts'
 import { createAgentCitationResolver } from './agent-citations.ts'
 import { wikiSourceSelectorFromHref, type WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
@@ -459,7 +460,7 @@ const copyCode = async (event: MouseEvent): Promise<void> => {
       .find(candidate => blockIdentity(candidate) === blockId) ?? null
   }
   try {
-    await navigator.clipboard.writeText(code)
+    await copyTextToClipboard(code)
     const activeButton = currentButton()
     if (activeButton) showCopyResult(activeButton, t('common:agentMarkdown.copied'), 'success')
   } catch {

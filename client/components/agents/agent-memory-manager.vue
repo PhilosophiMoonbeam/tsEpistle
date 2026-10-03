@@ -34,7 +34,7 @@
         </p>
 
         <v-expand-transition>
-          <section v-if="editing" class="agent-memory__editor" aria-labelledby="agent-memory-editor-title" :aria-busy="saving" @keydown.esc.stop="saving ? undefined : cancelEdit()">
+          <section v-if="editing" class="agent-memory__editor" aria-labelledby="agent-memory-editor-title" :aria-busy="saving" @keydown.esc.stop="cancelEditOnEscape">
             <header class="agent-memory__editor-header">
               <div>
                 <p class="agent-memory__eyebrow">{{ editing.id ? $t('common:agentMemoryManager.reviseRecord') : $t('common:agentMemoryManager.newRecord') }}</p>
@@ -80,7 +80,7 @@
             />
             <p v-if="draftOverLimit" class="agent-memory__draft-limit" role="alert">{{ draftCapacityLabel }}</p>
             <div class="agent-memory__editor-actions">
-              <span class="agent-memory__shortcut">{{ $t('common:agentMemoryManager.escCancel') }} <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> {{ $t('common:agentMemoryManager.save') }}</span>
+              <span v-if="!draftConflict" class="agent-memory__shortcut">{{ $t('common:agentMemoryManager.escCancel') }} <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> {{ $t('common:agentMemoryManager.save') }}</span>
               <v-btn variant="text" :disabled="saving" @click="cancelEdit">{{ $t('common:actions.cancel') }}</v-btn>
               <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving || stale || loading || networkBlocked || !memoryRefreshResult.accepted || !memoryRefreshResult.current || Boolean(draftConflict)" :loading="saving" @click="save">
                 {{ editing.id ? $t('common:agentMemoryManager.saveRevision') : $t('common:agentMemoryManager.saveMemory') }}
@@ -123,7 +123,7 @@
           <div v-else class="agent-memory__empty">
             <v-icon :icon="section.icon" size="20" aria-hidden="true" />
             <p>{{ section.empty }}</p>
-            <v-btn class="agent-memory__accent-action" variant="tonal" prepend-icon="mdi-plus" :aria-label="$t('common:agentMemoryManager.add', { target: section.target === 'user' ? 'personal detail' : 'Agent note', title: section.title, interpolation: { escapeValue: false } })" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading || !canAddTo(section.target)" @click="beginAdd(section.target)">
+            <v-btn class="agent-memory__accent-action" variant="tonal" prepend-icon="mdi-plus" :aria-label="$t('common:agentMemoryManager.add', { target: section.target === 'user' ? $t('common:agentMemoryManager.personalDetailLowercase') : $t('common:agentMemoryManager.agentNote'), title: section.title, interpolation: { escapeValue: false } })" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading || !canAddTo(section.target)" @click="beginAdd(section.target)">
               {{ section.target === 'user' ? $t('common:agentMemoryManager.addDetail') : $t('common:agentMemoryManager.addNote') }}
             </v-btn>
           </div>
@@ -183,12 +183,16 @@
       </v-card-title>
       <v-card-text :id="clearDialogDescriptionId">
         <v-alert v-if="clearError" class="agent-memory__dialog-error" type="error" variant="tonal" density="compact">{{ clearError }}</v-alert>
+        <div class="mb-3" aria-live="polite" aria-atomic="true">
+          <p>{{ $t('common:agentMemoryManager.reviewedRecordCount', { count: clearReviewCount, interpolation: { escapeValue: false } }) }}</p>
+          <p>{{ $t('common:agentMemoryManager.currentRecordCount', { count: memoryCount, interpolation: { escapeValue: false } }) }}</p>
+        </div>
         {{ $t('common:agentMemoryManager.everySavedPreferenceAgent') }}
       </v-card-text>
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelClear">{{ $t('common:agentMemoryManager.keepMemories') }}</v-btn>
-        <v-btn color="error" variant="flat" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy) || networkBlocked" @click="clear">{{ $t('common:agentMemoryManager.clearMemory') }}</v-btn>
+        <v-btn color="error" variant="flat" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy) || networkBlocked || clearReviewCount !== memoryCount" @click="clear">{{ $t('common:agentMemoryManager.clearMemory') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -280,20 +284,12 @@ const canAddTo = (target: AgentMemoryTarget): boolean => {
   const requiredCharacters = store.entries.length ? 4 : 1
   return remainingCharacters(store) >= requiredCharacters
 }
-const addMemoryDisabledReason = computed<string | undefined>(() => {
-  if (editing.value) return t('common:agentMemoryManager.finishCurrentMemoryEdit')
-  if (loading.value || !loaded.value) return t('common:agentMemoryManager.loadingAgentMemory')
-  if (stale.value) return t('common:agentMemoryManager.refreshAgentMemoryBefore')
-  if (!canAddTo('user') && !canAddTo('agent')) return t('common:agentMemoryManager.memoryCapacity')
-  return undefined
-})
 const clearMemoryDisabledReason = computed<string | undefined>(() => {
   if (loading.value || !loaded.value) return t('common:agentMemoryManager.loadingAgentMemory')
   if (stale.value) return t('common:agentMemoryManager.refreshBeforeClearing')
   if (memoryCount.value === 0) return t('common:agentMemoryManager.noSavedMemoryClear')
   return undefined
 })
-const canAddMemory = computed(() => addMemoryDisabledReason.value === undefined)
 /* The Clear control stays focusable while blocked; this visible line says why. */
 const clearMemoryBlocked = computed(() => Boolean(clearMemoryDisabledReason.value) || Boolean(actionBusy.value) || networkBlocked.value)
 const clearMemoryHelpVisible = computed(() => clearMemoryBlocked.value && memoryCount.value > 0)
@@ -428,6 +424,9 @@ const cancelEdit = (): void => {
   draftConflict.value = null
   refreshNotice.value = ''
   draftRevision.value += 1
+}
+const cancelEditOnEscape = (): void => {
+  if (!saving.value && !draftConflict.value) cancelEdit()
 }
 const beginAdd = (target?: AgentMemoryTarget): void => {
   editing.value = { id: '', version: 0 }

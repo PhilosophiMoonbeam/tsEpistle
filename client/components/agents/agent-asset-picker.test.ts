@@ -1,17 +1,20 @@
+import { parse, compileTemplate } from '@vue/compiler-sfc'
+import { browserWindow } from '../../test/browser-dom.mts'
+import * as Vue from 'vue'
 import fs from 'node:fs'
 import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import { fetchAssets, fetchAssetFolders } from '../../helpers/assets-api.ts'
 import { validateAgentAttachment } from '../../helpers/agent-media.ts'
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 const source = fs.readFileSync(new URL('./agent-asset-picker.vue', import.meta.url), 'utf8')
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Asset picker script missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
 const evaluate = new Function(
   'dependencies',
-  `const { computed, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, fetchAssets, fetchAssetFolders, validateAgentAttachment, window } = dependencies; ${executable}; return { trail, assets, folders, visibleAssets, query, loading, error, openFolder, navigate, select, close, load, unavailable }`
+  `const { computed, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, fetchAssets, fetchAssetFolders, validateAgentAttachment, window } = dependencies; ${executable}; return { trail, assets, folders, visibleAssets, query, loading, error, openFolder, navigate, select, close, load, unavailable, mimeType, formatSize }`
 )
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 const asset = (id: number, ext = '.png', size = 40) => ({
@@ -54,6 +57,50 @@ const mount = (fetcher: typeof fetch) => {
         fn()
       })
       scope.stop()
+    }
+  }
+}
+const descriptor = parse(source).descriptor
+if (!descriptor.template) throw new Error('Asset picker template missing')
+const compiledTemplate = compileTemplate({
+  source: descriptor.template.content,
+  filename: 'agent-asset-picker.vue',
+  id: 'asset-picker-test',
+  compilerOptions: { mode: 'function' }
+})
+if (compiledTemplate.errors.length) throw compiledTemplate.errors[0]
+const renderPicker = new Function('Vue', compiledTemplate.code)(Vue)
+const renderHarness = (api: Record<string, unknown>, props: { imageOnly: boolean; busy: boolean; disabled: boolean; attachmentError: string }) => {
+  const host = browserWindow.document.createElement('div')
+  browserWindow.document.body.append(host)
+  const app = Vue.createApp(
+    Vue.defineComponent({
+      setup: () => ({ ...api, ...Vue.toRefs(props), searchInput: ref(null) }),
+      render: renderPicker
+    })
+  )
+  app.config.globalProperties.$t = translateEnglish
+  for (const [name, tag] of [
+    ['VDialog', 'div'],
+    ['VBtn', 'button'],
+    ['VIcon', 'span']
+  ]) {
+    app.component(
+      name!,
+      Vue.defineComponent({
+        setup:
+          (_props, { attrs, slots }) =>
+          () =>
+            Vue.h(tag!, attrs, slots.default?.())
+      })
+    )
+  }
+  app.mount(host)
+  return {
+    host,
+    unmount: () => {
+      app.unmount()
+      host.remove()
     }
   }
 }
@@ -141,5 +188,37 @@ describe('Agent Wiki asset picker', () => {
     await nextTick()
     expect(harness.events).toContainEqual(['close', undefined])
     harness.unmount()
+  })
+  it('keeps attachment failure in the scrollable file area with explicit reselection and cancel actions', async () => {
+    const harness = mount(async input => response(String(input).includes('/folders?') ? [] : [asset(1), asset(2)]))
+    await settle()
+    harness.props.attachmentError = 'This file could not be attached.'
+    const rendered = renderHarness(harness.api, harness.props)
+    try {
+      const error = rendered.host.querySelector('.agent-asset-picker__body [role="alert"]')
+      expect(error?.textContent).toContain(harness.props.attachmentError)
+      expect(error?.textContent).toContain(translateEnglish('common:agentAssetPicker.attachmentFailureHelp'))
+      expect(rendered.host.querySelectorAll('[role="alert"]')).toHaveLength(1)
+      expect(rendered.host.querySelector('.agent-asset-picker__footer [role="alert"]')).toBeNull()
+      expect(harness.events).toHaveLength(0)
+      const file = Array.from(rendered.host.querySelectorAll<HTMLButtonElement>('.agent-asset-picker__row')).find(row =>
+        row.textContent?.includes('file-2.png')
+      )
+      expect(file?.disabled).toBe(false)
+      file?.click()
+      expect(harness.events).toHaveLength(1)
+      expect(harness.events[0]?.[0]).toBe('select')
+      expect(harness.events[0]?.[1]).toMatchObject({ id: 2 })
+      harness.props.attachmentError = ''
+      await nextTick()
+      expect(rendered.host.querySelector('[role="alert"]')).toBeNull()
+      harness.props.attachmentError = 'This file could not be attached.'
+      await nextTick()
+      rendered.host.querySelector<HTMLButtonElement>('.agent-asset-picker__footer button')?.click()
+      expect(harness.events).toContainEqual(['close', undefined])
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
   })
 })

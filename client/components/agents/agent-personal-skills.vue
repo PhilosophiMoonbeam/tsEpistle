@@ -114,11 +114,12 @@
               </div>
               <div class="personal-editor__header-actions">
                 <v-chip v-if="isDirty" color="warning" size="small" variant="tonal" prepend-icon="mdi-circle-edit-outline">{{ $t('common:agentPersonalSkills.unsaved') }}</v-chip>
-                <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="saving || loading || networkBlocked || !readAccepted" @click="beginRemove(selectedSkill, $event)">{{ $t('common:agentPersonalSkills.removeSkill') }}</v-btn>
+                <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="saving || loading || networkBlocked || !readAccepted || editedSkillMissing" @click="beginRemove(selectedSkill, $event)">{{ $t('common:agentPersonalSkills.removeSkill') }}</v-btn>
               </div>
             </div>
 
             <v-alert v-if="error" class="personal-editor__error" type="error" variant="tonal" closable @click:close="error = ''">{{ error }}</v-alert>
+            <v-alert v-if="editedSkillMissing" class="personal-editor__error" type="warning" variant="tonal" role="status">{{ $t('common:agentPersonalSkills.editedSkillRemoved') }}</v-alert>
             <v-progress-linear v-if="loading" indeterminate :aria-label="$t('common:agentPersonalSkills.refreshingPersonalSkills')" />
 
             <v-form id="personal-skill-form" class="personal-editor__form" @submit.prevent="save">
@@ -159,7 +160,7 @@
         <div class="personal-skills__trust-note"><v-icon icon="mdi-account-lock-outline" size="18" /><span>{{ $t('common:agentPersonalSkills.personalSkillsAffectOnly') }}</span></div>
         <v-spacer />
         <v-btn :disabled="saving" @click="requestClose">{{ $t('common:actions.close') }}</v-btn>
-        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !readAccepted || !formValid || loading || saving || networkBlocked" form="personal-skill-form">{{ editingId ? $t('common:agentPersonalSkills.saveRevision') : $t('common:agentPersonalSkills.createSkill') }}</v-btn>
+        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !readAccepted || !formValid || loading || saving || networkBlocked || editedSkillMissing" form="personal-skill-form">{{ editingId ? $t('common:agentPersonalSkills.saveRevision') : $t('common:agentPersonalSkills.createSkill') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -213,7 +214,7 @@ const open = defineModel<boolean>({ required: true })
 const { smAndDown } = useDisplay()
 const discoveryHelpId = useId()
 const skills = shallowRef<PersonalAgentSkill[]>([])
-const search = ref('')
+const search = ref<string | null>('')
 const editingId = ref<string | null>(null)
 const name = ref('my-skill')
 const skillMarkdown = ref('')
@@ -247,6 +248,7 @@ const ownerKey = (): number | null => props.ownerId ?? null
 const isCurrent = (generation: number, ownerId: number | null, csrfToken: string): boolean =>
   !disposed && authorityGeneration === generation && ownerKey() === ownerId && props.csrfToken === csrfToken
 const selectedSkill = computed(() => skills.value.find(skill => skill.id === editingId.value) ?? null)
+const editedSkillMissing = computed(() => loaded.value && Boolean(editingId.value) && !selectedSkill.value)
 const networkBlocked = computed(() => props.networkBlocked === true)
 const compareNames = (left: string, right: string): number => {
   const leftName = left.toLowerCase()
@@ -256,7 +258,7 @@ const compareNames = (left: string, right: string): number => {
   return left < right ? -1 : left > right ? 1 : 0
 }
 const filteredSkills = computed(() => {
-  const query = search.value.trim().toLowerCase()
+  const query = (search.value ?? '').trim().toLowerCase()
   return skills.value
     .filter(skill => !query || skill.name.toLowerCase().includes(query) || skill.description.toLowerCase().includes(query))
     .sort((left, right) => compareNames(left.name, right.name))
@@ -339,7 +341,7 @@ const load = async (selectedId?: string, committedMessage?: string): Promise<boo
     const selected = skills.value.find(skill => skill.id === selectedId) ?? skills.value.find(skill => skill.id === editingId.value)
     if (!preserveEditor && !isDirty.value) {
       if (selected) applyEdit(selected)
-      else if (!editingId.value) applyNew()
+      else applyNew()
     }
     return true
   } catch (caught) {
@@ -356,7 +358,7 @@ const load = async (selectedId?: string, committedMessage?: string): Promise<boo
   }
 }
 const save = async (): Promise<void> => {
-  if (disposed || networkBlocked.value || !readAccepted.value || saving.value || loading.value || !formValid.value) return
+  if (disposed || networkBlocked.value || !readAccepted.value || saving.value || loading.value || !formValid.value || editedSkillMissing.value) return
   const authority = authorityGeneration
   const ownerId = ownerKey()
   const csrfToken = props.csrfToken

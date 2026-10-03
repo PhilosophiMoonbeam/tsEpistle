@@ -24,6 +24,7 @@
       <v-select v-model="state" :label="$t('admin:agentAdminTools.deploymentState')" :items="states" hide-details />
     </div>
     <p class="tool-explanation">{{ $t('admin:agentAdminTools.deploymentEligibilityOnlyFirst') }}</p>
+    <p class="tool-explanation">{{ $t('admin:agentAdminTools.eligibilityFilterScope') }}</p>
     <v-skeleton-loader v-if="!loaded && loading" type="list-item-three-line, list-item-three-line" />
     <v-alert v-else-if="!loaded" type="info" variant="tonal">{{ $t('admin:agentAdminTools.toolPolicyCouldNot') }}</v-alert>
     <template v-else>
@@ -33,7 +34,9 @@
           <summary>
             <v-icon size="20">{{ tool.risk === 'read' ? 'mdi-book-search-outline' : tool.risk === 'open-world-read' ? 'mdi-web' : 'mdi-pencil-lock-outline' }}</v-icon>
             <span class="tool-record__name"><strong>{{ tool.title }}</strong><code>{{ tool.toolName }}</code></span>
-            <span class="tool-record__state">{{ eligible(tool) ? $t('admin:agentAdminTools.eligible') : $t('admin:agentAdminTools.deploymentBlocked') }}</span>
+            <span class="tool-record__states">
+              <span v-for="interfaceName in interfaceNames" :key="interfaceName" class="tool-record__state">{{ $t('admin:agentAdminTools.interfaceEligibility', { interface: interfaceName === 'agent' ? $t('admin:agentAdminTools.wikiAgent') : $t('admin:agentAdminTools.mcpClients'), state: interfaceState(tool, interfaceName), interpolation: { escapeValue: false } }) }}</span>
+            </span>
             <v-icon size="18">mdi-chevron-down</v-icon>
           </summary>
           <div class="tool-record__details">
@@ -72,6 +75,12 @@ const endpoint = new URL('/mcp', window.location.origin).href
 const transports = [{ title: t('admin:agentAdminTools.eitherInterface'), value: 'all' }, { title: t('admin:agentAdminTools.wikiAgent'), value: 'agent' }, { title: t('admin:agentAdminTools.mcpClients'), value: 'mcp' }]
 const states = [{ title: t('admin:agentAdminTools.allStates'), value: 'all' }, { title: t('admin:agentAdminTools.eligible'), value: 'eligible' }, { title: t('admin:agentAdminTools.deploymentBlocked'), value: 'blocked' }]
 const riskLabels = { read: t('admin:agentAdminTools.readOnly'), 'open-world-read': t('admin:agentAdminTools.externalBrowsing'), proposal: t('admin:agentAdminTools.preparesChangeReview'), 'reversible-write': t('admin:agentAdminTools.changesStoredData'), 'destructive-write': t('admin:agentAdminTools.appliesApprovedChange') }
+const interfaceNames = ['agent', 'mcp'] as const
+const interfaceState = (tool: AgentAdminTool, interfaceName: 'agent' | 'mcp') => !tool.exposure[interfaceName]
+  ? t('admin:agentAdminTools.notExposed')
+  : (interfaceName === 'agent' ? tool.agentBlockers : tool.mcpBlockers).length
+    ? t('admin:agentAdminTools.deploymentBlocked')
+    : t('admin:agentAdminTools.eligible')
 const eligible = (tool: AgentAdminTool) =>
   (transport.value !== 'mcp' && tool.exposure.agent && !tool.agentBlockers.length) ||
   (transport.value !== 'agent' && tool.exposure.mcp && !tool.mcpBlockers.length)
@@ -94,7 +103,7 @@ async function copyEndpoint() {
 h2 { font: 500 1.7rem var(--wiki-font-display); margin-block: .35rem; }
 h3 { font-size: 1rem; }
 p { font-size: .9rem; line-height: 1.65; margin-block: .5rem 1rem; }
-.mcp-connection { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding-block: 1.5rem; margin-block: 1rem 1.5rem; border-block: 1px solid var(--wiki-surface-border); }
+.mcp-connection { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding: 1.5rem; margin-block: 1rem 1.5rem; border: 1px solid var(--wiki-purpose-info-edge); border-radius: var(--wiki-control-radius); background: var(--wiki-purpose-info-fill); color: var(--wiki-purpose-info-ink); }
 .mcp-connection > div { min-width: 0; }
 .mcp-connection__endpoint { display: flex; flex-direction: column; gap: .6rem; font-size: .8rem; }
 .mcp-connection__url { display: flex; align-items: center; gap: .5rem; padding: .6rem; background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); }
@@ -110,7 +119,8 @@ summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offse
 .tool-record__name { display: grid; gap: .2rem; flex: 1; min-width: 0; }
 .tool-record__name strong { font-size: .9rem; }
 code { font-family: var(--wiki-font-mono); font-size: .75rem; overflow-wrap: anywhere; }
-.tool-record__state { font-size: .75rem; }
+.tool-record__states { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .4rem; max-width: 28rem; }
+.tool-record__state { font-size: .75rem; line-height: 1.5; padding: .2rem .5rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); }
 .tool-record__details { padding: 0 1rem 1rem 2rem; }
 dl { display: grid; gap: .75rem; font-size: .8rem; }
 dl > div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: 1rem; }
@@ -118,5 +128,6 @@ dt { font-weight: 600; }
 dd { margin: 0; overflow-wrap: anywhere; }
 .tool-empty { text-align: center; padding: 2rem; }
 @media (max-width: 1100px) { .mcp-connection, .tool-toolbar { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 600px) { .tool-record__state { max-width: 5rem; } .tool-record__details { padding-inline: 0; } dl > div { grid-template-columns: 1fr; gap: .25rem; } }
+@media (max-width: 600px) { summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .5rem; } .tool-record__states { grid-column: 2; grid-row: 2; justify-content: flex-start; max-width: none; } summary > .v-icon:last-child { grid-column: 3; grid-row: 1; } .tool-record__details { padding-inline: 0; } dl > div { grid-template-columns: 1fr; gap: .25rem; } }
+@media (forced-colors: active) { .mcp-connection, .tool-record__state { border-color: CanvasText; background: Canvas; color: CanvasText; } }
 </style>

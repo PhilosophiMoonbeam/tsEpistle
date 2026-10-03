@@ -109,7 +109,7 @@ const loadManager = (view, overrides = {}) => {
     'createModalFocusScope',
     'window',
     'HTMLElement',
-    `${executableScript}\nreturn { loaded, memories, sections, searchQuery, visibleSections, memorySearchStatus, memoryCountLabel, canAddMemory, addMemoryDisabledReason, clearMemoryDisabledReason, open, actionBusy, removing, clearing, draftTarget, draftContent, beginAdd, beginEdit, beginRemove, beginClear, remove, clear, requestClose }`
+    `${executableScript}\nreturn { loaded, memories, sections, searchQuery, visibleSections, memorySearchStatus, memoryCount, memoryCountLabel, canAddTo, clearMemoryDisabledReason, open, actionBusy, removing, clearing, clearReviewCount, clearError, draftTarget, draftContent, editing, draftConflict, beginAdd, beginEdit, beginRemove, beginClear, cancelClear, cancelEditOnEscape, keepDraftAfterRefresh, load, remove, clear, requestClose }`
   )
   const manager = evaluate(
     getter => ({
@@ -184,8 +184,8 @@ describe('Agent memory manager initial loading', () => {
     expect(getAgentMemories).toHaveBeenCalledTimes(1)
     expect(manager.loaded.value).toBe(true)
     expect(Number.parseInt(manager.memoryCountLabel.value, 10)).toBe(0)
-    expect(manager.canAddMemory.value).toBe(true)
-    expect(manager.addMemoryDisabledReason.value).toBeUndefined()
+    expect(manager.canAddTo('user')).toBe(true)
+    expect(manager.canAddTo('agent')).toBe(true)
     expect(emittedBusy).toEqual([false])
   })
 
@@ -236,7 +236,10 @@ describe('Agent memory manager destructive dialog lifetime', () => {
       agent: structuredClone(view.agent),
       user: { entries: [], characters: 0, limit: 1_375 }
     }
-    const getAgentMemories = vi.fn().mockResolvedValueOnce(view).mockImplementationOnce(() => reload.promise)
+    const getAgentMemories = vi
+      .fn()
+      .mockResolvedValueOnce(view)
+      .mockImplementationOnce(() => reload.promise)
     const { emittedBusy, manager } = loadManager(view, {
       createModalFocusScope,
       getAgentMemories,
@@ -294,11 +297,14 @@ describe('Agent memory manager destructive dialog lifetime', () => {
       agent: { entries: [], characters: 0, limit: view.agent.limit },
       user: { entries: [], characters: 0, limit: view.user.limit }
     }
-    const getAgentMemories = vi.fn().mockResolvedValueOnce(view).mockImplementationOnce(() => reload.promise)
+    const getAgentMemories = vi
+      .fn()
+      .mockResolvedValueOnce(view)
+      .mockImplementationOnce(() => reload.promise)
     const { emittedBusy, manager } = loadManager(view, {
       clearAgentMemories,
       createModalFocusScope,
-      getAgentMemories,
+      getAgentMemories
     })
 
     await Promise.resolve()
@@ -389,7 +395,8 @@ describe('Agent memory filtering', () => {
     manager.searchQuery.value = 'no matching phrase'
     expect(manager.visibleSections.value).toEqual([])
     expect(manager.memories.value).toEqual(originalView)
-    expect(manager.canAddMemory.value).toBe(true)
+    expect(manager.canAddTo('user')).toBe(true)
+    expect(manager.canAddTo('agent')).toBe(true)
     manager.searchQuery.value = null
     expect(manager.visibleSections.value.map(section => ({ target: section.target, entries: section.entries }))).toEqual([
       { target: 'user', entries: originalView.user.entries },

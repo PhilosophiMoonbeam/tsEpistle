@@ -22,7 +22,7 @@
         variant="outlined"
       />
       <span class="agent-history__search-status" role="status" aria-live="polite">{{ searchStatus }}</span>
-      <span v-if="normalizedSearch" class="agent-history__section-copy" role="status">{{ $t('common:agentHistoryPanel.loadedHistorySearchScope', { defaultValue: 'Search covers loaded conversations. Load older conversations to find more matches.' }) }}</span>
+      <span v-if="showLoadedHistorySearchScope" class="agent-history__section-copy" role="status">{{ $t('common:agentHistoryPanel.loadedHistorySearchScope') }}</span>
     </div>
     <v-alert v-if="networkBlocked" class="mx-3 mb-3" density="compact" type="warning" variant="tonal" role="status">
       {{ $t('common:agentHistoryPanel.connectionRequiredChangeConversation') }}
@@ -159,7 +159,7 @@
             <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" :aria-label="$t('common:agentHistoryPanel.createConversationFolder')" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginCreateFolder">{{ $t('common:agentHistoryPanel.newFolder') }}</v-btn>
           </div>
 
-          <v-expansion-panels v-if="visibleFolderGroups.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
+          <v-expansion-panels v-if="visibleFolderGroups.length" :model-value="openFolderIds" @update:model-value="updateOpenFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
             <v-expansion-panel
               v-for="group in visibleFolderGroups"
               :key="group.folder.id"
@@ -503,6 +503,7 @@ const rejectedRefresh = (error?: unknown): AgentRefreshResult => ({
 })
 
 const normalizedSearch = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())
+const showLoadedHistorySearchScope = computed(() => Boolean(normalizedSearch.value && sessionsNextCursor.value))
 type SessionTimeGroupLabel = 'Today' | 'Yesterday' | 'Previous 7 days' | 'Earlier'
 const sessionTimeGroupLabels: readonly SessionTimeGroupLabel[] = ['Today', 'Yesterday', 'Previous 7 days', 'Earlier']
 const sessionTimeGroupKeys: Record<SessionTimeGroupLabel, string> = { Today: 'today', Yesterday: 'yesterday', 'Previous 7 days': 'previous7Days', Earlier: 'earlier' }
@@ -1295,10 +1296,38 @@ const deleteFolder = async (): Promise<void> => {
     if (!disposed) deleting.value = false
   }
 }
+const activeFolderId = (): string | null =>
+  displaySessions.value.find(session => session.id === thread.value?.session.id)?.folderId ?? null
+interface SearchFolderSnapshot {
+  readonly ownerId: number | null
+  readonly ownerGeneration: number
+  readonly workspaceVersion: number
+  readonly activeFolderId: string | null
+  readonly openIds: Set<string>
+  readonly manualChoices: Map<string, boolean>
+}
+let searchFolderSnapshot: SearchFolderSnapshot | null = null
+const isSearchSnapshotCurrent = (snapshot: SearchFolderSnapshot): boolean =>
+  snapshot.ownerId === currentOwnerId() &&
+  snapshot.ownerGeneration === currentOwnerGeneration() &&
+  snapshot.workspaceVersion === currentWorkspaceVersion()
+const updateOpenFolderIds = (ids: string[]): void => {
+  const snapshot = searchFolderSnapshot
+  if (snapshot && isSearchSnapshotCurrent(snapshot)) {
+    const nextIds = new Set(ids)
+    for (const id of new Set([...openFolderIds.value, ...ids])) {
+      const open = nextIds.has(id)
+      if (open === openFolderIds.value.includes(id)) continue
+      snapshot.manualChoices.set(id, open)
+      if (open) snapshot.openIds.add(id)
+      else snapshot.openIds.delete(id)
+    }
+  }
+  openFolderIds.value = ids
+}
 const expandActiveFolder = (): void => {
-  const activeId = thread.value?.session.id
-  const activeSession = displaySessions.value.find(session => session.id === activeId)
-  if (activeSession?.folderId && !openFolderIds.value.includes(activeSession.folderId)) openFolderIds.value.push(activeSession.folderId)
+  const id = activeFolderId()
+  if (id && searchFolderSnapshot?.manualChoices.get(id) !== false && !openFolderIds.value.includes(id)) openFolderIds.value.push(id)
 }
 watch([deletingSession, removingFolder], async ([session, folder]) => {
   let cancelled = false
@@ -1340,10 +1369,34 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
   expandActiveFolder()
 })
 watch(folders, expandActiveFolder, { immediate: true })
-watch(normalizedSearch, query => {
-  if (!query) return
-  const visibleIds = visibleFolderGroups.value.map(group => group.folder.id)
-  openFolderIds.value = [...new Set([...openFolderIds.value, ...visibleIds])]
+watch([normalizedSearch, visibleFolderGroups, currentOwnerId, currentOwnerGeneration, currentWorkspaceVersion], () => {
+  if (searchFolderSnapshot && !isSearchSnapshotCurrent(searchFolderSnapshot)) {
+    searchFolderSnapshot = null
+    openFolderIds.value = []
+  }
+  if (normalizedSearch.value) {
+    searchFolderSnapshot ??= {
+      ownerId: currentOwnerId(),
+      ownerGeneration: currentOwnerGeneration(),
+      workspaceVersion: currentWorkspaceVersion(),
+      activeFolderId: activeFolderId(),
+      openIds: new Set(openFolderIds.value),
+      manualChoices: new Map()
+    }
+    const snapshot = searchFolderSnapshot
+    const visibleIds = visibleFolderGroups.value
+      .map(group => group.folder.id)
+      .filter(id => snapshot.manualChoices.get(id) !== false)
+    openFolderIds.value = [...new Set([...openFolderIds.value, ...visibleIds])]
+    return
+  }
+  const snapshot = searchFolderSnapshot
+  if (!snapshot) return
+  const existingIds = new Set(folders.value.map(folder => folder.id))
+  openFolderIds.value = [...snapshot.openIds].filter(id => existingIds.has(id))
+  const currentActiveFolderId = activeFolderId()
+  if (currentActiveFolderId && currentActiveFolderId !== snapshot.activeFolderId && existingIds.has(currentActiveFolderId)) expandActiveFolder()
+  searchFolderSnapshot = null
 })
 const startPendingInitialRefresh = (): void => {
   if (!initialRefreshPending.value || refreshHistoryBlocked()) return
@@ -1518,7 +1571,7 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 25%, transparent);
 }
 .agent-history__session.v-list-item--active::before { opacity: 1; }
-.agent-history__session :deep(.v-list-item-title) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; font-size: .82rem; font-weight: 550; line-height: 1.4; }
+.agent-history__session :deep(.v-list-item-title) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; font-size: .82rem; font-weight: 550; line-height: 1.4; }
 .agent-history__session :deep(.v-list-item-subtitle) { font-size: .68rem; opacity: .75; }
 .agent-history__session :deep(.v-list-item__prepend) { margin-inline-end: .65rem; }
 .agent-history__session :deep(.v-list-item__prepend > .v-list-item__spacer) { width: 0; }
