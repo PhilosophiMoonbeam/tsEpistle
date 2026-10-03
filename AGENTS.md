@@ -27,15 +27,8 @@ Enterprise Release retains the repository's immutable source review, attestation
 ## Agent authority
 
 - Main owns decomposition, routine implementation, sequencing, verification, deployment, and delivery within the active mode. Main may implement a bounded cohesive change directly.
-- Consult the planner once before implementing a choice that introduces or materially changes architecture, establishes or changes a shared interface or ownership boundary, changes schema/persistence behavior or a trust boundary, or sets a design assumption shared by multiple workers. If unsure whether a choice crosses this boundary, consult rather than guess. The planner remains read-only; ordinary local implementation, sequencing, debugging, and verification choices stay with Main.
-- Reconsult the planner only when evidence invalidates the approved architecture, changes a shared/persistent/security contract, or requires a scope tradeoff. Return implementation-local failures to the responsible agent or resolve them within the approved contract.
 - Delegate only when independent ownership enables real parallel progress or specialist review materially reduces risk. Several files alone do not require a mandatory planner/scout/reviewer/security-reviewer chain.
 - When agents are used, give them exact ownership and shared interfaces. Implementation agents follow the approved contract; scouts gather evidence without deciding architecture; subagents must not spawn subagents.
-
-## Goal Budgets
-
-- Set goal token budgets generously so budget pressure never narrows the requested work.
-- Use an unlimited goal budget for open-ended work.
 
 <!-- graft:start -->
 ## Graft — repo context graph
