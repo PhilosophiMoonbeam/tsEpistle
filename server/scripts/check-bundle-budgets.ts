@@ -70,8 +70,10 @@ const LOGO_SCENE_GZIP_LIMIT = 425 * KiB
 const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
 // Same-toolchain QA comparison: 093473794 measured 13,559.5 KiB; the
 // phone-menu build 3ca39f707 measured 13,565.4 KiB (5.9 KiB growth).
+// The directory/search/focus-reader feature has an approved 24 KiB aggregate
+// allowance: local build 13,584.5 KiB, clean Docker build 13,523.7 KiB.
 // Retain a fixed aggregate ceiling and every initial-load/lazy budget.
-const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_566 * KiB
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_590 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source
