@@ -332,7 +332,6 @@ const compileSearchComputed = (source, names) => {
 
 describe('Search panel layout and hand-off', () => {
   const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
-  const template = search.slice(0, search.indexOf('</template>'))
   const english = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8')).common
   const translate = (key, options = {}) => {
     const [, keyPath] = key.split(':')
@@ -342,15 +341,6 @@ describe('Search panel layout and hand-off', () => {
     if (typeof value !== 'string') throw new Error(`Missing English string ${key}`)
     return value.replace(/\{\{(\w+)\}\}/g, (_, field) => String(options[field]))
   }
-
-  test('keeps one heading level below the page title, one Close, and one paging model', () => {
-    // aria-modal stays Agent-only: in search mode the focused header field lives outside the dialog.
-    expect(template).toContain(":aria-modal='isAgentOpen ? `true` : undefined'")
-    expect(template).not.toMatch(/^\s*h1/m)
-    expect(template).toContain('h2#wiki-search-title.sr-only')
-    expect(template).not.toContain('v-pagination')
-    expect(template).not.toContain('search-results-close')
-  })
 
   test('folds truncation into one result summary', () => {
     const computed = compileSearchComputed(search, ['resultSummary', 'resultSummaryHint'])

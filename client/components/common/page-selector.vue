@@ -80,9 +80,30 @@
         v-col.page-selector__pane.page-selector__pages-pane(cols='12' md='7')
           v-toolbar.page-selector__pane-toolbar(color='surface-variant' density='compact' flat)
             h3.text-body-medium(:id='pagesId') {{$t('common:pageSelector.pages')}}
+          .page-selector__filter
+            v-text-field.page-selector__filter-input(
+              v-model='pageFilter'
+              variant='outlined'
+              density='compact'
+              :label='$t(`common:pageSelector.filterPages`)'
+              :hint='$t(`common:pageSelector.filterHint`)'
+              persistent-hint
+              clearable
+              :disabled='isSubmitting || moveReceipt !== null'
+            )
+              template(v-slot:clear='{ props }')
+                v-btn(
+                  v-bind='props'
+                  icon='mdi-close'
+                  size='x-small'
+                  variant='text'
+                  tabindex='0'
+                  :aria-label='$t(`common:pageSelector.clearPageFilter`)'
+                )
+            p.page-selector__filter-count(v-if='currentPages.length > 0' role='status' aria-live='polite' aria-atomic='true') {{$t('common:pageSelector.filterMatches', { count: filteredPages.length, total: currentPages.length })}}
           div.page-selector__scroller(role='region' :aria-labelledby='pagesId' :aria-busy='currentFolderLoading && currentPages.length > 0 ? `true` : undefined')
             .page-selector__selection-note(
-              v-if='currentPages.length > 0'
+              v-if='currentPages.length > 0 || currentPage'
               :class="{ 'page-selector__selection-note--selected': currentPage }"
               :data-selection-state='currentPage ? `selected` : `none`'
               role='status'
@@ -90,7 +111,9 @@
               aria-atomic='true'
             )
               v-icon(:color='currentPage ? `primary` : `on-surface-variant`' size='16' aria-hidden='true') {{ $t(`common:pageSelector.mdi`, { value: currentPage ? 'check-circle-outline' : 'cursor-default-click-outline', interpolation: { escapeValue: false } }) }}
-              span(v-if='currentPage') {{$t('common:pageSelector.pageSelected')}}
+              span.page-selector__selection-summary(v-if='currentPage')
+                span {{$t('common:pageSelector.selectedPageSummary', { title: currentPage.title, interpolation: { escapeValue: false } })}}
+                span.page-selector__page-path /{{currentPage.locale}}/{{currentPage.path}}
               span(v-else) {{$t('common:pageSelector.selectPageToContinue')}}
             async-state.page-selector__state(
               v-if='currentFolderLoading && currentPages.length === 0'
@@ -99,7 +122,7 @@
               :message='$t(`common:pageSelector.loadingPagesSelectedFolder`)'
             )
             v-list.page-selector__pages-list.py-0(
-              v-else-if='currentPages.length > 0'
+              v-else-if='filteredPages.length > 0'
               v-model:activated='currentPageIds'
               density='compact'
               activatable
@@ -107,7 +130,7 @@
               :aria-labelledby='pagesId'
               mandatory
             )
-              template(v-for='page of currentPages' :key='`page-` + page.id')
+              template(v-for='page of filteredPages' :key='`page-` + page.id')
                 v-list-item(
                   :value='page.id'
                   :class="{ 'page-selector__page--selected': currentPage?.id === page.id, 'page-selector__page--current': page.path === path && currentLocale === locale }"
@@ -115,6 +138,19 @@
                 )
                   template(v-slot:prepend): v-icon {{ $t(`common:pageSelector.ariaHiddenTrueMdi`) }}
                   v-list-item-title {{page.title}}
+                  v-list-item-subtitle.page-selector__page-path /{{page.locale}}/{{page.path}}
+            async-state.page-selector__state.page-selector__filter-empty(
+              v-else-if='currentPages.length > 0'
+              state='empty'
+              :title='$t(`common:pageSelector.noFilterMatches`)'
+            )
+              template(v-slot:actions)
+                v-btn(
+                  variant='text'
+                  color='primary'
+                  :disabled='isSubmitting || moveReceipt !== null'
+                  @click='pageFilter = ``'
+                ) {{$t('common:pageSelector.clearPageFilter')}}
             async-state.page-selector__state(
               v-else-if='currentFolderFailure'
               state='error'
@@ -461,6 +497,7 @@ export default defineComponent({
       currentLocale: siteConfig.lang,
       currentPath: 'new-page' as string | null,
       currentPage: null as PageEntry | null,
+      pageFilter: '' as string | null,
       currentNode: [0] as number[],
       openNodes: [0] as number[],
       tree: [createRootNode(siteConfig.lang, 0)] as PageTreeItem[],
@@ -506,6 +543,15 @@ export default defineComponent({
       const parentId = this.currentNode[0] ?? 0
       return this.pages.filter(page => page.parent === parentId).sort(comparePageEntries)
     },
+    filteredPages(): PageEntry[] {
+      const query = (this.pageFilter ?? '').trim().toLowerCase()
+      if (!query) return this.currentPages
+      const terms = query.split(/\s+/)
+      return this.currentPages.filter(page => {
+        const titleAndPath = `${page.title} /${page.locale}/${page.path}`.toLowerCase()
+        return terms.every(term => titleAndPath.includes(term))
+      })
+    },
     currentPageIds: {
       get(): number[] { return this.currentPage ? [this.currentPage.id] : [] },
       set(value: number[]) {
@@ -527,6 +573,7 @@ export default defineComponent({
       immediate: true,
       handler(newValue: boolean, oldValue: boolean | undefined) {
         if (newValue && !oldValue) {
+          this.pageFilter = ''
           this.moveReceipt = null
           this.committedMoveDestination = null
           this.resetMoveLinkReview()
@@ -556,6 +603,7 @@ export default defineComponent({
         void this.$nextTick(() => { this.currentNode = oldValue })
         return
       }
+      if (nodeId !== oldValue[0]) this.pageFilter = ''
       const current = this.all.find(item => item.id === nodeId)
       const opened = new Set(this.openNodes)
       if (current) opened.add(current.parent)
@@ -575,6 +623,7 @@ export default defineComponent({
           this.currentLocale = this.committedMoveDestination.locale
         return
       }
+      this.pageFilter = ''
       this.resetMoveLinkReview()
       void this.reloadTree(newValue)
     },
@@ -1029,6 +1078,23 @@ export default defineComponent({
   &__folder-error {
     border-radius: var(--wiki-control-radius);
   }
+  &__filter {
+    min-width: 0;
+    padding: var(--wiki-space-3) var(--wiki-space-3) var(--wiki-space-2);
+    border-block-end: 1px solid var(--wiki-surface-border);
+  }
+
+  &__filter-input {
+    min-width: 0;
+    font-size: var(--wiki-type-body-sm, .875rem);
+  }
+
+  &__filter-count {
+    margin: var(--wiki-space-2) 0 0;
+    color: rgb(var(--v-theme-on-surface-variant));
+    font-size: var(--wiki-type-body-sm, .875rem);
+  }
+
 
   &__scroller {
     min-height: 12rem;
@@ -1089,6 +1155,28 @@ export default defineComponent({
     padding-inline: var(--wiki-space-3);
   }
 
+  &__pages-list .v-list-item-title,
+  &__page-path {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  &__page-path {
+    display: block;
+    margin-block-start: .2rem;
+    color: rgb(var(--v-theme-on-surface-variant));
+    font-size: .8rem;
+    line-height: 1.45;
+    opacity: 1;
+  }
+
+  &__selection-summary {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    overflow-wrap: anywhere;
+  }
+
   &__selection-note {
     display: flex;
     min-height: 2.25rem;
@@ -1146,6 +1234,12 @@ export default defineComponent({
   &__state {
     min-height: 7.5rem;
     margin: var(--wiki-space-3);
+  }
+
+  &__filter-empty {
+    min-height: 0;
+    overflow-y: auto;
+    justify-content: flex-start;
   }
 
   &__state.async-state--loading {
