@@ -259,6 +259,8 @@ Ordinary corpus and policy updates revalidate the selected record without dismis
 
 Bulk saved-page removal requires unlocking an existing private vault. It removes public saved pages for the current installation and pages in the currently unlocked private vault, using each audience's current policy revision and identity fences. Completion is reported only after confirming those corpora are empty. Other installations and vaults are outside that scope; a handle or identity change interrupts removal instead of deleting from a newly opened vault.
 
+Private mutations select the active vault by its physical IndexedDB key prefix, not a record-supplied vault index. Malformed selectors inside that prefix still fail closed. Foreign encrypted or opaque vault rows are neither interpreted as active-vault records nor rewritten, and their existing byte accounting is preserved; incomplete accounting remains incomplete after scoped removal.
+
 ### 8.1 Foreground snapshot synchronization
 
 An app-owned foreground coordinator owns offline snapshot reconciliation. It coalesces startup, online, foreground, manual-download, automatic-policy, and tag-subscription triggers, and runs only while the page is visible and the network is reachable. Each pass captures the session generation and policy revision; generation/revision fences reject stale writes and request a fresh pass. The service worker remains shell/cache-only and never replays snapshot mutations in the background.

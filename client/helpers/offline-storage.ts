@@ -668,8 +668,10 @@ const readPrivateEntriesInTransaction = async (
     if (values.length !== keys.length) throw new OfflineStorageError('transaction', 'Private record keys and values could not be read consistently.')
     return values.map((value, index) => ({ key: keys[index]!, value }))
   }
-  const index = store.index('by-vault')
-  const [values, keys] = await Promise.all([index.getAll(keyId), index.getAllKeys(keyId)])
+  // Scope by the physical vault prefix, so corrupt active-vault selectors are
+  // still checked while unrelated (including opaque) vault rows stay untouched.
+  const range = IDBKeyRange.bound([keyId], [keyId + '\u0000'], false, true)
+  const [values, keys] = await Promise.all([store.getAll(range), store.getAllKeys(range)])
   if (values.length !== keys.length) throw new OfflineStorageError('transaction', 'Private record keys and values could not be read consistently.')
   return values.map((value, index) => ({ key: keys[index]!, value }))
 }
@@ -3186,7 +3188,7 @@ export class OfflineStorage {
       const parsedVault = vault === undefined ? null : OfflineReadingVaultV1Schema.safeParse(vault)
       if (!parsedVault?.success || !isSameReadingContext(parsedVault.data.context, first.context) || parsedVault.data.sessionGeneration !== expectedGeneration)
         throw new OfflineStorageError('generation-fenced', 'The active private vault is unavailable.')
-      const existingEntries = await readPrivateEntriesInTransaction(tx)
+      const existingEntries = await readPrivateEntriesInTransaction(tx, first.context.keyId)
       const existingPrivateRecords: OfflinePrivateEnvelopeV1[] = []
       for (const entry of existingEntries) {
         const existing = OfflinePrivateEnvelopeV1Schema.safeParse(entry.value)

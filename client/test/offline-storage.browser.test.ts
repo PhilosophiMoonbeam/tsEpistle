@@ -7,6 +7,7 @@ import { OFFLINE_KEY_VERSION, type OfflineDraftEnvelopeV1, type OfflinePageSnaps
 
 const storagePath = fileURLToPath(new URL('../helpers/offline-storage.ts', import.meta.url))
 const sessionPath = fileURLToPath(new URL('../helpers/offline-session.ts', import.meta.url))
+const cryptoPath = fileURLToPath(new URL('../helpers/offline-crypto.ts', import.meta.url))
 const executablePath = process.env.CHROME_BIN ?? '/usr/bin/google-chrome'
 const capturedAt = '2026-09-01T00:00:00.000Z'
 const privateKeyId = 'A'.repeat(22)
@@ -115,13 +116,15 @@ const policyLogicalBytes = (record: Record<string, unknown>): number => {
 const policyManagedBytes = (dump: SnapshotDump): number => dump.policy.reduce((total, record) => total + policyLogicalBytes(record), 0)
 
 const bytes = (value: unknown): number[] => (Array.isArray(value) ? value.map(item => Number(item)) : [])
-const driverSource = (absoluteStoragePath: string, absoluteSessionPath: string): string => `
+const driverSource = (absoluteStoragePath: string, absoluteSessionPath: string, absoluteCryptoPath: string): string => `
 import { openOfflineStorage, subscribeOfflineStorageChanges, type OfflineStorage } from ${JSON.stringify(absoluteStoragePath)};
 import {
   invalidateOfflineSession,
   registerOfflineIdentityBoundaryOwner,
-  requestDraftKey
+  requestDraftKey,
+  enrollOfflineReading
 } from ${JSON.stringify(absoluteSessionPath)};
+import { encryptOfflinePrivateRecord, generateOfflineReadingPairId } from ${JSON.stringify(absoluteCryptoPath)};
 
 type RawHandle = IDBDatabase;
 const handles = new Map<string, OfflineStorage>();
@@ -464,6 +467,111 @@ export async function run(operation: string, payload: Record<string, unknown> = 
       }
     }
     if (operation === 'isClosed') return { ok: true, value: storageFor(payload.id).isClosed };
+    if (operation === 'removePrivateWithForeignRows') {
+      const storage = storageFor(payload.id);
+      const snapshot = payload.snapshot as never;
+      const enroll = async (target: OfflineStorage, siteId: string, accountId: number, keyId: string) => {
+        const lp = (text: string) => {
+          const bytes = new TextEncoder().encode(text);
+          const field = new Uint8Array(4 + bytes.length);
+          new DataView(field.buffer).setUint32(0, bytes.length, false);
+          field.set(bytes, 4);
+          return field;
+        };
+        const u64 = (value: number) => {
+          const bytes = new Uint8Array(8);
+          new DataView(bytes.buffer).setBigUint64(0, BigInt(value), false);
+          return bytes;
+        };
+        const fields = [
+          new TextEncoder().encode('TSORK1'), lp(location.origin), lp(siteId),
+          u64(accountId), u64(1), lp('random-reading-v1'), lp(keyId),
+          crypto.getRandomValues(new Uint8Array(32))
+        ];
+        const frame = new Uint8Array(fields.reduce((size, field) => size + field.length, 0));
+        let offset = 0;
+        for (const field of fields) { frame.set(field, offset); offset += field.length; }
+        return await enrollOfflineReading(async () => new Response(frame, {
+          headers: { 'content-type': 'application/octet-stream' }
+        }), target, {
+          expectedAccountId: accountId, expectedAuthVersion: 1,
+          expectedSessionGeneration: await target.currentSessionGeneration(), confirmSecret: () => true
+        });
+      };
+      const foreignStorage = await openOfflineStorage({ databaseName: String(payload.foreignName) });
+      const foreign = await enroll(foreignStorage, 'foreign-site', 2, 'C'.repeat(21) + 'A');
+      const foreignBody = await encryptOfflinePrivateRecord(foreign.handle, 'snapshot', {
+        schemaVersion: 1, audience: 'private',
+        context: { canonicalOrigin: location.origin, siteId: 'foreign-site', accountId: 2, authVersion: 1 },
+        snapshot
+      }, { pageId: 42, locale: 'en', recordRevision: 1, pairId: generateOfflineReadingPairId() });
+      foreign.secret.fill(0);
+      foreignStorage.close();
+      const active = await enroll(storage, 'private-site', 1, privateKeyId);
+      active.secret.fill(0);
+      const selectors = { pageId: 42, locale: 'en', recordRevision: 1, pairId: generateOfflineReadingPairId() };
+      const body = await encryptOfflinePrivateRecord(active.handle, 'snapshot', {
+        schemaVersion: 1, audience: 'private',
+        context: { canonicalOrigin: location.origin, siteId: 'private-site', accountId: 1, authVersion: 1 },
+        snapshot
+      }, selectors);
+      const source = payload.snapshot as Record<string, unknown>;
+      const search = await encryptOfflinePrivateRecord(active.handle, 'search', {
+        schemaVersion: 1, siteId: 'private-site', pageId: 42, locale: 'en',
+        path: source.path, canonicalPath: source.canonicalPath, title: source.title,
+        description: source.description, searchText: source.searchText,
+        capturedAt: source.capturedAt, sourceRevision: source.sourceRevision, byteSize: 0
+      }, selectors);
+      const policy = await storage.readOfflinePolicy({ readingHandle: active.handle });
+      await storage.putPrivateSnapshotRecords(body, search, {
+        readingHandle: active.handle, expectedRecordRevision: null,
+        policyState: { ...policy.state, policyRevision: 1 },
+        policyPage: {
+          key: 'private-site\\u000042\\u0000en', recordType: 'page', schemaVersion: 1,
+          siteId: 'private-site', pageId: 42, locale: 'en', manual: true, automatic: false,
+          tag: false, tagNames: [], visitCount: 0, lastVisitedAt: null, lastEditedAt: null,
+          automaticSelectedAt: null, excluded: false, availability: 'available', byteSize: 0
+        }
+      });
+      const database = await openDatabase(String(payload.name));
+      const seed = database.transaction(['meta', 'privateRecords'], 'readwrite');
+      const foreignKey = [foreignBody.context.keyId, 'snapshot', 42, 'en'];
+      const opaqueKey = ['D'.repeat(22), 'snapshot', 42, 'en'];
+      const opaque = { ciphertext: new Uint8Array([7, 8, 9]), unknownSchema: 99 };
+      seed.objectStore('privateRecords').put(foreignBody, foreignKey);
+      seed.objectStore('privateRecords').put(opaque, opaqueKey);
+      const meta = await requestValue(seed.objectStore('meta').get('state')) as Record<string, unknown>;
+      const foreignBytes = new TextEncoder().encode(JSON.stringify({
+        schemaVersion: foreignBody.schemaVersion, context: foreignBody.context,
+        sessionGeneration: foreignBody.sessionGeneration, kind: foreignBody.kind,
+        pageId: foreignBody.pageId, locale: foreignBody.locale, recordRevision: foreignBody.recordRevision,
+        pairId: foreignBody.pairId, nonceBytes: foreignBody.nonce.byteLength,
+        ciphertextBytes: foreignBody.ciphertext.byteLength
+      })).byteLength + foreignBody.nonce.byteLength + foreignBody.ciphertext.byteLength;
+      seed.objectStore('meta').put({
+        ...meta, managedBytes: Number(meta.managedBytes) + foreignBytes + opaque.ciphertext.byteLength,
+        snapshotCount: Number(meta.snapshotCount) + 1, accountingComplete: false
+      });
+      await transactionDone(seed);
+      await storage.removeOfflinePage({ siteId: 'private-site', pageId: 42, locale: 'en' }, {
+        readingHandle: active.handle, expectedPolicyRevision: 1
+      });
+      const read = database.transaction(['meta', 'privateRecords'], 'readonly');
+      const [foreignAfter, opaqueAfter, metaAfter] = await Promise.all([
+        requestValue(read.objectStore('privateRecords').get(foreignKey)),
+        requestValue(read.objectStore('privateRecords').get(opaqueKey)),
+        requestValue(read.objectStore('meta').get('state'))
+      ]);
+      await transactionDone(read);
+      database.close();
+      return { ok: true, value: {
+        foreignPreserved: JSON.stringify(serialise(foreignAfter)) === JSON.stringify(serialise(foreignBody)),
+        opaquePreserved: JSON.stringify(serialise(opaqueAfter)) === JSON.stringify(serialise(opaque)),
+        activeSnapshots: (await storage.readSnapshotCorpus({ readingHandle: active.handle })).snapshots.length,
+        accountingComplete: (metaAfter as Record<string, unknown>).accountingComplete,
+        snapshotCount: (metaAfter as Record<string, unknown>).snapshotCount
+      } };
+    }
     if (operation === 'enrollPrivate') {
       const storage = storageFor(payload.id)
       const sessionGeneration = await storage.currentSessionGeneration()
@@ -506,6 +614,20 @@ export async function run(operation: string, payload: Record<string, unknown> = 
           { expectedSessionGeneration: sessionGeneration, expectedCorpusRevision: corpusRevision, expectedRecordRevision: null } as never
         )
       }
+    }
+    if (operation === 'spoofPrivateVaultIndex' || operation === 'putPrivateNestedAlias') {
+      const database = await openDatabase(String(payload.name));
+      const tx = database.transaction('privateRecords', 'readwrite');
+      tx.objectStore('privateRecords').put(
+        makePrivateRecord('snapshot', operation === 'putPrivateNestedAlias' ? 1 : 2,
+          operation === 'putPrivateNestedAlias' ? privateKeyId : 'C'.repeat(22), 0, 1, privatePairId, 4),
+        operation === 'putPrivateNestedAlias'
+          ? [privateKeyId, ['alias'], 'snapshot', 42, 'en']
+          : [privateKeyId, 'snapshot', 42, 'en']
+      );
+      await transactionDone(tx);
+      database.close();
+      return { ok: true, value: true };
     }
     if (operation === 'putPrivateAlias') {
       await putPrivateAlias(String(payload.name), Number(payload.accountId ?? 1), String(payload.keyId ?? privateKeyId), 0)
@@ -718,7 +840,7 @@ const readDump = async (name: string): Promise<SnapshotDump> => await succeeded<
 beforeAll(async () => {
   tempDirectory = await mkdtemp(`${tmpdir()}/tsepistle-offline-storage-`)
   const entry = `${tempDirectory}/browser-entry.ts`
-  await Bun.write(entry, driverSource(storagePath, sessionPath))
+  await Bun.write(entry, driverSource(storagePath, sessionPath, cryptoPath))
   const build = await Bun.build({ entrypoints: [entry], target: 'browser', format: 'esm', sourcemap: 'none' })
   if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'))
   const output = await build.outputs[0]!.text()
@@ -944,6 +1066,19 @@ describe('real IndexedDB offline storage adapter', () => {
     await failedWith('putPrivateSingle', { id: 'storage', accountId: 1, revision: 2 }, 'invalid-record')
     await failedWith('listPrivate', { id: 'storage', keyId: 'C'.repeat(22) }, 'generation-fenced')
   })
+
+  test('removes active private pages without inspecting or changing foreign encrypted and opaque vault rows', async () => {
+    const name = freshDatabase('private-foreign-removal')
+    const foreignName = freshDatabase('private-foreign-key')
+    await succeeded('open', { id: 'storage', name })
+    expect(await succeeded('removePrivateWithForeignRows', { id: 'storage', name, foreignName, snapshot: makeSnapshot() })).toEqual({
+      foreignPreserved: true,
+      opaquePreserved: true,
+      activeSnapshots: 0,
+      accountingComplete: false,
+      snapshotCount: 1
+    })
+  })
   test('rejects private alias keys while retirement clears obsolete physical rows', async () => {
     const name = freshDatabase('private-alias')
     await succeeded('open', { id: 'storage', name })
@@ -953,6 +1088,18 @@ describe('real IndexedDB offline storage adapter', () => {
     await failedWith('listPrivate', { id: 'storage', keyId: privateKeyId }, 'metadata-recovery')
     await expect(await succeeded<number>('retirePrivate', { id: 'storage', options: { expectedSessionGeneration: 0 } })).toBe(3)
     await failedWith('listPrivate', { id: 'storage', keyId: privateKeyId, options: { expectedSessionGeneration: 0 } }, 'generation-fenced')
+  })
+
+  test.each(['spoofPrivateVaultIndex', 'putPrivateNestedAlias'])('rejects malformed active physical vault keys through %s', async operation => {
+    const name = freshDatabase('private-malformed-prefix')
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('enrollPrivate', { id: 'storage', accountId: 1 })
+    await succeeded('putPrivatePair', { id: 'storage', accountId: 1, revision: 1, expectedRecordRevision: null })
+    await succeeded(operation, { name })
+    await failedWith('listPrivate', { id: 'storage', keyId: privateKeyId }, 'metadata-recovery')
+    await failedWith('putPrivatePair', {
+      id: 'storage', accountId: 1, revision: 2, pairId: 'E'.repeat(22), expectedRecordRevision: 1
+    }, 'metadata-recovery')
   })
 
   test('retires private authority atomically and fences a stale tab', async () => {

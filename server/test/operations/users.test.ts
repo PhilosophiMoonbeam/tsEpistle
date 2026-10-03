@@ -191,7 +191,7 @@ describe('self-service profile identity', () => {
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
     await expect(operations.default.updateProfilePreferences({
       requester, expectedAccountId, input: { appearance: 'dark' }
-    })).rejects.toBeInstanceOf(InputInvalid)
+    })).rejects.toMatchObject({ name: 'INVALID_PROFILE_ACCOUNT', status: 400 })
     expect(findById).not.toHaveBeenCalled()
     expect(updateUser).not.toHaveBeenCalled()
     expect(refreshToken).not.toHaveBeenCalled()

@@ -1065,8 +1065,12 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
         emit('error', t('common:offlineLibrary.requestedSavedPageNo'))
         return true
       }
-      await openRecord(selected, undefined, { history: 'initial' })
-      if (!currentLoad()) return false
+      // A normal open already pushed this route; consuming it must not reopen
+      // the unchanged reader after an unrelated corpus refresh.
+      if (selectedKey.value !== selectorKey || readerState.value !== 'ready') {
+        await openRecord(selected, undefined, { history: 'initial' })
+        if (!currentLoad()) return false
+      }
     }
     if (!props.navigateOnOpen && !requested && window.location.pathname !== '/' && window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
       emit('error', t('common:offlineLibrary.pageHasNotBeen'))
