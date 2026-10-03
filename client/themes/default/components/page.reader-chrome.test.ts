@@ -1,10 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import * as Vue from 'vue'
-import { describe, expect, it, vi } from '../../../../server/test/bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../../../../server/test/bun-test.mts'
 import { manualReviewerId } from '../../../helpers/approval-reviewer-search.ts'
 import { brandingDuplicatesSiteLogo } from '../../../helpers/page-branding.ts'
 import { UTILITY_TOOLTIP_GAP, UTILITY_TOOLTIP_MAX_WIDTH } from '../../../helpers/utility-tooltip-placement.ts'
+import { buildOutlineTree, filterOutlineTree, getInitialExpandedAnchors } from '../../../helpers/page-outline.ts'
+import { revealContentExtensionTarget } from '../../../helpers/content-extension-runtime.ts'
+import { browserWindow, document as browserDocument, resetBody } from '../../../test/browser-dom.mts'
 import { keyTranslator, renderTemplate } from '../../../test/render-template.mts'
 
 // Reader chrome: rail utilities, outline heading, state indicators and the
@@ -22,6 +25,11 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   printView: false,
   navMode: 'NONE',
   readerFocus: false,
+  readerSectionsOpen: false,
+  readerHasSections: false,
+  readerSectionsAvailable: false,
+  readerSectionIndex: -1,
+  readerSection: null,
   talkActive: false,
   linksActive: false,
   tocPosition: 'left',
@@ -66,8 +74,15 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   pageBranding: null,
   pageApproval: null,
   offlineControl: {
-    state: 'off', tone: 'neutral', icon: 'mdi-cloud-download-outline', action: 'save', blocked: false,
-    label: 'Save offline', title: 'Save offline', detail: 'Keep a copy on this device.', pressed: false
+    state: 'off',
+    tone: 'neutral',
+    icon: 'mdi-cloud-download-outline',
+    action: 'save',
+    blocked: false,
+    label: 'Save offline',
+    title: 'Save offline',
+    detail: 'Keep a copy on this device.',
+    pressed: false
   },
   offlineActionLoading: false,
   offlineStatusId: 'offline-status',
@@ -94,7 +109,9 @@ describe('page reader chrome template', () => {
     expect(wide.querySelector('.page-toc-card .page-toc-toggle')).toBeNull()
     expect(wide.querySelector('.page-toc-card')?.textContent).toContain('common:page.onThisPage')
 
-    const compact = (await renderTemplate(PAGE, baseState({ isTocCompact: true, winWidth: 900, pageToolsHost: '#page-tablet-tools', tocDisclosureExpanded: false }))).document
+    const compact = (
+      await renderTemplate(PAGE, baseState({ isTocCompact: true, winWidth: 900, pageToolsHost: '#page-tablet-tools', tocDisclosureExpanded: false }))
+    ).document
     const toggle = compact.querySelector('.page-toc-card .page-toc-toggle')
     expect(toggle?.getAttribute('aria-expanded')).toBe('false')
     expect(toggle?.getAttribute('aria-controls')).toBe('page-toc-content')
@@ -136,10 +153,13 @@ describe('page reader chrome template', () => {
     ;(props['onUpdate:modelValue'] as (open: boolean) => void)(true)
     expect(placeUtilityTooltip).toHaveBeenCalledWith(true, 'share')
 
-    const { document } = await renderTemplate(PAGE, baseState({
-      isAuthenticated: true,
-      utilityTooltipProps: (key: string) => page.methods.utilityTooltipProps!.call(vm, key)
-    }))
+    const { document } = await renderTemplate(
+      PAGE,
+      baseState({
+        isAuthenticated: true,
+        utilityTooltipProps: (key: string) => page.methods.utilityTooltipProps!.call(vm, key)
+      })
+    )
     const tooltips = Array.from(document.querySelectorAll('.page-tools-card__utilities [data-stub="v-tooltip"]'))
     expect(tooltips.length).toBeGreaterThan(2)
     const ids = tooltips.map(tooltip => tooltip.getAttribute('id'))
@@ -156,12 +176,15 @@ describe('page reader chrome template', () => {
   })
 
   it('keeps blocked utilities focusable and puts the reason in their tooltip', async () => {
-    const { document } = await renderTemplate(PAGE, baseState({
-      pageWatchBlockedReason: 'Watch reason',
-      pageOnlineActionReady: false,
-      pageOnlineActionUnavailableReason: 'Offline reason',
-      pageProtectionBlockedReason: 'Offline reason'
-    }))
+    const { document } = await renderTemplate(
+      PAGE,
+      baseState({
+        pageWatchBlockedReason: 'Watch reason',
+        pageOnlineActionReady: false,
+        pageOnlineActionUnavailableReason: 'Offline reason',
+        pageProtectionBlockedReason: 'Offline reason'
+      })
+    )
     for (const selector of ['.page-watch-control', '.page-approval-control', '.page-protection-control']) {
       const control = document.querySelector(selector)
       expect(control?.getAttribute('aria-disabled')).toBe('true')
@@ -205,11 +228,14 @@ describe('page reader chrome template', () => {
   })
 
   it('names the discussion view "Discussion" everywhere and keeps the book icon for focus reading only', async () => {
-    const { document } = await renderTemplate(PAGE, baseState({
-      showPageViewTabs: true,
-      commentsEnabled: true,
-      commentsPerms: { read: true, write: true }
-    }))
+    const { document } = await renderTemplate(
+      PAGE,
+      baseState({
+        showPageViewTabs: true,
+        commentsEnabled: true,
+        commentsPerms: { read: true, write: true }
+      })
+    )
     // Includes the teleported rail.
     const html = document.body.innerHTML
     expect(document.querySelector('#page-view-talk-tab')?.textContent?.trim()).toBe('common:comments.title')
@@ -241,25 +267,68 @@ const source = fs.readFileSync(path.join(process.cwd(), PAGE), 'utf8')
 const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)?.[1]
 if (!script) throw new Error('page.vue script block was not found')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  script.replace(/^import[\s\S]*?from\s+["'][^"']+["']\s*$/gm, '').replace('export default defineComponent({', 'const pageComponent = defineComponent({') + '\nreturn pageComponent'
+  script.replace(/^import[\s\S]*?from\s+["'][^"']+["']\s*$/gm, '').replace('export default defineComponent({', 'const pageComponent = defineComponent({') +
+    '\nreturn pageComponent'
 )
-const wikiStore = { user: { authenticated: true, id: 7, permissions: [] as string[] }, site: { logoUrl: '/_site-logo/abc/logo.png' }, authRefreshOutcome: 'authenticated' as string | null }
+const wikiStore = {
+  user: { authenticated: true, id: 7, permissions: [] as string[] },
+  site: { logoUrl: '/_site-logo/abc/logo.png' },
+  authRefreshOutcome: 'authenticated' as string | null
+}
 type Rules = {
   computed: Record<string, (this: Record<string, unknown>) => unknown>
   methods: Record<string, (this: Record<string, unknown>, ...args: unknown[]) => unknown>
+  watch: {
+    readerSectionsAvailable: (this: Record<string, unknown>, available: boolean) => void
+    tocFlattened: { handler: (this: Record<string, unknown>, entries: Array<{ anchor: string; title: string; depth: number }>) => void }
+  }
 }
 const stubComponent = {}
 const page = new Function(
-  'defineComponent', 'h', 'markRaw', 'mergeProps', 'useGoTo', 'i18next',
-  'AsyncState', 'PageBrandingMark', 'SiteBanner', 'NavSidebar',
-  'wikiStore', 'manualReviewerId', 'brandingDuplicatesSiteLogo', 'Prism', 'ClipboardJS',
-  'UTILITY_TOOLTIP_GAP', 'UTILITY_TOOLTIP_MAX_WIDTH',
+  'defineComponent',
+  'h',
+  'markRaw',
+  'mergeProps',
+  'useGoTo',
+  'i18next',
+  'AsyncState',
+  'PageBrandingMark',
+  'SiteBanner',
+  'NavSidebar',
+  'wikiStore',
+  'manualReviewerId',
+  'brandingDuplicatesSiteLogo',
+  'Prism',
+  'ClipboardJS',
+  'UTILITY_TOOLTIP_GAP',
+  'UTILITY_TOOLTIP_MAX_WIDTH',
+  'buildOutlineTree',
+  'filterOutlineTree',
+  'getInitialExpandedAnchors',
+  'revealContentExtensionTarget',
   executableScript
 )(
-  (options: unknown) => options, () => ({}), <Value>(value: Value) => value, Vue.mergeProps, () => () => {}, { t: (key: string) => key },
-  stubComponent, stubComponent, stubComponent, stubComponent,
-  wikiStore, manualReviewerId, brandingDuplicatesSiteLogo, { plugins: { toolbar: { registerButton: () => {} } } }, class ClipboardJS {},
-  UTILITY_TOOLTIP_GAP, UTILITY_TOOLTIP_MAX_WIDTH
+  (options: unknown) => options,
+  () => ({}),
+  <Value>(value: Value) => value,
+  Vue.mergeProps,
+  () => () => {},
+  { t: (key: string) => key },
+  stubComponent,
+  stubComponent,
+  stubComponent,
+  stubComponent,
+  wikiStore,
+  manualReviewerId,
+  brandingDuplicatesSiteLogo,
+  { plugins: { toolbar: { registerButton: () => {} } } },
+  class ClipboardJS {},
+  UTILITY_TOOLTIP_GAP,
+  UTILITY_TOOLTIP_MAX_WIDTH,
+  buildOutlineTree,
+  filterOutlineTree,
+  getInitialExpandedAnchors,
+  revealContentExtensionTarget
 ) as Rules
 
 const call = (name: string, vm: Record<string, unknown>) => page.computed[name]!.call(vm)
@@ -311,7 +380,8 @@ describe('page reader chrome rules', () => {
   })
 
   it('splits the author sentence around the name wherever the locale places it', () => {
-    const translate = (template: string) => (key: string, options?: { author: string }) => key === 'common:page.author' ? 'AUTHOR_MARKER' : template.replace('{{author}}', options?.author ?? '')
+    const translate = (template: string) => (key: string, options?: { author: string }) =>
+      key === 'common:page.author' ? 'AUTHOR_MARKER' : template.replace('{{author}}', options?.author ?? '')
     expect(call('authorAttribution', { $t: translate('by {{author}}') })).toEqual({ before: 'by ', after: '' })
     expect(call('authorAttribution', { $t: translate('{{author}} が編集') })).toEqual({ before: '', after: ' が編集' })
   })
@@ -319,7 +389,9 @@ describe('page reader chrome rules', () => {
   it('explains why watching is blocked and stays quiet while it loads', () => {
     const vm = { $t: (key: string) => key, pageOnlineActionUnavailableReason: 'offline' }
     expect(call('pageWatchBlockedReason', { ...vm, pageOnlineActionReady: false, pageWatchAuthorityReady: true, pageWatchLoading: false })).toBe('offline')
-    expect(call('pageWatchBlockedReason', { ...vm, pageOnlineActionReady: true, pageWatchAuthorityReady: false, pageWatchLoading: false })).toBe('common:page.watchStateStale')
+    expect(call('pageWatchBlockedReason', { ...vm, pageOnlineActionReady: true, pageWatchAuthorityReady: false, pageWatchLoading: false })).toBe(
+      'common:page.watchStateStale'
+    )
     expect(call('pageWatchBlockedReason', { ...vm, pageOnlineActionReady: true, pageWatchAuthorityReady: false, pageWatchLoading: true })).toBe('')
     expect(call('pageWatchBlockedReason', { ...vm, pageOnlineActionReady: true, pageWatchAuthorityReady: true, pageWatchLoading: false })).toBe('')
   })
@@ -412,5 +484,264 @@ describe('page reader chrome rules', () => {
     expect(label(5, '   ')).toBe('common:page.reviewerById(id=5)')
     // A selected reviewer without a name argument reuses the name from the history.
     expect(label(3)).toBe('Grace Hopper')
+  })
+})
+
+describe('focus reading section navigation', () => {
+  const sections = [
+    { anchor: '#opening', title: 'Opening', depth: 0 },
+    { anchor: '#hidden%20chapter', title: 'Hidden chapter', depth: 1 },
+    { anchor: '#conclusion', title: 'Conclusion', depth: 0 }
+  ]
+
+  const reader = (overrides: Record<string, unknown> = {}): Record<string, unknown> => {
+    const vm = baseState({
+      readerFocus: true,
+      tocFlattened: sections,
+      activeAnchor: '#opening',
+      tocQuery: '',
+      expandedAnchors: new Set<string>(),
+      collapsedByUser: new Set<string>(),
+      searchOverrides: new Map<string, boolean>(),
+      $nextTick: Vue.nextTick,
+      setupTocResizeObserver: () => {},
+      ensureActiveTocVisible: () => {},
+      ...overrides
+    })
+    for (const name of ['readerHasSections', 'readerSectionsAvailable', 'readerSectionIndex', 'readerSection', 'tocTree', 'tocTreeVisible']) {
+      Object.defineProperty(vm, name, { configurable: true, get: () => call(name, vm) })
+    }
+    for (const name of [
+      'closeReaderSections',
+      'toggleReaderSections',
+      'readerSectionsEscape',
+      'moveReaderSection',
+      'tocLinkClicked',
+      'scrollToPageAnchor',
+      'cancelScheduledScroll',
+      'animatePageScroll',
+      'toggleReaderFocus'
+    ]) {
+      vm[name] = (...args: unknown[]) => page.methods[name]!.call(vm, ...args)
+    }
+    return vm
+  }
+
+  beforeEach(() => {
+    resetBody()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+    resetBody()
+  })
+
+  it('names the current section without live announcements and disables only the document boundaries', async () => {
+    const vm = reader({ title: 'Library guide', winWidth: 390, isTocMobile: true, isTocCompact: true })
+    for (const [anchor, label, ordinal, previousDisabled, nextDisabled] of [
+      ['#opening', 'Opening', 1, true, false],
+      ['#hidden chapter', 'Hidden chapter', 2, false, false],
+      ['#conclusion', 'Conclusion', 3, false, true]
+    ] as const) {
+      vm.activeAnchor = anchor
+      const { document } = await renderTemplate(PAGE, vm)
+      const dock = document.querySelector('.page-reading-dock')!
+      expect(dock.querySelector('.page-reading-dock-title')?.textContent).toBe(label)
+      expect(dock.querySelector('.page-reading-dock-position')?.textContent).toBe(`common:page.sectionPosition(current=${ordinal},total=3)`)
+      expect(dock.querySelector('.page-reading-dock-document')?.textContent).toBe('Library guide')
+      expect(dock.querySelector('.page-reading-previous')?.hasAttribute('disabled')).toBe(previousDisabled)
+      expect(dock.querySelector('.page-reading-next')?.hasAttribute('disabled')).toBe(nextDisabled)
+      expect(dock.querySelector('[aria-live]')).toBeNull()
+    }
+
+    vm.activeAnchor = ''
+    expect(vm.readerSectionIndex).toBe(0)
+    expect(vm.readerSection).toEqual(sections[0])
+  })
+
+  it('moves through unfiltered document order and leaves focus mode enabled', () => {
+    const vm = reader({ tocQuery: 'Conclusion', readerSectionsOpen: true })
+    expect((vm.tocTreeVisible as Array<{ title: string }>).map(section => section.title)).toEqual(['Conclusion'])
+    const visited: string[] = []
+    vm.scrollToPageAnchor = (anchor: string) => {
+      visited.push(anchor)
+      vm.activeAnchor = anchor
+    }
+    page.methods.moveReaderSection!.call(vm, -1)
+    expect(visited).toEqual([])
+    expect(vm.readerSectionsOpen).toBe(true)
+    page.methods.moveReaderSection!.call(vm, 1)
+    expect(vm.readerSectionsOpen).toBe(false)
+    expect(vm.readerSectionIndex).toBe(1)
+    page.methods.moveReaderSection!.call(vm, 1)
+    page.methods.moveReaderSection!.call(vm, 1)
+    page.methods.moveReaderSection!.call(vm, -1)
+    expect(visited).toEqual(['#hidden%20chapter', '#conclusion', '#hidden%20chapter'])
+    expect(vm.readerFocus).toBe(true)
+    expect(vm.tocQuery).toBe('Conclusion')
+  })
+
+  it('moves the sole searchable outline into the picker without changing compact disclosure state', async () => {
+    const entries = Array.from({ length: 47 }, (_, index) => ({
+      anchor: `#section-${index + 1}`,
+      title: `Section ${index + 1}`,
+      depth: 0
+    }))
+    const vm = reader({
+      readerSectionsOpen: true,
+      tocFlattened: entries,
+      activeAnchor: '#section-23',
+      tocQuery: 'Section 23',
+      tocDisclosureExpanded: false,
+      isTocMobile: true,
+      isTocCompact: true,
+      winWidth: 320,
+      pageToolsHost: '#page-mobile-tools'
+    })
+    const open = await renderTemplate(PAGE, vm)
+    const outline = open.document.querySelector<HTMLElement>('#page-toc-content')!
+    expect(open.document.querySelectorAll('#page-toc-content')).toHaveLength(1)
+    expect(open.document.querySelectorAll('[data-stub="page-toc-tree"]')).toHaveLength(1)
+    expect(outline.closest('[data-teleport="#page-reading-sections-host"]')).not.toBeNull()
+    expect(outline.style.display).not.toBe('none')
+    expect(outline.querySelector('.page-toc-filter')?.getAttribute('modelvalue')).toBe('Section 23')
+    expect(open.document.querySelector('.page-reading-sections-toggle')?.getAttribute('aria-expanded')).toBe('true')
+    expect(open.document.querySelector('.page-toc-toggle')).toBeNull()
+
+    page.methods.closeReaderSections!.call(vm)
+    const closed = await renderTemplate(PAGE, vm)
+    expect(closed.document.querySelectorAll('#page-toc-content')).toHaveLength(1)
+    expect(closed.document.querySelector('#page-toc-content')?.closest('[data-teleport="#page-mobile-tools"]')).not.toBeNull()
+    expect(closed.document.querySelector('.page-toc-toggle')?.getAttribute('aria-expanded')).toBe('false')
+    expect(vm.tocQuery).toBe('Section 23')
+  })
+
+  it('targets Exit focus rather than the new first navigation button, then returns to the original focus control', async () => {
+    browserDocument.body.innerHTML = `<div id="reader">
+      <button class="page-reading-previous">Previous</button>
+      <button class="page-reading-exit">Exit focus</button>
+      <button class="page-focus-control">Focus reading</button>
+      <article></article>
+    </div>`
+    const root = browserDocument.querySelector<HTMLElement>('#reader')!
+    const vm = reader({
+      readerFocus: false,
+      $el: root,
+      $refs: { container: root.querySelector('article') },
+      scrollAnimationFrame: null,
+      scrollAnimationToken: 0
+    })
+    await page.methods.toggleReaderFocus!.call(vm)
+    await vi.advanceTimersByTimeAsync(32)
+    expect(vm.readerFocus).toBe(true)
+    expect(browserDocument.activeElement).toBe(root.querySelector('.page-reading-exit'))
+
+    vm.readerSectionsOpen = true
+    await page.methods.toggleReaderFocus!.call(vm)
+    await vi.advanceTimersByTimeAsync(32)
+    expect(vm.readerFocus).toBe(false)
+    expect(vm.readerSectionsOpen).toBe(false)
+    expect(browserDocument.activeElement).toBe(root.querySelector('.page-focus-control'))
+  })
+
+  it('opens on the outline search and lets Escape close it before clearing the filter, restoring its opener', async () => {
+    browserDocument.body.innerHTML = `<div id="reader">
+      <button class="page-reading-sections-toggle">Choose a section</button>
+      <button class="page-reading-exit">Exit focus</button>
+      <section><div class="page-toc-filter"><input /></div></section>
+    </div>`
+    const root = browserDocument.querySelector<HTMLElement>('#reader')!
+    const panel = root.querySelector<HTMLElement>('section')!
+    const opener = root.querySelector<HTMLElement>('.page-reading-sections-toggle')!
+    const input = panel.querySelector<HTMLInputElement>('input')!
+    const vm = reader({ $el: root, $refs: { readerSections: panel }, tocQuery: 'chapter' })
+    root.addEventListener('keydown', event => page.methods.readerSectionsEscape!.call(vm, event), { capture: true })
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Escape') vm.tocQuery = ''
+    })
+    opener.focus()
+    await page.methods.toggleReaderSections!.call(vm)
+    expect(vm.readerSectionsOpen).toBe(true)
+    expect(browserDocument.activeElement).toBe(input)
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await Vue.nextTick()
+    expect(vm.readerSectionsOpen).toBe(false)
+    expect(vm.tocQuery).toBe('chapter')
+    expect(browserDocument.activeElement).toBe(opener)
+    expect(vm.readerFocus).toBe(true)
+  })
+
+  it('selects and reveals a collapsed section, then focuses its heading with reduced motion and anchor reconciliation', async () => {
+    browserDocument.body.innerHTML = `<div id="reader">
+      <button class="page-reading-sections-toggle">Choose a section</button>
+      <article><details><summary>Outer</summary><details><summary>Inner</summary>
+        <h2 id="hidden chapter">Hidden chapter</h2>
+      </details></details></article>
+    </div>`
+    const root = browserDocument.querySelector<HTMLElement>('#reader')!
+    const article = root.querySelector<HTMLElement>('article')!
+    const heading = article.querySelector<HTMLElement>('h2')!
+    const opener = root.querySelector<HTMLElement>('button')!
+    const originalMatchMedia = browserWindow.matchMedia
+    vi.spyOn(browserWindow, 'matchMedia').mockImplementation(query => ({
+      ...originalMatchMedia(query),
+      matches: query === '(prefers-reduced-motion: reduce)'
+    }))
+    const scrollTo = vi.spyOn(browserWindow, 'scrollTo').mockImplementation(() => {})
+    const setNavigationAnchor = vi.fn()
+    const vm = reader({
+      $el: root,
+      $refs: { container: article },
+      readerSectionsOpen: true,
+      scrollAnimationFrame: null,
+      scrollAnimationToken: 0,
+      scrollOpts: { duration: 300 },
+      pageScrollTarget: () => 160,
+      outlineCleanup: { setNavigationAnchor }
+    })
+    opener.focus()
+    const event = new MouseEvent('click', { button: 0, cancelable: true })
+    page.methods.tocLinkClicked!.call(vm, event, '#hidden chapter')
+    expect(event.defaultPrevented).toBe(true)
+    expect(vm.readerSectionsOpen).toBe(false)
+    expect(vm.activeAnchor).toBe('#hidden%20chapter')
+    expect([...article.querySelectorAll<HTMLDetailsElement>('details')].every(details => details.open)).toBe(true)
+    expect(setNavigationAnchor).toHaveBeenLastCalledWith('#hidden%20chapter')
+
+    await vi.advanceTimersByTimeAsync(32)
+    expect(browserDocument.activeElement).toBe(heading)
+    expect(heading.getAttribute('tabindex')).toBe('-1')
+    expect(scrollTo).toHaveBeenCalledWith(0, 160)
+    expect(vm.scrollAnimationFrame).toBeNull()
+    expect(vm.readerFocus).toBe(true)
+  })
+
+  it('omits section controls when headings are absent or the outline is disabled, and closes on page or view changes', async () => {
+    for (const overrides of [{ tocFlattened: [] }, { tocPosition: 'off' }]) {
+      const vm = reader(overrides)
+      const { document } = await renderTemplate(PAGE, vm)
+      expect(document.querySelector('.page-reading-dock-title')?.textContent).toBe('Field guide')
+      expect(document.querySelector('.page-reading-sections-toggle')).toBeNull()
+      expect(document.querySelector('.page-reading-previous')).toBeNull()
+      expect(document.querySelector('.page-reading-next')).toBeNull()
+      await page.methods.toggleReaderSections!.call(vm)
+      expect(vm.readerSectionsOpen).toBe(false)
+    }
+
+    const vm = reader({ readerSectionsOpen: true })
+    page.watch.tocFlattened.handler.call(vm, sections)
+    expect(vm.readerSectionsOpen).toBe(false)
+    for (const overrides of [{ readerFocus: false }, { printView: true }, { talkActive: true }, { linksActive: true }, { tocPosition: 'off' }]) {
+      Object.assign(
+        vm,
+        { readerFocus: true, printView: false, talkActive: false, linksActive: false, tocPosition: 'left', readerSectionsOpen: true },
+        overrides
+      )
+      page.watch.readerSectionsAvailable.call(vm, vm.readerSectionsAvailable as boolean)
+      expect(vm.readerSectionsOpen).toBe(false)
+    }
   })
 })

@@ -5,10 +5,54 @@
     //- Decorative: a live progressbar would announce every scroll step.
     .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
-    .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
-      v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
-      span.page-reading-dock-title {{ title }}
-      v-btn(variant='text', size='small', prepend-icon='mdi-arrow-collapse-horizontal', @click='toggleReaderFocus') {{$t('common:page.exitFocus')}}
+    .page-reading-chrome(v-show='readerFocus && !printView && !talkActive && !linksActive', @keydown.esc.capture='readerSectionsEscape')
+      .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
+        v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
+        .page-reading-dock-context
+          span.page-reading-dock-title {{ readerSection ? readerSection.title : title }}
+          .page-reading-dock-meta(v-if='readerSection')
+            span.page-reading-dock-position {{ $t('common:page.sectionPosition', { current: readerSectionIndex + 1, total: tocFlattened.length }) }}
+            span.page-reading-dock-document {{ title }}
+        .page-reading-dock-actions
+          template(v-if='readerHasSections')
+            v-btn.page-reading-previous(
+              icon
+              variant='text'
+              size='small'
+              :aria-label='$t(`common:page.previousSection`)'
+              :disabled='readerSectionIndex <= 0'
+              @click='moveReaderSection(-1)'
+            )
+              v-icon(aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-right' : 'mdi-chevron-left' }}
+            v-btn.page-reading-next(
+              icon
+              variant='text'
+              size='small'
+              :aria-label='$t(`common:page.nextSection`)'
+              :disabled='readerSectionIndex >= tocFlattened.length - 1'
+              @click='moveReaderSection(1)'
+            )
+              v-icon(aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
+            v-btn.page-reading-sections-toggle(
+              variant='text'
+              size='small'
+              aria-haspopup='dialog'
+              aria-controls='page-reading-sections-host'
+              :aria-expanded='readerSectionsOpen'
+              @click='toggleReaderSections'
+            ) {{$t('common:page.chooseSection')}}
+          v-btn.page-reading-exit(variant='text', size='small', prepend-icon='mdi-arrow-collapse-horizontal', @click='toggleReaderFocus') {{$t('common:page.exitFocus')}}
+      #page-reading-sections-host.page-reading-sections(
+        ref='readerSections'
+        v-show='readerSectionsOpen'
+        role='dialog'
+        aria-modal='false'
+        :aria-label='$t(`common:page.chooseSection`)'
+      )
+        .page-reading-sections-header
+          span {{$t('common:page.chooseSection')}}
+          v-btn(icon, variant='text', size='small', :aria-label='$t(`common:actions.close`)', @click='closeReaderSections(true)')
+            v-icon(aria-hidden='true') mdi-close
     v-navigation-drawer(
       v-if='navMode !== `NONE` && !printView'
       id='page-navigation-drawer'
@@ -419,56 +463,62 @@
                       | {{ authorAttribution.before }}
                       bdi.page-provenance-author(:title='authorName') {{ authorName }}
                       | {{ authorAttribution.after }}
-            v-card.page-toc-card.mb-4(v-if='tocPosition !== `off` && !talkActive', tag='nav', :aria-label='$t(`common:page.onThisPage`)')
-              //- One outline heading: a disclosure button below the rail breakpoint,
-              //- a static label beside the article on wide screens.
-              v-btn.page-toc-toggle.text-none(
-                v-if='isTocCompact'
-                variant='text'
-                block
-                :aria-expanded='tocDisclosureExpanded'
-                aria-controls='page-toc-content'
-                @click='toggleToc'
-              )
-                span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
-                span.page-toc-toggle-meta
+            //- Move the same outline into the picker: filter and branch state,
+            //- focusable links, and disclosure IDs stay attached to one tree.
+            Teleport(
+              defer
+              to='#page-reading-sections-host'
+              :disabled='!readerSectionsOpen || printView'
+            )
+              v-card.page-toc-card.mb-4(v-if='tocPosition !== `off` && !talkActive', tag='nav', :aria-label='$t(`common:page.onThisPage`)')
+                //- In the picker the outline is always disclosed.
+                v-btn.page-toc-toggle.text-none(
+                  v-if='isTocCompact && !readerSectionsOpen'
+                  variant='text'
+                  block
+                  :aria-expanded='tocDisclosureExpanded'
+                  aria-controls='page-toc-content'
+                  @click='toggleToc'
+                )
+                  span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
+                  span.page-toc-toggle-meta
+                    span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
+                    span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
+                    v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
+                .page-toc-heading(v-else)
+                  span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
                   span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
                   span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
-                  v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
-              .page-toc-heading(v-else)
-                span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
-                span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
-                span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
 
-              div#page-toc-content.page-toc-content(
-                v-show='tocDisclosureExpanded'
-              )
-                v-text-field.page-toc-filter(
-                  v-if='tocFlattened.length > 10'
-                  v-model='tocQuery'
-                  :label='$t(`common:page.findSection`)'
-                  prepend-inner-icon='mdi-magnify'
-                  density='compact'
-                  variant='outlined'
-                  hide-details
-                  clearable
-                  @keydown.esc.stop='tocQuery = ``'
+                div#page-toc-content.page-toc-content(
+                  v-show='readerSectionsOpen || tocDisclosureExpanded'
                 )
-                .page-toc-filter-empty(v-if='tocQuery && !tocTreeVisible.length', role='status') {{$t('common:page.noMatchingSections')}}
-                .page-toc-tree-wrap(v-else-if='tocTreeVisible.length')
-                  page-toc-tree(
-                    :nodes='tocTreeVisible'
-                    :active-anchor='activeAnchor'
-                    :is-expanded='isBranchExpanded'
-                    :has-active-descendant='hasActiveDescendant'
-                    :on-toggle='toggleBranch'
-                    :on-navigate='tocLinkClicked'
-                    :is-rtl='$vuetify.locale.isRtl'
-                    :t='$t'
+                  v-text-field.page-toc-filter(
+                    v-if='tocFlattened.length > 10'
+                    v-model='tocQuery'
+                    :label='$t(`common:page.findSection`)'
+                    prepend-inner-icon='mdi-magnify'
+                    density='compact'
+                    variant='outlined'
+                    hide-details
+                    clearable
+                    @keydown.esc.stop='tocQuery = ``'
                   )
-                .page-toc-empty(v-else)
-                  v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
-                  span.text-body-small {{$t('common:page.noSections')}}
+                  .page-toc-filter-empty(v-if='tocQuery && !tocTreeVisible.length', role='status') {{$t('common:page.noMatchingSections')}}
+                  .page-toc-tree-wrap(v-else-if='tocTreeVisible.length')
+                    page-toc-tree(
+                      :nodes='tocTreeVisible'
+                      :active-anchor='activeAnchor'
+                      :is-expanded='isBranchExpanded'
+                      :has-active-descendant='hasActiveDescendant'
+                      :on-toggle='toggleBranch'
+                      :on-navigate='tocLinkClicked'
+                      :is-rtl='$vuetify.locale.isRtl'
+                      :t='$t'
+                    )
+                  .page-toc-empty(v-else)
+                    v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
+                    span.text-body-small {{$t('common:page.noSections')}}
 
           //- Keep this keyless too so both teleports move as a pair and keep
           //- their source order (shortcuts/provenance/toc before tags/comments).
@@ -1556,6 +1606,7 @@ export default defineComponent({
       preSearchCollapsedByUser: null as Set<string> | null,
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
+      readerSectionsOpen: false,
       readingProgress: 0,
       activeAnchor: '',
       outlineCleanup: null as PageOutlineTracker | null,
@@ -1952,6 +2003,20 @@ export default defineComponent({
       if (this.tocQuery?.trim()) return filterOutlineTree(this.tocTree, this.tocQuery)
       return this.tocTree
     },
+    readerHasSections (): boolean {
+      return this.tocPosition !== 'off' && this.tocFlattened.length > 0
+    },
+    readerSectionsAvailable (): boolean {
+      return this.readerFocus && !this.printView && !this.talkActive && !this.linksActive && this.readerHasSections
+    },
+    readerSectionIndex (): number {
+      if (!this.readerHasSections) return -1
+      const anchor = decodePageAnchor(this.activeAnchor)
+      return Math.max(0, this.tocFlattened.findIndex(entry => decodePageAnchor(entry.anchor) === anchor))
+    },
+    readerSection (): FlattenedTableOfContentsNode | null {
+      return this.readerHasSections ? this.tocFlattened[this.readerSectionIndex] ?? null : null
+    },
     // The card moves between three hosts; utility tooltips anchor to the
     // card in its current host and open below it (see the template).
     pageToolsHost (): string {
@@ -2040,6 +2105,9 @@ export default defineComponent({
     }
   },
   watch: {
+    readerSectionsAvailable (available: boolean) {
+      if (!available) this.closeReaderSections()
+    },
     approvalReviewerQuery (query: string | null | undefined) {
       if (!this.approvalDialog) return
       this.queueApprovalReviewerSearch(query ?? '')
@@ -2098,6 +2166,7 @@ export default defineComponent({
     tocFlattened: {
       immediate: true,
       handler (entries: FlattenedTableOfContentsNode[]) {
+        this.closeReaderSections()
         this.expandedAnchors = getInitialExpandedAnchors(entries)
         this.collapsedByUser = new Set()
         this.preSearchExpanded = null
@@ -2330,15 +2399,57 @@ export default defineComponent({
       const anchor = (blocks.find(({ bounds }) => bounds.top >= headerBottom) ?? blocks[0])?.element ?? container
       const previousTop = anchor?.getBoundingClientRect().top
       const previousScrollY = window.scrollY
+      this.closeReaderSections()
       this.readerFocus = !this.readerFocus
       await this.$nextTick()
       this.cancelScheduledScroll()
       this.scrollAnimationFrame = requestAnimationFrame(() => {
         this.scrollAnimationFrame = null
         if (previousScrollY > 0 && anchor && previousTop !== undefined) window.scrollBy(0, anchor.getBoundingClientRect().top - previousTop)
-        const target = this.$el.querySelector(this.readerFocus ? '.page-reading-dock button' : '.page-focus-control') as HTMLElement | null
+        const target = this.$el.querySelector(this.readerFocus ? '.page-reading-exit' : '.page-focus-control') as HTMLElement | null
         target?.focus({ preventScroll: true })
       })
+    },
+    async toggleReaderSections(): Promise<void> {
+      if (this.readerSectionsOpen) {
+        this.closeReaderSections(true)
+        return
+      }
+      if (!this.readerSectionsAvailable) return
+      this.readerSectionsOpen = true
+      await this.$nextTick()
+      if (!this.readerSectionsOpen) return
+      this.setupTocResizeObserver()
+      this.ensureActiveTocVisible()
+      const panel = this.$refs.readerSections as HTMLElement
+      const target = panel.querySelector<HTMLElement>('.page-toc-filter input, .page-toc-item[aria-current="location"]')
+        ?? panel.querySelector<HTMLElement>('.page-toc-item--descendant-active')
+        ?? panel.querySelector<HTMLElement>('.page-toc-item')
+        ?? panel.querySelector<HTMLElement>('button')
+      target?.focus({ preventScroll: true })
+    },
+    closeReaderSections(restoreFocus = false): void {
+      if (!this.readerSectionsOpen) return
+      this.readerSectionsOpen = false
+      if (restoreFocus) {
+        this.$nextTick(() => {
+          const target = this.$el.querySelector('.page-reading-sections-toggle, .page-reading-exit') as HTMLElement | null
+          target?.focus({ preventScroll: true })
+        })
+      }
+    },
+    readerSectionsEscape(event: KeyboardEvent): void {
+      if (!this.readerSectionsOpen) return
+      event.preventDefault()
+      event.stopPropagation()
+      this.closeReaderSections(true)
+    },
+    moveReaderSection(direction: -1 | 1): void {
+      if (!this.readerSectionsAvailable) return
+      const destination = this.tocFlattened[this.readerSectionIndex + direction]
+      if (!destination) return
+      this.closeReaderSections()
+      this.scrollToPageAnchor(destination.anchor)
     },
     focusArticle(): void {
       (this.$refs.container as HTMLElement)?.focus()
@@ -3024,6 +3135,7 @@ export default defineComponent({
       this.outlineCleanup = null
       this.cancelScheduledScroll()
       this.resetDesktopRailMeasurementState()
+      this.closeReaderSections()
       this.tocQuery = ''
       this.readingProgress = 0
       this.activeAnchor = ''
@@ -3260,6 +3372,7 @@ export default defineComponent({
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
       event.preventDefault()
       event.stopPropagation()
+      this.closeReaderSections()
       this.activeAnchor = anchor
       this.scrollToPageAnchor(anchor)
     },
@@ -3331,6 +3444,9 @@ export default defineComponent({
       const destination = container.id === id
         ? container
         : [...container.querySelectorAll<HTMLElement>('[id]')].find(element => element.id === id) ?? null
+      for (let parent = destination?.parentElement; parent && container.contains(parent); parent = parent.parentElement) {
+        if (parent.tagName === 'DETAILS') (parent as HTMLDetailsElement).open = true
+      }
       const view = container.ownerDocument.defaultView
       const token = this.scrollAnimationToken
       const reveal = (): void => {
@@ -6350,16 +6466,22 @@ export default defineComponent({
 
 
 
-.page-reading-dock {
+.page-reading-chrome {
   position: fixed;
   inset-block-end: calc(var(--wiki-footer-height) + env(safe-area-inset-bottom) + 1rem);
-  inset-inline-start: 50%;
+  inset-inline-start: calc(1rem + env(safe-area-inset-left));
+  inset-inline-end: calc(1rem + env(safe-area-inset-right));
   z-index: 1006;
+  width: max-content;
+  max-width: min(46rem, calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  margin-inline: auto;
+}
+
+.page-reading-dock {
   display: flex;
   align-items: center;
   gap: .5rem;
-  width: max-content;
-  max-width: min(26rem, calc(100% - 2rem));
+  width: 100%;
   isolation: isolate;
   padding: .25rem .375rem .25rem .75rem;
   border: 1px solid color-mix(in srgb, var(--wiki-surface-border-strong) 82%, transparent);
@@ -6370,7 +6492,6 @@ export default defineComponent({
   box-shadow: var(--wiki-shadow-md);
   backdrop-filter: var(--wiki-chrome-blur) !important;
   -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
-  transform: translateX(-50%);
 
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     border-color: var(--wiki-glass-border);
@@ -6382,18 +6503,110 @@ export default defineComponent({
     opacity: 1;
   }
 
-  .v-btn { flex-shrink: 0; min-height: 28px; height: 28px; color: var(--wiki-accent-ink); }
+  .v-btn { flex-shrink: 0; min-height: 36px; height: 36px; color: var(--wiki-accent-ink); }
 }
 
-.is-rtl .page-reading-dock { transform: translateX(50%); }
+
+.page-reading-dock-context {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.page-reading-dock-actions {
+  display: flex;
+  align-items: center;
+  gap: .125rem;
+  flex: 0 0 auto;
+}
+
+.page-reading-dock-meta {
+  display: flex;
+  gap: .625rem;
+  min-width: 0;
+  color: var(--wiki-text-muted);
+  font-size: .6875rem;
+}
+
+.page-reading-dock-position { flex: 0 0 auto; }
+
+.page-reading-dock-document {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .page-reading-dock-title {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--wiki-font-display);
   font-size: .9375rem;
+}
+
+.page-reading-sections {
+  position: absolute;
+  inset-block-end: calc(100% + var(--wiki-space-2));
+  inset-inline: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(26rem, 100%);
+  max-height: min(36rem, calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - var(--wiki-footer-height) - env(safe-area-inset-bottom) - 10rem));
+  margin-inline: auto;
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+
+  > .page-toc-card {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    margin-bottom: 0 !important;
+    border: 0 !important;
+    border-radius: 0;
+    background: none !important;
+    box-shadow: none;
+  }
+
+  .page-toc-content,
+  .page-toc-tree-wrap {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-filter,
+  .page-toc-heading,
+  .page-toc-filter-empty {
+    flex: 0 0 auto;
+  }
+
+  .page-toc-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.page-reading-sections-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  gap: var(--wiki-space-2);
+  padding-inline: var(--wiki-space-4) var(--wiki-space-2);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  color: var(--wiki-accent-ink);
+  font-family: var(--wiki-font-display);
 }
 
 .wiki-page.wiki-page--reading {
@@ -6458,14 +6671,48 @@ export default defineComponent({
 }
 
 @media (max-width: 599px) {
-  .page-reading-dock-title { display: none; }
+  .page-reading-chrome {
+    width: calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right));
+  }
 
+  .page-reading-dock {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .25rem;
+    padding: .5rem .375rem .25rem;
+    border-radius: var(--wiki-panel-radius);
+
+    > .v-icon { display: none; }
+    .v-btn { min-height: 44px; height: 44px; }
+    .page-reading-previous,
+    .page-reading-next { width: 44px; }
+    .page-reading-exit .v-btn__prepend { display: none; }
+  }
+
+  .page-reading-dock-context { padding-inline: .375rem; }
+  .page-reading-dock-document { display: none; }
+
+  .page-reading-dock-actions {
+    display: grid;
+    grid-template-columns: 44px 44px minmax(0, 1fr) minmax(0, 1fr);
+
+    &:not(:has(.page-reading-sections-toggle)) { grid-template-columns: minmax(0, 1fr); }
+
+    .v-btn {
+      min-width: 0;
+      padding-inline: .25rem;
+      font-size: .6875rem;
+      white-space: normal;
+    }
+  }
+
+  .page-reading-sections-header .v-btn { min-width: 44px; min-height: 44px; }
 }
 
 @media print {
   .page-position,
   .page-focus-control,
-  .page-reading-dock { display: none !important; }
+  .page-reading-chrome { display: none !important; }
 }
 
 </style>
