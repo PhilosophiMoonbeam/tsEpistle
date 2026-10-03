@@ -67,6 +67,7 @@ const ownerBehavior = new Bun.Transpiler({ loader: 'ts' }).transformSync(
 
 interface PanelStore {
   page: {
+    id: number
     sourceRevision: string
     okfLoading: boolean
     okfError: string
@@ -78,6 +79,7 @@ interface PanelStore {
 }
 const panelStore = (metadata: Record<string, unknown> | null = { type: 'Reference', status: 'stable' }): PanelStore => Vue.reactive({
   page: {
+    id: 12,
     sourceRevision: 'revision-panel',
     okfLoading: false,
     okfError: '',
@@ -329,7 +331,6 @@ describe('Knowledge / OKF editor panel', () => {
     store.page.okfError = 'Authority load failed'
     const owner = Vue.reactive({
       mode: 'update',
-      pageId: 12,
       hydratePage: () => {
         calls++
         return new Promise<void>(resolve => { finish = resolve })
