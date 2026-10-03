@@ -269,7 +269,7 @@ describe('Agent attachment upload batches', () => {
   const files = [0, 1, 2, 3].map(index => new File(['bytes'], `image-${index}.png`, { type: 'image/png' }))
   const uploaded = files.map((file, index) => ({ ...media, id: `00000000-0000-4000-8000-00000000010${index}`, filename: file.name }))
 
-  it('starts two uploads, bounds concurrency, and retains selection order across staggered completions', async () => {
+  it('serializes uploads within server admission capacity and retains selection order', async () => {
     const pending = files.map(() => Promise.withResolvers<Response>())
     const started: number[] = []
     let active = 0
@@ -292,23 +292,24 @@ describe('Agent attachment upload batches', () => {
     const rendered = renderHarness(harness.api, harness.props)
     try {
       const adding = harness.api.addFiles(files)
-      expect(started).toEqual([0, 1])
+      expect(started).toEqual([0])
       expect(await harness.api.addFiles([files[0]])).toBe(false)
-      expect(started).toEqual([0, 1])
+      expect(started).toEqual([0])
       await nextTick()
       expect(rendered.host.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true)
+      pending[0].resolve(response({ media: uploaded[0] }))
+      await settle()
+      expect(started).toEqual([0, 1])
       pending[1].resolve(response({ media: uploaded[1] }))
       await settle()
       expect(started).toEqual([0, 1, 2])
       pending[2].resolve(response({ media: uploaded[2] }))
       await settle()
       expect(started).toEqual([0, 1, 2, 3])
-      pending[3].resolve(response({ media: uploaded[3] }))
-      await settle()
       expect(harness.api.uploading.value).toBe(true)
-      pending[0].resolve(response({ media: uploaded[0] }))
+      pending[3].resolve(response({ media: uploaded[3] }))
       expect(await adding).toBe(true)
-      expect(peak).toBe(2)
+      expect(peak).toBe(1)
       expect(harness.api.attachments.value).toEqual(uploaded)
       expect(harness.events.filter(([event]) => event === 'busy')).toEqual([
         ['busy', true],
@@ -372,9 +373,9 @@ describe('Agent attachment upload batches', () => {
         }
       })
       const adding = harness.api.addFiles(files)
-      pending[1].resolve(response({ media: uploaded[1] }))
+      pending[0].resolve(response({ media: uploaded[0] }))
       await settle()
-      expect(started).toEqual([0, 1, 2])
+      expect(started).toEqual([0, 1])
       if (reason === 'session') harness.props.session.id = '00000000-0000-4000-8000-000000000099'
       if (reason === 'unmount') harness.unmount()
       if (reason === 'offline') harness.props.networkBlocked = true
@@ -382,14 +383,13 @@ describe('Agent attachment upload batches', () => {
       if (reason === 'capability') harness.props.capabilities!.attachments = false
       await nextTick()
       expect(signals.every(signal => signal.aborted)).toBe(true)
-      expect(deleted).toEqual([`/_api/agents/media/${uploaded[1].id}`])
-      pending[0].resolve(response({ media: uploaded[0] }))
-      pending[2].resolve(response({ media: uploaded[2] }))
+      expect(deleted).toEqual([`/_api/agents/media/${uploaded[0].id}`])
+      pending[1].resolve(response({ media: uploaded[1] }))
       expect(await adding).toBe(false)
-      expect(started).toEqual([0, 1, 2])
+      expect(started).toEqual([0, 1])
       expect(deleted.sort()).toEqual(
         uploaded
-          .slice(0, 3)
+          .slice(0, 2)
           .map(item => `/_api/agents/media/${item.id}`)
           .sort()
       )
@@ -418,12 +418,11 @@ describe('Agent attachment upload batches', () => {
     const adding = harness.api.addFiles(files)
     harness.props.csrfToken = 'another-owner-token'
     pending[0].resolve(response({ media: uploaded[0] }))
-    pending[1].resolve(response({ media: uploaded[1] }))
     expect(await adding).toBe(false)
-    expect(started).toEqual([0, 1])
+    expect(started).toEqual([0])
     expect(deleted.sort()).toEqual(
       uploaded
-        .slice(0, 2)
+        .slice(0, 1)
         .map(item => `/_api/agents/media/${item.id}`)
         .sort()
     )
