@@ -320,14 +320,25 @@ async function* tarChunks(root: StorageRootHandle, limits: StorageBackupLimits):
 async function* gzipChunks(source: AsyncIterable<Uint8Array>): AsyncGenerator<Uint8Array> {
   const input = Readable.from(source)
   const gzip = zlib.createGzip()
-  const transfer = pipeline(input, gzip)
+  const inputClosed = new Promise<void>(resolve => input.once('close', resolve))
+  const gzipClosed = new Promise<void>(resolve => gzip.once('close', resolve))
+  let transferFailed = false
+  let transferError: unknown
+  // Own rejection immediately: the output consumer may be awaiting a disk write.
+  const transfer = pipeline(input, gzip).catch((error: unknown) => {
+    transferFailed = true
+    transferError = error
+  })
   try {
     for await (const chunk of gzip) yield chunk as Buffer
     await transfer
+    if (transferFailed) throw transferError
   } finally {
     input.destroy()
     gzip.destroy()
-    await transfer.catch(() => {})
+    // Destruction starts asynchronous iterator/descriptor cleanup; wait for close,
+    // not just pipeline settlement, before the atomic writer can reject.
+    await Promise.all([transfer, inputClosed, gzipClosed])
   }
 }
 
