@@ -353,7 +353,8 @@ export default defineConfig(({ command }) => ({
       },
       output: {
         entryFileNames: 'js/[name]-[hash].js',
-        chunkFileNames: 'js/[name]-[hash].js',
+        // Entry-aware utility names include every consumer; don't copy that list into every preload URL.
+        chunkFileNames: chunk => chunk.name.startsWith('lodash-lazy') ? 'js/lodash-lazy-[hash].js' : 'js/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash][extname]',
         codeSplitting: {
           groups: [
