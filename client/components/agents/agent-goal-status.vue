@@ -250,7 +250,7 @@ const goalDetailsId = computed(() => `agent-goal-${goal.id}-details`)
 const goalBlockersTitleId = computed(() => `agent-goal-${goal.id}-blockers-title`)
 const cancelGoalTitleId = computed(() => `agent-goal-${goal.id}-cancel-title`)
 const goalBudgetTitleId = computed(() => `agent-goal-${goal.id}-budget-title`)
-const toggleAriaLabel = computed(() => t('common:agentGoalStatus.durableGoalDetails', { expanded: expanded.value ? 'Hide' : 'Show', objective: goal.objective, interpolation: { escapeValue: false } }))
+const toggleAriaLabel = computed(() => t('common:agentGoalStatus.durableGoalDetails', { expanded: expanded.value ? t('common:agentGoalStatus.hide') : t('common:agentGoalStatus.show'), objective: goal.objective, interpolation: { escapeValue: false } }))
 const goalToggleTargetStyle = {
   minHeight: 'max(44px, var(--wiki-control-height, 44px))',
   minWidth: 'max(44px, var(--wiki-control-height, 44px))'
@@ -408,7 +408,7 @@ const pendingActionLabel = computed(() => {
 const budgetLabel = computed(() => {
   const budgets = [
     { label: t('common:agentGoalStatus.tokenBudget'), percent: tokenPercent.value },
-    { label: 'tool-call budget', percent: toolPercent.value },
+    { label: t('common:agentGoalStatus.toolCallBudget'), percent: toolPercent.value },
     { label: t('common:agentGoalStatus.continuationBudget'), percent: continuationPercent.value }
   ]
   return budgets.reduce((highest, budget) => budget.percent > highest.percent ? budget : highest).label

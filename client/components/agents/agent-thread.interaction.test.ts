@@ -25,7 +25,7 @@ if (!parsedSfc.descriptor.template || !parsedSfc.descriptor.scriptSetup) throw n
 
 import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 setLocation('https://wiki.test/')
 
 resetBody()
@@ -221,6 +221,7 @@ interface MountedThread {
   readonly connection: { value: string }
   readonly userPicture: { value: UserPicture }
   readonly emittedReattachments: unknown[][]
+  readonly emittedSuggestions: unknown[][]
   readonly unmount: () => void
 }
 
@@ -241,6 +242,7 @@ const mountThread = async (
   const userPicture = Vue.shallowRef(initialUserPicture)
   const connection = Vue.ref(initialConnection)
   const emittedReattachments: unknown[][] = []
+  const emittedSuggestions: unknown[][] = []
   const agentThread = Vue.defineComponent({
     name: 'AgentThreadInteractionHarness',
     props: {
@@ -275,7 +277,8 @@ const mountThread = async (
         thread: thread.value,
         connection: connection.value,
         userPicture: userPicture.value,
-        onReattach: (...args: unknown[]) => emittedReattachments.push(args)
+        onReattach: (...args: unknown[]) => emittedReattachments.push(args),
+        onSuggest: (...args: unknown[]) => emittedSuggestions.push(args)
       })
   })
   const app = Vue.createApp(harness)
@@ -295,7 +298,7 @@ const mountThread = async (
     host.remove()
   }
   mountedApps.push(unmount)
-  return { host, thread, connection, userPicture, emittedReattachments, unmount }
+  return { host, thread, connection, userPicture, emittedReattachments, emittedSuggestions, unmount }
 }
 
 afterEach(() => {
@@ -346,6 +349,124 @@ describe('AgentThread identity presentation', () => {
 })
 
 describe('AgentThread live status and interaction behavior', () => {
+  it('explains matching public failures without leaking provider details or borrowing a different run failure', async () => {
+    const session = makeSession('session-recovery')
+    const currentRun = {
+      id: 'run-1',
+      sessionId: session.id,
+      status: 'failed' as const,
+      attempt: 1,
+      eventSequence: 1,
+      canCancel: false,
+      createdAt: session.createdAt,
+      startedAt: session.createdAt,
+      completedAt: session.updatedAt,
+      errorCode: 'AGENT_QUOTA_EXHAUSTED',
+      errorMessage: 'secret provider payload'
+    }
+    const mounted = await mountThread(
+      makeThread(session.id, {
+        session: { ...session, currentRun },
+        messages: [
+          makeMessage({ id: 'user-request', role: 'user', ordinal: 0, status: 'complete', content: 'Summarize the release' }),
+          makeMessage({ status: 'failed', content: '' })
+        ]
+      })
+    )
+    const recovery = (): HTMLElement => mounted.host.querySelector('.agent-message__recovery') as HTMLElement
+    expect(recovery().getAttribute('role')).toBe('region')
+    expect(recovery().getAttribute('aria-label')).toBeTruthy()
+    expect(recovery().textContent).toContain('quota')
+    expect(recovery().textContent).not.toContain(currentRun.errorMessage)
+    expect(recovery().hasAttribute('aria-live')).toBe(false)
+    expect(mounted.emittedSuggestions).toEqual([])
+    const review = recovery().querySelector('button') as HTMLButtonElement
+    expect(review.textContent).toContain('Review request')
+    review.click()
+    await settle()
+    expect(mounted.emittedSuggestions).toEqual([['Summarize the release']])
+
+    for (const [code, action] of [
+      ['AGENT_CONTEXT_TOO_LARGE', 'Start a new conversation'],
+      ['UNKNOWN_FAILURE', 'Nothing is sent automatically']
+    ]) {
+      mounted.thread.value = {
+        ...mounted.thread.value,
+        session: { ...session, currentRun: { ...currentRun, errorCode: code } }
+      }
+      await settle()
+      expect(recovery().textContent).toContain(action)
+      expect(recovery().textContent).not.toContain(currentRun.errorMessage)
+    }
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      session: { ...session, currentRun: { ...currentRun, id: 'different-run' } }
+    }
+    await settle()
+    expect(recovery().textContent).toContain('Nothing is sent automatically')
+    expect(recovery().textContent).not.toContain('quota')
+  })
+
+  it('offers bounded recovery for the matching partial run with a complete assistant answer only', async () => {
+    const session = makeSession('session-partial')
+    const currentRun = {
+      id: 'run-1',
+      sessionId: session.id,
+      status: 'partial' as const,
+      attempt: 1,
+      eventSequence: 1,
+      canCancel: false,
+      createdAt: session.createdAt,
+      startedAt: session.createdAt,
+      completedAt: session.updatedAt,
+      errorCode: null,
+      errorMessage: null
+    }
+    const mounted = await mountThread(
+      makeThread(session.id, {
+        session: { ...session, currentRun },
+        messages: [
+          makeMessage({ id: 'old-answer', runId: 'older-run', ordinal: 0, status: 'complete', content: 'An earlier answer' }),
+          makeMessage({ id: 'user-request', role: 'user', ordinal: 1, status: 'complete', content: 'Summarize the release' }),
+          makeMessage({ id: 'partial-answer', ordinal: 2, status: 'complete', content: 'The returned portion of the answer' })
+        ]
+      })
+    )
+    const articles = mounted.host.querySelectorAll<HTMLElement>('.agent-message')
+    const recovery = articles[2].querySelector<HTMLElement>('.agent-message__recovery')!
+    expect(mounted.host.querySelectorAll('.agent-message__recovery')).toHaveLength(1)
+    expect(recovery.getAttribute('role')).toBe('region')
+    expect(recovery.getAttribute('aria-label')).toBeTruthy()
+    expect(recovery.querySelector('strong')?.textContent).toBe('Partial answer')
+    expect(recovery.textContent).toContain('Review the returned answer')
+    expect(recovery.textContent).toContain('Narrow')
+    expect(recovery.textContent).toContain('explicit follow-up')
+    expect(recovery.hasAttribute('aria-live')).toBe(false)
+    expect(mounted.host.querySelectorAll('[aria-live]')).toHaveLength(1)
+    expect(mounted.host.querySelector('.sr-status')?.textContent).toBe('Partial answer')
+    expect(articles[2].getAttribute('aria-label')).toBe('Wiki Agent message · Partial')
+    expect(articles[2].querySelector('.agent-message__status')?.textContent).toContain('Partial')
+    for (const article of [articles[0], articles[1]]) {
+      expect(article.getAttribute('aria-label')).toContain('Complete')
+      expect(article.querySelector('.agent-message__recovery')).toBeNull()
+    }
+    expect(mounted.emittedSuggestions).toEqual([])
+    const review = recovery.querySelector<HTMLButtonElement>('button')!
+    expect(review.textContent).toContain('Review request')
+    review.click()
+    await settle()
+    expect(mounted.emittedSuggestions).toEqual([['Summarize the release']])
+
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      session: { ...session, currentRun: { ...currentRun, id: 'different-run' } }
+    }
+    await settle()
+    expect(mounted.host.querySelector('.agent-message__recovery')).toBeNull()
+    expect(mounted.host.querySelectorAll('.agent-message')[2].getAttribute('aria-label')).toContain('Complete')
+    expect(mounted.emittedSuggestions).toEqual([['Summarize the release']])
+  })
+
   it('announces complete, active, approval, and reconnecting states on mount', async () => {
     const states: Array<[string, AgentThreadState, string]> = [
       ['complete', makeThread('session-complete', { messages: [makeMessage({ status: 'complete' })] }), 'Response complete.'],
@@ -459,7 +580,10 @@ describe('AgentThread live status and interaction behavior', () => {
     const unsafeSection = Array.from(mounted.host.querySelectorAll('.agent-sources__label')).find(label => label.textContent === 'Unsafe')
     expect(unsafeSection).toBeDefined()
     expect(unsafeSection?.closest('a')).toBeNull()
-    for (const [pageLabel, sectionLabel] of [['Data source', 'Unsafe data URL'], ['Malformed source', 'Malformed URL']]) {
+    for (const [pageLabel, sectionLabel] of [
+      ['Data source', 'Unsafe data URL'],
+      ['Malformed source', 'Malformed URL']
+    ]) {
       const group = Array.from(mounted.host.querySelectorAll('.agent-sources__group')).find(
         row => row.querySelector('.agent-sources__page strong')?.textContent === pageLabel
       )
@@ -506,23 +630,57 @@ describe('AgentThread live status and interaction behavior', () => {
     }
     const mounted = await mountThread(makeThread('session-artifact', { artifacts: [artifact] }))
     expect(mounted.host.querySelector('.artifact-card')).not.toBeNull()
+    const image = mounted.host.querySelector('.artifact-card img')
+    expect(image?.getAttribute('decoding')).toBe('async')
+    expect(image?.getAttribute('fetchpriority')).toBe('low')
+    expect(mounted.host.querySelector('.artifact-card a')?.getAttribute('rel')).toBe('noopener noreferrer')
+    mounted.thread.value = { ...mounted.thread.value, artifacts: [{ ...artifact, available: false }] }
+    await settle()
+    const unavailable = mounted.host.querySelector('.artifact-card')
+    expect(unavailable?.querySelector('a, img')).toBeNull()
+    expect(unavailable?.querySelector('.artifact-card__unavailable')?.textContent).toContain('expired')
+    expect(unavailable?.hasAttribute('aria-disabled')).toBe(false)
   })
 
   it('shows each screenshot under the response that captured it, with a readable time in its alt text', async () => {
     const screenshot = (id: string, createdAt: string): AgentArtifactView => ({
-      id, kind: 'browser-screenshot', mimeType: 'image/png', byteLength: 128, width: 640, height: 480, createdAt, expiresAt: null, available: true
+      id,
+      kind: 'browser-screenshot',
+      mimeType: 'image/png',
+      byteLength: 128,
+      width: 640,
+      height: 480,
+      createdAt,
+      expiresAt: null,
+      available: true
     })
-    const mounted = await mountThread(makeThread('session-artifact-placement', {
-      messages: [
-        makeMessage({ id: 'assistant-early', runId: 'run-1', ordinal: 1, status: 'complete', content: 'First answer.', createdAt: '2026-09-03T10:00:00.000Z' }),
-        makeMessage({ id: 'assistant-late', runId: 'run-2', ordinal: 2, status: 'complete', content: 'Second answer.', createdAt: '2026-09-03T10:05:00.000Z' })
-      ],
-      artifacts: [
-        screenshot('artifact-before', '2026-09-03T09:00:00.000Z'),
-        screenshot('artifact-early', '2026-09-03T10:01:00.000Z'),
-        screenshot('artifact-late', '2026-09-03T10:06:00.000Z')
-      ]
-    }))
+    const mounted = await mountThread(
+      makeThread('session-artifact-placement', {
+        messages: [
+          makeMessage({
+            id: 'assistant-early',
+            runId: 'run-1',
+            ordinal: 1,
+            status: 'complete',
+            content: 'First answer.',
+            createdAt: '2026-09-03T10:00:00.000Z'
+          }),
+          makeMessage({
+            id: 'assistant-late',
+            runId: 'run-2',
+            ordinal: 2,
+            status: 'complete',
+            content: 'Second answer.',
+            createdAt: '2026-09-03T10:05:00.000Z'
+          })
+        ],
+        artifacts: [
+          screenshot('artifact-before', '2026-09-03T09:00:00.000Z'),
+          screenshot('artifact-early', '2026-09-03T10:01:00.000Z'),
+          screenshot('artifact-late', '2026-09-03T10:06:00.000Z')
+        ]
+      })
+    )
     const messages = Array.from(mounted.host.querySelectorAll<HTMLElement>('article.agent-message'))
     const sources = (root: Element | null | undefined): string[] =>
       Array.from(root?.querySelectorAll('.artifact-card img') ?? []).map(image => image.getAttribute('src') ?? '')

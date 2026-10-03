@@ -10,9 +10,8 @@ import type { Component } from 'vue'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 resetBody()
-
 
 // Vue and Vuetify stay dynamic so runtime-dom captures the JSDOM document initialized above.
 const Vue = await import('vue')
@@ -169,6 +168,34 @@ afterEach(() => {
 })
 
 describe('Agent task progress disclosure', () => {
+  it('shows attempt metadata and its separator only for retries', async () => {
+    const mounted = await mountTasks([makeTask()])
+    const metadata = mounted.details.querySelector('.agent-tasks__meta')!
+
+    expect(metadata.textContent).not.toContain('Attempt')
+    expect(metadata.querySelectorAll('[aria-hidden="true"]').length).toBe(2)
+
+    await mounted.setTasks([makeTask({ attempt: 3 })])
+    expect(metadata.textContent).toContain('Attempt 3')
+    expect(metadata.textContent).toContain('retried 2')
+    expect(metadata.querySelectorAll('[aria-hidden="true"]').length).toBe(3)
+  })
+
+  it('renders hour remainders with a single translated minute count', async () => {
+    const mounted = await mountTasks([
+      makeTask({
+        status: 'completed',
+        outcome: 'completed',
+        evidenceCount: 1,
+        startedAt: '2026-09-03T10:00:00.000Z',
+        completedAt: '2026-09-03T11:07:00.000Z'
+      })
+    ])
+
+    expect(mounted.details.querySelector('.agent-tasks__meta')?.textContent).toContain('Duration 1 hr 7 min')
+    expect(mounted.details.querySelector('.agent-tasks__meta')?.textContent).not.toContain('7 7 min')
+  })
+
   it('ignores native toggles caused by reactive open-state updates', async () => {
     const mounted = await mountTasks([makeTask()])
 

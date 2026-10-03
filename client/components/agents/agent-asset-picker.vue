@@ -11,6 +11,7 @@
       </nav>
       <label class="agent-asset-picker__search"><v-icon icon="mdi-magnify" size="20" aria-hidden="true" /><input ref="searchInput" v-model="query" type="search" :aria-label="$t('common:agentAssetPicker.searchFilenamesFolder')" :placeholder="$t('common:agentAssetPicker.searchFolder')" :disabled="busy" /></label>
       <div class="agent-asset-picker__body" :aria-busy="loading || busy">
+        <div v-if="attachmentError" class="agent-asset-picker__error" role="alert"><p>{{ attachmentError }}</p><p>{{ $t('common:agentAssetPicker.attachmentFailureHelp') }}</p></div>
         <p v-if="loading" class="agent-asset-picker__state" role="status">{{ $t('common:agentAssetPicker.loadingWikiAssets') }}</p>
         <div v-else-if="error" class="agent-asset-picker__state" role="alert"><p>{{ error }}</p><v-btn variant="text" size="small" @click="load">{{ $t('common:agentAssetPicker.tryAgain') }}</v-btn></div>
         <template v-else>
@@ -22,7 +23,6 @@
         </template>
       </div>
       <footer class="agent-asset-picker__footer"><span v-if="busy" role="status">{{ $t('common:agentAssetPicker.attachingPrivateCopy') }}</span><span v-else>{{ imageOnly ? $t('common:agentAssetPicker.pngJpegWebpUp') : $t('common:agentAssetPicker.imagesUp10Mb') }}</span><v-btn variant="text" size="small" @click="close">{{ $t('common:actions.cancel') }}</v-btn></footer>
-      <p v-if="attachmentError" class="agent-asset-picker__error" role="alert">{{ attachmentError }}</p>
     </section>
   </v-dialog>
 </template>
@@ -110,7 +110,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort() })
 .agent-asset-picker__search { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; border: 1px solid var(--wiki-surface-border); border-radius: 10px; padding: 9px 12px; }
 .agent-asset-picker__search input { appearance: none; border: 0; border-radius: 0; box-shadow: none; background: transparent; color: inherit; width: 100%; min-width: 0; outline: none; font-size: .875rem; }
 .agent-asset-picker__search:focus-within { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
-.agent-asset-picker__body { min-height: 170px; overflow-y: auto; padding: 0 12px; }
+.agent-asset-picker__body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 12px; }
 .agent-asset-picker__items { list-style: none; padding: 0; margin: 0; }
 .agent-asset-picker__row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 8px; text-align: start; border-radius: 9px; }
 .agent-asset-picker__row:hover:not(:disabled) { background: rgb(var(--v-theme-primary) / .08); }
@@ -120,7 +120,10 @@ onBeforeUnmount(() => { disposed = true; controller?.abort() })
 .agent-asset-picker__size { white-space: nowrap; opacity: .6; font-size: .75rem; }
 .agent-asset-picker__state { text-align: center; padding: 25px 12px; font-size: .85rem; opacity: .75; }
 .agent-asset-picker__footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-top: 1px solid var(--wiki-surface-border); padding: 12px 20px; font-size: .75rem; }
-.agent-asset-picker__error { color: rgb(var(--v-theme-error)); padding: 0 20px 16px; font-size: .8rem; margin: 0; }
+.agent-asset-picker__error { color: rgb(var(--v-theme-error)); padding: 12px 8px; font-size: .8rem; margin: 0; overflow-wrap: anywhere; }
+.agent-asset-picker__error p { margin: 0; }
+.agent-asset-picker__error p + p { margin-top: 6px; }
+.agent-asset-picker__header, .agent-asset-picker__breadcrumbs, .agent-asset-picker__search, .agent-asset-picker__footer { flex-shrink: 0; }
 .agent-asset-picker button { appearance: none; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .agent-asset-picker button:disabled { cursor: default; }
 .agent-asset-picker button:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }

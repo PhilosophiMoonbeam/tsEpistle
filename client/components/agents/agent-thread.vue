@@ -109,8 +109,8 @@
             </p>
             <div v-if="entry.message.media?.length" class="agent-message__media" :aria-label="$t('common:agentThread.messageAttachments')">
               <figure v-for="media in entry.message.media" :key="media.id">
-                <a v-if="media.available && media.mimeType.startsWith('image/')" :href="agentMediaContentUrl(media.id)" target="_blank" rel="noopener" :aria-label="$t('common:agentThread.open', { filename: media.filename, interpolation: { escapeValue: false } })">
-                  <img :src="agentMediaContentUrl(media.id)" :alt="media.kind === 'generated-image' ? $t('common:agentThread.imageCreatedWikiAgent') : media.filename" loading="lazy" />
+                <a v-if="media.available && media.mimeType.startsWith('image/')" :href="agentMediaContentUrl(media.id)" target="_blank" rel="noopener noreferrer" :aria-label="$t('common:agentThread.open', { filename: media.filename, interpolation: { escapeValue: false } })">
+                  <img :src="agentMediaContentUrl(media.id)" :alt="media.kind === 'generated-image' ? $t('common:agentThread.imageCreatedWikiAgent') : media.filename" loading="lazy" decoding="async" fetchpriority="low" />
                 </a>
                 <video v-if="media.available && media.kind === 'generated-video'" :src="agentMediaContentUrl(media.id)" controls preload="metadata" playsinline :aria-label="media.filename" />
                 <audio v-if="media.available && media.kind === 'generated-audio'" :src="agentMediaContentUrl(media.id)" controls preload="metadata" :aria-label="media.filename" />
@@ -136,6 +136,8 @@
             <aside
               v-if="entry.recovery"
               class="agent-message__recovery"
+              role="region"
+              :aria-label="$t('common:agentThread.recoveryRegion')"
             >
               <v-icon
                 :icon="entry.message.status === 'failed' ? 'mdi-alert-circle-outline' : 'mdi-stop-circle-outline'"
@@ -154,7 +156,7 @@
                 prepend-icon="mdi-reload"
                 @click="emit('suggest', entry.retryPrompt)"
               >
-                {{ $t('common:agentThread.tryAgain') }}
+                {{ $t('common:agentThread.reviewRequest') }}
               </v-btn>
             </aside>
             <div v-if="entry.message.role === 'user' && entry.message.knowledgeContext" class="agent-message__source-context" :aria-label="$t('common:agentThread.sourceContextUsedMessage')">
@@ -203,7 +205,7 @@
                     class="agent-sources__page"
                     :href="group.safeHref"
                     :target="group.safeHref && !group.previewSelector ? '_blank' : undefined"
-                    :rel="group.safeHref ? $t('common:agentThread.noopenerNoreferrer') : undefined"
+                    :rel="group.safeHref ? 'noopener noreferrer' : undefined"
                     @click="previewCitation($event, group.previewSelector)"
                   >
                     <span v-if="group.pageCitation" class="agent-sources__number">{{ group.pageCitation.number }}</span>
@@ -223,8 +225,8 @@
                         :is="citationEntry.safeHref ? 'a' : 'span'"
                         :href="citationEntry.safeHref"
                         :target="citationEntry.safeHref && !citationEntry.previewSelector ? '_blank' : undefined"
-                        :rel="citationEntry.safeHref ? $t('common:agentThread.noopenerNoreferrer') : undefined"
-                        :aria-label="$t('common:agentThread.citation', { number: citationEntry.number, label: citationEntry.citation.label, value: citationEntry.previewSelector ? ' (preview source)' : citationEntry.safeHref ? ' (opens in a new tab)' : '', interpolation: { escapeValue: false } })"
+                        :rel="citationEntry.safeHref ? 'noopener noreferrer' : undefined"
+                        :aria-label="$t('common:agentThread.citation', { number: citationEntry.number, label: citationEntry.citation.label, value: citationEntry.previewSelector ? ` ${$t('common:agentThread.previewSource')}` : citationEntry.safeHref ? ` ${$t('common:agentThread.opensNewTab')}` : '', interpolation: { escapeValue: false } })"
                         @click="previewCitation($event, citationEntry.previewSelector)"
                       >
                         <span class="agent-sources__number">{{ citationEntry.number }}</span>
@@ -470,6 +472,37 @@ type ProjectedMessage = Omit<AgentMessagePresentation, 'run' | 'citationGroups'>
 interface ThreadProjection {
   readonly orderedMessages: readonly ProjectedMessage[]
 }
+const isPartialAnswer = (entry: AgentMessagePresentation): boolean => {
+  const currentRun = props.thread.session.currentRun
+  return entry.message.role === 'assistant'
+    && entry.message.status === 'complete'
+    && currentRun?.status === 'partial'
+    && entry.message.runId === currentRun.id
+}
+// Only the matching current run can explain a failure; historical/provider text
+// is neither reliable recovery advice nor safe public copy.
+const recoveryDescription = (entry: AgentMessagePresentation): string => {
+  const currentRun = props.thread.session.currentRun
+  if (isPartialAnswer(entry)) return t('common:agentThread.recoveryPartial')
+  const code = entry.message.status === 'failed' && currentRun?.status === 'failed' && currentRun.id === entry.message.runId
+    ? currentRun.errorCode
+    : null
+  switch (code) {
+    case 'AGENT_QUOTA_EXHAUSTED':
+      return t('common:agentThread.recoveryQuota')
+    case 'AGENT_CONTEXT_TOO_LARGE':
+    case 'PROVIDER_CONTEXT_TOO_LARGE':
+    case 'PROVIDER_REQUEST_TOO_LARGE':
+    case 'AGENT_MEDIA_CONTEXT_LIMIT':
+      return t('common:agentThread.recoveryContext')
+    case 'AGENT_OUTPUT_LIMITED':
+      return t('common:agentThread.recoveryOutput')
+    case 'AGENT_TOKEN_BUDGET_LIMITED':
+      return t('common:agentThread.recoveryTokenBudget')
+    default:
+      return t('common:agentThread.recoveryGeneric')
+  }
+}
 const threadProjection = computed<ThreadProjection>(() => {
   const hrefMetadataCache = new Map<string, LinkPresentationMetadata>()
   const temporalMetadataCache = new Map<string, MessageTemporalMetadata>()
@@ -495,7 +528,16 @@ const threadProjection = computed<ThreadProjection>(() => {
   return {
     orderedMessages: threadPresentation.value.orderedMessages.map(entry => ({
       ...entry,
+      statusLabel: isPartialAnswer(entry) ? t('common:agentThread.partial') : entry.statusLabel,
+      ariaLabel: isPartialAnswer(entry) ? `Wiki Agent message · ${t('common:agentThread.partial')}` : entry.ariaLabel,
       temporal: metadataForTime(entry.message.createdAt),
+      recovery: isPartialAnswer(entry) ? {
+        title: t('common:agentThread.partialAnswer'),
+        description: recoveryDescription(entry)
+      } : entry.recovery ? {
+        title: t(`common:agentThread.${entry.message.role === 'user' ? entry.message.status === 'failed' ? 'messageNotSent' : 'messageStopped' : entry.message.status === 'failed' ? 'responseFailed' : 'responseStopped'}`),
+        description: recoveryDescription(entry)
+      } : null,
       citationGroups: entry.citationGroups.map(group => ({
         ...group,
         ...metadataForHref(group.pageHref),
@@ -551,6 +593,15 @@ const toolStateColor = (state: AgentToolState): string | undefined => {
 const currentLiveAnnouncement = computed(() => {
   if (props.connection === 'reconnecting') {
     return { key: 'connection:reconnecting', message: t('common:agentThread.connectionInterruptedReconnecting') }
+  }
+  const entries = threadProjection.value.orderedMessages
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry.message.role !== 'assistant') continue
+    if (isPartialAnswer(entry)) {
+      return { key: `${entry.message.id}:partial`, message: t('common:agentThread.partialAnswer') }
+    }
+    break
   }
   return agentLiveAnnouncement(props.thread.messages, props.thread.tools, props.thread.session.currentRun)
 })

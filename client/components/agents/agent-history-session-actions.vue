@@ -9,7 +9,7 @@
           icon="mdi-dots-horizontal"
           size="small"
           variant="text"
-          :aria-label="$t('common:agentHistorySessionActions.conversationActions', { title: session.title || 'New conversation', interpolation: { escapeValue: false } })"
+          :aria-label="$t('common:agentHistorySessionActions.conversationActions', { title: session.title || $t('common:agentHistorySessionActions.newConversation'), interpolation: { escapeValue: false } })"
           :disabled="busy || disabled"
           :loading="busy"
         />
@@ -18,7 +18,7 @@
         class="agent-history-session-actions__menu"
         density="compact"
         min-width="12rem"
-        :aria-label="$t('common:agentHistorySessionActions.actions', { title: session.title || 'New conversation', interpolation: { escapeValue: false } })"
+        :aria-label="$t('common:agentHistorySessionActions.actions', { title: session.title || $t('common:agentHistorySessionActions.newConversation'), interpolation: { escapeValue: false } })"
       >
         <v-list-item
           prepend-icon="mdi-pencil-outline"
@@ -27,7 +27,7 @@
           @click="requestRename"
         />
         <v-divider class="agent-history-session-actions__divider" />
-        <v-menu content-class="agent-owned-overlay" v-if="canMove" location="end" submenu>
+        <v-menu content-class="agent-owned-overlay" location="end" submenu>
           <template #activator="{ props: moveMenuProps }">
             <v-list-item
               v-bind="moveMenuProps"
@@ -44,7 +44,7 @@
             class="agent-history-session-actions__menu"
             density="compact"
             min-width="14.5rem"
-            :aria-label="$t('common:agentHistorySessionActions.move', { title: session.title || 'New conversation', interpolation: { escapeValue: false } })"
+            :aria-label="$t('common:agentHistorySessionActions.move', { title: session.title || $t('common:agentHistorySessionActions.newConversation'), interpolation: { escapeValue: false } })"
           >
             <v-list-item
               v-if="session.folderId !== null"
@@ -71,7 +71,7 @@
             />
           </v-list>
         </v-menu>
-        <v-divider v-if="canMove" class="agent-history-session-actions__divider" />
+        <v-divider class="agent-history-session-actions__divider" />
         <v-list-item
           class="agent-history-session-actions__delete text-error"
           prepend-icon="mdi-delete-outline"
@@ -112,7 +112,6 @@ const requestNewFolder = (): void => emit('new-folder', props.session, triggerEl
 const requestRename = (): void => emit('rename', triggerElement())
 const requestRemove = (): void => emit('remove', triggerElement())
 const availableFolders = computed(() => props.folders.filter(folder => folder.id !== props.session.folderId))
-const canMove = computed(() => true)
 </script>
 <style scoped>
 .agent-history-session-actions { align-items: center; display: flex; }

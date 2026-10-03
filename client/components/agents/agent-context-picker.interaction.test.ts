@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import type { AgentDraft } from '../../helpers/agent-draft.ts'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
-import type { PageSearchResult, PageSearchRow } from '../../helpers/pages-api.ts'
+import { searchPages as requestPageSearch, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api.ts'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-context-picker.vue')
@@ -15,7 +15,7 @@ if (!descriptor.template || !descriptor.scriptSetup) throw new Error('agent-cont
 
 import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 
 setLocation('/wiki/en/home')
 
@@ -412,10 +412,16 @@ describe('Agent context current-page inclusion', () => {
 
   it('names the chip by page title and explains, without toggling, while the connection is down', async () => {
     const page: AgentCurrentPageHint = { id: 78, locale: 'en', path: 'handbook/title', observedUpdatedAt: '2026-09-16T00:00:00.000Z' }
-    const mounted = mountPicker(vi.fn(async () => result([])), vi.fn(async (selector: { id: number }) => source(selector.id)), emptyDraft(), page, {
-      connectionBlocked: true,
-      currentPageTitle: 'Team handbook'
-    })
+    const mounted = mountPicker(
+      vi.fn(async () => result([])),
+      vi.fn(async (selector: { id: number }) => source(selector.id)),
+      emptyDraft(),
+      page,
+      {
+        connectionBlocked: true,
+        currentPageTitle: 'Team handbook'
+      }
+    )
     const chip = mounted.host.querySelector<HTMLButtonElement>('.agent-context__page-chip')
     if (!chip) throw new Error('Current-page source chip did not render')
     expect(chip.textContent).toContain('Team handbook')
@@ -430,6 +436,75 @@ describe('Agent context current-page inclusion', () => {
     await settle()
     expect(mounted.changes).toEqual([])
   })
+})
+
+describe('Agent context source search recovery', () => {
+  for (const recoveredRows of [[row(61)], []]) {
+    it(`shows one safe search failure and retries to ${recoveredRows.length ? 'results' : 'empty'} without attaching selections`, async () => {
+      const retryResult = deferred<PageSearchResult>()
+      let attempts = 0
+      const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) => {
+        attempts += 1
+        if (query === 'selected') return result([row(60)])
+        if (attempts === 2) {
+          return requestPageSearch(
+            async () =>
+              new Response(JSON.stringify({ message: 'sensitive server detail' }), {
+                status: 500,
+                headers: { 'content-type': 'application/json' }
+              }),
+            query,
+            { paginated: true }
+          )
+        }
+        return retryResult.promise
+      })
+      const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
+      const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft(Array.from({ length: 7 }, (_, index) => source(index + 1))))
+      await openPicker(mounted)
+      vi.useFakeTimers()
+      try {
+        await search(mounted, 'selected')
+        await selectResult()
+        await search(mounted, 'failed')
+
+        const alerts = document.body.querySelectorAll('.agent-context__dialog [role="alert"]')
+        expect(alerts).toHaveLength(1)
+        expect(alerts[0]?.textContent).toContain(translateEnglish('common:agentContextPicker.pageSearchCouldNot'))
+        expect(alerts[0]?.textContent).not.toContain('sensitive server detail')
+        expect(document.body.querySelector('.agent-context__results-state')).toBeNull()
+        expect(document.body.querySelector('.agent-context__status')).toBeNull()
+        expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(1)
+        expect(searchPagesImpl).toHaveBeenCalledTimes(2)
+
+        const retry = alerts[0]?.querySelector<HTMLButtonElement>('button')
+        if (!retry) throw new Error('Search failure retry action did not render')
+        retry.click()
+        await settle()
+        expect(searchPagesImpl).toHaveBeenCalledTimes(3)
+        expect(document.body.querySelector('.agent-context__results-state[role="status"]')).not.toBeNull()
+        expect(document.body.querySelector('.agent-context__search-error')).toBeNull()
+        retryResult.resolve(result(recoveredRows))
+        await settle()
+        expect(document.body.querySelector('.agent-context__dialog [role="alert"]')).toBeNull()
+        expect(resultCheckboxes()).toHaveLength(recoveredRows.length)
+        if (recoveredRows.length) expect(resultCheckboxes()[0]?.disabled).toBe(true)
+        else
+          expect(document.body.querySelector('.agent-context__results-state')?.textContent).toBe(
+            translateEnglish('common:agentContextPicker.noAccessiblePagesMatched')
+          )
+        expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(1)
+        await vi.advanceTimersByTimeAsync(320)
+        await settle()
+        expect(searchPagesImpl).toHaveBeenCalledTimes(3)
+        expect(fetchWikiSourceImpl).not.toHaveBeenCalled()
+        expect(mounted.changes).toHaveLength(0)
+        expect(mounted.sourcesAdded.value).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  }
 })
 
 describe('Agent context source debounce', () => {

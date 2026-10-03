@@ -224,6 +224,7 @@
               <p>{{ $t('common:agentMcpApproval.type') }} <code>{{ proposal.confirmationPath }}</code> {{ $t('common:agentMcpApproval.exactlyPastingTypingPath') }}</p>
               <v-text-field
                 v-model="confirmationPath"
+                maxlength="1024"
                 :label="$t('common:agentMcpApproval.exactPagePath')"
                 :hint="proposal.confirmationPath ?? ''"
                 persistent-hint

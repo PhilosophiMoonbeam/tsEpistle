@@ -30,6 +30,10 @@
         {{ error }}
         <template #append><v-btn variant="text" size="small" @click="reload">{{ $t('admin:skillAdmin.retry') }}</v-btn></template>
       </v-alert>
+      <v-alert v-if="sourcesError && !createOpen" class="skill-error" type="warning" variant="tonal" density="compact" role="status">
+        {{ sourcesError }}
+        <template #append><v-btn variant="text" size="small" :loading="sourcesLoading" @click="loadSources">{{ $t('admin:skillAdmin.retrySourceSearch') }}</v-btn></template>
+      </v-alert>
 
       <div class="skill-inventory-toolbar" role="search" :aria-label="$t('admin:skillAdmin.searchOrganizationSkills')">
         <v-text-field
@@ -192,10 +196,10 @@
         <dl class="review-metadata">
           <div><dt>{{ $t('admin:skillAdmin.contentHash') }}</dt><dd><code :title="preview.contentHash">{{ preview.contentHash }}</code></dd></div>
           <div><dt>{{ $t('admin:skillAdmin.sourceRevision') }}</dt><dd><code :title="preview.sourceRevision">{{ preview.sourceRevision }}</code></dd></div>
-          <div><dt>{{ $t('admin:skillAdmin.sourceUpdated') }}</dt><dd>{{ preview.sourceUpdatedAt }}</dd></div>
+          <div><dt>{{ $t('admin:skillAdmin.sourceUpdated') }}</dt><dd><time :datetime="preview.sourceUpdatedAt">{{ helpers.formatMoment(preview.sourceUpdatedAt, 'L LT') }}</time></dd></div>
           <div><dt>{{ $t('admin:skillAdmin.bundleSize') }}</dt><dd>{{ $t('admin:skillAdmin.bytes', { totalBytes: preview.totalBytes, interpolation: { escapeValue: false } }) }}</dd></div>
         </dl>
-        <div v-if="preview.previousSkillMarkdown !== null" class="source-heading"><div><span>{{ $t('admin:skillAdmin.changeReview') }}</span><h3>{{ $t('admin:skillAdmin.candidateComparedApprovedRevision') }}</h3></div><v-chip size="x-small" variant="tonal" color="primary">{{ $t('admin:skillAdmin.lineDifferences') }}</v-chip></div>
+        <div v-if="preview.previousSkillMarkdown !== null" class="source-heading"><div><span>{{ $t('admin:skillAdmin.changeReview') }}</span><h3>{{ $t('admin:skillAdmin.candidateComparedApprovedRevision') }}</h3></div><v-chip size="x-small" variant="tonal" color="primary">{{ $t('admin:skillAdmin.sideBySide') }}</v-chip></div>
         <v-alert v-if="preview.previousSkillMarkdown !== null && reviewLinesTruncated" class="skill-boundary review-diff-notice" type="info" variant="tonal" density="compact">
           {{ $t('admin:skillAdmin.showingFirstLinesRead', { MAX_REVIEW_LINES, reviewLineCount, interpolation: { escapeValue: false } }) }}
         </v-alert>
@@ -222,6 +226,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch 
 import { useDisplay } from 'vuetify'
 import { z } from 'zod'
 import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
+import { helpers } from '../../helpers/index.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
@@ -245,6 +250,7 @@ const selectSource = (source: SkillSource | null) => {
   create.name = source?.path.split('/').at(-1) ?? ''
 }
 const loadSources = async () => {
+  if (disposed) return
   sourceController?.abort()
   const controller = new AbortController()
   sourceController = controller
@@ -253,14 +259,17 @@ const loadSources = async () => {
   try {
     const query = sourceQuery.value === selectedSource.value?.title ? '' : sourceQuery.value || ''
     const result = SourcesSchema.parse(await request(`/_api/agents/admin/skills/sources?${new URLSearchParams({ query })}`, {}, controller.signal))
-    if (controller.signal.aborted) return
+    if (disposed || controller.signal.aborted || sourceController !== controller) return
     sourcePages.value = result.pages
     sourceNamespace.value = result.namespace
     sourcesHaveMore.value = result.hasMore
   } catch (value) {
-    if (!controller.signal.aborted) sourcesError.value = value instanceof Error ? value.message : t('admin:skillAdmin.sourcePagesCouldNot')
+    if (!disposed && !controller.signal.aborted && sourceController === controller) sourcesError.value = t('admin:skillAdmin.sourcePagesCouldNot')
   } finally {
-    if (sourceController === controller) sourcesLoading.value = false
+    if (sourceController === controller) {
+      sourcesLoading.value = false
+      sourceController = null
+    }
   }
 }
 watch(sourceQuery, () => {
@@ -301,10 +310,10 @@ type Skill = z.infer<typeof SkillSchema>
 type Preview = z.infer<typeof PreviewSchema>
 
 const skills = shallowRef<Skill[]>([])
-const bundledSkill = computed(() => skills.value.find(skill => skill.name === 'wiki-authoring' && skill.rootPath === `${sourceNamespace.value}/wiki-authoring`) ?? null)
+const bundledSkill = computed(() => sourceNamespace.value ? skills.value.find(skill => skill.name === 'wiki-authoring' && skill.rootPath === `${sourceNamespace.value}/wiki-authoring`) ?? null : null)
 const groups = shallowRef<z.infer<typeof GroupSchema>[]>([])
 const preview = shallowRef<Preview | null>(null)
-const search = ref('')
+const search = ref<string | null>('')
 const stateFilter = ref<'all' | 'enabled' | 'disabled' | 'review'>('all')
 const loading = ref(false)
 const loaded = ref(false)
@@ -389,6 +398,7 @@ const request = async (url: string, init: RequestInit = {}, signal?: AbortSignal
 
 const reload = async (): Promise<void> => {
   if (disposed) return
+  void loadSources()
   reloadController?.abort()
   const controller = new AbortController()
   reloadController = controller
@@ -442,7 +452,7 @@ const compareNames = (left: string, right: string): number => {
   return left < right ? -1 : left > right ? 1 : 0
 }
 const filteredSkills = computed(() => {
-  const query = search.value.trim().toLowerCase()
+  const query = (search.value ?? '').trim().toLowerCase()
   return skills.value
     .filter(skill => {
       if (stateFilter.value === 'enabled' && skill.status !== 'enabled') return false

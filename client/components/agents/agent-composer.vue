@@ -145,11 +145,11 @@
     <p
       :id="composerIds.webNotice"
       class="agent-composer__web-notice"
-      :class="{ 'sr-only': !googleSearchEnabled }"
+      :class="{ 'agent-composer__web-notice--clipped': !googleSearchEnabled }"
       :role="googleSearchEnabled ? 'note' : undefined"
     >
       <v-icon v-if="googleSearchEnabled" icon="mdi-web" size="15" aria-hidden="true" />
-      <span>{{ $t('common:agentComposer.webNotice') }}</span>
+      <span>{{ $t(googleSearchEnabled ? 'common:agentComposer.webNotice' : 'common:agentComposer.webAvailableNotice') }}</span>
     </p>
 
     <AgentComposerMedia
@@ -343,6 +343,7 @@
               :title="item.label"
               :subtitle="item.subtitle"
               :disabled="item.disabled"
+              :aria-disabled="item.disabled || undefined"
               :aria-checked="item.checked"
               role="menuitemcheckbox"
               @click="item.run()"
@@ -539,6 +540,9 @@ const mediaRequesting = computed(() => {
   const requesting = mediaComposer.value?.requesting as boolean | Ref<boolean> | undefined
   return typeof requesting === 'object' && requesting !== null ? Boolean(requesting.value) : Boolean(requesting)
 })
+// Generation tools are enabled preferences, not unsent input.
+const hasUnsentMedia = (): boolean => mediaSubmission.value.attachmentIds.length > 0
+const isMediaBusy = (): boolean => mediaBusy.value || mediaRecording.value || mediaTranscribing.value || mediaRequesting.value
 const readDictationLevel = (): number => {
   const read = mediaComposer.value?.getAudioLevel
   return typeof read === 'function' ? read() : 0
@@ -703,7 +707,7 @@ const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
 const inputDisabled = computed(() => props.draftEditable === true ? false : props.disabled || sendInProgress.value)
 const webSearchDisabled = computed(() =>
-  props.disabled || sendInProgress.value || props.googleSearchBusy || (!props.googleSearchAvailable && !props.googleSearchEnabled)
+  props.disabled || sendInProgress.value || props.networkBlocked || props.googleSearchBusy || (!props.googleSearchAvailable && !props.googleSearchEnabled)
 )
 const toggleGoogleSearch = (event: Event): void => {
   const input = event.currentTarget
@@ -879,10 +883,10 @@ const liveStatusLabel = computed(() => {
   if (sendFailed.value) return t('common:agentComposer.messageFailedSendRetry')
   const label = props.statusLabel.trim()
   if (sendInProgress.value || props.canStop) {
-    if (label && label !== 'Ready') return label
+    if (label && props.statusTone !== 'ready') return label
     return props.canStop ? t('common:agentComposer.working') : t('common:agentComposer.sending')
   }
-  return label || 'Ready'
+  return label || t('common:agentComposer.ready')
 })
 const submitLabel = computed(() => {
   if (sendFailed.value) return t('common:agentComposer.retry')
@@ -1336,7 +1340,7 @@ const editImage = async (media: AgentMediaView) => {
   }
 }
 const reattachMedia = async (media: AgentMediaView): Promise<boolean> => (await mediaComposer.value?.reattachMedia(media)) === true
-defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage, reattachMedia })
+defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage, reattachMedia, hasUnsentMedia, isMediaBusy })
 onMounted(() => {
   mounted = true
   mountCaretMirror()
@@ -1612,11 +1616,6 @@ onBeforeUnmount(() => {
   max-width: 100%;
   padding-inline: var(--agent-composer-control-padding-inline);
 }
-.agent-composer__web-search {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-}
 
 .agent-composer__web-search-toggle {
   position: relative;
@@ -1671,6 +1670,19 @@ onBeforeUnmount(() => {
   color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
+}
+
+.agent-composer__web-notice--clipped {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .agent-composer__goal-chip {

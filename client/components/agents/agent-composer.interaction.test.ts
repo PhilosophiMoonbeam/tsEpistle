@@ -8,7 +8,7 @@ import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelecta
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
 
 interface Ref<T> {
@@ -61,10 +61,8 @@ const source = fs.readFileSync(componentPath, 'utf8')
 const descriptor = parse(source, { filename: componentPath }).descriptor
 const compiledScript = compileScript(descriptor, { id: 'agent-composer-interaction-test' })
 if (!compiledScript.bindings || !compiledScript.scriptSetupAst) throw new Error('Composer setup metadata was not compiled')
-const setupNames = Object.keys(compiledScript.bindings).filter(name =>
-  compiledScript.bindings?.[name] !== 'props' &&
-  compiledScript.bindings?.[name] !== 'props-aliased' &&
-  !compiledScript.imports?.[name]
+const setupNames = Object.keys(compiledScript.bindings).filter(
+  name => compiledScript.bindings?.[name] !== 'props' && compiledScript.bindings?.[name] !== 'props-aliased' && !compiledScript.imports?.[name]
 )
 const script = descriptor.scriptSetup?.content
 if (!script) throw new Error('agent-composer.vue script block was not found')
@@ -148,11 +146,18 @@ const realSessionId = '00000000-0000-4000-8000-000000000081'
 const realMediaCapabilities = { attachments: true, imageGeneration: false, videoGeneration: false, musicGeneration: false, transcription: false }
 const storedPdfBytes = '%PDF-1.4\nowned stored report\n%%EOF\n'
 const storedPdf: AgentMediaView = {
-  id: '00000000-0000-4000-8000-000000000084', kind: 'attachment', filename: 'report.pdf',
-  mimeType: 'application/pdf', byteLength: storedPdfBytes.length, available: true, detached: true
+  id: '00000000-0000-4000-8000-000000000084',
+  kind: 'attachment',
+  filename: 'report.pdf',
+  mimeType: 'application/pdf',
+  byteLength: storedPdfBytes.length,
+  available: true,
+  detached: true
 }
 interface RealComposerPublic {
   readonly reattachMedia: (media: AgentMediaView) => Promise<boolean>
+  readonly hasUnsentMedia: () => boolean
+  readonly isMediaBusy: () => boolean
 }
 interface RealComposerOptions {
   readonly skills?: readonly TestSkill[]
@@ -180,7 +185,12 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
       if (!(file instanceof File)) throw new Error('Real media upload did not provide a multipart File')
       const id = `00000000-0000-4000-8000-${String(100 + uploads.length).padStart(12, '0')}`
       uploads.push({ id, filename: file.name, type: file.type, bytes: await file.text() })
-      return new Response(JSON.stringify({ media: { id, kind: 'attachment', filename: file.name, mimeType: file.type, byteLength: file.size, available: true, detached: false } }), { headers: { 'content-type': 'application/json' } })
+      return new Response(
+        JSON.stringify({
+          media: { id, kind: 'attachment', filename: file.name, mimeType: file.type, byteLength: file.size, available: true, detached: false }
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      )
     }
     if (method === 'GET' && (requestPath === '/_api/assets' || requestPath === '/_api/assets/folders')) {
       return new Response('[]', { headers: { 'content-type': 'application/json' } })
@@ -190,18 +200,40 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
   }
   Object.defineProperty(browserWindow, 'fetch', { configurable: true, writable: true, value: fetcher })
   const app = Vue.createApp({
-    setup: () => () => Vue.h('div', options.map((option, index) => Vue.h(RealAgentComposer, {
-      ref: publicRefs[index],
-      sessionId: realSessionId,
-      csrfToken: 'csrf', mediaSession: option.media ? { id: realSessionId, version: 3, profileResolutionToken: 'resolved' } : null,
-      mediaCapabilities: option.media ? { ...realMediaCapabilities, imageGeneration: option.imageGeneration ?? false } : undefined,
-      generationToolsEnabled: true, disabled: false, sending: false, canStop: false,
-      skillsEnabled: Boolean(option.skills), googleSearchAvailable: false, googleSearchEnabled: false,
-      goalsEnabled: true, skills: option.skills ?? [], skillsLoading: false, skillsLoadError: '', skillsPartial: false,
-      preferredSkills: [], invocationLimit: 3, statusLabel: 'Ready', statusTone: 'ready', initialDraft: '', networkBlocked: false,
-      onDraftChange: (sessionId: string, text: string) => drafts.push({ sessionId, text }),
-      onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', _complete: unknown, media: SentMessage['media']) => sent.push({ content, invokedSkillVersionIds, mode, media })
-    })))
+    setup: () => () =>
+      Vue.h(
+        'div',
+        options.map((option, index) =>
+          Vue.h(RealAgentComposer, {
+            ref: publicRefs[index],
+            sessionId: realSessionId,
+            csrfToken: 'csrf',
+            mediaSession: option.media ? { id: realSessionId, version: 3, profileResolutionToken: 'resolved' } : null,
+            mediaCapabilities: option.media ? { ...realMediaCapabilities, imageGeneration: option.imageGeneration ?? false } : undefined,
+            generationToolsEnabled: true,
+            disabled: false,
+            sending: false,
+            canStop: false,
+            skillsEnabled: Boolean(option.skills),
+            googleSearchAvailable: false,
+            googleSearchEnabled: false,
+            goalsEnabled: true,
+            skills: option.skills ?? [],
+            skillsLoading: false,
+            skillsLoadError: '',
+            skillsPartial: false,
+            preferredSkills: [],
+            invocationLimit: 3,
+            statusLabel: 'Ready',
+            statusTone: 'ready',
+            initialDraft: '',
+            networkBlocked: false,
+            onDraftChange: (sessionId: string, text: string) => drafts.push({ sessionId, text }),
+            onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', _complete: unknown, media: SentMessage['media']) =>
+              sent.push({ content, invokedSkillVersionIds, mode, media })
+          })
+        )
+      )
   })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
@@ -235,7 +267,8 @@ const selectRealFiles = async (root: HTMLElement, files: readonly File[]): Promi
   await yieldEventLoop()
   await Vue.nextTick()
 }
-const realAttachmentNames = (root: HTMLElement): string[] => Array.from(root.querySelectorAll('.agent-composer__media-attachments li > span')).map(item => item.textContent?.trim() ?? '')
+const realAttachmentNames = (root: HTMLElement): string[] =>
+  Array.from(root.querySelectorAll('.agent-composer__media-attachments li > span')).map(item => item.textContent?.trim() ?? '')
 const openRealAttachmentMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
   const attach = root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
   if (!attach) throw new Error('Real Attach action did not render')
@@ -251,7 +284,9 @@ const openRealAttachmentMenu = async (root: HTMLElement, keyboard = false): Prom
   return menu
 }
 const chooseRealAttachmentSource = async (menu: HTMLElement, title: string): Promise<void> => {
-  const item = Array.from(menu.querySelectorAll<HTMLElement>('.v-list-item')).find(candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === title)
+  const item = Array.from(menu.querySelectorAll<HTMLElement>('.v-list-item')).find(
+    candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === title
+  )
   if (!item) throw new Error(`Real attachment source ${title} did not render`)
   item.click()
   await waitForRealSurface(() => !menu.isConnected, 'attachment source selection closed')
@@ -308,7 +343,7 @@ const loadComposer = (
     statusLabel: 'Ready',
     statusTone: 'ready' as const,
     initialSkillVersionIds: options.initialSkillVersionIds,
-    initialMode: options.initialMode,
+    initialMode: options.initialMode
   }
   const sent: SentMessage[] = []
   const composer = evaluateComposer({
@@ -357,7 +392,9 @@ const loadComposer = (
 }
 interface MountedComposer {
   readonly root: HTMLElement
+  readonly publicRef: Ref<RealComposerPublic | null>
   readonly sent: Array<{ content: string; invokedSkillVersionIds: readonly string[]; mode: 'message' | 'goal' }>
+  readonly googleSearchUpdates: boolean[]
   readonly unmount: () => void
 }
 
@@ -376,11 +413,14 @@ interface MountedComposerOptions {
   readonly googleSearchAvailable?: boolean
   readonly googleSearchEnabled?: boolean
   readonly draftEditable?: boolean
+  readonly networkBlocked?: boolean
 }
 
 // Shared media-composer stub state; each test reads/adjusts these through the mounted harness helpers.
 let dictationTranscriptHook: () => Promise<string | null> = async () => null
-const setDictationTranscriptHook = (hook: () => Promise<string | null>): void => { dictationTranscriptHook = hook }
+const setDictationTranscriptHook = (hook: () => Promise<string | null>): void => {
+  dictationTranscriptHook = hook
+}
 const recording = Vue.ref(false)
 const requesting = Vue.ref(false)
 const transcribing = Vue.ref(false)
@@ -391,7 +431,9 @@ const generationOptions = Vue.ref([
   { value: 'video', title: 'Video', icon: 'mdi-movie-open-outline' }
 ])
 const selectedTools = Vue.ref<Array<'image' | 'video' | 'music'>>([])
-const markDocument = (name: string): void => { (document as unknown as { __which: string }).__which = name }
+const markDocument = (name: string): void => {
+  ;(document as unknown as { __which: string }).__which = name
+}
 markDocument('composer-test')
 const mountedComposers: Array<() => void> = []
 let sentRecorder: Array<{ content: string; invokedSkillVersionIds: readonly string[]; mode: 'message' | 'goal' }> = []
@@ -399,6 +441,7 @@ let lastBindings: Record<string, unknown> | null = null
 const mountComposer = (options: MountedComposerOptions = {}): MountedComposer => {
   const host = document.createElement('div')
   document.body.append(host)
+  const publicRef = Vue.ref<RealComposerPublic | null>(null)
   const componentProps = {
     disabled: options.disabled ?? false,
     sending: options.sending ?? false,
@@ -421,7 +464,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     initialMode: options.initialMode,
     initialSkillVersionIds: undefined,
     hasMessages: false,
-    networkBlocked: false,
+    networkBlocked: options.networkBlocked ?? false,
     mediaCapabilities: options.mediaCapabilities,
     mediaSession: options.mediaSession
   }
@@ -460,22 +503,24 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     render: renderAgentComposer
   })
   const sentMessages: Array<{ content: string; invokedSkillVersionIds: readonly string[]; mode: 'message' | 'goal' }> = []
+  const googleSearchUpdates: boolean[] = []
   sentRecorder = sentMessages
   const app = Vue.createApp({
     name: 'AgentComposerInteractionRoot',
-    render: () => Vue.h(
-      composerComponent,
-      {
-        ...componentProps,
-        onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void) => {
-          sentMessages.push({ content, invokedSkillVersionIds, mode })
-          completion?.(true)
-        }
-      },
-      options.contextControls
-        ? { 'context-controls': () => Vue.h('span', { class: 'harness-context-chip' }, 'EN · home') }
-        : undefined
-    )
+    render: () =>
+      Vue.h(
+        composerComponent,
+        {
+          ...componentProps,
+          ref: publicRef,
+          onUpdateGoogleSearch: (enabled: boolean) => googleSearchUpdates.push(enabled),
+          onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void) => {
+            sentMessages.push({ content, invokedSkillVersionIds, mode })
+            completion?.(true)
+          }
+        },
+        options.contextControls ? { 'context-controls': () => Vue.h('span', { class: 'harness-context-chip' }, 'EN · home') } : undefined
+      )
   })
   const mediaHarness = Vue.defineComponent({
     name: 'AgentComposerMediaHarness',
@@ -483,25 +528,31 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     emits: ['change', 'busy', 'dictation', 'settled'],
     template: '<div class="agent-media-composer-harness" />',
     setup(_props, { emit, expose }: { emit: (event: string, value: unknown) => void; expose: (value: unknown) => void }) {
-      Vue.watch(recording, value => emit('busy', value))
-      Vue.watch(transcribing, value => { if (value) emit('busy', true) })
+      Vue.watch([recording, transcribing], ([capturing, processing]) => emit('busy', capturing || processing), { flush: 'sync' })
       expose({
         clear: () => undefined,
         addFiles: async () => undefined,
         editImage: async () => false,
-        startRecording: async () => { recording.value = true; seconds.value = 0 },
-        stopRecording: () => { recording.value = false },
-        cancelDictation: () => { recording.value = false; transcribing.value = false; dictationIntent.value = 'insert' },
+        startRecording: async () => {
+          recording.value = true
+          seconds.value = 0
+        },
+        stopRecording: () => {
+          recording.value = false
+        },
+        cancelDictation: () => {
+          recording.value = false
+          transcribing.value = false
+          dictationIntent.value = 'insert'
+        },
         beginDictationSubmit: () => {
           if (!recording.value) return false
           dictationIntent.value = 'send'
           return true
         },
-        waitForDictationTranscript: () => dictationIntent.value === 'send' ? dictationTranscriptHook() : Promise.resolve(null),
+        waitForDictationTranscript: () => (dictationIntent.value === 'send' ? dictationTranscriptHook() : Promise.resolve(null)),
         toggleGenerationTool: (tool: 'image' | 'video' | 'music') => {
-          selectedTools.value = selectedTools.value.includes(tool)
-            ? selectedTools.value.filter(item => item !== tool)
-            : [...selectedTools.value, tool]
+          selectedTools.value = selectedTools.value.includes(tool) ? selectedTools.value.filter(item => item !== tool) : [...selectedTools.value, tool]
         },
         generationOptions,
         selectedGenerationTools: selectedTools,
@@ -526,7 +577,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     host.remove()
   }
   mountedComposers.push(unmount)
-  return { root, sent: sentMessages, unmount }
+  return { root, publicRef, sent: sentMessages, googleSearchUpdates, unmount }
 }
 
 const press = (composer: ComposerHarness, key: string, options?: KeyOptions): KeyboardEvent & { wasPrevented: () => boolean } => {
@@ -589,6 +640,16 @@ describe('Agent composer submit loading presentation', () => {
     expect(loadingStatus.textContent?.trim()).toBe('Sending')
   })
 
+  it('uses working status instead of a localized ready label during send and streaming', () => {
+    const idle = mountComposer({ statusLabel: 'Prêt', statusTone: 'ready' })
+    expect(idle.root.querySelector('.agent-composer__live-status')?.textContent?.trim()).toBe('Prêt')
+    const sending = mountComposer({ statusLabel: 'Prêt', statusTone: 'ready', sending: true })
+    expect(sending.root.querySelector('.agent-composer__live-status')?.textContent?.trim()).toBe('Sending')
+    const working = mountComposer({ statusLabel: 'Prêt', statusTone: 'ready', canStop: true })
+    expect(working.root.querySelector('.agent-composer__live-status')?.textContent?.trim()).toBe('Working')
+    const busy = mountComposer({ statusLabel: 'Recherche en cours', statusTone: 'busy', canStop: true })
+    expect(busy.root.querySelector('.agent-composer__live-status')?.textContent?.trim()).toBe('Recherche en cours')
+  })
 
   it('announces external error feedback without relabeling the ordinary Send action', () => {
     const error = mountComposer({ statusLabel: 'Try again', statusTone: 'error' })
@@ -742,7 +803,6 @@ describe('Agent composer send admission', () => {
   })
 })
 
-
 describe('Real Agent composer slash boundaries', () => {
   it('preserves a documentation path in the draft and submission without selecting a skill', async () => {
     const mounted = mountRealComposers([{ skills: [makeSkill('release-notes')] }])
@@ -761,11 +821,13 @@ describe('Real Agent composer slash boundaries', () => {
     expect(root.querySelector('[aria-label="Skills attached as context for the next message"]')).toBeNull()
     textarea.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
     await Vue.nextTick()
-    expect(mounted.sent).toEqual([expect.objectContaining({
-      content: 'Explain docs/release-notes',
-      invokedSkillVersionIds: [],
-      mode: 'message'
-    })])
+    expect(mounted.sent).toEqual([
+      expect.objectContaining({
+        content: 'Explain docs/release-notes',
+        invokedSkillVersionIds: [],
+        mode: 'message'
+      })
+    ])
   })
 
   it('accepts a whitespace-delimited slash command while preserving the preceding draft', async () => {
@@ -789,11 +851,13 @@ describe('Real Agent composer slash boundaries', () => {
     expect(mounted.sent).toEqual([])
     submit.click()
     await Vue.nextTick()
-    expect(mounted.sent).toEqual([expect.objectContaining({
-      content: 'Explain ',
-      invokedSkillVersionIds: ['release-notes-version'],
-      mode: 'message'
-    })])
+    expect(mounted.sent).toEqual([
+      expect.objectContaining({
+        content: 'Explain ',
+        invokedSkillVersionIds: ['release-notes-version'],
+        mode: 'message'
+      })
+    ])
   })
 })
 
@@ -878,16 +942,23 @@ describe('Agent composer three-section layout', () => {
     if (!create) throw new Error('Create control did not render')
     expect(create.textContent?.trim()).toBe('Create')
     expect(create.getAttribute('data-state')).toBe('selected')
+    expect(mounted.publicRefs[0].value?.hasUnsentMedia()).toBe(false)
+    expect(mounted.publicRefs[0].value?.isMediaBusy()).toBe(false)
     const menu = await openRealAttachmentMenu(root)
     const input = root.querySelector<HTMLInputElement>('input[type="file"]')
     if (!input) throw new Error('Upload input did not render')
     let dialogOpened = false
     // Browser platform boundary: the native file chooser cannot open in JSDOM.
-    input.addEventListener('click', () => { dialogOpened = true })
+    input.addEventListener('click', () => {
+      dialogOpened = true
+    })
     await chooseRealAttachmentSource(menu, 'Upload files')
     expect(dialogOpened).toBe(true)
     await selectRealFiles(root, [new File(['%PDF-1.4\nreference\n%%EOF\n'], 'reference.pdf', { type: 'application/pdf' })])
-    await waitForRealSurface(() => realAttachmentNames(root).includes('reference.pdf') && root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')?.disabled === false, 'settled reference upload')
+    await waitForRealSurface(
+      () => realAttachmentNames(root).includes('reference.pdf') && root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')?.disabled === false,
+      'settled reference upload'
+    )
     expect(realAttachmentNames(root)).toEqual(['reference.pdf'])
     expect(mounted.requests.filter(request => request.method === 'POST')).toEqual([
       { path: `/_api/agents/sessions/${realSessionId}/media`, method: 'POST', credentials: 'same-origin', csrf: 'csrf' }
@@ -899,7 +970,10 @@ describe('Agent composer three-section layout', () => {
     expect(picker?.getAttribute('aria-label')).toBe('Browse Wiki assets')
     expect(picker?.getAttribute('aria-modal')).toBe('true')
     expect(picker?.classList.contains('v-overlay--active')).toBe(true)
-    expect(mounted.requests.filter(request => request.path.startsWith('/_api/assets')).map(request => request.path)).toEqual(['/_api/assets', '/_api/assets/folders'])
+    expect(mounted.requests.filter(request => request.path.startsWith('/_api/assets')).map(request => request.path)).toEqual([
+      '/_api/assets',
+      '/_api/assets/folders'
+    ])
   })
 
   it('disables attaching once four real uploads settle and rejects a fifth', async () => {
@@ -907,9 +981,14 @@ describe('Agent composer three-section layout', () => {
     const root = mounted.roots[0]
     const input = root.querySelector<HTMLInputElement>('input[type="file"]')
     expect(input?.disabled).toBe(false)
-    const files = ['one.pdf', 'two.pdf', 'three.pdf', 'four.pdf'].map(filename => new File([`%PDF-1.4\n${filename}\n%%EOF\n`], filename, { type: 'application/pdf' }))
+    const files = ['one.pdf', 'two.pdf', 'three.pdf', 'four.pdf'].map(
+      filename => new File([`%PDF-1.4\n${filename}\n%%EOF\n`], filename, { type: 'application/pdf' })
+    )
     await selectRealFiles(root, files)
-    await waitForRealSurface(() => realAttachmentNames(root).length === 4 && root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.disabled === false, 'four settled uploads')
+    await waitForRealSurface(
+      () => realAttachmentNames(root).length === 4 && root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.disabled === false,
+      'four settled uploads'
+    )
     expect(realAttachmentNames(root)).toEqual(files.map(file => file.name))
     expect(mounted.uploads.map(upload => upload.filename)).toEqual(files.map(file => file.name))
     const attach = root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
@@ -919,7 +998,10 @@ describe('Agent composer three-section layout', () => {
     await Vue.nextTick()
     expect(document.querySelector('.v-overlay--active [aria-label="Attachment source"]')).toBeNull()
     await selectRealFiles(root, [new File(['%PDF-1.4\nfifth\n%%EOF\n'], 'five.pdf', { type: 'application/pdf' })])
-    await waitForRealSurface(() => root.querySelector('[role="alert"]') !== null || realAttachmentNames(root).includes('five.pdf'), 'fifth file admission result')
+    await waitForRealSurface(
+      () => root.querySelector('[role="alert"]') !== null || realAttachmentNames(root).includes('five.pdf'),
+      'fifth file admission result'
+    )
     expect(realAttachmentNames(root)).toEqual(files.map(file => file.name))
     expect(mounted.uploads.map(upload => upload.filename)).toEqual(files.map(file => file.name))
     expect(root.querySelector('[role="alert"]')).not.toBeNull()
@@ -928,7 +1010,9 @@ describe('Agent composer three-section layout', () => {
     remove.click()
     await waitForRealSurface(() => realAttachmentNames(root).length === 3, 'selected attachment removal')
     expect(realAttachmentNames(root)).toEqual(['one.pdf', 'three.pdf', 'four.pdf'])
-    expect(mounted.requests.filter(request => request.method === 'DELETE').map(request => request.path)).toEqual(['/_api/agents/media/00000000-0000-4000-8000-000000000101'])
+    expect(mounted.requests.filter(request => request.method === 'DELETE').map(request => request.path)).toEqual([
+      '/_api/agents/media/00000000-0000-4000-8000-000000000101'
+    ])
     expect(attach?.disabled).toBe(false)
     expect(input?.disabled).toBe(false)
   })
@@ -939,8 +1023,12 @@ describe('Agent composer three-section layout', () => {
     await Vue.nextTick()
     const parent = mounted.publicRefs[0].value
     if (!parent) throw new Error('Real parent public ref was not mounted')
+    expect(parent.hasUnsentMedia()).toBe(false)
+    expect(parent.isMediaBusy()).toBe(false)
     expect(await parent.reattachMedia(storedPdf)).toBe(true)
     await Vue.nextTick()
+    expect(parent.hasUnsentMedia()).toBe(true)
+    expect(parent.isMediaBusy()).toBe(false)
     expect(mounted.requests).toEqual([
       { path: `/_api/agents/media/${storedPdf.id}/content`, method: 'GET', credentials: 'same-origin', csrf: null },
       { path: `/_api/agents/sessions/${realSessionId}/media`, method: 'POST', credentials: 'same-origin', csrf: 'csrf' }
@@ -951,11 +1039,13 @@ describe('Agent composer three-section layout', () => {
     root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
     await settleAsync()
     await waitForRealSurface(() => mounted.sent.length !== 0, 'attachment-only message submission')
-    expect(mounted.sent).toEqual([expect.objectContaining({ content: '', media: { attachmentIds: ['00000000-0000-4000-8000-000000000100'], generationTools: [] } })])
+    expect(mounted.sent).toEqual([
+      expect.objectContaining({ content: '', media: { attachmentIds: ['00000000-0000-4000-8000-000000000100'], generationTools: [] } })
+    ])
   })
 
   it('labels the Web toggle and announces its unchecked Google Search preference', () => {
-    const mounted = mountComposer({ initialDraft: '' })
+    const mounted = mountComposer({ initialDraft: '', googleSearchAvailable: true })
     const toggle = mounted.root.querySelector<HTMLLabelElement>('.agent-composer__web-search-toggle')
     if (!toggle) throw new Error('Web toggle did not render')
     expect(toggle.textContent?.trim()).toBe('Web')
@@ -966,7 +1056,14 @@ describe('Agent composer three-section layout', () => {
     const notice = noticeId ? mounted.root.querySelector<HTMLElement>(`[id="${noticeId}"]`) : null
     expect(notice?.textContent).toContain('Google Search')
     expect(notice?.textContent).toContain('charges')
-    expect(notice?.classList.contains('sr-only')).toBe(true)
+    expect(notice?.textContent).toContain('Enable Web')
+    expect(notice?.textContent).not.toContain('Web search is on')
+    if (!notice) throw new Error('Unchecked Web description did not render')
+    const style = browserWindow.getComputedStyle(notice)
+    expect(style.position).toBe('absolute')
+    expect(style.width).toBe('1px')
+    expect(style.height).toBe('1px')
+    expect(style.overflow).toBe('hidden')
     // Color-independent state attribute for the off state is absent; the checkbox aria-checked carries state.
     expect(toggle.querySelector('input')?.getAttribute('aria-checked')).toBe('false')
   })
@@ -976,9 +1073,73 @@ describe('Agent composer three-section layout', () => {
     const input = mounted.root.querySelector<HTMLInputElement>('.agent-composer__web-search-toggle input')
     const notice = mounted.root.querySelector<HTMLElement>('.agent-composer__web-notice')
     expect(input?.getAttribute('aria-describedby')).toBe(notice?.id)
-    expect(notice?.classList.contains('sr-only')).toBe(false)
+    if (!notice) throw new Error('Enabled Web notice did not render')
+    expect(browserWindow.getComputedStyle(notice).position).not.toBe('absolute')
     expect(notice?.getAttribute('role')).toBe('note')
     expect(notice?.textContent).toContain('Search has its own charges')
+    expect(notice.textContent).toContain('Web search is on')
+  })
+
+  it('blocks offline inline and folded Web changes but allows connected changes', async () => {
+    for (const enabled of [false, true]) {
+      const mounted = mountComposer({ googleSearchAvailable: true, googleSearchEnabled: enabled, networkBlocked: true })
+      const input = mounted.root.querySelector<HTMLInputElement>('.agent-composer__web-search-toggle input')
+      if (!input) throw new Error('Offline Web checkbox did not render')
+      expect(input.disabled).toBe(true)
+      input.checked = !enabled
+      input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+      await Vue.nextTick()
+      expect(mounted.googleSearchUpdates).toEqual([])
+      expect(input.checked).toBe(enabled)
+      expect(input.getAttribute('aria-checked')).toBe(String(enabled))
+      const bindings = lastBindings as unknown as {
+        foldedControls: { value: string[] }
+        moreMenuOpen: { value: boolean }
+      }
+      bindings.foldedControls.value = ['web']
+      bindings.moreMenuOpen.value = true
+      await Vue.nextTick()
+      await Vue.nextTick()
+      const menu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
+      const webItem = Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]') ?? []).find(
+        item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web'
+      )
+      if (!webItem) throw new Error('Offline folded Web action did not render')
+      expect(webItem.getAttribute('aria-disabled')).toBe('true')
+      webItem.click()
+      await Vue.nextTick()
+      expect(mounted.googleSearchUpdates).toEqual([])
+      expect(webItem.getAttribute('aria-checked')).toBe(String(enabled))
+      bindings.moreMenuOpen.value = false
+      await Vue.nextTick()
+    }
+    const connected = mountComposer({ googleSearchAvailable: true })
+    const input = connected.root.querySelector<HTMLInputElement>('.agent-composer__web-search-toggle input')
+    if (!input) throw new Error('Connected Web checkbox did not render')
+    expect(input.disabled).toBe(false)
+    input.checked = true
+    input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    await Vue.nextTick()
+    expect(connected.googleSearchUpdates).toEqual([true])
+    const bindings = lastBindings as unknown as {
+      foldedControls: { value: string[] }
+      moreMenuOpen: { value: boolean }
+    }
+    bindings.foldedControls.value = ['web']
+    bindings.moreMenuOpen.value = true
+    await Vue.nextTick()
+    await Vue.nextTick()
+    const menu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
+    const webItem = Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]') ?? []).find(
+      item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web'
+    )
+    if (!webItem) throw new Error('Connected folded Web action did not render')
+    expect(webItem.getAttribute('aria-disabled')).not.toBe('true')
+    webItem.click()
+    await Vue.nextTick()
+    expect(connected.googleSearchUpdates).toEqual([true, true])
+    bindings.moreMenuOpen.value = false
+    await Vue.nextTick()
   })
 
   it('keeps the message field editable while a reply streams but does not submit', async () => {
@@ -1020,7 +1181,6 @@ describe('Agent composer three-section layout', () => {
     expect(actions.querySelector('.harness-context-chip')).toBeNull()
     expect(actions.querySelector('.agent-composer__goal-chip')).toBeNull()
   })
-
 })
 
 describe('Agent composer fit-based folding', () => {
@@ -1065,7 +1225,6 @@ describe('Agent composer fit-based folding', () => {
     expect(fold.foldedControls.value).toEqual([])
   })
 
-
   it('shows folded controls as More menu entries and restores the inline controls on unfold', async () => {
     const mounted = mountComposer({
       initialDraft: '',
@@ -1091,7 +1250,9 @@ describe('Agent composer fit-based folding', () => {
     const moreMenu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
     if (!moreMenu) throw new Error('More menu did not render')
     const titles = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())
-    const webItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web')
+    const webItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(
+      item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web'
+    )
     if (!webItem) throw new Error('Folded Web menu item did not render')
     expect(webItem.getAttribute('role')).toBe('menuitemcheckbox')
     expect(webItem.getAttribute('aria-checked')).toBe('false')
@@ -1115,7 +1276,9 @@ describe('Agent composer fit-based folding', () => {
     await Vue.nextTick()
     const reopened = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
     if (!reopened) throw new Error('Reopened More menu did not render')
-    const reopenedTitles = Array.from(reopened.querySelectorAll<HTMLElement>('.v-list-item')).map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())
+    const reopenedTitles = Array.from(reopened.querySelectorAll<HTMLElement>('.v-list-item')).map(item =>
+      item.querySelector('.v-list-item-title')?.textContent?.trim()
+    )
     expect(reopenedTitles).toEqual(['Skills'])
   })
 })
@@ -1133,7 +1296,7 @@ describe('Agent composer goal placement', () => {
   it('moves Goal into the More menu only when the fold logic folds it', async () => {
     const mounted = mountComposer({ initialDraft: '', initialMode: 'message' })
     await Vue.nextTick()
-    const bindings = lastBindings as unknown as { foldedControls: { value: string[] }, moreMenuOpen: { value: boolean } }
+    const bindings = lastBindings as unknown as { foldedControls: { value: string[] }; moreMenuOpen: { value: boolean } }
     bindings.foldedControls.value = ['goal']
     await Vue.nextTick()
     await Vue.nextTick()
@@ -1146,7 +1309,9 @@ describe('Agent composer goal placement', () => {
     await Vue.nextTick()
     const moreMenu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
     if (!moreMenu) throw new Error('More menu did not render')
-    const goalItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Goal')
+    const goalItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(
+      item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Goal'
+    )
     if (!goalItem) throw new Error('Folded Goal menu item did not render')
     goalItem.click()
     await Vue.nextTick()
@@ -1170,6 +1335,23 @@ describe('Agent composer goal placement', () => {
 })
 
 describe('Agent composer dictation controls', () => {
+  it('reports permission, recording, and transcription work through the parent public contract', async () => {
+    const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { transcription: true } })
+    const parent = mounted.publicRef.value
+    if (!parent) throw new Error('Composer parent public ref was not mounted')
+    expect(parent.hasUnsentMedia()).toBe(false)
+    expect(parent.isMediaBusy()).toBe(false)
+    for (const pending of [requesting, recording, transcribing]) {
+      pending.value = true
+      expect(parent.isMediaBusy()).toBe(true)
+      expect(parent.hasUnsentMedia()).toBe(false)
+      pending.value = false
+      await Vue.nextTick()
+      expect(parent.isMediaBusy()).toBe(false)
+    }
+    expect(mounted.sent).toEqual([])
+  })
+
   it('starts recording from the microphone and stops for review with a labeled outlined control', async () => {
     const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
     const mic = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')
@@ -1282,7 +1464,12 @@ describe('Agent composer dictation controls', () => {
 
   it('blocks duplicate submissions while a dictation submit is pending', async () => {
     let resolveTranscript: ((value: string | null) => void) | null = null
-    setDictationTranscriptHook(() => new Promise(resolve => { resolveTranscript = resolve }))
+    setDictationTranscriptHook(
+      () =>
+        new Promise(resolve => {
+          resolveTranscript = resolve
+        })
+    )
     const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
     await Vue.nextTick()

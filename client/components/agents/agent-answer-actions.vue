@@ -31,7 +31,8 @@ import { onBeforeUnmount, ref } from 'vue'
 import type { AgentCitation, AgentGoogleSearchGrounding } from '../../../shared/agents/contracts.ts'
 import { wikiSourceHref } from '../../../shared/wiki-source.ts'
 import { createPage } from '../../helpers/pages-api.ts'
-import { formatAgentCitationMarkers } from './agent-citations.ts'
+import { copyTextToClipboard } from '../../helpers/clipboard.ts'
+import { createAgentCitationResolver, formatAgentCitationMarkers } from './agent-citations.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
@@ -50,20 +51,21 @@ const copied = ref(false)
 const feedback = ref('')
 let copyTimer: ReturnType<typeof setTimeout> | undefined
 const exportedAnswer = (): string => {
-  const citations = props.citations.map(citation => {
-    try {
-      const url = new URL(citation.href ?? '', window.location.origin)
-      return { ...citation, href: citation.href && ['http:', 'https:'].includes(url.protocol) ? url.href : null }
-    } catch { return { ...citation, href: null } }
-  })
-  const body = formatAgentCitationMarkers(props.content, citations)
-  const wikiReferences = citations.flatMap((citation, index) => {
-    if (!citation.href) return []
-    try {
-      const url = new URL(citation.href, window.location.origin)
-      if (!['http:', 'https:'].includes(url.protocol)) return []
-      return [`${index + 1}. [${citation.label.replace(/[\\[\]]/g, '\\$&')}](${url.href.replaceAll('(', '%28').replaceAll(')', '%29')})`]
-    } catch { return [] }
+  const resolveCitation = createAgentCitationResolver(props.citations)
+  const resolveExportCitation = (evidenceId: string) => {
+    const citation = resolveCitation(evidenceId)
+    if (!citation?.href) return citation
+    try { return { ...citation, href: new URL(citation.href, window.location.origin).href } }
+    catch { return { ...citation, href: null } }
+  }
+  const body = formatAgentCitationMarkers(props.content, resolveExportCitation)
+  const referencedIds = new Set<string>()
+  const wikiReferences = props.citations.flatMap(citation => {
+    if (referencedIds.has(citation.evidenceId)) return []
+    referencedIds.add(citation.evidenceId)
+    const resolved = resolveExportCitation(citation.evidenceId)
+    if (!resolved?.href) return []
+    return [`- [${resolved.number}] [${resolved.label.replace(/[\\[\]]/g, '\\$&')}](${resolved.href.replaceAll('(', '%28').replaceAll(')', '%29')})`]
   })
   const googleReferences = (props.googleSearchGrounding?.citations ?? []).flatMap((citation, index) => {
     try {
@@ -79,8 +81,8 @@ const exportedAnswer = (): string => {
   ].join('\n\n')
 }
 const copyAnswer = async (): Promise<void> => {
-  try { await navigator.clipboard.writeText(exportedAnswer()); copied.value = true; feedback.value = t('common:agentAnswerActions.answerSourceLinksCopied') }
-  catch { feedback.value = t('common:agentAnswerActions.copyUnavailableOpenDraft') }
+  try { await copyTextToClipboard(exportedAnswer()); copied.value = true; feedback.value = t('common:agentAnswerActions.answerSourceLinksCopied') }
+  catch { copied.value = false; feedback.value = t('common:agentAnswerActions.copyUnavailableOpenDraft') }
   clearTimeout(copyTimer)
   copyTimer = setTimeout(() => { copied.value = false; feedback.value = '' }, 3000)
 }

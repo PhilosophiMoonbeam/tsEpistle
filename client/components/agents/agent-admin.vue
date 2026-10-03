@@ -192,7 +192,7 @@
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
-                <span class="agent-panel__icon agent-panel__icon--violet"><v-icon icon="mdi-brain" size="22" aria-hidden="true" /></span>
+                <span class="agent-panel__icon"><v-icon icon="mdi-brain" size="22" aria-hidden="true" /></span>
                 <div>
                   <div class="agent-panel__eyebrow">{{ $t('admin:agentAdmin.inferenceFoundation') }}</div>
                   <h2>{{ $t('admin:agentAdmin.providerProfiles') }}</h2>
@@ -307,7 +307,7 @@
                 <article v-for="target in filteredBrowserTargets" :key="target.id" class="target-row">
                   <span class="target-row__icon"><v-icon icon="mdi-lock-outline" size="20" aria-hidden="true" /></span>
                   <div class="target-row__copy"><strong :title="target.canonicalUrl">{{ target.canonicalUrl }}</strong><small :title="$t('admin:agentAdmin.policy', { policySha256: target.policySha256, interpolation: { escapeValue: false } })">{{ $t('admin:agentAdmin.policy2', { policySha256: target.policySha256.slice(0, 16), interpolation: { escapeValue: false } }) }}</small></div>
-                  <div class="target-row__state"><span>{{ target.enabled ? $t('admin:agentAdmin.allowed') : $t('admin:agentAdmin.paused') }}</span><v-switch :model-value="target.enabled" color="primary" hide-details inset :loading="actionBusyKey === `browser:${target.id}`" :disabled="Boolean(actionBusyKey)" :aria-label="$t('admin:agentAdmin.browserTarget', { enabled: target.enabled ? 'Pause' : 'Allow', canonicalUrl: target.canonicalUrl, interpolation: { escapeValue: false } })" @update:model-value="value => setBrowserEnabled(target, Boolean(value))" /></div>
+                  <div class="target-row__state"><span>{{ target.enabled ? $t('admin:agentAdmin.allowed') : $t('admin:agentAdmin.paused') }}</span><v-switch :model-value="target.enabled" color="primary" hide-details inset :loading="actionBusyKey === `browser:${target.id}`" :disabled="Boolean(actionBusyKey)" :aria-label="$t('admin:agentAdmin.browserTarget', { enabled: target.enabled ? $t('admin:agentAdmin.pause') : $t('admin:agentAdmin.allow'), canonicalUrl: target.canonicalUrl, interpolation: { escapeValue: false } })" @update:model-value="value => setBrowserEnabled(target, Boolean(value))" /></div>
                 </article>
               </div>
               <div v-else-if="browserTargets.length" class="agent-empty">
@@ -355,6 +355,7 @@
           <v-spacer />
           <v-chip v-if="saving" class="profile-editor__change" size="small" color="primary" variant="tonal" prepend-icon="mdi-connection">{{ smAndDown ? $t('admin:agentAdmin.saving') : $t('admin:agentAdmin.savingVerifying') }}</v-chip>
           <v-chip v-else-if="profileDirty" class="profile-editor__change" size="small" color="warning" variant="tonal" prepend-icon="mdi-circle-edit-outline">{{ smAndDown ? $t('admin:agentAdmin.unsaved') : $t('admin:agentAdmin.unsavedChanges') }}</v-chip>
+          <v-chip v-else-if="!editingProfile" class="profile-editor__change" size="small" variant="outlined" prepend-icon="mdi-file-edit-outline">{{ $t('admin:agentAdmin.unsaved') }}</v-chip>
           <v-chip v-else class="profile-editor__change" size="small" variant="outlined" prepend-icon="mdi-check-circle-outline">{{ smAndDown ? $t('admin:agentAdmin.saved') : $t('admin:agentAdmin.noPendingChanges') }}</v-chip>
           <v-btn icon="mdi-close" variant="text" :aria-label="$t('admin:agentAdmin.closeProviderEditor')" :disabled="saving" @click="requestProfileClose" />
         </div>
@@ -373,7 +374,7 @@
             <section v-if="profileStep === 'identity'" class="profile-form-section">
               <div class="profile-form-section__intro"><span><v-icon icon="mdi-card-account-details-outline" size="21" aria-hidden="true" /></span><div><h3>{{ $t('admin:agentAdmin.nameConnection') }}</h3><p>{{ $t('admin:agentAdmin.chooseApiContractFirst') }}</p></div></div>
               <div class="form-grid">
-                <v-text-field v-model="profileDraft.displayName" :rules="profileDisplayNameRules" :label="$t('admin:agentAdmin.displayName')" :placeholder="$t('admin:agentAdmin.productionAgent')" maxlength="255" counter="255" required autofocus />
+                <v-text-field v-model="profileDraft.displayName" :rules="profileDisplayNameRules" :label="$t('admin:agentAdmin.displayName')" maxlength="255" counter="255" required autofocus />
                 <div class="protocol-field">
                   <v-select v-model="profileDraft.transportKind" :items="protocolOptions" :label="$t('admin:agentAdmin.apiProtocol')" required @update:model-value="selectProtocol">
                     <template #item="{ props: itemProps, internalItem }">
@@ -467,9 +468,9 @@
 
             <section v-else-if="profileStep === 'access'" class="profile-form-section">
               <div class="profile-form-section__intro"><span><v-icon icon="mdi-account-multiple-outline" size="21" aria-hidden="true" /></span><div><h3>{{ $t('admin:agentAdmin.chooseAudience') }}</h3><p>{{ $t('admin:agentAdmin.makeProfileWorkspaceOption') }}</p></div></div>
-              <div class="access-choice">
-                <label v-for="mode in exposureModes" :key="mode.value" :class="{ 'access-choice__item--active': profileDraft.exposureMode === mode.value }">
-                  <input v-model="profileDraft.exposureMode" type="radio" :value="mode.value">
+              <div class="access-choice" role="radiogroup" :aria-label="$t('admin:agentAdmin.chooseAudience')">
+                <label v-for="mode in exposureModes" :key="mode.value" class="access-choice__item" :class="{ 'access-choice__item--active': profileDraft.exposureMode === mode.value }">
+                  <input v-model="profileDraft.exposureMode" type="radio" name="provider-exposure" :value="mode.value">
                   <span class="access-choice__icon"><v-icon :icon="mode.value === 'all_agent_users' ? 'mdi-account-group-outline' : 'mdi-account-lock-outline'" size="23" aria-hidden="true" /></span>
                   <span><strong>{{ mode.title }}</strong><small>{{ mode.value === 'all_agent_users' ? $t('admin:agentAdmin.everyUserAgentPermission') : $t('admin:agentAdmin.onlyMembersGroupsYou') }}</small></span>
                   <v-icon :icon="profileDraft.exposureMode === mode.value ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" class="access-choice__check" size="20" aria-hidden="true" />
@@ -568,7 +569,7 @@
           <v-card-text>
             <v-alert v-if="browserError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ browserError }}</v-alert>
             <v-alert class="mb-4" type="warning" variant="tonal" density="compact">{{ $t('admin:agentAdmin.approvalExactPathsOrigins') }}</v-alert>
-            <v-text-field v-model="browserUrl" :rules="browserUrlRules" :label="$t('admin:agentAdmin.exactCanonicalHttpsUrl')" :placeholder="$t('admin:agentAdmin.httpsExampleComPath')" autofocus prepend-inner-icon="mdi-lock-outline" autocomplete="url" spellcheck="false" required />
+            <v-text-field v-model="browserUrl" :rules="browserUrlRules" :label="$t('admin:agentAdmin.exactCanonicalHttpsUrl')" :hint="$t('admin:agentAdmin.httpsExampleComPath')" persistent-hint autofocus prepend-inner-icon="mdi-lock-outline" autocomplete="url" spellcheck="false" required />
             <v-checkbox v-model="browserEnabled" :label="$t('admin:agentAdmin.enableImmediately')" :hint="$t('admin:agentAdmin.leaveOffStageTarget')" persistent-hint />
           </v-card-text>
         </v-form>
@@ -776,13 +777,13 @@ const protocolBehaviorRows = computed(() => {
   }[profileDraft.authMode]
   return [
     { label: t('admin:agentAdmin.availableUse'), value: t('admin:agentAdmin.wikiAgentActionsGoverned') },
-    { label: t('admin:agentAdmin.modelRoles'), value: profileDraft.utilityModel.trim() ? t('admin:agentAdmin.agentUtility', { model: profileDraft.model || 'not set', utilityModel: profileDraft.utilityModel, interpolation: { escapeValue: false } }) : t('admin:agentAdmin.agentModelAlsoHandles') },
+    { label: t('admin:agentAdmin.modelRoles'), value: profileDraft.utilityModel.trim() ? t('admin:agentAdmin.agentUtility', { model: profileDraft.model || t('admin:agentAdmin.notSet'), utilityModel: profileDraft.utilityModel, interpolation: { escapeValue: false } }) : t('admin:agentAdmin.agentModelAlsoHandles') },
     ...(reasoningEffortOptions.value.length > 1 ? [{
       label: t('admin:agentAdmin.reasoning'),
-      value: t('admin:agentAdmin.agentUtility2', { agentReasoningEffort: profileDraft.agentReasoningEffort === null ? 'provider default' : reasoningEffortTitles[profileDraft.agentReasoningEffort], utilityReasoningEffort: profileDraft.utilityReasoningEffort === null ? 'provider default' : reasoningEffortTitles[profileDraft.utilityReasoningEffort], interpolation: { escapeValue: false } })
+      value: t('admin:agentAdmin.agentUtility2', { agentReasoningEffort: profileDraft.agentReasoningEffort === null ? t('admin:agentAdmin.providerDefault') : reasoningEffortTitles[profileDraft.agentReasoningEffort], utilityReasoningEffort: profileDraft.utilityReasoningEffort === null ? t('admin:agentAdmin.providerDefault') : reasoningEffortTitles[profileDraft.utilityReasoningEffort], interpolation: { escapeValue: false } })
     }] : []),
     { label: t('admin:agentAdmin.toolCalls'), value: profileDraft.toolCalling === 'prompt' ? t('admin:agentAdmin.promptEmulatedOneAction') : profileDraft.parallelToolCalls ? t('admin:agentAdmin.nativeApiMultipleCalls') : t('admin:agentAdmin.nativeApiOneCall') },
-    { label: t('admin:agentAdmin.responseDelivery'), value: profileDraft.streaming ? t('admin:agentAdmin.streamed', { cancellation: profileDraft.cancellation ? 'cancellable' : 'not cancellable', interpolation: { escapeValue: false } }) : t('admin:agentAdmin.oneBufferedResponse') },
+    { label: t('admin:agentAdmin.responseDelivery'), value: profileDraft.streaming ? t('admin:agentAdmin.streamed', { cancellation: profileDraft.cancellation ? t('admin:agentAdmin.cancellable') : t('admin:agentAdmin.notCancellable'), interpolation: { escapeValue: false } }) : t('admin:agentAdmin.oneBufferedResponse') },
     { label: t('admin:agentAdmin.structuredOutput'), value: structuredOutput },
     { label: t('admin:agentAdmin.usageAccounting'), value: usage },
     { label: t('admin:agentAdmin.authentication'), value: authentication }
@@ -810,7 +811,7 @@ const capabilityRows = computed(() => runtime.value ? [
   { label: t('admin:agentAdmin.patch'), enabled: runtime.value.proposalsEnabled && runtime.value.writes.enabled && runtime.value.writes.patch },
   { label: t('common:actions.move'), enabled: runtime.value.proposalsEnabled && runtime.value.writes.enabled && runtime.value.writes.move },
   { label: t('admin:agentAdmin.restore'), enabled: runtime.value.proposalsEnabled && runtime.value.writes.enabled && runtime.value.writes.restore },
-  { label: 'Delete', enabled: runtime.value.proposalsEnabled && runtime.value.writes.enabled && runtime.value.writes.delete },
+  { label: t('common:actions.delete'), enabled: runtime.value.proposalsEnabled && runtime.value.writes.enabled && runtime.value.writes.delete },
   { label: 'MCP', enabled: runtime.value.mcpEnabled }
 ].map(item => ({ ...item, enabled: runtime.value!.enabled && item.enabled })) : [])
 const enabledCapabilityCount = computed(() => capabilityRows.value.filter(item => item.enabled).length)
@@ -1277,6 +1278,20 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
   box-shadow: var(--wiki-shadow-inset);
 }
 
+.agent-panel__icon--teal,
+.agent-empty__icon--teal,
+.target-row__icon,
+.compact-dialog__header--teal > span {
+  border-color: var(--wiki-purpose-info-edge);
+  background: var(--wiki-purpose-info-fill);
+  color: var(--wiki-purpose-info-ink);
+}
+
+.compact-dialog .compact-dialog__header--teal {
+  border-block-end: 1px solid var(--wiki-purpose-info-edge);
+  background: var(--wiki-purpose-info-fill);
+}
+
 .provider-card__models span,
 .provider-card__meta small,
 .selection-preview small {
@@ -1287,34 +1302,10 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
   text-transform: uppercase;
 }
 
-.agent-workspace {
-  display: grid;
-  align-items: start;
-  grid-template-columns: 18rem minmax(0, 1fr);
-  gap: var(--wiki-space-4);
-}
-
-.agent-sections {
-  position: sticky;
-  inset-block-start: var(--wiki-space-4);
-  display: grid;
-  gap: var(--wiki-space-1);
-  padding: var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
-}
 
 .agent-section {
   position: relative;
-  display: grid;
-  width: 100%;
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
   align-items: center;
-  grid-template-columns: auto var(--wiki-control-height) minmax(0, 1fr) auto auto;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-2);
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: var(--wiki-control-radius);
@@ -1399,18 +1390,6 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
   color: var(--wiki-accent-ink);
 }
 
-.agent-section__arrow {
-  opacity: .42;
-}
-
-.agent-section--active .agent-section__arrow {
-  color: var(--wiki-accent-ink);
-  opacity: 1;
-}
-
-:dir(rtl) .agent-section__arrow {
-  transform: rotate(180deg);
-}
 
 .agent-content {
   min-width: 0;
@@ -1985,7 +1964,7 @@ code {
 
 .browser-boundary-note .v-icon {
   flex: 0 0 auto;
-  color: var(--wiki-accent-ink);
+  color: var(--wiki-purpose-info-ink);
 }
 
 .browser-boundary-note strong {
@@ -2512,44 +2491,8 @@ code {
   opacity: 1 !important;
 }
 
-@media (max-width: 1180px) {
-
-  .agent-workspace {
-    grid-template-columns: 15rem minmax(0, 1fr);
-  }
-
-  .agent-section {
-    grid-template-columns: auto var(--wiki-control-height) minmax(0, 1fr) auto;
-  }
-
-  .agent-section__badge {
-    display: none;
-  }
-}
 
 @media (max-width: 960px) {
-  .agent-workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-
-  .agent-sections {
-    position: static;
-    display: flex;
-    overflow-x: auto;
-    padding: var(--wiki-space-2);
-    scrollbar-width: thin;
-  }
-
-  .agent-section {
-    min-width: 11.5rem;
-    grid-template-columns: auto var(--wiki-control-height) minmax(0, 1fr);
-  }
-
-  .agent-section__arrow,
-  .agent-section__badge {
-    display: none;
-  }
 
   .profile-editor__workspace {
     grid-template-columns: 13rem minmax(0, 1fr);
@@ -2571,9 +2514,6 @@ code {
 @media (max-width: 760px) {
 
 
-  .agent-hero__status > :deep(.v-chip:nth-of-type(2)){
-    display: none;
-  }
 
   .agent-hero__refresh {
     width: 100%;
@@ -2741,6 +2681,16 @@ code {
     border: 1px solid CanvasText;
     background: Canvas;
     box-shadow: none;
+  }
+
+  .agent-panel__icon--teal,
+  .agent-empty__icon--teal,
+  .target-row__icon,
+  .compact-dialog__header--teal > span,
+  .compact-dialog .compact-dialog__header--teal {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
   }
 
   .agent-section--active,
