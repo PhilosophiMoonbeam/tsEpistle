@@ -144,7 +144,7 @@
     </div>
     <p :id="composerIds.keyboardHelp" class="agent-composer__keyboard-help">{{ keyboardHelp }}</p>
 
-    <p v-if="error" class="agent-composer__notice" role="alert">{{ error }}</p>
+    <p v-if="composerNotice" class="agent-composer__notice" role="alert">{{ composerNotice }}</p>
     <p
       :id="composerIds.webNotice"
       class="agent-composer__web-notice"
@@ -686,11 +686,9 @@ const appendDictation = (text: string) => {
   })
 }
 const admitMediaFiles = (files: readonly File[]): void => {
-  if (attachmentAdmissionReason.value) {
-    error.value = attachmentAdmissionReason.value
-    return
-  }
   error.value = ''
+  attachmentAdmissionError.value = attachmentAdmissionReason.value
+  if (attachmentAdmissionError.value) return
   void mediaComposer.value?.addFiles(files)
 }
 const handleMediaPaste = (event: ClipboardEvent) => {
@@ -742,6 +740,10 @@ const sendFailed = ref(false)
 const submissionPending = ref(false)
 const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
+// A mixed paste inserts text after file admission; draft edits must not erase the file rejection.
+const attachmentAdmissionError = ref('')
+const composerNotice = computed(() => error.value || attachmentAdmissionError.value)
+watch(attachmentAdmissionReason, () => { attachmentAdmissionError.value = '' })
 const inputDisabled = computed(() => props.draftEditable === true ? false : props.disabled || sendInProgress.value)
 const webSearchDisabled = computed(() =>
   props.disabled || sendInProgress.value || props.networkBlocked || props.googleSearchBusy || (!props.googleSearchAvailable && !props.googleSearchEnabled)

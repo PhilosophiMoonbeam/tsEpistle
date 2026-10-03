@@ -827,7 +827,7 @@ const selectProtocol = (value: unknown) => {
   Object.assign(profileDraft, agentProviderProtocolDefaults(value), {
     transportKind: value,
     ...(baseUrl !== previousDefaults.baseUrl ? { baseUrl } : {}),
-    ...(authMode !== previousDefaults.authMode ? { authMode } : {}),
+    ...(value === 'legacy-completions' && (authMode === 'bearer' || authMode === 'api-key-header') ? { authMode } : {}),
     agentReasoningEffort: null, utilityReasoningEffort: null,
     mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false
   })
