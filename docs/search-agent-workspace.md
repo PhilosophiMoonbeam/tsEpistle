@@ -8,6 +8,8 @@ Opening Agent from an already-open Search dialog retires the previous Search foc
 
 Search rows offer Preview. Citation links in Agent answers open the same reader, while modified clicks still support opening the underlying page. The reader includes current revision, update date, a bounded text excerpt, and Open page / Ask about this page. On the full reader page, **Focus Reading** and the permission-gated **Edit** action remain compact and vertically aligned; Edit keeps its pencil affordance and raised shadow. The preview's own focus scope restores focus and leaves the search query, result position, and conversation in place. Unavailable and locked sources have explicit states.
 
+Attached source chips show a preview affordance and support keyboard activation without removing the source. Add sources searches across All Wiki; the separate scope control limits the Agent's next Wiki search. Selected-pages scope is unavailable until at least one source is attached.
+
 Search has an explicit **Close search** control that exits the workspace and restores focus to its opener. With focus in the visible header search input, **Alt+Enter** previews the keyboard-selected result only when it is a fresh online wiki result and the server is verified live; downloaded-page results, suggestions, and loading or stale results do not offer that preview. This shortcut neither navigates nor submits an Agent request. Closing a preview or pressing Escape returns focus to the search input while retaining the query and result cursor. Modified result clicks retain native link behavior and leave search in place.
 
 The offline shell bundles the same search and page-selector control labels, including filter match counts and empty states, without fetching a locale catalog. Destructive library actions retain their full explanation of which unlocked vault and site are affected.
@@ -24,6 +26,24 @@ Submission snapshots the context. Validated source references and scope become p
 
 Early server-session creation remains intentional: the existing provider resolution and frozen memory snapshot are established when the conversation opens. Creating sessions lazily would change those semantics. **New** creates a saved session directly, **Temporary** creates a new temporary session with an hourglass action, and **Keep** converts the existing temporary session to saved retention without changing its ID. Agent and New controls use brief, intermittent theme-token border-beam highlights that fade between cycles and disappear when unavailable. Empty conversations are excluded from history, and replacement creation already preserves the previous draft on failure.
 
+The conversation header identifies the resolved provider and Agent model. Its provider picker offers only authorized profiles and the workspace default. Changing provider preserves the unsent message and included Wiki sources, resets Web search consent, and does not submit a request. Active work, conversation mutations, uploads, recordings, and unsent attachments block provider changes with an explanation.
+
+## Composer input and attachments
+
+Desktop Enter submits, Shift+Enter inserts a newline, and Ctrl/Command+Enter submits. With a coarse primary pointer, Enter inserts a newline and the explicit Send control submits. Input-method composition does not accidentally send a message.
+
+Up to four files can be attached. A multi-file selection is validated as a whole against the remaining capacity before uploading. Files upload sequentially to respect the server's single-upload memory admission gate and retain selection order. Failed filenames are reported without discarding successful uploads. Cancellation, conversation changes, and owner changes fence late results and clean up uploaded files that cannot remain attached. Paste and drop use the same admission rules; disabled or full controls explain why.
+
+Typing updates the in-memory draft synchronously without rewriting pinned-source preferences. Transcript clearance follows the measured composer height, and scroll updates are coalesced so a growing draft or streamed response does not repeatedly force layout.
+
+## Provider workbench
+
+Administration loads runtime policy, providers, browser targets, and groups independently. A failed resource has its own retry state; successfully loaded sections remain visible. Previously loaded data is marked stale when its refresh fails rather than silently appearing current.
+
+The provider wizard advances one step at a time on Enter; it does not save an incomplete configuration. Blocked steps remain focusable and expose the fields that need attention. The footer distinguishes required corrections from readiness, and the mobile rail brings the selected step into view. Protocol changes update untouched defaults without overwriting a customized endpoint or authentication configuration.
+
+A saved profile whose connection check failed retains a provider-specific warning until a successful check or another save resolves it. Credentials remain server-managed, and provider verification and access grants retain their existing enforcement.
+
 ## Search coverage and continuation
 
 PostgreSQL search accepts authorized page identities before lexical, exact, fuzzy, and graph ranking caps. Current metadata and page rules produce those identities; protected pages qualify only through searchable metadata. Selected-page scope constrains both public and private candidate queries. Search results are rehydrated from current metadata before returning them. Exact page paths bypass unnecessary broader lexical/fuzzy matching.
@@ -35,6 +55,10 @@ The permission prefilter currently reads scoped public metadata to evaluate the 
 ## Answers and changes
 
 Completed answers offer Copy answer with source links and Save as Wiki draft. Saving opens an editable Markdown review with title, locale, path, and rendered preview. The explicit Create private draft action creates a new private, unpublished page through the existing page API. It never overwrites an existing page, and creation errors preserve the reviewed content. Existing Agent edit proposals retain their immutable diff, revision checks, and approval controls. Mermaid source disclosures are closed by default and preserve each user's open/closed state when rendered output is refreshed.
+
+Terminal assistant messages carry a bounded, owner-scoped `runOutcome` with terminal status and an optional error code; it does not keep a finished run in `currentRun` or expose provider error messages. Partial, failed, and cancelled answers retain truthful recovery states after reload. Review request restores an editable draft and never resubmits it automatically.
+
+Activity labels name the action and its status. Running or exceptional activity opens by default, while a user's native disclosure choice survives transcript updates. Completed message entrances are static; animation and decorative live indicators are confined to live work. Presentation caches retain unchanged entry identities and invalidate when content, locale, time, or origin changes.
 
 ## Token accounting and provider completion
 
@@ -53,4 +77,4 @@ The committed [2026-09-06 report](benchmarks/search-agent-2026-09-06.json) used 
 
 Token-accounting rollout is a coordinated **drain workers → migrate → deploy all nodes → restart** cutover with no mixed old/new writers. Drain and stop every agent-state writer before applying `tsepistle-000031-agent-total-token-accounting.ts`; its `agentRuns.totalTokens` backfill stores only validated directional sums as lower bounds and never rewrites quota-ledger history. Deploy the current writer to every node before restarting or restoring admission; see [Agent deployment and operations](agents-deployment.md) for the operator sequence.
 
-**Component/store and repository evidence.** The current isolated unit suite passes 493/493 files. Shared, client, and server typechecks pass, as do the production build and bundle-budget checks. The targeted 13-file suite includes the real PostgreSQL conversation-folder duplicate and same-owner cap race and passed after local corrections. That repository result proves server-canonical folder names and atomic one-winner-at-32 behavior; it is not provider evidence.
+**Validation scope.** Provider and workspace changes use focused component/store/API/host checks, applicable typechecks, lint, production builds, and bundle-budget checks. Ordinary media fixtures use SQLite; full-suite, native PostgreSQL, and large-PDF coverage are separate checks. Live provider execution and deployed browser flows supply behavioral evidence that unit checks alone cannot provide.
