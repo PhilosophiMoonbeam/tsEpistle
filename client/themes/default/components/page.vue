@@ -241,17 +241,13 @@
               span.page-disclosures__status(role='status', aria-live='polite', aria-atomic='true') {{$t(disclosureHasExcluded ? 'common:page.disclosureEligibleStatus' : 'common:page.disclosureStatus', { open: disclosureOpenCount, total: disclosureTotal })}}
               .page-disclosures__actions
                 button.page-disclosures__button(
+                  v-for='open in disclosureBatchStates'
+                  :key='open ? `expand` : `collapse`'
                   type='button'
                   :aria-controls='pageArticleId'
-                  :aria-disabled='navigationPending || disclosureOpenCount === disclosureTotal'
-                  @click='setArticleDisclosuresOpen(true)'
-                ) {{$t('common:page.expandDisclosures')}}
-                button.page-disclosures__button(
-                  type='button'
-                  :aria-controls='pageArticleId'
-                  :aria-disabled='navigationPending || disclosureOpenCount === 0'
-                  @click='setArticleDisclosuresOpen(false)'
-                ) {{$t('common:page.collapseDisclosures')}}
+                  :aria-disabled='navigationPending || (open ? disclosureOpenCount === disclosureTotal : disclosureOpenCount === 0)'
+                  @click='setArticleDisclosuresOpen(open)'
+                ) {{$t(open ? 'common:page.expandDisclosures' : 'common:page.collapseDisclosures')}}
             article.contents(ref='container', v-show='printView || selectedPageView === `article`', :id='pageArticleId', role='tabpanel', :aria-labelledby='showPageViewTabs ? `page-view-article-tab` : pageTitleId', tabindex='-1', :lang='locale', :dir='contentDirection')
               template(v-if='$slots.contents')
                 slot(name='contents')
@@ -945,6 +941,8 @@ type Breadcrumb = {
   title: string
 }
 
+const DISCLOSURE_BATCH_STATES = markRaw([true, false] as const)
+
 const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): string => {
   const detail = result.outcome === 'unavailable'
     ? result.error
@@ -1626,6 +1624,7 @@ export default defineComponent({
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
       readerSectionsOpen: false,
+      disclosureBatchStates: DISCLOSURE_BATCH_STATES,
       disclosureArticleCount: 0,
       disclosureTotal: 0,
       disclosureOpenCount: 0,

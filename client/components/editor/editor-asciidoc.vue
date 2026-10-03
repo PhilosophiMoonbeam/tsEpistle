@@ -60,17 +60,12 @@
             )
               v-icon mdi-dots-horizontal
           v-list(nav)
-            v-list-item(v-for='action in formattingActions.insert', :key='action.label', @click='runFormattingAction(action)')
-              template(v-slot:prepend)
-                v-icon.mr-3 {{ action.icon }}
-              v-list-item-title {{$t(action.label)}}
-            v-divider
-            template(v-for='group in mobileFormattingGroups', :key='group[0].label')
+            template(v-for='(group, index) in mobileFormattingGroups', :key='group[0].label')
               v-list-item(v-for='action in group', :key='action.label', @click='runFormattingAction(action)')
                 template(v-slot:prepend)
                   v-icon.mr-3 {{ action.icon }}
                 v-list-item-title {{$t(action.label)}}
-            v-divider
+              v-divider(v-if='index !== 1')
             v-list-item(@click='toggleFullscreen')
               template(v-slot:prepend)
                 v-icon.mr-3 mdi-arrow-expand-all
@@ -180,7 +175,7 @@ const formattingActions: Readonly<Record<'emphasis' | 'script' | 'blocks' | 'ins
     { kind: 'modal', value: 'editorModalDrawio', icon: 'mdi-chart-multiline', label: 'editor:markup.insertDiagram' }
   ]
 }
-const mobileFormattingGroups = [formattingActions.script, formattingActions.blocks] as const
+const mobileFormattingGroups = [formattingActions.insert, formattingActions.script, formattingActions.blocks] as const
 
 // ========================================
 // Vue Component

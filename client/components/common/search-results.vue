@@ -54,19 +54,20 @@
               :aria-pressed='offlineSearchActive === scope.downloaded'
               @click='selectSearchScope(scope.id)'
             ) {{ $t(`common:searchPanel.${scope.label}`) }}
-            v-tooltip(v-for='filter of searchScopeFilters' :key='filter.key' location='bottom' :disabled='!offlineSearchActive' :text='$t(`common:searchPanel.scopeNeedsServer`)')
-              template(v-slot:activator='{ props: tooltipProps }')
-                v-btn.search-results-scope-filter(
-                  v-bind='tooltipProps'
-                  size='small'
-                  :prepend-icon='filter.icon'
-                  :variant='filter.pressed ? `tonal` : `text`'
-                  :color='filter.pressed ? `primary` : undefined'
-                  :aria-pressed='filter.pressed'
-                  :aria-disabled='offlineSearchActive ? `true` : undefined'
-                  :aria-label='filter.ariaLabel'
-                  @click='filter.toggle'
-                ) {{ filter.label }}
+            v-btn.search-results-scope-filter(
+              v-for='filter of searchScopeFilters'
+              :key='filter.key'
+              size='small'
+              :prepend-icon='filter.icon'
+              :variant='filter.pressed ? `tonal` : `text`'
+              :color='filter.pressed ? `primary` : undefined'
+              :aria-pressed='filter.pressed'
+              :aria-disabled='offlineSearchActive ? `true` : undefined'
+              :aria-label='filter.ariaLabel'
+              @click='filter.toggle'
+            )
+              | {{ filter.label }}
+              v-tooltip(activator='parent' location='bottom' :disabled='!offlineSearchActive' :text='$t(`common:searchPanel.scopeNeedsServer`)')
           v-btn.search-results-close(
             size='small'
             variant='text'
@@ -124,17 +125,17 @@
                 .search-results-count(v-if='resultSummary')
                   span {{ resultSummary }}
                   span.search-results-window(v-if='resultSummaryHint')  · {{ resultSummaryHint }}
-              v-tooltip(v-if='canAsk || serverUnavailable' location='bottom' :disabled='canAsk' :text='askUnavailableReason')
-                template(v-slot:activator='{ props: tooltipProps }')
-                  v-btn.search-results-ask(
-                    v-bind='tooltipProps'
-                    color='primary'
-                    variant='tonal'
-                    prepend-icon='mdi-creation-outline'
-                    :aria-disabled='!canAsk ? `true` : undefined'
-                    @click='askCurrentQuery'
-                    data-modal-focus-key='search-ask-query'
-                  ) {{ $t('common:searchPanel.askAbout') }}
+              v-btn.search-results-ask(
+                v-if='canAsk || serverUnavailable'
+                color='primary'
+                variant='tonal'
+                prepend-icon='mdi-creation-outline'
+                :aria-disabled='!canAsk ? `true` : undefined'
+                @click='askCurrentQuery'
+                data-modal-focus-key='search-ask-query'
+              )
+                | {{ $t('common:searchPanel.askAbout') }}
+                v-tooltip(activator='parent' location='bottom' :disabled='canAsk' :text='askUnavailableReason')
             .search-results-none(v-if='hasFreshResponse && results.length < 1')
               async-state(
                 state='empty'
@@ -213,17 +214,15 @@
                             v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
                             v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19' aria-hidden='true')
                     .search-results-preview-cell(role='gridcell')
-                      v-tooltip(location='start' :disabled='previewAvailable' :text='previewUnavailableReason')
-                        template(v-slot:activator='{ props: tooltipProps }')
-                          button.search-results-preview(
-                            v-bind='tooltipProps'
-                            type='button'
-                            :aria-label='$t(`common:searchPanel.previewLabel`, { title: item.title })'
-                            :aria-disabled='!previewAvailable ? `true` : undefined'
-                            @click='openPreview(item)'
-                          )
-                            v-icon(icon='mdi-text-box-search-outline' size='18' aria-hidden='true')
-                            span {{ $t('common:searchPanel.preview') }}
+                      button.search-results-preview(
+                        type='button'
+                        :aria-label='$t(`common:searchPanel.previewLabel`, { title: item.title })'
+                        :aria-disabled='!previewAvailable ? `true` : undefined'
+                        @click='openPreview(item)'
+                      )
+                        v-icon(icon='mdi-text-box-search-outline' size='18' aria-hidden='true')
+                        span {{ $t('common:searchPanel.preview') }}
+                        v-tooltip(activator='parent' location='start' :disabled='previewAvailable' :text='previewUnavailableReason')
                   v-divider(v-if='idx < results.length - 1' aria-hidden='true')
             .search-results-continuation(v-if='!offlineSearchActive && (response.nextCursor || moreError)')
               v-btn(v-if='response.nextCursor' variant='tonal' :loading='loadingMore' prepend-icon='mdi-chevron-down' @click='loadMoreResults') {{ $t('common:searchPanel.moreResults') }}
