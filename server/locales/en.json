@@ -8916,7 +8916,6 @@
       "tipBlockquote": "Tip blockquote",
       "cautionBlockquote": "Caution blockquote",
       "importantBlockquote": "Important blockquote",
-      "mdiFormatHeader": "mdi-format-header-{{n}}",
       "retry": "Retry",
       "asciidoc": "AsciiDoc",
       "lnCol": "Ln {{line}}, Col {{ch}}",

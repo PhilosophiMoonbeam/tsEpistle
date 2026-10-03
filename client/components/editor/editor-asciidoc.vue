@@ -18,7 +18,7 @@
             template(v-for='(n, idx) in 6', :key='idx')
               v-list-item(@click='setHeaderLine(n)')
                 template(v-slot:append)
-                  v-icon(:size='24 - (idx - 1) * 2') {{ $t(`editor:editorAsciidoc.mdiFormatHeader`, { n, interpolation: { escapeValue: false } }) }}
+                  v-icon(:size='24 - (idx - 1) * 2', :icon='`mdi-format-header-${n}`')
                 v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-divider(v-if='idx < 5')
         v-divider.editor-asciidoc-tool-separator(v-if='$vuetify.display.mdAndUp', vertical, aria-hidden='true')
