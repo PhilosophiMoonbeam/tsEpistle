@@ -13,6 +13,12 @@
       "skillPath": "packages/playground/.agents/skills/frontend-design/SKILL.md",
       "computedHash": "537c1df9d0c694ecf9139a911f9ad0bd111a7ebc173a55457568459e543fe75b"
     },
+    "peccable": {
+      "source": "PhilosophiMoonbeam/Peccable",
+      "sourceType": "github",
+      "skillPath": "skills/peccable/SKILL.md",
+      "computedHash": "3187431ff32636dca2d6c04479d57d5a9dc1e0e41176eed33422d62f25434ea1"
+    },
     "tiptap": {
       "source": "ueberdosis/tiptap",
       "sourceType": "github",
