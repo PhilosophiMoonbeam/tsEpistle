@@ -456,7 +456,7 @@
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType } from 'vue'
 import { useDate } from 'vuetify'
-import _ from 'lodash'
+import * as _ from 'lodash-es'
 import { wikiStore } from '@/store/index.ts'
 import {
   fetchPageLocaleRelations,

@@ -42,7 +42,7 @@
 import { confirmDiscard, requestConfirmation } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
-import _ from 'lodash'
+import * as _ from 'lodash-es'
 import AdminPagePublicationSettings from './admin-page-publication-settings.vue'
 import AdminPageAccess from './admin-page-access.vue'
 import { pageHref, publicationState } from '../../helpers/admin-pages'

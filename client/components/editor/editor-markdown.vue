@@ -195,7 +195,8 @@
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType } from 'vue'
 import { useDisplay } from 'vuetify'
-import _ from 'lodash'
+import * as _ from 'lodash-es'
+import type { DebouncedFunc } from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
@@ -443,7 +444,7 @@ export default defineComponent({
       helpShown: false,
       spellModeActive: false,
       insertLinkDialog: false,
-      debouncedProcessContent: null as _.DebouncedFunc<(newContent: string) => void> | null,
+      debouncedProcessContent: null as DebouncedFunc<(newContent: string) => void> | null,
       collaborationStatus: null as CollaborationStatus | null,
       editorDisposed: false,
       editorAdapter: null as EditorAdapterController | null,

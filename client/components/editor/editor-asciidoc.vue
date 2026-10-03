@@ -108,7 +108,7 @@
 import { defineComponent, markRaw } from 'vue'
 import { useDisplay } from 'vuetify'
 import i18next from 'i18next'
-import _ from 'lodash'
+import * as _ from 'lodash-es'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'

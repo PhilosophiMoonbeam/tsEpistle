@@ -840,7 +840,6 @@
 <script lang='ts'>
 import ClipboardJS from 'clipboard'
 import i18next from 'i18next'
-import _ from 'lodash'
 import type { Environment as PrismEnvironment } from 'prismjs'
 import { defineComponent, h, inject, markRaw, mergeProps, type PropType, shallowRef, type VNode } from 'vue'
 import { useGoTo } from 'vuetify'
