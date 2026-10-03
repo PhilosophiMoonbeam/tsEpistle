@@ -1089,6 +1089,11 @@ export class OfflineEditorDraftCoordinator {
       if (!deleted) return false
       this.envelopes.delete(target)
       if (this.currentDraft?.recordId === target) this.currentDraft = null
+      if (this.activePrepared?.envelope.recordId === target) {
+        this.activePrepared = null
+        this.outcomeKind = null
+        this.outcomeStatus = null
+      }
       try {
         this.detachEditor()
         this.options.detachedClear?.()

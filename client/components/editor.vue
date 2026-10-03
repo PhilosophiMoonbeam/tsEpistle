@@ -1491,24 +1491,13 @@ export default defineComponent({
         this.notifySafetyChanged()
       }
     },
-    reloadServerEditorAfterDiscard(coordinator: Pick<OfflineEditorDraftCoordinator, 'destroy'>) {
-      if (this.mode !== 'update' || this.offlineDraftCoordinator !== coordinator) return
-      // Fence pending captures; the authorized bootstrap owns the complete server baseline.
-      coordinator.destroy()
-      this.offlineDraftCoordinator = null
-      this.exitConfirmed = true
-      window.location.reload()
-    },
     async discardOfflineDraft(recordId?: string) {
       if (this.offlineDraftBusy || !this.offlineDraftCoordinator) return
       const coordinator = this.offlineDraftCoordinator
       const lifecycleGeneration = this.lifecycleGeneration
       this.offlineDraftBusy = true
       try {
-        if (await coordinator.clearDetachedCandidate(recordId)) {
-          if (this.lifecycleGeneration !== lifecycleGeneration || this.offlineDraftCoordinator !== coordinator) return
-          this.reloadServerEditorAfterDiscard(coordinator)
-        }
+        await coordinator.clearDetachedCandidate(recordId)
       } finally {
         if (this.lifecycleGeneration === lifecycleGeneration && this.offlineDraftCoordinator === coordinator) {
           this.offlineDraftBusy = false
@@ -1578,7 +1567,6 @@ export default defineComponent({
           if (this.lifecycleGeneration !== lifecycleGeneration || this.offlineDraftCoordinator !== coordinator) return
           if (this.offlineReconcilePrompt?.recordId === recordId) this.offlineReconcilePrompt = null
           if (this.mode === 'create' && this.offlineSubmissionCandidates.length <= 1) clearOfflineCreateIdentity()
-          this.reloadServerEditorAfterDiscard(coordinator)
         }
       } finally {
         if (this.lifecycleGeneration === lifecycleGeneration && this.offlineDraftCoordinator === coordinator) {
@@ -1596,6 +1584,7 @@ export default defineComponent({
       const lifecycleGeneration = this.lifecycleGeneration
       this.offlineDraftBusy = true
       try {
+        const capture = resolution === 'discard' && prompt.kind === 'update' ? this.captureSaveSnapshot() : null
         const resolved = resolution === 'discard'
           ? await coordinator.clearDetachedCandidate(prompt.recordId)
           : await coordinator.replaceDetachedCandidate(candidate.payload, prompt.recordId)
@@ -1603,7 +1592,20 @@ export default defineComponent({
         if (resolved) {
           this.offlineReconcilePrompt = null
           if (resolution === 'discard' && prompt.kind === 'create') clearOfflineCreateIdentity()
-          if (resolution === 'discard') this.reloadServerEditorAfterDiscard(coordinator)
+          if (
+            capture &&
+            _.isEqual(this.canonicalEditableState(capture), this.canonicalEditableState(this.currentEditableState()))
+          ) {
+            // Explicit server-version choice replaces the baseline; later edits must stay in memory.
+            coordinator.destroy()
+            this.offlineDraftCoordinator = null
+            this.exitConfirmed = true
+            window.location.reload()
+          }
+        }
+      } catch (error) {
+        if (this.lifecycleGeneration === lifecycleGeneration && this.offlineDraftCoordinator === coordinator) {
+          wikiStore.showNotification({ message: getErrorMessage(error), style: 'error', icon: 'warning' })
         }
       } finally {
         if (this.lifecycleGeneration === lifecycleGeneration && this.offlineDraftCoordinator === coordinator) {
