@@ -81,6 +81,7 @@ function normalizeAppearance (value: string | null | undefined): Appearance {
 
 async function toggleAppearance (): Promise<void> {
   if (saving.value) return
+  const accountId = wikiStore.user.id
   const nextEffective: Appearance = effectiveTheme.value === 'dark' ? 'light' : 'dark'
   // When the requested theme already matches the device preference, keep the
   // stored value on `system` so the profile keeps tracking device changes.
@@ -98,16 +99,20 @@ async function toggleAppearance (): Promise<void> {
   try {
     wikiStore.user.appearance = next
     await theme.change(next, false)
+    if (wikiStore.user.id !== accountId || !wikiStore.user.authenticated) return
     await updateProfilePreferences(
       window.fetch.bind(window),
+      accountId,
       { appearance: next },
       t('common:appearanceSelector.appearanceUpdateFailed')
     )
     await wikiStore.refreshAuth()
+    if (wikiStore.user.id !== accountId || !wikiStore.user.authenticated) return
     const effectiveAppearance = normalizeAppearance(wikiStore.user.appearance)
     await theme.change(effectiveAppearance, false)
     statusMessage.value = t('common:appearanceSelector.appearanceSaved', { nextEffective, interpolation: { escapeValue: false } })
   } catch (error) {
+    if (wikiStore.user.id !== accountId || !wikiStore.user.authenticated) return
     wikiStore.user.appearance = previousStoreAppearance
     await theme.change(resolveThemeName(previousAppearance, siteConfig.darkMode), false)
     statusMessage.value = t('common:appearanceSelector.appearanceCouldNotSaved')

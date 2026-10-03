@@ -470,6 +470,14 @@
                   v-list-item-title {{lc.name}}
 
 
+          v-btn.nav-header-sign-in(
+            v-if='!isAuthenticated && verifiedAnonymous'
+            href='/login'
+            variant='text'
+            rounded='lg'
+            data-no-wiki-navigation
+          ) {{ $t('common:accountMenu.signIn', { defaultValue: 'Sign in' }) }}
+
           v-menu(location="bottom end", transition='slide-y-transition', :close-on-content-click='false', @update:model-value='accountMenuVisibilityChanged')
             template(v-slot:activator='{ props: menuProps }')
               //- Touch keeps the hover state after a tap; the tooltip must not
@@ -746,8 +754,8 @@ export default defineComponent({
   },
   computed: {
     search: {
-      get(): string { return wikiStore.site.search },
-      set(value: string) { wikiStore.site.search = value }
+      get(): string { return wikiStore.site.search ?? '' },
+      set(value: string | null | undefined) { wikiStore.site.search = value ?? '' }
     },
     searchMode: {
       get(): 'search' | 'ask' { return wikiStore.site.searchMode },

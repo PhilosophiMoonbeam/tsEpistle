@@ -1044,6 +1044,10 @@ export default defineComponent({
         this.commentEditContent = comment.content
         this.commentEditId = cm.id
         this.commentEditRevision += 1
+        this.$nextTick(() => {
+          if (!this.isCurrentContext(context) || generation !== this.editGeneration || this.commentEditId !== cm.id || this.isBusy) return
+          this.$el.querySelector(`#comment-post-id-${cm.id} .comments-post-editcontent textarea`)?.focus()
+        })
       } catch (error) {
         if (!this.isCurrentContext(context) || generation !== this.editGeneration) return
         this.setAuthorityFailure(error)

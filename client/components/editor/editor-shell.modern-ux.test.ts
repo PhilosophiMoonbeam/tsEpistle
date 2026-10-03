@@ -1524,6 +1524,247 @@ describe('modern editor shell interaction contract', () => {
     expect(store.loadingOwners).toEqual([])
   })
 
+  for (const originalVisibility of ['public', 'private'] as const) {
+    for (const failRefresh of [false, true]) {
+      test(`keeps a failed ${originalVisibility} visibility transition retryable after persisted content${failRefresh ? ' and a failed refresh' : ''}`, async () => {
+        const store = createStore()
+        store.page.visibility = originalVisibility
+        const requestedVisibility = originalVisibility === 'public' ? 'private' : 'public'
+        const testWindow = createTestWindow()
+        const persistedOkf = _.cloneDeep(store.page.okf)
+        const writeRevisions: string[] = []
+        const visibilityRequests: Array<{ visibility: string; sourceRevision: string }> = []
+        let refreshCalls = 0
+        const context = createShellHarness(store, testWindow, {
+          updatePage: async (_fetcher, _id, _input, sourceRevision) => {
+            writeRevisions.push(sourceRevision)
+            return { sourceRevision: `content-revision-${writeRevisions.length}`, updatedAt: '2026-09-03T12:00:00.000Z' }
+          },
+          changePageVisibility: async (_fetcher, _id, visibility, sourceRevision) => {
+            visibilityRequests.push({ visibility, sourceRevision })
+            if (visibilityRequests.length === 1) throw new Error('Visibility change was rejected.')
+            return { sourceRevision: 'visibility-revision' }
+          },
+          fetchPage: async () => {
+            refreshCalls++
+            if (refreshCalls === 1 && failRefresh) throw new Error('Follow-up page could not be loaded.')
+            return {
+              okf: _.cloneDeep(persistedOkf),
+              sourceRevision: refreshCalls === 1 ? 'content-revision-1' : 'visibility-revision',
+              isSearchable: true
+            }
+          }
+        })
+        context.editorAdapter.replaceText('content that did persist')
+        store.page.visibility = requestedVisibility
+
+        expect(await context.saveAndClose()).toBe(false)
+        expect(context.savedState.content).toBe('content that did persist')
+        expect(context.savedState.visibility).toBe(originalVisibility)
+        expect(store.page.visibility).toBe(requestedVisibility)
+        expect(store.page.sourceRevision).toBe('content-revision-1')
+        expect(context.checkoutDateActive).toBe('2026-09-03T12:00:00.000Z')
+        expect(context.editorAdapterSafety.nonPersisted).toBe(false)
+        expect(context.isDirty).toBe(true)
+        expect(store.notifications).toHaveLength(1)
+        expect(store.notifications[0]?.style).toBe('warning')
+        expect(String(store.notifications[0]?.message)).toContain('Visibility change was rejected.')
+        expect(testWindow.location.assigned).toEqual([])
+        expect(testWindow.location.replaced).toEqual([])
+        expect(testWindow.scheduledTimers).toEqual([])
+
+        expect(await context.save()).toBe(true)
+        expect(writeRevisions).toEqual(['1', 'content-revision-1'])
+        expect(visibilityRequests).toEqual([
+          { visibility: requestedVisibility, sourceRevision: 'content-revision-1' },
+          { visibility: requestedVisibility, sourceRevision: 'content-revision-2' }
+        ])
+        expect(context.savedState.visibility).toBe(requestedVisibility)
+        expect(context.isDirty).toBe(false)
+      })
+    }
+  }
+
+  for (const pendingStage of ['write', 'refresh'] as const) {
+    for (const lateEdit of ['Knowledge', 'searchability', 'both'] as const) {
+      test(`preserves late ${lateEdit} edits while the save ${pendingStage} is pending and acknowledges the submitted baseline`, async () => {
+        const store = createStore()
+        const testWindow = createTestWindow()
+        const originalOkf = _.cloneDeep(store.page.okf)
+        const submittedOkf = _.cloneDeep(originalOkf)
+        submittedOkf.authority.metadata = { type: 'Article', status: 'draft' }
+        submittedOkf.projection = { state: 'current', value: { summary: 'authoritative saved projection' } }
+        let started!: () => void
+        let release!: () => void
+        const pendingStarted = new Promise<void>(resolve => { started = resolve })
+        const pendingRelease = new Promise<void>(resolve => { release = resolve })
+        const inputs: PageInput[] = []
+        let refreshCalls = 0
+        const changesKnowledge = lateEdit !== 'searchability'
+        const changesSearchability = lateEdit !== 'Knowledge'
+        const context = createShellHarness(store, testWindow, {
+          updatePage: async (_fetcher, _id, input) => {
+            inputs.push(_.cloneDeep(input))
+            if (inputs.length === 1 && pendingStage === 'write') {
+              started()
+              await pendingRelease
+            }
+            return { sourceRevision: 'content-revision', updatedAt: '2026-09-03T12:00:00.000Z' }
+          },
+          fetchPage: async () => {
+            refreshCalls++
+            if (refreshCalls === 1 && pendingStage === 'refresh') {
+              started()
+              await pendingRelease
+            }
+            return {
+              okf: _.cloneDeep(refreshCalls === 1 || !changesKnowledge ? submittedOkf : originalOkf),
+              sourceRevision: 'authoritative-revision',
+              isSearchable: refreshCalls > 1 && changesSearchability
+            }
+          }
+        })
+        context.editorAdapter.replaceText('submitted content')
+        store.page.okf.authority.metadata = { type: 'Article', status: 'draft' }
+        store.page.isSearchable = false
+        const save = context.save()
+        await pendingStarted
+        // Reverting a field to its old baseline is still a new unsaved edit after this capture.
+        if (changesKnowledge) store.page.okf.authority.metadata = _.cloneDeep(originalOkf.authority.metadata)
+        if (changesSearchability) store.page.isSearchable = true
+        release()
+
+        expect(await save).toBe(true)
+        expect(store.page.okf.authority.metadata).toEqual(changesKnowledge ? originalOkf.authority.metadata : submittedOkf.authority.metadata)
+        if (!changesKnowledge) expect(store.page.okf.projection).toEqual(submittedOkf.projection)
+        expect(store.page.isSearchable).toBe(changesSearchability)
+        expect(context.savedState.content).toBe('submitted content')
+        expect(context.savedState.okf.authority.metadata).toEqual({ type: 'Article', status: 'draft' })
+        expect(context.savedState.isSearchable).toBe(false)
+        expect(context.editorAdapterSafety.nonPersisted).toBe(false)
+        expect(context.isDirty).toBe(true)
+        expect(testWindow.location.assigned).toEqual([])
+        expect(testWindow.location.replaced).toEqual([])
+
+        expect(await context.save()).toBe(true)
+        expect(inputs[1]?.okfMetadata).toEqual(changesKnowledge ? originalOkf.authority.metadata : submittedOkf.authority.metadata)
+        expect(inputs[1]?.isSearchable).toBe(changesSearchability)
+        expect(context.isDirty).toBe(false)
+      })
+    }
+  }
+
+  test('keeps late typing after create and uses the authoritative new ID for conflict, update and hydration', async () => {
+    const store = createStore('create')
+    store.page.id = 0
+    store.editor.id = 0
+    const testWindow = createTestWindow()
+    const persistedOkf = _.cloneDeep(store.page.okf)
+    let started!: () => void
+    let release!: () => void
+    const createStarted = new Promise<void>(resolve => { started = resolve })
+    const createRelease = new Promise<void>(resolve => { release = resolve })
+    const createdInputs: PageInput[] = []
+    const updatedInputs: Array<{ id: number; content: string; sourceRevision: string }> = []
+    const conflictIds: number[] = []
+    const fetchedIds: number[] = []
+    const context = createShellHarness(store, testWindow, {
+      createPage: async (_fetcher, input) => {
+        createdInputs.push(_.cloneDeep(input))
+        started()
+        await createRelease
+        return { id: 91, sourceRevision: 'created-revision', updatedAt: '2026-09-03T12:00:00.000Z' }
+      },
+      checkPageConflict: async (_fetcher, id) => {
+        conflictIds.push(id)
+        return false
+      },
+      updatePage: async (_fetcher, id, input, sourceRevision) => {
+        updatedInputs.push({ id, content: input.content, sourceRevision })
+        return { sourceRevision: 'updated-revision', updatedAt: '2026-09-03T13:00:00.000Z' }
+      },
+      fetchPage: async (_fetcher, id) => {
+        fetchedIds.push(id)
+        return { okf: _.cloneDeep(persistedOkf), sourceRevision: 'updated-revision', isSearchable: true }
+      }
+    })
+    context.editorAdapter.replaceText('captured new content')
+    const create = context.save()
+    await createStarted
+    context.editorAdapter.replaceText('late new content')
+    release()
+
+    expect(await create).toBe(true)
+    expect(createdInputs[0]?.content).toBe('captured new content')
+    expect(store.editor.content).toBe('late new content')
+    expect(store.page.id).toBe(91)
+    expect(store.editor.mode).toBe('update')
+    expect(context.pageId).toBe(0)
+    expect(context.savedState.content).toBe('captured new content')
+    expect(context.isDirty).toBe(true)
+    expect(context.editorAdapterSafety.nonPersisted).toBe(true)
+    expect(testWindow.location.assigned).toEqual([])
+
+    await context.refreshConflict()
+    expect(conflictIds).toEqual([91])
+    expect(await context.save()).toBe(true)
+    expect(conflictIds).toEqual([91, 91])
+    expect(updatedInputs).toEqual([{ id: 91, content: 'late new content', sourceRevision: 'created-revision' }])
+    expect(fetchedIds).toEqual([91])
+    expect(context.isDirty).toBe(false)
+    expect(store.notifications.every(notification => notification.style === 'success')).toBe(true)
+
+    await context.hydratePage()
+    expect(fetchedIds).toEqual([91, 91])
+  })
+
+  for (const boundary of ['page', 'lifecycle', 'account'] as const) {
+    test(`ignores a save hydration response after the ${boundary} identity boundary changes`, async () => {
+      const store = createStore()
+      const testWindow = createTestWindow()
+      let release!: () => void
+      const requestRelease = new Promise<void>(resolve => { release = resolve })
+      const oldOkf = _.cloneDeep(store.page.okf)
+      const context = createShellHarness(store, testWindow, {
+        fetchPage: async () => {
+          await requestRelease
+          return { okf: { ...oldOkf, authority: { ...oldOkf.authority, metadata: { type: 'Stale response' } } }, sourceRevision: 'stale-revision', isSearchable: false }
+        }
+      })
+      const refresh = context.refreshOkfAfterSave(context.captureSaveSnapshot())
+      if (boundary === 'page') store.page.id = 99
+      if (boundary === 'lifecycle') context.lifecycleGeneration++
+      if (boundary === 'account') {
+        context.accountId = 99
+        store.user.id = 99
+        store.offlineIdentityEpoch++
+      }
+      release()
+      await refresh
+
+      expect(store.page.okf).toEqual(oldOkf)
+      expect(store.page.sourceRevision).toBe('1')
+      expect(store.page.isSearchable).toBe(true)
+    })
+  }
+
+  test('ignores a conflict result for a replaced current store page even if the original prop is unchanged', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let release!: (conflict: boolean) => void
+    const pendingConflict = new Promise<boolean>(resolve => { release = resolve })
+    const context = createShellHarness(store, testWindow, {
+      checkPageConflict: async () => pendingConflict
+    })
+    context.editorAdapter.replaceText('dirty content')
+    const refresh = context.refreshConflict()
+    store.page.id = 99
+    release(true)
+    await refresh
+    expect(context.pageId).toBe(12)
+    expect(context.isConflict).toBe(false)
+  })
+
   test('prompts only for a genuinely dirty unconfirmed unload', () => {
     const store = createStore()
     const testWindow = createTestWindow()

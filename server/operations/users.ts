@@ -130,6 +130,9 @@ interface UserRequest {
   input: unknown
   response?: Response
 }
+interface ProfileMutationRequest extends UserRequest {
+  expectedAccountId: unknown
+}
 type WikiErrorName = 'AuthRequired' | 'AuthAccountBanned' | 'AuthAccountNotVerified' | 'AuthProviderInvalid' | 'AuthPasswordInvalid' | 'InputInvalid'
 interface WikiUsers {
   Error: Record<Exclude<WikiErrorName, 'InputInvalid'>, new () => Error> & {
@@ -487,7 +490,7 @@ const setTfa = async (value: unknown): Promise<void> => {
   await store.act(requester, id, { fingerprint: current.fingerprint, action, reason: 'Authenticator policy updated through the administration API' })
   revoke(id)
 }
-const requireProfileUser = async (requester: Express.User | undefined): Promise<UserRecord> => {
+const requireProfilePrincipal = (requester: Express.User | undefined): number => {
   const userId = principalId(requester)
   const hasOwnershipIdentity = isRecord(requester) && Object.hasOwn(requester, 'ownershipUserId')
   const ownershipUserId = hasOwnershipIdentity ? requester.ownershipUserId : undefined
@@ -501,10 +504,27 @@ const requireProfileUser = async (requester: Express.User | undefined): Promise<
   ) {
     throw new wiki.Error.AuthRequired()
   }
+  return userId
+}
+const requireProfileUser = async (requester: Express.User | undefined): Promise<UserRecord> => {
+  const userId = requireProfilePrincipal(requester)
   const user = await wiki.models.users.query().findById(userId)
   if (!user) throw new wiki.Error.AuthRequired()
   if (!user.isActive) throw new wiki.Error.AuthAccountBanned()
   return user
+}
+const requireProfileMutationUser = (requester: Express.User | undefined, expectedAccountId: unknown): Promise<UserRecord> => {
+  const userId = requireProfilePrincipal(requester)
+  const expectedId = typeof expectedAccountId === 'string' && /^[1-9]\d*$/.test(expectedAccountId)
+    ? Number(expectedAccountId)
+    : expectedAccountId
+  if (typeof expectedId !== 'number' || !Number.isSafeInteger(expectedId) || expectedId < 1) {
+    throw new wiki.Error.InputInvalid('The profile account identity is required.')
+  }
+  if (expectedId !== userId) {
+    throw new ApplicationError('Your signed-in account changed. Reload your profile before saving.', { code: 'STALE_PROFILE', status: 409 })
+  }
+  return requireProfileUser(requester)
 }
 const getProfile = async (requester: Express.User | undefined): Promise<UserRecord> => {
   const user = await requireProfileUser(requester)
@@ -529,8 +549,8 @@ const issueReplacementCookie = (response: Response | undefined, token: string): 
   response.cookie('jwt', token, commonHelper.getCookieOpts())
   response.set('Cache-Control', 'no-store')
 }
-const updateProfile = async ({ requester, input: value, response }: UserRequest): Promise<void> => {
-  const user = await requireProfileUser(requester)
+const updateProfile = async ({ requester, expectedAccountId, input: value, response }: ProfileMutationRequest): Promise<void> => {
+  const user = await requireProfileMutationUser(requester, expectedAccountId)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   const input = recordValue(value)
   const name = stringValue(input.name, 'name')
@@ -558,8 +578,8 @@ const updateProfile = async ({ requester, input: value, response }: UserRequest)
   })
   issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
 }
-const requireVerifiedProfileUser = async (requester: Express.User | undefined): Promise<UserRecord> => {
-  const user = await requireProfileUser(requester)
+const requireVerifiedProfileUser = async (requester: Express.User | undefined, expectedAccountId: unknown): Promise<UserRecord> => {
+  const user = await requireProfileMutationUser(requester, expectedAccountId)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   return user
 }
@@ -572,24 +592,26 @@ const mutateAvatar = async (user: UserRecord, data: Buffer | null, response: Res
 
 const updateAvatar = async ({
   requester,
+  expectedAccountId,
   data,
   response
 }: {
   requester: Express.User | undefined
+  expectedAccountId: unknown
   data: Buffer
   response?: Response
 }): Promise<{ pictureUrl: string | null }> => {
-  const user = await requireVerifiedProfileUser(requester)
+  const user = await requireVerifiedProfileUser(requester, expectedAccountId)
   const canonical = await normalizeUserAvatar(data)
   return mutateAvatar(user, canonical, response)
 }
 
-const clearAvatar = async ({ requester, response }: { requester: Express.User | undefined; response?: Response }): Promise<{ pictureUrl: string | null }> => {
-  const user = await requireVerifiedProfileUser(requester)
+const clearAvatar = async ({ requester, expectedAccountId, response }: { requester: Express.User | undefined; expectedAccountId: unknown; response?: Response }): Promise<{ pictureUrl: string | null }> => {
+  const user = await requireVerifiedProfileUser(requester, expectedAccountId)
   return mutateAvatar(user, null, response)
 }
-const updateProfilePreferences = async ({ requester, input: value, response }: UserRequest): Promise<void> => {
-  const user = await requireProfileUser(requester)
+const updateProfilePreferences = async ({ requester, expectedAccountId, input: value, response }: ProfileMutationRequest): Promise<void> => {
+  const user = await requireProfileMutationUser(requester, expectedAccountId)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   const result = ProfilePreferencesInputSchema.safeParse(value)
   if (!result.success) throw new wiki.Error.InputInvalid()
@@ -599,7 +621,7 @@ const updateProfilePreferences = async ({ requester, input: value, response }: U
 
 const changePassword = async (value: unknown): Promise<void> => {
   const input = recordValue(value)
-  const user = await requireProfileUser(isRecord(input.requester) ? input.requester : undefined)
+  const user = await requireProfileMutationUser(isRecord(input.requester) ? input.requester : undefined, input.expectedAccountId)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   if (user.providerKey !== 'local') throw new wiki.Error.AuthProviderInvalid()
   const current = stringValue(input.current, 'current')

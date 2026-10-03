@@ -17,6 +17,12 @@ This is transport confinement, not a reduction of the key's permissions. Operato
 
 The executable contract is `shared/api-access.ts` together with `server/test/core/auth.api-access.test.ts`; MCP's separate mount and resource/permission checks are exercised by `server/test/agents/mcp.test.ts`. GraphQL and MCP are not covered by the REST v1 compatibility promise below.
 
+## Browser profile account binding
+
+Browser self-service profile mutations require `X-TsEpistle-Profile-Account`, containing the account ID returned by the profile read. This applies to profile details, preferences, avatar upload/removal, and password changes under `/_api/users/profile`, and to the corresponding GraphQL mutations. The header is not an authorization credential: the current authenticated human principal must still satisfy the operation's verification and provider requirements.
+
+Missing or malformed draft identities are rejected. A valid identity that differs from the current cookie principal is rejected with `409 STALE_PROFILE` before account lookup or persistence. Clients must reload the new account's profile rather than retargeting an old draft. Profile reads do not require this header. The internal browser and GraphQL contracts are outside the `/api/v1` compatibility promise below.
+
 ## Compatibility policy
 
 Within `/api/v1`, releases may add endpoints, optional request fields and parameters, response fields, response status codes, or enum values. They must not add required request-body properties; add required query, path, or header parameters; remove documented endpoints, parameters, responses, required response fields, enum values, or authentication requirements; narrow accepted numeric or string ranges; or change documented field types and meanings.

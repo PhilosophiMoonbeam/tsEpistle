@@ -1114,16 +1114,18 @@ export default defineComponent({
           found = 'diagram'
           foundStart = line
         } else if (text === '```' && found === 'diagram') {
-          if (line - foundStart === 2) {
+          const start = foundStart
+          const end = line
+          if (end - start === 2) {
             markers.push({
-              from: { line: foundStart, ch: 3 },
-              to: { line: foundStart, ch: 10 },
+              from: { line: start, ch: 3 },
+              to: { line: start, ch: 10 },
               text: String(this.$t('editor:markup.editDiagram')),
               action: () => {
                 const editor = requireEditor(this.cm)
-                editor.setSelection({ line: foundStart, ch: 0 }, { line, ch: 3 })
+                editor.setSelection({ line: start, ch: 0 }, { line: end, ch: 3 })
                 try {
-                  wikiStore.editor.activeModalData = decodeBase64Text(editor.getLine(line - 1))
+                  wikiStore.editor.activeModalData = decodeBase64Text(editor.getLine(end - 1))
                   this.toggleModal(`editorModalDrawio`)
                 } catch {
                   wikiStore.showNotification({
@@ -1135,8 +1137,8 @@ export default defineComponent({
               }
             })
             cm.foldRange(
-              { line: foundStart, ch: cm.getLine(foundStart).length },
-              { line, ch: 0 }
+              { line: start, ch: cm.getLine(start).length },
+              { line: end, ch: 0 }
             )
           }
           found = null

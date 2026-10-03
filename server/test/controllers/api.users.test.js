@@ -424,7 +424,7 @@ describe('controllers/api users endpoints', () => {
     ]
   ])('persists profile preferences and returns a success response', async (body, expectedUpdate) => {
     const { preferences } = await loadHandler()
-    const req = { user: { id: 42 }, body }
+    const req = { user: { id: 42 }, body, get: name => name === 'X-TsEpistle-Profile-Account' ? '42' : undefined }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), cookie: vi.fn(), set: vi.fn() }
 
     await preferences(req, res, vi.fn())

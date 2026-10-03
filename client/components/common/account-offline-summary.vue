@@ -27,7 +27,7 @@ section.account-offline-summary(:aria-busy='loading ? `true` : `false`', :aria-l
       size='small'
       variant='text'
       color='primary'
-      @click='load'
+      @click='retry'
     ) {{ $t('common:offline.summary.tryAgain', { defaultValue: 'Try again' }) }}
     v-tooltip(location='bottom', :disabled='!syncBlockedReason($t)', :open-on-click='Boolean(syncBlockedReason($t))')
       template(v-slot:activator='{ props }')
@@ -153,6 +153,12 @@ const readingIsCurrent = (handle: OfflineReadingHandleV1 | null, epoch: number):
   return handle === null ? current === null : current === handle && isCurrentOfflineReadingHandle(handle)
 }
 
+async function retry (): Promise<void> {
+  if (disposed || loading.value) return
+  if (storage) await load()
+  else await openStorage()
+}
+
 async function load (): Promise<void> {
   const current = storage
   if (!current || disposed) return
@@ -236,6 +242,8 @@ onBeforeUnmount(() => {
 })
 
 async function openStorage (): Promise<void> {
+  if (disposed) return
+  loading.value = true
   try {
     const opened = await openOfflineStorage()
     if (disposed) {

@@ -55,7 +55,7 @@
     v-main.profile-main(ref='profileMain' tabindex='-1')
       router-view(v-slot='{ Component }')
         transition(name='profile-router' mode='out-in' @after-enter='focusRouteHeading')
-          component(:is='Component')
+          component(:is='Component' @vue:mounted='focusMountedRoute')
 
     nav-footer
     notify
@@ -84,15 +84,42 @@ export default defineComponent({
     wikiStore.page.mode = 'profile'
   },
   watch: {
-    '$route.fullPath' () {
+    '$route.fullPath' (nextPath: string, previousPath: string) {
       if (this.$vuetify.display.smAndDown) {
         this.profileDrawerShown = false
+      }
+      if (this.$route.hash && nextPath.split(/[?#]/u)[0] === previousPath.split(/[?#]/u)[0]) {
+        void this.$nextTick(() => this.focusRouteHeading())
       }
     }
   },
   methods: {
-    // Runs only after in-app navigation: the initial route renders without an enter transition.
+    async focusMountedRoute () {
+      const route = this.$route.fullPath
+      await this.$nextTick()
+      if (this.$route.fullPath === route && this.$route.hash) this.focusRouteHeading()
+    },
+    focusRenderedFragment (): boolean {
+      const main = ((this.$refs.profileMain as { $el?: HTMLElement })?.$el || this.$refs.profileMain) as HTMLElement | undefined
+      if (!main || !this.$route.hash) return false
+      let id: string
+      try {
+        id = decodeURIComponent(this.$route.hash.slice(1))
+      } catch {
+        return false
+      }
+      const target = document.getElementById(id)
+      if (!target || !main.contains(target) || target.closest('[hidden], [inert]')) return false
+      for (let ancestor = target.parentElement; ancestor && main.contains(ancestor); ancestor = ancestor.parentElement) {
+        if (ancestor instanceof HTMLDetailsElement) ancestor.open = true
+      }
+      target.setAttribute('tabindex', '-1')
+      target.scrollIntoView({ block: 'start' })
+      target.focus({ preventScroll: true })
+      return true
+    },
     focusRouteHeading () {
+      if (this.focusRenderedFragment()) return
       const main = ((this.$refs.profileMain as { $el?: HTMLElement })?.$el || this.$refs.profileMain) as HTMLElement | undefined
       const heading = main?.querySelector('h1') as HTMLElement | null
       if (!heading) return

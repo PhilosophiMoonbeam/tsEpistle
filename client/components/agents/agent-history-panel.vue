@@ -22,6 +22,7 @@
         variant="outlined"
       />
       <span class="agent-history__search-status" role="status" aria-live="polite">{{ searchStatus }}</span>
+      <span v-if="normalizedSearch" class="agent-history__section-copy" role="status">{{ $t('common:agentHistoryPanel.loadedHistorySearchScope', { defaultValue: 'Search covers loaded conversations. Load older conversations to find more matches.' }) }}</span>
     </div>
     <v-alert v-if="networkBlocked" class="mx-3 mb-3" density="compact" type="warning" variant="tonal" role="status">
       {{ $t('common:agentHistoryPanel.connectionRequiredChangeConversation') }}
@@ -147,32 +148,6 @@
             <span>{{ $t('common:agentHistoryPanel.conversationsNotFolderAppear') }}</span>
           </div>
 
-            <div
-              v-if="sessionsNextCursor || sessionsLoadingMore || sessionsLoadMoreError"
-              class="agent-history__pagination"
-              aria-live="polite"
-            >
-              <div v-if="sessionsLoadingMore" class="agent-history__pagination-status" role="status">
-                <v-progress-circular color="primary" indeterminate size="18" width="2" />
-                <span>{{ $t('common:agentHistoryPanel.loadingOlderConversations') }}</span>
-              </div>
-              <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
-                <div class="agent-history__refresh-error">
-                  <span>{{ sessionsLoadMoreError }}</span>
-                  <v-btn :aria-label="$t('common:agentHistoryPanel.retryLoadingOlderConversations')" size="small" variant="text" :disabled="networkBlocked" @click="loadMoreSessions">{{ $t('common:agentHistoryPanel.retry') }}</v-btn>
-                </div>
-              </v-alert>
-              <v-btn
-                v-else
-                block
-                prepend-icon="mdi-chevron-down"
-                variant="tonal"
-                :disabled="refreshingHistory || sessionsReloading || networkBlocked"
-                @click="loadMoreSessions"
-              >
-                {{ $t('common:agentHistoryPanel.loadMore') }}
-              </v-btn>
-            </div>
         </section>
 
         <section class="agent-history__folders" aria-labelledby="agent-history-folders-title">
@@ -285,6 +260,32 @@
           </div>
         </section>
       </template>
+            <div
+              v-if="sessionsNextCursor || sessionsLoadingMore || sessionsLoadMoreError"
+              class="agent-history__pagination"
+              aria-live="polite"
+            >
+              <div v-if="sessionsLoadingMore" class="agent-history__pagination-status" role="status">
+                <v-progress-circular color="primary" indeterminate size="18" width="2" />
+                <span>{{ $t('common:agentHistoryPanel.loadingOlderConversations') }}</span>
+              </div>
+              <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
+                <div class="agent-history__refresh-error">
+                  <span>{{ sessionsLoadMoreError }}</span>
+                  <v-btn :aria-label="$t('common:agentHistoryPanel.retryLoadingOlderConversations')" size="small" variant="text" :disabled="networkBlocked" @click="loadMoreSessions">{{ $t('common:agentHistoryPanel.retry') }}</v-btn>
+                </div>
+              </v-alert>
+              <v-btn
+                v-else
+                block
+                prepend-icon="mdi-chevron-down"
+                variant="tonal"
+                :disabled="refreshingHistory || sessionsReloading || networkBlocked"
+                @click="loadMoreSessions"
+              >
+                {{ $t('common:agentHistoryPanel.loadMore') }}
+              </v-btn>
+            </div>
 
     </div>
   </v-card>

@@ -452,8 +452,9 @@ type EditorSaveCapture = {
   readonly scriptCss: string
   readonly scriptJs: string
   readonly brandingAssignment: PageBrandingAssignment | null
+  readonly brandingView: PageBrandingView | null
   readonly pageFeatures: PageFeatures
-  readonly okf: unknown
+  readonly okf: typeof wikiStore.page.okf
 }
 type EditorEditableState = {
   readonly content: unknown
@@ -735,7 +736,7 @@ export default defineComponent({
     },
     mode(): string { return wikiStore.editor.mode },
     canRetryOkfAuthorityLoad(): boolean {
-      return this.mode !== 'create' && this.pageId > 0 && Boolean(wikiStore.page.okfError) && !wikiStore.page.okfLoading
+      return this.mode !== 'create' && wikiStore.page.id > 0 && Boolean(wikiStore.page.okfError) && !wikiStore.page.okfLoading
     },
     welcomeMode() { return this.mode === `create` && this.path === `home` },
     currentPageTitle: {
@@ -1748,9 +1749,9 @@ export default defineComponent({
       return true
     },
     async hydratePage() {
-      if (this.mode === 'create' || this.pageId <= 0 || wikiStore.page.okfLoading) return
+      if (this.mode === 'create' || wikiStore.page.id <= 0 || wikiStore.page.okfLoading) return
       const lifecycleGeneration = this.lifecycleGeneration
-      const expectedPageId = this.pageId
+      const expectedPageId = wikiStore.page.id
       const coordinator = this.offlineDraftCoordinator
       const expectedAccountId = this.accountId
       const expectedAuthenticated = this.isAuthenticated
@@ -1765,7 +1766,7 @@ export default defineComponent({
         if (
           this.lifecycleGeneration !== lifecycleGeneration ||
           this.offlineDraftCoordinator !== coordinator ||
-          this.pageId !== expectedPageId ||
+          wikiStore.page.id !== expectedPageId ||
           !this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration) ||
           this.mode === 'create' ||
           this.isDirty
@@ -1782,25 +1783,22 @@ export default defineComponent({
         if (
           this.lifecycleGeneration === lifecycleGeneration &&
           this.offlineDraftCoordinator === coordinator &&
-          this.pageId === expectedPageId &&
+          wikiStore.page.id === expectedPageId &&
           this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)
         )
           wikiStore.page.okfError = getErrorMessage(err)
       } finally {
-        if (this.lifecycleGeneration === lifecycleGeneration && this.pageId === expectedPageId && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) wikiStore.page.okfLoading = false
+        if (this.lifecycleGeneration === lifecycleGeneration && wikiStore.page.id === expectedPageId && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) wikiStore.page.okfLoading = false
       }
     },
-    async refreshOkfAfterSave(
-      expectedBrandingAssignment: PageBrandingAssignment | null = wikiStore.page.brandingAssignment,
-      expectedPageFeatures: PageFeatures = wikiStore.page.pageFeatures
-    ) {
+    async refreshOkfAfterSave(capture: EditorSaveCapture): Promise<PageDetails | undefined> {
       const lifecycleGeneration = this.lifecycleGeneration
-      const expectedPageId = this.pageId
+      const expectedPageId = wikiStore.page.id
       const coordinator = this.offlineDraftCoordinator
       const expectedAccountId = this.accountId
       const expectedAuthenticated = this.isAuthenticated
       const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
-      const pageFeaturesSnapshot = _.cloneDeep(expectedPageFeatures)
+      const metadataSnapshot = this.canonicalEditableState(capture).okf
       wikiStore.page.okfLoading = true
       wikiStore.page.okfError = null
       try {
@@ -1809,32 +1807,35 @@ export default defineComponent({
         if (
           this.lifecycleGeneration !== lifecycleGeneration ||
           this.offlineDraftCoordinator !== coordinator ||
-          this.pageId !== expectedPageId ||
+          wikiStore.page.id !== expectedPageId ||
           !this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)
         )
           return
-        this.applyHydratedBranding(page, expectedBrandingAssignment)
-        this.applyHydratedPageFeatures(page, pageFeaturesSnapshot)
-        wikiStore.page.okf = page.okf
-        wikiStore.page.isSearchable = page.isSearchable !== false
+        this.applyHydratedBranding(page, capture.brandingAssignment)
+        this.applyHydratedPageFeatures(page, capture.pageFeatures)
+        if (_.isEqual(metadataSnapshot, this.canonicalEditableState(this.currentEditableState()).okf)) {
+          wikiStore.page.okf = page.okf
+        }
+        if (wikiStore.page.isSearchable === capture.isSearchable) wikiStore.page.isSearchable = page.isSearchable !== false
         wikiStore.page.sourceRevision = page.sourceRevision
+        return page
       } catch (err) {
         if (
           this.lifecycleGeneration === lifecycleGeneration &&
           this.offlineDraftCoordinator === coordinator &&
-          this.pageId === expectedPageId &&
+          wikiStore.page.id === expectedPageId &&
           this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)
         )
           wikiStore.page.okfError = getErrorMessage(err)
         throw err
       } finally {
-        if (this.lifecycleGeneration === lifecycleGeneration && this.pageId === expectedPageId && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) wikiStore.page.okfLoading = false
+        if (this.lifecycleGeneration === lifecycleGeneration && wikiStore.page.id === expectedPageId && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) wikiStore.page.okfLoading = false
       }
     },
     async refreshConflict() {
       if (this.mode === 'create' || this.isSaving || !this.isDirty || this.conflictCheckPending) return
       const lifecycleGeneration = this.lifecycleGeneration
-      const expectedPageId = this.pageId
+      const expectedPageId = wikiStore.page.id
       const expectedAccountId = this.accountId
       const expectedAuthenticated = this.isAuthenticated
       const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
@@ -1847,7 +1848,7 @@ export default defineComponent({
         if (
           this.lifecycleGeneration === lifecycleGeneration &&
           this.offlineDraftCoordinator === coordinator &&
-          this.pageId === expectedPageId &&
+          wikiStore.page.id === expectedPageId &&
           this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration) &&
           !this.isSaving
         )
@@ -1913,6 +1914,8 @@ export default defineComponent({
       let receiptPreparationWarning: string | null = null
       let authoritativePageId: number | null = null
       let authoritativeUpdatedAt: string | undefined
+      let persistedVisibility = saveMode === 'create' ? capture.visibility : this.savedState.visibility
+      let hydratedPage: PageDetails | undefined
       const routeChanged = saveMode === 'update' && (
         capture.locale !== this.savedState.locale ||
         capture.path !== this.savedState.path ||
@@ -2069,13 +2072,14 @@ export default defineComponent({
               )
               this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
               wikiStore.page.sourceRevision = visibilityPage.sourceRevision
+              persistedVisibility = capture.visibility
             } catch (error) {
               this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
               postWriteError = getErrorMessage(error)
             }
           }
           try {
-            await this.refreshOkfAfterSave(capture.brandingAssignment, capture.pageFeatures)
+            hydratedPage = await this.refreshOkfAfterSave(capture)
             this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           } catch (error) {
             this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
@@ -2116,18 +2120,14 @@ export default defineComponent({
 
         this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
         const currentSnapshot = this.isCurrentSaveSnapshot(capture)
-        if (currentSnapshot) {
-          this.setCurrentSavedState()
-          this.markSaveSnapshotPersisted(capture)
-        }
+        this.markSaveSnapshotPersisted(capture)
+        this.setSavedStateFromCapture(capture, persistedVisibility, hydratedPage)
 
-        const saveMessage = receiptPreparationWarning
-          ? `${saveMode === 'create' ? this.$t('editor:save.createSuccess') : this.$t('editor:save.updateSuccess')}; ${receiptPreparationWarning}`
-          : postWriteError
-            ? this.$t('editor:editor.pageSavedBut', { postWriteError, interpolation: { escapeValue: false } })
-            : (saveMode === 'create' ? this.$t('editor:save.createSuccess') : this.$t('editor:save.updateSuccess'))
+        const saveMessage = postWriteError
+          ? this.$t('editor:editor.pageSavedBut', { postWriteError, interpolation: { escapeValue: false } })
+          : (saveMode === 'create' ? this.$t('editor:save.createSuccess') : this.$t('editor:save.updateSuccess'))
         wikiStore.showNotification({
-          message: saveMessage,
+          message: receiptPreparationWarning ? `${saveMessage}; ${receiptPreparationWarning}` : saveMessage,
           style: postWriteError || receiptPreparationWarning ? 'warning' : 'success',
           icon: postWriteError || receiptPreparationWarning ? 'warning' : 'check'
         })
@@ -2138,6 +2138,8 @@ export default defineComponent({
           return (
             this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration) &&
             !receiptPreparationWarning &&
+            !postWriteError &&
+            !this.isDirty &&
             currentSnapshot &&
             this.activeModal === '' &&
             !this.offlineDraftBusy &&
@@ -2156,7 +2158,7 @@ export default defineComponent({
             const scope = capture.visibility === 'private' ? '/_private' : ''
             window.location.assign(`${scope}/${capture.locale}/${capture.path}`)
           }
-        } else if (routeChanged) {
+        } else if (routeChanged && postWriteError === null) {
           if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
           this.navigationTimer = window.setTimeout(() => {
             if (canNavigateAfterSave()) {
@@ -2167,7 +2169,7 @@ export default defineComponent({
             this.navigationTimer = null
           }, 1000)
         }
-        return true
+        return postWriteError === null
       } catch (error) {
         if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) {
           const staleError = new Error(this.$t('editor:editor.accountSessionChangedWhile'))
@@ -2249,7 +2251,7 @@ export default defineComponent({
       const capturedLifecycleGeneration = this.lifecycleGeneration
       const wasCreate = wikiStore.editor.mode === 'create'
       try {
-        await this.save({ rethrow: true })
+        if (!(await this.save({ rethrow: true }))) return false
         if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) return false
         if (!wasCreate) {
           await this.exit()
@@ -2372,6 +2374,7 @@ export default defineComponent({
         scriptCss: pageInput.scriptCss,
         scriptJs: pageInput.scriptJs,
         brandingAssignment: _.cloneDeep(wikiStore.page.brandingAssignment),
+        brandingView: _.cloneDeep(wikiStore.page.brandingView),
         pageFeatures: normalizePageFeatures(pageInput.pageFeatures),
         okf: _.cloneDeep(wikiStore.page.okf)
       })
@@ -2391,7 +2394,8 @@ export default defineComponent({
       }
     },
     markSaveSnapshotPersisted(capture: EditorSaveCapture): void {
-      if (this.isCurrentSaveSnapshot(capture)) this.editorAdapter?.markPersisted?.(capture.editVersion)
+      const current = this.editorAdapter?.capture()
+      if (current?.text === capture.content && current.editVersion === capture.editVersion) this.editorAdapter?.markPersisted?.(capture.editVersion)
     },
     getPageInput(content = wikiStore.editor.content): PageWriteInput {
       const okfMetadata = buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata)
@@ -2427,6 +2431,32 @@ export default defineComponent({
         ...(okfMetadata === undefined ? {} : { okfMetadata: _.cloneDeep(okfMetadata) })
       }
       return freezePageInput(pageInput)
+    },
+    setSavedStateFromCapture(capture: EditorSaveCapture, visibility: 'public' | 'private', page?: PageDetails) {
+      const brandingAssignment = page && Object.hasOwn(page, 'brandingAssignment')
+        ? normalizeEditorBrandingAssignment(page.brandingAssignment)
+        : _.cloneDeep(capture.brandingAssignment)
+      this.savedState = {
+        content: capture.content,
+        description: capture.description,
+        isPublished: capture.isPublished,
+        isSearchable: page ? page.isSearchable !== false : capture.isSearchable,
+        visibility,
+        locale: capture.locale,
+        path: capture.path,
+        publishEndDate: capture.publishEndDate,
+        publishStartDate: capture.publishStartDate,
+        tags: [...capture.tags],
+        title: capture.title,
+        scriptCss: capture.scriptCss,
+        scriptJs: capture.scriptJs,
+        brandingAssignment,
+        brandingView: page && Object.hasOwn(page, 'branding')
+          ? normalizeEditorBrandingView(page.branding, brandingAssignment)
+          : _.cloneDeep(capture.brandingView),
+        pageFeatures: page ? normalizePageFeatures(page.pageFeatures) : normalizePageFeatures(capture.pageFeatures),
+        okf: _.cloneDeep(page ? page.okf : capture.okf)
+      }
     },
     setCurrentSavedState () {
       this.savedState = {

@@ -134,7 +134,7 @@
             <p class="system-note">
               {{ $t('admin:system.externalProxyCanTerminate') }}
             </p>
-            <v-btn to="/a/ssl" variant="outlined" append-icon="mdi-arrow-right">{{ $t('admin:system.httpsCertificates') }}</v-btn>
+            <v-btn to="/ssl" variant="outlined" append-icon="mdi-arrow-right">{{ $t('admin:system.httpsCertificates') }}</v-btn>
             <section class="system-metrics-reference" aria-labelledby="system-metrics-title">
               <div class="system-section-head">
                 <h3 id="system-metrics-title">{{ $t('admin:system.prometheusMetrics') }}</h3>
@@ -421,15 +421,15 @@
           </div>
           <div>
             <h3>{{ $t('admin:system.relatedOperations') }}</h3>
-            <router-link to="/a/storage">
+            <router-link to="/storage">
               {{ $t('admin:system.storageRecovery') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>
-            <router-link to="/a/logging">
+            <router-link to="/logging">
               {{ $t('admin:system.logging') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>
-            <router-link to="/a/utilities">
+            <router-link to="/utilities">
               {{ $t('admin:system.maintenanceUtilities') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>

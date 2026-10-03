@@ -3,8 +3,8 @@
     <nav class="group-directory-stats" :aria-label="$t('admin:groups.groupFilters')"><button v-for="stat in stats" :key="stat.key" :aria-pressed="kind === stat.key" @click="setKind(stat.key)"><span>{{ stat.title }}</span><strong>{{ stat.value }}</strong></button></nav>
     <section aria-labelledby="group-directory-title"><div class="group-heading"><div><span class="group-kicker">{{ $t('admin:groups.accessDirectory') }}</span><h2 id="group-directory-title">{{ $t('admin:groups.organizedAroundResponsibility') }}</h2></div><router-link to="/users" class="text-body-small">{{ $t('admin:groups.managePeople') }} <v-icon icon="mdi-arrow-right" size="16" /></router-link></div>
       <form class="group-directory-filters" @submit.prevent="searchNow"><v-text-field v-model="search" :label="$t('admin:groups.searchGroupNamePurpose')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details density="comfortable" clearable @update:model-value="queueSearch" /><v-btn v-if="search || kind !== 'all'" variant="text" @click="clearFilters">{{ $t('admin:groups.clearFilters') }}</v-btn></form>
-      <async-state v-if="loading" state="loading" :title="$t('admin:groups.loadingGroups')" :message="$t('admin:groups.readingAccessPoliciesMemberships')" /><async-state v-else-if="error" state="error" :title="$t('admin:groups.groupDirectoryUnavailable')" :message="error" :retry-label="$t('admin:groups.tryAgain')" @retry="load" /><async-state v-else-if="!directory?.items.length" state="empty" :title="search || kind !== 'all' ? $t('admin:groups.noMatchingGroups') : $t('admin:groups.noGroupsShow')" :message="$t('admin:groups.tryAnotherSearchCreate')" />
-      <template v-else><ul class="group-register"><li v-for="group in directory.items" :key="group.id" class="group-register-row"><div class="group-register-identity"><router-link :to="groupLink(group.id)" class="group-register-name">{{ group.name }}<v-icon v-if="group.isSystem" icon="mdi-lock-outline" size="16" :aria-label="$t('admin:groups.systemGroup')" /></router-link><p class="group-register-purpose">{{ group.description || (group.id === 1 ? $t('admin:groups.fullWorkspaceAdministrationAccess') : group.id === 2 ? $t('admin:groups.policyAppliedAnonymousVisitors') : $t('admin:groups.noPurposeRecordedYet')) }}</p><div class="group-register-meta"><span class="group-pill">{{ group.permissions.includes('manage:system') ? $t('admin:groups.fullSystemAccess') : $t('admin:groups.permissionCount', { count: group.permissions.length }) }}</span><span class="group-pill">{{ $t('admin:groups.pageRulesCount', { count: group.ruleCount }) }}</span><span v-if="group.isSystem" class="group-pill">{{ $t('admin:groups.system') }}</span></div></div><div class="group-register-number"><strong>{{ group.memberCount }}</strong><span>{{ $t('admin:groups.membersCount', { count: group.memberCount }) }}</span></div><div class="group-register-number"><strong>{{ group.apiKeyCount }}</strong><span>{{ $t('admin:groups.activeCredentials') }}</span></div><v-btn :to="groupLink(group.id)" variant="text" append-icon="mdi-arrow-right" class="group-register-action" :aria-label="$t('admin:groups.manage', { name: group.name, interpolation: { escapeValue: false } })">{{ $t('admin:groups.manage2') }}</v-btn></li></ul><div class="group-pagination"><span aria-live="polite">{{ $t('admin:groups.groups', { value: offset + 1, total: Math.min(offset + directory.items.length, directory.total), total2: directory.total, interpolation: { escapeValue: false } }) }}</span><div class="group-actions"><v-btn variant="text" :disabled="offset === 0" @click="paginate(-1)">{{ $t('admin:groups.previous') }}</v-btn><v-btn variant="text" :disabled="offset + directory.limit >= directory.total" @click="paginate(1)">{{ $t('admin:groups.next') }}</v-btn></div></div></template>
+      <async-state v-if="loading" state="loading" :title="$t('admin:groups.loadingGroups')" :message="$t('admin:groups.readingAccessPoliciesMemberships')" /><async-state v-else-if="error" state="error" :title="$t('admin:groups.groupDirectoryUnavailable')" :message="error" :retry-label="$t('admin:groups.tryAgain')" @retry="load" /><async-state v-else-if="!directory?.total" state="empty" :title="search || kind !== 'all' ? $t('admin:groups.noMatchingGroups') : $t('admin:groups.noGroupsShow')" :message="$t('admin:groups.tryAnotherSearchCreate')" />
+      <template v-else><ul class="group-register"><li v-for="group in directory.items" :key="group.id" class="group-register-row"><div class="group-register-identity"><router-link :to="groupLink(group.id)" class="group-register-name">{{ group.name }}<v-icon v-if="group.isSystem" icon="mdi-lock-outline" size="16" :aria-label="$t('admin:groups.systemGroup')" /></router-link><p class="group-register-purpose">{{ group.description || (group.id === 1 ? $t('admin:groups.fullWorkspaceAdministrationAccess') : group.id === 2 ? $t('admin:groups.policyAppliedAnonymousVisitors') : $t('admin:groups.noPurposeRecordedYet')) }}</p><div class="group-register-meta"><span class="group-pill">{{ group.permissions.includes('manage:system') ? $t('admin:groups.fullSystemAccess') : $t('admin:groups.permissionCount', { count: group.permissions.length }) }}</span><span class="group-pill">{{ $t('admin:groups.pageRulesCount', { count: group.ruleCount }) }}</span><span v-if="group.isSystem" class="group-pill">{{ $t('admin:groups.system') }}</span></div></div><div class="group-register-number"><strong>{{ group.memberCount }}</strong><span>{{ $t('admin:groups.membersCount', { count: group.memberCount }) }}</span></div><div class="group-register-number"><strong>{{ group.apiKeyCount }}</strong><span>{{ $t('admin:groups.activeCredentials') }}</span></div><v-btn :to="groupLink(group.id)" variant="text" append-icon="mdi-arrow-right" class="group-register-action" :aria-label="$t('admin:groups.manage', { name: group.name, interpolation: { escapeValue: false } })">{{ $t('admin:groups.manage2') }}</v-btn></li></ul><div class="group-pagination"><span aria-live="polite">{{ $t('admin:groups.groups', { value: Math.min(offset + 1, directory.total), total: Math.min(offset + directory.items.length, directory.total), total2: directory.total, interpolation: { escapeValue: false } }) }}</span><div class="group-actions"><v-btn variant="text" :disabled="offset === 0" @click="paginate(-1)">{{ $t('admin:groups.previous') }}</v-btn><v-btn variant="text" :disabled="offset + directory.limit >= directory.total" @click="paginate(1)">{{ $t('admin:groups.next') }}</v-btn></div></div></template>
     </section><group-create ref="createForm" v-model="creating" @created="created" />
   </v-container>
 </template>
@@ -22,7 +22,38 @@ export default {
   beforeUnmount() { this.disposed = true; this.sequence++; if (this.timer) clearTimeout(this.timer) },
   beforeRouteLeave() { return (this.$refs.createForm as { canLeave: () => Promise<boolean> } | undefined)?.canLeave() ?? true },
   methods: {
-    async load(sync = true) { const sequence = ++this.sequence; this.loading = true; this.error = ''; if (sync) { const query: Record<string,string> = {}; if (this.search) query.search = this.search; if (this.kind !== 'all') query.kind = this.kind; if (this.offset) query.offset = String(this.offset); void this.$router.replace({ query }) } try { const directory = await fetchGroupDirectory(new URLSearchParams({ search: this.search || '', kind: this.kind, offset: String(this.offset), limit: '25' })); if (!this.disposed && sequence === this.sequence) this.directory = directory } catch (error) { if (!this.disposed && sequence === this.sequence) this.error = getErrorMessage(error) } finally { if (!this.disposed && sequence === this.sequence) this.loading = false } },
+    async load(sync = true) {
+      const sequence = ++this.sequence
+      const params = new URLSearchParams({ search: this.search || '', kind: this.kind, offset: String(this.offset), limit: '25' })
+      this.loading = true
+      this.error = ''
+      if (sync) this.syncQuery()
+      try {
+        let directory = await fetchGroupDirectory(params)
+        if (this.disposed || sequence !== this.sequence) return
+        let recovered = false
+        if (!directory.items.length && directory.total > 0 && this.offset >= directory.total) {
+          this.offset = Math.floor((directory.total - 1) / 25) * 25
+          params.set('offset', String(this.offset))
+          directory = await fetchGroupDirectory(params)
+          if (this.disposed || sequence !== this.sequence) return
+          recovered = true
+        }
+        this.directory = directory
+        if (recovered) this.syncQuery()
+      } catch (error) {
+        if (!this.disposed && sequence === this.sequence) this.error = getErrorMessage(error)
+      } finally {
+        if (!this.disposed && sequence === this.sequence) this.loading = false
+      }
+    },
+    syncQuery() {
+      const query: Record<string,string> = {}
+      if (this.search) query.search = this.search
+      if (this.kind !== 'all') query.kind = this.kind
+      if (this.offset) query.offset = String(this.offset)
+      void this.$router.replace({ query })
+    },
     groupLink(id: number) { return { path: `/groups/${id}`, query: { from: this.$route.fullPath } } },
     queueSearch() { if (this.timer) clearTimeout(this.timer); this.timer = setTimeout(() => this.searchNow(), 250) }, searchNow() { if (this.timer) clearTimeout(this.timer); this.offset = 0; void this.load() }, setKind(kind: string) { this.kind = kind; this.searchNow() }, clearFilters() { this.search = ''; this.kind = 'all'; this.searchNow() }, paginate(direction: number) { this.offset = Math.max(0, this.offset + direction * 25); void this.load() }, created(id: number) { this.creating = false; void this.$router.push(this.groupLink(id)) }
   }

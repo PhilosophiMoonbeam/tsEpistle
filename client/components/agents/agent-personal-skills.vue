@@ -55,9 +55,9 @@
             </div>
 
             <template v-else-if="loaded">
-              <v-alert v-if="refreshError" class="personal-inventory__error" type="warning" variant="tonal" density="compact">
-                {{ refreshError }}
-                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || networkBlocked" @click="requestRefresh">{{ $t('common:agentPersonalSkills.retry') }}</v-btn></template>
+              <v-alert v-if="refreshError || (!readAccepted && !saving && !loading)" class="personal-inventory__error" type="warning" variant="tonal" density="compact">
+                {{ refreshError || $t('common:agentPersonalSkills.reloadBeforeRetry', { defaultValue: 'Reload personal skills before retrying.' }) }}
+                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || saving || networkBlocked" @click="load()">{{ $t('common:agentPersonalSkills.reloadSkills', { defaultValue: 'Reload skills' }) }}</v-btn></template>
               </v-alert>
               <div class="personal-inventory__summary" aria-live="polite">{{ $t('common:agentPersonalSkills.shown', { filteredSkillsCount: filteredSkills.length, skillsCount: skills.length, interpolation: { escapeValue: false } }) }}</div>
               <v-list v-if="filteredSkills.length" class="personal-inventory__list" density="compact" nav :aria-label="$t('common:agentPersonalSkills.personalSkills')">
@@ -169,7 +169,10 @@
       <div class="personal-confirmation__header personal-confirmation__header--danger"><span><v-icon icon="mdi-delete-alert-outline" size="21" /></span><div><div class="personal-skills__eyebrow">{{ $t('common:agentPersonalSkills.destructiveAction') }}</div><h2 id="personal-remove-title">{{ $t('common:agentPersonalSkills.removePersonalSkill') }}</h2></div></div>
       <v-card-text>
         <v-alert class="mb-4" type="warning" variant="tonal" icon="mdi-history">{{ $t('common:agentPersonalSkills.existingRunHistoryRemains') }}</v-alert>
-        <v-alert v-if="removeError" class="mb-4" type="error" variant="tonal">{{ removeError }}</v-alert>
+        <v-alert v-if="removeError" class="mb-4" type="error" variant="tonal">
+          {{ removeError }}
+          <template #append><v-btn v-if="!readAccepted" variant="text" size="small" :loading="loading" :disabled="loading || saving || networkBlocked" @click="load()">{{ $t('common:agentPersonalSkills.reloadSkills', { defaultValue: 'Reload skills' }) }}</v-btn></template>
+        </v-alert>
         <p><strong>{{ removing?.name }}</strong> {{ $t('common:agentPersonalSkills.willRemovedPersonalLibrary') }}</p>
       </v-card-text>
       <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="cancelRemove">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="error" prepend-icon="mdi-delete-outline" :loading="saving" :disabled="saving || networkBlocked || !readAccepted" @click="remove">{{ $t('common:agentPersonalSkills.removeSkill') }}</v-btn></v-card-actions>
@@ -307,7 +310,6 @@ const handleOpenUpdate = (value: boolean): void => {
   }
   requestClose()
 }
-const requestRefresh = (): void => requestNavigation(() => { void load() })
 const confirmDiscard = (): void => {
   discardOpen.value = false
   const action = pendingNavigation.value
@@ -333,6 +335,7 @@ const load = async (selectedId?: string, committedMessage?: string): Promise<boo
     skills.value = nextSkills
     loaded.value = true
     readAccepted.value = true
+    if (removing.value) removing.value = nextSkills.find(skill => skill.id === removing.value?.id) ?? null
     const selected = skills.value.find(skill => skill.id === selectedId) ?? skills.value.find(skill => skill.id === editingId.value)
     if (!preserveEditor && !isDirty.value) {
       if (selected) applyEdit(selected)

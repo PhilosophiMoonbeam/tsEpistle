@@ -1005,6 +1005,7 @@
       "email": "Email"
     },
     "agentHistoryPanel": {
+      "loadedHistorySearchScope": "Search covers loaded conversations. Load older conversations to find more matches.",
       "archiveCount": {
         "all_one": "{{count}} conversation",
         "all_other": "{{count}} conversations",
@@ -1743,6 +1744,8 @@
       "typeExactPagePath": "Type the exact page path to enable deletion"
     },
     "agentPersonalSkills": {
+      "reloadBeforeRetry": "Reload personal skills before retrying.",
+      "reloadSkills": "Reload skills",
       "sCount_one": "",
       "sCount_other": "s",
       "useLowercaseLettersNumbers": "Use lowercase letters, numbers, and single hyphens.",
@@ -1888,6 +1891,13 @@
       "copyUnavailable": "Copy unavailable"
     },
     "offlineSettings": {
+      "unlockBeforeRemovingPages": "Unlock private reading before removing saved pages.",
+      "removalScope": "Removes public saved pages for this site and pages in the currently unlocked private vault. Other vaults and sites are unchanged.",
+      "savedPagesRemovedScope": "Public saved pages for this site and saved pages in the unlocked private vault were removed.",
+      "publicSavedPagesRemoved": "Public saved pages for this site were removed.",
+      "savedPagesRemain": "Some saved pages remain. Refresh the library before trying again.",
+      "removalSyncUnavailable": "Synchronization will resume when available: {{error}}",
+      "removalSyncOffline": "Synchronization will resume when you are online.",
       "sCount_one": "",
       "sCount_other": "s",
       "offlineStorageHasNot": "Offline storage has not been checked yet.",
@@ -9494,6 +9504,7 @@
     }
   },
   "profile": {
+    "accountChanged": "Your signed-in account changed. Reload your profile before saving.",
     "auth": {
       "title": "Authentication",
       "provider": "Provider",

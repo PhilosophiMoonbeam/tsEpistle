@@ -181,7 +181,7 @@ export default defineComponent({
   mounted() {
     wikiStore.editor.editorKey = 'code'
 
-    if (this.mode === 'create') {
+    if (this.mode === 'create' && !wikiStore.editor.content) {
       wikiStore.editor.content = this.$t('editor:editorCode.h1TitleH1P')
     }
 

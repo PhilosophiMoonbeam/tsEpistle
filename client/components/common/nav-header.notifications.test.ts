@@ -479,6 +479,7 @@ afterEach(() => {
   agentDestroyCalls = 0
   Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
   wikiStore.site.title = 'Wiki'
+  wikiStore.site.search = ''
   wikiStore.user = user(1)
   wikiStore.authRefreshPending = false
   wikiStore.authRefreshSettled = true
@@ -491,6 +492,20 @@ afterEach(() => {
 })
 
 describe('search header affordances', () => {
+  it.each([false, true])('keeps clearable search reusable after a null clear (small screen: %s)', async smAndDown => {
+    const mounted = await mountHeader({ hideSearch: false, smAndDown })
+    const vm = mounted.vm as unknown as { search: string | null }
+    vm.search = 'initial query'
+    vm.search = null
+    await settle()
+    expect(wikiStore.site.search).toBe('')
+    expect(vm.search).toBe('')
+    vm.search = 'replacement query'
+    await settle()
+    expect(wikiStore.site.search).toBe('replacement query')
+    expect(vm.search).toBe('replacement query')
+  })
+
   it('omits Browse by Tags from the desktop header when search is hidden', async () => {
     const mounted = await mountHeader({ hideSearch: true, smAndDown: false })
 
@@ -655,6 +670,23 @@ describe('notification header identity recovery', () => {
 })
 
 describe('account menu containment', () => {
+  it.each([false, true])('offers guests direct Sign in while retaining Account and offline controls (small screen: %s)', async smAndDown => {
+    wikiStore.user = user(0, false)
+    wikiStore.authRefreshOutcome = 'anonymous'
+    const mounted = await mountHeader({ smAndDown })
+    const signIn = mounted.host.querySelector('.nav-header-sign-in')
+    expect(signIn?.getAttribute('href')).toBe('/login')
+    expect(signIn?.textContent).toBe('Sign in')
+    expect(signIn?.closest('.account-menu')).toBeNull()
+    expect(mounted.host.querySelector('.account-menu__trigger')).not.toBeNull()
+    expect(mounted.host.querySelector('.account-offline-summary')).not.toBeNull()
+    wikiStore.user = user(1)
+    wikiStore.authRefreshOutcome = 'authenticated'
+    await settle()
+    expect(mounted.host.querySelector('.nav-header-sign-in')).toBeNull()
+    expect(mounted.host.querySelector('form[action="/logout"]')).not.toBeNull()
+  })
+
   it('keeps the account button tooltip closed while the account menu is open', async () => {
     const mounted = await mountHeader({ smAndDown: true })
     mounted.vm.setAccountTooltip(true)

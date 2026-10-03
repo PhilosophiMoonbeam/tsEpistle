@@ -599,6 +599,55 @@ const resolveConfiguredLogoEffect = (logoUrl: string, logoEffect: LogoEffectDesc
   }
 }
 
+describe('login token continuation recovery', () => {
+  it.each(['verifyEmail', 'resetPwd', 'changePwd'])('reveals the sole credential provider after leaving %s', async initialScreen => {
+    const options = Login as unknown as Vue.ComponentOptions
+    const ContinuationLogin = Vue.defineComponent({
+      ...options,
+      components: { ...options.components, ...components },
+      mounted() {},
+      computed: {
+        ...options.computed,
+        siteTitle: () => 'Example knowledge base',
+        logoUrl: () => '',
+        logoEffect: () => null,
+        filteredStrategies() { return this.strategies }
+      }
+    })
+    const host = createTestHostNode('element', 'root')
+    const app = testRenderer.createApp(ContinuationLogin)
+    app.config.globalProperties.$t = (key: string): string => key
+    const vm = app.mount(host) as unknown as {
+      screen: string
+      strategies: Parameters<typeof createLoginHarness>[3]
+      selectedStrategyKey: string
+      cancelContinuation: () => void
+    }
+    try {
+      vm.screen = initialScreen
+      vm.strategies = [{
+        key: 'local', displayName: 'Local', order: 0, selfRegistration: false,
+        strategy: { useForm: true, usernameType: 'email', color: '', icon: '' }
+      }]
+      await Vue.nextTick()
+      expect(vm.selectedStrategyKey).toBe('unselected')
+      expect(findTestHostNode(host, node => node.type === 'input' && node.props.name === 'username')).toBeNull()
+      if (initialScreen === 'changePwd') vm.cancelContinuation()
+      else {
+        vm.screen = 'success'
+        await Vue.nextTick()
+        vm.screen = 'login'
+      }
+      await Vue.nextTick()
+      expect(vm.selectedStrategyKey).toBe('local')
+      expect(findTestHostNode(host, node => node.type === 'input' && node.props.name === 'username')).not.toBeNull()
+      expect(findTestHostNode(host, node => node.type === 'input' && node.props.name === 'password')).not.toBeNull()
+    } finally {
+      app.unmount()
+    }
+  })
+})
+
 describe('login personalized static-logo integration', () => {
   it('renders provider logos supplied by the authentication API and falls back to an icon', async () => {
     const dom = await renderLoginDom(null, [

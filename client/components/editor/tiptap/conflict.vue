@@ -122,12 +122,14 @@ export default defineComponent({
     useLocal () {
       if (!this.hasLatestVersion) return
       wikiStore.editor.checkoutDateActive = this.latest.updatedAt
+      wikiStore.page.sourceRevision = this.latest.sourceRevision
       emitEditorConflictReset()
       this.close()
     },
     useRemote () {
       if (!this.hasLatestVersion) return
       wikiStore.editor.checkoutDateActive = this.latest.updatedAt
+      wikiStore.page.sourceRevision = this.latest.sourceRevision
       wikiStore.editor.content = this.latest.content
       emitEditorConflictResolved()
       this.close()

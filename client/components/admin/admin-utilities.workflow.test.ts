@@ -205,6 +205,38 @@ describe('Utilities reviewed operation recovery', () => {
     expect(state.receiptDetail).toBeNull()
     expect(state.receiptError).toBe('')
   })
+
+  it('preserves the selected utility and URL until discard approval resolves, including cancellation', async () => {
+    const { state, component } = arrange()
+    state.section = 'telemetry'
+    state.$route.query = { section: 'telemetry' }
+    state.draftDirty = true
+    const selectedComponent = state.selectedComponent
+    let resolveLeave!: (accepted: boolean) => void
+    state.canLeave = vi.fn(() => new Promise<boolean>(resolve => { resolveLeave = resolve }))
+
+    const cancelled = state.selectSection('cache')
+    expect(state.section).toBe('telemetry')
+    expect(state.selectedComponent).toBe(selectedComponent)
+    expect(state.$router.replace).not.toHaveBeenCalled()
+    resolveLeave(false)
+    await cancelled
+    expect(state.section).toBe('telemetry')
+    expect(state.draftDirty).toBe(true)
+    expect(state.$route.query.section).toBe('telemetry')
+    expect(state.$router.replace).not.toHaveBeenCalled()
+
+    const accepted = state.selectSection('cache')
+    expect(state.selectedComponent).toBe(selectedComponent)
+    resolveLeave(true)
+    await accepted
+    expect(state.$router.replace).toHaveBeenCalledWith({ query: { section: 'cache' } })
+    // Component selection follows the committed route rather than the selector event.
+    state.$route.query.section = 'cache'
+    component.watch['$route.query.section'].handler.call(state, 'cache')
+    expect(state.section).toBe('cache')
+    expect(state.selectedComponent).not.toBe(selectedComponent)
+  })
 })
 
 describe('Utilities browser-cache recovery', () => {

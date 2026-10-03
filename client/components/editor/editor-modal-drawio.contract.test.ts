@@ -6,6 +6,12 @@ import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-
 import { browserWindow, document, resetBody } from '../../test/browser-dom.mts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
 import { isRecord } from '../../helpers/type-guards.ts'
+import { TextEditor } from './common/text-editor.ts'
+import { EditorAdapterController } from './common/editor-adapter.ts'
+import { decodeBase64Text } from '../../helpers/base64.ts'
+import { EditorView, keymap } from '@codemirror/view'
+import { html } from '@codemirror/lang-html'
+import _ from 'lodash'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 ;globalThis.useTranslate = () => translateEnglish
@@ -104,6 +110,90 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   resetBody()
+})
+
+const loadSourceEditor = (variant: 'code' | 'asciidoc' | 'markdown', wikiStore: object) => {
+  const filename = join(process.cwd(), `client/components/editor/editor-${variant}.vue`)
+  const descriptor = parse(readFileSync(filename, 'utf8'), { filename }).descriptor
+  const script = descriptor.script!.content
+    .replace(/^import\s[\s\S]*?\sfrom\s['"][^'"]+['"];?\s*$/gm, '')
+    .replace('export default defineComponent(', 'const component = defineComponent(')
+  const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script)
+  const dependencies = {
+    defineComponent: Vue.defineComponent, markRaw: Vue.markRaw, wikiStore,
+    TextEditor, EditorAdapterController, decodeBase64Text, EditorView, keymap, html, _,
+    HTMLElement: browserWindow.HTMLElement, require,
+    Velocity: () => {}, markdownHelp: {}, vRovingToolbar: {},
+    onEditorInsert: () => {}, onEditorSaveConflict: () => {}, onEditorContentOverwrite: () => {}
+  }
+  return new Function(...Object.keys(dependencies), `${executable}\nreturn component`)(
+    ...Object.values(dependencies)
+  )
+}
+
+describe('Source document authoring contract', () => {
+  for (const variant of ['code', 'asciidoc'] as const) {
+    for (const incoming of ['distinctive template payload\nsecond line', ' ', '']) {
+      test(`${variant} mounts the incoming template and seeds only an empty create document (${JSON.stringify(incoming)})`, () => {
+        const wikiStore = { editor: { content: incoming, editorKey: '' } }
+        const component = loadSourceEditor(variant, wikiStore)
+        const host = document.body.appendChild(document.createElement('div'))
+        const context = {
+          ...component.data.call({}),
+          mode: 'create', $refs: { cm: host }, $vuetify: { theme: { current: { dark: false } } },
+          $t: translateEnglish, $emit: () => {}, processContent: () => {}, positionSync: () => {}
+        }
+        try {
+          component.mounted.call(context)
+          const expected = incoming || translateEnglish(variant === 'code'
+            ? 'editor:editorCode.h1TitleH1P' : 'editor:editorAsciidoc.headerContent')
+          expect(context.cm.getValue()).toBe(expected)
+          expect(context.editorAdapter.capture().text).toBe(expected)
+          expect(wikiStore.editor.content).toBe(expected)
+        } finally {
+          context.editorAdapter?.destroy()
+          context.cm?.destroy()
+          context.debouncedProcessContent?.cancel()
+          host.remove()
+        }
+      })
+    }
+  }
+
+  for (const variant of ['markdown', 'asciidoc'] as const) {
+    test(`${variant} edits each diagram without replacing intervening prose or the other diagram`, () => {
+      const first = btoa('<mxfile>first</mxfile>')
+      const second = btoa('<mxfile>second</mxfile>')
+      const initial = ['```diagram', first, '```', 'Distinctive intervening prose', '```diagram', second, '```'].join('\n')
+      const wikiStore = { editor: { activeModalData: '' }, showNotification: vi.fn() }
+      const component = loadSourceEditor(variant, wikiStore)
+      const host = document.body.appendChild(document.createElement('div'))
+      const editor = new TextEditor({ parent: host, value: initial, ariaLabel: 'Diagram source', dark: false })
+      let markers: Parameters<TextEditor['setMarkers']>[0] = []
+      const setMarkers = vi.spyOn(editor, 'setMarkers').mockImplementation(value => { markers = value })
+      const toggleModal = vi.fn()
+      try {
+        const context = { cm: editor, editor: () => editor, $t: translateEnglish, toggleModal }
+        component.methods.processMarkers.call(context, 0, editor.lineCount)
+        expect(markers).toHaveLength(2)
+        markers[0]!.action(new browserWindow.Event('click'))
+        expect(wikiStore.editor.activeModalData).toBe('<mxfile>first</mxfile>')
+        editor.replaceSelection(['```diagram', btoa('<mxfile>updated first</mxfile>'), '```'].join('\n'))
+        expect(editor.getValue()).toBe([
+          '```diagram', btoa('<mxfile>updated first</mxfile>'), '```',
+          'Distinctive intervening prose', '```diagram', second, '```'
+        ].join('\n'))
+        markers[1]!.action(new browserWindow.Event('click'))
+        expect(wikiStore.editor.activeModalData).toBe('<mxfile>second</mxfile>')
+        expect(toggleModal).toHaveBeenCalledTimes(2)
+        expect(wikiStore.showNotification).not.toHaveBeenCalled()
+      } finally {
+        setMarkers.mockRestore()
+        editor.destroy()
+        host.remove()
+      }
+    })
+  }
 })
 
 describe('Draw.io editor modal contract', () => {

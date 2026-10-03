@@ -96,7 +96,7 @@ const makeDocumentStub = () => {
   }
 }
 
-const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: (constraints: MediaStreamConstraints) => Promise<unknown>; recorder?: typeof Recorder; focus?: () => void; generationToolsEnabled?: boolean; level?: { value: number }; wakeLock?: WakeLockManagerStub } = {}) => {
+const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: (constraints: MediaStreamConstraints) => Promise<unknown>; recorder?: typeof Recorder | false; focus?: () => void; generationToolsEnabled?: boolean; level?: { value: number }; wakeLock?: WakeLockManagerStub } = {}) => {
   const props = reactive({ csrfToken: 'csrf', session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' }, capabilities: options.media, generationToolsEnabled: options.generationToolsEnabled, disabled: false, networkBlocked: false })
   const events: Array<[string, unknown]> = []
   const cleanup: Array<() => void> = []
@@ -104,7 +104,7 @@ const mount = (options: { media?: { attachments: boolean; imageGeneration: boole
   let microphoneCalls = 0
   const documentStub = makeDocumentStub()
   const scope = effectScope()
-  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async (constraints: MediaStreamConstraints) => { microphoneCalls++; return options.microphone ? options.microphone(constraints) : { getTracks: () => [{ stop: () => { stopped++ } }] } } }, wakeLock: options.wakeLock }, MediaRecorder: options.recorder ?? Recorder, document: documentStub.stub, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })), AudioContext: options.level ? mountAudio(options.level) : undefined } }))
+  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async (constraints: MediaStreamConstraints) => { microphoneCalls++; return options.microphone ? options.microphone(constraints) : { getTracks: () => [{ stop: () => { stopped++ } }] } } }, wakeLock: options.wakeLock }, MediaRecorder: options.recorder === false ? undefined : options.recorder ?? Recorder, document: documentStub.stub, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })), AudioContext: options.level ? mountAudio(options.level) : undefined } }))
   return { api, props, events, stopped: () => stopped, microphoneCalls: () => microphoneCalls, visibility: documentStub.visibility, unmount: () => { cleanup.forEach(fn => { fn() }); scope.stop() } }
 }
 describe('Agent media composer lifecycle', () => {
@@ -115,6 +115,61 @@ describe('Agent media composer lifecycle', () => {
     await harness.api.startRecording()
     expect(requests).toBe(0)
     expect(harness.microphoneCalls()).toBe(0)
+    harness.unmount()
+  })
+  it('reports unavailable browser recording support without requesting the microphone', async () => {
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, recorder: false })
+    await harness.api.startRecording()
+    expect(harness.microphoneCalls()).toBe(0)
+    expect(harness.events.filter(([event]) => event === 'dictationFailed')).toEqual([['dictationFailed', 'This browser does not support dictation. You can still type your message.']])
+    expect(harness.api.dictationError.value).toBe('This browser does not support dictation. You can still type your message.')
+    harness.unmount()
+  })
+  it('reports microphone denial once without starting a transcription', async () => {
+    let requests = 0
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, microphone: async () => { throw new Error('Microphone permission denied') }, fetch: async () => { requests++; return response({ media }) } })
+    await harness.api.startRecording()
+    expect(harness.api.recording.value).toBe(false)
+    expect(harness.events.filter(([event]) => event === 'dictationFailed')).toEqual([['dictationFailed', 'Microphone permission denied']])
+    expect(requests).toBe(0)
+    harness.unmount()
+  })
+  it('ignores a late microphone denial after the conversation changes', async () => {
+    const pending = Promise.withResolvers<unknown>()
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, microphone: () => pending.promise })
+    const starting = harness.api.startRecording()
+    harness.props.session = { ...harness.props.session, id: '00000000-0000-4000-8000-000000000099' }
+    pending.reject(new Error('Old conversation permission denied'))
+    await starting
+    expect(harness.events.filter(([event]) => event === 'dictationFailed')).toEqual([])
+    harness.unmount()
+  })
+  it('reports a recorder startup failure and releases the microphone', async () => {
+    class BrokenRecorder extends Recorder {
+      start() { throw new Error('Recorder could not start') }
+    }
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, recorder: BrokenRecorder })
+    await harness.api.startRecording()
+    expect(harness.events.filter(([event]) => event === 'dictationFailed')).toEqual([['dictationFailed', 'Recorder could not start']])
+    expect(harness.api.recording.value).toBe(false)
+    expect(harness.stopped()).toBe(1)
+    harness.unmount()
+  })
+  it('reports recorder errors once and ignores late callbacks from that capture', async () => {
+    let capture: Recorder | undefined
+    class ErrorRecorder extends Recorder {
+      constructor() { super(); capture = this }
+    }
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, recorder: ErrorRecorder })
+    await harness.api.startRecording()
+    const fail = capture?.onerror
+    if (!fail) throw new Error('Recorder did not install its error callback')
+    fail()
+    fail()
+    expect(harness.events.filter(([event]) => event === 'dictationFailed')).toHaveLength(1)
+    expect(harness.api.dictationError.value).toContain('Recording failed')
+    expect(harness.api.recording.value).toBe(false)
+    expect(harness.stopped()).toBe(1)
     harness.unmount()
   })
   it('stops a late permission grant after the conversation is unmounted', async () => {
@@ -278,6 +333,7 @@ describe('Agent media composer lifecycle', () => {
     expect(harness.api.dictationError.value).toBe('No speech was detected. Dictation was canceled.')
     expect(harness.stopped()).toBe(1)
     expect(harness.events.some(([event]) => event === 'dictation')).toBe(false)
+    expect(harness.events.filter(([event]) => event === 'dictationFailed')).toEqual([['dictationFailed', 'No speech was detected. Dictation was canceled.']])
     harness.unmount()
   })
 

@@ -68,7 +68,7 @@ type OfflineVisibleRecord = OfflineSnapshotRecord & {
 
 type ReaderHistoryMode = 'none' | 'initial' | 'pushed' | 'history'
 type ReaderCloseOptions = { readonly fromHistory?: boolean; readonly restoreFocus?: boolean }
-type ReaderOpenOptions = { readonly history?: ReaderHistoryMode; readonly inDocument?: boolean }
+type ReaderOpenOptions = { readonly history?: ReaderHistoryMode; readonly inDocument?: boolean; readonly preservePosition?: boolean }
 
 type FocusAfterRemove = {
   readonly nextKey: string | null
@@ -113,7 +113,9 @@ const privateRecords = shallowRef<readonly OfflineVisibleRecord[]>([])
 const corpus = shallowRef<OfflineSnapshotCorpus | null>(null)
 const preparedCorpus = shallowRef<OfflineSearchCorpus | null>(null)
 const corpusRevision = ref<number | null>(null)
-const policy = shallowRef<OfflinePolicySnapshot | null>(null)
+const publicPolicy = shallowRef<OfflinePolicySnapshot | null>(null)
+const privatePolicy = shallowRef<OfflinePolicySnapshot | null>(null)
+const policy = computed(() => privatePolicy.value ?? publicPolicy.value)
 const policyLoading = ref(false)
 const policyMutationLoading = ref(false)
 const policyError = ref('')
@@ -159,13 +161,16 @@ let readerToken = 0
 let searchController: AbortController | null = null
 let preparationController: AbortController | null = null
 let clockTimer: number | undefined
+let selectedExpiryTimer: number | undefined
 let unsubscribeStorageChanges: (() => void) | undefined
 
 const audienceFor = (record: OfflineSnapshotRecord | { readonly audience?: OfflineAudience }): OfflineAudience =>
   'audience' in record && record.audience !== undefined ? record.audience : 'public'
 
-const recordKey = (record: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'> & { readonly audience?: OfflineAudience }): string =>
-  `${audienceFor(record)}\u0000${record.siteId}\u0000${record.pageId}\u0000${record.locale}`
+const recordKey = (
+  record: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'> & { readonly audience?: OfflineAudience },
+  audience: OfflineAudience = audienceFor(record)
+): string => `${audience}\u0000${record.siteId}\u0000${record.pageId}\u0000${record.locale}`
 
 const isSameOfflinePage = (
   left: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId'> & { readonly audience?: OfflineAudience },
@@ -276,12 +281,15 @@ const canUseNativeShare = computed(() => {
   }
   return typeof navigator.canShare !== 'function' || navigator.canShare(payload)
 })
-const policyByKey = computed(() => new Map(
-  policy.value?.pages.map((record: OfflinePagePolicyRecord) => [recordKey(record), record] as const) ?? []
+const publicPolicyByKey = computed(() => new Map(
+  publicPolicy.value?.pages.map(record => [recordKey(record, 'public'), record] as const) ?? []
+))
+const privatePolicyByKey = computed(() => new Map(
+  privatePolicy.value?.pages.map(record => [recordKey(record, 'private'), record] as const) ?? []
 ))
 
-const policyForRecord = (record: OfflineSnapshotRecord): OfflinePagePolicyRecord | null =>
-  policyByKey.value.get(recordKey({ siteId: record.siteId, pageId: record.pageId, locale: record.locale })) ?? null
+const policyForRecord = (record: OfflineSnapshotRecord & { readonly audience?: OfflineAudience }): OfflinePagePolicyRecord | null =>
+  (audienceFor(record) === 'private' ? privatePolicyByKey.value : publicPolicyByKey.value).get(recordKey(record)) ?? null
 const automaticSavingEnabled = computed(() => policy.value?.state.automaticSavingEnabled === true)
 const selectedTags = computed(() => policy.value?.state.selectedTags ?? [])
 const syncDiagnostics = computed(() => policy.value?.state.syncDiagnostics ?? null)
@@ -350,13 +358,10 @@ const missingPolicyStatusLabel = (status: MissingPolicyPageStatus): string =>
 
 const missingPolicyPages = computed<MissingPolicyPage[]>(() => {
   if (!policy.value || !hasCorpus.value) return []
-  const bodyKeys = new Set(activeRecords.value.map(record => recordKey({
-    siteId: record.siteId,
-    pageId: record.pageId,
-    locale: record.locale
-  })))
+  const audience: OfflineAudience = privatePolicy.value ? 'private' : 'public'
+  const bodyKeys = new Set(activeRecords.value.map(record => recordKey(record)))
   return policy.value.pages
-    .filter((page: OfflinePagePolicyRecord) => hasEffectivePolicyIntent(page) && !bodyKeys.has(recordKey(page)))
+    .filter((page: OfflinePagePolicyRecord) => hasEffectivePolicyIntent(page) && !bodyKeys.has(recordKey(page, audience)))
     .map((page: OfflinePagePolicyRecord) => ({ page, status: missingPolicyPageStatus(page) }))
 })
 
@@ -637,22 +642,22 @@ const isReaderCurrent = (
   expectedPolicyRevision: number | null,
   handle: OfflineReadingHandleV1 | null,
   epoch: number
-): boolean =>
-  operation === readerToken &&
-  selectedKey.value === key &&
-  sessionGeneration.value === generation &&
-  corpusRevision.value === revision &&
-  isReadingCurrent(handle, epoch) &&
-  (expectedPolicyRevision === null ||
-    (
-      policy.value?.sessionGeneration === generation &&
-      (
-        policy.value?.state.policyRevision === expectedPolicyRevision ||
-        publicPolicyRevision.value === expectedPolicyRevision ||
-        privatePolicyRevision.value === expectedPolicyRevision
-      )
-    )) &&
-  Boolean(activeRecordForKey(key))
+): boolean => {
+  if (
+    operation !== readerToken ||
+    selectedKey.value !== key ||
+    sessionGeneration.value !== generation ||
+    corpusRevision.value !== revision ||
+    !isReadingCurrent(handle, epoch)
+  ) return false
+  const record = activeRecordForKey(key)
+  if (!record) return false
+  const audiencePolicy = record.audience === 'private' ? privatePolicy.value : publicPolicy.value
+  return expectedPolicyRevision === null || (
+    audiencePolicy?.sessionGeneration === generation &&
+    audiencePolicy.state.policyRevision === expectedPolicyRevision
+  )
+}
 
 const decorateReaderTree = (target: HTMLElement): void => {
   target.setAttribute('dir', 'auto')
@@ -699,8 +704,11 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
   }
   const storage = props.storage
   const view = corpus.value
-  const currentPolicy = policy.value
+  const currentPolicy = record.audience === 'private' ? privatePolicy.value : publicPolicy.value
   const mode = options.history ?? 'pushed'
+  const preservedPosition = options.preservePosition && typeof window !== 'undefined'
+    ? { top: window.scrollY, bodyTop: renderTarget.value?.scrollTop ?? 0 }
+    : null
   if (event) {
     rememberReaderOpener(record, event)
     if (typeof window !== 'undefined' && selectedKey.value === null) listScrollTop.value = window.scrollY
@@ -724,7 +732,7 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
     emit('error', t('common:offlineLibrary.savedPagesChangedBefore'))
     return
   }
-  setSelectionUrl(record, mode)
+  if (!options.preservePosition) setSelectionUrl(record, mode)
   const operation = ++readerToken
   selectedKey.value = key
   readerState.value = 'loading'
@@ -797,9 +805,14 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
     emit('selected', record)
     await nextTick()
     if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
-    selectedHeading.value?.focus({ preventScroll: true })
-    if (window.location.hash) {
-      try { document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView() } catch { /* malformed fragment */ }
+    if (preservedPosition) {
+      target.scrollTop = preservedPosition.bodyTop
+      if (window.scrollY !== preservedPosition.top) window.scrollTo({ top: preservedPosition.top, behavior: 'auto' })
+    } else {
+      selectedHeading.value?.focus({ preventScroll: true })
+      if (window.location.hash) {
+        try { document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView() } catch { /* malformed fragment */ }
+      }
     }
   } catch (error) {
     if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
@@ -847,7 +860,6 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
   const token = ++loadToken
   const readerOperationAtStart = readerToken
   const selectedKeyAtStart = selectedKey.value
-  const previousPolicyRevision = policy.value?.state.policyRevision ?? null
   const reading = {
     handle: currentOfflineReadingHandle() && isCurrentOfflineReadingHandle(currentOfflineReadingHandle()!) ? currentOfflineReadingHandle() : null,
     epoch: currentOfflineReadingEpoch()
@@ -860,7 +872,8 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
   searchController = null
   searching.value = false
   if (!storage || props.storageState !== 'available') {
-    policy.value = null
+    publicPolicy.value = null
+    privatePolicy.value = null
     policyLoading.value = false
     loading.value = false
     loadError.value = ''
@@ -870,7 +883,8 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
   }
   const origin = currentOrigin()
   if (!origin) {
-    policy.value = null
+    publicPolicy.value = null
+    privatePolicy.value = null
     policyLoading.value = false
     hasCorpus.value = false
     records.value = publicRecords.value
@@ -883,7 +897,8 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
   }
   const selector = props.requestedSelector
   if (selector && !isValidSelector(selector, origin)) {
-    policy.value = null
+    publicPolicy.value = null
+    privatePolicy.value = null
     policyLoading.value = false
     hasCorpus.value = false
     records.value = publicRecords.value
@@ -907,7 +922,6 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       expectedPolicyRevision: loadedPublicPolicy.state.policyRevision
     })
     if (!currentLoad()) return false
-    let loadedPolicy = loadedPublicPolicy
     let loadedPrivatePolicy: OfflinePolicySnapshot | null = null
     let loadedPrivate: OfflineSnapshotCorpus | null = null
     if (reading.handle) {
@@ -916,7 +930,6 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
           readingHandle: reading.handle,
           expectedSessionGeneration: reading.handle.sessionGeneration
         })
-        loadedPolicy = loadedPrivatePolicy
         if (!currentLoad()) return false
       } catch {
         if (!currentLoad()) return false
@@ -973,25 +986,15 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       sessionGeneration: loadedPublic.sessionGeneration,
       corpusRevision: loadedPublic.corpusRevision
     }) as unknown as OfflineSnapshotCorpus
-    if (
-      !currentLoad() ||
-      (
-        selectedKey.value &&
-        selectedKey.value === selectedKeyAtStart &&
-        readerToken === readerOperationAtStart &&
-        previousRevision !== null &&
-        (
-          previousRevision !== loadedPublic.corpusRevision ||
-          previousGeneration !== loadedPublic.sessionGeneration ||
-          previousPolicyRevision !== loadedPolicy.state.policyRevision
-        )
-      )
-    ) {
-      if (!currentLoad()) return false
-      ++readerToken
-      renderTarget.value?.replaceChildren()
-      readerState.value = 'error'
-      readerMessage.value = t('common:offlineLibrary.savedPagesChangedDevice')
+    if (!currentLoad()) return false
+    if (previousGeneration !== null && previousGeneration !== loadedPublic.sessionGeneration) {
+      invalidateLocalProjection()
+      void loadRecords()
+      return false
+    }
+    if (selectedKey.value && !validRecords.some(record => recordKey(record) === selectedKey.value)) {
+      closeRecord({ fromHistory: true })
+      clearOfflineSelector()
     }
     let prepared = preparedCorpus.value
     if (!sameCommittedCorpus) {
@@ -1009,6 +1012,21 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       }
     }
     if (!currentLoad() || !prepared) return false
+    // Revalidate the live selection, including one opened while this load awaited.
+    const selectedKeyAtCommit = selectedKey.value
+    const selectedBeforeCommit = selectedRecord.value
+    const revalidatedSelection = selectedKeyAtCommit
+      ? validRecords.find(record => recordKey(record) === selectedKeyAtCommit)
+      : undefined
+    const preserveReaderPosition = readerState.value === 'ready'
+    const reopenSelection = revalidatedSelection && (
+      !preserveReaderPosition ||
+      !selectedBeforeCommit ||
+      selectedBeforeCommit.snapshot.content.html !== revalidatedSelection.snapshot.content.html ||
+      selectedBeforeCommit.snapshot.content.sanitizerVersion !== revalidatedSelection.snapshot.content.sanitizerVersion ||
+      selectedBeforeCommit.snapshot.integrity !== revalidatedSelection.snapshot.integrity
+    )
+    if (reopenSelection) ++readerToken
     publicRecords.value = Object.freeze(publicVisible)
     privateRecords.value = Object.freeze(privateVisible)
     records.value = Object.freeze(validRecords)
@@ -1019,16 +1037,15 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     publicPolicyRevision.value = loadedPublicPolicy.state.policyRevision
     privatePolicyRevision.value = loadedPrivatePolicy?.state.policyRevision ?? null
     hasCorpus.value = true
-    policy.value = loadedPolicy
+    publicPolicy.value = loadedPublicPolicy
+    privatePolicy.value = loadedPrivatePolicy
     if (!preservePolicyError) policyError.value = ''
-    if (
-      selectedKey.value &&
-      !activeRecordForKey(selectedKey.value) &&
-      selectedKey.value === selectedKeyAtStart &&
-      readerToken === readerOperationAtStart
-    ) {
+    if (selectedKeyAtCommit && !revalidatedSelection) {
       closeRecord({ fromHistory: true })
       clearOfflineSelector()
+    } else if (reopenSelection && revalidatedSelection && selectedKey.value === selectedKeyAtCommit) {
+      await openRecord(revalidatedSelection, undefined, { history: historyMode.value, preservePosition: preserveReaderPosition })
+      if (!currentLoad()) return false
     }
     await runSearch()
     if (!currentLoad()) return false
@@ -1057,6 +1074,9 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     return true
   } catch (error) {
     if (!currentLoad() || isAbortError(error)) return false
+    if (selectedKeyAtStart && selectedKey.value === selectedKeyAtStart && readerToken === readerOperationAtStart) {
+      finishReaderError(readerOperationAtStart, selectedKeyAtStart, t('common:offlineLibrary.savedPagesChangedDevice'))
+    }
     loadError.value = normalizeError(error, t('common:offlineLibrary.savedPagesCouldNot'))
     emit('error', loadError.value)
     return false
@@ -1097,10 +1117,11 @@ const removeLocalPageProjection = (selector: Pick<OfflineSnapshotRecord, 'siteId
   }
   preparedCorpus.value = null
   searchHasMore.value = false
-  if (policy.value) {
-    policy.value = {
-      ...policy.value,
-      pages: policy.value.pages.filter(page => !isSameOfflinePage(page, selector))
+  const audiencePolicy = audienceFor(selector) === 'private' ? privatePolicy : publicPolicy
+  if (audiencePolicy.value) {
+    audiencePolicy.value = {
+      ...audiencePolicy.value,
+      pages: audiencePolicy.value.pages.filter(page => page.siteId !== selector.siteId || page.pageId !== selector.pageId)
     }
   }
   if (selectedWasRemoved) {
@@ -1213,7 +1234,8 @@ const toggleAutomaticSaving = async (): Promise<void> => {
       ...(handle ? { readingHandle: handle } : {})
     })
     policyMutationCommitted = true
-    policy.value = { ...current, state }
+    if (handle) privatePolicy.value = { ...current, state }
+    else publicPolicy.value = { ...current, state }
     emit('changed')
     const syncResult: OfflineSyncResult = offlineSyncService
       ? await offlineSyncService.reconcile('policy')
@@ -1259,7 +1281,8 @@ const removeSelectedTag = async (tag: string): Promise<void> => {
       ...(handle ? { readingHandle: handle } : {})
     })
     policyMutationCommitted = true
-    policy.value = { ...current, state }
+    if (handle) privatePolicy.value = { ...current, state }
+    else publicPolicy.value = { ...current, state }
     emit('changed')
     const syncResult: OfflineSyncResult = offlineSyncService
       ? await offlineSyncService.reconcile('tags')
@@ -1435,7 +1458,8 @@ const invalidateLocalProjection = (): void => {
   readingEpoch.value = currentOfflineReadingEpoch()
   publicPolicyRevision.value = null
   privatePolicyRevision.value = null
-  policy.value = null
+  publicPolicy.value = null
+  privatePolicy.value = null
   policyLoading.value = false
   hasCorpus.value = false
   loading.value = false
@@ -1444,6 +1468,7 @@ const invalidateLocalProjection = (): void => {
   searchError.value = ''
   renderTarget.value?.replaceChildren()
   selectedKey.value = null
+  emit('selected', null)
   selectedHeading.value = null
   readerState.value = 'idle'
   readerMessage.value = ''
@@ -1544,7 +1569,8 @@ watch(searchQuery, () => {
 
 watch(
   () => [props.storage, props.storageState, props.refreshToken],
-  () => {
+  (value, previous) => {
+    if (previous && (value[0] !== previous[0] || value[1] !== 'available')) invalidateLocalProjection()
     void refreshReadingVault()
     void loadRecords()
   }
@@ -1555,6 +1581,23 @@ watch(() => props.clearDeviceToken, (value, previous) => {
 })
 watch(requestedSelectorKey, (value, previous) => {
   if (value !== previous) requestedSelectorConsumed.value = null
+})
+
+watch([() => selectedSnapshot.value?.expiresAt, clock], ([expiresAt]) => {
+  if (selectedExpiryTimer !== undefined) window.clearTimeout(selectedExpiryTimer)
+  selectedExpiryTimer = undefined
+  if (!expiresAt) return
+  const expiry = Date.parse(expiresAt)
+  if (!Number.isFinite(expiry)) return
+  const now = Date.now()
+  if (expiry <= now) {
+    clock.value = now
+    return
+  }
+  selectedExpiryTimer = window.setTimeout(() => {
+    selectedExpiryTimer = undefined
+    clock.value = Date.now()
+  }, Math.min(expiry - now, 2_147_483_647))
 })
 
 watch(clock, () => {
@@ -1572,8 +1615,12 @@ onMounted(() => {
   window.addEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateChange)
   window.addEventListener(OFFLINE_SAVED_PAGE_OPEN_EVENT, handleSavedPageOpen)
   unsubscribeStorageChanges = subscribeOfflineStorageChanges(notice => {
-    if (notice.kind === 'generation' || notice.kind === 'corpus') {
+    if (notice.kind === 'generation' || (sessionGeneration.value !== null && notice.sessionGeneration !== sessionGeneration.value)) {
       invalidateLocalProjection()
+      void loadRecords()
+      return
+    }
+    if (notice.kind === 'corpus') {
       void loadRecords()
       return
     }
@@ -1596,6 +1643,7 @@ onBeforeUnmount(() => {
   unsubscribeStorageChanges?.()
   window.removeEventListener(OFFLINE_SAVED_PAGE_OPEN_EVENT, handleSavedPageOpen)
   if (clockTimer !== undefined) window.clearInterval(clockTimer)
+  if (selectedExpiryTimer !== undefined) window.clearTimeout(selectedExpiryTimer)
 })
 </script>
 
@@ -1631,88 +1679,6 @@ onBeforeUnmount(() => {
       />
       <p id="downloaded-pages-search-detail" class="field-hint" role="status" aria-live="polite" aria-atomic="true">{{ searchDetail }}</p>
     </div>
-    <section v-if="showSettings" class="offline-policy" aria-labelledby="offline-policy-title">
-      <div class="policy-heading">
-        <div>
-          <p class="section-kicker">{{ $t('common:offlineLibrary.device') }}</p>
-          <h3 id="offline-policy-title">{{ $t('common:offlineLibrary.whatGetsSaved') }}</h3>
-        </div>
-        <button class="text-button" type="button" :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing" @click="refreshOfflineSync">
-          {{ policyLoading || refreshing ? $t('common:offlineLibrary.refreshing') : $t('common:offlineLibrary.syncNow') }}
-        </button>
-      </div>
-      <label class="policy-toggle">
-        <input
-          type="checkbox"
-          :checked="automaticSavingEnabled"
-          :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing"
-          @change="toggleAutomaticSaving"
-        />
-        <span>
-          <strong>{{ $t('common:offlineLibrary.saveFrequentlyVisitedRecently') }}</strong>
-          <small>{{ $t('common:offlineLibrary.defaultSaveUp10') }}</small>
-        </span>
-      </label>
-      <div class="policy-tags">
-        <div class="policy-tags-heading">
-          <strong>{{ $t('common:offlineLibrary.followedTags') }}</strong>
-          <a class="text-button" href="/t">{{ $t('common:offlineLibrary.browseTags') }}</a>
-        </div>
-        <span v-if="!selectedTags.length" class="policy-muted">{{ $t('common:offlineLibrary.noneYet') }}</span>
-        <button
-          v-for="tag in selectedTags"
-          :key="`offline-tag-${tag}`"
-          class="policy-tag"
-          type="button"
-          :aria-label="$t('common:offlineLibrary.unfollow', { tag, interpolation: { escapeValue: false } })"
-          :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing"
-          @click="removeSelectedTag(tag)"
-        >
-          #{{ tag }} <span aria-hidden="true">×</span>
-        </button>
-      </div>
-      <p class="policy-diagnostics" role="status" aria-live="polite">{{ syncDiagnosticsDetail }}</p>
-      <p v-if="policyError" class="library-inline-error" role="alert">{{ policyError }}</p>
-    </section>
-    <section v-if="showSettings && missingPolicyPages.length" class="offline-policy missing-pages" aria-labelledby="missing-pages-title">
-      <div class="policy-heading">
-        <div>
-          <p class="section-kicker">{{ $t('common:offlineLibrary.needsAttention') }}</p>
-          <h3 id="missing-pages-title">{{ $t('common:offlineLibrary.selectedPagesWithoutSaved') }}</h3>
-        </div>
-        <span class="policy-muted">{{ $t('common:offlineLibrary.waiting', { missingPolicyPagesCount: missingPolicyPages.length, interpolation: { escapeValue: false } }) }}</span>
-      </div>
-      <p class="policy-muted">{{ $t('common:offlineLibrary.thesePagesSelectedOffline') }}</p>
-      <ul class="missing-page-list">
-        <li v-for="entry in missingPolicyPages" :key="entry.page.key" class="missing-page-item">
-          <div class="missing-page-main">
-            <strong>{{ $t('common:offlineLibrary.page', { pageId: entry.page.pageId, locale: entry.page.locale, interpolation: { escapeValue: false } }) }}</strong>
-            <span class="missing-page-status" :data-state="entry.status">{{ missingPolicyStatusLabel(entry.status) }}</span>
-            <small v-if="entry.status === 'denied' && entry.page.ineligibleReason">{{ offlineServerReasonDetail(entry.page.ineligibleReason, $t) }}</small>
-            <small>{{ $t('common:offlineLibrary.savedVia', { page: provenanceLabelForPolicy(entry.page), interpolation: { escapeValue: false } }) }}</small>
-          </div>
-          <div class="missing-page-actions">
-            <button
-              class="secondary-button"
-              type="button"
-              :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing || Boolean(removingKey)"
-              @click="retryMissingPage(entry.page)"
-            >
-              {{ refreshing || policyLoading ? $t('common:offlineLibrary.refreshing') : $t('common:offlineLibrary.retrySync') }}
-            </button>
-            <button
-              class="text-button"
-              type="button"
-              :data-offline-record-key="recordDomKey(entry.page)"
-              :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing || Boolean(removingKey)"
-              @click="removeMissingPage(entry.page)"
-            >
-              {{ removingKey === recordKey(entry.page) ? $t('common:offlineLibrary.removing') : $t('common:offlineLibrary.removeExclude') }}
-            </button>
-          </div>
-        </li>
-      </ul>
-    </section>
 
     <div v-if="storageChecking && !activeRecords.length && !selectedRecord" class="library-message" role="status" aria-live="polite">
       <span class="loading-mark" aria-hidden="true">…</span>
@@ -1802,7 +1768,7 @@ onBeforeUnmount(() => {
       <small>{{ $t('common:offlineLibrary.automaticSavingDefaultIncludes') }}</small>
     </div>
 
-    <ol v-else class="page-list" :aria-label="$t('common:offlineLibrary.savedPublicPages')">
+    <ol v-else class="page-list" :aria-label="$t('common:offlineLibrary.savedPages')">
       <li v-if="storageUnavailable || loadError" class="page-list-notice" role="alert">
         <span>{{ storageUnavailable ? libraryMessage : loadError }}</span>
         <button class="text-button" type="button" @click="retryStorage">{{ $t('common:offlineLibrary.retrySavedPages') }}</button>
@@ -1830,6 +1796,94 @@ onBeforeUnmount(() => {
         </article>
       </li>
     </ol>
+    <details v-if="showSettings && !selectedRecord" class="policy-disclosure" :open="policyError ? true : undefined">
+      <summary>
+        <span>{{ $t('common:offlineLibrary.whatGetsSaved') }}</span>
+        <span v-if="missingPolicyPages.length" class="policy-muted">{{ $t('common:offlineLibrary.waiting', { missingPolicyPagesCount: missingPolicyPages.length, interpolation: { escapeValue: false } }) }}</span>
+      </summary>
+    <section v-if="showSettings" class="offline-policy" aria-labelledby="offline-policy-title">
+      <div class="policy-heading">
+        <div>
+          <p class="section-kicker">{{ $t('common:offlineLibrary.device') }}</p>
+          <h3 id="offline-policy-title">{{ $t('common:offlineLibrary.whatGetsSaved') }}</h3>
+        </div>
+        <button class="text-button" type="button" :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing" @click="refreshOfflineSync">
+          {{ policyLoading || refreshing ? $t('common:offlineLibrary.refreshing') : $t('common:offlineLibrary.syncNow') }}
+        </button>
+      </div>
+      <label class="policy-toggle">
+        <input
+          type="checkbox"
+          :checked="automaticSavingEnabled"
+          :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing"
+          @change="toggleAutomaticSaving"
+        />
+        <span>
+          <strong>{{ $t('common:offlineLibrary.saveFrequentlyVisitedRecently') }}</strong>
+          <small>{{ $t('common:offlineLibrary.defaultSaveUp10') }}</small>
+        </span>
+      </label>
+      <div class="policy-tags">
+        <div class="policy-tags-heading">
+          <strong>{{ $t('common:offlineLibrary.followedTags') }}</strong>
+          <a class="text-button" href="/t">{{ $t('common:offlineLibrary.browseTags') }}</a>
+        </div>
+        <span v-if="!selectedTags.length" class="policy-muted">{{ $t('common:offlineLibrary.noneYet') }}</span>
+        <button
+          v-for="tag in selectedTags"
+          :key="`offline-tag-${tag}`"
+          class="policy-tag"
+          type="button"
+          :aria-label="$t('common:offlineLibrary.unfollow', { tag, interpolation: { escapeValue: false } })"
+          :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing"
+          @click="removeSelectedTag(tag)"
+        >
+          #{{ tag }} <span aria-hidden="true">×</span>
+        </button>
+      </div>
+      <p class="policy-diagnostics" role="status" aria-live="polite">{{ syncDiagnosticsDetail }}</p>
+      <p v-if="policyError" class="library-inline-error" role="alert">{{ policyError }}</p>
+    </section>
+    <section v-if="showSettings && missingPolicyPages.length" class="offline-policy missing-pages" aria-labelledby="missing-pages-title">
+      <div class="policy-heading">
+        <div>
+          <p class="section-kicker">{{ $t('common:offlineLibrary.needsAttention') }}</p>
+          <h3 id="missing-pages-title">{{ $t('common:offlineLibrary.selectedPagesWithoutSaved') }}</h3>
+        </div>
+        <span class="policy-muted">{{ $t('common:offlineLibrary.waiting', { missingPolicyPagesCount: missingPolicyPages.length, interpolation: { escapeValue: false } }) }}</span>
+      </div>
+      <p class="policy-muted">{{ $t('common:offlineLibrary.thesePagesSelectedOffline') }}</p>
+      <ul class="missing-page-list">
+        <li v-for="entry in missingPolicyPages" :key="entry.page.key" class="missing-page-item">
+          <div class="missing-page-main">
+            <strong>{{ $t('common:offlineLibrary.page', { pageId: entry.page.pageId, locale: entry.page.locale, interpolation: { escapeValue: false } }) }}</strong>
+            <span class="missing-page-status" :data-state="entry.status">{{ missingPolicyStatusLabel(entry.status) }}</span>
+            <small v-if="entry.status === 'denied' && entry.page.ineligibleReason">{{ offlineServerReasonDetail(entry.page.ineligibleReason, $t) }}</small>
+            <small>{{ $t('common:offlineLibrary.savedVia', { page: provenanceLabelForPolicy(entry.page), interpolation: { escapeValue: false } }) }}</small>
+          </div>
+          <div class="missing-page-actions">
+            <button
+              class="secondary-button"
+              type="button"
+              :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing || Boolean(removingKey)"
+              @click="retryMissingPage(entry.page)"
+            >
+              {{ refreshing || policyLoading ? $t('common:offlineLibrary.refreshing') : $t('common:offlineLibrary.retrySync') }}
+            </button>
+            <button
+              class="text-button"
+              type="button"
+              :data-offline-record-key="recordDomKey(entry.page)"
+              :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing || Boolean(removingKey)"
+              @click="removeMissingPage(entry.page)"
+            >
+              {{ removingKey === recordKey(entry.page) ? $t('common:offlineLibrary.removing') : $t('common:offlineLibrary.removeExclude') }}
+            </button>
+          </div>
+        </li>
+      </ul>
+    </section>
+    </details>
   </section>
 </template>
 
@@ -1855,6 +1909,10 @@ onBeforeUnmount(() => {
   --offline-heading: var(--wiki-font-display);
   color: var(--offline-ink);
 }
+.policy-disclosure { margin-block-start: 1rem; border-block-start: 1px solid var(--offline-border); }
+.policy-disclosure > summary { min-block-size: 44px; padding-block: .85rem; color: var(--offline-accent-strong); cursor: pointer; font-weight: 600; }
+.policy-disclosure > summary span + span { margin-inline-start: .75rem; font-size: .8rem; }
+.policy-disclosure > summary:focus-visible { outline: 2px solid var(--offline-focus); outline-offset: 3px; }
 button { font: inherit; cursor: pointer; min-height: 44px; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--offline-focus); outline-offset: 3px; }

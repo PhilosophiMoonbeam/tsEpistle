@@ -83,14 +83,15 @@ describe('users api helper', () => {
     async input => {
       const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Profile preferences updated successfully.' }))
 
-      await expect(updateProfilePreferences(fetchImpl, input)).resolves.toBe('Profile preferences updated successfully.')
+      await expect(updateProfilePreferences(fetchImpl, 42, input)).resolves.toBe('Profile preferences updated successfully.')
 
       expect(fetchImpl).toHaveBeenCalledWith('/_api/users/profile/preferences', {
         method: 'PATCH',
         credentials: 'same-origin',
         headers: {
           Accept: 'application/json',
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-TsEpistle-Profile-Account': '42'
         },
         body: JSON.stringify(input)
       })
@@ -100,7 +101,7 @@ describe('users api helper', () => {
   test('rejects malformed profile preference responses with the provided fallback', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ token: '' }))
 
-    await expect(updateProfilePreferences(fetchImpl, { appearance: 'system' }, 'Bad preferences response')).rejects.toThrow('Bad preferences response')
+    await expect(updateProfilePreferences(fetchImpl, 42, { appearance: 'system' }, 'Bad preferences response')).rejects.toThrow('Bad preferences response')
   })
 
   test.each(['token', 'jwt'])('rejects otherwise-valid profile preference responses containing %s', async credential => {
@@ -108,13 +109,13 @@ describe('users api helper', () => {
       createJsonResponse({ message: 'Profile preferences updated successfully.', [credential]: 'unexpected' })
     )
 
-    await expect(updateProfilePreferences(fetchImpl, { appearance: 'system' }, 'Bad preferences response')).rejects.toThrow('Bad preferences response')
+    await expect(updateProfilePreferences(fetchImpl, 42, { appearance: 'system' }, 'Bad preferences response')).rejects.toThrow('Bad preferences response')
   })
 
   test('surfaces API errors from profile preference updates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Profile preferences could not be saved' }, false))
 
-    await expect(updateProfilePreferences(fetchImpl, { fontFamily: 'newsreader' })).rejects.toThrow('Profile preferences could not be saved')
+    await expect(updateProfilePreferences(fetchImpl, 42, { fontFamily: 'newsreader' })).rejects.toThrow('Profile preferences could not be saved')
   })
 
   test('surfaces API error messages for failed searches', async () => {
@@ -137,7 +138,7 @@ describe('users api helper', () => {
     )
     const file = new File([Buffer.from('avatar')], 'avatar.png', { type: 'image/png' })
 
-    await expect(uploadProfileAvatar(fetchImpl, file)).resolves.toEqual({
+    await expect(uploadProfileAvatar(fetchImpl, 42, file)).resolves.toEqual({
       message: 'Profile avatar updated successfully.',
       pictureUrl: 'internal'
     })
@@ -147,7 +148,7 @@ describe('users api helper', () => {
     expect(options).toMatchObject({
       method: 'POST',
       credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
+      headers: { Accept: 'application/json', 'X-TsEpistle-Profile-Account': '42' }
     })
     expect(options.headers).not.toHaveProperty('Content-Type')
     expect(options.body).toBeInstanceOf(FormData)
@@ -169,22 +170,22 @@ describe('users api helper', () => {
       })
     )
 
-    await expect(removeProfileAvatar(fetchImpl)).resolves.toEqual({
+    await expect(removeProfileAvatar(fetchImpl, 42)).resolves.toEqual({
       message: 'Profile avatar removed successfully.',
       pictureUrl: null
     })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/users/profile/avatar', {
       method: 'DELETE',
       credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
+      headers: { Accept: 'application/json', 'X-TsEpistle-Profile-Account': '42' }
     })
   })
 
   test('rejects malformed avatar mutation responses and preserves API errors', async () => {
     const malformed = vi.fn().mockResolvedValue(createJsonResponse({ message: 'done', pictureUrl: 'internal', token: 'unexpected' }))
-    await expect(uploadProfileAvatar(malformed, new File([Buffer.from('avatar')], 'avatar.png'), 'Bad avatar response')).rejects.toThrow('Bad avatar response')
+    await expect(uploadProfileAvatar(malformed, 42, new File([Buffer.from('avatar')], 'avatar.png'), 'Bad avatar response')).rejects.toThrow('Bad avatar response')
 
     const failed = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Avatar image is invalid or could not be decoded.' }, false))
-    await expect(removeProfileAvatar(failed)).rejects.toThrow('Avatar image is invalid or could not be decoded.')
+    await expect(removeProfileAvatar(failed, 42)).rejects.toThrow('Avatar image is invalid or could not be decoded.')
   })
 })

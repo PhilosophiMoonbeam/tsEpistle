@@ -76,7 +76,7 @@
               auto-grow
               autofocus
               :disabled="saving"
-              @keydown.ctrl.enter.prevent="save"
+              @keydown.enter="saveShortcut"
             />
             <p v-if="draftOverLimit" class="agent-memory__draft-limit" role="alert">{{ draftCapacityLabel }}</p>
             <div class="agent-memory__editor-actions">
@@ -496,6 +496,11 @@ const componentElement = (component: ComponentRoot | null): HTMLElement | null =
   if (!component) return null
   if (component instanceof HTMLElement) return component
   return component.$el instanceof HTMLElement ? component.$el : null
+}
+const saveShortcut = (event: KeyboardEvent): void => {
+  if (!event.ctrlKey && !event.metaKey) return
+  event.preventDefault()
+  void save()
 }
 const save = async (): Promise<void> => {
   const current = editing.value

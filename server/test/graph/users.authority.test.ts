@@ -59,7 +59,7 @@ describe('GraphQL profile transport results', () => {
     const mutation = await graphql({
       schema,
       source: 'mutation { users { updateProfile(name: "API", location: "", jobTitle: "", timezone: "UTC", dateFormat: "", appearance: "light") { responseResult { succeeded errorCode slug message } } } }',
-      contextValue: { req: { user: apiPrincipal }, res: {} }
+      contextValue: { req: { user: apiPrincipal, get: () => '1' }, res: {} }
     })
     expect(mutation.errors).toBeUndefined()
     expect(mutation.data).toEqual({
@@ -78,7 +78,7 @@ describe('GraphQL profile transport results', () => {
     const password = await graphql({
       schema,
       source: 'mutation { users { changePassword(current: "old", new: "new") { responseResult { succeeded errorCode slug message } } } }',
-      contextValue: { req: { user: apiPrincipal }, res: {} }
+      contextValue: { req: { user: apiPrincipal, get: () => '1' }, res: {} }
     })
     expect(password.errors).toBeUndefined()
     expect(password.data).toEqual({
@@ -102,7 +102,7 @@ describe('GraphQL profile transport results', () => {
     const result = await graphql({
       schema,
       source: 'mutation { users { updateProfile(name: "Human", location: "", jobTitle: "", timezone: "UTC", dateFormat: "", appearance: "light") { responseResult { succeeded errorCode slug message } } } }',
-      contextValue: { req: { user: humanPrincipal }, res: {} }
+      contextValue: { req: { user: humanPrincipal, get: () => '7' }, res: {} }
     })
     expect(result.errors).toBeUndefined()
     expect(result.data).toEqual({

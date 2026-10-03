@@ -569,7 +569,7 @@
                   <h3>{{ $t('admin:storage.wholeWorkspaceRecovery') }}</h3>
                   <p>{{ $t('admin:storage.keepDatabaseBackupRequired') }}</p>
                   <p>{{ $t('admin:storage.restoreIntoIsolatedEnvironment') }}</p><v-btn
-                    to="/a/system"
+                    to="/system"
                     variant="text"
                     append-icon="mdi-arrow-right"
                   >{{ $t('admin:storage.inspectDeploymentInformation') }}</v-btn>
