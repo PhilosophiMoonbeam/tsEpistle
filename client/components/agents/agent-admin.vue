@@ -67,6 +67,10 @@
               <h2>{{ $t('admin:agentAdmin.modelsExpertiseAccess') }}</h2>
               <p>{{ $t('admin:agentAdmin.reviewConversationSetupThen') }}</p>
             </div>
+            <v-alert v-if="resourceState.runtime.error || resourceState.profiles.error" type="warning" variant="tonal" role="alert">
+              {{ resourceState.runtime.error || resourceState.profiles.error }}
+              <v-btn variant="text" :disabled="loading" @click="refreshResources(['runtime', 'profiles'])">{{ $t('admin:agentAdmin.retry') }}</v-btn>
+            </v-alert>
             <v-skeleton-loader v-if="!dataLoaded && loading" type="article, list-item-three-line" />
             <div v-else-if="dataLoaded" class="agent-overview__grid">
               <section class="agent-setup" aria-labelledby="agent-setup-title">
@@ -98,6 +102,7 @@
                 <button type="button" @click="tab = 'memory'"><v-icon icon="mdi-brain" aria-hidden="true" /><span><strong>{{ $t('admin:agentAdmin.understandWhatPersists') }}</strong><small>{{ $t('admin:agentAdmin.knowledgeSourcesPersonalMemory') }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
               </section>
             </div>
+            <div v-else class="agent-empty"><h3>{{ $t('admin:agentAdmin.deploymentStateUnavailable') }}</h3><p>{{ resourceState.runtime.error }}</p><v-btn variant="tonal" :disabled="loading" @click="refreshResources(['runtime', 'profiles'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></div>
           </section>
         </v-window-item>
 
@@ -202,6 +207,8 @@
               <v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true || Boolean(actionBusyKey)" @click="openProfile()">{{ $t('admin:agentAdmin.addProvider') }}</v-btn>
             </div>
             <div class="agent-panel__body">
+              <v-alert v-if="resourceState.profiles.error || resourceState.runtime.error" type="warning" variant="tonal" role="alert" class="mb-4">{{ resourceState.profiles.error || resourceState.runtime.error }} <v-btn variant="text" :disabled="loading" @click="refreshResources(['profiles', 'runtime'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></v-alert>
+              <v-alert v-for="(warning, id) in profileWarnings" :key="id" type="warning" variant="tonal" closable role="alert" class="mb-4" @click:close="delete profileWarnings[id]">{{ warning }}</v-alert>
               <v-progress-linear v-if="loading" indeterminate class="mb-4" :aria-label="$t('admin:agentAdmin.loadingProviderProfiles')" />
               <aside class="provider-policy-strip" :aria-label="$t('admin:agentAdmin.providerGovernance')">
                 <span><v-icon icon="mdi-connection" size="17" aria-hidden="true" /><strong>{{ $t('admin:agentAdmin.verify') }}</strong>{{ $t('admin:agentAdmin.liveCapabilityCheckEvery') }}</span>
@@ -263,12 +270,14 @@
                 <h3>{{ $t('admin:agentAdmin.noProvidersMatch') }}</h3><p>{{ $t('admin:agentAdmin.tryAnotherModelName') }}</p>
                 <v-btn variant="tonal" @click="providerQuery = ''; providerState = 'all'">{{ $t('admin:agentAdmin.clearFilters') }}</v-btn>
               </div>
-              <div v-else-if="dataLoaded" class="agent-empty">
+              <div v-else-if="resourceState.profiles.loaded" class="agent-empty">
                 <span class="agent-empty__icon"><v-icon icon="mdi-brain" size="34" aria-hidden="true" /></span>
                 <h3>{{ $t('admin:agentAdmin.connectFirstProvider') }}</h3>
                 <p>{{ $t('admin:agentAdmin.startModelTeamTrusts') }}</p>
                 <v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true || Boolean(actionBusyKey)" @click="openProfile()">{{ $t('admin:agentAdmin.addProvider') }}</v-btn>
               </div>
+              <v-skeleton-loader v-else-if="resourceState.profiles.loading" type="article" />
+              <div v-else class="agent-empty"><h3>{{ $t('admin:agentAdmin.providerDataUnavailable') }}</h3><p>{{ resourceState.profiles.error }}</p><v-btn variant="tonal" @click="refreshResources(['profiles'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></div>
             </div>
           </section>
         </v-window-item>
@@ -292,6 +301,7 @@
               <v-btn color="primary" prepend-icon="mdi-plus" :disabled="Boolean(actionBusyKey)" @click="openBrowserDialog">{{ $t('admin:agentAdmin.addTarget') }}</v-btn>
             </div>
             <div class="agent-panel__body">
+              <v-alert v-if="resourceState.browser.error || resourceState.runtime.error" type="warning" variant="tonal" role="alert" class="mb-4">{{ resourceState.browser.error || resourceState.runtime.error }} <v-btn variant="text" :disabled="loading" @click="refreshResources(['browser', 'runtime'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></v-alert>
               <v-progress-linear v-if="loading" indeterminate class="mb-4" :aria-label="$t('admin:agentAdmin.loadingBrowserTargets')" />
               <v-alert v-if="runtime?.browserEnabled === false" type="info" variant="tonal" density="compact" class="mb-4">{{ $t('admin:agentAdmin.isolatedBrowserPausedDeployment') }}</v-alert>
               <aside class="browser-boundary-note">
@@ -313,11 +323,13 @@
               <div v-else-if="browserTargets.length" class="agent-empty">
                 <h3>{{ $t('admin:agentAdmin.noDestinationsMatch') }}</h3><v-btn variant="tonal" @click="browserQuery = ''; browserState = 'all'">{{ $t('admin:agentAdmin.clearFilters') }}</v-btn>
               </div>
-              <div v-else-if="dataLoaded" class="agent-empty">
+              <div v-else-if="resourceState.browser.loaded" class="agent-empty">
                 <span class="agent-empty__icon agent-empty__icon--teal"><v-icon icon="mdi-web-off" size="34" aria-hidden="true" /></span>
                 <h3>{{ $t('admin:agentAdmin.noBrowserDestinationsApproved') }}</h3>
                 <v-btn color="primary" prepend-icon="mdi-plus" :disabled="Boolean(actionBusyKey)" @click="openBrowserDialog">{{ $t('admin:agentAdmin.addTarget') }}</v-btn>
               </div>
+              <v-skeleton-loader v-else-if="resourceState.browser.loading" type="article" />
+              <div v-else class="agent-empty"><h3>{{ $t('admin:agentAdmin.browserDataUnavailable') }}</h3><p>{{ resourceState.browser.error }}</p><v-btn variant="tonal" @click="refreshResources(['browser'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></div>
             </div>
           </section>
         </v-window-item>
@@ -361,8 +373,8 @@
         </div>
         <v-progress-linear class="profile-editor__progress" color="primary" :model-value="profileProgress" :aria-label="$t('admin:agentAdmin.providerSetupProgress')" />
         <div class="profile-editor__workspace">
-          <nav class="profile-steps" :aria-label="$t('admin:agentAdmin.providerSetupSections')">
-            <button v-for="(step, index) in profileSteps" :key="step.value" type="button" :class="{ 'profile-step--active': profileStep === step.value }" :aria-current="profileStep === step.value ? 'step' : undefined" :disabled="!canNavigateProfileStep(index)" @click="profileStep = step.value">
+          <nav ref="profileRail" class="profile-steps" :aria-label="$t('admin:agentAdmin.providerSetupSections')">
+            <button v-for="(step, index) in profileSteps" :key="step.value" type="button" :class="{ 'profile-step--active': profileStep === step.value }" :aria-current="profileStep === step.value ? 'step' : undefined" :aria-disabled="!canNavigateProfileStep(index)" @click="navigateProfileStep(index)">
               <span class="profile-step__index">{{ index + 1 }}</span>
               <span><strong>{{ step.title }}</strong><small>{{ step.description }}</small></span>
               <v-icon icon="mdi-chevron-right" size="17" aria-hidden="true" />
@@ -376,7 +388,7 @@
               <div class="form-grid">
                 <v-text-field v-model="profileDraft.displayName" :rules="profileDisplayNameRules" :label="$t('admin:agentAdmin.displayName')" maxlength="255" counter="255" required autofocus />
                 <div class="protocol-field">
-                  <v-select v-model="profileDraft.transportKind" :items="protocolOptions" :label="$t('admin:agentAdmin.apiProtocol')" required @update:model-value="selectProtocol">
+                  <v-select :model-value="profileDraft.transportKind" :items="protocolOptions" :label="$t('admin:agentAdmin.apiProtocol')" required @update:model-value="selectProtocol">
                     <template #item="{ props: itemProps, internalItem }">
                       <v-list-subheader v-if="internalItem.raw.startsGroup">{{ internalItem.raw.group }}</v-list-subheader>
                       <v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="internalItem.raw.description" />
@@ -477,6 +489,11 @@
                 </label>
               </div>
               <v-autocomplete v-if="profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" class="mt-5" :items="groups" item-title="name" item-value="id" :label="$t('admin:agentAdmin.wikiGroups')" multiple chips closable-chips :hint="$t('admin:agentAdmin.usersReceiveProviderThrough')" persistent-hint />
+              <div v-if="profileDraft.exposureMode === 'groups' && (resourceState.groups.error || !groups.length)" class="field-note" role="status">
+                <template v-if="resourceState.groups.error">{{ resourceState.groups.error }} <v-btn variant="text" :disabled="resourceState.groups.loading" @click="refreshResources(['groups'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></template>
+                <template v-else-if="resourceState.groups.loaded">{{ $t('admin:agentAdmin.noWikiGroupsYet') }} <router-link to="/a/groups">{{ $t('admin:agentAdmin.manageWikiGroups') }}</router-link></template>
+                <template v-else>{{ $t('admin:agentAdmin.loading') }}</template>
+              </div>
             </section>
 
             <section v-else class="profile-form-section">
@@ -508,14 +525,14 @@
           </div>
           <div class="profile-editor__save-state" role="status" aria-live="polite">
             <v-icon :icon="saving ? 'mdi-progress-clock' : profileDirty ? 'mdi-circle-edit-outline' : 'mdi-shield-check-outline'" size="17" aria-hidden="true" />
-            <span>{{ saving ? $t('admin:agentAdmin.verifyingProviderCapabilities') : profileDirty ? $t('admin:agentAdmin.readyReviewSave') : $t('admin:agentAdmin.configurationUnchanged') }}</span>
+            <span>{{ profileSaveState }}</span>
           </div>
           <v-spacer />
           <v-btn variant="text" :disabled="saving" @click="requestProfileClose">{{ $t('common:actions.cancel') }}</v-btn>
           <v-btn variant="text" :disabled="saving || !profileDirty" prepend-icon="mdi-restore" @click="resetProfileDraft">{{ $t('admin:agentAdmin.reset') }}</v-btn>
           <v-btn v-if="profileStepIndex > 0" variant="outlined" prepend-icon="mdi-arrow-left" :disabled="saving" @click="previousProfileStep">{{ $t('admin:agentAdmin.back') }}</v-btn>
           <v-btn v-if="!editingProfile && profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" :disabled="saving || !profileStepValid" form="provider-profile-form" type="submit">{{ $t('admin:agentAdmin.continue') }}</v-btn>
-          <v-btn v-else color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" :disabled="saving || !profileDraftValid || !profileDirty" form="provider-profile-form" type="submit">{{ $t('admin:agentAdmin.saveVerify') }}</v-btn>
+          <v-btn v-else color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" :disabled="saving || !profileDraftValid || !profileDirty" type="button" @click="saveProfile">{{ $t('admin:agentAdmin.saveVerify') }}</v-btn>
         </div>
       </v-card>
     </v-dialog>
@@ -557,6 +574,11 @@
       <v-card class="compact-dialog">
         <div class="compact-dialog__header"><span><v-icon icon="mdi-account-multiple-outline" size="23" aria-hidden="true" /></span><div><h2 id="provider-grants-title">{{ grantProfile ? $t('admin:agentAdmin.access2', { displayName: grantProfile.displayName, interpolation: { escapeValue: false } }) : $t('admin:agentAdmin.providerAccess') }}</h2><p>{{ $t('admin:agentAdmin.controlWhoCanDiscover') }}</p></div></div>
         <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" :label="$t('admin:agentAdmin.available2')" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" :label="$t('admin:agentAdmin.wikiGroups')" multiple chips closable-chips :hint="$t('admin:agentAdmin.usersReceiveProviderThrough')" persistent-hint /><v-alert class="mt-4" type="info" variant="tonal" density="compact">{{ $t('admin:agentAdmin.globalDefaultAvailableEveryone') }}</v-alert></v-card-text>
+        <div v-if="grantDraft.exposureMode === 'groups' && (resourceState.groups.error || !groups.length)" class="field-note mx-6" role="status">
+          <template v-if="resourceState.groups.error">{{ resourceState.groups.error }} <v-btn variant="text" :disabled="resourceState.groups.loading" @click="refreshResources(['groups'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></template>
+          <template v-else-if="resourceState.groups.loaded">{{ $t('admin:agentAdmin.noWikiGroupsYet') }} <router-link to="/a/groups">{{ $t('admin:agentAdmin.manageWikiGroups') }}</router-link></template>
+          <template v-else>{{ $t('admin:agentAdmin.loading') }}</template>
+        </div>
         <v-alert v-if="grantProfile?.isGlobalDefault && grantsDirty" class="mx-6 mt-4 mb-0" type="warning" variant="tonal" density="compact">{{ $t('admin:agentAdmin.savingAnyAccessChange') }}</v-alert>
         <v-card-actions><span class="compact-dialog__audit"><v-icon icon="mdi-text-box-check-outline" size="16" aria-hidden="true" />{{ $t('admin:agentAdmin.accessChangesAudited') }}</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="grantsDialog = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || !grantsDirty || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">{{ grantProfile?.isGlobalDefault ? $t('admin:agentAdmin.saveClearDefault') : $t('admin:agentAdmin.saveAccess') }}</v-btn></v-card-actions>
       </v-card>
@@ -580,7 +602,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import {
   agentProviderReasoningEfforts,
@@ -666,9 +688,18 @@ const filteredProfiles = computed(() => {
 })
 type ProfileStep = 'identity' | 'models' | 'connection' | 'access' | 'limits'
 const profileStep = ref<ProfileStep>('identity')
-const loading = ref(false)
-const loadFailed = ref(false)
-const dataLoaded = ref(false)
+type AdminResource = 'runtime' | 'profiles' | 'browser' | 'groups'
+const resourceState = reactive<Record<AdminResource, { loaded: boolean; loading: boolean; error: string }>>({
+  runtime: { loaded: false, loading: false, error: '' },
+  profiles: { loaded: false, loading: false, error: '' },
+  browser: { loaded: false, loading: false, error: '' },
+  groups: { loaded: false, loading: false, error: '' }
+})
+const loading = computed(() => Object.values(resourceState).some(state => state.loading))
+const loadFailed = computed(() => Object.values(resourceState).some(state => state.error))
+const dataLoaded = computed(() => resourceState.runtime.loaded)
+const profileWarnings = reactive<Record<string, string>>({})
+const profileRail = ref<HTMLElement | null>(null)
 const saving = ref(false)
 const actionBusyKey = ref('')
 const error = ref('')
@@ -705,8 +736,7 @@ const browserEnableTarget = shallowRef<BrowserTarget | null>(null)
 const browserUrl = ref('')
 const browserEnabled = ref(false)
 const grantDraft = reactive({ exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups', groupIds: [] as number[] })
-let loadController: AbortController | null = null
-let loadGeneration = 0
+const resourceControllers = new Map<AdminResource, AbortController>()
 let disposed = false
 const sameIdSet = (left: readonly number[], right: readonly number[]): boolean => {
   if (left.length !== right.length) return false
@@ -790,9 +820,17 @@ const protocolBehaviorRows = computed(() => {
   ]
 })
 const selectProtocol = (value: unknown) => {
-  if (!isAgentProviderTransport(value)) return
-  profileDraft.transportKind = value
-  Object.assign(profileDraft, agentProviderProtocolDefaults(value), { agentReasoningEffort: null, utilityReasoningEffort: null, mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false })
+  if (!isAgentProviderTransport(value) || value === profileDraft.transportKind) return
+  const previousDefaults = agentProviderProtocolDefaults(profileDraft.transportKind)
+  const baseUrl = profileDraft.baseUrl
+  const authMode = profileDraft.authMode
+  Object.assign(profileDraft, agentProviderProtocolDefaults(value), {
+    transportKind: value,
+    ...(baseUrl !== previousDefaults.baseUrl ? { baseUrl } : {}),
+    ...(authMode !== previousDefaults.authMode ? { authMode } : {}),
+    agentReasoningEffort: null, utilityReasoningEffort: null,
+    mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false
+  })
 }
 const selectToolCalling = () => {
   profileDraft.parallelToolCalls = profileDraft.toolCalling === 'native' && agentProviderProtocolDefaults(profileDraft.transportKind).parallelToolCalls
@@ -832,7 +870,7 @@ const sectionItems = computed(() => [
   { value: 'browser', title: t('admin:agentAdmin.browserAccess'), description: t('admin:agentAdmin.networkBoundaries'), icon: 'mdi-web-check', badge: browserTargets.value.length ? String(browserTargets.value.length) : '' },
   { value: 'tools', title: t('admin:agentAdmin.toolsMcp'), description: t('admin:agentAdmin.capabilityDirectory'), icon: 'mdi-connection', badge: '' },
   { value: 'memory', title: t('admin:agentAdmin.knowledgeMemory'), description: t('admin:agentAdmin.sourcesRetention'), icon: 'mdi-book-open-page-variant-outline', badge: '' },
-  { value: 'runtime', title: t('admin:agentAdmin.runtime'), description: t('admin:agentAdmin.policySafeguards'), icon: 'mdi-tune-variant', badge: loadFailed.value ? dataLoaded.value ? t('admin:agentAdmin.stale') : t('admin:agentAdmin.unavailable') : dataLoaded.value ? runtime.value?.enabled ? t('admin:agentAdmin.active') : t('admin:agentAdmin.paused') : loading.value ? t('admin:agentAdmin.loading') : '' }
+  { value: 'runtime', title: t('admin:agentAdmin.runtime'), description: t('admin:agentAdmin.policySafeguards'), icon: 'mdi-tune-variant', badge: resourceState.runtime.error ? resourceState.runtime.loaded ? t('admin:agentAdmin.stale') : t('admin:agentAdmin.unavailable') : dataLoaded.value ? runtime.value?.enabled ? t('admin:agentAdmin.active') : t('admin:agentAdmin.paused') : resourceState.runtime.loading ? t('admin:agentAdmin.loading') : '' }
 ])
 const selectSection = (requestedIndex: number, event: KeyboardEvent): void => {
   const sections = sectionItems.value
@@ -884,6 +922,9 @@ const providerBaseUrlError = computed(() => {
     const url = new URL(input)
     const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
     const octets = hostname.split('.').map(value => Number(value))
+    const mapped = /^(?:::ffff:|::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(hostname)
+    const mappedOctets = mapped ? [parseInt(mapped[1], 16) >> 8, parseInt(mapped[1], 16) & 255, parseInt(mapped[2], 16) >> 8, parseInt(mapped[2], 16) & 255] : null
+    if (mappedOctets) octets.splice(0, octets.length, ...mappedOctets)
     const privateIpv4 = octets.length === 4 && octets.every(value => Number.isInteger(value) && value >= 0 && value <= 255) && (octets[0] === 0 || octets[0] === 10 || octets[0] === 127 || (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) || (octets[0] === 169 && octets[1] === 254) || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168) || octets[0] >= 224)
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || !hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || privateIpv4 || hostname === '::' || hostname === '::1' || /^(?:fc|fd|fe[89ab])/i.test(hostname)) return t('admin:agentAdmin.usePublicHttpsOrigin')
     return ''
@@ -911,6 +952,46 @@ const profileStepValid = computed(() => profileStepIsValid(profileStep.value))
 const profileDraftValid = computed(() => profileSteps.value.every(step => profileStepIsValid(step.value)))
 const maxProfileStepIndex = ref(0)
 const canNavigateProfileStep = (index: number): boolean => index <= maxProfileStepIndex.value
+const navigateProfileStep = (index: number): void => {
+  if (saving.value) return
+  if (!canNavigateProfileStep(index)) {
+    profileError.value = t('admin:agentAdmin.completeRequiredFieldsStep')
+    return
+  }
+  profileError.value = ''
+  profileStep.value = profileSteps.value[index].value
+}
+watch([profileStep, profileDialog], async () => {
+  await nextTick()
+  const rail = profileRail.value
+  const active = rail?.querySelector<HTMLElement>('.profile-step--active')
+  if (!profileDialog.value || !rail || !active || rail.scrollWidth <= rail.clientWidth) return
+  const railBounds = rail.getBoundingClientRect()
+  const activeBounds = active.getBoundingClientRect()
+  rail.scrollBy({
+    left: activeBounds.left + activeBounds.width / 2 - railBounds.left - railBounds.width / 2,
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'
+  })
+}, { flush: 'post' })
+const profileSaveState = computed(() => {
+  if (saving.value) return t('admin:agentAdmin.verifyingProviderCapabilities')
+  const invalid = profileSteps.value.find(step => !profileStepIsValid(step.value))
+  if (invalid) {
+    let field = invalid.title
+    if (invalid.value === 'connection') field = providerBaseUrlError.value ? t('admin:agentAdmin.baseUrl') : t('admin:agentAdmin.apiKey')
+    if (invalid.value === 'identity') field = t('admin:agentAdmin.displayName')
+    if (invalid.value === 'models') field = profileDraft.model.trim() ? t('admin:agentAdmin.mediaSettings') : t('admin:agentAdmin.agentModel')
+    if (invalid.value === 'access') field = t('admin:agentAdmin.wikiGroups')
+    if (invalid.value === 'limits') {
+      for (const [key, rules] of Object.entries(profileRules)) {
+        const issue = rules[0](profileDraft[key as keyof typeof profileRules])
+        if (issue !== true) { field = issue; break }
+      }
+    }
+    return t('admin:agentAdmin.reviewInvalidField', { step: invalid.title, field, interpolation: { escapeValue: false } })
+  }
+  return profileDirty.value ? t('admin:agentAdmin.readyReviewSave') : t('admin:agentAdmin.configurationUnchanged')
+})
 const previousProfileStep = () => {
   const previous = profileSteps.value[profileStepIndex.value - 1]
   if (previous) profileStep.value = previous.value
@@ -959,40 +1040,46 @@ const run = async (operation: () => Promise<void>, busyKey = 'global', onError: 
   error.value = ''
   try { await operation() } catch (value) { onError(value instanceof Error ? value.message : t('admin:agentAdmin.agentAdministrationRequestFailed')) } finally { saving.value = false; actionBusyKey.value = '' }
 }
-const load = async (): Promise<void> => {
+const refreshResources = async (resources: AdminResource[]): Promise<void> => {
   if (disposed) return
-  loadController?.abort()
-  const controller = new AbortController()
-  loadController = controller
-  const generation = ++loadGeneration
-  loading.value = true
-  loadFailed.value = false
-  error.value = ''
-  try {
-    const [runtimeResult, profileResult, browserResult, groupResult] = await Promise.all([
-      request<{ runtime: RuntimePolicy; tools?: AgentAdminTool[] }>('/_api/agents/admin/runtime', { signal: controller.signal }),
-      request<{ profiles: Profile[] }>('/_api/agents/admin/profiles', { signal: controller.signal }),
-      request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets', { signal: controller.signal }),
-      request<GroupOption[]>('/_api/groups', { signal: controller.signal })
-    ])
-    if (generation !== loadGeneration) return
-    runtime.value = runtimeResult.runtime
-    toolInventory.value = runtimeResult.tools ?? []
-    profiles.value = profileResult.profiles
-    browserTargets.value = browserResult.targets
-    groups.value = groupResult
-    dataLoaded.value = true
-  } catch (value) {
-    if (generation !== loadGeneration || controller.signal.aborted) return
-    loadFailed.value = true
-    error.value = value instanceof Error ? value.message : t('admin:agentAdmin.agentAdministrationCouldNot')
-  } finally {
-    if (generation === loadGeneration) {
-      loading.value = false
-      if (loadController === controller) loadController = null
+  await Promise.all(resources.map(async resource => {
+    resourceControllers.get(resource)?.abort()
+    const controller = new AbortController()
+    resourceControllers.set(resource, controller)
+    const state = resourceState[resource]
+    state.loading = true
+    try {
+      if (resource === 'runtime') {
+        const result = await request<{ runtime: RuntimePolicy; tools?: AgentAdminTool[] }>('/_api/agents/admin/runtime', { signal: controller.signal })
+        if (controller.signal.aborted || disposed) return
+        runtime.value = result.runtime
+        toolInventory.value = result.tools ?? []
+      } else if (resource === 'profiles') {
+        const result = await request<{ profiles: Profile[] }>('/_api/agents/admin/profiles', { signal: controller.signal })
+        if (controller.signal.aborted || disposed) return
+        profiles.value = result.profiles
+      } else if (resource === 'browser') {
+        const result = await request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets', { signal: controller.signal })
+        if (controller.signal.aborted || disposed) return
+        browserTargets.value = result.targets
+      } else {
+        const result = await request<GroupOption[]>('/_api/groups', { signal: controller.signal })
+        if (controller.signal.aborted || disposed) return
+        groups.value = result
+      }
+      state.loaded = true
+      state.error = ''
+    } catch (value) {
+      if (!controller.signal.aborted && !disposed) state.error = value instanceof Error ? value.message : t('admin:agentAdmin.agentAdministrationCouldNot')
+    } finally {
+      if (resourceControllers.get(resource) === controller) {
+        state.loading = false
+        resourceControllers.delete(resource)
+      }
     }
-  }
+  }))
 }
+const load = (): Promise<void> => refreshResources(['runtime', 'profiles', 'browser', 'groups'])
 const openProfile = (profile?: Profile) => {
   profileError.value = ''
   editingProfile.value = profile ?? null
@@ -1042,6 +1129,7 @@ const openProfile = (profile?: Profile) => {
   } : {})
   profileBaseline.value = profileDraftFingerprint()
   profileDialog.value = true
+  if (!profile) void refreshResources(['groups'])
 }
 const mediaRateValid = (value: string): boolean => /^[1-9][0-9]{0,14}$/u.test(value) && Number.isSafeInteger(Number(value))
 const mediaRateRule = (value: string): true | string => mediaRateValid(value) || t('admin:agentAdmin.enterPositiveWholeNumber')
@@ -1077,8 +1165,9 @@ const saveProfile = async (): Promise<void> => {
       ? await request<{ profile: Profile; connectionCheck: ConnectionCheck }>(`/_api/agents/admin/profiles/${encodeURIComponent(editingProfile.value.id)}`, { method: 'PUT', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName }) })
       : await request<{ profile: Profile; connectionCheck: ConnectionCheck }>('/_api/agents/admin/profiles', { method: 'POST', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName, exposureMode: profileDraft.exposureMode, ...(profileDraft.exposureMode === 'groups' ? { groupIds: profileDraft.groupIds } : {}) }) })
     profileDialog.value = false
-    await load()
-    if (result.connectionCheck.status === 'failed') error.value = t('admin:agentAdmin.profileSavedButConnection', { value: result.connectionCheck.message ?? result.connectionCheck.errorCode ?? 'Unknown provider error', interpolation: { escapeValue: false } })
+    if (result.connectionCheck.status === 'failed') profileWarnings[result.profile.id] = t('admin:agentAdmin.profileSavedButConnection', { value: result.connectionCheck.message ?? result.connectionCheck.errorCode ?? t('admin:agentAdmin.providerConnectionCheckFailed'), interpolation: { escapeValue: false } })
+    else delete profileWarnings[result.profile.id]
+    await refreshResources(['profiles', 'runtime'])
   } catch (value) {
     profileError.value = value instanceof Error ? value.message : t('admin:agentAdmin.providerProfileCouldNot')
   } finally {
@@ -1086,7 +1175,6 @@ const saveProfile = async (): Promise<void> => {
   }
 }
 const submitProfileStep = (): void => {
-  if (editingProfile.value) { void saveProfile(); return }
   if (profileStepIndex.value < profileSteps.value.length - 1) {
     nextProfileStep()
     return
@@ -1094,7 +1182,7 @@ const submitProfileStep = (): void => {
   void saveProfile()
 }
 const confirmRemove = (profile: Profile) => { removeError.value = ''; removingProfile.value = profile }
-const removeProfile = () => run(async () => { if (!removingProfile.value) return; await request(`/_api/agents/admin/profiles/${encodeURIComponent(removingProfile.value.id)}`, { method: 'DELETE' }); removingProfile.value = null; await load() }, 'remove', message => { removeError.value = message })
+const removeProfile = () => run(async () => { if (!removingProfile.value) return; const profile = removingProfile.value; await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}`, { method: 'DELETE' }); delete profileWarnings[profile.id]; removingProfile.value = null; await refreshResources(profile.isGlobalDefault ? ['profiles', 'runtime'] : ['profiles']) }, 'remove', message => { removeError.value = message })
 const willBecomeDefault = (profile: Profile): boolean => profile.exposureMode === 'all_agent_users' && !profiles.value.some(candidate => candidate.isGlobalDefault)
 const enableProfileSubtitle = (profile: Profile): string => willBecomeDefault(profile) ? t('admin:agentAdmin.alsoBecomesWorkspaceDefault') : profile.exposureMode === 'all_agent_users' ? t('admin:agentAdmin.makesAvailableEveryAgent') : t('admin:agentAdmin.makesAvailableGrantedGroups')
 const connectionActionSubtitle = (profile: Profile): string => profile.status === 'disabled' ? willBecomeDefault(profile) ? t('admin:agentAdmin.successfulCheckEnablesSets') : t('admin:agentAdmin.successfulCheckEnablesProfile') : t('admin:agentAdmin.runsLiveCapabilityCheck')
@@ -1102,13 +1190,14 @@ const confirmEnableProfile = (profile: Profile): void => { enableError.value = '
 const enableConfirmedProfile = (): void => {
   const profile = enablingProfile.value
   if (!profile) return
-  void run(async () => { await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled: true }) }); await load(); enablingProfile.value = null }, `enabled:${profile.id}`, message => { enableError.value = message })
+  void run(async () => { await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled: true }) }); await refreshResources(willBecomeDefault(profile) ? ['profiles', 'runtime'] : ['profiles']); enablingProfile.value = null }, `enabled:${profile.id}`, message => { enableError.value = message })
 }
-const setProfileEnabled = (profile: Profile, enabled: boolean) => run(async () => { await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }); await load() }, `enabled:${profile.id}`)
-const setDefault = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/default`, { method: 'POST', body: '{}' }); await load() }, `default:${profile.id}`)
+const setProfileEnabled = (profile: Profile, enabled: boolean) => run(async () => { await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }); await refreshResources(profile.isGlobalDefault || (enabled && willBecomeDefault(profile)) ? ['profiles', 'runtime'] : ['profiles']) }, `enabled:${profile.id}`)
+const setDefault = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/default`, { method: 'POST', body: '{}' }); await refreshResources(['profiles', 'runtime']) }, `default:${profile.id}`)
 const testConnection = (profile: Profile) => run(async () => {
   const result = await request<{ profile: Profile; connectionCheck: ConnectionCheck }>(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/connection-check`, { method: 'POST', body: JSON.stringify({ enableOnSuccess: profile.status === 'disabled' }) })
-  await load()
+  if (result.connectionCheck.status === 'passed') delete profileWarnings[profile.id]
+  await refreshResources(profile.isGlobalDefault || (profile.status === 'disabled' && willBecomeDefault(profile)) ? ['profiles', 'runtime'] : ['profiles'])
   if (result.connectionCheck.status === 'failed') throw new Error(result.connectionCheck.message ?? result.connectionCheck.errorCode ?? t('admin:agentAdmin.providerConnectionCheckFailed'))
 }, `test:${profile.id}`)
 const loadConnectionHistory = async () => {
@@ -1136,11 +1225,11 @@ const openConnectionHistory = (profile: Profile) => {
 }
 watch(connectionHistoryDialog, open => { if (!open) connectionHistoryController?.abort() })
 const groupNames = (groupIds: readonly number[]): string => groupIds.length ? groupIds.map(id => groups.value.find(group => group.id === id)?.name ?? t('admin:agentAdmin.group', { id, interpolation: { escapeValue: false } })).join(', ') : t('admin:agentAdmin.noSelectedGroups')
-const openGrants = (profile: Profile) => { grantsError.value = ''; grantProfile.value = profile; grantDraft.exposureMode = profile.exposureMode; grantDraft.groupIds = [...profile.groupIds]; grantsDialog.value = true }
+const openGrants = (profile: Profile) => { grantsError.value = ''; grantProfile.value = profile; grantDraft.exposureMode = profile.exposureMode; grantDraft.groupIds = [...profile.groupIds]; grantsDialog.value = true; void refreshResources(['groups']) }
 const saveGrants = () => {
   if (!grantProfile.value || !grantsDirty.value) return
   const profile = grantProfile.value
-  void run(async () => { await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/grants`, { method: 'PUT', body: JSON.stringify({ exposureMode: grantDraft.exposureMode, groupIds: grantDraft.exposureMode === 'groups' ? grantDraft.groupIds : [] }) }); grantsDialog.value = false; await load() }, 'grants', message => { grantsError.value = message })
+  void run(async () => { await request(`/_api/agents/admin/profiles/${encodeURIComponent(profile.id)}/grants`, { method: 'PUT', body: JSON.stringify({ exposureMode: grantDraft.exposureMode, groupIds: grantDraft.exposureMode === 'groups' ? grantDraft.groupIds : [] }) }); grantsDialog.value = false; await refreshResources(profile.isGlobalDefault ? ['profiles', 'runtime'] : ['profiles']) }, 'grants', message => { grantsError.value = message })
 }
 const browserUrlError = computed(() => {
   const input = browserUrl.value.trim()
@@ -1171,12 +1260,12 @@ const createBrowserTarget = () => run(async () => {
   browserDialog.value = false
   browserUrl.value = ''
   browserEnabled.value = false
-  await load()
+  await refreshResources(['browser'])
 }, 'browser-create', message => { browserError.value = message })
 const updateBrowserTarget = (target: BrowserTarget, enabled: boolean, onError: (message: string) => void): void => {
   void run(async () => {
     await request(`/_api/agents/admin/browser-targets/${encodeURIComponent(target.id)}`, { method: 'PUT', body: JSON.stringify({ enabled }) })
-    await load()
+    await refreshResources(['browser'])
     if (enabled) browserEnableTarget.value = null
   }, `browser:${target.id}`, onError)
 }
@@ -1196,9 +1285,8 @@ const allowConfirmedBrowserTarget = (): void => {
 onBeforeUnmount(() => {
   disposed = true
   connectionHistoryController?.abort()
-  loadGeneration += 1
-  loadController?.abort()
-  loadController = null
+  for (const controller of resourceControllers.values()) controller.abort()
+  resourceControllers.clear()
 })
 const restoreSection = () => {
   const requested = window.location.hash.slice(1)
@@ -1303,8 +1391,15 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 }
 
 
+.agent-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--wiki-space-6); }
+.agent-sections { display: flex; gap: var(--wiki-space-1); min-width: 0; overflow-x: auto; padding-block-end: var(--wiki-space-2); border-block-end: 1px solid var(--wiki-surface-border); scrollbar-width: thin; }
 .agent-section {
   position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  min-height: var(--wiki-control-height);
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-3);
   align-items: center;
   overflow: hidden;
   border: 1px solid transparent;
@@ -1355,18 +1450,13 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 
 .agent-section__icon {
   display: grid;
-  width: var(--wiki-control-height);
-  height: var(--wiki-control-height);
+  width: auto;
+  height: auto;
   place-items: center;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
   color: var(--wiki-text-muted);
 }
 
 .agent-section--active .agent-section__icon {
-  border-color: color-mix(in srgb, var(--wiki-accent-warm) 22%, transparent);
-  background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
   color: var(--wiki-accent-ink);
 }
 
@@ -1382,7 +1472,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 
 .agent-section__copy small {
   color: var(--wiki-text-muted);
-  font-size: .7rem;
+  font-size: max(.7rem, var(--wiki-label-size));
 }
 
 .agent-section__badge {
@@ -1804,7 +1894,7 @@ code {
   border-radius: var(--wiki-radius-pill);
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 6%, transparent);
   color: var(--wiki-text-muted);
-  font-size: .65rem;
+  font-size: max(.7rem, var(--wiki-label-size));
   font-weight: 680;
 }
 
@@ -1854,7 +1944,7 @@ code {
   border-radius: var(--wiki-radius-pill);
   background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent);
   color: var(--wiki-accent-ink);
-  font-size: .58rem;
+  font-size: max(.7rem, var(--wiki-label-size));
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -2008,7 +2098,7 @@ code {
 .target-row__copy small {
   color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
-  font-size: .66rem;
+  font-size: max(.7rem, var(--wiki-label-size));
 }
 
 .target-row__state {
@@ -2095,11 +2185,11 @@ code {
     background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
-.profile-steps button:hover:not(:disabled) {
+.profile-steps button:hover:not([aria-disabled="true"]) {
   background: color-mix(in srgb, var(--wiki-accent-warm) 5%, transparent);
 }
 
-.profile-steps button:disabled {
+.profile-steps button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: .46;
 }
@@ -2120,7 +2210,7 @@ code {
   background: var(--wiki-surface-raised);
   color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
-  font-size: .65rem;
+  font-size: max(.7rem, var(--wiki-label-size));
   font-weight: 750;
 }
 
@@ -2142,7 +2232,7 @@ code {
 
 .profile-steps small {
   color: var(--wiki-text-muted);
-  font-size: .65rem;
+  font-size: max(.7rem, var(--wiki-label-size));
 }
 
 .profile-steps button > .v-icon {
@@ -2224,7 +2314,7 @@ code {
 .selection-preview p {
   margin: var(--wiki-space-1) 0 0;
   color: var(--wiki-text-muted);
-  font-size: .68rem;
+  font-size: max(.7rem, var(--wiki-label-size));
 }
 
 .subsection-card,
@@ -2387,7 +2477,7 @@ code {
 
 .profile-editor__position span {
   color: var(--wiki-text-muted);
-  font-size: .65rem;
+  font-size: max(.7rem, var(--wiki-label-size));
 }
 
 .profile-editor__save-state {
@@ -2492,15 +2582,45 @@ code {
 }
 
 
+.agent-overview__intro { max-width: 43rem; padding-block: var(--wiki-space-1) calc(var(--wiki-space-6) + var(--wiki-space-1)); }
+.agent-overview__intro h2 { font: 500 clamp(1.6rem, 2.4vw, 2rem)/1.2 var(--wiki-font-display); margin-block: var(--wiki-space-3) var(--wiki-space-4); }
+.agent-overview__intro p { max-width: 60ch; font-size: .95rem; line-height: 1.7; }
+.agent-overview__grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--wiki-space-6); }
+.agent-setup, .agent-default { padding: clamp(var(--wiki-space-4), 2vw, calc(var(--wiki-space-6) + var(--wiki-space-1))); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
+.agent-setup h3, .agent-default h3 { font: 500 1.4rem var(--wiki-font-display); }
+.agent-overview__caption { font-size: .8rem; line-height: 1.6; margin-block: var(--wiki-space-3) var(--wiki-space-4); }
+.agent-setup__step { appearance: none; background: transparent; color: inherit; border: 0; cursor: pointer; display: flex; width: 100%; align-items: center; gap: var(--wiki-space-3); padding: var(--wiki-space-4) 0; border-top: 1px solid var(--wiki-surface-border); text-align: start; }
+.agent-setup__step > span { display: grid; flex: 1; gap: var(--wiki-space-1); min-width: 0; }
+.agent-setup__step strong { font-size: .9rem; }
+.agent-setup__step small { font-size: .8rem; line-height: 1.5; overflow-wrap: anywhere; }
+.agent-setup__step:focus-visible, .agent-pathways button:focus-visible, .agent-memory-sources button:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }
+.agent-default { background: color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised)); }
+.agent-default h3 { margin-block: var(--wiki-space-6) var(--wiki-space-2); overflow-wrap: anywhere; }
+.agent-default code { font-family: var(--wiki-font-mono); font-size: .85rem; overflow-wrap: anywhere; }
+.agent-default p { font-size: .85rem; line-height: 1.7; margin-block: var(--wiki-space-4) var(--wiki-space-6); }
+.agent-pathways { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--wiki-surface-border); }
+.agent-pathways button { appearance: none; background: transparent; color: inherit; border: 0; cursor: pointer; display: flex; align-items: start; gap: var(--wiki-space-3); padding: var(--wiki-space-6) var(--wiki-space-4); text-align: start; }
+.agent-pathways button > span { display: grid; gap: var(--wiki-space-2); flex: 1; }
+.agent-pathways strong { font-size: .9rem; }
+.agent-pathways small { font-size: .8rem; line-height: 1.6; }
+.agent-memory-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--wiki-space-6); margin-bottom: var(--wiki-space-8); }
+.agent-memory-sources h3 { font: 500 1.2rem var(--wiki-font-display); margin-block: var(--wiki-space-3); }
+.agent-memory-sources p { font-size: .85rem; line-height: 1.7; margin-block: var(--wiki-space-3); }
+.agent-memory-sources button { appearance: none; border: 0; background: transparent; cursor: pointer; }
+.agent-memory-sources a, .agent-memory-sources button { color: var(--wiki-accent-ink); font-size: .85rem; text-decoration: underline; }
+.agent-retention { display: grid; margin-bottom: var(--wiki-space-6); }
+.agent-retention > div { display: grid; grid-template-columns: 1fr 1fr; gap: var(--wiki-space-4); padding-block: var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); font-size: .85rem; }
+.agent-retention dd { margin: 0; font-weight: 600; }
+.provider-inventory-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, .4fr); gap: var(--wiki-space-4); margin-block: var(--wiki-space-6) var(--wiki-space-4); }
+.provider-inventory-count { font-size: .8rem; margin-bottom: var(--wiki-space-4); }
 @media (max-width: 960px) {
 
   .profile-editor__workspace {
     grid-template-columns: 13rem minmax(0, 1fr);
   }
 
-  .profile-editor__save-state {
-    display: none;
-  }
+  .profile-editor__footer { flex-wrap: wrap; }
+  .profile-editor__save-state { width: 100%; margin-inline-start: 0; }
 }
 
 @media (max-width: 839.98px) {
@@ -2512,6 +2632,8 @@ code {
 }
 
 @media (max-width: 760px) {
+  .agent-overview__grid, .provider-inventory-toolbar { grid-template-columns: 1fr; }
+  .agent-retention > div { grid-template-columns: 1fr; gap: var(--wiki-space-1); }
 
 
 
@@ -2722,46 +2844,7 @@ code {
     animation-duration: .01ms !important;
   }
 }
-/* The subsection workspace uses the full content width; configuration is the focus. */
-.agent-workspace { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
-.agent-sections { position: static; display: flex; gap: .25rem; min-width: 0; overflow-x: auto; padding: 0 0 .5rem; border: 0; border-bottom: 1px solid var(--wiki-surface-border); border-radius: 0; box-shadow: none; background: transparent; scrollbar-width: thin; }
-.agent-section { scroll-margin-block-start: 6rem; display: flex; flex: 0 0 auto; width: auto; min-width: 0; min-height: 2.75rem; gap: .45rem; padding: .65rem .75rem; }
-.agent-section__icon { width: auto; height: auto; background: transparent; border: 0; box-shadow: none; }
-.agent-section__copy small, .agent-section__badge { display: none; }
-.agent-section__copy strong { font-size: .8rem; }
-.agent-overview__intro { max-width: 43rem; padding-block: .25rem 1.75rem; }
-.agent-overview__intro h2 { font: 500 clamp(1.6rem, 2.4vw, 2rem)/1.2 var(--wiki-font-display); margin-block: .65rem 1rem; }
-.agent-overview__intro p { max-width: 60ch; font-size: .95rem; line-height: 1.7; }
-.agent-overview__grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 1.5rem; }
-.agent-setup, .agent-default { padding: clamp(1rem, 2vw, 1.75rem); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
-.agent-setup h3, .agent-default h3 { font: 500 1.4rem var(--wiki-font-display); }
-.agent-overview__caption { font-size: .8rem; line-height: 1.6; margin-block: .65rem 1rem; }
-.agent-setup__step { appearance: none; background: transparent; color: inherit; border: 0; cursor: pointer; display: flex; width: 100%; align-items: center; gap: .8rem; padding: 1rem 0; border-top: 1px solid var(--wiki-surface-border); text-align: start; }
-.agent-setup__step > span { display: grid; flex: 1; gap: .35rem; min-width: 0; }
-.agent-setup__step strong { font-size: .9rem; }
-.agent-setup__step small { font-size: .8rem; line-height: 1.5; overflow-wrap: anywhere; }
-.agent-setup__step:focus-visible, .agent-pathways button:focus-visible, .agent-memory-sources button:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }
-.agent-default { background: color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised)); }
-.agent-default h3 { margin-block: 1.5rem .5rem; overflow-wrap: anywhere; }
-.agent-default code { font-family: var(--wiki-font-mono); font-size: .85rem; overflow-wrap: anywhere; }
-.agent-default p { font-size: .85rem; line-height: 1.7; margin-block: 1rem 1.5rem; }
-.agent-pathways { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--wiki-surface-border); }
-.agent-pathways button { appearance: none; background: transparent; color: inherit; border: 0; cursor: pointer; display: flex; align-items: start; gap: .75rem; padding: 1.5rem 1rem; text-align: start; }
-.agent-pathways button > span { display: grid; gap: .5rem; flex: 1; }
-.agent-pathways strong { font-size: .9rem; }
-.agent-pathways small { font-size: .8rem; line-height: 1.6; }
-.agent-memory-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-.agent-memory-sources h3 { font: 500 1.2rem var(--wiki-font-display); margin-block: .75rem; }
-.agent-memory-sources p { font-size: .85rem; line-height: 1.7; margin-block: .75rem; }
-.agent-memory-sources button { appearance: none; border: 0; background: transparent; cursor: pointer; }
-.agent-memory-sources a, .agent-memory-sources button { color: var(--wiki-accent-ink); font-size: .85rem; text-decoration: underline; }
-.agent-retention { display: grid; margin-bottom: 1.5rem; }
-.agent-retention > div { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding-block: .8rem; border-bottom: 1px solid var(--wiki-surface-border); font-size: .85rem; }
-.agent-retention dd { margin: 0; font-weight: 600; }
-.provider-inventory-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, .4fr); gap: 1rem; margin-block: 1.5rem 1rem; }
-.provider-inventory-count { font-size: .8rem; margin-bottom: 1rem; }
 @media (max-width: 1100px) { .agent-memory-sources, .agent-pathways { grid-template-columns: 1fr; } .agent-pathways button + button { border-top: 1px solid var(--wiki-surface-border); } }
-@media (max-width: 760px) { .agent-overview__grid, .provider-inventory-toolbar { grid-template-columns: 1fr; } .agent-retention > div { grid-template-columns: 1fr; gap: .35rem; } }
 .media-storage-help { font-size: .8rem; line-height: 1.6; }
 .media-storage-help summary { width: fit-content; cursor: pointer; color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); }
 .media-storage-help summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; border-radius: 2px; }

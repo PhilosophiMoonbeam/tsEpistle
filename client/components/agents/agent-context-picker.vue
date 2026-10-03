@@ -2,11 +2,17 @@
   <div class="agent-context" :aria-label="$t('common:agentContextPicker.sourcesSearchScope')">
     <div class="agent-context__scope" role="group" :aria-label="$t('common:agentContextPicker.conversationSourceControls')">
       <v-menu content-class="agent-owned-overlay" location="top start">
-        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" class="agent-context__control agent-context__scope-control" :disabled="disabled || connectionBlocked" variant="text" rounded="pill" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" :aria-label="$t('common:agentContextPicker.chooseAgentSearchScope')" type="button">{{ scopeLabel }}</v-btn></template>
+        <template #activator="{ props: menuProps }">
+          <v-tooltip location="top" :text="$t('common:agentContextPicker.searchScopeHelp')">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn v-bind="mergeProps(menuProps, tooltipProps)" class="agent-context__control agent-context__scope-control" :disabled="disabled || connectionBlocked" variant="text" rounded="pill" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" :aria-label="$t('common:agentContextPicker.chooseAgentSearchScope')" type="button">{{ scopeLabel }}</v-btn>
+            </template>
+          </v-tooltip>
+        </template>
         <v-list density="compact" :aria-label="$t('common:agentContextPicker.agentSearchScope')">
           <v-list-item :title="$t('common:agentContextPicker.allWiki')" :subtitle="$t('common:agentContextPicker.searchEveryPageYou')" prepend-icon="mdi-earth" :active="draft.scope.kind === 'all'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'all' })" />
           <v-list-item v-if="currentPage" :title="$t('common:agentContextPicker.pageTree')" :subtitle="currentPage.path" prepend-icon="mdi-file-tree-outline" :active="draft.scope.kind === 'section'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'section', locale: currentPage.locale, path: currentPage.path })" />
-          <v-list-item :title="$t('common:agentContextPicker.selectedPages')" :subtitle="$t('common:agentContextPicker.searchWithinSourcesAttached')" prepend-icon="mdi-file-multiple-outline" :disabled="disabled || connectionBlocked || !draft.sources.length" :active="draft.scope.kind === 'selected'" @click="setScope({ kind: 'selected' })" />
+          <v-list-item :title="$t('common:agentContextPicker.selectedPages')" :subtitle="$t(draft.sources.length ? 'common:agentContextPicker.searchWithinSourcesAttached' : 'common:agentContextPicker.attachSourcesFirst')" prepend-icon="mdi-file-multiple-outline" :disabled="disabled || connectionBlocked || !draft.sources.length" :aria-disabled="disabled || connectionBlocked || !draft.sources.length ? 'true' : undefined" :active="draft.scope.kind === 'selected'" @click="setScope({ kind: 'selected' })" />
         </v-list>
       </v-menu>
       <v-btn
@@ -52,7 +58,24 @@
       </template>
     </v-tooltip>
     <div v-if="draft.sources.length" class="agent-context__sources" :aria-label="$t('common:agentContextPicker.pagesAttachedNextMessage')">
-      <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :disabled="disabled || connectionBlocked" :close-label="$t('common:agentContextPicker.removeSource', { title: source.title, interpolation: { escapeValue: false } })" :aria-label="$t('common:agentContextPicker.previewAttachedSource', { title: source.title, interpolation: { escapeValue: false } })" variant="outlined" prepend-icon="mdi-file-document-outline" @click.stop="previewSelector = { id: source.id }" @click:close.stop="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
+      <v-chip
+        v-for="source in draft.sources"
+        :key="source.id"
+        size="small"
+        closable
+        role="button"
+        :disabled="disabled || connectionBlocked"
+        :close-label="$t('common:agentContextPicker.removeSource', { title: source.title, interpolation: { escapeValue: false } })"
+        :aria-label="$t('common:agentContextPicker.previewAttachedSource', { title: source.title, interpolation: { escapeValue: false } })"
+        :title="$t('common:agentContextPicker.previewAttachedSource', { title: source.title, interpolation: { escapeValue: false } })"
+        variant="outlined"
+        prepend-icon="mdi-file-document-outline"
+        @click.stop="previewSource(source.id)"
+        @click:close.stop="removeSource(source.id)"
+      >
+        <span class="agent-context__source-label">{{ source.title }}</span>
+        <v-icon class="agent-context__preview-icon" icon="mdi-eye-outline" size="14" aria-hidden="true" />
+      </v-chip>
     </div>
     <p v-if="draft.sources.length === 8" class="agent-context__limit" role="status">{{ $t('common:agentContextPicker.eightSourcesAttachedRemove') }}</p>
     <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" @close="previewSelector = null" />
@@ -195,7 +218,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import type { AgentDraft, AgentSearchScope } from '../../helpers/agent-draft.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
@@ -303,8 +326,12 @@ const rowAriaLabel = (row: PageSearchRow): string => {
   return `${row.title}, ${row.locale}, ${row.path}${state ? `, ${state}` : ''}`
 }
 const setScope = (scope: AgentSearchScope): void => {
-  if (interactionBlocked.value) return
+  if (interactionBlocked.value || (scope.kind === 'selected' && !props.draft.sources.length)) return
   emit('change', { scope })
+}
+const previewSource = (id: number): void => {
+  if (interactionBlocked.value) return
+  previewSelector.value = { id }
 }
 const removeSource = (id: number): void => {
   if (interactionBlocked.value) return
@@ -663,6 +690,17 @@ onBeforeUnmount(() => {
 }
 .agent-context__sources .v-chip { max-width: 100%; border-radius: var(--wiki-radius-pill); }
 .agent-context__source-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-context__preview-icon { flex: 0 0 auto; margin-inline-start: var(--wiki-space-1); color: var(--wiki-text-muted); }
+.agent-context__sources .v-chip:not(.v-chip--disabled):is(:hover, :focus-within) {
+  border-color: var(--wiki-surface-border-strong);
+  background: var(--wiki-surface-sunken);
+}
+.agent-context__sources .v-chip:not(.v-chip--disabled):is(:hover, :focus-within) .agent-context__source-label {
+  text-decoration: underline dotted;
+  text-underline-offset: .2em;
+}
+.agent-context__sources .v-chip:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.agent-context__sources .v-chip:is(:hover, :focus-within) .agent-context__preview-icon { color: var(--wiki-primary-ink); }
 .agent-context__limit {
   order: 2;
   flex: 1 1 100%;

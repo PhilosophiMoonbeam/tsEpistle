@@ -89,7 +89,49 @@
                     :aria-label="$t('common:agentWorkspace.pinned')"
                   />
                 </span>
-
+                <v-menu v-if="providerIdentity" v-model="providerMenuOpen" content-class="agent-owned-overlay" location="bottom start" attach=".inline-agent">
+                  <template #activator="{ props: providerMenuProps }">
+                    <v-btn
+                      v-bind="providerMenuProps"
+                      class="inline-agent__provider-trigger"
+                      variant="text"
+                      size="small"
+                      :title="providerIdentity"
+                      :aria-label="$t('common:inlineAgentChat.chooseProviderLabel', { identity: providerIdentity, interpolation: { escapeValue: false } })"
+                      :aria-expanded="providerMenuOpen"
+                    >
+                      <span class="inline-agent__provider-identity" :title="providerIdentity">{{ providerIdentity }}</span>
+                      <v-icon icon="mdi-chevron-down" size="14" aria-hidden="true" />
+                    </v-btn>
+                  </template>
+                  <v-list class="inline-agent__provider-menu" density="compact" role="menu" :aria-label="$t('common:inlineAgentChat.chooseProvider')">
+                    <v-list-item
+                      class="inline-agent__provider-option"
+                      role="menuitemradio"
+                      :aria-checked="!thread?.session.providerProfileId"
+                      :active="!thread?.session.providerProfileId"
+                      :prepend-icon="!thread?.session.providerProfileId ? 'mdi-check' : undefined"
+                      :title="$t('common:inlineAgentChat.workspaceDefaultProvider')"
+                      :disabled="Boolean(providerSelectionUnavailableReason)"
+                      @click="selectProvider(null)"
+                    />
+                    <v-list-item
+                      v-for="profile in profiles"
+                      :key="profile.id"
+                      class="inline-agent__provider-option"
+                      role="menuitemradio"
+                      :aria-checked="thread?.session.providerProfileId === profile.id"
+                      :active="thread?.session.providerProfileId === profile.id"
+                      :prepend-icon="thread?.session.providerProfileId === profile.id ? 'mdi-check' : undefined"
+                      :title="profile.name"
+                      :subtitle="profile.model"
+                      :disabled="Boolean(providerSelectionUnavailableReason)"
+                      @click="selectProvider(profile.id)"
+                    />
+                    <p v-if="providerSelectionUnavailableReason" class="inline-agent__provider-help" role="status">{{ providerSelectionUnavailableReason }}</p>
+                    <p class="inline-agent__provider-help">{{ $t('common:inlineAgentChat.providerWebConsentHelp') }}</p>
+                  </v-list>
+                </v-menu>
               </div>
             </div>
           </div>
@@ -303,7 +345,8 @@
                   class="inline-agent__starters"
                   role="group"
                   :aria-label="$t('common:agentWorkspace.starters')"
-                  :aria-describedby="!canSubmit && submitUnavailableReason ? starterReasonId : undefined"
+                  :aria-describedby="starterUnavailableReason ? starterReasonId : undefined"
+                  :aria-busy="promptSubmissionPending"
                 >
                   <v-btn
                     v-for="(starter, starterIndex) in starters"
@@ -325,7 +368,7 @@
                     </span>
                     <span class="inline-agent__starter-copy"><small>{{ $t(starter.description) }}</small></span>
                   </v-btn>
-                  <p v-if="!canSubmit && submitUnavailableReason" :id="starterReasonId" class="inline-agent__starter-reason">{{ submitUnavailableReason }}</p>
+                  <p v-if="starterUnavailableReason" :id="starterReasonId" class="inline-agent__starter-reason" role="status">{{ starterUnavailableReason }}</p>
                 </div>
               </section>
 
@@ -345,7 +388,7 @@
                 @ask-source="source => preparePrompt($t('common:inlineAgentChat.helpMeUnderstand', { title: source.title, interpolation: { escapeValue: false } }), source)"
                 @decision="handleDecision"
               />
-              <div class="inline-agent__conversation-dock">
+              <div ref="conversationDock" class="inline-agent__conversation-dock">
                 <div
                   v-if="thread?.goal"
                   class="inline-agent__goal-dock"
@@ -659,6 +702,7 @@ const userPicture = computed(() => resolveUserPicture(wikiStore.user))
 const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchPending, googleSearchSuggestions, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
+const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean>; hasUnsentMedia: () => boolean; isMediaBusy: () => boolean }>('composer')
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
@@ -710,6 +754,9 @@ const setSessionNotice = (message: string): void => {
 const historyOpen = ref(false)
 const memoryOpen = ref(false)
 const panelMenuOpen = ref(false)
+const providerMenuOpen = ref(false)
+const providerSelectionPending = ref(false)
+let providerSelectionGeneration = 0
 const memoryMutationBusy = ref(false)
 const initializationError = ref('')
 const connectionRetrying = ref(false)
@@ -738,8 +785,10 @@ const transcriptBottomDistance = ref(0)
 // Restore the composer over the final 160px, with a quiet 24px landing zone.
 const transcriptReadingProgress = computed(() => Math.min(1, Math.max(0, (transcriptBottomDistance.value - 24) / 136)))
 let transcriptObserver: MutationObserver | null = null
+let dockObserver: ResizeObserver | null = null
 let transcriptFrame: number | null = null
 let transcriptFrameShouldFollow = false
+let transcriptGrowthPending = false
 let panelFocusScope: ModalFocusScope | null = null
 let panelFocusKind: 'history' | 'memory' | null = null
 let pendingPanelFocusKind: 'history' | 'memory' | null = null
@@ -780,6 +829,9 @@ const hasConversation = computed(() => Boolean(thread.value && (thread.value.mes
 const followJumpVisible = computed(() => Boolean(hasConversation.value && transcriptReadingProgress.value > 0 && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const mediaProfile = computed(() => thread.value?.session.providerProfileId ? profiles.value.find(profile => profile.id === thread.value?.session.providerProfileId) : profiles.value.find(profile => profile.isGlobalDefault) ?? (profiles.value.length === 1 ? profiles.value[0] : undefined))
+const providerIdentity = computed(() => mediaProfile.value
+  ? t('common:inlineAgentChat.providerIdentity', { name: mediaProfile.value.name, model: mediaProfile.value.model, interpolation: { escapeValue: false } })
+  : '')
 const googleSearchAvailable = computed(() => Boolean(thread.value && thread.value.session.executionMode === 'agent' && mediaProfile.value?.googleSearchAvailable === true))
 /* Optimistic while the Web toggle request is in flight, so the button state
    is truthful immediately and the global session mutation lock stays free. */
@@ -888,6 +940,55 @@ const submitUnavailableReason = computed(() => connectionBlocked.value
                 : openGoal.value
                   ? goalSubmitUnavailableReason.value
                   : '')
+const starterUnavailableReason = computed(() => promptSubmissionPending.value
+  ? t('common:inlineAgentChat.sendingMessage')
+  : !canSubmit.value ? submitUnavailableReason.value : '')
+const providerSelectionUnavailableReason = computed(() => {
+  if (composer.value?.isMediaBusy() || mediaRefreshing.value) return t('common:inlineAgentChat.providerWaitForMedia')
+  if (composer.value?.hasUnsentMedia()) return t('common:inlineAgentChat.providerRemoveAttachments')
+  if (providerSelectionPending.value) return t('common:inlineAgentChat.providerChanging')
+  if (promptSubmissionPending.value) return t('common:inlineAgentChat.sendingMessage')
+  if (creatingRetention.value || keepingConversation.value || googleSearchPending.value !== null) return t('common:inlineAgentChat.waitCurrentConversationUpdate')
+  return canSubmit.value ? '' : submitUnavailableReason.value || t('common:inlineAgentChat.providerConversationRequired')
+})
+const selectProvider = async (providerProfileId: string | null): Promise<void> => {
+  if (!networkActionAllowed() || providerSelectionUnavailableReason.value || !thread.value) return
+  if (providerProfileId !== null && !profiles.value.some(profile => profile.id === providerProfileId)) return
+  if ((thread.value.session.providerProfileId ?? null) === providerProfileId) { providerMenuOpen.value = false; return }
+  const generation = componentGeneration
+  const selectionGeneration = ++providerSelectionGeneration
+  const ownerId = props.ownerId
+  const sessionId = thread.value.session.id
+  const workspaceVersion = agents.workspaceVersion
+  const ownerGeneration = agents.ownerGeneration
+  const isSelectionCurrent = (): boolean => isComponentCurrent(generation, ownerId) &&
+    providerSelectionGeneration === selectionGeneration && thread.value?.session.id === sessionId &&
+    agents.workspaceVersion === workspaceVersion && agents.ownerGeneration === ownerGeneration
+  providerSelectionPending.value = true
+  providerMenuOpen.value = false
+  try {
+    const updated = await agents.setProfile(providerProfileId)
+    if (!isSelectionCurrent() || !updated || (thread.value?.session.providerProfileId ?? null) !== providerProfileId) return
+    setSessionNotice(t('common:inlineAgentChat.providerChanged', { identity: providerIdentity.value, interpolation: { escapeValue: false } }))
+  } catch (value) {
+    if (isSelectionCurrent()) agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.providerChangeFailed')
+  } finally {
+    if (providerSelectionGeneration === selectionGeneration) providerSelectionPending.value = false
+  }
+}
+watch([
+  () => props.ownerId,
+  () => currentPage.value?.id,
+  () => currentPage.value?.locale,
+  () => thread.value?.session.id,
+  () => agents.workspaceVersion,
+  () => agents.ownerGeneration,
+  () => workspaceDisposed.value
+], () => {
+  providerMenuOpen.value = false
+  providerSelectionPending.value = false
+  providerSelectionGeneration += 1
+}, { flush: 'sync' })
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const isTemporary = computed(() => thread.value?.session.retention === 'temporary' && !thread.value.session.folderId)
@@ -1173,7 +1274,7 @@ const scrollToLatest = async (): Promise<void> => {
   await nextTick()
   if (container !== transcript.value || !container.isConnected) return
   container.focus({ preventScroll: true })
-  updateApprovalJump()
+  handleTranscriptScroll()
 }
 const reloadSkillCatalog = async (): Promise<void> => {
   if (!networkActionAllowed()) return
@@ -1442,14 +1543,12 @@ const recoverClearUnfiledHistory = async (): Promise<void> => {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
   }
 }
-const updateApprovalJump = (): void => {
-  const container = transcript.value
+const updateApprovalJump = (container: HTMLElement, dockBounds: DOMRect | undefined): void => {
   const proposalId = pendingApprovalId.value
-  if (!container || !proposalId) { approvalJumpVisible.value = false; return }
+  if (!proposalId) { approvalJumpVisible.value = false; return }
   const approval = container.querySelector<HTMLElement>(`#agent-approval-${proposalId}`)
   if (!approval) { approvalJumpVisible.value = false; return }
   const viewport = container.getBoundingClientRect()
-  const dockBounds = container.querySelector<HTMLElement>('.inline-agent__conversation-dock')?.getBoundingClientRect()
   const visibleBottom = dockBounds && dockBounds.height > 0 && dockBounds.top > viewport.top
     ? Math.min(viewport.bottom, dockBounds.top)
     : viewport.bottom
@@ -1463,85 +1562,90 @@ const jumpToApproval = async (): Promise<void> => {
   const proposalId = pendingApprovalId.value
   const approval = proposalId ? transcript.value?.querySelector<HTMLElement>(`#agent-approval-${proposalId}`) : null
   if (!approval) return
+  transcriptReadingIntent = true
+  transcriptFollowing.value = false
+  transcriptFrameShouldFollow = false
   approval.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' })
   await nextTick()
   if (!approval.isConnected || !transcript.value?.contains(approval)) return
   approval.focus({ preventScroll: true })
   approvalJumpVisible.value = false
+  handleTranscriptScroll()
 }
-const transcriptIsNearBottom = (element: HTMLElement | null): boolean =>
-  Boolean(element && element.scrollHeight - element.scrollTop - element.clientHeight < 160)
 let transcriptScrollTopMemory = 0
 const handleTranscriptScroll = (): void => {
-  const container = transcript.value
-  const distance = container ? Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight) : 0
-  const scrollTop = container?.scrollTop ?? 0
-  // Only a downward scroll (reading away) drops composer focus. A keyboard-open
-  // viewport shrink raises the bottom distance without moving scrollTop.
-  if (scrollTop > transcriptScrollTopMemory + 1 && distance > transcriptBottomDistance.value + 1) composerFocused.value = false
-  transcriptBottomDistance.value = distance
-  const following = transcriptIsNearBottom(transcript.value)
-  // Content growth can increase the distance without moving the viewport. Only
-  // leaving the bottom by scrolling upward ends automatic following.
-  if (following) transcriptFollowing.value = true
-  else if (scrollTop < transcriptScrollTopMemory - 1) {
-    if (transcriptReadingIntent) transcriptFollowing.value = false
-    else if (transcriptFollowing.value) scheduleTranscriptReconcile()
-  }
-  transcriptScrollTopMemory = scrollTop
-  if (!transcriptFollowing.value) transcriptFrameShouldFollow = false
-  updateApprovalJump()
+  scheduleTranscriptFrame()
 }
 const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> => {
   await nextTick()
   if (disposed) return
-  if (!hasConversation.value && transcript.value) {
-    // With a mobile keyboard open, slide the starters up above the composer
-    // instead of pinning the greeting at the top of the shrunken scrollport.
-    if (window.matchMedia(mobilePanelQuery).matches && composerFocused.value) {
-      transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: 'auto' })
-    } else {
-      transcript.value.scrollTo({ top: 0, behavior: 'auto' })
-    }
-    transcriptFollowing.value = true
-  } else if (shouldFollow && transcript.value) {
-    transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: 'auto' })
-    transcriptFollowing.value = true
-  } else {
-    transcriptFollowing.value = transcriptIsNearBottom(transcript.value)
-  }
-  handleTranscriptScroll()
+  transcriptGrowthPending = true
+  transcriptFrameShouldFollow ||= shouldFollow
+  scheduleTranscriptFrame()
 }
 const handleGoalExpanded = async (expanded: boolean): Promise<void> => {
-  const container = transcript.value
-  const shouldFollow = shouldFollowGoalExpansion(expanded, transcriptFollowing.value, transcriptIsNearBottom(container))
+  const shouldFollow = shouldFollowGoalExpansion(expanded, transcriptFollowing.value, transcriptBottomDistance.value < 160)
   goalExpanded.value = expanded
-  await nextTick()
-  if (container !== transcript.value || !container?.isConnected) return
-  if (shouldFollow) {
-    container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
-    transcriptFollowing.value = true
-  } else {
-    transcriptFollowing.value = transcriptIsNearBottom(container)
-  }
-  handleTranscriptScroll()
+  await reconcileTranscriptGrowth(shouldFollow)
+}
+const scheduleTranscriptFrame = (): void => {
+  if (disposed || transcriptFrame !== null) return
+  transcriptFrame = window.requestAnimationFrame(() => {
+    transcriptFrame = null
+    if (disposed) return
+    const container = transcript.value
+    const shouldFollow = transcriptFrameShouldFollow
+    const growthPending = transcriptGrowthPending
+    transcriptFrameShouldFollow = false
+    transcriptGrowthPending = false
+    if (!container) { approvalJumpVisible.value = false; return }
+
+    // Scroll bursts, content growth and dock resizing share one layout pass.
+    const scrollHeight = container.scrollHeight
+    const clientHeight = container.clientHeight
+    const scrollTop = container.scrollTop
+    const distance = Math.max(0, scrollHeight - scrollTop - clientHeight)
+    // Keyboard resizing can change the distance without moving the viewport.
+    if (scrollTop > transcriptScrollTopMemory + 1 && distance > transcriptBottomDistance.value + 1) composerFocused.value = false
+    transcriptBottomDistance.value = distance
+    if (distance < 160) transcriptFollowing.value = true
+    else if (scrollTop < transcriptScrollTopMemory - 1 && transcriptReadingIntent) transcriptFollowing.value = false
+    const restoreFollowing = transcriptFollowing.value && !transcriptReadingIntent && scrollTop < transcriptScrollTopMemory - 1
+    transcriptScrollTopMemory = scrollTop
+
+    if ((growthPending || restoreFollowing) && (!hasConversation.value || ((shouldFollow || restoreFollowing) && transcriptFollowing.value))) {
+      const top = !hasConversation.value && !(window.matchMedia(mobilePanelQuery).matches && composerFocused.value)
+        ? 0
+        : Math.max(0, scrollHeight - clientHeight)
+      container.scrollTo({ top, behavior: 'auto' })
+      transcriptFollowing.value = true
+      transcriptScrollTopMemory = top
+      transcriptBottomDistance.value = Math.max(0, scrollHeight - top - clientHeight)
+    }
+    const dockBounds = conversationDock.value?.getBoundingClientRect()
+    container.style.setProperty('--agent-dock-height', `${dockBounds?.height ?? 0}px`)
+    updateApprovalJump(container, dockBounds)
+  })
 }
 const scheduleTranscriptReconcile = (): void => {
-  transcriptFrameShouldFollow ||= transcriptFollowing.value || transcriptIsNearBottom(transcript.value)
-  if (transcriptFrame !== null) return
-  transcriptFrame = window.requestAnimationFrame(() => {
-    const shouldFollow = transcriptFrameShouldFollow
-    transcriptFrame = null
-    transcriptFrameShouldFollow = false
-    void reconcileTranscriptGrowth(shouldFollow)
-  })
+  transcriptGrowthPending = true
+  transcriptFrameShouldFollow ||= transcriptFollowing.value
+  scheduleTranscriptFrame()
 }
 const observeTranscript = (container: HTMLElement | null): void => {
   transcriptObserver?.disconnect()
   if (container) transcriptObserver?.observe(container, { childList: true, subtree: true, characterData: true })
+  transcriptScrollTopMemory = container?.scrollTop ?? 0
+  scheduleTranscriptReconcile()
+}
+const observeConversationDock = (dock: HTMLElement | null): void => {
+  dockObserver?.disconnect()
+  if (dock) dockObserver?.observe(dock, { box: 'border-box' })
+  scheduleTranscriptReconcile()
 }
 
 watch(transcript, observeTranscript, { flush: 'post' })
+watch(conversationDock, observeConversationDock, { flush: 'post' })
 watch(() => {
   const messages = thread.value?.messages ?? []
   const response = messages.findLast(message => message.role === 'assistant' && (message.content || message.media?.length))
@@ -1720,7 +1824,7 @@ watch(() => thread.value?.goal?.id, (goalId, previousGoalId) => {
   if (goalId !== previousGoalId) goalExpanded.value = false
 })
 watch([thread, pendingApprovalId, connection], () => {
-  void nextTick(() => { if (!hasConversation.value && transcript.value) transcript.value.scrollTop = 0; updateApprovalJump() })
+  handleTranscriptScroll()
 }, { flush: 'post' })
 onMounted(() => {
   panelModeMedia = [
@@ -1737,6 +1841,8 @@ onMounted(() => {
     })) scheduleTranscriptReconcile()
   })
   observeTranscript(transcript.value)
+  dockObserver = new ResizeObserver(scheduleTranscriptReconcile)
+  observeConversationDock(conversationDock.value)
   window.addEventListener('resize', scheduleTranscriptReconcile)
   window.addEventListener('pagehide', handlePageHide)
   window.addEventListener('pageshow', handlePageShow)
@@ -1756,7 +1862,9 @@ onBeforeUnmount(() => {
   initialization = null
   initializationKey = ''
   transcriptObserver?.disconnect()
+  dockObserver?.disconnect()
   if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
+  transcriptFrame = null
   panelFocusScope?.deactivate({ restoreFocus: false })
   if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
   if (mutationLockMessageTimer !== null) { clearTimeout(mutationLockMessageTimer); mutationLockMessageTimer = null }
@@ -1894,7 +2002,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   min-width: 0;
 }
 
-.inline-agent__eyebrow,
+.inline-agent__provider-identity,
 .inline-agent__session-title {
   overflow: hidden;
   margin: 0;
@@ -1902,17 +2010,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   white-space: nowrap;
 }
 
-.inline-agent__eyebrow {
-  color: var(--wiki-primary-ink);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .1em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
 
-/* The brand name stays only as the accessible label; the conversation name
-   is the visible title on every layout, standing alone on the left. */
+/* The brand name remains the workspace's accessible label; the header shows
+   the conversation title beside its resolved provider. */
 .inline-agent__heading h2 {
   position: absolute;
   width: 1px;
@@ -1926,7 +2026,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__session-title {
-  flex: 0 0 100%;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 28rem;
   color: rgb(var(--v-theme-on-surface));
@@ -1935,6 +2035,40 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   font-weight: 720;
   letter-spacing: -.015em;
   line-height: 1.2;
+}
+
+.inline-agent__provider-identity {
+  min-width: 0;
+  max-width: 24rem;
+  flex: 0 1 auto;
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  line-height: 1.4;
+}
+
+.inline-agent__provider-trigger {
+  min-width: 0;
+  max-width: 24rem;
+  height: auto !important;
+  flex: 0 1 auto;
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  color: var(--wiki-text-muted);
+  text-transform: none;
+  letter-spacing: normal;
+}
+.inline-agent__provider-trigger :deep(.v-btn__content) {
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--wiki-space-1);
+}
+.inline-agent__provider-help {
+  max-width: 24rem;
+  margin: 0;
+  padding: var(--wiki-space-2) var(--wiki-space-4);
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  line-height: 1.4;
 }
 
 .inline-agent__panel-actions {
@@ -2087,8 +2221,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__session-line {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  row-gap: 0;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--wiki-space-2);
 }
@@ -2235,7 +2368,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   scrollbar-gutter: stable both-edges;
   scroll-behavior: auto;
   scroll-padding-block: var(--wiki-space-4);
-  scroll-padding-block-end: 13rem;
+  scroll-padding-block-end: calc(var(--agent-dock-height, 0px) + var(--wiki-space-4));
 }
 .inline-agent__transcript--following {
   /* Automatic follow owns the scroll position while streaming. When reading
@@ -2644,6 +2777,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__composer--focused {
   opacity: 1;
 }
+.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
+  border-color: var(--wiki-surface-border-strong);
+  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
+}
 @media (hover: hover) and (pointer: fine) {
   .inline-agent__composer:hover {
     opacity: 1;
@@ -2678,63 +2815,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   line-height: 1.4;
 }
 
-.inline-agent__composer-meta {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--wiki-space-3);
-  justify-content: space-between;
-  margin-bottom: var(--wiki-space-3);
-}
-
-.inline-agent__page-context {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-1) var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-radius-pill);
-  background: var(--wiki-surface-raised);
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  line-height: 1.4;
-}
-
-.inline-agent__page-context > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inline-agent__page-context .v-icon {
-  color: var(--wiki-primary-ink);
-}
-
-.inline-agent__page-context strong {
-  color: rgb(var(--v-theme-on-surface));
-  font-weight: var(--wiki-label-weight);
-}
-
-.inline-agent__notice {
-  display: inline-flex;
-  flex: 0 1 auto;
-  align-items: center;
-  gap: var(--wiki-space-1);
-  padding: var(--wiki-space-1) var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-radius-pill);
-  background: var(--wiki-surface-raised);
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  line-height: 1.4;
-  text-align: end;
-}
-
-.inline-agent__notice span {
-  white-space: nowrap;
-}
 
 .inline-agent__side {
   position: relative;
@@ -2918,7 +2998,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__panel-actions > .inline-agent__more-menu { order: 2; }
   .inline-agent__session-action { min-width: var(--wiki-control-height); padding-inline: var(--wiki-space-2); }
   .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
-  .inline-agent__notice { display: none; }
   .inline-agent__starters { width: 100%; grid-template-columns: 1fr; }
   .inline-agent__starter { min-height: 3.25rem; padding: .6rem; }
 }
@@ -2929,9 +3008,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     padding-inline: var(--wiki-space-3);
   }
 
-  .inline-agent__eyebrow {
-    display: none;
-  }
 
   .inline-agent__panel-actions {
     gap: var(--wiki-space-1);
@@ -3015,12 +3091,22 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     inset-block-start: calc(var(--wiki-control-height) + env(safe-area-inset-top) - var(--wiki-space-1));
   }
 
-  .inline-agent__eyebrow {
-    display: none;
-  }
   .inline-agent__identity {
     overflow: hidden;
     gap: .25rem;
+  }
+  .inline-agent__session-line {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+  }
+  .inline-agent__session-title,
+  .inline-agent__provider-identity,
+  .inline-agent__provider-trigger {
+    max-width: 100%;
+  }
+  .inline-agent__provider-trigger {
+    padding: 0;
   }
 
   .inline-agent__panel-actions {
@@ -3048,15 +3134,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     padding-inline: 0;
   }
 
-  .inline-agent__notice {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
 
   .inline-agent__welcome {
     --agent-welcome-pad-start: var(--wiki-space-6);
@@ -3074,15 +3151,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     padding: var(--wiki-space-2) var(--wiki-space-3) max(var(--wiki-space-2), env(safe-area-inset-bottom));
   }
 
-  .inline-agent__page-context {
-    margin-inline: var(--wiki-space-1);
-  }
-
-  .inline-agent__page-context span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 
 }
 
@@ -3097,9 +3165,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
   }
 
-  .inline-agent__eyebrow {
-    display: none;
-  }
 
   .inline-agent__progress {
     inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-2) - var(--wiki-space-1));
@@ -3115,13 +3180,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
 
-  .inline-agent__notice {
-    justify-content: flex-start;
-    margin-top: var(--wiki-space-1);
-    font-size: .6875rem;
-    line-height: 1.25;
-    text-align: start;
-  }
 
   .inline-agent__welcome {
     min-height: auto;
@@ -3205,18 +3263,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     backdrop-filter: none;
   }
 
-  .inline-agent__temporary-session--active {
-    border-color: Highlight !important;
-    background: Highlight !important;
-    color: HighlightText !important;
-    outline: 2px solid Highlight;
-    outline-offset: -2px;
-    box-shadow: inset 0 0 0 1px HighlightText;
-  }
-
-  .inline-agent__temporary-session--active:focus-visible {
-    outline-offset: 2px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

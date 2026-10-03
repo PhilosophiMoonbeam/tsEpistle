@@ -39,12 +39,14 @@
           <v-checkbox-btn
             :model-value="isSelected(skill.versionId) || isPreferred(skill.versionId)"
             :aria-label="`${skill.name}: ${isSelected(skill.versionId) || isPreferred(skill.versionId) ? $t('common:agentComposerSkillMenu.selected') : $t('common:agentComposerSkillMenu.notSelected')}`"
-            :disabled="disabled || sendInProgress || isPreferred(skill.versionId) || (!isSelected(skill.versionId) && selectedSkillVersionIds.length >= invocationLimit)"
+            :disabled="disabled || sendInProgress || isPreferred(skill.versionId) || isLimited(skill.versionId)"
+            :title="isLimited(skill.versionId) ? skillLimitReason : undefined"
+            :aria-describedby="isLimited(skill.versionId) ? limitReasonId : undefined"
             @click.stop="toggle(skill.versionId)"
           />
         </template>
         <v-list-item-title>{{ skill.name }}</v-list-item-title>
-        <v-list-item-subtitle>{{ isPreferred(skill.versionId) ? $t('common:agentComposerSkillMenu.alwaysLoadedConversations') : skill.description }}</v-list-item-subtitle>
+        <v-list-item-subtitle>{{ isLimited(skill.versionId) ? skillLimitReason : isPreferred(skill.versionId) ? $t('common:agentComposerSkillMenu.alwaysLoadedConversations') : skill.description }}</v-list-item-subtitle>
         <template #append>
           <div class="d-flex align-center ga-1">
             <v-chip v-if="skill.exposureMode === 'owner'" size="x-small" variant="tonal">{{ $t('common:agentComposerSkillMenu.mine') }}</v-chip>
@@ -66,7 +68,7 @@
       </v-list-item>
     </v-list>
     <v-card-text v-else-if="!skillsPartial" class="text-medium-emphasis">{{ $t('common:agentComposerSkillMenu.noSkillsAvailableYet') }}</v-card-text>
-    <v-card-text v-if="invocationLimit === 0" class="pt-0 text-body-small text-medium-emphasis">{{ $t('common:agentComposerSkillMenu.youHaveMaximum8') }}</v-card-text>
+    <v-card-text v-if="items.some(skill => isLimited(skill.versionId))" :id="limitReasonId" role="status" class="pt-0 text-body-small text-medium-emphasis">{{ skillLimitReason }}</v-card-text>
     <v-divider />
     <v-card-actions>
       <v-btn prepend-icon="mdi-file-document-edit-outline" variant="text" :disabled="sendInProgress" @click="manageSkills">{{ $t('common:agentComposerSkillMenu.manageMySkills') }}</v-btn>
@@ -131,6 +133,12 @@ const selectedSkillVersionIdSet = computed(() => new Set(props.selectedSkillVers
 const preferredVersionIdSet = computed(() => new Set(props.preferredVersionIds))
 const isSelected = (versionId: string): boolean => selectedSkillVersionIdSet.value.has(versionId)
 const isPreferred = (versionId: string): boolean => preferredVersionIdSet.value.has(versionId)
+const limitReasonId = `${generatedId}-skills-limit`
+const isLimited = (versionId: string): boolean =>
+  !isPreferred(versionId) && !isSelected(versionId) && props.selectedSkillVersionIds.length >= props.invocationLimit
+const skillLimitReason = computed(() => props.invocationLimit === 0
+  ? t('common:agentComposerSkillMenu.youHaveMaximum8')
+  : t('common:agentComposer.skillSelectionLimit', { limit: props.invocationLimit }))
 
 const skillLoadTitle = computed(() => props.skillsLoadError
   ? props.skillsCount > 0 ? t('common:agentComposerSkillMenu.skillCatalogIncomplete') : t('common:agentComposerSkillMenu.skillCatalogUnavailable')
@@ -142,7 +150,7 @@ const skillLoadMessage = computed(() => props.skillsLoadError
   : t('common:agentComposerSkillMenu.availableSkillsStillBeing'))
 
 const toggle = (versionId: string): void => {
-  if (props.disabled || props.sendInProgress) return
+  if (props.disabled || props.sendInProgress || isPreferred(versionId) || isLimited(versionId)) return
   emit('toggle', versionId)
 }
 const manageSkills = (): void => {

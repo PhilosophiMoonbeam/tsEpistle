@@ -12,6 +12,11 @@ import type {
   AgentToolCallView
 } from '../../../shared/agents/contracts.ts'
 
+export interface AgentLocalizedText {
+  readonly key: string
+  readonly params?: Readonly<Record<string, string | number>>
+}
+
 export interface AgentProposalTool {
   readonly tool: AgentToolCallView
   readonly proposal: AgentProposalView
@@ -24,7 +29,7 @@ export interface AgentRunTools {
 export interface AgentCitationEntry {
   readonly citation: AgentCitation
   readonly number: number
-  readonly sectionLabel: string
+  readonly sectionLabel: string | null
 }
 
 export interface AgentCitationGroup {
@@ -66,7 +71,7 @@ export const groupAgentCitations = (citations: readonly AgentCitation[]): readon
     const entry = {
       citation,
       number: index + 1,
-      sectionLabel: labelParts.slice(1).join(' › ') || 'Page overview'
+      sectionLabel: labelParts.slice(1).join(' › ') || null
     }
     if (citation.evidenceId === pageEvidenceId || pageEvidenceId === undefined) group.pageCitation ??= entry
     else group.sections.push(entry)
@@ -103,7 +108,7 @@ export const agentAppliedPageLinks = (entries: readonly AgentProposalTool[]): re
   return links
 }
 
-const activityCount = (count: number): string => `${count} ${count === 1 ? 'activity' : 'activities'}`
+const activityCount = (count: number): AgentLocalizedText => ({ key: 'common:agentThread.activityCount', params: { count } })
 
 interface AgentActivityDispositionCounts {
   readonly failures: number
@@ -123,45 +128,34 @@ const activityDispositionCounts = (tools: readonly AgentToolCallView[]): AgentAc
   return { failures, omitted, notExecuted }
 }
 
-const dispositionSuffix = (counts: AgentActivityDispositionCounts): string => {
-  const parts: string[] = []
-  if (counts.omitted > 0) parts.push(`${counts.omitted} omitted`)
-  if (counts.notExecuted > 0) parts.push(`${counts.notExecuted} not executed`)
-  if (counts.failures > 0) parts.push(`${counts.failures} failed`)
-  return parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
-}
-
-export const agentActivityLabel = (tools: readonly AgentToolCallView[]): string => {
-  let active: AgentToolCallView | undefined
-  for (let index = tools.length - 1; index >= 0; index -= 1) {
-    const tool = tools[index]
-    if (tool && (tool.state === 'preparing' || tool.state === 'running')) {
-      active = tool
-      break
-    }
-  }
+export const agentActivityLabel = (tools: readonly AgentToolCallView[]): readonly AgentLocalizedText[] => {
+  const active = tools.findLast(tool => tool.state === 'preparing' || tool.state === 'running' || tool.state === 'awaitingApproval')
   const { failures, omitted, notExecuted } = activityDispositionCounts(tools)
   const exceptional = failures > 0 || omitted > 0 || notExecuted > 0
-  if (active && !exceptional) return `${active.title} · ${activityCount(tools.length)}`
-  if (exceptional) {
-    return `Activity · ${activityCount(tools.length)}${dispositionSuffix({ failures, omitted, notExecuted })}`
+  const parts: AgentLocalizedText[] = [
+    active && !exceptional ? { key: 'common:agentThread.activityTitle', params: { title: active.title } } : { key: 'common:agentThread.activity' },
+    activityCount(tools.length)
+  ]
+  if (omitted > 0) parts.push({ key: 'common:agentThread.activityOmitted', params: { count: omitted } })
+  if (notExecuted > 0) parts.push({ key: 'common:agentThread.activityNotExecuted', params: { count: notExecuted } })
+  if (failures > 0) parts.push({ key: 'common:agentThread.activityFailed', params: { count: failures } })
+  if (!active && !exceptional) {
+    parts.push({
+      key: tools.some(tool => tool.state === 'cancelled' || tool.state === 'denied') ? 'common:agentThread.activityStopped' : 'common:agentThread.complete'
+    })
   }
-  if (active) return `${active.title} · ${activityCount(tools.length)}`
-  if (tools.some(tool => tool.state === 'cancelled' || tool.state === 'denied')) {
-    return `Activity · ${activityCount(tools.length)} · Stopped`
-  }
-  return `Activity · ${activityCount(tools.length)} · Complete`
+  return parts
 }
 export interface AgentRunPresentation extends AgentRunTools {
   readonly tasks: readonly AgentTaskView[]
   readonly pageLinks: readonly AgentPageActionLink[]
-  readonly activityLabel: string
+  readonly activityLabel: readonly AgentLocalizedText[]
   readonly workingPhase?: AgentRunWorkingPhase
 }
 
 export interface AgentMessageRecovery {
-  readonly title: string
-  readonly description: string
+  readonly title: AgentLocalizedText
+  readonly description: AgentLocalizedText
 }
 
 export interface AgentMessagePresentation {
@@ -169,8 +163,8 @@ export interface AgentMessagePresentation {
   readonly run: AgentRunPresentation | null
   readonly citationGroups: readonly AgentCitationGroup[]
   readonly retryPrompt: string
-  readonly statusLabel: string
-  readonly ariaLabel: string
+  readonly statusLabel: AgentLocalizedText | null
+  readonly ariaLabel: AgentLocalizedText
   readonly recovery: AgentMessageRecovery | null
 }
 
@@ -243,30 +237,65 @@ const cachedAgentCitationGroups = (citations: readonly AgentCitation[], cached: 
   return preservedOrder ? cached : canonicalGroups
 }
 
-const messageStatusLabel = (message: AgentMessageView, run: AgentRunPresentation | null): string => {
-  if (message.status === 'complete') return ''
+const terminalAssistantOutcome = (message: AgentMessageView): AgentMessageView['runOutcome'] =>
+  message.role === 'assistant' && message.runId !== null && message.status !== 'pending' && message.status !== 'streaming' ? message.runOutcome : undefined
+
+const messageStatusLabel = (message: AgentMessageView, run: AgentRunPresentation | null): AgentLocalizedText | null => {
+  const outcome = terminalAssistantOutcome(message)
+  if (outcome?.status === 'partial' && message.status === 'complete') return { key: 'common:agentThread.partial' }
   if (message.role === 'user') {
-    if (message.status === 'failed') return 'Send failed'
-    if (message.status === 'cancelled') return 'Send stopped'
-    return 'Sending'
+    if (message.status === 'complete') return null
+    if (message.status === 'failed') return { key: 'common:agentThread.sendFailed' }
+    if (message.status === 'cancelled') return { key: 'common:agentThread.sendStopped' }
+    return { key: 'common:agentThread.sending' }
   }
-  if (message.status === 'failed') return 'Response failed'
-  if (message.status === 'cancelled') return 'Response stopped'
-  if (run?.workingPhase === 'correcting') return 'Checking and correcting a response'
-  return 'Preparing a response'
+  if (message.status === 'failed' || outcome?.status === 'failed') return { key: 'common:agentThread.responseFailedStatus' }
+  if (message.status === 'cancelled' || outcome?.status === 'cancelled') return { key: 'common:agentThread.responseStopped' }
+  if (message.status === 'complete') return null
+  if (run?.workingPhase === 'correcting') return { key: 'common:agentThread.correctingResponse' }
+  return { key: message.status === 'streaming' ? 'common:agentThread.generatingResponse' : 'common:agentThread.preparingResponse' }
 }
 
 const messageRecovery = (message: AgentMessageView): AgentMessageRecovery | null => {
-  if (message.status !== 'failed' && message.status !== 'cancelled') return null
-  if (message.role === 'user') {
-    return {
-      title: message.status === 'failed' ? 'Message was not sent' : 'Message sending stopped',
-      description: 'You can retry this message or revise it in the composer.'
+  const outcome = terminalAssistantOutcome(message)
+  if (message.status === 'complete' && outcome?.status === 'partial') {
+    return { title: { key: 'common:agentThread.partialAnswer' }, description: { key: 'common:agentThread.recoveryPartial' } }
+  }
+  const failed = message.status === 'failed' || outcome?.status === 'failed'
+  const stopped = message.status === 'cancelled' || outcome?.status === 'cancelled'
+  if (!failed && !stopped) return null
+  let descriptionKey = 'common:agentThread.recoveryGeneric'
+  if (failed && outcome?.status === 'failed') {
+    switch (outcome.errorCode) {
+      case 'AGENT_QUOTA_EXHAUSTED':
+        descriptionKey = 'common:agentThread.recoveryQuota'
+        break
+      case 'AGENT_CONTEXT_TOO_LARGE':
+      case 'PROVIDER_CONTEXT_TOO_LARGE':
+      case 'PROVIDER_REQUEST_TOO_LARGE':
+      case 'AGENT_MEDIA_CONTEXT_LIMIT':
+        descriptionKey = 'common:agentThread.recoveryContext'
+        break
+      case 'AGENT_OUTPUT_LIMITED':
+        descriptionKey = 'common:agentThread.recoveryOutput'
+        break
+      case 'AGENT_TOKEN_BUDGET_LIMITED':
+        descriptionKey = 'common:agentThread.recoveryTokenBudget'
+        break
     }
   }
   return {
-    title: message.status === 'failed' ? 'Response could not be completed' : 'Response stopped',
-    description: message.status === 'failed' ? 'You can retry the same request or revise it in the composer.' : 'You can continue by retrying the request.'
+    title: {
+      key:
+        message.role === 'user'
+          ? failed
+            ? 'common:agentThread.messageNotSent'
+            : 'common:agentThread.messageStopped'
+          : failed
+            ? 'common:agentThread.responseFailed'
+            : 'common:agentThread.responseStopped'
+    },
+    description: { key: descriptionKey }
   }
 }
 
@@ -314,7 +343,10 @@ export const buildAgentThreadPresentation = (
     runPresentations.set(runId, {
       ...run,
       ...(workingPhase === undefined ? {} : { workingPhase }),
-      pageLinks: agentAppliedPageLinks(run.proposals),
+      pageLinks: (() => {
+        const links = agentAppliedPageLinks(run.proposals)
+        return cached && hasSameSemanticSignature(links, cached.pageLinks) ? cached.pageLinks : links
+      })(),
       activityLabel: agentActivityLabel(run.activity)
     })
   }
@@ -346,7 +378,7 @@ export const buildAgentThreadPresentation = (
       citationGroups: citationsUnchanged ? cached!.citationGroups : cachedAgentCitationGroups(canonicalMessage.citations, cached?.citationGroups),
       retryPrompt,
       statusLabel,
-      ariaLabel: `${canonicalMessage.role === 'assistant' ? 'Wiki Agent' : 'Your'} message · ${statusLabel || 'Complete'}`,
+      ariaLabel: { key: canonicalMessage.role === 'assistant' ? 'common:agentThread.assistantMessage' : 'common:agentThread.userMessage' },
       recovery: messageRecovery(canonicalMessage)
     })
   }
@@ -354,22 +386,24 @@ export const buildAgentThreadPresentation = (
   return { runs: runPresentations, messages: messagePresentations, orderedMessages }
 }
 
-export type AgentLiveAnnouncementKind = 'preparing' | 'correcting' | 'approval' | 'complete' | 'stopped' | 'failed'
+export type AgentLiveAnnouncementKind = 'preparing' | 'generating' | 'correcting' | 'approval' | 'complete' | 'partial' | 'stopped' | 'failed'
 
 export interface AgentLiveAnnouncement {
   readonly key: string
   readonly kind: AgentLiveAnnouncementKind
-  readonly message: string
+  readonly message: AgentLocalizedText
   readonly tone: 'neutral' | 'error'
 }
 
-const liveAnnouncementCopy: Record<AgentLiveAnnouncementKind, string> = {
-  preparing: 'Preparing a response.',
-  correcting: 'Checking and correcting a response.',
-  approval: 'Review needed before the response can continue.',
-  complete: 'Response complete.',
-  stopped: 'Response stopped.',
-  failed: 'Response failed.'
+const liveAnnouncementCopy: Record<AgentLiveAnnouncementKind, AgentLocalizedText> = {
+  preparing: { key: 'common:agentThread.announcePreparing' },
+  generating: { key: 'common:agentThread.announceGenerating' },
+  correcting: { key: 'common:agentThread.announceCorrecting' },
+  approval: { key: 'common:agentThread.announceApproval' },
+  complete: { key: 'common:agentThread.announceComplete' },
+  partial: { key: 'common:agentThread.partialAnswer' },
+  stopped: { key: 'common:agentThread.announceStopped' },
+  failed: { key: 'common:agentThread.announceFailed' }
 }
 
 export const agentLiveAnnouncement = (
@@ -388,14 +422,16 @@ export const agentLiveAnnouncement = (
   if (!latestAssistant) return null
 
   let kind: AgentLiveAnnouncementKind
-  if (latestAssistant.status === 'complete') kind = 'complete'
-  else if (latestAssistant.status === 'cancelled') kind = 'stopped'
-  else if (latestAssistant.status === 'failed') kind = 'failed'
+  const outcome = terminalAssistantOutcome(latestAssistant)
+  if (latestAssistant.status === 'complete' && outcome?.status === 'partial') kind = 'partial'
+  else if (latestAssistant.status === 'failed' || outcome?.status === 'failed') kind = 'failed'
+  else if (latestAssistant.status === 'cancelled' || outcome?.status === 'cancelled') kind = 'stopped'
+  else if (latestAssistant.status === 'complete') kind = 'complete'
   else {
     const runId = latestAssistant.runId
     const awaitingApproval = runId !== null && tools.some(tool => tool.runId === runId && tool.state === 'awaitingApproval')
     const correcting = currentRun?.status === 'running' && currentRun.id === runId && currentRun.workingPhase === 'correcting'
-    kind = awaitingApproval ? 'approval' : correcting ? 'correcting' : 'preparing'
+    kind = awaitingApproval ? 'approval' : correcting ? 'correcting' : latestAssistant.status === 'streaming' ? 'generating' : 'preparing'
   }
   return {
     key: `${latestAssistant.id}:${kind}`,

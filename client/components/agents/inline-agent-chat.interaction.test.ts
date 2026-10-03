@@ -17,6 +17,7 @@ import { fallbackLocalizationLabel } from '../../modules/localization.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import type { AgentProviderProfileView, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
+import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/inline-agent-chat.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
@@ -96,8 +97,8 @@ const renderPicker = new Function('Vue', pickerTemplate.code)(Vue) as () => unkn
 const pickerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(pickerDescriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
 const pickerBindings = Array.from(pickerDescriptor.scriptSetup.content.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const evaluatePicker = new Function(
-  '{ computed, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, searchPages, fetchWikiSource, AgentKnowledgeContextSchema }',
-  `${pickerScript}\nreturn { ${pickerBindings.join(', ')} }`
+  '{ computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, searchPages, fetchWikiSource, AgentKnowledgeContextSchema }',
+  `${pickerScript}\nreturn { mergeProps, ${pickerBindings.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
 const contextPickerComponent = Vue.defineComponent({
   props: {
@@ -111,6 +112,7 @@ const contextPickerComponent = Vue.defineComponent({
   setup(props, { emit }) {
     return evaluatePicker({
       computed: Vue.computed,
+      mergeProps: Vue.mergeProps,
       nextTick: Vue.nextTick,
       onBeforeUnmount: Vue.onBeforeUnmount,
       ref: Vue.ref,
@@ -156,6 +158,13 @@ interface LockState {
   handleComposerFocusOut: (event: FocusEvent) => void
   handleTranscriptEngagement: (event: FocusEvent | PointerEvent) => void
   transcript: ValueRef<HTMLElement | null>
+  conversationDock: ValueRef<HTMLElement | null>
+  handleTranscriptScroll: () => void
+  scheduleTranscriptReconcile: () => void
+  jumpToApproval: () => Promise<void>
+  approvalJumpVisible: ValueRef<boolean>
+  transcriptFollowing: ValueRef<boolean>
+  transcriptBottomDistance: ValueRef<number>
   reconcileTranscriptGrowth: (shouldFollow: boolean) => Promise<void>
   openGoal: ValueRef<{ status: string } | null>
   goalSubmitUnavailableReason: ValueRef<string>
@@ -165,6 +174,7 @@ interface LockState {
   offlineComposerDraft: ValueRef<string>
   resolveDraftDiscard: (discard: boolean) => void
   agentCalls: {
+    setProfile: (...args: unknown[]) => unknown
     drafts: Record<string, AgentDraft>
     clearUnfiledHistory: (...args: unknown[]) => unknown
     initialize: (...args: unknown[]) => unknown
@@ -334,7 +344,7 @@ const loadGoalLockState = (
     loading: ref(false),
     pinnedSessionId: ref<string | null>(null),
     pinStorageAvailable: ref(true),
-    profiles: ref([{ id: 'profile-1' }]),
+    profiles: ref([{ id: 'profile-1', name: 'Test provider', model: 'test', isGlobalDefault: true }]),
     sending: ref(false),
     networkPaused: ref(workspaceClosed),
     workspaceDisposed: ref(workspaceClosed),
@@ -370,6 +380,7 @@ const loadGoalLockState = (
     sessions: [] as Array<{ id: string; deletedAt: string | null }>,
     send: vi.fn(() => Promise.resolve(true)),
     setCurrentChatPinned: vi.fn(),
+    setProfile: vi.fn(() => Promise.resolve()),
     drafts: Vue.reactive<Record<string, AgentDraft>>({}),
     setDraft: vi.fn(),
     updateDraft: vi.fn(),
@@ -438,8 +449,8 @@ const loadGoalLockState = (
       activeOwnedOverlayRoots: () => [],
       createModalFocusScope: (options: Parameters<typeof createModalFocusScope>[0]) =>
         options.root.closest('.v-dialog') ? createModalFocusScope(options) : { deactivate: () => undefined },
-      isAgentApprovalOutsideViewport: () => false,
-      shouldFollowGoalExpansion: () => false,
+      isAgentApprovalOutsideViewport,
+      shouldFollowGoalExpansion,
       pwaState: testPwaState,
       retryServerConnection: async () => true,
       wikiStore: { user: { id: 2, name: 'Test User', pictureUrl: '' } },
@@ -554,10 +565,36 @@ const settle = async (): Promise<void> => {
   await Vue.nextTick()
 }
 
+const controlTranscriptFrames = () => {
+  let frameId = 0
+  const callbacks = new Map<number, FrameRequestCallback>()
+  const cancelled: number[] = []
+  vi.spyOn(browserWindow, 'requestAnimationFrame').mockImplementation(callback => {
+    const id = ++frameId
+    callbacks.set(id, callback)
+    return id
+  })
+  vi.spyOn(browserWindow, 'cancelAnimationFrame').mockImplementation(id => {
+    cancelled.push(id)
+    callbacks.delete(id)
+  })
+  return {
+    callbacks,
+    cancelled,
+    flush: async () => {
+      await settle()
+      const frame = [...callbacks.values()]
+      callbacks.clear()
+      for (const callback of frame) callback(0)
+      await settle()
+    }
+  }
+}
+
 const sessionId = '00000000-0000-4000-8000-000000000001'
 const timestamp = '2026-09-15T10:00:00.000Z'
 // Fixture-only signing material; this harness exercises client continuity, not server authorization.
-const profileResolutionToken = (id: string, version: number): string => {
+const profileResolutionToken = (id: string, version: number, profileId = profileFixture.id): string => {
   const kid = 'inline-agent-interaction'
   const payload = Buffer.from(
     JSON.stringify({
@@ -566,7 +603,7 @@ const profileResolutionToken = (id: string, version: number): string => {
       ownerId: 2,
       sessionId: id,
       sessionVersion: version,
-      profileId: profileFixture.id,
+      profileId,
       profileVersionId: '00000000-0000-4000-8000-000000000011',
       profileVersion: 1,
       profilePolicyVersion: profileFixture.policyVersion,
@@ -631,8 +668,9 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
   const store = useAgentsStore(createPinia())
   let serverThread = threadFixture(sessionId, retention)
   const creations: Array<{ retention: 'saved' | 'temporary'; thread: AgentThreadState }> = []
-  const authorization = { pending: null as Promise<Response> | null }
+  const authorization = { pending: null as Promise<Response> | null, profiles: [profileFixture] as AgentProviderProfileView[] }
   const mediaUpload = { pending: null as Promise<Response> | null }
+  const profileChanges: Array<{ expectedSessionVersion: number; profileId: string | null }> = []
   const requests: Array<{ method: string; path: string }> = []
   const summary = () => {
     const { session } = serverThread
@@ -644,7 +682,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     const method = init?.method ?? 'GET'
     requests.push({ method, path })
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {}
-    if (path === '/_api/agents/profiles') return authorization.pending ?? Response.json({ profiles: [profileFixture] })
+    if (path === '/_api/agents/profiles') return authorization.pending ?? Response.json({ profiles: authorization.profiles })
     if (path === '/_api/agents/skills') return Response.json({ skills: [] })
     if (path === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
     if (path === '/_api/agents/sessions' && method === 'GET') return Response.json({ sessions: [summary()], nextCursor: null })
@@ -673,6 +711,31 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
           }
         })
       )
+    }
+    if (path === `/_api/agents/sessions/${serverThread.session.id}/profile` && method === 'PUT') {
+      if (
+        body.expectedSessionVersion !== serverThread.session.version ||
+        !(body.profileId === null || authorization.profiles.some(profile => profile.id === body.profileId))
+      )
+        throw new Error('Unexpected provider mutation')
+      const profileId = body.profileId as string | null
+      const version = serverThread.session.version + 1
+      profileChanges.push({ expectedSessionVersion: serverThread.session.version, profileId })
+      serverThread = {
+        ...serverThread,
+        session: {
+          ...serverThread.session,
+          providerProfileId: profileId,
+          version,
+          googleSearchEnabled: false,
+          profileResolutionToken: profileResolutionToken(
+            serverThread.session.id,
+            version,
+            profileId ?? authorization.profiles.find(profile => profile.isGlobalDefault)?.id
+          )
+        }
+      }
+      return Response.json(serverThread)
     }
     if (path === `/_api/agents/sessions/${serverThread.session.id}` && method === 'PATCH') {
       if (body.retention !== 'saved' || body.expectedSessionVersion !== serverThread.session.version) throw new Error('Unexpected retention mutation')
@@ -728,13 +791,21 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     store.closeWorkspace()
     store.$dispose()
   })
-  return { store, state, creations, authorization, mediaUpload, requests }
+  return { store, state, creations, authorization, mediaUpload, requests, profileChanges }
 }
 
 const menuAction = (items: HTMLElement[], name: string): HTMLElement => {
   const item = items.find(candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === name)
   if (!item) throw new Error(`Missing More chat actions item: ${name}`)
   return item
+}
+
+const openProviderMenu = async (mounted: MountedInlineAgent): Promise<HTMLElement[]> => {
+  const trigger = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__provider-trigger')
+  if (!trigger) throw new Error('Conversation provider trigger missing')
+  if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
+  await settle()
+  return Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__provider-option'))
 }
 
 const mountInlineAgent = (
@@ -1480,6 +1551,16 @@ describe('Inline Agent workspace actions', () => {
     await settle()
 
     expect(lockState.agentCalls.send).toHaveBeenCalledTimes(1)
+    const group = mounted.root.querySelector<HTMLElement>('.inline-agent__starters')
+    const reasonId = group?.getAttribute('aria-describedby')
+    const reason = reasonId ? mounted.root.querySelector<HTMLElement>(`[id="${reasonId}"]`) : null
+    expect(group?.getAttribute('aria-busy')).toBe('true')
+    expect(reason?.textContent?.trim()).toBe(translateEnglish('common:inlineAgentChat.sendingMessage'))
+    expect(reason?.getAttribute('role')).toBe('status')
+    const secondStarter = mounted.root.querySelectorAll<HTMLButtonElement>('.inline-agent__starter')[1]
+    secondStarter?.click()
+    await settle()
+    expect(lockState.agentCalls.send).toHaveBeenCalledTimes(1)
     starter.click()
     await settle()
     expect(lockState.agentCalls.send).toHaveBeenCalledTimes(1)
@@ -1490,13 +1571,389 @@ describe('Inline Agent workspace actions', () => {
     await competing
     await settle()
     expect((lockState.promptSubmissionPending as ValueRef<boolean>).value).toBe(false)
+    expect(group?.getAttribute('aria-busy')).toBe('false')
+    expect(group?.hasAttribute('aria-describedby')).toBe(false)
     starter.click()
     await settle()
     expect(lockState.agentCalls.send).toHaveBeenCalledTimes(2)
   })
 
+  it('changes an allowed conversation provider once, preserves the full draft and resets to workspace default without inference', async () => {
+    vi.useFakeTimers()
+    const workspace = realWorkspace()
+    const second = { ...profileFixture, id: '00000000-0000-4000-8000-000000000012', name: 'Review provider', model: 'review-model', isGlobalDefault: false }
+    workspace.authorization.profiles = [profileFixture, second]
+    workspace.store.profiles = workspace.authorization.profiles
+    const initialThread = workspace.store.thread
+    if (!initialThread) throw new Error('Conversation missing')
+    workspace.store.thread = { ...initialThread, session: { ...initialThread.session, googleSearchEnabled: true } }
+    const draft: AgentDraft = {
+      ...emptyAgentDraft(),
+      text: 'Keep this research draft',
+      mode: 'goal',
+      skillVersionIds: ['skill-version-1'],
+      sources: [
+        {
+          id: 41,
+          locale: 'en',
+          path: 'handbook/release',
+          title: 'Release handbook',
+          description: '',
+          visibility: 'public',
+          updatedAt: timestamp,
+          sourceRevision: '1',
+          excerpt: '',
+          excerptTruncated: false
+        }
+      ],
+      scope: { kind: 'selected' },
+      includeCurrentPage: false
+    }
+    workspace.store.drafts[sessionId] = structuredClone(draft)
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state)
+    const options = await openProviderMenu(mounted)
+    const defaultOption = menuAction(options, translateEnglish('common:inlineAgentChat.workspaceDefaultProvider'))
+    expect(defaultOption.getAttribute('aria-checked')).toBe('true')
+    const selected = menuAction(options, second.name)
+    expect(selected.getAttribute('aria-checked')).toBe('false')
+    expect(selected.querySelector('.v-list-item-subtitle')?.textContent).toBe(second.model)
+    expect(mounted.root.querySelector('.inline-agent__provider-help')?.textContent).toBe(translateEnglish('common:inlineAgentChat.providerWebConsentHelp'))
+    selected.click()
+    selected.click()
+    await settle()
+    expect(workspace.profileChanges).toEqual([{ expectedSessionVersion: 1, profileId: second.id }])
+    expect(workspace.store.thread?.session.providerProfileId).toBe(second.id)
+    expect(workspace.store.thread?.session.googleSearchEnabled).toBe(false)
+    expect(workspace.store.drafts[sessionId]).toEqual(draft)
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(draft.text)
+    expect(mounted.root.querySelector('.inline-agent__provider-identity')?.textContent).toContain(second.model)
+    expect(state.sessionNotice.value).toBe(
+      translateEnglish('common:inlineAgentChat.providerChanged', {
+        identity: translateEnglish('common:inlineAgentChat.providerIdentity', { name: second.name, model: second.model })
+      })
+    )
+    await vi.advanceTimersByTimeAsync(50)
+    const updatedOptions = await openProviderMenu(mounted)
+    expect(menuAction(updatedOptions, second.name).getAttribute('aria-checked')).toBe('true')
+    menuAction(updatedOptions, translateEnglish('common:inlineAgentChat.workspaceDefaultProvider')).click()
+    await settle()
+    expect(workspace.profileChanges).toEqual([
+      { expectedSessionVersion: 1, profileId: second.id },
+      { expectedSessionVersion: 2, profileId: null }
+    ])
+    expect(workspace.store.thread?.session.providerProfileId).toBeNull()
+    expect(workspace.store.drafts[sessionId]).toEqual(draft)
+    expect(workspace.requests.filter(request => request.path.endsWith('/messages') || request.path.endsWith('/google-search'))).toHaveLength(0)
+  })
+
+  for (const invalidation of ['session', 'workspace'] as const) {
+    it(`closes provider choices when the ${invalidation} changes`, async () => {
+      const workspace = realWorkspace()
+      const state = workspace.state()
+      const mounted = mountInlineAgent(state)
+      expect(await openProviderMenu(mounted)).not.toHaveLength(0)
+      expect((state.providerMenuOpen as ValueRef<boolean>).value).toBe(true)
+      if (invalidation === 'session') workspace.store.thread = threadFixture('00000000-0000-4000-8000-000000000004')
+      else workspace.store.workspaceVersion += 1
+      await settle()
+      expect((state.providerMenuOpen as ValueRef<boolean>).value).toBe(false)
+      expect(mounted.root.querySelector('.inline-agent__provider-trigger')?.getAttribute('aria-expanded')).toBe('false')
+      expect(workspace.profileChanges).toHaveLength(0)
+    })
+  }
+
+  for (const blocker of ['run', 'active-goal', 'paused-goal', 'blocked-goal', 'mutation', 'offline'] as const) {
+    it(`disables provider choices with a visible reason during ${blocker}`, async () => {
+      const state = loadGoalLockState(
+        blocker === 'active-goal' ? 'active' : blocker === 'paused-goal' ? 'paused' : null,
+        blocker === 'mutation',
+        blocker === 'run' ? 'running' : null
+      )
+      if (blocker === 'blocked-goal' && state.thread.value) state.thread.value = { ...state.thread.value, goal: { id: 'goal-1', status: 'blocked' } }
+      if (blocker === 'offline') testPwaState.connectionState = 'offline'
+      const mounted = mountInlineAgent(state)
+      const options = await openProviderMenu(mounted)
+      expect(options.length).toBeGreaterThan(0)
+      expect(options.every(option => option.classList.contains('v-list-item--disabled'))).toBe(true)
+      const reason = mounted.root.querySelector<HTMLElement>('.inline-agent__provider-help[role="status"]')
+      expect(reason?.textContent?.trim()).not.toBe('')
+      options.at(-1)?.click()
+      await (state.selectProvider as (id: string) => Promise<void>)('profile-1')
+      expect(state.agentCalls.setProfile).not.toHaveBeenCalled()
+    })
+  }
+
+  it('blocks provider changes during real uploads and while attachments remain, then re-enables choices after removal', async () => {
+    vi.useFakeTimers()
+    const workspace = realWorkspace()
+    const withMedia = {
+      ...profileFixture,
+      media: { attachments: true, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false }
+    }
+    const second = { ...withMedia, id: '00000000-0000-4000-8000-000000000012', name: 'Review provider', model: 'review-model', isGlobalDefault: false }
+    workspace.authorization.profiles = [withMedia, second]
+    workspace.store.profiles = workspace.authorization.profiles
+    let completeUpload!: (response: Response) => void
+    workspace.mediaUpload.pending = new Promise<Response>(resolve => {
+      completeUpload = resolve
+    })
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state)
+    const input = mounted.root.querySelector<HTMLInputElement>('input[type="file"]')
+    if (!input) throw new Error('Real media upload input missing')
+    const file = new File(['%PDF-1.4\nreport\n%%EOF\n'], 'provider-draft.pdf', { type: 'application/pdf' })
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] })
+    input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    await settle()
+    await openProviderMenu(mounted)
+    expect(mounted.root.querySelector('.inline-agent__provider-help[role="status"]')?.textContent).toBe(
+      translateEnglish('common:inlineAgentChat.providerWaitForMedia')
+    )
+    await (state.selectProvider as (id: string) => Promise<void>)(second.id)
+    expect(workspace.profileChanges).toHaveLength(0)
+    completeUpload(
+      Response.json({
+        media: {
+          id: '00000000-0000-4000-8000-000000000050',
+          kind: 'attachment',
+          filename: file.name,
+          mimeType: file.type,
+          byteLength: file.size,
+          available: true,
+          detached: false
+        }
+      })
+    )
+    await settle()
+    expect(mounted.root.querySelector('.agent-composer__media-attachments')?.textContent).toContain(file.name)
+    expect(mounted.root.querySelector('.inline-agent__provider-help[role="status"]')?.textContent).toBe(
+      translateEnglish('common:inlineAgentChat.providerRemoveAttachments')
+    )
+    await (state.selectProvider as (id: string) => Promise<void>)(second.id)
+    expect(workspace.profileChanges).toHaveLength(0)
+    const remove = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__media-attachments button')
+    if (!remove) throw new Error('Attachment removal control missing')
+    remove.click()
+    await settle()
+    expect(mounted.root.querySelector('.inline-agent__provider-help[role="status"]')).toBeNull()
+    const options = await openProviderMenu(mounted)
+    expect(options.every(option => !option.classList.contains('v-list-item--disabled'))).toBe(true)
+    menuAction(options, second.name).click()
+    await settle()
+    expect(workspace.profileChanges).toHaveLength(1)
+  })
+
+  for (const viewportWidth of [1440, 390]) {
+    it(`shows the resolved provider and model with full accessible text at ${viewportWidth}px`, async () => {
+      const state = loadGoalLockState(null)
+      const profiles = state.profiles as ValueRef<AgentProviderProfileView[]>
+      const first = { ...profileFixture, name: 'Research profile with a deliberately long accessible name', model: 'research-model-long-name' }
+      const second = { ...profileFixture, id: 'profile-2', name: 'Review provider', model: 'review-model', isGlobalDefault: false }
+      profiles.value = [first, second]
+      const mounted = mountInlineAgent(state, { viewportWidth })
+      const expectIdentity = (root: HTMLElement, profile: AgentProviderProfileView) => {
+        const identity = root.querySelector<HTMLElement>('.inline-agent__provider-identity')
+        const fullText = translateEnglish('common:inlineAgentChat.providerIdentity', { name: profile.name, model: profile.model })
+        expect(identity?.textContent).toBe(fullText)
+        expect(identity?.getAttribute('title')).toBe(fullText)
+        expect(identity?.closest('.inline-agent__session-line')?.querySelector('.inline-agent__session-title')?.textContent).toContain('Release planning')
+      }
+      expectIdentity(mounted.root, first)
+      const thread = state.thread.value
+      if (!thread) throw new Error('Conversation missing')
+      state.thread.value = { ...thread, session: { ...(thread.session as Record<string, unknown>), providerProfileId: second.id } }
+      await settle()
+      expectIdentity(mounted.root, second)
+
+      profiles.value = [
+        { ...first, isGlobalDefault: false },
+        { ...second, isGlobalDefault: true }
+      ]
+      await settle()
+      expectIdentity(mounted.root, second)
+      state.thread.value = { ...state.thread.value, session: { ...(state.thread.value?.session as Record<string, unknown>), providerProfileId: null } }
+      await settle()
+      expectIdentity(mounted.root, second)
+      mounted.unmount()
+      const reopenedState = loadGoalLockState(null)
+      ;(reopenedState.profiles as ValueRef<AgentProviderProfileView[]>).value = profiles.value
+      const reopened = mountInlineAgent(reopenedState, { viewportWidth })
+      expectIdentity(reopened.root, second)
+      ;(reopenedState.profiles as ValueRef<AgentProviderProfileView[]>).value = [{ ...first, isGlobalDefault: true }]
+      await settle()
+      expectIdentity(reopened.root, first)
+    })
+  }
+
+  it('coalesces scroll measurements while preserving manual reading, follow and approval navigation', async () => {
+    installBrowserSurface()
+    const frames = controlTranscriptFrames()
+    const state = loadGoalLockState(null)
+    const thread = state.thread.value
+    if (!thread) throw new Error('Conversation missing')
+    state.thread.value = {
+      ...thread,
+      messages: [{ id: 'message-1', role: 'user', content: 'A question' }],
+      proposals: [{ id: 'proposal-1', status: 'pending', approval: { status: 'pending' } }]
+    }
+    const mounted = mountInlineAgent(state)
+    const container = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+    const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__conversation-dock')
+    if (!container || !dock) throw new Error('Conversation dock missing')
+    state.transcript.value = container
+    state.conversationDock.value = dock
+    const approval = document.createElement('div')
+    approval.id = 'agent-approval-proposal-1'
+    approval.tabIndex = -1
+    container.insertBefore(approval, dock)
+    let height = 2000
+    const heightRead = vi.fn(() => height)
+    const viewportRead = vi.fn(() => ({ top: 0, bottom: 600, height: 600 }) as DOMRect)
+    const dockRead = vi.fn(() => ({ top: 400, bottom: 600, height: 200 }) as DOMRect)
+    let approvalTop = 700
+    const approvalRead = vi.fn(() => ({ top: approvalTop, bottom: approvalTop + 100, height: 100 }) as DOMRect)
+    Object.defineProperties(container, {
+      scrollHeight: { configurable: true, get: heightRead },
+      clientHeight: { configurable: true, value: 600 }
+    })
+    container.getBoundingClientRect = viewportRead
+    dock.getBoundingClientRect = dockRead
+    approval.getBoundingClientRect = approvalRead
+    await frames.flush()
+    expect(container.scrollTop).toBe(1400)
+    heightRead.mockClear()
+    viewportRead.mockClear()
+    dockRead.mockClear()
+    approvalRead.mockClear()
+
+    container.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    for (const top of [1000, 900, 800]) {
+      container.scrollTop = top
+      container.dispatchEvent(new browserWindow.Event('scroll'))
+    }
+    expect(heightRead).not.toHaveBeenCalled()
+    expect(viewportRead).not.toHaveBeenCalled()
+    await frames.flush()
+    expect(heightRead).toHaveBeenCalledTimes(1)
+    expect(viewportRead).toHaveBeenCalledTimes(1)
+    expect(dockRead).toHaveBeenCalledTimes(1)
+    expect(approvalRead).toHaveBeenCalledTimes(1)
+    expect(state.transcriptFollowing.value).toBe(false)
+    expect(state.transcriptBottomDistance.value).toBe(600)
+    expect(state.approvalJumpVisible.value).toBe(true)
+
+    height = 2400
+    state.scheduleTranscriptReconcile()
+    await frames.flush()
+    expect(container.scrollTop).toBe(800)
+    expect(state.transcriptFollowing.value).toBe(false)
+    approvalTop = 200
+    state.handleTranscriptScroll()
+    await frames.flush()
+    expect(state.approvalJumpVisible.value).toBe(false)
+
+    container.scrollTop = 1800
+    container.dispatchEvent(new browserWindow.Event('scroll'))
+    await frames.flush()
+    expect(state.transcriptFollowing.value).toBe(true)
+    height = 2600
+    state.scheduleTranscriptReconcile()
+    await frames.flush()
+    expect(container.scrollTop).toBe(2000)
+    expect(state.transcriptBottomDistance.value).toBe(0)
+
+    state.handleTranscriptScroll()
+    const scheduled = [...frames.callbacks.keys()]
+    mounted.unmount()
+    expect(scheduled.every(id => frames.cancelled.includes(id))).toBe(true)
+    expect(frames.callbacks.size).toBe(0)
+  })
+
+  it('tracks growing dock height and focuses approvals without resuming automatic follow', async () => {
+    installBrowserSurface()
+    const frames = controlTranscriptFrames()
+    const originalObserver = globalThis.ResizeObserver
+    const observers: TestDockObserver[] = []
+    class TestDockObserver implements ResizeObserver {
+      readonly targets = new Set<Element>()
+      disconnected = false
+      constructor(readonly callback: ResizeObserverCallback) {
+        observers.push(this)
+      }
+      observe(target: Element): void {
+        this.disconnected = false
+        this.targets.add(target)
+      }
+      unobserve(target: Element): void {
+        this.targets.delete(target)
+      }
+      disconnect(): void {
+        this.disconnected = true
+        this.targets.clear()
+      }
+    }
+    globalThis.ResizeObserver = TestDockObserver
+    stateCleanups.push(() => {
+      globalThis.ResizeObserver = originalObserver
+    })
+    const state = loadGoalLockState(null)
+    const thread = state.thread.value
+    if (!thread) throw new Error('Conversation missing')
+    state.thread.value = {
+      ...thread,
+      messages: [{ id: 'message-1', role: 'user', content: 'A question' }],
+      proposals: [{ id: 'proposal-1', status: 'pending', approval: { status: 'pending' } }]
+    }
+    const mounted = mountInlineAgent(state)
+    const container = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+    const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__conversation-dock')
+    if (!container || !dock) throw new Error('Conversation dock missing')
+    state.transcript.value = container
+    state.conversationDock.value = dock
+    Object.defineProperties(container, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 600 }
+    })
+    let dockHeight = 120
+    dock.getBoundingClientRect = () => ({ top: 600 - dockHeight, bottom: 600, height: dockHeight }) as DOMRect
+    container.getBoundingClientRect = () => ({ top: 0, bottom: 600, height: 600 }) as DOMRect
+    const approval = document.createElement('div')
+    approval.id = 'agent-approval-proposal-1'
+    approval.tabIndex = -1
+    approval.getBoundingClientRect = () => ({ top: 200, bottom: 300, height: 100 }) as DOMRect
+    container.insertBefore(approval, dock)
+    await frames.flush()
+    expect(container.style.getPropertyValue('--agent-dock-height')).toBe('120px')
+    const observer = observers.find(candidate => candidate.targets.has(dock))
+    if (!observer) throw new Error('Conversation dock was not observed')
+    dockHeight = 340
+    observer.callback([], observer)
+    observer.callback([], observer)
+    await frames.flush()
+    expect(container.style.getPropertyValue('--agent-dock-height')).toBe('340px')
+
+    const scrollIntoView = vi.spyOn(approval, 'scrollIntoView')
+    await state.jumpToApproval()
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).toBe(approval)
+    expect(state.transcriptFollowing.value).toBe(false)
+    container.scrollTop = 900
+    state.handleTranscriptScroll()
+    await frames.flush()
+    dockHeight = 420
+    observer.callback([], observer)
+    await frames.flush()
+    expect(container.style.getPropertyValue('--agent-dock-height')).toBe('420px')
+    expect(container.scrollTop).toBe(900)
+    expect(state.transcriptFollowing.value).toBe(false)
+    mounted.unmount()
+    expect(observer.disconnected).toBe(true)
+  })
+
   it('positions empty mobile starters above the focused composer while translations are unavailable and after recovery', async () => {
     installBrowserSurface()
+    const frames = controlTranscriptFrames()
     resizeViewport?.(390)
     const translator = vi.spyOn(globalThis, 'useTranslate').mockReturnValue(fallbackLocalizationLabel)
     const state = loadGoalLockState(null)
@@ -1511,15 +1968,18 @@ describe('Inline Agent workspace actions', () => {
     state.transcript.value = transcript
     state.handleComposerFocusIn()
     await state.reconcileTranscriptGrowth(false)
+    await frames.flush()
     expect(transcript.scrollTop).toBe(560)
 
     translator.mockReturnValue(translateEnglish)
     transcript.scrollTo({ top: 0 })
     await state.reconcileTranscriptGrowth(false)
+    await frames.flush()
     expect(transcript.scrollTop).toBe(560)
 
     resizeViewport?.(1024)
     await state.reconcileTranscriptGrowth(false)
+    await frames.flush()
     expect(transcript.scrollTop).toBe(0)
   })
 

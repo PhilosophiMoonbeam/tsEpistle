@@ -1,20 +1,20 @@
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import { browserWindow } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
+import i18next from 'i18next'
 import fs from 'node:fs'
 import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import { fetchAssets, fetchAssetFolders } from '../../helpers/assets-api.ts'
 import { validateAgentAttachment } from '../../helpers/agent-media.ts'
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
 const source = fs.readFileSync(new URL('./agent-asset-picker.vue', import.meta.url), 'utf8')
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Asset picker script missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
 const evaluate = new Function(
   'dependencies',
-  `const { computed, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, fetchAssets, fetchAssetFolders, validateAgentAttachment, window } = dependencies; ${executable}; return { trail, assets, folders, visibleAssets, query, loading, error, openFolder, navigate, select, close, load, unavailable, mimeType, formatSize }`
+  `const { computed, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, useTranslate, fetchAssets, fetchAssetFolders, validateAgentAttachment, window } = dependencies; ${executable}; return { trail, assets, folders, visibleAssets, query, loading, error, openFolder, navigate, select, close, load, unavailable, mimeType, formatSize }`
 )
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 const asset = (id: number, ext = '.png', size = 40) => ({
@@ -28,7 +28,7 @@ const asset = (id: number, ext = '.png', size = 40) => ({
 const settle = async () => {
   for (let i = 0; i < 8; i++) await new Promise(resolve => setTimeout(resolve, 0))
 }
-const mount = (fetcher: typeof fetch) => {
+const mount = (fetcher: typeof fetch, translate: typeof translateEnglish = translateEnglish) => {
   const props = reactive({ imageOnly: false, busy: false, disabled: false, attachmentError: '' })
   const events: [string, unknown][] = []
   const cleanup: (() => void)[] = []
@@ -38,6 +38,7 @@ const mount = (fetcher: typeof fetch) => {
       computed,
       ref,
       watch,
+      useTranslate: () => translate,
       useTemplateRef: () => ref(null),
       onBeforeUnmount: (fn: () => void) => cleanup.push(fn),
       defineProps: () => props,
@@ -70,7 +71,11 @@ const compiledTemplate = compileTemplate({
 })
 if (compiledTemplate.errors.length) throw compiledTemplate.errors[0]
 const renderPicker = new Function('Vue', compiledTemplate.code)(Vue)
-const renderHarness = (api: Record<string, unknown>, props: { imageOnly: boolean; busy: boolean; disabled: boolean; attachmentError: string }) => {
+const renderHarness = (
+  api: Record<string, unknown>,
+  props: { imageOnly: boolean; busy: boolean; disabled: boolean; attachmentError: string },
+  translate: typeof translateEnglish = translateEnglish
+) => {
   const host = browserWindow.document.createElement('div')
   browserWindow.document.body.append(host)
   const app = Vue.createApp(
@@ -79,7 +84,7 @@ const renderHarness = (api: Record<string, unknown>, props: { imageOnly: boolean
       render: renderPicker
     })
   )
-  app.config.globalProperties.$t = translateEnglish
+  app.config.globalProperties.$t = translate
   for (const [name, tag] of [
     ['VDialog', 'div'],
     ['VBtn', 'button'],
@@ -105,6 +110,40 @@ const renderHarness = (api: Record<string, unknown>, props: { imageOnly: boolean
   }
 }
 describe('Agent Wiki asset picker', () => {
+  it('shows catalog-localized file validation and keeps invalid assets unselectable', async () => {
+    const messages = { imageTooLarge: 'Cada imagen debe tener 10 MB o menos.', emptyFile: 'No se pueden adjuntar archivos vacíos.' }
+    const catalog = i18next.createInstance()
+    await catalog.init({
+      lng: 'es',
+      fallbackLng: false,
+      ns: ['common'],
+      defaultNS: 'common',
+      resources: { es: { common: { agentComposerMedia: messages } } },
+      initAsync: false
+    })
+    const translate: typeof translateEnglish = (key, options = {}) => (catalog.exists(key) ? String(catalog.t(key, options)) : translateEnglish(key, options))
+    const listed = [asset(1, '.png', 12 * 1024 * 1024), asset(2, '.png', 0), asset(3)]
+    const harness = mount(async input => response(String(input).includes('/folders?') ? [] : listed), translate)
+    await settle()
+    const rendered = renderHarness(harness.api, harness.props, translate)
+    try {
+      const rows = Array.from(rendered.host.querySelectorAll<HTMLButtonElement>('.agent-asset-picker__row'))
+      expect(rows[0]?.querySelector('small')?.textContent).toBe(messages.imageTooLarge)
+      expect(rows[1]?.querySelector('small')?.textContent).toBe(messages.emptyFile)
+      expect(rows[0]?.disabled).toBe(true)
+      expect(rows[1]?.disabled).toBe(true)
+      rows[0]?.click()
+      rows[1]?.click()
+      expect(harness.events).toEqual([])
+      rows[2]?.click()
+      expect(harness.events).toHaveLength(1)
+      expect(harness.events[0]?.[0]).toBe('select')
+      expect(harness.events[0]?.[1]).toEqual(expect.objectContaining({ id: listed[2].id, filename: listed[2].filename }))
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
   it('browses folders, searches supported files, and disables PDFs for image mode', async () => {
     const paths: string[] = []
     const harness = mount(async (input, init) => {

@@ -1,15 +1,30 @@
+import { parse, compileTemplate } from '@vue/compiler-sfc'
+import { browserWindow } from '../../test/browser-dom.mts'
+import * as Vue from 'vue'
+import i18next from 'i18next'
 import fs from 'node:fs'
 import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
-import { AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from '../../helpers/agents-api.ts'
+import {
+  AgentApiError,
+  agentMediaContentUrl,
+  attachAgentAsset,
+  cancelAgentRun,
+  deleteAgentMedia,
+  getAgentTranscription,
+  startAgentTranscription,
+  uploadAgentMedia
+} from '../../helpers/agents-api.ts'
 import { validateAgentAttachment } from '../../helpers/agent-media.ts'
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
 const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta.url), 'utf8')
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected, getAudioLevel }`)
+const evaluate = new Function(
+  'dependencies',
+  `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, useTranslate, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, locked, removeAttachment, chooseFiles, chooseUpload, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected, getAudioLevel }`
+)
 interface WakeLockSentinelStub {
   release: () => Promise<void>
   addEventListener?: (type: 'release', listener: () => void) => void
@@ -20,7 +35,7 @@ interface WakeLockManagerStub {
 const makeFakeWakeLock = () => {
   const requests: string[] = []
   let releases = 0
-  let current: WakeLockSentinelStub & { listeners: Array<() => void> } | null = null
+  let current: (WakeLockSentinelStub & { listeners: Array<() => void> }) | null = null
   const manager: WakeLockManagerStub = {
     request: async (type: 'screen') => {
       requests.push(type)
@@ -33,7 +48,9 @@ const makeFakeWakeLock = () => {
           sentinel.listeners = []
           for (const listener of fired) listener()
         },
-        addEventListener: (type: 'release', listener: () => void) => { sentinel.listeners.push(listener) }
+        addEventListener: (type: 'release', listener: () => void) => {
+          sentinel.listeners.push(listener)
+        }
       }
       current = sentinel
       return sentinel
@@ -49,16 +66,26 @@ const mediaId = '00000000-0000-4000-8000-000000000082'
 const runId = '00000000-0000-4000-8000-000000000083'
 const media = { id: mediaId, kind: 'attachment', filename: 'image.png', mimeType: 'image/png', byteLength: 5, available: true, detached: false }
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
-const settle = async () => { for (let step = 0; step < 12; step++) await new Promise(resolve => setTimeout(resolve, 0)) }
+const settle = async () => {
+  for (let step = 0; step < 12; step++) await new Promise(resolve => setTimeout(resolve, 0))
+}
 class Recorder {
-  static isTypeSupported() { return true }
+  static isTypeSupported() {
+    return true
+  }
   state = 'inactive'
   mimeType = 'audio/webm'
   onstop: (() => void) | null = null
   ondataavailable: ((event: { data: Blob }) => void) | null = null
   onerror: (() => void) | null = null
-  start() { this.state = 'recording' }
-  stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['voice'], { type: this.mimeType }) }); this.onstop?.() }
+  start() {
+    this.state = 'recording'
+  }
+  stop() {
+    this.state = 'inactive'
+    this.ondataavailable?.({ data: new Blob(['voice'], { type: this.mimeType }) })
+    this.onstop?.()
+  }
 }
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -69,48 +96,469 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const mountAudio = (level: { value: number }) => {
   class Analyser {
     fftSize = 512
-    getFloatTimeDomainData(target: Float32Array): void { target.fill(level.value) }
+    getFloatTimeDomainData(target: Float32Array): void {
+      target.fill(level.value)
+    }
   }
   return class {
-    createMediaStreamSource() { return { connect: () => undefined, disconnect: () => undefined } }
-    createAnalyser() { return new Analyser() }
-    close() { return Promise.resolve() }
+    createMediaStreamSource() {
+      return { connect: () => undefined, disconnect: () => undefined }
+    }
+    createAnalyser() {
+      return new Analyser()
+    }
+    close() {
+      return Promise.resolve()
+    }
   }
 }
 
 const withTimeOffset = (run: () => Promise<void>) => {
   const realNow = Date.now
-  return run().finally(() => { Date.now = realNow })
+  return run().finally(() => {
+    Date.now = realNow
+  })
 }
 
 const makeDocumentStub = () => {
   const listeners: Record<string, Array<() => void>> = {}
   const stub = {
     visibilityState: 'visible',
-    addEventListener: (type: string, listener: () => void) => { (listeners[type] ??= []).push(listener) },
-    removeEventListener: (type: string, listener: () => void) => { listeners[type] = (listeners[type] ?? []).filter(entry => entry !== listener) }
+    addEventListener: (type: string, listener: () => void) => {
+      ;(listeners[type] ??= []).push(listener)
+    },
+    removeEventListener: (type: string, listener: () => void) => {
+      listeners[type] = (listeners[type] ?? []).filter(entry => entry !== listener)
+    }
   }
   return {
     stub,
-    visibility: (state: string) => { stub.visibilityState = state; for (const listener of listeners['visibilitychange'] ?? []) listener() }
+    visibility: (state: string) => {
+      stub.visibilityState = state
+      for (const listener of listeners['visibilitychange'] ?? []) listener()
+    }
   }
 }
 
-const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: (constraints: MediaStreamConstraints) => Promise<unknown>; recorder?: typeof Recorder | false; focus?: () => void; generationToolsEnabled?: boolean; level?: { value: number }; wakeLock?: WakeLockManagerStub } = {}) => {
-  const props = reactive({ csrfToken: 'csrf', session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' }, capabilities: options.media, generationToolsEnabled: options.generationToolsEnabled, disabled: false, networkBlocked: false })
+const mount = (
+  options: {
+    media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }
+    fetch?: typeof fetch
+    microphone?: (constraints: MediaStreamConstraints) => Promise<unknown>
+    recorder?: typeof Recorder | false
+    focus?: () => void
+    generationToolsEnabled?: boolean
+    level?: { value: number }
+    wakeLock?: WakeLockManagerStub
+    translate?: typeof translateEnglish
+  } = {}
+) => {
+  const props = reactive({
+    csrfToken: 'csrf',
+    session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' },
+    capabilities: options.media,
+    generationToolsEnabled: options.generationToolsEnabled,
+    disabled: false,
+    networkBlocked: false
+  })
   const events: Array<[string, unknown]> = []
   const cleanup: Array<() => void> = []
   let stopped = 0
   let microphoneCalls = 0
   const documentStub = makeDocumentStub()
   const scope = effectScope()
-  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async (constraints: MediaStreamConstraints) => { microphoneCalls++; return options.microphone ? options.microphone(constraints) : { getTracks: () => [{ stop: () => { stopped++ } }] } } }, wakeLock: options.wakeLock }, MediaRecorder: options.recorder === false ? undefined : options.recorder ?? Recorder, document: documentStub.stub, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })), AudioContext: options.level ? mountAudio(options.level) : undefined } }))
-  return { api, props, events, stopped: () => stopped, microphoneCalls: () => microphoneCalls, visibility: documentStub.visibility, unmount: () => { cleanup.forEach(fn => { fn() }); scope.stop() } }
+  const api = scope.run(() =>
+    evaluate({
+      computed,
+      nextTick,
+      ref,
+      watch,
+      useTranslate: () => options.translate ?? translateEnglish,
+      useTemplateRef: (key: string) =>
+        ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null),
+      onBeforeUnmount: (fn: () => void) => cleanup.push(fn),
+      defineProps: () => props,
+      defineEmits: () => (event: string, value: unknown) => events.push([event, value]),
+      defineExpose: () => {},
+      AgentApiError,
+      agentMediaContentUrl,
+      attachAgentAsset,
+      cancelAgentRun,
+      deleteAgentMedia,
+      getAgentTranscription,
+      startAgentTranscription,
+      uploadAgentMedia,
+      validateAgentAttachment,
+      navigator: {
+        mediaDevices: {
+          getUserMedia: async (constraints: MediaStreamConstraints) => {
+            microphoneCalls++
+            return options.microphone
+              ? options.microphone(constraints)
+              : {
+                  getTracks: () => [
+                    {
+                      stop: () => {
+                        stopped++
+                      }
+                    }
+                  ]
+                }
+          }
+        },
+        wakeLock: options.wakeLock
+      },
+      MediaRecorder: options.recorder === false ? undefined : (options.recorder ?? Recorder),
+      document: documentStub.stub,
+      window: {
+        requestAnimationFrame: (callback: () => void) => callback(),
+        fetch: options.fetch ?? (async () => response({ media })),
+        AudioContext: options.level ? mountAudio(options.level) : undefined
+      }
+    })
+  )
+  return {
+    api,
+    props,
+    events,
+    stopped: () => stopped,
+    microphoneCalls: () => microphoneCalls,
+    visibility: documentStub.visibility,
+    unmount: () => {
+      cleanup.forEach(fn => {
+        fn()
+      })
+      scope.stop()
+    }
+  }
 }
+
+const descriptor = parse(source).descriptor
+if (!descriptor.template) throw new Error('Media composer template missing')
+const compiledTemplate = compileTemplate({
+  source: descriptor.template.content,
+  filename: 'agent-composer-media.vue',
+  id: 'media-composer-test',
+  compilerOptions: { mode: 'function' }
+})
+if (compiledTemplate.errors.length) throw compiledTemplate.errors[0]
+const renderMedia = new Function('Vue', compiledTemplate.code)(Vue)
+const renderHarness = (api: Record<string, unknown>, props: object, translate: typeof translateEnglish = translateEnglish) => {
+  const host = browserWindow.document.createElement('div')
+  browserWindow.document.body.append(host)
+  const app = Vue.createApp(
+    Vue.defineComponent({
+      setup: () => ({ ...api, ...Vue.toRefs(props), fileInput: ref(null) }),
+      render: renderMedia
+    })
+  )
+  app.config.globalProperties.$t = translate
+  app.component('AgentAssetPicker', Vue.defineComponent({ render: () => null }))
+  app.mount(host)
+  return {
+    host,
+    unmount: () => {
+      app.unmount()
+      host.remove()
+    }
+  }
+}
+
+describe('Agent attachment upload batches', () => {
+  const capabilities = { attachments: true, imageGeneration: false, transcription: false }
+  const files = [0, 1, 2, 3].map(index => new File(['bytes'], `image-${index}.png`, { type: 'image/png' }))
+  const uploaded = files.map((file, index) => ({ ...media, id: `00000000-0000-4000-8000-00000000010${index}`, filename: file.name }))
+
+  it('starts two uploads, bounds concurrency, and retains selection order across staggered completions', async () => {
+    const pending = files.map(() => Promise.withResolvers<Response>())
+    const started: number[] = []
+    let active = 0
+    let peak = 0
+    const harness = mount({
+      media: capabilities,
+      fetch: async (_input, init) => {
+        const file = (init!.body as FormData).get('file') as File
+        const index = files.findIndex(candidate => candidate.name === file.name)
+        started.push(index)
+        active += 1
+        peak = Math.max(peak, active)
+        try {
+          return await pending[index].promise
+        } finally {
+          active -= 1
+        }
+      }
+    })
+    const rendered = renderHarness(harness.api, harness.props)
+    try {
+      const adding = harness.api.addFiles(files)
+      expect(started).toEqual([0, 1])
+      expect(await harness.api.addFiles([files[0]])).toBe(false)
+      expect(started).toEqual([0, 1])
+      await nextTick()
+      expect(rendered.host.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true)
+      pending[1].resolve(response({ media: uploaded[1] }))
+      await settle()
+      expect(started).toEqual([0, 1, 2])
+      pending[2].resolve(response({ media: uploaded[2] }))
+      await settle()
+      expect(started).toEqual([0, 1, 2, 3])
+      pending[3].resolve(response({ media: uploaded[3] }))
+      await settle()
+      expect(harness.api.uploading.value).toBe(true)
+      pending[0].resolve(response({ media: uploaded[0] }))
+      expect(await adding).toBe(true)
+      expect(peak).toBe(2)
+      expect(harness.api.attachments.value).toEqual(uploaded)
+      expect(harness.events.filter(([event]) => event === 'busy')).toEqual([
+        ['busy', true],
+        ['busy', false]
+      ])
+      harness.api.clear()
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
+
+  it('retains successful files and renders failed filenames as safe text without server details', async () => {
+    const unsafeName = '<img src=x onerror=alert(1)>.png'
+    const chosen = [files[0], new File(['bytes'], unsafeName, { type: 'image/png' }), files[2], files[3]]
+    const harness = mount({
+      media: capabilities,
+      fetch: async (_input, init) => {
+        const file = (init!.body as FormData).get('file') as File
+        if (file.name === unsafeName || file.name === files[3].name)
+          return new Response(JSON.stringify({ message: 'private provider detail' }), { status: 403, headers: { 'content-type': 'application/json' } })
+        return response({ media: uploaded[files.findIndex(candidate => candidate.name === file.name)] })
+      }
+    })
+    const rendered = renderHarness(harness.api, harness.props)
+    try {
+      expect(await harness.api.addFiles(chosen)).toBe(false)
+      await nextTick()
+      expect(harness.api.attachments.value).toEqual([uploaded[0], uploaded[2]])
+      const notice = rendered.host.querySelector('[role="alert"]')
+      expect(notice?.textContent).toContain(unsafeName)
+      expect(notice?.textContent).toContain(files[3].name)
+      expect(notice?.textContent).not.toContain('private provider detail')
+      expect(notice?.querySelector('img')).toBeNull()
+      expect(harness.api.uploading.value).toBe(false)
+      harness.api.clear()
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
+
+  for (const reason of ['session', 'unmount', 'offline', 'disabled', 'capability'] as const)
+    it(`cancels a batch on ${reason}, deletes buffered and late successes, and never starts remaining files`, async () => {
+      const pending = files.map(() => Promise.withResolvers<Response>())
+      const started: number[] = []
+      const signals: AbortSignal[] = []
+      const deleted: string[] = []
+      const harness = mount({
+        media: { ...capabilities },
+        fetch: async (input, init) => {
+          if (init?.method === 'DELETE') {
+            deleted.push(String(input))
+            return new Response(null, { status: 204 })
+          }
+          const file = (init!.body as FormData).get('file') as File
+          const index = files.findIndex(candidate => candidate.name === file.name)
+          started.push(index)
+          signals.push(init?.signal as AbortSignal)
+          return pending[index].promise
+        }
+      })
+      const adding = harness.api.addFiles(files)
+      pending[1].resolve(response({ media: uploaded[1] }))
+      await settle()
+      expect(started).toEqual([0, 1, 2])
+      if (reason === 'session') harness.props.session.id = '00000000-0000-4000-8000-000000000099'
+      if (reason === 'unmount') harness.unmount()
+      if (reason === 'offline') harness.props.networkBlocked = true
+      if (reason === 'disabled') harness.props.disabled = true
+      if (reason === 'capability') harness.props.capabilities!.attachments = false
+      await nextTick()
+      expect(signals.every(signal => signal.aborted)).toBe(true)
+      expect(deleted).toEqual([`/_api/agents/media/${uploaded[1].id}`])
+      pending[0].resolve(response({ media: uploaded[0] }))
+      pending[2].resolve(response({ media: uploaded[2] }))
+      expect(await adding).toBe(false)
+      expect(started).toEqual([0, 1, 2])
+      expect(deleted.sort()).toEqual(
+        uploaded
+          .slice(0, 3)
+          .map(item => `/_api/agents/media/${item.id}`)
+          .sort()
+      )
+      expect(harness.api.attachments.value).toEqual([])
+      if (reason !== 'unmount') harness.unmount()
+    })
+
+  it('fences late upload results when the owner token changes and cleans them with the original token', async () => {
+    const pending = files.map(() => Promise.withResolvers<Response>())
+    const started: number[] = []
+    const deleted: string[] = []
+    const harness = mount({
+      media: capabilities,
+      fetch: async (input, init) => {
+        expect(new Headers(init?.headers).get('x-wiki-csrf')).toBe('csrf')
+        if (init?.method === 'DELETE') {
+          deleted.push(String(input))
+          return new Response(null, { status: 204 })
+        }
+        const file = (init!.body as FormData).get('file') as File
+        const index = files.findIndex(candidate => candidate.name === file.name)
+        started.push(index)
+        return pending[index].promise
+      }
+    })
+    const adding = harness.api.addFiles(files)
+    harness.props.csrfToken = 'another-owner-token'
+    pending[0].resolve(response({ media: uploaded[0] }))
+    pending[1].resolve(response({ media: uploaded[1] }))
+    expect(await adding).toBe(false)
+    expect(started).toEqual([0, 1])
+    expect(deleted.sort()).toEqual(
+      uploaded
+        .slice(0, 2)
+        .map(item => `/_api/agents/media/${item.id}`)
+        .sort()
+    )
+    expect(harness.api.attachments.value).toEqual([])
+    harness.unmount()
+  })
+
+  it('prevalidates the entire batch and four-file cap before any upload starts', async () => {
+    let requests = 0
+    const harness = mount({
+      media: capabilities,
+      fetch: async () => {
+        requests += 1
+        return response({ media })
+      }
+    })
+    expect(await harness.api.addFiles([files[0], new File(['active'], 'active.svg', { type: 'image/svg+xml' })])).toBe(false)
+    expect(requests).toBe(0)
+    expect(harness.api.attachments.value).toEqual([])
+    harness.api.attachments.value = uploaded.slice(0, 3)
+    expect(await harness.api.addFiles(files.slice(0, 2))).toBe(false)
+    expect(requests).toBe(0)
+    expect(harness.api.attachments.value).toEqual(uploaded.slice(0, 3))
+    expect(harness.api.error.value).toContain('up to 4 files')
+    harness.api.clear()
+    harness.unmount()
+  })
+
+  it('keeps the hidden native file input disabled at four attachments and re-enables it after removal', async () => {
+    const deleted: string[] = []
+    const harness = mount({
+      media: capabilities,
+      fetch: async (input, init) => {
+        expect(init?.method).toBe('DELETE')
+        deleted.push(String(input))
+        return new Response(null, { status: 204 })
+      }
+    })
+    harness.api.attachments.value = [...uploaded]
+    const rendered = renderHarness(harness.api, harness.props)
+    try {
+      const input = rendered.host.querySelector<HTMLInputElement>('input[type="file"]')
+      expect(input?.disabled).toBe(true)
+      await harness.api.removeAttachment(uploaded[1])
+      await nextTick()
+      expect(deleted).toEqual([`/_api/agents/media/${uploaded[1].id}`])
+      expect(harness.api.attachments.value).toEqual([uploaded[0], uploaded[2], uploaded[3]])
+      expect(input?.disabled).toBe(false)
+      harness.api.clear()
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
+
+  for (const reason of ['capability', 'session', 'offline', 'disabled'] as const)
+    it(`explains ${reason} admission failure without uploading or changing attachments`, async () => {
+      let requests = 0
+      const harness = mount({
+        media: { ...capabilities },
+        fetch: async () => {
+          requests += 1
+          return response({ media })
+        }
+      })
+      if (reason === 'capability') harness.props.capabilities!.attachments = false
+      if (reason === 'session') Reflect.set(harness.props, 'session', null)
+      if (reason === 'offline') harness.props.networkBlocked = true
+      if (reason === 'disabled') harness.props.disabled = true
+      await nextTick()
+      const rendered = renderHarness(harness.api, harness.props)
+      try {
+        expect(await harness.api.addFiles([files[0]])).toBe(false)
+        await nextTick()
+        const notice = rendered.host.querySelector('[role="alert"]')
+        expect(notice?.textContent?.length).toBeGreaterThan(0)
+        expect(notice?.textContent).not.toContain('common:')
+        expect(requests).toBe(0)
+        expect(harness.api.attachments.value).toEqual([])
+        expect(rendered.host.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true)
+      } finally {
+        rendered.unmount()
+        harness.unmount()
+      }
+    })
+
+  it('renders catalog-localized oversized and empty-file validation before uploading', async () => {
+    const messages = { imageTooLarge: 'Cada imagen debe tener 10 MB o menos.', emptyFile: 'No se pueden adjuntar archivos vacíos.' }
+    const catalog = i18next.createInstance()
+    await catalog.init({
+      lng: 'es',
+      fallbackLng: false,
+      ns: ['common'],
+      defaultNS: 'common',
+      resources: { es: { common: { agentComposerMedia: messages } } },
+      initAsync: false
+    })
+    const translate: typeof translateEnglish = (key, options = {}) => (catalog.exists(key) ? String(catalog.t(key, options)) : translateEnglish(key, options))
+    let requests = 0
+    const harness = mount({
+      media: capabilities,
+      translate,
+      fetch: async () => {
+        requests += 1
+        return response({ media })
+      }
+    })
+    const rendered = renderHarness(harness.api, harness.props, translate)
+    try {
+      const oversized = new File([new Uint8Array(12 * 1024 * 1024)], 'large.png', { type: 'image/png' })
+      for (const [file, message] of [
+        [oversized, messages.imageTooLarge],
+        [new File([], 'empty.png', { type: 'image/png' }), messages.emptyFile]
+      ] as const) {
+        expect(await harness.api.addFiles([file])).toBe(false)
+        await nextTick()
+        expect(rendered.host.querySelector('[role="alert"]')?.textContent).toBe(message)
+      }
+      expect(requests).toBe(0)
+      expect(harness.api.attachments.value).toEqual([])
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
+})
 describe('Agent media composer lifecycle', () => {
   it('does not upload or request microphone access without configured capabilities', async () => {
     let requests = 0
-    const harness = mount({ fetch: async () => { requests++; return response({ media }) } })
+    const harness = mount({
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
     await harness.api.addFiles([new File(['bytes'], 'image.png', { type: 'image/png' })])
     await harness.api.startRecording()
     expect(requests).toBe(0)
@@ -121,13 +569,24 @@ describe('Agent media composer lifecycle', () => {
     const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, recorder: false })
     await harness.api.startRecording()
     expect(harness.microphoneCalls()).toBe(0)
-    expect(harness.events.filter(([event]) => event === 'dictationFailed')).toEqual([['dictationFailed', 'This browser does not support dictation. You can still type your message.']])
+    expect(harness.events.filter(([event]) => event === 'dictationFailed')).toEqual([
+      ['dictationFailed', 'This browser does not support dictation. You can still type your message.']
+    ])
     expect(harness.api.dictationError.value).toBe('This browser does not support dictation. You can still type your message.')
     harness.unmount()
   })
   it('reports microphone denial once without starting a transcription', async () => {
     let requests = 0
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, microphone: async () => { throw new Error('Microphone permission denied') }, fetch: async () => { requests++; return response({ media }) } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      microphone: async () => {
+        throw new Error('Microphone permission denied')
+      },
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
     await harness.api.startRecording()
     expect(harness.api.recording.value).toBe(false)
     expect(harness.events.filter(([event]) => event === 'dictationFailed')).toEqual([['dictationFailed', 'Microphone permission denied']])
@@ -146,7 +605,9 @@ describe('Agent media composer lifecycle', () => {
   })
   it('reports a recorder startup failure and releases the microphone', async () => {
     class BrokenRecorder extends Recorder {
-      start() { throw new Error('Recorder could not start') }
+      start() {
+        throw new Error('Recorder could not start')
+      }
     }
     const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, recorder: BrokenRecorder })
     await harness.api.startRecording()
@@ -158,7 +619,10 @@ describe('Agent media composer lifecycle', () => {
   it('reports recorder errors once and ignores late callbacks from that capture', async () => {
     let capture: Recorder | undefined
     class ErrorRecorder extends Recorder {
-      constructor() { super(); capture = this }
+      constructor() {
+        super()
+        capture = this
+      }
     }
     const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, recorder: ErrorRecorder })
     await harness.api.startRecording()
@@ -175,10 +639,24 @@ describe('Agent media composer lifecycle', () => {
   it('stops a late permission grant after the conversation is unmounted', async () => {
     let grant!: (stream: unknown) => void
     let stopped = 0
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, microphone: () => new Promise(resolve => { grant = resolve }) })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      microphone: () =>
+        new Promise(resolve => {
+          grant = resolve
+        })
+    })
     const starting = harness.api.startRecording()
     harness.unmount()
-    grant({ getTracks: () => [{ stop: () => { stopped++ } }] })
+    grant({
+      getTracks: () => [
+        {
+          stop: () => {
+            stopped++
+          }
+        }
+      ]
+    })
     await starting
     expect(stopped).toBe(1)
     expect(harness.events.some(([event]) => event === 'dictation')).toBe(false)
@@ -186,10 +664,14 @@ describe('Agent media composer lifecycle', () => {
   it('requests native voice processing on the stream recorded and analysed for dictation', async () => {
     let requested: MediaStreamConstraints | undefined
     const level = { value: 0.2 }
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, level, microphone: async constraints => {
-      requested = constraints
-      return { getTracks: () => [{ stop: () => {} }] }
-    } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      level,
+      microphone: async constraints => {
+        requested = constraints
+        return { getTracks: () => [{ stop: () => {} }] }
+      }
+    })
     await harness.api.startRecording()
     expect(requested?.audio).toEqual({ noiseSuppression: true, echoCancellation: true, autoGainControl: true, channelCount: { ideal: 1 } })
     expect(harness.api.getAudioLevel()).toBeGreaterThan(0)
@@ -198,13 +680,17 @@ describe('Agent media composer lifecycle', () => {
   })
   it('keeps capture usable without an analyser and preserves the recording past the pre-roll limit', async () => {
     const paths: string[] = []
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async input => {
-      const path = String(input); paths.push(path)
-      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Still recording.' })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      fetch: async input => {
+        const path = String(input)
+        paths.push(path)
+        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Still recording.' })
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
     await harness.api.startRecording()
     await withTimeOffset(async () => {
       const realNow = Date.now
@@ -224,7 +710,15 @@ describe('Agent media composer lifecycle', () => {
     const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, microphone: () => promise })
     const starting = harness.api.startRecording()
     harness.api.stopRecording()
-    resolve({ getTracks: () => [{ stop: () => { stopped++ } }] })
+    resolve({
+      getTracks: () => [
+        {
+          stop: () => {
+            stopped++
+          }
+        }
+      ]
+    })
     await starting
     expect(stopped).toBe(1)
     expect(harness.api.recording.value).toBe(false)
@@ -242,18 +736,22 @@ describe('Agent media composer lifecycle', () => {
       }
     }
     const recorded: string[] = []
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, recorder: AsyncRecorder, fetch: async (input, init) => {
-      const path = String(input)
-      if (path.endsWith('/media')) {
-        const file = (init?.body as FormData | undefined)?.get('file')
-        if (!(file instanceof File)) throw new Error('Missing dictation recording')
-        recorded.push(await file.text())
-        return response({ media: { ...media, mimeType: 'audio/webm' } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      recorder: AsyncRecorder,
+      fetch: async (input, init) => {
+        const path = String(input)
+        if (path.endsWith('/media')) {
+          const file = (init?.body as FormData | undefined)?.get('file')
+          if (!(file instanceof File)) throw new Error('Missing dictation recording')
+          recorded.push(await file.text())
+          return response({ media: { ...media, mimeType: 'audio/webm' } })
+        }
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Final chunk.' })
+        throw new Error(`Unexpected request ${path}`)
       }
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Final chunk.' })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    })
     await harness.api.startRecording()
     harness.api.stopRecording()
     await settle()
@@ -267,13 +765,17 @@ describe('Agent media composer lifecycle', () => {
   })
   it('transcribes into an editable draft without sending a chat message and releases the microphone', async () => {
     const paths: string[] = []
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
-      const path = String(input); paths.push(path)
-      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Please edit this draft.' })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      fetch: async input => {
+        const path = String(input)
+        paths.push(path)
+        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Please edit this draft.' })
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
     await harness.api.startRecording()
     harness.api.stopRecording()
     await settle()
@@ -286,13 +788,18 @@ describe('Agent media composer lifecycle', () => {
   it('starts the countdown only after detected speech and auto-stops into review after sustained silence', async () => {
     const level = { value: 0 }
     const paths: string[] = []
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, level, fetch: async (input) => {
-      const path = String(input); paths.push(path)
-      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Auto stopped.' })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      level,
+      fetch: async input => {
+        const path = String(input)
+        paths.push(path)
+        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Auto stopped.' })
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
     await harness.api.startRecording()
     // Pre-roll: no countdown and no speech flag until sustained voice shows up.
     expect(harness.api.speechDetected.value).toBe(false)
@@ -338,13 +845,16 @@ describe('Agent media composer lifecycle', () => {
   })
 
   it('delivers the transcript to a pending send without emitting the review event', async () => {
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
-      const path = String(input)
-      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Send this sentence.' })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      fetch: async input => {
+        const path = String(input)
+        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Send this sentence.' })
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
     await harness.api.startRecording()
     expect(harness.api.beginDictationSubmit()).toBe(true)
     const pending = harness.api.waitForDictationTranscript()
@@ -356,13 +866,16 @@ describe('Agent media composer lifecycle', () => {
   })
 
   it('resolves a pending send with null and keeps no dictation event when no speech is found', async () => {
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
-      const path = String(input)
-      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: '   ' })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      fetch: async input => {
+        const path = String(input)
+        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: '   ' })
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
     await harness.api.startRecording()
     expect(harness.api.beginDictationSubmit()).toBe(true)
     const pending = harness.api.waitForDictationTranscript()
@@ -377,13 +890,16 @@ describe('Agent media composer lifecycle', () => {
   })
 
   it('emits dictationFailed for the review path when no speech is found', async () => {
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
-      const path = String(input)
-      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: '   ' })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      fetch: async input => {
+        const path = String(input)
+        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: '   ' })
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
     await harness.api.startRecording()
     harness.api.stopRecording()
     await settle()
@@ -392,13 +908,16 @@ describe('Agent media composer lifecycle', () => {
   })
 
   it('resolves a pending send with null when dictation fails and reports the error', async () => {
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
-      const path = String(input)
-      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return response({ status: 'failed' })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      fetch: async input => {
+        const path = String(input)
+        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription')) return response({ status: 'failed' })
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
     await harness.api.startRecording()
     expect(harness.api.beginDictationSubmit()).toBe(true)
     const pending = harness.api.waitForDictationTranscript()
@@ -422,23 +941,53 @@ describe('Agent media composer lifecycle', () => {
   it('cancels an admitted transcription when connection is lost and ignores late text', async () => {
     let resolveResult!: (value: Response) => void
     let cancelled = false
-    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
-      const path = String(input)
-      if (path.endsWith('/media')) return response({ media })
-      if (path.endsWith('/transcriptions')) return response({ runId })
-      if (path.endsWith('/transcription')) return new Promise(resolve => { resolveResult = resolve })
-      if (path.endsWith('/cancel')) { cancelled = true; return response({ run: { id: runId, sessionId, status: 'cancelled', attempt: 1, eventSequence: 1, canCancel: false, createdAt: '2026-09-18T00:00:00.000Z', startedAt: null, completedAt: null, errorCode: null, errorMessage: null } }) }
-      throw new Error(`Unexpected request ${path}`)
-    } })
-    await harness.api.startRecording(); harness.api.stopRecording(); await settle()
-    harness.props.networkBlocked = true; await nextTick()
-    resolveResult(response({ status: 'succeeded', text: 'Late text' })); await settle()
+    const harness = mount({
+      media: { attachments: false, imageGeneration: false, transcription: true },
+      fetch: async input => {
+        const path = String(input)
+        if (path.endsWith('/media')) return response({ media })
+        if (path.endsWith('/transcriptions')) return response({ runId })
+        if (path.endsWith('/transcription'))
+          return new Promise(resolve => {
+            resolveResult = resolve
+          })
+        if (path.endsWith('/cancel')) {
+          cancelled = true
+          return response({
+            run: {
+              id: runId,
+              sessionId,
+              status: 'cancelled',
+              attempt: 1,
+              eventSequence: 1,
+              canCancel: false,
+              createdAt: '2026-09-18T00:00:00.000Z',
+              startedAt: null,
+              completedAt: null,
+              errorCode: null,
+              errorMessage: null
+            }
+          })
+        }
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
+    await harness.api.startRecording()
+    harness.api.stopRecording()
+    await settle()
+    harness.props.networkBlocked = true
+    await nextTick()
+    resolveResult(response({ status: 'succeeded', text: 'Late text' }))
+    await settle()
     expect(cancelled).toBe(true)
     expect(harness.events.some(([event]) => event === 'dictation')).toBe(false)
     harness.unmount()
   })
   it('edits an image alongside a PDF draft without replacing chat attachments', async () => {
-    const harness = mount({ media: { attachments: true, imageGeneration: true, transcription: false }, fetch: async (input) => String(input).endsWith('/content') ? new Response('image', { headers: { 'content-type': 'image/png' } }) : response({ media }) })
+    const harness = mount({
+      media: { attachments: true, imageGeneration: true, transcription: false },
+      fetch: async input => (String(input).endsWith('/content') ? new Response('image', { headers: { 'content-type': 'image/png' } }) : response({ media }))
+    })
     const pdf = { ...media, id: 'pdf', filename: 'reference.pdf', mimeType: 'application/pdf' }
     harness.api.attachments.value = [pdf]
     harness.api.toggleGenerationTool('image')
@@ -450,7 +999,13 @@ describe('Agent media composer lifecycle', () => {
   })
   it('does not upload images without the attachments capability', async () => {
     let requests = 0
-    const harness = mount({ media: { attachments: false, imageGeneration: true, transcription: false }, fetch: async () => { requests++; return response({ media }) } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: true, transcription: false },
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
     expect(await harness.api.addFiles([new File(['bytes'], 'image.png', { type: 'image/png' })])).toBe(false)
     expect(await harness.api.editImage({ ...media, kind: 'generated-image' })).toBe(false)
     expect(requests).toBe(0)
@@ -462,14 +1017,17 @@ const asset = { id: 42, filename: 'wiki-image.png', description: '', ext: '.png'
 describe('Agent Wiki asset attachments', () => {
   it('attaches an authorized asset as a private copy and closes the picker', async () => {
     let copied = false
-    const harness = mount({ media: { attachments: true, imageGeneration: true, transcription: false }, fetch: async (input, init) => {
-      expect(String(input)).toBe(`/_api/agents/sessions/${sessionId}/media/assets`)
-      expect(JSON.parse(String(init?.body))).toEqual({ assetId: 42 })
-      expect(new Headers(init?.headers).get('x-wiki-csrf')).toBe('csrf')
-      expect(init?.credentials).toBe('same-origin')
-      copied = true
-      return response({ media })
-    } })
+    const harness = mount({
+      media: { attachments: true, imageGeneration: true, transcription: false },
+      fetch: async (input, init) => {
+        expect(String(input)).toBe(`/_api/agents/sessions/${sessionId}/media/assets`)
+        expect(JSON.parse(String(init?.body))).toEqual({ assetId: 42 })
+        expect(new Headers(init?.headers).get('x-wiki-csrf')).toBe('csrf')
+        expect(init?.credentials).toBe('same-origin')
+        copied = true
+        return response({ media })
+      }
+    })
     harness.api.browseAssets()
     expect(harness.api.assetPickerOpen.value).toBe(true)
     await harness.api.attachAsset(asset)
@@ -477,11 +1035,18 @@ describe('Agent Wiki asset attachments', () => {
     expect(harness.api.attachments.value).toEqual([media])
     expect(harness.api.assetPickerOpen.value).toBe(false)
     expect(harness.api.uploading.value).toBe(false)
-    harness.api.clear(); harness.unmount()
+    harness.api.clear()
+    harness.unmount()
   })
   it('closes the asset picker without uploading when dismissed', async () => {
     const requests: string[] = []
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async input => { requests.push(String(input)); return response({ media }) } })
+    const harness = mount({
+      media: { attachments: true, imageGeneration: false, transcription: false },
+      fetch: async input => {
+        requests.push(String(input))
+        return response({ media })
+      }
+    })
     harness.api.browseAssets()
     expect(harness.api.assetPickerOpen.value).toBe(true)
     harness.api.closeAssetPicker()
@@ -490,32 +1055,46 @@ describe('Agent Wiki asset attachments', () => {
     expect(requests).toEqual([])
     harness.unmount()
   })
-  for (const reason of ['close', 'session', 'disabled', 'offline'] as const) it(`cancels an asset copy on ${reason} and deletes a late private copy`, async () => {
-    let finish!: (value: Response) => void
-    let signal: AbortSignal | null | undefined
-    const deleted: string[] = []
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async (input, init) => {
-      if (init?.method === 'DELETE') { deleted.push(String(input)); return new Response(null, { status: 204 }) }
-      signal = init?.signal
-      return new Promise(resolve => { finish = resolve })
-    } })
-    harness.api.browseAssets()
-    const pending = harness.api.attachAsset(asset)
-    if (reason === 'close') harness.api.closeAssetPicker()
-    if (reason === 'session') harness.props.session.id = '00000000-0000-4000-8000-000000000091'
-    if (reason === 'disabled') harness.props.disabled = true
-    if (reason === 'offline') harness.props.networkBlocked = true
-    await nextTick()
-    expect(signal?.aborted).toBe(true)
-    finish(response({ media }))
-    await pending; await settle()
-    expect(deleted).toEqual([`/_api/agents/media/${mediaId}`])
-    expect(harness.api.attachments.value).toHaveLength(0)
-    expect(harness.api.assetPickerOpen.value).toBe(false)
-    harness.unmount()
-  })
+  for (const reason of ['close', 'session', 'disabled', 'offline'] as const)
+    it(`cancels an asset copy on ${reason} and deletes a late private copy`, async () => {
+      let finish!: (value: Response) => void
+      let signal: AbortSignal | null | undefined
+      const deleted: string[] = []
+      const harness = mount({
+        media: { attachments: true, imageGeneration: false, transcription: false },
+        fetch: async (input, init) => {
+          if (init?.method === 'DELETE') {
+            deleted.push(String(input))
+            return new Response(null, { status: 204 })
+          }
+          signal = init?.signal
+          return new Promise(resolve => {
+            finish = resolve
+          })
+        }
+      })
+      harness.api.browseAssets()
+      const pending = harness.api.attachAsset(asset)
+      if (reason === 'close') harness.api.closeAssetPicker()
+      if (reason === 'session') harness.props.session.id = '00000000-0000-4000-8000-000000000091'
+      if (reason === 'disabled') harness.props.disabled = true
+      if (reason === 'offline') harness.props.networkBlocked = true
+      await nextTick()
+      expect(signal?.aborted).toBe(true)
+      finish(response({ media }))
+      await pending
+      await settle()
+      expect(deleted).toEqual([`/_api/agents/media/${mediaId}`])
+      expect(harness.api.attachments.value).toHaveLength(0)
+      expect(harness.api.assetPickerOpen.value).toBe(false)
+      harness.unmount()
+    })
   it('explains revoked asset access without exposing raw server errors', async () => {
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async () => new Response(JSON.stringify({ message: 'sensitive provider detail' }), { status: 403, headers: { 'content-type': 'application/json' } }) })
+    const harness = mount({
+      media: { attachments: true, imageGeneration: false, transcription: false },
+      fetch: async () =>
+        new Response(JSON.stringify({ message: 'sensitive provider detail' }), { status: 403, headers: { 'content-type': 'application/json' } })
+    })
     harness.api.browseAssets()
     await harness.api.attachAsset(asset)
     expect(harness.api.error.value).toBe('You no longer have access to this Wiki asset. Choose another file or upload a copy.')
@@ -525,7 +1104,13 @@ describe('Agent Wiki asset attachments', () => {
   })
   it('requires attachments capability for Wiki assets', async () => {
     let requests = 0
-    const harness = mount({ media: { attachments: false, imageGeneration: true, transcription: false }, fetch: async () => { requests++; return response({ media }) } })
+    const harness = mount({
+      media: { attachments: false, imageGeneration: true, transcription: false },
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
     harness.api.browseAssets()
     expect(harness.api.assetPickerOpen.value).toBe(false)
     // Isolate copy admission from the closed-picker guard.
@@ -539,7 +1124,13 @@ describe('Agent Wiki asset attachments', () => {
   })
   it('admits a fourth Wiki asset but blocks browsing and copying a fifth', async () => {
     const requests: string[] = []
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async input => { requests.push(String(input)); return response({ media }) } })
+    const harness = mount({
+      media: { attachments: true, imageGeneration: false, transcription: false },
+      fetch: async input => {
+        requests.push(String(input))
+        return response({ media })
+      }
+    })
     const existing = [1, 2, 3].map(index => ({ ...media, id: `00000000-0000-4000-8000-00000000009${index}`, filename: `reference-${index}.png` }))
     harness.api.attachments.value = existing
     harness.api.browseAssets()
@@ -554,7 +1145,8 @@ describe('Agent Wiki asset attachments', () => {
     await harness.api.attachAsset(asset)
     expect(requests).toEqual([`/_api/agents/sessions/${sessionId}/media/assets`])
     expect(harness.api.attachments.value).toEqual([...existing, media])
-    harness.api.clear(); harness.unmount()
+    harness.api.clear()
+    harness.unmount()
   })
 })
 
@@ -563,7 +1155,12 @@ describe('re-attaching a detached attachment', () => {
 
   it('does not fetch or upload without attachment capabilities', async () => {
     let requests = 0
-    const harness = mount({ fetch: async () => { requests++; return response({ media }) } })
+    const harness = mount({
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
     const added = await harness.api.reattachMedia(detachedMedia)
     expect(added).toBe(false)
     expect(requests).toBe(0)
@@ -575,20 +1172,27 @@ describe('re-attaching a detached attachment', () => {
     const storedBytes = '%PDF-1.4\nstored report\n%%EOF\n'
     let uploadedFile: { name: string; type: string; bytes: string } | null = null
     const uploaded = { ...detachedMedia, id: '00000000-0000-4000-8000-000000000085', byteLength: storedBytes.length, detached: false }
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async (input, init) => {
-      const path = String(input); paths.push(path)
-      if (path.endsWith('/content')) return new Response(storedBytes, { headers: { 'content-type': 'application/pdf' } })
-      if (path.endsWith('/media') && init?.method === 'POST') {
-        const file = (init.body as FormData).get('file')
-        if (!(file instanceof File)) throw new Error('Missing re-attached File')
-        uploadedFile = { name: file.name, type: file.type, bytes: await file.text() }
-        return response({ media: uploaded })
+    const harness = mount({
+      media: { attachments: true, imageGeneration: false, transcription: false },
+      fetch: async (input, init) => {
+        const path = String(input)
+        paths.push(path)
+        if (path.endsWith('/content')) return new Response(storedBytes, { headers: { 'content-type': 'application/pdf' } })
+        if (path.endsWith('/media') && init?.method === 'POST') {
+          const file = (init.body as FormData).get('file')
+          if (!(file instanceof File)) throw new Error('Missing re-attached File')
+          uploadedFile = { name: file.name, type: file.type, bytes: await file.text() }
+          return response({ media: uploaded })
+        }
+        throw new Error(`Unexpected request ${path}`)
       }
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    })
     const added = await harness.api.reattachMedia(detachedMedia)
     expect(added).toBe(true)
-    expect(paths).toEqual(['/_api/agents/media/00000000-0000-4000-8000-000000000084/content', '/_api/agents/sessions/00000000-0000-4000-8000-000000000081/media'])
+    expect(paths).toEqual([
+      '/_api/agents/media/00000000-0000-4000-8000-000000000084/content',
+      '/_api/agents/sessions/00000000-0000-4000-8000-000000000081/media'
+    ])
     expect(uploadedFile).toEqual({ name: 'report.pdf', type: 'application/pdf', bytes: storedBytes })
     expect(harness.api.attachments.value.map(item => item.id)).toEqual(['00000000-0000-4000-8000-000000000085'])
     expect(harness.api.error.value).toBe('')
@@ -597,11 +1201,15 @@ describe('re-attaching a detached attachment', () => {
 
   it('reports an error and does not upload when the stored copy is unavailable', async () => {
     const paths: string[] = []
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async (input) => {
-      const path = String(input); paths.push(path)
-      if (path.endsWith('/content')) return new Response('gone', { status: 404 })
-      throw new Error(`Unexpected request ${path}`)
-    } })
+    const harness = mount({
+      media: { attachments: true, imageGeneration: false, transcription: false },
+      fetch: async input => {
+        const path = String(input)
+        paths.push(path)
+        if (path.endsWith('/content')) return new Response('gone', { status: 404 })
+        throw new Error(`Unexpected request ${path}`)
+      }
+    })
     const added = await harness.api.reattachMedia(detachedMedia)
     expect(added).toBe(false)
     expect(paths).toEqual(['/_api/agents/media/00000000-0000-4000-8000-000000000084/content'])
@@ -624,11 +1232,14 @@ describe('creation tool selection', () => {
   it('selects all configured tools, allows multiple selections, and preserves choices after sending', async () => {
     const harness = mount({ media: { attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false } })
     expect(harness.api.selectedGenerationTools.value).toEqual(['image', 'video', 'music'])
-    harness.api.toggleGenerationTool('image'); await nextTick()
+    harness.api.toggleGenerationTool('image')
+    await nextTick()
     expect(harness.events).toContainEqual(['change', { attachmentIds: [], generationTools: ['video', 'music'] }])
-    harness.api.clear(); await nextTick()
+    harness.api.clear()
+    await nextTick()
     expect(harness.api.selectedGenerationTools.value).toEqual(['video', 'music'])
-    harness.props.capabilities!.musicGeneration = false; await nextTick()
+    harness.props.capabilities!.musicGeneration = false
+    await nextTick()
     expect(harness.api.selectedGenerationTools.value).toEqual(['video'])
     harness.api.toggleGenerationTool('music')
     expect(harness.api.selectedGenerationTools.value).toEqual(['video'])
@@ -636,10 +1247,12 @@ describe('creation tool selection', () => {
   })
   it('allows an explicit empty whitelist and suppresses tools in unsupported execution modes', async () => {
     const harness = mount({ media: { attachments: false, imageGeneration: true, transcription: false } })
-    harness.api.toggleGenerationTool('image'); await nextTick()
+    harness.api.toggleGenerationTool('image')
+    await nextTick()
     expect(harness.events).toContainEqual(['change', { attachmentIds: [], generationTools: [] }])
     harness.api.toggleGenerationTool('image')
-    harness.props.generationToolsEnabled = false; await nextTick()
+    harness.props.generationToolsEnabled = false
+    await nextTick()
     expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
     harness.api.toggleGenerationTool('image')
     expect(harness.api.selectedGenerationTools.value).toEqual(['image'])

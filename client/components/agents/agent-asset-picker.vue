@@ -51,7 +51,8 @@ const unavailable = (asset: Asset): string | null => {
   const type = mimeType(asset)
   if (props.imageOnly && type === 'application/pdf') return t('common:agentAssetPicker.imagesOnlyImageMode')
   if (!Number.isSafeInteger(asset.fileSize) || asset.fileSize < 0) return t('common:agentAssetPicker.fileUnavailable')
-  return validateAgentAttachment({ type, size: asset.fileSize })
+  const problem = validateAgentAttachment({ type, size: asset.fileSize })
+  return problem ? t(problem) : null
 }
 const formatSize = (size: number): string => size < 1024 * 1024 ? t('common:agentAssetPicker.kb', { sizeKb: Math.max(1, Math.ceil(size / 1024)), interpolation: { escapeValue: false } }) : t('common:agentAssetPicker.mb', { value: (size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0), interpolation: { escapeValue: false } })
 const close = () => { controller?.abort(); emit('close') }

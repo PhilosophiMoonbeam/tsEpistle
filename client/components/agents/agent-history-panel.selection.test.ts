@@ -32,6 +32,7 @@ interface PanelHarness {
   beginRenameSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
   beginDeleteSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
   beginRemoveFolder: (folder: AgentConversationFolderView) => void
+  setFolderActionTrigger: (folderId: string, component: HTMLElement | null) => void
   beginSessionDrag: (event: DragEvent, session: AgentSessionSummary) => void
   canDropTo: (folderId: string | null) => boolean
   clearHistoryDisabled: Ref<boolean>
@@ -124,8 +125,9 @@ const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scri
 interface FocusControls {
   searchRoot?: HarnessElement
   close?: HarnessElement
-  folderActivator?: HarnessElement
+  removeDialog?: HarnessElement
   activeElement?: HarnessElement
+  modalRestoreTargets?: Array<() => HTMLElement | null>
   mount?: boolean
   initialLoading?: boolean
   initialMutationBusy?: boolean
@@ -176,7 +178,8 @@ const loadPanel = (
   }
   const templateRefs: Record<string, HarnessElement | null> = {
     historyCloseButton: focusControls.close ?? null,
-    historySearchField: focusControls.searchRoot ?? null
+    historySearchField: focusControls.searchRoot ?? null,
+    removeFolderDialogCard: focusControls.removeDialog ?? null
   }
   const useTemplateRef = <T>(name: string): ReactiveRef<T | null> => ref((templateRefs[name] ?? null) as T | null)
   const folders = ref(folderFixtures)
@@ -225,6 +228,7 @@ const loadPanel = (
       beginDeleteSession,
       beginRemoveFolder,
       beginRenameFolder,
+      setFolderActionTrigger,
       beginSessionDrag,
       canDropTo,
       clearHistoryDisabled,
@@ -327,12 +331,14 @@ const loadPanel = (
     () => store,
     agentConversationFolderNameKey,
     cleanAgentConversationFolderName,
-    vi.fn(),
+    ({ restoreTarget }: { restoreTarget: () => HTMLElement | null }) => {
+      focusControls.modalRestoreTargets?.push(restoreTarget)
+      return { deactivate: vi.fn() }
+    },
     { matchMedia: () => ({ matches: compact }) },
     {
       activeElement: focusControls.activeElement ?? null,
-      querySelector: (selector: string) =>
-        selector === '.agent-history__folder-actions[aria-expanded="true"]' ? (focusControls.folderActivator ?? null) : null
+      querySelector: () => null
     },
     HarnessElement
   )
@@ -1152,21 +1158,57 @@ describe('Agent history session selection', () => {
     expect(renameSession).toHaveBeenCalledWith(session.id, 'Renamed after retention')
     expect(moveSessionToFolder).toHaveBeenCalledWith(session.id, folder.id)
   })
-  it('restores folder action focus to the exact activator after a rename closes', async () => {
-    const folder = makeFolder()
-    const activator = new HarnessElement()
+  it('restores the third folder action trigger rather than the hidden rename menu item', async () => {
+    const folders = [makeFolder({ id: 'folder-one' }), makeFolder({ id: 'folder-two' }), makeFolder({ id: 'folder-three' })]
+    const triggers = folders.map(() => new HarnessElement())
+    const menuItem = new HarnessElement()
+    menuItem.hiddenByAncestor = true
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
       cancelSessionReadTransition: vi.fn()
     }
-    const panel = loadPanel(agents, true, [], [folder], { folderActivator: activator })
+    const panel = loadPanel(agents, true, [], folders, { activeElement: menuItem })
+    folders.forEach((folder, index) => {
+      panel.setFolderActionTrigger(folder.id, triggers[index] as unknown as HTMLElement)
+    })
 
-    panel.beginRenameFolder(folder)
+    panel.beginRenameFolder(folders[2])
     expect(panel.folderEditorOpen.value).toBe(true)
     panel.folderEditorOpen.value = false
     await Promise.resolve()
 
-    expect(activator.focus).toHaveBeenCalledTimes(1)
+    expect(triggers[2].focus).toHaveBeenCalledTimes(1)
+    expect(triggers[0].focus).not.toHaveBeenCalled()
+    expect(triggers[1].focus).not.toHaveBeenCalled()
+    expect(menuItem.focus).not.toHaveBeenCalled()
+  })
+
+  it('selects the exact remove-dialog restore target and search or close after commit', async () => {
+    const folder = makeFolder()
+    const trigger = new HarnessElement()
+    const searchRoot = new HarnessElement(false)
+    const close = new HarnessElement()
+    const searchInput = new HarnessElement()
+    searchRoot.focusTarget = searchInput
+    const modalRestoreTargets: Array<() => HTMLElement | null> = []
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      deleteFolder: vi.fn().mockImplementation(async () => {
+        trigger.isConnected = false
+        return true
+      })
+    }
+    const panel = loadPanel(agents, true, [], [folder], { searchRoot, close, removeDialog: new HarnessElement(false), modalRestoreTargets })
+    panel.setFolderActionTrigger(folder.id, trigger as unknown as HTMLElement)
+    panel.beginRemoveFolder(folder)
+    await Promise.resolve()
+    expect(modalRestoreTargets[0]?.()).toBe(trigger as unknown as HTMLElement)
+    await panel.deleteFolder()
+    await Promise.resolve()
+    expect(modalRestoreTargets[0]?.()).toBe(searchInput as unknown as HTMLElement)
+    searchInput.visible = false
+    expect(modalRestoreTargets[0]?.()).toBe(close as unknown as HTMLElement)
   })
 
   it('defers one initial archive refresh until workspace loading settles', () => {

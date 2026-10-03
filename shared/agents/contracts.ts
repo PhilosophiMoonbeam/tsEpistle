@@ -262,6 +262,8 @@ export interface AgentMessageView {
   readonly knowledgeContext?: AgentKnowledgeContext
   readonly id: string
   readonly runId: string | null
+  /** Present only when the matching assistant run is terminal and selected in the bounded thread window. */
+  readonly runOutcome?: { readonly status: AgentTerminalRunStatus; readonly errorCode: string | null }
   readonly ordinal: number
   readonly role: AgentMessageRole
   readonly status: AgentMessageStatus

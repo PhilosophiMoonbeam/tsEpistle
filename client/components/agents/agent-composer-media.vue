@@ -1,8 +1,8 @@
 <template>
-  <div v-if="capabilities?.attachments || generationOptions.length || capabilities?.transcription" class="agent-media-composer">
+  <div v-if="error || capabilities?.attachments || generationOptions.length || capabilities?.transcription" class="agent-media-composer">
     <!-- Recording, upload, and transcription controls live in the composer action bar (agent-composer.vue).
          This component owns the capture/transcription pipeline and renders pending attachments only. -->
-    <input ref="fileInput" class="agent-media-composer__file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple :aria-label="$t('common:agentComposerMedia.chooseImagesPdfs')" :disabled="locked || attachments.length >= 4" @change="chooseFiles" />
+    <input ref="fileInput" class="agent-media-composer__file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple :aria-label="$t('common:agentComposerMedia.chooseImagesPdfs')" :disabled="locked || !session || !capabilities?.attachments || attachments.length >= 4" @change="chooseFiles" />
     <p v-if="generationOptions.length && generationToolsEnabled === false" class="agent-media-composer__hint">{{ $t('common:agentComposerMedia.creationToolsAvailableConversations') }}</p>
     <p v-else-if="generationOptions.length && !capabilities?.attachments" class="agent-media-composer__hint">{{ $t('common:agentComposerMedia.imageReferencesNeedPdf') }}</p>
     <slot
@@ -257,37 +257,70 @@ const removeAttachment = async (item: AgentMediaView) => {
   } catch (value) { if (!disposed) error.value = value instanceof Error ? value.message : t('common:agentComposerMedia.attachmentCouldNotRemoved') }
   finally { if (!disposed) uploading.value = false }
 }
-const addFiles = async (files: readonly File[]) => {
-  if (locked.value || !props.capabilities?.attachments || !props.session) return false
+const addFiles = async (files: readonly File[]): Promise<boolean> => {
+  if (disposed || !files.length) return false
+  if (!props.capabilities?.attachments) { error.value = t('common:agentComposerMedia.attachmentsUnavailable'); return false }
+  if (!props.session) { error.value = t('common:agentComposerMedia.sessionRequired'); return false }
+  if (props.networkBlocked) { error.value = t('common:agentComposerMedia.connectionRequired'); return false }
+  if (locked.value) { error.value = t('common:agentComposerMedia.attachmentsBusy'); return false }
   error.value = ''
-  if (attachments.value.length + files.length > 4) { error.value = t('common:agentComposerMedia.attachUp4Files'); return }
+  if (attachments.value.length + files.length > 4) { error.value = t('common:agentComposerMedia.attachUp4Files'); return false }
   for (const file of files) {
     const problem = validateAgentAttachment(file)
-    if (problem) { error.value = problem; return false }
+    if (problem) { error.value = t(problem); return false }
   }
   const sessionId = props.session.id
   const csrfToken = props.csrfToken
   const controller = new AbortController()
   uploadController = controller
   uploading.value = true
-  try {
-    for (const file of files) {
-      const media = await uploadAgentMedia(fetcher, csrfToken, sessionId, file, controller.signal)
-      if (disposed || controller.signal.aborted || props.session?.id !== sessionId) {
-        void deleteAgentMedia(fetcher, csrfToken, media.id).catch(() => {})
-        return
+  const uploaded: Array<AgentMediaView | null> = files.map(() => null)
+  const failed = files.map(() => false)
+  const stale = () => disposed || controller.signal.aborted || uploadController !== controller || props.session?.id !== sessionId || props.csrfToken !== csrfToken
+  const discardUploads = () => {
+    for (let index = 0; index < uploaded.length; index += 1) {
+      const media = uploaded[index]
+      if (!media) continue
+      uploaded[index] = null
+      void deleteAgentMedia(fetcher, csrfToken, media.id).catch(() => {})
+    }
+  }
+  controller.signal.addEventListener('abort', discardUploads, { once: true })
+  let nextIndex = 0
+  const uploadNext = async () => {
+    while (!stale()) {
+      const index = nextIndex++
+      if (index >= files.length) return
+      try {
+        const media = await uploadAgentMedia(fetcher, csrfToken, sessionId, files[index], controller.signal)
+        if (stale()) {
+          void deleteAgentMedia(fetcher, csrfToken, media.id).catch(() => {})
+          return
+        }
+        uploaded[index] = media
+      } catch {
+        if (stale()) return
+        failed[index] = true
       }
-      attachments.value = [...attachments.value, media]
+    }
+  }
+  try {
+    // Each worker settles files independently; no batch ever has more than two uploads in flight.
+    await Promise.all(Array.from({ length: Math.min(2, files.length) }, () => uploadNext()))
+    if (stale()) { discardUploads(); return false }
+    attachments.value = [...attachments.value, ...uploaded.filter((media): media is AgentMediaView => media !== null)]
+    if (failed.some(Boolean)) {
+      error.value = t('common:agentComposerMedia.filesCouldNotUploaded', { filenames: files.filter((_file, index) => failed[index]).map(file => file.name).join(', '), interpolation: { escapeValue: false } })
+      return false
     }
     return true
-  } catch (value) {
-    if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : t('common:agentComposerMedia.attachmentCouldNotUploaded')
   } finally {
+    controller.signal.removeEventListener('abort', discardUploads)
     if (uploadController === controller) { uploadController = null; uploading.value = false }
   }
 }
 const chooseUpload = () => {
-  if (!locked.value && props.session && attachments.value.length < 4) fileInput.value?.click()
+  if (!locked.value && props.session && props.capabilities?.attachments && attachments.value.length < 4) fileInput.value?.click()
 }
 const browseAssets = () => {
   if (locked.value || !props.session || attachments.value.length >= 4 || !props.capabilities?.attachments) return
@@ -305,7 +338,7 @@ const attachAsset = async (asset: Asset) => {
   const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf' }
   const type = mimeTypes[asset.ext.replace(/^\./, '').toLowerCase()] ?? ''
   const problem = validateAgentAttachment({ type, size: asset.fileSize })
-  if (problem) { error.value = problem; return }
+  if (problem) { error.value = t(problem); return }
   const sessionId = props.session.id
   const csrfToken = props.csrfToken
   const controller = new AbortController()
@@ -611,14 +644,7 @@ defineExpose({ clear, addFiles, editImage, reattachMedia, attachments, startReco
 </script>
 <style scoped>
 .agent-media-composer { min-width: 0; }
-.agent-media-composer__count { margin-left: 6px; font-size: .72rem; opacity: .7; }
-.agent-media-composer__tool-menu { min-width: 264px; max-width: min(320px, calc(100vw - 24px)); }
-.agent-media-composer__menu-note { margin: 8px 16px 6px; max-width: 250px; font-size: .75rem; line-height: 1.5; opacity: .7; }
 .agent-media-composer__file { display: none; }
 .agent-media-composer__hint { margin: 2px 0 6px; font-size: .78rem; color: rgb(var(--v-theme-on-surface), .68); }
-.agent-media-composer__attachments { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 4px 0; margin: 0; }
-.agent-media-composer__attachments li { display: flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 6px; border: 1px solid rgb(var(--v-theme-on-surface), .12); border-radius: 12px; background: rgb(var(--v-theme-surface), .48); }
-.agent-media-composer__attachments img { width: 32px; height: 32px; object-fit: cover; border-radius: 6px; }
-.agent-media-composer__attachments li > span { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; }
 .agent-media-composer__error { color: rgb(var(--v-theme-error)); font-size: .8rem; margin: 6px 0; }
 </style>

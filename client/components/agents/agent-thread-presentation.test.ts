@@ -13,6 +13,11 @@ import {
   isAgentApprovalOutsideViewport,
   shouldFollowGoalExpansion
 } from './agent-thread-presentation.ts'
+import { translateEnglish } from '../../test/english-translate.mts'
+import type { AgentLocalizedText } from './agent-thread-presentation.ts'
+
+const text = (value: AgentLocalizedText | null): string => (value ? translateEnglish(value.key, value.params) : '')
+const activityText = (tools: readonly AgentToolCallView[]): string => agentActivityLabel(tools).map(text).join(' · ')
 
 const tool = (input: Partial<AgentToolCallView> & Pick<AgentToolCallView, 'id' | 'runId'>): AgentToolCallView => ({
   actionName: 'pages.get',
@@ -176,7 +181,7 @@ describe('Agent thread presentation', () => {
         pageHref: '/en/runbook',
         pageCitation: null,
         sections: [
-          { citation: citations[0], number: 1, sectionLabel: 'Page overview' },
+          { citation: citations[0], number: 1, sectionLabel: null },
           { citation: citations[1], number: 2, sectionLabel: 'Response sequence' }
         ]
       },
@@ -184,7 +189,7 @@ describe('Agent thread presentation', () => {
         key: 'page:19',
         pageLabel: 'Assessment',
         pageHref: '/en/assessment',
-        pageCitation: { citation: citations[2], number: 3, sectionLabel: 'Page overview' },
+        pageCitation: { citation: citations[2], number: 3, sectionLabel: null },
         sections: []
       }
     ])
@@ -232,7 +237,6 @@ describe('Agent thread presentation', () => {
     )
 
     expect(presentation.runs.get('run')).toMatchObject({
-      activityLabel: 'Activity · 1 activity · Complete',
       tasks: [runTask]
     })
     expect(presentation.messages.get('assistant-1')).toMatchObject({
@@ -240,61 +244,27 @@ describe('Agent thread presentation', () => {
       citationGroups: [{ key: 'page:6' }]
     })
     expect(presentation.orderedMessages.map(entry => entry.message.id)).toEqual(['user-1', 'assistant-1'])
-    expect(presentation.orderedMessages[0]).toMatchObject({
-      statusLabel: '',
-      ariaLabel: 'Your message · Complete',
-      recovery: null
-    })
-    expect(presentation.orderedMessages[1]).toMatchObject({
-      statusLabel: 'Response failed',
-      ariaLabel: 'Wiki Agent message · Response failed',
-      retryPrompt: 'How should I respond?',
-      run: {
-        activityLabel: 'Activity · 1 activity · Complete',
-        tasks: [runTask]
-      }
-    })
-    expect(presentation.orderedMessages[1]?.recovery).toBeTruthy()
+    expect(presentation.orderedMessages[0]?.statusLabel).toBeNull()
+    expect(presentation.orderedMessages[0]?.recovery).toBeNull()
+    expect(presentation.orderedMessages[1]?.retryPrompt).toBe('How should I respond?')
+    expect(text(presentation.orderedMessages[1]?.recovery?.title ?? null)).toBe('Response could not be completed')
   })
 
   it('announces correction progress while preserving approval and terminal priority', () => {
     const preparing = message({ id: 'assistant-1', role: 'assistant', status: 'streaming' })
-    expect(agentLiveAnnouncement([preparing], [])).toEqual({
-      key: 'assistant-1:preparing',
-      kind: 'preparing',
-      message: 'Preparing a response.',
-      tone: 'neutral'
-    })
+    expect(agentLiveAnnouncement([preparing], [])?.kind).toBe('generating')
     const correctingRun = runView({ workingPhase: 'correcting' })
-    expect(agentLiveAnnouncement([preparing], [], correctingRun)).toEqual({
-      key: 'assistant-1:correcting',
-      kind: 'correcting',
-      message: 'Checking and correcting a response.',
-      tone: 'neutral'
-    })
+    expect(agentLiveAnnouncement([preparing], [], correctingRun)?.kind).toBe('correcting')
     expect(agentLiveAnnouncement([{ ...preparing, content: 'Another streamed token' }], [], correctingRun)?.key).toBe('assistant-1:correcting')
-    expect(agentLiveAnnouncement([preparing], [], runView({ id: 'other-run', workingPhase: 'correcting' }))).toMatchObject({
-      kind: 'preparing',
-      message: 'Preparing a response.'
-    })
-    expect(agentLiveAnnouncement([preparing], [tool({ id: 'approval-1', runId: 'run', state: 'awaitingApproval' })], correctingRun)).toMatchObject({
-      key: 'assistant-1:approval',
-      message: 'Review needed before the response can continue.'
-    })
-    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'complete' })], [], correctingRun)).toMatchObject({
-      kind: 'complete',
-      message: 'Response complete.'
-    })
-    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'cancelled' })], [], correctingRun)).toMatchObject({
-      kind: 'stopped',
-      message: 'Response stopped.',
-      tone: 'neutral'
-    })
-    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'failed' })], [], correctingRun)).toMatchObject({
-      kind: 'failed',
-      message: 'Response failed.',
-      tone: 'error'
-    })
+    expect(agentLiveAnnouncement([preparing], [], runView({ id: 'other-run', workingPhase: 'correcting' }))?.kind).toBe('generating')
+    expect(agentLiveAnnouncement([preparing], [tool({ id: 'approval-1', runId: 'run', state: 'awaitingApproval' })], correctingRun)?.kind).toBe('approval')
+    for (const [status, kind, tone] of [
+      ['complete', 'complete', 'neutral'],
+      ['cancelled', 'stopped', 'neutral'],
+      ['failed', 'failed', 'error']
+    ] as const) {
+      expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status })], [], correctingRun)).toMatchObject({ kind, tone })
+    }
   })
 
   it('updates only live status when a persisted run phase changes', () => {
@@ -307,41 +277,26 @@ describe('Agent thread presentation', () => {
       citations: [citation]
     })
     const initial = buildAgentThreadPresentation([preparing], [], [], [])
-    expect(initial.messages.get('assistant-1')?.statusLabel).toBe('Preparing a response')
+    expect(text(initial.messages.get('assistant-1')?.statusLabel ?? null)).toBe('Generating response')
 
     const correcting = buildAgentThreadPresentation([preparing], [], [], [], initial, runView({ workingPhase: 'correcting' }))
-    expect(correcting.messages.get('assistant-1')).toMatchObject({
-      statusLabel: 'Checking and correcting a response',
-      run: { workingPhase: 'correcting' }
-    })
+    expect(text(correcting.messages.get('assistant-1')?.statusLabel ?? null)).toBe('Checking and correcting a response')
+    expect(correcting.messages.get('assistant-1')?.run?.workingPhase).toBe('correcting')
     expect(correcting.messages.get('assistant-1')?.message).toEqual(preparing)
     expect(correcting.messages.get('assistant-1')?.citationGroups).toEqual([
       {
         key: 'page:6',
         pageLabel: 'Runbook',
         pageHref: '/en/runbook',
-        pageCitation: { citation, number: 1, sectionLabel: 'Page overview' },
+        pageCitation: { citation, number: 1, sectionLabel: null },
         sections: []
       }
     ])
 
     const accepted = message({ id: 'assistant-1', role: 'assistant', status: 'complete', content: 'The accepted response.' })
     const completed = buildAgentThreadPresentation([accepted], [], [], [], correcting, null)
-    expect(completed.messages.get('assistant-1')).toMatchObject({ statusLabel: '', message: { content: 'The accepted response.' } })
-    expect(agentLiveAnnouncement([accepted], [], null)).toMatchObject({ kind: 'complete', message: 'Response complete.' })
-  })
-
-  it('keeps routine activity compact while surfacing current and failed states', () => {
-    expect(
-      agentActivityLabel([
-        tool({ id: 'read', runId: 'run', title: 'Read page' }),
-        tool({ id: 'search', runId: 'run', title: 'Search pages', state: 'running', completedAt: null })
-      ])
-    ).toBe('Search pages · 2 activities')
-    expect(agentActivityLabel([tool({ id: 'read', runId: 'run' }), tool({ id: 'search', runId: 'run', state: 'failed' })])).toBe(
-      'Activity · 2 activities · 1 failed'
-    )
-    expect(agentActivityLabel([tool({ id: 'read', runId: 'run' })])).toBe('Activity · 1 activity · Complete')
+    expect(completed.messages.get('assistant-1')).toMatchObject({ statusLabel: null, message: { content: 'The accepted response.' } })
+    expect(agentLiveAnnouncement([accepted], [], null)?.kind).toBe('complete')
   })
 
   it('keeps capacity-limited activity calm and separate from genuine failures', () => {
@@ -363,8 +318,8 @@ describe('Agent thread presentation', () => {
       )
     ]
 
-    expect(agentActivityLabel(activities)).toBe('Activity · 11 activities · 1 omitted · 7 not executed')
-    expect(agentActivityLabel(activities)).not.toContain('failed')
+    expect(activityText(activities)).toContain('1 omitted · 7 not executed')
+    expect(activityText(activities)).not.toContain('failed')
   })
 
   it('keeps genuine failures prominent when capacity dispositions are mixed in', () => {
@@ -379,7 +334,7 @@ describe('Agent thread presentation', () => {
       }),
       tool({ id: 'failed', runId: 'run', state: 'failed' })
     ]
-    expect(agentActivityLabel(capacityLimited)).toBe('Activity · 4 activities · 1 omitted · 1 not executed · 1 failed')
+    expect(activityText(capacityLimited)).toContain('1 omitted · 1 not executed · 1 failed')
   })
 
   it('claims the approval jump dock only when the approval is fully outside the transcript viewport', () => {

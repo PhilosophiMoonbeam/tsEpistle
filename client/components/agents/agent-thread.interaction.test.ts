@@ -4,10 +4,14 @@ import path from 'node:path'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { RenderFunction } from 'vue'
+import i18next from 'i18next'
+import type { i18n } from 'i18next'
+import type { Translate } from '../../helpers/use-translate.ts'
 import type {
   AgentArtifactView,
   AgentMediaView,
   AgentMessageView,
+  AgentRunView,
   AgentSessionView,
   AgentThreadState,
   AgentToolCallView
@@ -40,11 +44,11 @@ const compiledTemplate = compileTemplate({
 })
 const renderAgentThread = new Function('Vue', compiledTemplate.code)(Vue) as RenderFunction
 
-// Render the real screenshot grid child so placement and alt text are checked end to end.
+// Load real children only after registering the SFC loader; static imports bypass this test boundary.
 Bun.plugin({
-  name: 'agent-thread-real-artifact-grid',
+  name: 'agent-thread-real-children',
   setup(builder) {
-    builder.onLoad({ filter: /agent-artifact-grid\.vue$/ }, async ({ path: filename }) => {
+    builder.onLoad({ filter: /(?:agent-artifact-grid|status-indicator)\.vue$/ }, async ({ path: filename }) => {
       const parsed = parse(await Bun.file(filename).text(), { filename })
       if (parsed.errors.length) throw parsed.errors[0]
       const script = compileScript(parsed.descriptor, { id: 'agent-thread-real-artifact-grid', genDefaultAs: '__component', inlineTemplate: true })
@@ -53,6 +57,8 @@ Bun.plugin({
   }
 })
 const AgentArtifactGrid = (await import('./agent-artifact-grid.vue')).default
+// The test loader must be installed before this known module is imported.
+const StatusIndicator = (await import('../common/status-indicator.vue')).default
 
 const scriptWithoutImports = parsedSfc.descriptor.scriptSetup.content.replace(/import[\s\S]*?from\s+['"][^'"]+['"]\s*/g, '')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scriptWithoutImports)
@@ -60,6 +66,9 @@ const evaluateAgentThread = new Function(
   'computed',
   'ref',
   'watch',
+  'onUnmounted',
+  'i18next',
+  'useTranslate',
   'defineProps',
   'defineEmits',
   'wikiSourceSelectorFromHref',
@@ -68,7 +77,7 @@ const evaluateAgentThread = new Function(
   'agentMediaContentUrl',
   'placeAgentArtifacts',
   `${executableScript}
-return { artifactPlacement, artifactTimeLabel, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, sourceDomId, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
+return { artifactPlacement, artifactTimeLabel, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, activityOpen, markActivityToggle, handleActivityToggle, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const NullStub = Vue.defineComponent({
@@ -164,6 +173,20 @@ const makeSession = (id: string): AgentSessionView => ({
   expiresAt: null
 })
 
+const makeCurrentRun = (sessionId: string, id = 'run-1'): AgentRunView => ({
+  id,
+  sessionId,
+  status: 'running',
+  attempt: 1,
+  eventSequence: 1,
+  canCancel: true,
+  createdAt: '2026-09-03T10:00:00.000Z',
+  startedAt: '2026-09-03T10:00:00.000Z',
+  completedAt: null,
+  errorCode: null,
+  errorMessage: null
+})
+
 const makeMessage = (overrides: Partial<AgentMessageView> = {}): AgentMessageView => ({
   id: 'assistant-1',
   runId: 'run-1',
@@ -215,6 +238,15 @@ const makeThread = (sessionId: string, overrides: Partial<AgentThreadState> = {}
   ...overrides
 })
 
+interface PresentedMessage {
+  readonly message: AgentMessageView
+  readonly run: { readonly pageLinks: readonly unknown[] } | null
+  readonly citationGroups: readonly { readonly sections: readonly unknown[] }[]
+  readonly googleSearchCitations: readonly unknown[]
+  readonly statusLabel: string
+  readonly temporal: { readonly time: string; readonly timestamp: string }
+}
+
 interface MountedThread {
   readonly host: HTMLElement
   readonly thread: { value: AgentThreadState }
@@ -222,6 +254,7 @@ interface MountedThread {
   readonly userPicture: { value: UserPicture }
   readonly emittedReattachments: unknown[][]
   readonly emittedSuggestions: unknown[][]
+  readonly projection: { readonly value: { readonly orderedMessages: readonly PresentedMessage[] } }
   readonly unmount: () => void
 }
 
@@ -234,7 +267,8 @@ const settle = async (): Promise<void> => {
 const mountThread = async (
   initialThread: AgentThreadState,
   initialConnection = 'connected',
-  initialUserPicture: UserPicture = resolveUserPicture({ id: 42, name: 'Ada Lovelace', pictureUrl: '' })
+  initialUserPicture: UserPicture = resolveUserPicture({ id: 42, name: 'Ada Lovelace', pictureUrl: '' }),
+  localization: { readonly translate: Translate; readonly engine: i18n } = { translate: translateEnglish, engine: i18next }
 ): Promise<MountedThread> => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -243,6 +277,7 @@ const mountThread = async (
   const connection = Vue.ref(initialConnection)
   const emittedReattachments: unknown[][] = []
   const emittedSuggestions: unknown[][] = []
+  let projection: MountedThread['projection']
   const agentThread = Vue.defineComponent({
     name: 'AgentThreadInteractionHarness',
     props: {
@@ -255,10 +290,13 @@ const mountThread = async (
     },
     emits: ['askSource', 'suggest', 'decision', 'reattach'],
     setup(props, { emit }) {
-      return evaluateAgentThread(
+      const setup = evaluateAgentThread(
         Vue.computed,
         Vue.ref,
         Vue.watch,
+        Vue.onUnmounted,
+        localization.engine,
+        () => localization.translate,
         () => props,
         () => emit,
         wikiSourceSelectorFromHref,
@@ -267,6 +305,8 @@ const mountThread = async (
         agentMediaContentUrl,
         placeAgentArtifacts
       )
+      projection = setup.threadProjection as MountedThread['projection']
+      return setup
     },
     render: renderAgentThread
   })
@@ -282,8 +322,9 @@ const mountThread = async (
       })
   })
   const app = Vue.createApp(harness)
-  app.config.globalProperties.$t = translateEnglish
-  for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'StatusIndicator', 'AgentToolCard']) app.component(name, NullStub)
+  app.config.globalProperties.$t = localization.translate
+  for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'AgentToolCard']) app.component(name, NullStub)
+  app.component('StatusIndicator', StatusIndicator)
   app.component('v-avatar', AvatarStub)
   app.component('v-icon', IconStub)
   app.component('v-img', ImageStub)
@@ -298,7 +339,7 @@ const mountThread = async (
     host.remove()
   }
   mountedApps.push(unmount)
-  return { host, thread, connection, userPicture, emittedReattachments, emittedSuggestions, unmount }
+  return { host, thread, connection, userPicture, projection: projection!, emittedReattachments, emittedSuggestions, unmount }
 }
 
 afterEach(() => {
@@ -326,7 +367,7 @@ describe('AgentThread identity presentation', () => {
     const userAvatar = userIdentity?.querySelector<HTMLElement>('.agent-message__user-avatar')
     expect(userDetails?.querySelector('.agent-message__role')?.textContent).toBe('You')
     expect(userDetails?.querySelector('time')?.getAttribute('datetime')).toBe('2026-09-03T10:00:00.000Z')
-    expect(userDetails?.querySelector('.agent-message__status')?.textContent?.trim()).toBe('Send failed')
+    expect(userDetails?.querySelector('.agent-message__status')?.textContent).toContain('Send failed')
     expect(userAvatar?.getAttribute('aria-hidden')).toBe('true')
     expect(userAvatar?.textContent?.trim()).toBe('AL')
 
@@ -351,25 +392,13 @@ describe('AgentThread identity presentation', () => {
 describe('AgentThread live status and interaction behavior', () => {
   it('explains matching public failures without leaking provider details or borrowing a different run failure', async () => {
     const session = makeSession('session-recovery')
-    const currentRun = {
-      id: 'run-1',
-      sessionId: session.id,
-      status: 'failed' as const,
-      attempt: 1,
-      eventSequence: 1,
-      canCancel: false,
-      createdAt: session.createdAt,
-      startedAt: session.createdAt,
-      completedAt: session.updatedAt,
-      errorCode: 'AGENT_QUOTA_EXHAUSTED',
-      errorMessage: 'secret provider payload'
-    }
+    const runOutcome = { status: 'failed' as const, errorCode: 'AGENT_QUOTA_EXHAUSTED' }
     const mounted = await mountThread(
       makeThread(session.id, {
-        session: { ...session, currentRun },
+        session,
         messages: [
           makeMessage({ id: 'user-request', role: 'user', ordinal: 0, status: 'complete', content: 'Summarize the release' }),
-          makeMessage({ status: 'failed', content: '' })
+          makeMessage({ status: 'failed', content: '', runOutcome })
         ]
       })
     )
@@ -377,7 +406,6 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(recovery().getAttribute('role')).toBe('region')
     expect(recovery().getAttribute('aria-label')).toBeTruthy()
     expect(recovery().textContent).toContain('quota')
-    expect(recovery().textContent).not.toContain(currentRun.errorMessage)
     expect(recovery().hasAttribute('aria-live')).toBe(false)
     expect(mounted.emittedSuggestions).toEqual([])
     const review = recovery().querySelector('button') as HTMLButtonElement
@@ -392,43 +420,54 @@ describe('AgentThread live status and interaction behavior', () => {
     ]) {
       mounted.thread.value = {
         ...mounted.thread.value,
-        session: { ...session, currentRun: { ...currentRun, errorCode: code } }
+        messages: mounted.thread.value.messages.map(message =>
+          message.role === 'assistant' ? { ...message, runOutcome: { ...runOutcome, errorCode: code } } : message
+        )
       }
       await settle()
       expect(recovery().textContent).toContain(action)
-      expect(recovery().textContent).not.toContain(currentRun.errorMessage)
     }
     mounted.thread.value = {
       ...mounted.thread.value,
-      session: { ...session, currentRun: { ...currentRun, id: 'different-run' } }
+      messages: mounted.thread.value.messages.map(message => (message.role === 'assistant' ? { ...message, runOutcome: undefined } : message)),
+      session: {
+        ...session,
+        currentRun: {
+          id: 'different-run',
+          sessionId: session.id,
+          status: 'running',
+          attempt: 1,
+          eventSequence: 1,
+          canCancel: true,
+          createdAt: session.createdAt,
+          startedAt: session.createdAt,
+          completedAt: null,
+          errorCode: 'AGENT_QUOTA_EXHAUSTED',
+          errorMessage: 'secret provider payload'
+        }
+      }
     }
     await settle()
     expect(recovery().textContent).toContain('Nothing is sent automatically')
     expect(recovery().textContent).not.toContain('quota')
+    expect(recovery().textContent).not.toContain('secret provider payload')
   })
 
   it('offers bounded recovery for the matching partial run with a complete assistant answer only', async () => {
     const session = makeSession('session-partial')
-    const currentRun = {
-      id: 'run-1',
-      sessionId: session.id,
-      status: 'partial' as const,
-      attempt: 1,
-      eventSequence: 1,
-      canCancel: false,
-      createdAt: session.createdAt,
-      startedAt: session.createdAt,
-      completedAt: session.updatedAt,
-      errorCode: null,
-      errorMessage: null
-    }
     const mounted = await mountThread(
       makeThread(session.id, {
-        session: { ...session, currentRun },
+        session,
         messages: [
           makeMessage({ id: 'old-answer', runId: 'older-run', ordinal: 0, status: 'complete', content: 'An earlier answer' }),
           makeMessage({ id: 'user-request', role: 'user', ordinal: 1, status: 'complete', content: 'Summarize the release' }),
-          makeMessage({ id: 'partial-answer', ordinal: 2, status: 'complete', content: 'The returned portion of the answer' })
+          makeMessage({
+            id: 'partial-answer',
+            ordinal: 2,
+            status: 'complete',
+            content: 'The returned portion of the answer',
+            runOutcome: { status: 'partial', errorCode: null }
+          })
         ]
       })
     )
@@ -442,7 +481,7 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(recovery.textContent).toContain('Narrow')
     expect(recovery.textContent).toContain('explicit follow-up')
     expect(recovery.hasAttribute('aria-live')).toBe(false)
-    expect(mounted.host.querySelectorAll('[aria-live]')).toHaveLength(1)
+    expect(mounted.host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
     expect(mounted.host.querySelector('.sr-status')?.textContent).toBe('Partial answer')
     expect(articles[2].getAttribute('aria-label')).toBe('Wiki Agent message · Partial')
     expect(articles[2].querySelector('.agent-message__status')?.textContent).toContain('Partial')
@@ -457,9 +496,17 @@ describe('AgentThread live status and interaction behavior', () => {
     await settle()
     expect(mounted.emittedSuggestions).toEqual([['Summarize the release']])
 
+    const announcement = mounted.host.querySelector('.sr-status')
+    mounted.thread.value = structuredClone(mounted.thread.value)
+    await settle()
+    expect(mounted.host.querySelector('.sr-status')).toBe(announcement)
+    expect(mounted.host.querySelectorAll('.agent-message__recovery')).toHaveLength(1)
+
     mounted.thread.value = {
       ...mounted.thread.value,
-      session: { ...session, currentRun: { ...currentRun, id: 'different-run' } }
+      messages: mounted.thread.value.messages.map(message =>
+        message.id === 'partial-answer' ? { ...message, runOutcome: { status: 'succeeded', errorCode: null } } : message
+      )
     }
     await settle()
     expect(mounted.host.querySelector('.agent-message__recovery')).toBeNull()
@@ -470,7 +517,7 @@ describe('AgentThread live status and interaction behavior', () => {
   it('announces complete, active, approval, and reconnecting states on mount', async () => {
     const states: Array<[string, AgentThreadState, string]> = [
       ['complete', makeThread('session-complete', { messages: [makeMessage({ status: 'complete' })] }), 'Response complete.'],
-      ['active', makeThread('session-active', { messages: [makeMessage({ status: 'streaming' })] }), 'Preparing a response.'],
+      ['active', makeThread('session-active', { messages: [makeMessage({ status: 'streaming' })] }), 'Generating response.'],
       [
         'approval',
         makeThread('session-approval', {
@@ -506,6 +553,269 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(mounted.host.querySelector('.sr-status')).toBe(secondStatus)
   })
 
+  it('moves from preparing to generating with one central announcement and animates only live assistant identities', async () => {
+    const mounted = await mountThread(
+      makeThread('session-transition', {
+        messages: [
+          makeMessage({ id: 'old', runId: 'old-run', status: 'complete', content: 'An earlier answer.' }),
+          makeMessage({ id: 'live', status: 'pending', ordinal: 2 })
+        ]
+      })
+    )
+    const articles = mounted.host.querySelectorAll('.agent-message')
+    expect(articles[0]?.querySelector('.control-border-beam')).toBeNull()
+    expect(articles[1]?.querySelector('.control-border-beam')).not.toBeNull()
+    expect(articles[1]?.querySelector('.agent-message__status')?.textContent).toContain('Preparing a response')
+    expect(mounted.host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
+    const indicator = articles[1]?.querySelector('.status-indicator')
+    expect(indicator?.getAttribute('aria-hidden')).toBe('true')
+    expect(indicator?.getAttribute('aria-live')).toBe('off')
+    expect(indicator?.getAttribute('role')).toBe('presentation')
+    const preparingAnnouncement = mounted.host.querySelector('.sr-status')
+
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      messages: mounted.thread.value.messages.map(message => (message.id === 'live' ? { ...message, status: 'streaming', content: 'First token' } : message))
+    }
+    await settle()
+    expect(articles[1]?.querySelector('.agent-message__status')?.textContent).toContain('Generating response')
+    expect(mounted.host.querySelector('.sr-status')).not.toBe(preparingAnnouncement)
+    const generatingAnnouncement = mounted.host.querySelector('.sr-status')
+    mounted.thread.value = {
+      ...structuredClone(mounted.thread.value),
+      messages: mounted.thread.value.messages.map(message => (message.id === 'live' ? { ...message, content: 'First token and more' } : message))
+    }
+    await settle()
+    expect(mounted.host.querySelector('.sr-status')).toBe(generatingAnnouncement)
+
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      messages: mounted.thread.value.messages.map(message =>
+        message.id === 'live' ? { ...message, status: 'complete', runOutcome: { status: 'succeeded', errorCode: null } } : message
+      )
+    }
+    await settle()
+    expect(mounted.host.querySelectorAll('.control-border-beam')).toHaveLength(0)
+    expect(articles[1]?.querySelector('.agent-message__status')).toBeNull()
+    expect(mounted.host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
+  })
+
+  it('preserves untouched projected messages, runs and citations during polling, invalidating changed presentation inputs and evicting removed entries', async () => {
+    const messages = Array.from({ length: 100 }, (_, index) =>
+      makeMessage({
+        id: `message-${index}`,
+        runId: `run-${index}`,
+        ordinal: index,
+        status: index === 99 ? 'streaming' : 'complete',
+        content: 'Evidence text',
+        citations: [{ evidenceId: `page:${index}:section:1`, kind: 'page', label: `Page ${index} › Section`, href: `/en/page-${index}#section` }],
+        googleSearchGrounding: { citations: [{ url: 'https://source.test/evidence', title: 'Evidence', startIndex: 0, endIndex: 8 }] }
+      })
+    )
+    const mounted = await mountThread(
+      makeThread('session-cache', {
+        messages,
+        tools: messages.map(message =>
+          makeTool({ id: `tool-${message.id}`, runId: message.runId!, proposalId: null, actionName: 'pages.get', state: 'complete' })
+        )
+      })
+    )
+    const initial = mounted.projection.value.orderedMessages
+    mounted.thread.value = structuredClone(mounted.thread.value)
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      messages: mounted.thread.value.messages.map(message => (message.id === 'message-99' ? { ...message, content: 'Evidence text continues' } : message))
+    }
+    await settle()
+    const streamed = mounted.projection.value.orderedMessages
+    for (let index = 0; index < 99; index += 1) {
+      expect(streamed[index]).toBe(initial[index])
+      expect(streamed[index]?.run).toBe(initial[index]?.run)
+      expect(streamed[index]?.run?.pageLinks).toBe(initial[index]?.run?.pageLinks)
+      expect(streamed[index]?.citationGroups).toBe(initial[index]?.citationGroups)
+      expect(streamed[index]?.googleSearchCitations).toBe(initial[index]?.googleSearchCitations)
+    }
+    expect(streamed[99]).not.toBe(initial[99])
+    expect(streamed[99]?.citationGroups[0]).toBe(initial[99]?.citationGroups[0])
+    expect(streamed[99]?.run).toBe(initial[99]?.run)
+    expect(streamed[99]?.googleSearchCitations).toBe(initial[99]?.googleSearchCitations)
+
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      messages: mounted.thread.value.messages.map(message =>
+        message.id === 'message-0'
+          ? {
+              ...message,
+              createdAt: '2026-09-03T12:00:00.000Z',
+              runOutcome: { status: 'partial', errorCode: 'AGENT_OUTPUT_LIMITED' },
+              citations: [{ ...message.citations[0]!, href: '/en/revised#section' }],
+              googleSearchGrounding: { citations: [{ url: 'https://source.test/new', title: 'New evidence', startIndex: 0, endIndex: 4 }] }
+            }
+          : message
+      )
+    }
+    await settle()
+    const changed = mounted.projection.value.orderedMessages[0]!
+    expect(changed).not.toBe(streamed[0])
+    expect(changed.temporal.timestamp).not.toBe(streamed[0]?.temporal.timestamp)
+    expect(changed.citationGroups).not.toBe(streamed[0]?.citationGroups)
+    expect(changed.googleSearchCitations).not.toBe(streamed[0]?.googleSearchCitations)
+    expect(changed.statusLabel).toBe('Partial')
+    expect(mounted.projection.value.orderedMessages[1]).toBe(streamed[1])
+
+    const savedThread = mounted.thread.value
+    mounted.thread.value = { ...savedThread, messages: savedThread.messages.slice(1), tools: savedThread.tools.slice(1) }
+    await settle()
+    mounted.thread.value = structuredClone(savedThread)
+    await settle()
+    expect(mounted.projection.value.orderedMessages[0]).not.toBe(changed)
+  })
+
+  it('defaults live activity open, preserves manual preference across polls, collapses clean completion and keeps exceptional outcomes inspectable', async () => {
+    const session = makeSession('session-activity')
+    const activeThread = (runId: string): AgentThreadState =>
+      makeThread(session.id, {
+        session: { ...session, currentRun: makeCurrentRun(session.id, runId) },
+        messages: [makeMessage({ id: `answer-${runId}`, runId })],
+        tools: [makeTool({ runId, state: 'preparing', title: 'Read release notes', actionName: 'pages.get', proposalId: null, risk: 'read' })]
+      })
+    const mounted = await mountThread(activeThread('run-1'))
+    const details = (): HTMLDetailsElement => mounted.host.querySelector('.agent-activity') as HTMLDetailsElement
+    const toggle = async (): Promise<void> => {
+      details().querySelector<HTMLElement>('summary')!.click()
+      details().dispatchEvent(new browserWindow.Event('toggle'))
+      await settle()
+    }
+    expect(details().open).toBe(true)
+    await toggle()
+    expect(details().open).toBe(false)
+    mounted.thread.value = {
+      ...structuredClone(mounted.thread.value),
+      tools: mounted.thread.value.tools.map(tool => ({ ...tool, state: 'running' }))
+    }
+    await settle()
+    expect(details().open).toBe(false)
+    await toggle()
+    expect(details().open).toBe(true)
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      session,
+      messages: mounted.thread.value.messages.map(message => ({ ...message, status: 'complete', runOutcome: { status: 'succeeded', errorCode: null } })),
+      tools: mounted.thread.value.tools.map(tool => ({ ...tool, state: 'complete' }))
+    }
+    await settle()
+    expect(details().open).toBe(true)
+
+    mounted.thread.value = activeThread('run-2')
+    await settle()
+    expect(details().open).toBe(true)
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      session,
+      messages: mounted.thread.value.messages.map(message => ({ ...message, status: 'complete', runOutcome: { status: 'succeeded', errorCode: null } })),
+      tools: mounted.thread.value.tools.map(tool => ({ ...tool, state: 'complete' }))
+    }
+    await settle()
+    expect(details().open).toBe(false)
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      messages: mounted.thread.value.messages.map(message => ({ ...message, status: 'failed', runOutcome: { status: 'failed', errorCode: null } })),
+      tools: mounted.thread.value.tools.map(tool => ({ ...tool, state: 'failed' }))
+    }
+    await settle()
+    expect(details().open).toBe(true)
+    await toggle()
+    mounted.thread.value = structuredClone(mounted.thread.value)
+    await settle()
+    expect(details().open).toBe(false)
+  })
+
+  it('resolves runtime statuses, activity, recovery, section labels and accessible announcements through the current catalog', async () => {
+    const english = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8'))
+    const engine = i18next.createInstance()
+    await engine.init({
+      lng: 'en',
+      fallbackLng: 'en',
+      defaultNS: 'common',
+      initAsync: false,
+      resources: {
+        en: english,
+        fr: {
+          common: {
+            agentThread: {
+              preparingResponse: 'Préparation de la réponse',
+              generatingResponse: 'Génération de la réponse',
+              announcePreparing: 'Préparation en cours.',
+              announceGenerating: 'Génération en cours.',
+              assistantMessage: 'Message de l’agent · {{status}}',
+              userMessage: 'Votre message · {{status}}',
+              activityTitle: '{{title}}',
+              activity: 'Activité',
+              activityCount_one: '{{count}} activité',
+              activityCount_other: '{{count}} activités',
+              running: 'En cours',
+              complete: 'Terminé',
+              pageOverview: 'Vue de la page',
+              partial: 'Partielle',
+              partialAnswer: 'Réponse partielle',
+              recoveryPartial: 'Relisez la réponse avant de poursuivre.'
+            }
+          }
+        }
+      }
+    })
+    const mounted = await mountThread(
+      makeThread('session-localized', {
+        messages: [
+          makeMessage({ id: 'old-localized', runId: 'old-run', status: 'complete', content: 'A past answer.' }),
+          makeMessage({
+            id: 'live-localized',
+            status: 'pending',
+            ordinal: 2,
+            citations: [{ evidenceId: 'page:1:section:1', kind: 'page', label: 'Page', href: '/en/page#section' }]
+          })
+        ],
+        tools: [makeTool({ actionName: 'pages.get', title: 'Read sources', state: 'running', proposalId: null, risk: 'read' })]
+      }),
+      'connected',
+      undefined,
+      { engine, translate: (key, options = {}) => String(engine.t(key, options)) }
+    )
+    const englishProjection = mounted.projection.value.orderedMessages
+    await engine.changeLanguage('fr')
+    await settle()
+    const articles = mounted.host.querySelectorAll('.agent-message')
+    expect(articles[0]?.getAttribute('aria-label')).toBe('Message de l’agent · Terminé')
+    expect(articles[1]?.querySelector('.agent-message__status')?.textContent).toContain('Préparation de la réponse')
+    expect(articles[1]?.getAttribute('aria-label')).toBe('Message de l’agent · Préparation de la réponse')
+    expect(mounted.host.querySelector('.agent-activity summary')?.textContent).toContain('Read sources · 1 activité')
+    expect(mounted.host.querySelector('.agent-activity small')?.textContent).toBe('En cours')
+    expect(mounted.host.querySelector('.agent-sources__label')?.textContent).toBe('Vue de la page')
+    expect(mounted.host.querySelector('.sr-status')?.textContent).toBe('Préparation en cours.')
+    expect(mounted.projection.value.orderedMessages[0]).not.toBe(englishProjection[0])
+    expect(mounted.projection.value.orderedMessages[0]?.temporal.timestamp).not.toBe(englishProjection[0]?.temporal.timestamp)
+
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      messages: mounted.thread.value.messages.map(message =>
+        message.id === 'live-localized' ? { ...message, status: 'streaming', content: 'Le début' } : message
+      )
+    }
+    await settle()
+    expect(articles[1]?.querySelector('.agent-message__status')?.textContent).toContain('Génération de la réponse')
+    expect(mounted.host.querySelector('.sr-status')?.textContent).toBe('Génération en cours.')
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      messages: mounted.thread.value.messages.map(message =>
+        message.id === 'live-localized' ? { ...message, status: 'complete', runOutcome: { status: 'partial', errorCode: null } } : message
+      )
+    }
+    await settle()
+    expect(articles[1]?.querySelector('.agent-message__recovery strong')?.textContent).toBe('Réponse partielle')
+    expect(articles[1]?.querySelector('.agent-message__recovery span')?.textContent).toBe('Relisez la réponse avant de poursuivre.')
+    expect(mounted.host.querySelector('.sr-status')?.textContent).toBe('Réponse partielle')
+  })
+
   it('renders capacity-limited activity rows without treating them as failures', async () => {
     const mounted = await mountThread(
       makeThread('session-capacity', {
@@ -537,11 +847,9 @@ describe('AgentThread live status and interaction behavior', () => {
     const rows = activity?.querySelectorAll('.agent-activity__list > li')
     expect(activity?.querySelector('summary')?.textContent).toContain('Activity · 3 activities · 1 omitted · 1 not executed')
     expect(rows).toHaveLength(3)
-    expect(Array.from(rows ?? []).map(row => row.querySelector('small')?.textContent)).toEqual([
-      'pages.get · Complete',
-      'pages.get · Result omitted',
-      'pages.get · Not executed'
-    ])
+    expect(Array.from(rows ?? []).map(row => row.querySelector('strong')?.textContent)).toEqual(['Get page', 'Get page', 'Get page'])
+    expect(Array.from(rows ?? []).map(row => row.querySelector('small')?.textContent)).toEqual(['Complete', 'Result omitted', 'Not executed'])
+    expect(activity?.textContent).not.toContain('pages.get')
     expect(rows?.[0]?.querySelector('.v-icon')?.getAttribute('data-color')).toBe('success')
     expect(rows?.[1]?.querySelector('.v-icon')?.getAttribute('data-color')).toBeNull()
     expect(rows?.[2]?.querySelector('.v-icon')?.getAttribute('data-color')).toBeNull()

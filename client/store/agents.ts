@@ -71,11 +71,20 @@ interface AgentAdmissionPins {
 }
 
 const admissionPinFields = [
-  'v', 'kid', 'ownerId', 'sessionId', 'sessionVersion', 'profileId', 'profileVersionId',
-  'profileVersion', 'profilePolicyVersion', 'defaultGeneration', 'executionMode', 'exp'
+  'v',
+  'kid',
+  'ownerId',
+  'sessionId',
+  'sessionVersion',
+  'profileId',
+  'profileVersionId',
+  'profileVersion',
+  'profilePolicyVersion',
+  'defaultGeneration',
+  'executionMode',
+  'exp'
 ] as const
-const positiveAdmissionInteger = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+const positiveAdmissionInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 
 // Continuity only: the server still authenticates and validates the fresh signed token.
 const readAdmissionPins = (token: string): AgentAdmissionPins | null => {
@@ -90,7 +99,8 @@ const readAdmissionPins = (token: string): AgentAdmissionPins | null => {
     const consent = Object.hasOwn(payload, 'googleSearchEnabled') ? payload.googleSearchEnabled : false
     if (
       payload.v !== 1 ||
-      typeof payload.kid !== 'string' || !payload.kid ||
+      typeof payload.kid !== 'string' ||
+      !payload.kid ||
       !positiveAdmissionInteger(payload.ownerId) ||
       !isAgentSessionId(payload.sessionId) ||
       !positiveAdmissionInteger(payload.sessionVersion) ||
@@ -98,11 +108,14 @@ const readAdmissionPins = (token: string): AgentAdmissionPins | null => {
       !isAgentSessionId(payload.profileVersionId) ||
       !positiveAdmissionInteger(payload.profileVersion) ||
       !positiveAdmissionInteger(payload.profilePolicyVersion) ||
-      typeof payload.defaultGeneration !== 'number' || !Number.isSafeInteger(payload.defaultGeneration) || payload.defaultGeneration < 0 ||
+      typeof payload.defaultGeneration !== 'number' ||
+      !Number.isSafeInteger(payload.defaultGeneration) ||
+      payload.defaultGeneration < 0 ||
       payload.executionMode !== 'agent' ||
       !positiveAdmissionInteger(payload.exp) ||
       typeof consent !== 'boolean'
-    ) return null
+    )
+      return null
     payload.googleSearchEnabled = consent
     return payload as unknown as AgentAdmissionPins
   } catch {
@@ -111,7 +124,8 @@ const readAdmissionPins = (token: string): AgentAdmissionPins | null => {
 }
 
 const sameAdmissionPins = (previous: AgentAdmissionPins | null, next: AgentAdmissionPins | null): boolean =>
-  previous !== null && next !== null &&
+  previous !== null &&
+  next !== null &&
   previous.v === next.v &&
   previous.ownerId === next.ownerId &&
   previous.sessionId === next.sessionId &&
@@ -685,8 +699,14 @@ export const useAgentsStore = defineStore('agents', {
     },
     updateDraft(sessionId: string, patch: Partial<AgentDraft>) {
       if (!sessionId) return
-      this.drafts[sessionId] = { ...(this.drafts[sessionId] ?? emptyAgentDraft()), ...patch }
-      if (sessionId === this.pinnedSessionId) this.persistPinnedContext()
+      const previous = this.drafts[sessionId] ?? emptyAgentDraft()
+      const contextChanged =
+        (patch.includeCurrentPage !== undefined && patch.includeCurrentPage !== previous.includeCurrentPage) ||
+        (patch.sources !== undefined &&
+          patch.sources !== previous.sources &&
+          (patch.sources.length !== previous.sources.length || patch.sources.some((source, index) => !sameAgentChatPage(source, previous.sources[index]))))
+      this.drafts[sessionId] = { ...previous, ...patch }
+      if (contextChanged && sessionId === this.pinnedSessionId) this.persistPinnedContext()
     },
     async newSession(retention: 'temporary' | 'saved', mutationOwner?: number, allowWhileInitializing = false): Promise<boolean> {
       if (this.workspaceDisposed || (!this.isWorkspaceReady() && !(allowWhileInitializing && this.loading && this.initializedWorkspaceVersion === null)))
@@ -1206,17 +1226,20 @@ export const useAgentsStore = defineStore('agents', {
       this.error = ''
       try {
         const clickedSkillVersionIds = invokedSkillVersionIds.length > 0 ? [...invokedSkillVersionIds] : undefined
-        const clickedMedia = media ? {
-          attachmentIds: [...media.attachmentIds],
-          ...(media.generationTools ? { generationTools: [...media.generationTools] } : {})
-        } : undefined
+        const clickedMedia = media
+          ? {
+              attachmentIds: [...media.attachmentIds],
+              ...(media.generationTools ? { generationTools: [...media.generationTools] } : {})
+            }
+          : undefined
         try {
           const refreshed = await this.refreshThread()
           if (
             !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
             !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
             !this.isSessionMutationOwned(mutationToken)
-          ) return false
+          )
+            return false
           if (!refreshed.accepted || !refreshed.current || !this.isWorkspaceReady() || this.googleSearchPending !== null) {
             if (refreshed.current) this.error = 'The conversation could not be refreshed. Nothing was sent; retry when ready.'
             return false
