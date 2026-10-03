@@ -1,3 +1,7 @@
+const privateVaultUnlockError = 'The private offline vault could not be unlocked.'
+const savedPagesReadError = 'Saved pages could not be read from this device.'
+const savedPageRemovalSyncError = 'Saved page removed locally, but offline sync failed: {{detail}}'
+
 // Audited offline-only shell English, including shared account/header controls. Keep aligned with server/locales/en.json.
 export const offlineEnglish = {
   searchPanel: {
@@ -131,7 +135,7 @@ export const offlineEnglish = {
     waitingSync: 'Waiting for sync',
     notEligible: 'Not eligible',
     savedCopyStale: 'Saved copy is stale',
-    privateOfflineVaultCould: 'The private offline vault could not be unlocked.',
+    privateOfflineVaultCould: privateVaultUnlockError,
     checkingSavedPagesDevice: 'Checking saved pages on this device.',
     searchingSavedPage_one: 'Searching {{count}} saved page…',
     searchingSavedPage_other: 'Searching {{count}} saved pages…',
@@ -170,12 +174,12 @@ export const offlineEnglish = {
     currentSiteIdentityUnavailable: 'The current site identity is unavailable; saved pages cannot be opened safely.',
     requestedSavedPageLink: 'The requested saved-page link is invalid or belongs to another site.',
     savedPagesChangedDevice: 'Saved pages changed on this device. Retry opening this page to verify the new saved version.',
-    savedPagesCouldNot: 'Saved pages could not be read from this device.',
+    savedPagesCouldNot: savedPagesReadError,
     offlineSynchronizationUnavailable: 'Offline synchronization is unavailable.',
     offlineSynchronizationCouldNot: 'Offline synchronization could not be completed.',
     savedPageRemovedLocally: 'Saved page removed locally, but offline sync is unavailable: {{detail}}',
-    savedPageRemovedLocally2: 'Saved page removed locally, but offline sync failed: {{detail}}',
-    savedPageRemovedLocally3: 'Saved page removed locally, but offline sync failed: {{detail}}',
+    savedPageRemovedLocally2: savedPageRemovalSyncError,
+    savedPageRemovedLocally3: savedPageRemovalSyncError,
     savedPagesCouldNot2: 'Saved pages could not be refreshed.',
     savedPageListCould: '{{syncFailure}} Saved-page list could not be refreshed: {{refillDetail}}',
     savedPageRemovedLocally4: 'Saved page removed locally, but the saved-page list could not be refreshed: {{refillDetail}}',
@@ -273,7 +277,7 @@ export const offlineEnglish = {
     checkingConnection: 'Checking connection',
     serverUnavailable: 'Server unavailable',
     youreOffline: 'You’re offline',
-    savedPagesCouldNot: 'Saved pages could not be read from this device.',
+    savedPagesCouldNot: savedPagesReadError,
     browse: 'Browse',
     onlyPagesSavedDevice: 'Only pages saved on this device are listed.',
     openingSavedPages: 'Opening saved pages…',
@@ -316,7 +320,7 @@ export const offlineEnglish = {
     privateOfflineReadingCould: 'Private offline reading could not be enabled.',
     confirmationCouldNotAccepted: 'The confirmation could not be accepted.',
     privateOfflineReadingUnlocked: 'Private offline reading is unlocked in this browser.',
-    privateOfflineVaultCould: 'The private offline vault could not be unlocked.',
+    privateOfflineVaultCould: privateVaultUnlockError,
     privateOfflineReadingLocked: 'Private offline reading is locked.',
     openingOfflineStorage: 'Opening offline storage…',
     changesSavedAutomaticallyDevice: 'Changes are saved automatically on this device.',
