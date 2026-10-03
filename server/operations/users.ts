@@ -519,7 +519,7 @@ const requireProfileMutationUser = (requester: Express.User | undefined, expecte
     ? Number(expectedAccountId)
     : expectedAccountId
   if (typeof expectedId !== 'number' || !Number.isSafeInteger(expectedId) || expectedId < 1) {
-    throw new wiki.Error.InputInvalid('The profile account identity is required.')
+    throw new ApplicationError('The profile account identity is required.', { code: 'INVALID_PROFILE_ACCOUNT', status: 400 })
   }
   if (expectedId !== userId) {
     throw new ApplicationError('Your signed-in account changed. Reload your profile before saving.', { code: 'STALE_PROFILE', status: 409 })

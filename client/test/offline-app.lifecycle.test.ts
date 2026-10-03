@@ -203,7 +203,7 @@ const lifecycleTranslate = (key: string, options: Record<string, unknown> = {}):
 
 async function savedRecord(siteId: string, pageId: number, title: string, html = `<p>${title} body</p>`): Promise<OfflineSnapshotRecord> {
   const snapshot: OfflinePageSnapshotV1 = {
-    schemaVersion: 1, pageId, locale: 'en', path: `saved/${pageId}`, canonicalPath: `saved/${pageId}`,
+    schemaVersion: 1, pageId, locale: 'en', path: `saved/${pageId}`, canonicalPath: `/en/saved/${pageId}`,
     title, description: '', sourceRevision: 'r1', capturedAt: '2026-09-01T00:00:00.000Z', expiresAt: null,
     content: { representation: 'sanitized-html-fragment', sanitizerVersion: 'offline-html-allowlist-v1', html },
     searchText: `${title} body`, contentType: 'sanitized-html-fragment', integrity: 'pending'
@@ -396,6 +396,7 @@ describe('saved-page reader and library settings lifecycle', () => {
 
   it('keeps the current article DOM, URL, focus and position when another saved page changes', async () => {
     const fixture = await offlineFixture()
+    setLocation('/?saved=1')
     const { host, props, errors } = await fixture.mount()
     host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
     await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Reader A body'))
@@ -403,6 +404,7 @@ describe('saved-page reader and library settings lifecycle', () => {
     const paragraph = body.querySelector('p')
     const heading = document.activeElement
     const url = browserWindow.location.href
+    expect(browserWindow.location.pathname).toBe('/en/saved/1')
     body.scrollTop = 123
     let windowScrollY = 456
     Object.defineProperty(browserWindow, 'scrollY', { configurable: true, get: () => windowScrollY })

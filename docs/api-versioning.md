@@ -21,7 +21,7 @@ The executable contract is `shared/api-access.ts` together with `server/test/cor
 
 Browser self-service profile mutations require `X-TsEpistle-Profile-Account`, containing the account ID returned by the profile read. This applies to profile details, preferences, avatar upload/removal, and password changes under `/_api/users/profile`, and to the corresponding GraphQL mutations. The header is not an authorization credential: the current authenticated human principal must still satisfy the operation's verification and provider requirements.
 
-Missing or malformed draft identities are rejected. A valid identity that differs from the current cookie principal is rejected with `409 STALE_PROFILE` before account lookup or persistence. Clients must reload the new account's profile rather than retargeting an old draft. Profile reads do not require this header. The internal browser and GraphQL contracts are outside the `/api/v1` compatibility promise below.
+Missing or malformed draft identities are rejected before account lookup or persistence (`400` in REST). A valid identity that differs from the current cookie principal is rejected with REST `409`; GraphQL returns its ordinary failure envelope with the `STALE_PROFILE` slug. Clients must reload the new account's profile rather than retargeting an old draft. Profile reads do not require this header. The internal browser and GraphQL contracts are outside the `/api/v1` compatibility promise below.
 
 ## Compatibility policy
 
