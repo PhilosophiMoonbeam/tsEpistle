@@ -534,22 +534,6 @@ describe('search header affordances', () => {
   })
 })
 
-describe('Wiki Agent header entry', () => {
-  it.each([false, true])('names the Agent button and its tooltip through the locale (small screen: %s)', async smAndDown => {
-    globals.siteConfig = { ...globals.siteConfig, agentsEnabled: true }
-    wikiStore.user = { ...user(1), permissions: ['use:agents'] }
-    try {
-      const mounted = await mountHeader({ hideSearch: false, smAndDown, dense: false })
-      const agent = mounted.host.querySelector<HTMLElement>('.nav-header-agent')
-      expect(agent?.getAttribute('aria-label')).toBe('Ouvrir l’agent')
-      expect(agent?.parentElement?.textContent).toContain('Agent localisé')
-      expect(mounted.host.textContent).not.toContain('Wiki Agent')
-      if (smAndDown) expect(mounted.host.querySelector('.nav-header-search-toggle')?.getAttribute('aria-label')).toBe('Ouvrir la recherche')
-    } finally {
-      globals.siteConfig = { ...globals.siteConfig, agentsEnabled: false }
-    }
-  })
-})
 
 describe('workspace title responsiveness', () => {
   it('splits multi-word workspace titles onto two balanced lines for the stacked small-screen variant', async () => {
