@@ -10,7 +10,7 @@
 </template>
 <script lang='ts'>
 import { defineComponent, markRaw } from 'vue'
-import _ from 'lodash'
+import * as _ from 'lodash-es'
 import * as d3 from 'd3'
 import AsyncState from '@/components/common/async-state.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'

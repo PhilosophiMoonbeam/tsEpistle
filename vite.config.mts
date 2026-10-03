@@ -296,8 +296,6 @@ export default defineConfig(({ command }) => ({
       injectRegister: false,
       injectManifest: {
         rollupFormat: 'iife',
-        // This separate Vite build does not inherit terserOptions; retain its existing minifier.
-        minify: 'oxc',
         swDest: resolve(root, 'assets/service-worker.js'),
         globPatterns: ['client/offline.html', 'js/**/*.js', 'assets/**/*', 'svg/icon-tsepistle.svg'],
         globDirectory: resolve(root, 'assets'),
@@ -311,12 +309,19 @@ export default defineConfig(({ command }) => ({
     runtimeAssetsPlugin(command)
   ],
   resolve: {
-    alias: {
-      '@': resolve(root, 'client'),
+    alias: [
+      { find: '@', replacement: resolve(root, 'client') },
       // Server Pug views provide the root component template mounted by client-app.ts.
-      vue: 'vue/dist/vue.esm-bundler.js'
-    },
-    dedupe: ['@codemirror/state', '@codemirror/view', 'katex']
+      { find: 'vue', replacement: 'vue/dist/vue.esm-bundler.js' },
+      // These public submodules have identical implementations in the pinned Lodash ES build.
+      // Resolve them to the same modules as named imports instead of retaining CommonJS copies.
+      {
+        find: /^lodash\/(debounce|deburr|kebabCase|set|startCase)\.js$/u,
+        replacement: 'lodash-es/$1.js'
+      }
+    ],
+    // Moment Timezone must extend the same Moment instance used by date-formatting components.
+    dedupe: ['@codemirror/state', '@codemirror/view', 'katex', 'moment']
   },
   css: {
     preprocessorOptions: {
@@ -339,19 +344,6 @@ export default defineConfig(({ command }) => ({
     manifest: true,
     sourcemap: true,
     target: 'es2022',
-    // Prefer size-focused compression without assuming getters or public properties are pure.
-    minify: 'terser',
-    terserOptions: {
-      ecma: 2022,
-      compress: {
-        passes: 2,
-        pure_getters: false,
-        unsafe: false
-      },
-      mangle: {
-        properties: false
-      }
-    },
     chunkSizeWarningLimit: 1200,
     rolldownOptions: {
       input: {

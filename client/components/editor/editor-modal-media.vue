@@ -443,7 +443,7 @@
 
 <script lang='ts'>
 import { defineComponent, markRaw, type Component, type PropType } from 'vue'
-import _ from 'lodash'
+import * as _ from 'lodash-es'
 import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetBranding, fetchAssetFolders, fetchAssetRelocationStatus, fetchAssets, relocateAsset as relocateAssetRequest, type Asset, type AssetFolder, type AssetRelocationInput, type AssetRelocationReceipt } from '../../helpers/assets-api'
 import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
 import { wikiStore } from '@/store/index.ts'

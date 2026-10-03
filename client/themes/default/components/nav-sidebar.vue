@@ -183,7 +183,7 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
+import * as _ from 'lodash-es'
 import { observeBrowserConnection, pwaState, reportServerConnectionFailure, retryServerConnection } from '../../../helpers/pwa.ts'
 import OfflineNavigation from '@/components/pwa/offline-navigation.vue'
 import AsyncState from '@/components/common/async-state.vue'
