@@ -337,35 +337,34 @@
             template(v-slot:activator='{ props: menuProps }')
               //- Touch keeps the hover state after a tap; the tooltip must not
               //- stay over the open menu.
-              v-tooltip(location="bottom", :model-value='accountTooltipOpen', @update:model-value='setAccountTooltip', :text='`${accountButtonLabel} · ${connectionLabel}`')
-                template(v-slot:activator='{ props: tooltipProps }')
-                  v-btn.account-menu__trigger(
-                    icon
-                    v-bind='mergeProps(menuProps, tooltipProps)'
-                    :class='$vuetify.locale.isRtl ? `ml-0` : ``'
-                    rounded='lg'
-                    :aria-label='accountButtonLabel'
-                    :aria-description='connectionLabel'
-                  )
-                    template(v-if='isAuthenticated')
-                      v-avatar(v-if='avatar.kind === `initials`', :size='32', color='primary')
-                        span.account-menu__initials {{ avatar.initials }}
-                      v-avatar(v-else-if='avatar.kind === `image`', :size='32')
-                        v-img(:src='avatar.url', alt='', @error='avatarFailed(avatar.url)')
-                      v-icon(v-else) mdi-account-circle
-                    v-icon(v-else) mdi-account-circle
-                    span.account-menu__notification-indicator(
-                      v-if='isAuthenticated && notificationState !== `clear`'
-                      :class='`account-menu__notification-indicator--${notificationState}`'
-                      aria-hidden='true'
-                    )
-                    span.account-menu__connectivity-indicator(
-                      :class='`account-menu__connectivity-indicator--${connectionPresentation.tone}`'
-                      :data-connection='connectionPresentation.key'
-                      data-connectivity-indicator
-                      aria-hidden='true'
-                    )
-                      v-icon(:icon='connectionPresentation.icon', size='13')
+              v-btn.account-menu__trigger(
+                icon
+                v-bind='menuProps'
+                :class='$vuetify.locale.isRtl ? `ml-0` : ``'
+                rounded='lg'
+                :aria-label='accountButtonLabel'
+                :aria-description='connectionLabel'
+              )
+                template(v-if='isAuthenticated')
+                  v-avatar(v-if='avatar.kind === `initials`', :size='32', color='primary')
+                    span.account-menu__initials {{ avatar.initials }}
+                  v-avatar(v-else-if='avatar.kind === `image`', :size='32')
+                    v-img(:src='avatar.url', alt='', @error='avatarFailed(avatar.url)')
+                  v-icon(v-else) mdi-account-circle
+                v-icon(v-else) mdi-account-circle
+                span.account-menu__notification-indicator(
+                  v-if='isAuthenticated && notificationState !== `clear`'
+                  :class='`account-menu__notification-indicator--${notificationState}`'
+                  aria-hidden='true'
+                )
+                span.account-menu__connectivity-indicator(
+                  :class='`account-menu__connectivity-indicator--${connectionPresentation.tone}`'
+                  :data-connection='connectionPresentation.key'
+                  data-connectivity-indicator
+                  aria-hidden='true'
+                )
+                  v-icon(:icon='connectionPresentation.icon', size='13')
+                v-tooltip(activator='parent', location='bottom', :model-value='accountTooltipOpen', @update:model-value='setAccountTooltip', :text='`${accountButtonLabel} · ${connectionLabel}`')
             v-list.nav-header-menu.account-menu(:aria-label='accountMenuLabel')
               template(v-if='isAuthenticated')
                 v-list-item.account-menu__profile.py-3.bg-surface-variant(
@@ -488,7 +487,7 @@
 </template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
+import { defineAsyncComponent, defineComponent, markRaw } from 'vue'
 import {
   invalidateOfflineIdentity,
   markOfflineLogoutPending,
@@ -933,7 +932,6 @@ export default defineComponent({
     this.navHeaderTitleResizeObserver = null
   },
   methods: {
-    mergeProps,
     runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler']): void {
       this[handler]()
     },
