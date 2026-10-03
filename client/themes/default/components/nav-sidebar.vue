@@ -33,6 +33,27 @@
         span {{$t('common:sidebar.browse')}}
         v-icon(icon='mdi-file-tree-outline', size='16', aria-hidden='true')
       v-divider.nav-sidebar-edge
+      .nav-sidebar-directory-tools(v-if='currentMode === `browse`')
+        .nav-sidebar-directory-label {{$t('common:sidebar.currentDirectory')}}
+        .nav-sidebar-directory-title {{ currentParent.id === 0 ? $t('common:sidebar.root') : currentParent.title }}
+        v-text-field.nav-sidebar-directory-filter(
+          :model-value='directoryFilter'
+          @update:model-value='directoryFilter = $event ?? ``'
+          :label='$t(`common:sidebar.filterDirectory`)'
+          prepend-inner-icon='mdi-filter-outline'
+          density='compact'
+          variant='outlined'
+          hide-details
+          autocomplete='off'
+        )
+        .nav-sidebar-directory-summary
+          span.nav-sidebar-directory-count(role='status', aria-live='polite', aria-atomic='true') {{$t('common:sidebar.directoryMatches', { count: filteredItems.length, total: currentItems.length })}}
+          v-btn.nav-sidebar-clear-filter(
+            v-if='directoryFilter'
+            variant='text'
+            size='small'
+            @click='directoryFilter = ``'
+          ) {{$t('common:sidebar.clearFilter')}}
       //-> Custom Navigation
       v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav, role='group', tabindex='-1')
         async-state(
@@ -102,14 +123,28 @@
           state='empty'
           :title='$t(`common:sidebar.noPagesInDirectory`)'
         )
+        async-state(
+          v-else-if='filteredItems.length === 0 && !connectionUnavailable'
+          state='empty'
+          :title='$t(`common:sidebar.noMatchingItems`)'
+        )
         template(v-if='currentParent.id > 0')
           .nav-sidebar-ancestor-trail
-            v-list-item.nav-sidebar-ancestor(v-for='(item, idx) of parents', :key='`parent-` + item.id', link, role='button', tabindex='0', @click='fetchBrowseItems(item)')
+            v-list-item.nav-sidebar-ancestor(
+              v-for='(item, idx) of parents'
+              :key='`parent-` + item.id'
+              :class='{ "nav-sidebar-ancestor--current": item.id === currentParent.id }'
+              :link='item.id !== currentParent.id'
+              :role='item.id === currentParent.id ? undefined : `button`'
+              :tabindex='item.id === currentParent.id ? undefined : 0'
+              :aria-current='item.id === currentParent.id ? `location` : undefined'
+              @click='item.id !== currentParent.id && fetchBrowseItems(item)'
+            )
               template(v-slot:prepend)
                 v-avatar.nav-sidebar-ancestor-icon(size='20', variant='text', :style='{ "--nav-depth": idx }')
                   v-icon(size="small") mdi-folder-open
               v-list-item-title(:title='item.title') {{ item.title }}
-              template(v-slot:append)
+              template(v-slot:append, v-if='item.id !== currentParent.id')
                 v-icon.nav-sidebar-folder-chevron(size='16', aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
           v-divider.nav-sidebar-section-divider.mt-2
           .nav-sidebar-current.d-flex.align-center.mt-2(v-if='typeof currentParent.pageId === "number" && currentParent.pageId > 0')
@@ -132,8 +167,7 @@
               :aria-label='$t(`common:sidebar.editParentPage`, { title: currentParent.title })'
             )
               v-icon(size="small") mdi-pencil
-          v-list-subheader.nav-sidebar-subheader.nav-sidebar-directory-label {{$t('common:sidebar.currentDirectory')}}
-        template(v-for='item of currentItems', :key='item.id')
+        template(v-for='item of filteredItems', :key='item.id')
           v-list-item.nav-sidebar-folder(v-if='item.isFolder', link, role='button', tabindex='0', @click='fetchBrowseItems(item)')
             template(v-slot:prepend)
               v-avatar(size='24', variant='text')
@@ -207,11 +241,13 @@ export default defineComponent({
     return {
       currentMode: 'custom' as NavigationMode,
       currentItems: [] as PageTreeRow[],
+      directoryFilter: '',
+      loadedBrowseLocale: '',
       navLoading: false,
       navError: '',
       currentParent: {
         id: 0,
-        title: this.$t('common:navSidebar.root')
+        title: `/ ${this.$t('common:sidebar.root')}`
       } as NavigationTreeItem,
       parents: [] as NavigationTreeItem[],
       loadedCache: [] as number[],
@@ -234,6 +270,11 @@ export default defineComponent({
     customItems (): SidebarItem[] {
       return this.items.filter(item => item.k !== 'link' || item.y !== 'home')
     },
+    filteredItems (): PageTreeRow[] {
+      const query = this.directoryFilter.trim().toLowerCase()
+      if (!query) return this.currentItems
+      return this.currentItems.filter(item => item.title.toLowerCase().includes(query) || item.path.toLowerCase().includes(query))
+    },
     pageLocationKey (): string {
       return `${wikiStore.page.visibility}:${wikiStore.page.id}:${this.locale}:${this.path}`
     }
@@ -250,9 +291,8 @@ export default defineComponent({
     },
     pageLocationKey (value: string, previous: string) {
       if (value === previous || this.currentMode !== 'browse') return
-      this.resetBrowseRoot()
       if (this.expandParentByDefault) void this.loadFromCurrentPath()
-      else void this.fetchBrowseItems(this.currentParent)
+      else void this.fetchBrowseItems({ id: 0, title: `/ ${this.$t('common:sidebar.root')}` })
     }
   },
   methods: {
@@ -315,6 +355,8 @@ export default defineComponent({
           }
         )
         if (requestSequence !== this.browseRequestSequence) return
+        if (this.currentParent.id !== item.id || this.loadedBrowseLocale !== locale) this.directoryFilter = ''
+        this.loadedBrowseLocale = locale
         this.parents = parents
         this.currentParent = item
         this.currentItems = items
@@ -365,8 +407,15 @@ export default defineComponent({
           invertedAncestors.push(curParent)
           curParentId = curParent.parent
         }
-        this.parents = [this.currentParent, ...invertedAncestors.reverse()]
-        this.currentParent = this.parents[this.parents.length - 1]
+        const parents: NavigationTreeItem[] = [
+          { id: 0, title: `/ ${this.$t('common:sidebar.root')}` },
+          ...invertedAncestors.reverse()
+        ]
+        const currentParent = parents[parents.length - 1]
+        if (this.currentParent.id !== currentParent.id || this.loadedBrowseLocale !== locale) this.directoryFilter = ''
+        this.loadedBrowseLocale = locale
+        this.parents = parents
+        this.currentParent = currentParent
         this.loadedCache = [curPage.parent]
         this.currentItems = _.filter(items, ['parent', curPage.parent])
       } catch (error) {
@@ -474,6 +523,59 @@ export default defineComponent({
     background: transparent;
   }
 
+  .nav-sidebar-directory-tools {
+    min-width: 0;
+    padding: var(--wiki-space-4) var(--wiki-space-3) var(--wiki-space-1);
+  }
+
+  .nav-sidebar-directory-title {
+    margin-block: var(--wiki-space-1) var(--wiki-space-4);
+    color: rgb(var(--v-theme-on-surface));
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .nav-sidebar-directory-filter {
+    .v-field {
+      border-radius: var(--wiki-control-radius);
+      background: var(--wiki-surface-sunken);
+    }
+
+    .v-field__input {
+      font-size: .875rem;
+    }
+  }
+
+  .nav-sidebar-directory-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wiki-space-1) var(--wiki-space-2);
+    min-height: var(--wiki-control-height);
+    margin-block-start: var(--wiki-space-1);
+  }
+
+  .nav-sidebar-directory-count {
+    flex: 1 1 auto;
+    color: var(--wiki-text-muted);
+    font-size: .75rem;
+    line-height: 1.4;
+  }
+
+  .nav-sidebar-clear-filter {
+    min-height: var(--wiki-control-height);
+    padding-inline: var(--wiki-space-2);
+    color: var(--wiki-accent-ink);
+    font-size: .75rem;
+    text-transform: none;
+
+    .v-btn__content {
+      white-space: normal;
+    }
+  }
+
   .async-state {
     min-height: 9rem;
     margin-block: var(--wiki-space-2);
@@ -518,6 +620,7 @@ export default defineComponent({
     position: relative;
     min-height: var(--wiki-control-height);
     margin-block: var(--wiki-space-1);
+    padding-block: var(--wiki-space-2);
     overflow: hidden;
     border: 1px solid transparent;
     border-radius: var(--wiki-control-radius);
@@ -582,16 +685,23 @@ export default defineComponent({
       box-shadow: none;
     }
 
+    .v-list-item__content {
+      min-width: 0;
+    }
+
     .v-list-item-title {
-      overflow: hidden;
+      overflow: visible;
       font-size: .875rem;
       letter-spacing: .002em;
-      line-height: 1.35;
-      text-overflow: ellipsis;
+      line-height: 1.4;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      text-overflow: clip;
     }
 
     .v-list-item__prepend {
       color: currentColor;
+      flex-shrink: 0;
 
       > .v-avatar,
       > .v-icon {
@@ -599,6 +709,10 @@ export default defineComponent({
         color: currentColor;
         opacity: .74;
       }
+    }
+
+    .v-list-item__append {
+      flex-shrink: 0;
     }
   }
 
@@ -612,13 +726,22 @@ export default defineComponent({
   }
 
   .nav-sidebar-ancestor {
-    min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+    min-height: var(--wiki-control-height);
     margin-block: 0;
     color: var(--wiki-text-muted);
 
     .v-list-item-title {
       font-size: .8125rem;
       font-weight: 580;
+    }
+
+    &.nav-sidebar-ancestor--current {
+      color: var(--wiki-accent-ink);
+      background: color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent);
+
+      .v-list-item-title {
+        font-weight: 650;
+      }
     }
   }
 
@@ -691,7 +814,10 @@ export default defineComponent({
   }
 
   .nav-sidebar-directory-label {
-    margin-block-start: var(--wiki-space-2);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .085em;
+    text-transform: uppercase;
     color: color-mix(in srgb, var(--wiki-ambient-accent) 68%, rgb(var(--v-theme-on-surface)));
   }
 }

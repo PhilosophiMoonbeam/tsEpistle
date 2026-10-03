@@ -53,10 +53,10 @@ const compileSnapshotAdapters = source => {
   if (!script) throw new Error('Search component script was not found.')
   const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const names = new Set(['OFFLINE_LOCALE_PATTERN', 'isOfflineLocale', 'isOfflineSnapshotRecord', 'isOfflineSnapshotExpired', 'toOfflineSearchDocument'])
-  const declarations = sourceFile.statements.filter(statement =>
-    ts.isVariableStatement(statement) && statement.declarationList.declarations.some(declaration =>
-      ts.isIdentifier(declaration.name) && names.has(declaration.name.text)
-    )
+  const declarations = sourceFile.statements.filter(
+    statement =>
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.some(declaration => ts.isIdentifier(declaration.name) && names.has(declaration.name.text))
   )
   if (declarations.length !== names.size) throw new Error('Offline snapshot adapters were not found.')
   const compiled = ts.transpileModule(
@@ -110,11 +110,11 @@ describe('inline Ask mode contract', () => {
   const searchPath = path.join(process.cwd(), 'client/components/common/search-results.vue')
   const search = fs.readFileSync(searchPath, 'utf8')
 
-  test('retains results without loading during replacement debounce and rejects the stale response', async () => {
+  test('retains results without loading during replacement debounce, blocks stale navigation, and rejects the stale response', async () => {
     const scheduler = useSearchScheduler()
     try {
       const pendingByQuery = new Map()
-      const methods = compileSearchMethods(search, ['queueSearch', 'runSearch'], {
+      const methods = compileSearchMethods(search, ['queueSearch', 'runSearch', 'handleResultClick', 'navigateToPage'], {
         searchPages: (_fetcher, query) => {
           const request = deferred()
           pendingByQuery.set(query, request)
@@ -137,6 +137,7 @@ describe('inline Ask mode contract', () => {
         searchAbortController: null,
         searchError: '',
         searchIsLoading: false,
+        hasFreshResponse: false,
         searchMode: 'search',
         searchRequestId: 0,
         searchRequestKey: 'replacement-key',
@@ -144,6 +145,12 @@ describe('inline Ask mode contract', () => {
         searchRestrictPath: false,
         serverCapabilitiesAvailable: true,
         searchTimer: null,
+        closeSearch() {
+          throw new Error('A stale result must not close search.')
+        },
+        requestOfflineSavedResultOpen() {
+          throw new Error('A stale result must not open a private saved page.')
+        },
         runSearch(query, requestKey, requestId) {
           return methods.runSearch.call(this, query, requestKey, requestId)
         }
@@ -153,6 +160,24 @@ describe('inline Ask mode contract', () => {
       expect(state.response).toBe(retainedResponse)
       expect(state.searchIsLoading).toBe(false)
       expect(scheduler.pending()).toBe(1)
+      for (const item of [
+        retainedResponse.results[0],
+        { id: 2, title: 'Saved result', offline: true, visibility: 'public' },
+        { id: 3, title: 'Private saved result', offline: true, visibility: 'private' }
+      ]) {
+        let prevented = false
+        methods.handleResultClick.call(
+          state,
+          {
+            preventDefault: () => {
+              prevented = true
+            }
+          },
+          item
+        )
+        expect(prevented).toBe(true)
+        methods.navigateToPage.call(state, item)
+      }
 
       scheduler.runNext()
       expect(state.searchIsLoading).toBe(true)
@@ -241,7 +266,6 @@ describe('inline Ask mode contract', () => {
       scheduler.restore()
     }
   })
-
 
   test('restores retained-response keyboard navigation without treating raw Enter as selection', async () => {
     const scheduler = useSearchScheduler()
@@ -367,7 +391,10 @@ describe('inline Ask mode contract', () => {
     try {
       const pendingByQuery = new Map()
       const adapters = compileSnapshotAdapters(search)
-      const snapshots = [[1, 'stale', 'Stale'], [2, 'latest', 'Latest']].map(([pageId, path, title]) =>
+      const snapshots = [
+        [1, 'stale', 'Stale'],
+        [2, 'latest', 'Latest']
+      ].map(([pageId, path, title]) =>
         OfflineSnapshotRecordSchema.parse({
           siteId: window.location.origin,
           pageId,

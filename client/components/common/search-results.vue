@@ -130,6 +130,7 @@
               @retry='retrySearch'
             )
           template(v-else)
+            .search-results-updating(v-if='resultsUpdating' role='status' aria-live='polite' aria-atomic='true') {{ $t('common:searchPanel.updatingResults') }}
             .search-results-summary(v-if='hasFreshResponse')
               div(role='status' aria-live='polite' aria-atomic='true')
                 .search-results-eyebrow {{ offlineSearchActive ? $t('common:searchPanel.scopeDownloaded') : $t('common:searchPanel.resultsEyebrow') }}
@@ -170,6 +171,7 @@
                 id='wiki-search-results'
                 role='grid'
                 :aria-busy='searchIsLoading'
+                :class='{ "search-results-items--stale": !hasFreshResponse }'
                 :aria-label='$t(`common:searchPanel.resultsLabel`)'
               )
                 template(v-for='(item, idx) of results' :key='resultKey(item)')
@@ -180,17 +182,27 @@
                         :href='pageHref(item)'
                         :data-no-wiki-navigation='isDownloadedResult(item) ? `true` : undefined'
                         :class='idx === cursor ? `highlighted` : ``'
+                        :aria-disabled='!hasFreshResponse ? `true` : undefined'
                         @click='handleResultClick($event, item)'
                       )
                         template(v-slot:prepend)
                           .search-results-item-mark(aria-hidden='true')
                             v-icon(icon='mdi-file-document-outline' size='21')
-                        v-list-item-title {{ item.title }}
-                        v-list-item-subtitle {{ item.description }}
+                        v-list-item-title(:title='item.title')
+                          template(v-for='(segment, segmentIndex) of resultHighlights[idx].title' :key='segmentIndex')
+                            mark.search-results-text-match(v-if='segment.matched') {{ segment.text }}
+                            template(v-else) {{ segment.text }}
+                        v-list-item-subtitle
+                          template(v-for='(segment, segmentIndex) of resultHighlights[idx].description' :key='segmentIndex')
+                            mark.search-results-text-match(v-if='segment.matched') {{ segment.text }}
+                            template(v-else) {{ segment.text }}
                         .search-results-match(v-if='matchSummary(item)') {{ matchSummary(item) }}
                         .search-results-path
                           v-icon(icon='mdi-source-branch' size='14' aria-hidden='true')
-                          span {{ item.path }}
+                          span
+                            template(v-for='(segment, segmentIndex) of resultHighlights[idx].path' :key='segmentIndex')
+                              mark.search-results-text-match(v-if='segment.matched') {{ segment.text }}
+                              template(v-else) {{ segment.text }}
                         .search-results-tags(v-if='item.tags.length || item.matchedFields?.includes("graph")')
                           v-chip(
                             v-for='(tag, tagIndex) of item.tags.slice(0, 3)'
@@ -238,6 +250,7 @@
                 role='listbox'
                 :aria-busy='searchIsLoading'
                 :aria-label='$t(`common:searchPanel.suggestionsLabel`)'
+                :class='{ "search-results-suggestions--stale": !hasFreshResponse }'
                 density='compact'
               )
                 template(v-for='(term, idx) of suggestions' :key='occurrenceKey(suggestions, term, idx)')
@@ -247,7 +260,8 @@
                     :aria-selected='idx + results.length === cursor'
                     :class='idx + results.length === cursor ? `highlighted` : ``'
                     prepend-icon='mdi-magnify'
-                    @click='setSearchTerm(term)'
+                    :aria-disabled='!hasFreshResponse ? `true` : undefined'
+                    @click='hasFreshResponse && setSearchTerm(term)'
                   )
                     v-list-item-title {{ term }}
                   v-divider(v-if='idx < suggestions.length - 1' aria-hidden='true')
@@ -304,6 +318,7 @@ import {
 } from '../../../shared/offline.ts'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
 import { navigateToWikiPage } from '../../helpers/wiki-navigation'
+import { createSearchHighlighter, type SearchTextSegment } from '../../helpers/search-highlight.ts'
 
 type SearchScope = 'wiki' | 'downloaded'
 type OnlineSearchRow = PageSearchRow & {
@@ -528,6 +543,14 @@ export default defineComponent({
     results(): SearchResultRow[] {
       return this.response.results
     },
+    resultHighlights(): { title: SearchTextSegment[], description: SearchTextSegment[], path: SearchTextSegment[] }[] {
+      const highlight = createSearchHighlighter(this.hasFreshResponse ? this.normalizedSearch : '', !this.offlineSearchActive)
+      return this.results.map(item => ({
+        title: highlight(item.title),
+        description: highlight(item.description),
+        path: highlight(item.path)
+      }))
+    },
     normalizedSearch(): string {
       return (this.search ?? '').trim()
     },
@@ -571,6 +594,12 @@ export default defineComponent({
     },
     hasFreshResponse(): boolean {
       return this.responseKey === this.searchRequestKey && this.normalizedSearch.length >= 2
+    },
+    resultsUpdating(): boolean {
+      return this.normalizedSearch.length >= 2 &&
+        !this.hasFreshResponse &&
+        !this.searchError &&
+        (this.searchIsLoading || this.searchTimer !== null)
     },
     activeDescendant(): string | undefined {
       if (!this.hasFreshResponse || this.cursor < 0 || this.cursor >= this.results.length + this.suggestions.length) return undefined
@@ -1113,23 +1142,28 @@ export default defineComponent({
       this.previewSelector = { id: Number(item.id) }
     },
     handleResultClick(event: Event, item: SearchResultRow): void {
+      if (!this.hasFreshResponse) {
+        event.preventDefault()
+        return
+      }
       if (this.requestOfflineSavedResultOpen(item)) {
         event.preventDefault()
         this.closeSearch()
         return
       }
-      if (!isDownloadedSearchRow(item) && (!this.serverCapabilitiesAvailable || !this.hasFreshResponse)) {
+      if (!isDownloadedSearchRow(item) && !this.serverCapabilitiesAvailable) {
         event.preventDefault()
         return
       }
       this.closeSearch()
     },
     navigateToPage(item: SearchResultRow): void {
+      if (!this.hasFreshResponse) return
       if (this.requestOfflineSavedResultOpen(item)) {
         this.closeSearch()
         return
       }
-      if (!isDownloadedSearchRow(item) && (!this.serverCapabilitiesAvailable || !this.hasFreshResponse)) return
+      if (!isDownloadedSearchRow(item) && !this.serverCapabilitiesAvailable) return
       const href = this.pageHref(item)
       this.closeSearch()
       if (isDownloadedSearchRow(item)) window.location.assign(href)
@@ -1625,6 +1659,12 @@ export default defineComponent({
     font-size: .78rem;
     font-weight: 450;
   }
+  &-updating {
+    padding: 0 var(--wiki-space-1) var(--wiki-space-3);
+    color: var(--wiki-text-muted);
+    font-size: .78rem;
+    line-height: 1.4;
+  }
   &-ask { min-height: var(--wiki-control-height); flex: 0 0 auto; letter-spacing: 0; text-transform: none; }
   &-empty-actions {
     display: flex;
@@ -1710,6 +1750,10 @@ export default defineComponent({
     background: transparent;
     text-align: start;
   }
+  &-items--stale,
+  &-suggestions--stale {
+    opacity: .6;
+  }
 
   &-item {
     min-width: 0;
@@ -1721,6 +1765,16 @@ export default defineComponent({
     &:focus-visible,
     &.highlighted {
       background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
+    }
+    &.highlighted::before {
+      position: absolute;
+      inset-inline-start: 0;
+      inset-block: .65rem;
+      width: 3px;
+      border-radius: 2px;
+      background: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+      content: '';
+      pointer-events: none;
     }
 
     &:focus-visible {
@@ -1745,6 +1799,13 @@ export default defineComponent({
     overflow-wrap: anywhere;
     font-size: .98rem;
     font-weight: 650;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    line-height: 1.4;
+    overflow: hidden;
+    white-space: normal;
   }
   &-item .v-list-item-subtitle {
     margin-top: var(--wiki-space-1);
@@ -1753,7 +1814,19 @@ export default defineComponent({
     overflow-wrap: anywhere;
     line-height: 1.4;
     white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
+  &-text-match {
+    background: color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent);
+    border-radius: .15em;
+    color: inherit;
+    padding: 0;
+  }
+  &-item .v-list-item__content { min-width: 0; }
 
   &-match {
     margin-top: .4rem;
@@ -1772,10 +1845,11 @@ export default defineComponent({
     margin-top: .28rem;
     min-width: 0;
 
-    span {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    > .v-icon { flex: 0 0 auto; }
+    > span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
   }
 
@@ -1815,6 +1889,7 @@ export default defineComponent({
 
   &-suggestions .highlighted {
     background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, rgb(var(--v-theme-surface)));
+    border-inline-start: 3px solid var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
   }
 
   &--ask .inline-agent {
@@ -1850,6 +1925,10 @@ export default defineComponent({
     &-item { padding-inline: var(--wiki-space-1); }
     &-item-chevron { display: none; }
     &-item-mark { height: var(--wiki-control-height); width: var(--wiki-control-height); }
+    &-item .v-list-item__append { align-self: start; margin-inline-start: .25rem; }
+    &-item-meta { align-items: flex-end; flex-direction: column; max-width: 5rem; }
+    &-item-meta .v-chip { max-width: 100%; }
+    &-item-meta .v-chip__content { overflow: hidden; text-overflow: ellipsis; }
   }
 }
 
@@ -1900,6 +1979,8 @@ export default defineComponent({
     backdrop-filter: none;
   }
   .search-results-search { border: 1px solid CanvasText; }
+  .search-results-item.highlighted::before { background: Highlight; }
+  .search-results-suggestions .highlighted { border-inline-start-color: Highlight; }
 }
 
 @media (prefers-reduced-motion: reduce) {
