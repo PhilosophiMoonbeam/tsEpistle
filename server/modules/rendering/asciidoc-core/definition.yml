@@ -9,9 +9,9 @@ enabledDefault: true
 props:
   safeMode:
     type: String
-    default: server
+    default: secure
     title: Safe Mode
-    hint: Sets the safe mode to use when parsing content to HTML.
+    hint: Use secure mode for untrusted wiki content. Less restrictive modes permit server-side file reads.
     order: 1
     enum:
       - unsafe

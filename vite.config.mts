@@ -296,6 +296,8 @@ export default defineConfig(({ command }) => ({
       injectRegister: false,
       injectManifest: {
         rollupFormat: 'iife',
+        // This separate Vite build does not inherit terserOptions; retain its existing minifier.
+        minify: 'oxc',
         swDest: resolve(root, 'assets/service-worker.js'),
         globPatterns: ['client/offline.html', 'js/**/*.js', 'assets/**/*', 'svg/icon-tsepistle.svg'],
         globDirectory: resolve(root, 'assets'),
@@ -337,6 +339,19 @@ export default defineConfig(({ command }) => ({
     manifest: true,
     sourcemap: true,
     target: 'es2022',
+    // Prefer size-focused compression without assuming getters or public properties are pure.
+    minify: 'terser',
+    terserOptions: {
+      ecma: 2022,
+      compress: {
+        passes: 2,
+        pure_getters: false,
+        unsafe: false
+      },
+      mangle: {
+        properties: false
+      }
+    },
     chunkSizeWarningLimit: 1200,
     rolldownOptions: {
       input: {

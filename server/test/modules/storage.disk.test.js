@@ -149,14 +149,31 @@ describe('disk storage target', () => {
     ['compressed output', { maxOutputBytes: 1 }]
   ])('preserves the previous daily archive when the %s limit is exceeded', async (_name, override) => {
     context.config.createDailyBackups = true
-    await plugin.assetUploaded.call(context, { path: 'page.txt', data: Buffer.from('content') })
+    const contents = _name === 'compressed output' ? randomBytes(256 * 1024 + 123) : Buffer.from('content')
+    await plugin.assetUploaded.call(context, { path: 'page.txt', data: contents })
     await plugin.sync.call(context)
     const directory = path.join(rootPath, 'content', '_daily')
     const name = `wiki-${moment().format('DD')}.tar.gz`
     const previous = await fs.readFile(path.join(directory, name))
+    const originalOpenFile = context.root.openFile.bind(context.root)
+    const openSources = new Set()
+    const openFileSpy = vi.spyOn(context.root, 'openFile').mockImplementation(async (relativePath, expected) => {
+      const source = await originalOpenFile(relativePath, expected)
+      openSources.add(source)
+      const originalClose = source.close.bind(source)
+      vi.spyOn(source, 'close').mockImplementation(async () => {
+        // Closing a source can itself require asynchronous descriptor cleanup.
+        await new Promise(resolve => setImmediate(resolve))
+        await originalClose()
+        openSources.delete(source)
+      })
+      return source
+    })
 
     context.backupLimits = { ...context.backupLimits, ...override }
     await expect(plugin.sync.call(context)).rejects.toThrow()
+    if (_name === 'compressed output') expect(openFileSpy).toHaveBeenCalled()
+    expect(openSources.size).toBe(0)
 
     expect(await fs.readdir(directory)).toEqual([name])
     expect(await fs.readFile(path.join(directory, name))).toEqual(previous)
@@ -171,6 +188,18 @@ describe('disk storage target', () => {
     const directory = path.join(rootPath, 'content', '_daily')
     const name = `wiki-${moment().format('DD')}.tar.gz`
     const previous = await fs.readFile(path.join(directory, name))
+    const originalWriteAtomicStream = context.root.writeAtomicStream.bind(context.root)
+    vi.spyOn(context.root, 'writeAtomicStream').mockImplementation((relativePath, chunks, maxBytes) => {
+      return originalWriteAtomicStream(relativePath, {
+        async *[Symbol.asyncIterator]() {
+          for await (const chunk of chunks) {
+            // Source failure must remain owned while the consumer is between writes.
+            await new Promise(resolve => setImmediate(resolve))
+            yield chunk
+          }
+        }
+      }, maxBytes)
+    })
     const originalOpenFile = context.root.openFile.bind(context.root)
     let hooked = false
     vi.spyOn(context.root, 'openFile').mockImplementation(async (relativePath, expected) => {
@@ -197,7 +226,10 @@ describe('disk storage target', () => {
       return source
     })
 
-    await expect(plugin.sync.call(context)).rejects.toThrow()
+    await expect(plugin.sync.call(context)).rejects.toThrow(mode === 'growth'
+      ? 'Backup source grew during archive: mutable.bin'
+      : 'Local storage file changed during validation: mutable.bin')
+    expect(hooked).toBe(true)
     expect(await fs.readdir(directory)).toEqual([name])
     expect(await fs.readFile(path.join(directory, name))).toEqual(previous)
   })
