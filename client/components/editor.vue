@@ -1489,14 +1489,30 @@ export default defineComponent({
         this.notifySafetyChanged()
       }
     },
+    reloadServerEditorAfterDiscard(coordinator: Pick<OfflineEditorDraftCoordinator, 'destroy'>) {
+      if (this.mode !== 'update' || this.offlineDraftCoordinator !== coordinator) return
+      // The authoritative editor bootstrap owns the complete server baseline.
+      // Cancel empty-source captures from detachedClear before loading it.
+      coordinator.destroy()
+      this.offlineDraftCoordinator = null
+      this.exitConfirmed = true
+      window.location.reload()
+    },
     async discardOfflineDraft(recordId?: string) {
       if (this.offlineDraftBusy || !this.offlineDraftCoordinator) return
+      const coordinator = this.offlineDraftCoordinator
+      const lifecycleGeneration = this.lifecycleGeneration
       this.offlineDraftBusy = true
       try {
-        await this.offlineDraftCoordinator.clearDetachedCandidate(recordId)
+        if (await coordinator.clearDetachedCandidate(recordId)) {
+          if (this.lifecycleGeneration !== lifecycleGeneration || this.offlineDraftCoordinator !== coordinator) return
+          this.reloadServerEditorAfterDiscard(coordinator)
+        }
       } finally {
-        this.offlineDraftBusy = false
-        this.notifySafetyChanged()
+        if (this.lifecycleGeneration === lifecycleGeneration && this.offlineDraftCoordinator === coordinator) {
+          this.offlineDraftBusy = false
+          this.notifySafetyChanged()
+        }
       }
     },
     async restoreOfflineDraftRow(row: OfflineDraftRow) {
@@ -1553,15 +1569,21 @@ export default defineComponent({
     },
     async deleteOfflineSubmission(recordId: string) {
       if (this.offlineDraftBusy || !this.offlineDraftCoordinator) return
+      const coordinator = this.offlineDraftCoordinator
+      const lifecycleGeneration = this.lifecycleGeneration
       this.offlineDraftBusy = true
       try {
-        if (await this.offlineDraftCoordinator.clearDetachedCandidate(recordId)) {
+        if (await coordinator.clearDetachedCandidate(recordId)) {
+          if (this.lifecycleGeneration !== lifecycleGeneration || this.offlineDraftCoordinator !== coordinator) return
           if (this.offlineReconcilePrompt?.recordId === recordId) this.offlineReconcilePrompt = null
           if (this.mode === 'create' && this.offlineSubmissionCandidates.length <= 1) clearOfflineCreateIdentity()
+          this.reloadServerEditorAfterDiscard(coordinator)
         }
       } finally {
-        this.offlineDraftBusy = false
-        this.notifySafetyChanged()
+        if (this.lifecycleGeneration === lifecycleGeneration && this.offlineDraftCoordinator === coordinator) {
+          this.offlineDraftBusy = false
+          this.notifySafetyChanged()
+        }
       }
     },
     async resolveOfflineSubmission(resolution: 'discard' | 'continue') {
@@ -1569,18 +1591,24 @@ export default defineComponent({
       if (!prompt || this.offlineDraftBusy || !this.offlineDraftCoordinator) return
       const candidate = this.offlineSubmissionCandidates.find(item => item.submission.recordId === prompt.recordId)
       if (!candidate) return
+      const coordinator = this.offlineDraftCoordinator
+      const lifecycleGeneration = this.lifecycleGeneration
       this.offlineDraftBusy = true
       try {
         const resolved = resolution === 'discard'
-          ? await this.offlineDraftCoordinator.clearDetachedCandidate(prompt.recordId)
-          : await this.offlineDraftCoordinator.replaceDetachedCandidate(candidate.payload, prompt.recordId)
+          ? await coordinator.clearDetachedCandidate(prompt.recordId)
+          : await coordinator.replaceDetachedCandidate(candidate.payload, prompt.recordId)
+        if (this.lifecycleGeneration !== lifecycleGeneration || this.offlineDraftCoordinator !== coordinator) return
         if (resolved) {
           this.offlineReconcilePrompt = null
           if (resolution === 'discard' && prompt.kind === 'create') clearOfflineCreateIdentity()
+          if (resolution === 'discard') this.reloadServerEditorAfterDiscard(coordinator)
         }
       } finally {
-        this.offlineDraftBusy = false
-        this.notifySafetyChanged()
+        if (this.lifecycleGeneration === lifecycleGeneration && this.offlineDraftCoordinator === coordinator) {
+          this.offlineDraftBusy = false
+          this.notifySafetyChanged()
+        }
       }
     },
     handleOfflineSessionInvalidated() {

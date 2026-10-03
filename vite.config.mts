@@ -362,6 +362,14 @@ export default defineConfig(({ command }) => ({
               test: /[\\/]node_modules[\\/]lodash-es[\\/]/u,
               // Coalesce only already-initial utilities; keep editor and other lazy methods lazy.
               tags: ['$initial']
+            },
+            {
+              name: 'lodash-lazy',
+              test: /[\\/]node_modules[\\/]lodash-es[\\/]/u,
+              // Preserve each lazy entry's exact utility set; never merge consumer sets.
+              entriesAware: true,
+              entriesAwareMergeThreshold: 0,
+              includeDependenciesRecursively: false
             }
           ]
         }
