@@ -19,9 +19,21 @@ The September 2026 review focused on the shared reading shell, site navigation, 
 - A first history-diff worker timeout terminates that worker without making main-thread diffing permanent; Retry can start a fresh worker.
 - Collaborative Markdown Undo/Redo uses the collaboration provider's local-change history exclusively, preserving peer edits. Non-collaborative editors retain ordinary CodeMirror history.
 
+## October 2026 refinements
+
+The priority is faster orientation in existing knowledge, not a new visual system. Source triage and the deployed reader review selected three bounded changes:
+
+- **Browse directories:** filter the already-authorized current directory by title or path without another request. Matching/total counts and a clear action distinguish no matches from an empty directory. Successful directory or locale changes reset the filter; pending, failed, stale, and same-directory retry requests preserve it. Long navigation titles wrap, and the committed directory and current ancestor remain explicit.
+- **Search results:** positive literal terms and phrases are marked in titles, descriptions, and paths through escaped text nodes. Online exclusions and OR operators are not highlighted; downloaded search retains plain-text semantics. Titles and descriptions have explicit two-line limits, keyboard selection has its own accent marker independent of pointer hover, and retained results explain that an updated query is pending. Stale results and suggestions cannot navigate.
+- **Focus reading:** the dock retains the active section and its document-order position, with previous/next boundary controls. Choose a section moves the existing searchable outline into a bounded, non-modal panel rather than duplicating it. Escape restores the opener; selection closes the panel and focuses the heading. Filtering does not alter adjacent-section order. Disabled or heading-free outlines omit the controls. Section jumps also reveal containing native disclosures.
+
+The serif/gold design, search ranking, provider behavior, permissions, and persisted data formats are unchanged. The approved aggregate JavaScript allowance increases by 24 KiB; every initial-load, login, and individual-chunk limit remains unchanged. Local and clean Docker builds have different aggregate measurements and both pass their fixed limits.
+
 ## Verification
 
 Targeted navigation, outline, search modal and inline Agent contracts; client type checking; repository lint; production build and bundle budgets. Browser checks cover live search, filtering, section jumps, active headings, Escape, skip-link focus, dark mode, reduced motion, and 320/390/768/1024/1440 px layouts. Real wiki content was used for browser verification; content and screenshots are deliberately excluded from this document.
+
+The October changes passed nine affected test files, client type checking, repository lint, Vue diagnostics, application builds, and bundle budgets. The maintained Wiki service was deployed alone; PostgreSQL identity, mounts, network, ports, and the home article fingerprint were unchanged. Native Chromium checks exercised directory filtering/clearing/folder commits and page opening, search highlighting/updating feedback/independent pointer and keyboard selection/preview and page opening, and the 47-section focus picker with first/last boundaries and Escape restoration. Visual checks covered 1440px and 390px, plus 320px dock/picker containment; dark and reduced-motion modes were exercised. A controlled search response verified that markup remained literal text. Content and screenshots are deliberately excluded. This is changed-path Sprint verification, not a full browser-engine or whole-product UX audit.
 
 ## Further review areas
 
