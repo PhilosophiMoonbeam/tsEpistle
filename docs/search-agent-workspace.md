@@ -32,7 +32,7 @@ The conversation header identifies the resolved provider and Agent model. Its pr
 
 Desktop Enter submits, Shift+Enter inserts a newline, and Ctrl/Command+Enter submits. With a coarse primary pointer, Enter inserts a newline and the explicit Send control submits. Input-method composition does not accidentally send a message.
 
-Up to four files can be attached. A multi-file selection is validated as a whole against the remaining capacity before uploading. Files upload sequentially to respect the server's single-upload memory admission gate and retain selection order. Failed filenames are reported without discarding successful uploads. Cancellation, conversation changes, and owner changes fence late results and clean up uploaded files that cannot remain attached. Paste and drop use the same admission rules; disabled or full controls explain why.
+Up to four files can be attached. A multi-file selection is validated as a whole against the remaining capacity before uploading. Files upload sequentially to respect the server's single-upload memory admission gate and retain selection order. Failed filenames are reported without discarding successful uploads. Cancellation, conversation changes, and owner changes fence late results and clean up uploaded files that cannot remain attached. Paste and drop use the same admission rules; disabled or full controls explain why. Mixed text/file pastes preserve native text insertion, and that draft edit does not erase a file-rejection notice. The notice clears when admission conditions change.
 
 Typing updates the in-memory draft synchronously without rewriting pinned-source preferences. Transcript clearance follows the measured composer height, and scroll updates are coalesced so a growing draft or streamed response does not repeatedly force layout.
 
@@ -40,7 +40,7 @@ Typing updates the in-memory draft synchronously without rewriting pinned-source
 
 Administration loads runtime policy, providers, browser targets, and groups independently. A failed resource has its own retry state; successfully loaded sections remain visible. Previously loaded data is marked stale when its refresh fails rather than silently appearing current.
 
-The provider wizard advances one step at a time on Enter; it does not save an incomplete configuration. Blocked steps remain focusable and expose the fields that need attention. The footer distinguishes required corrections from readiness, and the mobile rail brings the selected step into view. Protocol changes update untouched defaults without overwriting a customized endpoint or authentication configuration.
+The provider wizard advances one step at a time on Enter; it does not save an incomplete configuration. Blocked steps remain focusable and expose the fields that need attention. The footer distinguishes required corrections from readiness, and the mobile rail brings the selected step into view. Protocol changes update untouched defaults without overwriting a customized endpoint. Customized authentication is preserved only when the destination protocol supports it; otherwise the wizard applies that protocol's required mode.
 
 A saved profile whose connection check failed retains a provider-specific warning until a successful check or another save resolves it. Credentials remain server-managed, and provider verification and access grants retain their existing enforcement.
 
