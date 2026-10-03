@@ -740,7 +740,7 @@ describe('composed editor offline submission boundary', () => {
   })
 
   for (const action of ['keep-server', 'discard-draft', 'delete-receipt'] as const) {
-    test(`${action} deletes only the chosen record and cannot persist the cleared editor as an empty draft`, async () => {
+    test(`${action} deletes only the chosen record without blanking server text or recreating a discarded draft`, async () => {
       const storage = new ComposedDraftStorage()
       const testWindow = createTestWindow(keyFetchImpl)
       installWindow(testWindow)
@@ -770,8 +770,8 @@ describe('composed editor offline submission boundary', () => {
       } else {
         await shell.deleteOfflineSubmission(targetId)
       }
-      // A queued text watcher from detachedClear must not commit an empty fork
-      // while the normal server editor bootstrap loads the authoritative baseline.
+      expect(serverStore.editor.content).toBe('server baseline')
+      // A queued capture must not recreate discarded data while the authoritative editor reloads.
       expect(await coordinator.captureThrough(shell.editorAdapter.snapshot().editVersion)).toBe(false)
       expect(storage.records.has(targetId)).toBe(false)
       expect(storage.records.size).toBe(1)

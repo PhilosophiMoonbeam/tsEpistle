@@ -1401,7 +1401,9 @@ export default defineComponent({
         }),
         detachedApply: payload => this.applyOfflineDraft(payload),
         detachedReplace: payload => this.applyOfflineDraft(payload),
-        detachedClear: () => this.editorAdapter?.clear(),
+        detachedClear: () => {
+          if (this.offlineDraftCoordinator === coordinator && this.mode === 'create') this.editorAdapter?.clear()
+        },
         isDirty: () => this.isDirty,
         getReloadSafetyFacts: () => this.getReloadSafetyFacts(),
         isOnline: () => pwaState.connectionState === 'online',
@@ -1491,8 +1493,7 @@ export default defineComponent({
     },
     reloadServerEditorAfterDiscard(coordinator: Pick<OfflineEditorDraftCoordinator, 'destroy'>) {
       if (this.mode !== 'update' || this.offlineDraftCoordinator !== coordinator) return
-      // The authoritative editor bootstrap owns the complete server baseline.
-      // Cancel empty-source captures from detachedClear before loading it.
+      // Fence pending captures; the authorized bootstrap owns the complete server baseline.
       coordinator.destroy()
       this.offlineDraftCoordinator = null
       this.exitConfirmed = true
