@@ -45,47 +45,28 @@
         .search-results-scope
           .search-results-scope-actions(role='group' :aria-label='$t(`common:searchPanel.scopeLabel`)')
             v-btn(
+              v-for='scope of searchScopes'
+              :key='scope.id'
               size='small'
-              prepend-icon='mdi-earth'
-              :variant='!offlineSearchActive ? `tonal` : `text`'
-              :color='!offlineSearchActive ? `primary` : undefined'
-              :aria-pressed='!offlineSearchActive'
-              @click='selectSearchScope(`wiki`)'
-            ) {{ $t('common:searchPanel.scopeWiki') }}
-            v-btn(
-              size='small'
-              prepend-icon='mdi-cloud-check-outline'
-              :variant='offlineSearchActive ? `tonal` : `text`'
-              :color='offlineSearchActive ? `primary` : undefined'
-              :aria-pressed='offlineSearchActive'
-              @click='selectSearchScope(`downloaded`)'
-            ) {{ $t('common:searchPanel.scopeDownloaded') }}
-            v-tooltip(v-if='currentPageLocale' location='bottom' :disabled='!offlineSearchActive')
+              :prepend-icon='scope.icon'
+              :variant='offlineSearchActive === scope.downloaded ? `tonal` : `text`'
+              :color='offlineSearchActive === scope.downloaded ? `primary` : undefined'
+              :aria-pressed='offlineSearchActive === scope.downloaded'
+              @click='selectSearchScope(scope.id)'
+            ) {{ $t(`common:searchPanel.${scope.label}`) }}
+            v-tooltip(v-for='filter of searchScopeFilters' :key='filter.key' location='bottom' :disabled='!offlineSearchActive')
               template(v-slot:activator='{ props: tooltipProps }')
                 v-btn.search-results-scope-filter(
                   v-bind='tooltipProps'
                   size='small'
-                  prepend-icon='mdi-translate'
-                  :variant='searchRestrictLocale ? `tonal` : `text`'
-                  :color='searchRestrictLocale ? `primary` : undefined'
-                  :aria-pressed='searchRestrictLocale'
+                  :prepend-icon='filter.icon'
+                  :variant='filter.pressed ? `tonal` : `text`'
+                  :color='filter.pressed ? `primary` : undefined'
+                  :aria-pressed='filter.pressed'
                   :aria-disabled='offlineSearchActive ? `true` : undefined'
-                  :aria-label='$t(`common:searchPanel.scopeLocale`, { locale: currentPageLocale.toLocaleUpperCase() })'
-                  @click='toggleLocaleScope'
-                ) {{ currentPageLocale.toLocaleUpperCase() }}
-              span {{ $t('common:searchPanel.scopeNeedsServer') }}
-            v-tooltip(v-if='currentPagePath' location='bottom' :disabled='!offlineSearchActive')
-              template(v-slot:activator='{ props: tooltipProps }')
-                v-btn.search-results-scope-filter(
-                  v-bind='tooltipProps'
-                  size='small'
-                  prepend-icon='mdi-file-tree-outline'
-                  :variant='searchRestrictPath ? `tonal` : `text`'
-                  :color='searchRestrictPath ? `primary` : undefined'
-                  :aria-pressed='searchRestrictPath'
-                  :aria-disabled='offlineSearchActive ? `true` : undefined'
-                  @click='togglePathScope'
-                ) {{ $t('common:searchPanel.scopeTree') }}
+                  :aria-label='filter.ariaLabel'
+                  @click='filter.toggle'
+                ) {{ filter.label }}
               span {{ $t('common:searchPanel.scopeNeedsServer') }}
           v-btn.search-results-close(
             size='small'
@@ -348,6 +329,10 @@ type SearchResponse = Omit<PageSearchResult, 'results'> & {
 
 const OFFLINE_DOCUMENT_PATH = '/?saved=1'
 const OFFLINE_LOCALE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{1,34}$/u
+const SEARCH_SCOPES = [
+  { id: 'wiki', downloaded: false, icon: 'mdi-earth', label: 'scopeWiki' },
+  { id: 'downloaded', downloaded: true, icon: 'mdi-cloud-check-outline', label: 'scopeDownloaded' }
+] as const
 
 const offlineRecordKey = (siteId: string, pageId: number, locale: string): string =>
   `${siteId}\u0000${pageId}\u0000${locale}`
@@ -455,6 +440,31 @@ export default defineComponent({
     }
   },
   computed: {
+    searchScopes() { return SEARCH_SCOPES },
+    // Cache filter labels and state while sharing the disabled-with-reason control.
+    searchScopeFilters(): { key: string, icon: string, label: string, ariaLabel?: string, pressed: boolean, toggle: () => void }[] {
+      const locale = this.currentPageLocale.toLocaleUpperCase()
+      return [
+        {
+          key: 'locale',
+          visible: !!this.currentPageLocale,
+          icon: 'mdi-translate',
+          label: locale,
+          ariaLabel: this.$t('common:searchPanel.scopeLocale', { locale }),
+          pressed: this.searchRestrictLocale,
+          toggle: this.toggleLocaleScope
+        },
+        {
+          key: 'path',
+          visible: !!this.currentPagePath,
+          icon: 'mdi-file-tree-outline',
+          label: this.$t('common:searchPanel.scopeTree'),
+          ariaLabel: undefined,
+          pressed: this.searchRestrictPath,
+          toggle: this.togglePathScope
+        }
+      ].filter(filter => filter.visible)
+    },
     search: {
       get(): string { return wikiStore.site.search ?? '' },
       set(value: string | null | undefined) { wikiStore.site.search = value ?? '' }

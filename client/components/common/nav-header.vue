@@ -228,68 +228,15 @@
                 .text-label-small.pa-4 {{$t('common:header.currentPage')}}
                 p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
                 v-list-item.pl-4(
+                  v-for='action of desktopPageMenuActions'
+                  :key='action.handler'
                   role='button'
                   link
-                  :disabled='!readerActionReady'
-                  @click='pageView'
-                  v-if='mode !== `view`'
+                  :disabled='action.handler === `pageView` ? !readerActionReady : !onlineActionReady'
+                  @click='runPageMenuAction(action.handler)'
                 )
-                  template(v-slot:prepend): v-icon(color='primary') mdi-file-document-outline
-                  v-list-item-title.text-body-medium {{$t('common:header.view')}}
-                v-list-item.pl-4(
-                  role='button'
-                  link
-                  :disabled='!onlineActionReady'
-                  @click='pageHistory'
-                  v-if='mode !== `history` && hasReadHistoryPermission'
-                )
-                  template(v-slot:prepend): v-icon(color='primary') mdi-history
-                  v-list-item-title.text-body-medium {{$t('common:header.history')}}
-                v-list-item.pl-4(
-                  role='button'
-                  link
-                  :disabled='!onlineActionReady'
-                  @click='pageSource'
-                  v-if='mode !== `source` && hasReadSourcePermission'
-                )
-                  template(v-slot:prepend): v-icon(color='primary') mdi-code-tags
-                  v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
-                v-list-item.pl-4(
-                  role='button'
-                  link
-                  :disabled='!onlineActionReady'
-                  @click='pageConvert'
-                  v-if='hasWritePagesPermission'
-                )
-                  template(v-slot:prepend): v-icon(color='primary') mdi-lightning-bolt
-                  v-list-item-title.text-body-medium {{$t('common:header.convert')}}
-                v-list-item.pl-4(
-                  role='button'
-                  link
-                  :disabled='!onlineActionReady'
-                  @click='pageDuplicate'
-                  v-if='hasWritePagesPermission'
-                )
-                  template(v-slot:prepend): v-icon(color='primary') mdi-content-duplicate
-                  v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
-                v-list-item.pl-4(
-                  role='button'
-                  link
-                  :disabled='!onlineActionReady'
-                  @click='pageMove'
-                  v-if='hasManagePagesPermission'
-                )
-                  template(v-slot:prepend): v-icon(color='primary') mdi-content-save-move-outline
-                  v-list-item-title.text-body-medium {{$t('common:header.move')}}
-                v-list-item.pl-4(
-                  role='button'
-                  link
-                  :disabled='!onlineActionReady'
-                  @click='pageDelete'
-                  v-if='hasDeletePagesPermission'
-                )
-                  template(v-slot:prepend): v-icon(color='error') mdi-trash-can-outline
-                  v-list-item-title.text-body-medium {{$t('common:header.delete')}}
+                  template(v-slot:prepend): v-icon(:color='action.handler === `pageDelete` ? `error` : `primary`') {{ action.icon }}
+                  v-list-item-title.text-body-medium {{ $t(`common:header.${action.label}`) }}
 
           //- NEW PAGE
 
@@ -361,76 +308,16 @@
               v-list-subheader(v-if='hasMobilePageActions') {{ $t('common:header.pageActions') }}
               p.nav-header-menu__note(v-if='hasMobilePageActions && !onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
               v-list-item(
-                role='button'
+                v-for='action of mobilePageMenuActions'
+                :key='action.handler'
+                :role='action.handler === `pageDuplicate` ? undefined : `button`'
                 link
-                v-if='path && mode !== `view`'
-                :disabled='!readerActionReady'
-                prepend-icon='mdi-file-document-outline'
-                @click='pageView'
+                :class='{ "nav-header-menu-danger": action.handler === `pageDelete` }'
+                :disabled='action.handler === `pageView` ? !readerActionReady : !onlineActionReady'
+                :prepend-icon='action.icon'
+                @click='runPageMenuAction(action.handler)'
               )
-                v-list-item-title {{$t('common:header.view')}}
-              v-list-item(
-                role='button'
-                link
-                v-if='path && hasWritePagesPermission && mode !== `edit`'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-file-document-edit-outline'
-                @click='pageEdit'
-              )
-                v-list-item-title {{$t('common:header.edit')}}
-              v-list-item(
-                role='button'
-                link
-                v-if='path && hasReadHistoryPermission && mode !== `history`'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-history'
-                @click='pageHistory'
-              )
-                v-list-item-title {{$t('common:header.history')}}
-              v-list-item(
-                role='button'
-                link
-                v-if='path && hasReadSourcePermission && mode !== `source`'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-code-tags'
-                @click='pageSource'
-              )
-                v-list-item-title {{$t('common:header.viewSource')}}
-              v-list-item(
-                role='button'
-                link
-                v-if='path && hasWritePagesPermission'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-lightning-bolt'
-                @click='pageConvert'
-              )
-                v-list-item-title {{$t('common:header.convert')}}
-              v-list-item(
-                link
-                v-if='path && hasWritePagesPermission'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-content-duplicate'
-                @click='pageDuplicate'
-              )
-                v-list-item-title {{$t('common:header.duplicate')}}
-              v-list-item(
-                role='button'
-                link
-                v-if='path && hasManagePagesPermission'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-content-save-move-outline'
-                @click='pageMove'
-              )
-                v-list-item-title {{$t('common:header.move')}}
-              v-list-item.nav-header-menu-danger(
-                role='button'
-                link
-                v-if='path && hasDeletePagesPermission'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-trash-can-outline'
-                @click='pageDelete'
-              )
-                v-list-item-title {{$t('common:header.delete')}}
+                v-list-item-title {{ $t(`common:header.${action.label}`) }}
               v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
               v-list-item(
                 role='button'
@@ -682,6 +569,18 @@ type PageMoveSelection = PageLocation & {
 }
 type PageMoveAcknowledgement = { locale: string, path: string, receipt: MovePageReceipt }
 
+// Both page menus share order and permission gates; their presentation stays local.
+const PAGE_MENU_ACTIONS = [
+  { handler: 'pageView', label: 'view', icon: 'mdi-file-document-outline', mode: 'view', permission: null },
+  { handler: 'pageEdit', label: 'edit', icon: 'mdi-file-document-edit-outline', mode: 'edit', permission: 'hasWritePagesPermission' },
+  { handler: 'pageHistory', label: 'history', icon: 'mdi-history', mode: 'history', permission: 'hasReadHistoryPermission' },
+  { handler: 'pageSource', label: 'viewSource', icon: 'mdi-code-tags', mode: 'source', permission: 'hasReadSourcePermission' },
+  { handler: 'pageConvert', label: 'convert', icon: 'mdi-lightning-bolt', mode: null, permission: 'hasWritePagesPermission' },
+  { handler: 'pageDuplicate', label: 'duplicate', icon: 'mdi-content-duplicate', mode: null, permission: 'hasWritePagesPermission' },
+  { handler: 'pageMove', label: 'move', icon: 'mdi-content-save-move-outline', mode: null, permission: 'hasManagePagesPermission' },
+  { handler: 'pageDelete', label: 'delete', icon: 'mdi-trash-can-outline', mode: null, permission: 'hasDeletePagesPermission' }
+] as const
+
 const ADMIN_PERMISSION_NAMES = new Set([
   'manage:system',
   'write:users',
@@ -754,6 +653,18 @@ export default defineComponent({
     }
   },
   computed: {
+    pageMenuActions(): (typeof PAGE_MENU_ACTIONS)[number][] {
+      return PAGE_MENU_ACTIONS.filter(action =>
+        (action.mode === null || this.mode !== action.mode) &&
+        (action.permission === null || this[action.permission])
+      )
+    },
+    desktopPageMenuActions(): (typeof PAGE_MENU_ACTIONS)[number][] {
+      return this.pageMenuActions.filter(action => action.handler !== 'pageEdit')
+    },
+    mobilePageMenuActions(): (typeof PAGE_MENU_ACTIONS)[number][] {
+      return this.path ? this.pageMenuActions : []
+    },
     search: {
       get(): string { return wikiStore.site.search ?? '' },
       set(value: string | null | undefined) { wikiStore.site.search = value ?? '' }
@@ -1057,6 +968,9 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
+    runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler']): void {
+      this[handler]()
+    },
     // Keeps the workspace title whole on narrow screens. The stacked variant
     // starts from a balanced two-word-group split and lets each group wrap
     // (balanced) onto more lines. If a word or the line count still does not
