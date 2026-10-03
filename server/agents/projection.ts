@@ -7,6 +7,7 @@ import {
   AGENT_PROPOSAL_STATUSES,
   AGENT_TOOL_CALL_NAMES,
   AGENT_TOOL_CONTROL_NAMES,
+  isTerminalAgentRunStatus,
   type AgentActionName,
   type AgentActionRisk,
   type AgentApprovalView,
@@ -642,6 +643,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
 
   const events = eventPages.flat()
   const runs = runRows.map(row => projectAgentRun(row, agentRunWorkingPhase(events, row)))
+  const runsById = new Map(runs.map(run => [run.id, run]))
   const currentRun = runs.find(run => run.canCancel) ?? null
   const goal = latestGoal === null ? null : projectAgentGoal(latestGoal, latestGoalRun?.id ?? null)
   const reduced = reduceAgentEvents(events, runRows[0]?.id ?? null)
@@ -669,6 +671,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     : []
   const messages: AgentMessageView[] = messageRows.map(message => {
     const grounding = googleSearchGrounding(message.googleSearchGrounding)
+    const run = message.role === 'assistant' && message.runId ? runsById.get(message.runId) : undefined
     return {
       id: message.id,
       runId: message.runId,
@@ -677,6 +680,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       status: message.status,
       content: message.content,
       citations: citations(message.citations),
+      ...(run && isTerminalAgentRunStatus(run.status) ? { runOutcome: { status: run.status, errorCode: run.errorCode } } : {}),
       ...(grounding === undefined ? {} : { googleSearchGrounding: grounding }),
       ...(mediaRows.some(media => media.messageId === message.id)
         ? { media: mediaRows.filter(media => media.messageId === message.id).map(projectAgentMedia) }

@@ -106,6 +106,7 @@ const setupScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(descripto
 const bindingNames = Array.from(descriptor.scriptSetup.content.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const evaluatePicker = new Function(
   'computed',
+  'mergeProps',
   'nextTick',
   'onBeforeUnmount',
   'ref',
@@ -116,7 +117,7 @@ const evaluatePicker = new Function(
   'searchPages',
   'fetchWikiSource',
   'AgentKnowledgeContextSchema',
-  `${setupScript}\nreturn { ${bindingNames.join(', ')} }`
+  `${setupScript}\nreturn { mergeProps, ${bindingNames.join(', ')} }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 const settle = async (): Promise<void> => {
   for (let pass = 0; pass < 4; pass += 1) {
@@ -206,6 +207,7 @@ const mountPicker = (
     setup(componentProps) {
       return evaluatePicker(
         Vue.computed,
+        Vue.mergeProps,
         Vue.nextTick,
         Vue.onBeforeUnmount,
         Vue.ref,
@@ -226,7 +228,19 @@ const mountPicker = (
   const app = Vue.createApp(picker, { draft, currentPage, disabled: false, connectionBlocked: false, connectionRetrying: false, ...extraProps })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
-  app.component('WikiSourcePreview', Vue.defineComponent({ render: () => Vue.h('div') }))
+  app.component(
+    'WikiSourcePreview',
+    Vue.defineComponent({
+      props: ['selector'],
+      emits: ['close'],
+      setup(props, { emit }) {
+        return () =>
+          Vue.h('div', { role: 'dialog', 'aria-label': 'Source preview', 'data-source-id': props.selector.id }, [
+            Vue.h('button', { type: 'button', onClick: () => emit('close') }, 'Close preview')
+          ])
+      }
+    })
+  )
   app.mount(host)
   const mounted = { app, changes, host, sourcesAdded }
   mountedPickers.push(mounted)
@@ -435,6 +449,63 @@ describe('Agent context current-page inclusion', () => {
     chip.click()
     await settle()
     expect(mounted.changes).toEqual([])
+  })
+})
+
+describe('Agent context source and scope affordances', () => {
+  it('opens source preview with Enter while close removes without previewing', async () => {
+    const searchPagesImpl = vi.fn(async () => result([]))
+    const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
+    const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft([source(7)]))
+    const chip = mounted.host.querySelector<HTMLElement>('.agent-context__sources .v-chip')
+    if (!chip) throw new Error('Attached source chip did not render')
+    expect(chip.getAttribute('title')).toBe(chip.getAttribute('aria-label'))
+    chip.focus()
+    chip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await settle()
+    const preview = mounted.host.querySelector<HTMLElement>('[role="dialog"][data-source-id="7"]')
+    expect(preview).not.toBeNull()
+    preview?.querySelector<HTMLButtonElement>('button')?.click()
+    await settle()
+    const close = chip.querySelector<HTMLElement>('.v-chip__close')
+    if (!close) throw new Error('Source removal control did not render')
+    close.click()
+    await settle()
+    expect(mounted.changes).toEqual([{ sources: [] }])
+    expect(mounted.host.querySelector('[role="dialog"][data-source-id]')).toBeNull()
+    expect(searchPagesImpl).not.toHaveBeenCalled()
+    expect(fetchWikiSourceImpl).not.toHaveBeenCalled()
+  })
+
+  it('explains scope on focus and guides empty selected pages without changing admission', async () => {
+    const searchPagesImpl = vi.fn(async () => result([]))
+    const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
+    const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl)
+    const scope = mounted.host.querySelector<HTMLButtonElement>('.agent-context__scope-control')
+    if (!scope) throw new Error('Scope control did not render')
+    scope.focus()
+    await settle()
+    const helpId = scope.getAttribute('aria-describedby')
+    const help = helpId ? document.getElementById(helpId) : null
+    expect(help?.textContent).toContain(translateEnglish('common:agentContextPicker.searchScopeHelp'))
+    scope.click()
+    await settle()
+    const selected = Array.from(document.body.querySelectorAll<HTMLElement>('.v-list-item')).find(
+      item => item.querySelector('.v-list-item-title')?.textContent === translateEnglish('common:agentContextPicker.selectedPages')
+    )
+    expect(selected?.getAttribute('aria-disabled')).toBe('true')
+    expect(selected?.textContent).toContain(translateEnglish('common:agentContextPicker.attachSourcesFirst'))
+    selected?.click()
+    await settle()
+    expect(mounted.changes).toEqual([])
+    const allWiki = Array.from(document.body.querySelectorAll<HTMLElement>('.v-list-item')).find(
+      item => item.querySelector('.v-list-item-title')?.textContent === translateEnglish('common:agentContextPicker.allWiki')
+    )
+    allWiki?.click()
+    await settle()
+    expect(mounted.changes).toEqual([{ scope: { kind: 'all' } }])
+    expect(searchPagesImpl).not.toHaveBeenCalled()
+    expect(fetchWikiSourceImpl).not.toHaveBeenCalled()
   })
 })
 

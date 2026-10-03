@@ -49,7 +49,7 @@
           :disabled="isCommandSkillDisabled(skill.versionId)"
           :prepend-icon="isSelected(skill.versionId) ? 'mdi-check-circle' : 'mdi-puzzle-outline'"
           :title="skill.name"
-          :subtitle="isPreferred(skill.versionId) ? $t('common:agentComposer.alwaysLoadedConversations') : skill.description"
+          :subtitle="isSkillLimited(skill.versionId) ? skillLimitReason : isPreferred(skill.versionId) ? $t('common:agentComposer.alwaysLoadedConversations') : skill.description"
           @mouseenter="setActiveCommandSkill(skill.versionId)"
           @click="invokeCommandSkill(skill)"
         >
@@ -64,6 +64,7 @@
         <v-list-item v-else-if="skillCommandResults.length === 0 && skillsPartial" :id="composerIds.commandPartial" role="option" aria-disabled="true" :title="skillLoadTitle" :subtitle="skillLoadMessage" disabled />
         <v-list-item v-else-if="skillCommandResults.length === 0" :id="composerIds.commandEmpty" role="option" aria-disabled="true" :title="$t('common:agentComposer.noMatchingSkills')" :subtitle="$t('common:agentComposer.tryAnotherNameDescription')" disabled />
       </v-list>
+      <p v-if="skillCommandResults.some(skill => isSkillLimited(skill.versionId))" class="agent-composer__command-limit" role="status">{{ skillLimitReason }}</p>
       <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandStatus }}</div>
       <v-card-actions v-if="skillsLoadError" class="agent-composer__command-retry">
         <span>{{ skills.length > 0 ? $t('common:agentComposer.showingLastLoadedCatalog2') : $t('common:agentComposer.noCatalogEntriesAvailable') }}</span>
@@ -106,6 +107,7 @@
         :aria-autocomplete="skillsEnabled ? 'list' : undefined"
         :aria-haspopup="skillsEnabled ? 'listbox' : undefined"
         :placeholder="composerInputPlaceholder"
+        :enterkeyhint="coarseInput ? 'enter' : 'send'"
         rows="1"
         variant="solo"
         flat
@@ -140,6 +142,7 @@
         >{{ dictationTimerLabel }}</span>
       </div>
     </div>
+    <p :id="composerIds.keyboardHelp" class="agent-composer__keyboard-help">{{ keyboardHelp }}</p>
 
     <p v-if="error" class="agent-composer__notice" role="alert">{{ error }}</p>
     <p
@@ -227,24 +230,31 @@
       <div v-else ref="controlsGroup" class="agent-composer__context-controls" role="group" :aria-label="$t('common:agentComposer.messageTools')">
         <v-menu v-if="attachmentsAvailable" content-class="agent-owned-overlay" location="top start" v-model="attachmentMenuOpen">
           <template #activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              ref="attachmentTrigger"
-              class="agent-composer__attach wiki-purpose-control"
-              variant="text"
-              rounded="pill"
-              prepend-icon="mdi-paperclip"
-              :aria-label="$t('common:agentComposer.attachFiles')"
-              :title="$t('common:agentComposer.attachFiles')"
-              :disabled="attachDisabled"
-              :aria-expanded="attachmentMenuOpen"
-            >{{ $t('common:agentComposer.attach') }}</v-btn>
+            <v-tooltip location="top" :text="attachmentAdmissionReason || $t('common:agentComposer.attachFiles')">
+              <template #activator="{ props: tooltipProps }">
+                <span v-bind="tooltipProps" class="agent-composer__attach-wrapper" :tabindex="attachDisabled ? 0 : undefined" :aria-describedby="attachDisabled ? composerIds.attachmentReason : undefined">
+                  <v-btn
+                    v-bind="activatorProps"
+                    ref="attachmentTrigger"
+                    class="agent-composer__attach wiki-purpose-control"
+                    variant="text"
+                    rounded="pill"
+                    prepend-icon="mdi-paperclip"
+                    :aria-label="$t('common:agentComposer.attachFiles')"
+                    :aria-describedby="attachDisabled ? composerIds.attachmentReason : undefined"
+                    :disabled="attachDisabled"
+                    :aria-expanded="attachmentMenuOpen"
+                  >{{ $t('common:agentComposer.attach') }} <span class="agent-composer__attachment-count">{{ attachmentCount }}/4</span></v-btn>
+                </span>
+              </template>
+            </v-tooltip>
           </template>
           <v-list density="compact" :aria-label="$t('common:agentComposer.attachmentSource')">
             <v-list-item prepend-icon="mdi-upload" :title="$t('common:agentComposer.uploadFiles')" @click="openFilePicker" />
             <v-list-item prepend-icon="mdi-folder-outline" :title="$t('common:agentComposer.browseWikiAssets')" @click="openAssetBrowser" />
           </v-list>
         </v-menu>
+        <span :id="composerIds.attachmentReason" class="sr-only">{{ attachmentAdmissionReason }}</span>
         <v-menu v-if="createAvailable && !isControlFolded('create')" content-class="agent-owned-overlay" location="top start">
           <template #activator="{ props: activatorProps }">
             <v-btn
@@ -258,7 +268,7 @@
               append-icon="mdi-chevron-down"
               :aria-label="$t('common:agentComposer.chooseCreationTools')"
               :title="selectedGenerationTools.length ? $t('common:agentComposer.creationToolEnabledAssistant', { count: selectedGenerationTools.length, interpolation: { escapeValue: false } }) : $t('common:agentComposer.chooseCreationTools')"
-              :disabled="attachDisabled"
+              :disabled="generationDisabled"
             >{{ $t('common:actions.create') }}</v-btn>
           </template>
           <v-list density="compact" class="agent-composer__tool-menu" :aria-label="$t('common:agentComposer.creationTools')">
@@ -271,7 +281,7 @@
               role="menuitemcheckbox"
               :aria-checked="selectedGenerationTools.includes(option.value)"
               :active="selectedGenerationTools.includes(option.value)"
-              :disabled="attachDisabled"
+              :disabled="generationDisabled"
               @click="toggleGenerationTool(option.value)"
             >
               <template #append><v-icon :icon="selectedGenerationTools.includes(option.value) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
@@ -301,19 +311,22 @@
             </label>
           </template>
         </v-tooltip>
-        <v-btn
-          v-if="goalsEnabled && !goalMode && !isControlFolded('goal')"
-          class="agent-composer__goal-toggle wiki-purpose-control"
-          :class="{ 'wiki-purpose-control--selected': goalMode }"
-          :data-state="goalMode ? 'selected' : undefined"
-          variant="text"
-          rounded="pill"
-          prepend-icon="mdi-target"
-          :aria-label="$t('common:agentComposer.goal')"
-          :title="$t('common:agentComposer.defineDurableOutcomeMulti')"
-          :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0"
-          @click="goalMode = true"
-        >{{ $t('common:agentComposer.goal') }}</v-btn>
+        <v-tooltip v-if="goalsEnabled && !goalMode && !isControlFolded('goal')" location="top" :text="goalDisabledReason || $t('common:agentComposer.defineDurableOutcomeMulti')">
+          <template #activator="{ props: tooltipProps }">
+            <span v-bind="tooltipProps" :tabindex="goalDisabledReason ? 0 : undefined" :aria-label="goalDisabledReason || undefined">
+              <v-btn
+                class="agent-composer__goal-toggle wiki-purpose-control"
+                variant="text"
+                rounded="pill"
+                prepend-icon="mdi-target"
+                :aria-label="$t('common:agentComposer.goal')"
+                :title="goalDisabledReason || $t('common:agentComposer.defineDurableOutcomeMulti')"
+                :disabled="Boolean(goalDisabledReason)"
+                @click="goalMode = true"
+              >{{ $t('common:agentComposer.goal') }}</v-btn>
+            </span>
+          </template>
+        </v-tooltip>
         <v-menu
           v-if="hasMoreMenuContent"
           content-class="agent-owned-overlay agent-composer__more-menu-content"
@@ -579,10 +592,22 @@ const attachmentCount = computed(() => {
   const count = (mediaComposer.value as unknown as { attachments?: unknown } | null)?.attachments
   return Array.isArray(count) ? count.length : 0
 })
-const attachDisabled = computed(() =>
-  props.disabled || sendInProgress.value || props.networkBlocked === true ||
-  mediaBusy.value || !props.mediaSession || attachmentCount.value >= 4
-)
+const attachmentAdmissionReason = computed(() => {
+  if (!attachmentsAvailable.value) return t('common:agentComposer.attachmentsUnsupported')
+  if (props.networkBlocked) return t('common:agentComposer.attachmentsOffline')
+  if (!props.mediaSession) return t('common:agentComposer.attachmentsNeedSession')
+  if (goalMode.value) return t('common:agentComposer.attachmentsGoalMode')
+  if (props.disabled || sendInProgress.value || props.canStop || isMediaBusy()) return t('common:agentComposer.attachmentsBusy')
+  if (attachmentCount.value >= 4) return t('common:agentComposer.attachmentsFull')
+  return ''
+})
+const attachDisabled = computed(() => Boolean(attachmentAdmissionReason.value))
+const goalDisabledReason = computed(() => {
+  if (props.networkBlocked) return t('common:agentComposer.attachmentsOffline')
+  if (props.disabled || sendInProgress.value || props.canStop || isMediaBusy()) return t('common:agentComposer.attachmentsBusy')
+  if (hasUnsentMedia()) return t('common:agentComposer.goalRemoveAttachments')
+  return ''
+})
 interface ComposerGenerationOption { value: 'image' | 'video' | 'music'; title: string; icon: string }
 const generationOptions = computed<ReadonlyArray<ComposerGenerationOption>>(() => {
   const options = mediaComposer.value?.generationOptions as unknown
@@ -594,6 +619,10 @@ const selectedGenerationTools = computed<ReadonlyArray<'image' | 'video' | 'musi
 })
 const createAvailable = computed(() =>
   props.generationToolsEnabled !== false && generationOptions.value.length > 0
+)
+const generationDisabled = computed(() =>
+  !createAvailable.value || Boolean(props.networkBlocked) || !props.mediaSession || goalMode.value ||
+  props.disabled || sendInProgress.value || props.canStop || isMediaBusy()
 )
 const openFilePicker = (): void => {
   attachmentMenuOpen.value = false
@@ -616,7 +645,7 @@ const focusAttachmentTrigger = async (): Promise<void> => {
   element.focus({ preventScroll: true })
 }
 const toggleGenerationTool = (tool: 'image' | 'video' | 'music'): void => {
-  if (attachDisabled.value) return
+  if (generationDisabled.value) return
   mediaComposer.value?.toggleGenerationTool(tool)
 }
 /**
@@ -656,20 +685,29 @@ const appendDictation = (text: string) => {
     }
   })
 }
-const handleMediaPaste = (event: ClipboardEvent) => {
-  const files = Array.from(event.clipboardData?.files ?? [])
-  if (!(props.mediaCapabilities?.attachments) || !files.length) return
-  event.preventDefault()
+const admitMediaFiles = (files: readonly File[]): void => {
+  if (attachmentAdmissionReason.value) {
+    error.value = attachmentAdmissionReason.value
+    return
+  }
+  error.value = ''
   void mediaComposer.value?.addFiles(files)
 }
+const handleMediaPaste = (event: ClipboardEvent) => {
+  const files = Array.from(event.clipboardData?.files ?? [])
+  if (!files.length) return
+  // Preserve accompanying text as a native paste even when files cannot attach.
+  if (!event.clipboardData?.getData('text/plain')) event.preventDefault()
+  admitMediaFiles(files)
+}
 const handleMediaDragOver = (event: DragEvent) => {
-  if ((props.mediaCapabilities?.attachments) && event.dataTransfer?.types.includes('Files')) event.preventDefault()
+  if (event.dataTransfer?.types.includes('Files')) event.preventDefault()
 }
 const handleMediaDrop = (event: DragEvent) => {
   const files = Array.from(event.dataTransfer?.files ?? [])
-  if (!files.length) return
+  if (!files.length && !event.dataTransfer?.types.includes('Files')) return
   event.preventDefault()
-  if (props.mediaCapabilities?.attachments) void mediaComposer.value?.addFiles(files)
+  if (files.length) admitMediaFiles(files)
 }
 const draft = ref(props.initialDraft ?? '')
 watch(draft, text => {
@@ -680,7 +718,6 @@ watch(() => props.initialDraft, (value, previous) => {
   if (draft.value === (previous ?? '')) draft.value = value ?? ''
 })
 const goalMode = ref(props.initialMode === 'goal')
-const skillMenuOpen = ref(false)
 const foldedSkillMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 const attachmentMenuOpen = ref(false)
@@ -728,11 +765,10 @@ const composerIds = {
   commandLoading: `${composerId}-command-loading`,
   commandPartial: `${composerId}-command-partial`,
   commandEmpty: `${composerId}-command-empty`,
-  skillsDialog: `${composerId}-skills-dialog`,
-  skillsHeading: `${composerId}-skills-heading`,
-  skillsDescription: `${composerId}-skills-description`,
   status: `${composerId}-status`,
-  webNotice: `${composerId}-web-notice`
+  webNotice: `${composerId}-web-notice`,
+  keyboardHelp: `${composerId}-keyboard-help`,
+  attachmentReason: `${composerId}-attachment-reason`,
 } as const
 const commandOptionId = (versionId: string): string => `${composerIds.commandResults}-${versionId}`
 const preferredSkillIds = computed(() => new Set(props.preferredSkills.map(skill => skill.skillId)))
@@ -770,10 +806,11 @@ const moreMenuItems = computed(() => {
       key: 'goal',
       icon: 'mdi-target',
       label: t('common:agentComposer.goal'),
-      subtitle: t('common:agentComposer.defineDurableOutcomeMulti'),
+      subtitle: goalDisabledReason.value || t('common:agentComposer.defineDurableOutcomeMulti'),
       checked: false,
+      disabled: Boolean(goalDisabledReason.value),
       run: () => {
-        if (props.disabled || sendInProgress.value || mediaBusy.value || mediaSubmission.value.attachmentIds.length > 0) return
+        if (goalDisabledReason.value) return
         goalMode.value = true
       }
     })
@@ -799,7 +836,7 @@ const moreMenuItems = computed(() => {
         icon: option.icon,
         label: option.title,
         checked: selectedGenerationTools.value.includes(option.value),
-        disabled: attachDisabled.value,
+        disabled: generationDisabled.value,
         run: () => toggleGenerationTool(option.value)
       })
     }
@@ -857,6 +894,14 @@ const handleFoldResize = (): void => {
   void updateFoldState()
 }
 
+const coarseInput = ref(false)
+let coarseInputQuery: MediaQueryList | null = null
+const updateCoarseInput = (): void => { coarseInput.value = coarseInputQuery?.matches ?? false }
+const keyboardHelp = computed(() => t(coarseInput.value
+  ? 'common:agentComposer.keyboardHelpTouch'
+  : props.draftEditable && (props.disabled || sendInProgress.value || props.canStop)
+    ? 'common:agentComposer.keyboardHelpBusy'
+    : 'common:agentComposer.keyboardHelpDesktop'))
 const composerInputLabel = computed(() =>
   goalMode.value
     ? t('common:agentComposer.defineOutcomeWikiAgent')
@@ -866,7 +911,8 @@ const composerInputLabel = computed(() =>
 )
 const composerInputDescriptionIds = computed(() => [
   props.externalDescriptionId?.trim(),
-  composerIds.status
+  composerIds.status,
+  composerIds.keyboardHelp
 ].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
   if (goalMode.value) return t('common:agentComposer.describeBoundedOutcomeWiki')
@@ -1088,6 +1134,11 @@ const skillCommandStatus = computed(() => skillCommandResults.value.length
     : props.skillsPartial
       ? props.skills.length > 0 ? t('common:agentComposer.skillCatalogIncomplete') : t('common:agentComposer.skillCatalogUnavailable')
       : t('common:agentComposer.noMatchingSkills'))
+const isSkillLimited = (versionId: string): boolean =>
+  !isPreferred(versionId) && !isSelected(versionId) && selectedSkillIds.value.length >= props.invocationLimit
+const skillLimitReason = computed(() => props.invocationLimit === 0
+  ? t('common:agentComposerSkillMenu.youHaveMaximum8')
+  : t('common:agentComposer.skillSelectionLimit', { limit: props.invocationLimit }))
 const isCommandSkillDisabled = (versionId: string): boolean =>
   props.disabled || sendInProgress.value || isPreferred(versionId) || (!isSelected(versionId) && selectedSkillIds.value.length >= props.invocationLimit)
 const usableSkillCommandResults = computed(() => skillCommandResults.value.filter(skill => !isCommandSkillDisabled(skill.versionId)))
@@ -1116,6 +1167,9 @@ const invokeCommandSkill = (skill: VisibleAgentSkill): void => {
 }
 const handleKeydown = (event: KeyboardEvent): void => {
   if (event.isComposing) return
+  const plainEnter = event.key === 'Enter' && !event.ctrlKey && !event.metaKey
+  if (plainEnter && (event.shiftKey || coarseInput.value ||
+      (props.draftEditable && (props.disabled || sendInProgress.value || props.canStop)))) return
   if (skillCommandOpen.value) {
     if (event.key === 'Escape') {
       event.preventDefault()
@@ -1201,7 +1255,6 @@ watch(
 )
 const manageSkills = (): void => {
   if (props.disabled || sendInProgress.value) return
-  skillMenuOpen.value = false
   foldedSkillMenuOpen.value = false
   emit('manageSkills')
 }
@@ -1305,7 +1358,6 @@ const submit = (): void => {
   const invokedSkillVersionIds = [...selectedSkillIds.value]
   const mode = goalMode.value ? 'goal' : 'message'
   submissionPending.value = true
-  skillMenuOpen.value = false
   restoreInputWhenReady = true
   sendFailed.value = false
   emit('send', content, invokedSkillVersionIds, mode, (success: boolean) => {
@@ -1343,6 +1395,11 @@ const reattachMedia = async (media: AgentMediaView): Promise<boolean> => (await 
 defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage, reattachMedia, hasUnsentMedia, isMediaBusy })
 onMounted(() => {
   mounted = true
+  if (typeof window.matchMedia === 'function') {
+    coarseInputQuery = window.matchMedia('(pointer: coarse)')
+    updateCoarseInput()
+    coarseInputQuery.addEventListener('change', updateCoarseInput)
+  }
   mountCaretMirror()
   resizeInput()
   window.addEventListener('resize', resizeInput)
@@ -1357,6 +1414,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   mounted = false
+  coarseInputQuery?.removeEventListener('change', updateCoarseInput)
+  coarseInputQuery = null
   window.removeEventListener('resize', resizeInput)
   foldResizeObserver?.disconnect()
   foldResizeObserver = null
@@ -1365,6 +1424,57 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.agent-composer__media-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-composer__media-attachments li {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+}
+
+.agent-composer__media-attachments img {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  object-fit: cover;
+  border-radius: var(--wiki-space-1);
+}
+
+.agent-composer__media-attachments li > span {
+  min-width: 0;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--wiki-label-size);
+}
+
+.agent-composer__media-attachments :deep(.v-btn) { flex-shrink: 0; }
+.agent-composer__uploading,
+.agent-composer__attachment-count,
+.agent-composer__keyboard-help,
+.agent-composer__command-limit {
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+}
+.agent-composer__attachment-count { margin-inline-start: var(--wiki-space-1); }
+.agent-composer__keyboard-help { margin: var(--wiki-space-1) 0; }
+.agent-composer__command-limit { margin: var(--wiki-space-2) var(--wiki-space-3); }
+.agent-composer__attach-wrapper { display: inline-flex; }
+
 .agent-composer {
   --agent-composer-control-face-height: clamp(28px, calc(var(--wiki-control-height) * .7), 31px);
   --agent-composer-control-hit-height: max(44px, var(--wiki-control-height));
@@ -1703,9 +1813,10 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__more-menu {
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-success)) 24%, var(--wiki-surface-border));
+  border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-lg);
 }
 
 /* Recording feedback row inside the input area. Red is reserved for the
@@ -1838,9 +1949,9 @@ onBeforeUnmount(() => {
 }
 
 :global(.agent-composer__skill-menu-content) {
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-success)) 24%, var(--wiki-surface-border)) !important;
+  border: 1px solid var(--wiki-surface-border-strong) !important;
   border-radius: var(--wiki-panel-radius);
-  box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-success)) 8%, transparent);
+  box-shadow: var(--wiki-shadow-lg);
 }
 .agent-composer__command-menu :deep(.v-list) {
   max-height: min(20rem, 42dvh) !important;

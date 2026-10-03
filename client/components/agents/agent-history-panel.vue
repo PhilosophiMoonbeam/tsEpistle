@@ -182,7 +182,9 @@
               </v-expansion-panel-title>
               <v-menu content-class="agent-owned-overlay" location="bottom end">
                 <template #activator="{ props: menuProps }">
-                  <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="$t('common:agentHistoryPanel.actions', { name: group.folder.name, interpolation: { escapeValue: false } })" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" />
+                  <span :ref="element => setFolderActionTrigger(group.folder.id, element as ComponentRoot | null)" class="agent-history__folder-action-anchor">
+                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="$t('common:agentHistoryPanel.actions', { name: group.folder.name, interpolation: { escapeValue: false } })" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" />
+                  </span>
                 </template>
                 <v-list density="compact" :aria-label="$t('common:agentHistoryPanel.folderActions', { name: group.folder.name, interpolation: { escapeValue: false } })">
                   <v-list-item link prepend-icon="mdi-pencil-outline" :title="$t('common:agentHistoryPanel.renameFolder')" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginRenameFolder(group.folder)" />
@@ -831,6 +833,12 @@ const componentControl = (component: ComponentRoot | null): HTMLElement | null =
     'input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
   )
 }
+const folderActionTriggers = new Map<string, HTMLElement>()
+const setFolderActionTrigger = (folderId: string, component: ComponentRoot | null): void => {
+  const target = componentControl(component)
+  if (target) folderActionTriggers.set(folderId, target)
+  else folderActionTriggers.delete(folderId)
+}
 const isVisibleFocusTarget = (target: HTMLElement | null): target is HTMLElement =>
   Boolean(
     target?.isConnected &&
@@ -995,9 +1003,7 @@ const beginRenameFolder = (folder: AgentConversationFolderView): void => {
   editingFolder.value = folder
   resetFolderWorkflow()
   folderName.value = folder.name
-  folderEditorRestoreTarget.value =
-    document.querySelector<HTMLElement>('.agent-history__folder-actions[aria-expanded="true"]') ??
-    (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+  folderEditorRestoreTarget.value = folderActionTriggers.get(folder.id) ?? null
   folderEditorOpen.value = true
 }
 const beginRenameSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
@@ -1041,7 +1047,7 @@ const beginDeleteSession = (session: AgentSessionSummary, restoreTarget: HTMLEle
 const beginRemoveFolder = (folder: AgentConversationFolderView): void => {
   if (loading.value || sessionMutationBusy.value) return
   dialogError.value = ''
-  destructiveRestoreTarget.value = document.querySelector<HTMLElement>('.agent-history__folder-actions[aria-expanded="true"]')
+  destructiveRestoreTarget.value = folderActionTriggers.get(folder.id) ?? null
   removingFolder.value = folder
 }
 const cancelDeleteSession = (): void => {
@@ -1260,7 +1266,7 @@ const deleteFolder = async (): Promise<void> => {
     if (!committed || !isOperationCurrent(identity)) return
     for (const sessionId of affectedSessionIds) setProjectedFolder(sessionId, null)
     openFolderIds.value = openFolderIds.value.filter(id => id !== folder.id)
-    destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
+    destructiveRestoreTarget.value = null
     removingFolder.value = null
     const folderRefresh = await refreshFolders(identity)
     const sessionsRefresh = await refreshSessions(identity)
@@ -1347,7 +1353,11 @@ watch([deletingSession, removingFolder], async ([session, folder]) => {
   destructiveFocusScope?.deactivate({ restoreFocus: false })
   destructiveFocusScope = createModalFocusScope({
     root,
-    restoreTarget: () => destructiveRestoreTarget.value,
+    restoreTarget: () => [
+      destructiveRestoreTarget.value,
+      componentControl(historySearchField.value),
+      componentControl(historyCloseButton.value)
+    ].find(isVisibleFocusTarget) ?? null,
     onEscape: () => {
       if (deleting.value) return
       if (deletingSession.value) cancelDeleteSession()
@@ -1421,6 +1431,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.agent-history__folder-action-anchor { display: contents; }
 .agent-history {
   background: var(--wiki-surface-raised);
   border: 1px solid var(--wiki-surface-border);

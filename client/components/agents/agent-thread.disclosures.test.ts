@@ -12,27 +12,13 @@ import type { AgentMessageView } from '../../../shared/agents/contracts.ts'
 import { buildAgentThreadPresentation } from './agent-thread-presentation.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 resetBody()
 
 const componentPath = join(process.cwd(), 'client/components/agents/agent-thread.vue')
 const source = readFileSync(componentPath, 'utf8')
 const { descriptor } = parse(source, { filename: componentPath })
 const template = descriptor.template?.content ?? ''
-const script = descriptor.scriptSetup?.content ?? ''
-const helperScript = script.match(/const safeNavigableHref[\s\S]*?(?=interface LinkPresentationMetadata)/)?.[0]
-if (!helperScript) throw new Error('agent-thread.vue source helpers were not found')
-const executableHelperScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(helperScript)
-const loadThreadHelpers = (): {
-  safeNavigableHref: (href: string | null) => string | undefined
-  sourceDomId: (messageId: string, evidenceId: string, sourceKind: 'page' | 'section') => string
-} => {
-  const evaluate = new Function(`${executableHelperScript}\nreturn { safeNavigableHref, sourceDomId }`) as () => {
-    safeNavigableHref: (href: string | null) => string | undefined
-    sourceDomId: (messageId: string, evidenceId: string, sourceKind: 'page' | 'section') => string
-  }
-  return evaluate()
-}
 
 const componentStyleId = 'agent-thread-disclosures'
 const componentScopeId = `data-v-${componentStyleId}`
@@ -58,7 +44,7 @@ const makeMessage = (id: string, ordinal: number, runId: string | null = null): 
     {
       evidenceId: 'page:shared source:section:repeat/1',
       kind: 'page',
-      label: 'Citation',
+      label: 'Citation › Referenced section',
       href: null
     }
   ],
@@ -69,28 +55,30 @@ const makeMessage = (id: string, ordinal: number, runId: string | null = null): 
 const renderDuplicateSources = async (): Promise<string> => {
   const messages = [makeMessage('message one/α', 1), makeMessage('message two/β', 2)]
   const thread = { messages, artifacts: [], suggestions: [] }
-  const { safeNavigableHref, sourceDomId } = loadThreadHelpers()
   const threadPresentation = buildAgentThreadPresentation(messages, [], [], [])
   const threadProjection = {
     orderedMessages: threadPresentation.orderedMessages.map(entry => ({
       ...entry,
+      statusLabel: entry.statusLabel ? translateEnglish(entry.statusLabel.key, entry.statusLabel.params) : '',
+      ariaLabel: translateEnglish(entry.ariaLabel.key, { status: translateEnglish('common:agentThread.complete') }),
       temporal: { time: '', timestamp: '' },
       citationGroups: entry.citationGroups.map(group => ({
         ...group,
-        safeHref: safeNavigableHref(group.pageHref),
+        safeHref: undefined,
         previewSelector: null,
         sections: group.sections.map(citationEntry => ({
           ...citationEntry,
-          safeHref: safeNavigableHref(citationEntry.citation.href),
+          safeHref: undefined,
           previewSelector: null
         }))
       })),
       run: entry.run
         ? {
             ...entry.run,
+            activityLabel: entry.run.activityLabel.map(label => translateEnglish(label.key, label.params)).join(' · '),
             pageLinks: entry.run.pageLinks.map(link => ({
               ...link,
-              safeHref: safeNavigableHref(link.href),
+              safeHref: undefined,
               previewSelector: null
             }))
           }
@@ -107,7 +95,6 @@ const renderDuplicateSources = async (): Promise<string> => {
         artifactTimeLabel: () => '',
         decidingApprovalId: null,
         canSubmit: true,
-        sourceDomId,
         previewSelector: null,
         forwardDecision: () => undefined,
         emit: () => undefined
@@ -119,25 +106,32 @@ const renderDuplicateSources = async (): Promise<string> => {
   const emptyStub = defineComponent({ render: () => null })
   const app = createSSRApp(component)
   app.config.globalProperties.$t = translateEnglish
-  for (const name of ['AgentAnswerActions', 'AgentArtifactGrid', 'WikiSourcePreview', 'AgentMarkdown', 'AgentTaskProgress', 'AgentToolCard', 'v-avatar', 'v-btn', 'v-icon']) {
+  for (const name of [
+    'AgentAnswerActions',
+    'AgentArtifactGrid',
+    'WikiSourcePreview',
+    'AgentMarkdown',
+    'AgentTaskProgress',
+    'AgentToolCard',
+    'v-avatar',
+    'v-btn',
+    'v-icon'
+  ]) {
     app.component(name, emptyStub)
   }
   return renderToString(app)
 }
 
 describe('Agent thread disclosures', () => {
-  test('renders unique encoded page and section identifiers when messages repeat evidence', async () => {
+  test('keeps repeated sources in independent collapsed disclosures with numbered section links, not misnumbered overview links', async () => {
     const dom = new JSDOM(await renderDuplicateSources())
     const disclosures = [...dom.window.document.querySelectorAll<HTMLDetailsElement>('.agent-sources')]
-    const pageIds = disclosures.map(disclosure => disclosure.querySelector<HTMLElement>('.agent-sources__group')?.id ?? '')
-    const sectionIds = disclosures.map(disclosure => disclosure.querySelector<HTMLElement>('.agent-sources__sections > li')?.id ?? '')
-    const sourceIds = [...pageIds, ...sectionIds]
-
     expect(disclosures).toHaveLength(2)
     expect(disclosures.every(disclosure => !disclosure.open)).toBe(true)
-    expect(pageIds[0]).not.toBe(pageIds[1])
-    expect(sectionIds[0]).not.toBe(sectionIds[1])
-    expect(new Set(sourceIds).size).toBe(sourceIds.length)
-    expect(sourceIds.every(id => id.length > 0 && !/\s/u.test(id))).toBe(true)
+    for (const disclosure of disclosures) {
+      expect(disclosure.querySelector('.agent-sources__page .agent-sources__number')).toBeNull()
+      expect(disclosure.querySelector('.agent-sources__sections .agent-sources__number')?.textContent).toBe('1')
+      expect(disclosure.querySelector('.agent-sources__label')?.textContent).toBe('Referenced section')
+    }
   })
 })

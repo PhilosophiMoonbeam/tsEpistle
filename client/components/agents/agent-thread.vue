@@ -9,9 +9,9 @@
         :aria-label="entry.ariaLabel"
       >
         <div v-if="entry.message.role === 'assistant'" class="agent-message__identity" aria-hidden="true">
-          <span class="agent-message__assistant-mark">
+          <span class="agent-message__assistant-mark" :class="{ 'agent-message__assistant-mark--working': entry.message.status === 'pending' || entry.message.status === 'streaming' }">
             <v-icon class="agent-message__assistant-spark" icon="mdi-creation-outline" size="18" aria-hidden="true" />
-            <ControlBorderBeam :enabled="true" :phase-offset-ms="0" />
+            <ControlBorderBeam :enabled="entry.message.status === 'pending' || entry.message.status === 'streaming'" :phase-offset-ms="0" />
           </span>
         </div>
         <header v-else class="agent-message__identity agent-message__identity--user">
@@ -29,6 +29,9 @@
             >
               <StatusIndicator
                 aria-hidden="true"
+                role="presentation"
+                aria-live="off"
+                :aria-atomic="false"
                 :active="entry.message.status === 'streaming'"
                 :intermediary="entry.message.status === 'pending'"
                 :negative="entry.message.status === 'failed'"
@@ -71,6 +74,9 @@
             >
               <StatusIndicator
                 aria-hidden="true"
+                role="presentation"
+                aria-live="off"
+                :aria-atomic="false"
                 :active="entry.message.status === 'streaming'"
                 :intermediary="entry.message.status === 'pending'"
                 :negative="entry.message.status === 'failed'"
@@ -196,7 +202,6 @@
               <ol class="agent-sources__groups">
                 <li
                   v-for="group in entry.citationGroups"
-                  :id="sourceDomId(entry.message.id, group.key, 'page')"
                   :key="group.key"
                   class="agent-sources__group"
                 >
@@ -218,7 +223,6 @@
                   <ol v-if="group.sections.length" class="agent-sources__sections">
                     <li
                       v-for="citationEntry in group.sections"
-                      :id="sourceDomId(entry.message.id, citationEntry.citation.evidenceId, 'section')"
                       :key="citationEntry.citation.evidenceId"
                     >
                       <component
@@ -261,8 +265,10 @@
             <details
               v-if="entry.message.role === 'assistant' && entry.run?.activity.length"
               class="agent-activity mt-3"
+              :open="activityOpen(entry)"
+              @toggle="handleActivityToggle($event, entry)"
             >
-              <summary>
+              <summary @click="markActivityToggle(entry)">
                 <v-icon icon="mdi-format-list-checks" size="18" aria-hidden="true" />
                 <span>{{ entry.run?.activityLabel }}</span>
               </summary>
@@ -270,8 +276,9 @@
                 <li v-for="tool in entry.run?.activity" :key="tool.id">
                   <v-icon :icon="toolStateIcon(tool.state)" :color="toolStateColor(tool.state)" size="18" aria-hidden="true" />
                   <span>
-                    <strong>{{ tool.summary ? tool.summary : tool.title }}</strong>
-                    <small>{{ tool.summary ? `${tool.title} · ` : '' }}{{ tool.actionName }} · {{ toolStateLabel(tool.state) }}</small>
+                    <strong>{{ tool.title }}</strong>
+                    <small>{{ toolStateLabel(tool.state) }}</small>
+                    <span v-if="tool.summary">{{ tool.summary }}</span>
                   </span>
                 </li>
               </ul>
@@ -321,7 +328,8 @@
 <script setup lang="ts">
 import type { AgentGoogleSearchCitation, AgentMediaView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import i18next from 'i18next'
 import type { UserPicture } from '../../helpers/user-picture.ts'
 import ControlBorderBeam from '../common/control-border-beam.vue'
 import StatusIndicator from '../common/status-indicator.vue'
@@ -339,6 +347,7 @@ import {
   placeAgentArtifacts,
   type AgentCitationEntry,
   type AgentCitationGroup,
+  type AgentLocalizedText,
   type AgentMessagePresentation,
   type AgentRunPresentation,
   type AgentThreadPresentation
@@ -346,6 +355,15 @@ import {
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const localeRevision = ref(0)
+const refreshLocale = (): void => { localeRevision.value += 1 }
+i18next.on('languageChanged', refreshLocale)
+i18next.on('loaded', refreshLocale)
+onUnmounted(() => {
+  i18next.off('languageChanged', refreshLocale)
+  i18next.off('loaded', refreshLocale)
+})
+const localizedText = (text: AgentLocalizedText): string => t(text.key, { ...text.params, interpolation: { escapeValue: false } })
 
 const props = defineProps<{
   thread: AgentThreadState
@@ -392,8 +410,14 @@ const sourceSelector = (href: string | null): WikiSourceSelector | null => {
   const origin = typeof window === 'undefined' ? 'https://wiki.invalid' : window.location.origin
   return wikiSourceSelectorFromHref(href, origin)
 }
-const messageTimeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
-const messageTimestampFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+const messageFormats = computed(() => {
+  void localeRevision.value
+  const locale = i18next.resolvedLanguage || i18next.language || undefined
+  return {
+    time: new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }),
+    timestamp: new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
+  }
+})
 interface MessageTemporalMetadata {
   readonly time: string
   readonly timestamp: string
@@ -411,15 +435,11 @@ const googleCitationQuote = (content: string, citation: AgentGoogleSearchCitatio
   if (citation.startIndex < 0 || citation.endIndex <= citation.startIndex || citation.endIndex > content.length) return ''
   return content.slice(citation.startIndex, citation.endIndex)
 }
-const normalizeSourceIdSegment = (segment: string): string =>
-  encodeURIComponent(segment.normalize('NFC').replace(/[\uD800-\uDFFF]/gu, '\uFFFD'))
-const sourceDomId = (messageId: string, evidenceId: string, sourceKind: 'page' | 'section'): string =>
-  `agent-source-${sourceKind}-${normalizeSourceIdSegment(messageId)}-${normalizeSourceIdSegment(evidenceId)}`
 const temporalMetadataFor = (createdAt: string): MessageTemporalMetadata => {
   const date = new Date(createdAt)
   return Number.isNaN(date.valueOf())
     ? { time: '', timestamp: createdAt }
-    : { time: messageTimeFormat.format(date), timestamp: messageTimestampFormat.format(date) }
+    : { time: messageFormats.value.time.format(date), timestamp: messageFormats.value.timestamp.format(date) }
 }
 interface LinkPresentationMetadata {
   readonly safeHref: string | undefined
@@ -451,11 +471,12 @@ const artifactTimeLabel = (createdAt: string): string => {
   const metadata = temporalMetadataFor(createdAt)
   return metadata.time ? metadata.timestamp : ''
 }
-type ProjectedCitationEntry = AgentCitationEntry & LinkPresentationMetadata
+type ProjectedCitationEntry = Omit<AgentCitationEntry, 'sectionLabel'> & LinkPresentationMetadata & { readonly sectionLabel: string }
 type ProjectedCitationGroup = Omit<AgentCitationGroup, 'sections'> & LinkPresentationMetadata & {
   readonly sections: readonly ProjectedCitationEntry[]
 }
-type ProjectedRun = Omit<AgentRunPresentation, 'pageLinks'> & {
+type ProjectedRun = Omit<AgentRunPresentation, 'pageLinks' | 'activityLabel'> & {
+  readonly activityLabel: string
   readonly pageLinks: readonly (AgentRunPresentation['pageLinks'][number] & LinkPresentationMetadata)[]
 }
 interface ProjectedGoogleSearchCitation {
@@ -463,113 +484,187 @@ interface ProjectedGoogleSearchCitation {
   readonly safeHref: string | undefined
   readonly quote: string
 }
-type ProjectedMessage = Omit<AgentMessagePresentation, 'run' | 'citationGroups'> & {
+type ProjectedMessage = Omit<AgentMessagePresentation, 'run' | 'citationGroups' | 'statusLabel' | 'ariaLabel' | 'recovery'> & {
   readonly run: ProjectedRun | null
   readonly citationGroups: readonly ProjectedCitationGroup[]
+  readonly statusLabel: string
+  readonly ariaLabel: string
+  readonly recovery: { readonly title: string; readonly description: string } | null
   readonly temporal: MessageTemporalMetadata
   readonly googleSearchCitations: readonly ProjectedGoogleSearchCitation[]
 }
 interface ThreadProjection {
   readonly orderedMessages: readonly ProjectedMessage[]
 }
-const isPartialAnswer = (entry: AgentMessagePresentation): boolean => {
-  const currentRun = props.thread.session.currentRun
-  return entry.message.role === 'assistant'
-    && entry.message.status === 'complete'
-    && currentRun?.status === 'partial'
-    && entry.message.runId === currentRun.id
+interface CachedProjectedMessage {
+  readonly source: AgentMessagePresentation
+  readonly value: ProjectedMessage
 }
-// Only the matching current run can explain a failure; historical/provider text
-// is neither reliable recovery advice nor safe public copy.
-const recoveryDescription = (entry: AgentMessagePresentation): string => {
-  const currentRun = props.thread.session.currentRun
-  if (isPartialAnswer(entry)) return t('common:agentThread.recoveryPartial')
-  const code = entry.message.status === 'failed' && currentRun?.status === 'failed' && currentRun.id === entry.message.runId
-    ? currentRun.errorCode
-    : null
-  switch (code) {
-    case 'AGENT_QUOTA_EXHAUSTED':
-      return t('common:agentThread.recoveryQuota')
-    case 'AGENT_CONTEXT_TOO_LARGE':
-    case 'PROVIDER_CONTEXT_TOO_LARGE':
-    case 'PROVIDER_REQUEST_TOO_LARGE':
-    case 'AGENT_MEDIA_CONTEXT_LIMIT':
-      return t('common:agentThread.recoveryContext')
-    case 'AGENT_OUTPUT_LIMITED':
-      return t('common:agentThread.recoveryOutput')
-    case 'AGENT_TOKEN_BUDGET_LIMITED':
-      return t('common:agentThread.recoveryTokenBudget')
-    default:
-      return t('common:agentThread.recoveryGeneric')
-  }
-}
+let projectionSessionId = ''
+let projectionLocaleRevision = -1
+let projectionOrigin = ''
+let projectedMessages = new Map<string, CachedProjectedMessage>()
+let projectedRuns = new Map<AgentRunPresentation, ProjectedRun>()
+let projectedCitationGroups = new Map<AgentCitationGroup, ProjectedCitationGroup>()
+let projectedPageLinks = new Map<AgentRunPresentation['pageLinks'], ProjectedRun['pageLinks']>()
+let hrefMetadata = new Map<string, LinkPresentationMetadata>()
+let temporalMetadata = new Map<string, MessageTemporalMetadata>()
 const threadProjection = computed<ThreadProjection>(() => {
-  const hrefMetadataCache = new Map<string, LinkPresentationMetadata>()
-  const temporalMetadataCache = new Map<string, MessageTemporalMetadata>()
+  const sessionId = props.thread.session.id
+  const revision = localeRevision.value
+  const origin = typeof window === 'undefined' ? 'https://wiki.invalid' : window.location.origin
+  if (sessionId !== projectionSessionId || revision !== projectionLocaleRevision || origin !== projectionOrigin) {
+    projectedMessages.clear()
+    projectedRuns.clear()
+    projectedCitationGroups.clear()
+    projectedPageLinks.clear()
+    hrefMetadata.clear()
+    temporalMetadata.clear()
+    projectionSessionId = sessionId
+    projectionLocaleRevision = revision
+    projectionOrigin = origin
+  }
+  const nextMessages = new Map<string, CachedProjectedMessage>()
+  const nextRuns = new Map<AgentRunPresentation, ProjectedRun>()
+  const nextGroups = new Map<AgentCitationGroup, ProjectedCitationGroup>()
+  const nextPageLinks = new Map<AgentRunPresentation['pageLinks'], ProjectedRun['pageLinks']>()
+  const nextHrefs = new Map<string, LinkPresentationMetadata>()
+  const nextTimes = new Map<string, MessageTemporalMetadata>()
   const metadataForHref = (href: string | null): LinkPresentationMetadata => {
     if (!href) return emptyLinkPresentationMetadata
-    const cached = hrefMetadataCache.get(href)
-    if (cached) return cached
-    const safeHref = safeNavigableHref(href)
-    const metadata: LinkPresentationMetadata = {
-      safeHref,
-      previewSelector: safeHref ? sourceSelector(safeHref) : null
+    const cached = hrefMetadata.get(href) ?? nextHrefs.get(href)
+    if (cached) {
+      nextHrefs.set(href, cached)
+      return cached
     }
-    hrefMetadataCache.set(href, metadata)
+    const safeHref = safeNavigableHref(href)
+    const metadata = { safeHref, previewSelector: safeHref ? sourceSelector(safeHref) : null }
+    nextHrefs.set(href, metadata)
     return metadata
   }
   const metadataForTime = (createdAt: string): MessageTemporalMetadata => {
-    const cached = temporalMetadataCache.get(createdAt)
-    if (cached) return cached
-    const metadata = temporalMetadataFor(createdAt)
-    temporalMetadataCache.set(createdAt, metadata)
+    const metadata = temporalMetadata.get(createdAt) ?? nextTimes.get(createdAt) ?? temporalMetadataFor(createdAt)
+    nextTimes.set(createdAt, metadata)
     return metadata
   }
-  return {
-    orderedMessages: threadPresentation.value.orderedMessages.map(entry => ({
-      ...entry,
-      statusLabel: isPartialAnswer(entry) ? t('common:agentThread.partial') : entry.statusLabel,
-      ariaLabel: isPartialAnswer(entry) ? `Wiki Agent message · ${t('common:agentThread.partial')}` : entry.ariaLabel,
-      temporal: metadataForTime(entry.message.createdAt),
-      recovery: isPartialAnswer(entry) ? {
-        title: t('common:agentThread.partialAnswer'),
-        description: recoveryDescription(entry)
-      } : entry.recovery ? {
-        title: t(`common:agentThread.${entry.message.role === 'user' ? entry.message.status === 'failed' ? 'messageNotSent' : 'messageStopped' : entry.message.status === 'failed' ? 'responseFailed' : 'responseStopped'}`),
-        description: recoveryDescription(entry)
-      } : null,
-      citationGroups: entry.citationGroups.map(group => ({
+  const projectGroup = (group: AgentCitationGroup): ProjectedCitationGroup => {
+    const pageMetadata = metadataForHref(group.pageHref)
+    for (const section of group.sections) metadataForHref(section.citation.href)
+    let projected = projectedCitationGroups.get(group)
+    if (!projected) {
+      projected = {
         ...group,
-        ...metadataForHref(group.pageHref),
-        sections: group.sections.map(citationEntry => ({
-          ...citationEntry,
-          ...metadataForHref(citationEntry.citation.href)
+        ...pageMetadata,
+        sections: group.sections.map(section => ({
+          ...section,
+          ...metadataForHref(section.citation.href),
+          sectionLabel: section.sectionLabel ?? t('common:agentThread.pageOverview')
         }))
-      })),
-      googleSearchCitations: (entry.message.googleSearchGrounding?.citations ?? []).map(citation => ({
-        citation,
-        safeHref: safeNavigableHref(citation.url),
-        quote: googleCitationQuote(entry.message.content, citation)
-      })),
-      run: entry.run
-        ? {
-            ...entry.run,
-            pageLinks: entry.run.pageLinks.map(link => ({ ...link, ...metadataForHref(link.href) }))
-          }
-        : null
-    }))
+      }
+    }
+    nextGroups.set(group, projected)
+    return projected
   }
+  const projectRun = (run: AgentRunPresentation): ProjectedRun => {
+    let pageLinks = projectedPageLinks.get(run.pageLinks) ?? nextPageLinks.get(run.pageLinks)
+    if (!pageLinks) pageLinks = run.pageLinks.map(link => ({ ...link, ...metadataForHref(link.href) }))
+    else for (const link of run.pageLinks) metadataForHref(link.href)
+    nextPageLinks.set(run.pageLinks, pageLinks)
+    const projected = projectedRuns.get(run) ?? nextRuns.get(run) ?? {
+      ...run,
+      pageLinks,
+      activityLabel: run.activityLabel.map(localizedText).join(' · ')
+    }
+    nextRuns.set(run, projected)
+    return projected
+  }
+  const orderedMessages = threadPresentation.value.orderedMessages.map(entry => {
+    const temporal = metadataForTime(entry.message.createdAt)
+    const cached = projectedMessages.get(entry.message.id)
+    let projected = cached?.source === entry ? cached.value : undefined
+    if (projected) {
+      for (const group of entry.citationGroups) projectGroup(group)
+      if (entry.run) projectRun(entry.run)
+    }
+    if (!projected) {
+      const citationGroups = entry.citationGroups.map(projectGroup)
+      const run = entry.run ? projectRun(entry.run) : null
+      const statusLabel = entry.statusLabel ? localizedText(entry.statusLabel) : ''
+      const googleSearchCitations = (entry.message.googleSearchGrounding?.citations ?? []).map((citation, index) => {
+        const previous = cached?.value.googleSearchCitations[index]
+        const quote = googleCitationQuote(entry.message.content, citation)
+        if (previous && previous.quote === quote
+          && previous.citation.url === citation.url && previous.citation.title === citation.title
+          && previous.citation.startIndex === citation.startIndex && previous.citation.endIndex === citation.endIndex) return previous
+        return { citation, safeHref: safeNavigableHref(citation.url), quote }
+      })
+      projected = {
+        ...entry,
+        statusLabel,
+        ariaLabel: t(entry.ariaLabel.key, { status: statusLabel || t('common:agentThread.complete'), interpolation: { escapeValue: false } }),
+        temporal,
+        recovery: entry.recovery ? { title: localizedText(entry.recovery.title), description: localizedText(entry.recovery.description) } : null,
+        citationGroups,
+        googleSearchCitations: cached && googleSearchCitations.length === cached.value.googleSearchCitations.length
+          && googleSearchCitations.every((citation, index) => citation === cached.value.googleSearchCitations[index])
+          ? cached.value.googleSearchCitations
+          : googleSearchCitations,
+        run
+      }
+    }
+    nextMessages.set(entry.message.id, cached?.source === entry && cached.value === projected ? cached : { source: entry, value: projected })
+    return projected
+  })
+  projectedMessages = nextMessages
+  projectedRuns = nextRuns
+  projectedCitationGroups = nextGroups
+  projectedPageLinks = nextPageLinks
+  hrefMetadata = nextHrefs
+  temporalMetadata = nextTimes
+  return { orderedMessages }
 })
-const stateLabels: Record<AgentToolState, string> = {
-  preparing: t('common:agentThread.preparing'),
-  running: t('common:agentThread.running'),
-  awaitingApproval: t('common:agentThread.awaitingApproval'),
-  complete: t('common:agentThread.complete'),
-  failed: t('common:agentThread.failed'),
-  denied: t('common:agentThread.denied'),
-  cancelled: t('common:agentThread.cancelled'),
-  omitted: t('common:agentThread.resultOmitted'),
-  not_executed: t('common:agentThread.notExecuted')
+const activityPreferences = ref(new Map<string, boolean>())
+const pendingActivityToggles = new Set<string>()
+const activityKey = (entry: ProjectedMessage): string => entry.message.runId ?? entry.message.id
+const activityOpen = (entry: ProjectedMessage): boolean => {
+  const preference = activityPreferences.value.get(activityKey(entry))
+  if (preference !== undefined) return preference
+  const activity = entry.run?.activity ?? []
+  const active = props.thread.session.currentRun?.id === entry.message.runId
+  const exceptional = entry.message.runOutcome?.status === 'partial' || entry.message.runOutcome?.status === 'failed' || entry.message.runOutcome?.status === 'cancelled'
+    || entry.message.status === 'failed' || entry.message.status === 'cancelled'
+    || activity.some(tool => tool.state === 'failed' || tool.state === 'cancelled' || tool.state === 'denied' || tool.state === 'omitted' || tool.state === 'not_executed')
+  return exceptional || (active && (
+    activity.some(tool => tool.state === 'preparing' || tool.state === 'running' || tool.state === 'awaitingApproval')
+    || entry.run?.proposals.some(({ tool }) => tool.state === 'preparing' || tool.state === 'running' || tool.state === 'awaitingApproval') === true
+  ))
+}
+const markActivityToggle = (entry: ProjectedMessage): void => { pendingActivityToggles.add(activityKey(entry)) }
+const handleActivityToggle = (event: Event, entry: ProjectedMessage): void => {
+  const key = activityKey(entry)
+  const target = event.currentTarget as HTMLDetailsElement | null
+  if (!target || !pendingActivityToggles.delete(key)) return
+  activityPreferences.value.set(key, target.open)
+}
+watch(() => props.thread.session.id, () => {
+  activityPreferences.value.clear()
+  pendingActivityToggles.clear()
+})
+watch(() => threadProjection.value.orderedMessages, entries => {
+  const currentKeys = new Set(entries.map(activityKey))
+  for (const key of activityPreferences.value.keys()) if (!currentKeys.has(key)) activityPreferences.value.delete(key)
+  for (const key of pendingActivityToggles) if (!currentKeys.has(key)) pendingActivityToggles.delete(key)
+})
+const stateLabelKeys: Record<AgentToolState, string> = {
+  preparing: 'common:agentThread.preparing',
+  running: 'common:agentThread.running',
+  awaitingApproval: 'common:agentThread.awaitingApproval',
+  complete: 'common:agentThread.complete',
+  failed: 'common:agentThread.failed',
+  denied: 'common:agentThread.denied',
+  cancelled: 'common:agentThread.cancelled',
+  omitted: 'common:agentThread.resultOmitted',
+  not_executed: 'common:agentThread.notExecuted'
 }
 const stateIcons: Record<AgentToolState, string> = {
   preparing: 'mdi-dots-horizontal',
@@ -582,7 +677,10 @@ const stateIcons: Record<AgentToolState, string> = {
   omitted: 'mdi-eye-off-outline',
   not_executed: 'mdi-minus-circle-outline'
 }
-const toolStateLabel = (state: AgentToolState): string => stateLabels[state]
+const toolStateLabel = (state: AgentToolState): string => {
+  void localeRevision.value
+  return t(stateLabelKeys[state])
+}
 const toolStateIcon = (state: AgentToolState): string => stateIcons[state]
 const toolStateColor = (state: AgentToolState): string | undefined => {
   if (state === 'complete') return 'success'
@@ -591,19 +689,12 @@ const toolStateColor = (state: AgentToolState): string | undefined => {
   return 'primary'
 }
 const currentLiveAnnouncement = computed(() => {
+  void localeRevision.value
   if (props.connection === 'reconnecting') {
     return { key: 'connection:reconnecting', message: t('common:agentThread.connectionInterruptedReconnecting') }
   }
-  const entries = threadProjection.value.orderedMessages
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index]
-    if (entry.message.role !== 'assistant') continue
-    if (isPartialAnswer(entry)) {
-      return { key: `${entry.message.id}:partial`, message: t('common:agentThread.partialAnswer') }
-    }
-    break
-  }
-  return agentLiveAnnouncement(props.thread.messages, props.thread.tools, props.thread.session.currentRun)
+  const announcement = agentLiveAnnouncement(props.thread.messages, props.thread.tools, props.thread.session.currentRun)
+  return announcement ? { key: announcement.key, message: localizedText(announcement.message) } : null
 })
 const liveSummary = ref('')
 const liveSummaryRevision = ref(0)
@@ -613,7 +704,7 @@ watch(
     const previousSessionId = previous?.[0]
     const previousAnnouncement = previous?.[1]
     if (sessionId !== previousSessionId) previewSelector.value = null
-    if (sessionId === previousSessionId && announcement?.key === previousAnnouncement?.key) return
+    if (sessionId === previousSessionId && announcement?.key === previousAnnouncement?.key && announcement?.message === previousAnnouncement?.message) return
     liveSummary.value = announcement?.message ?? ''
     liveSummaryRevision.value += 1
   },
@@ -631,13 +722,11 @@ watch(
 .agent-message__media figcaption a { color: var(--wiki-primary-ink); }
 .agent-message__media figcaption .agent-message__media-detached { align-items: center; color: var(--wiki-text-muted); display: inline-flex; gap: 4px; }
 .agent-message__media figcaption .agent-message__media-confirm { color: var(--wiki-text-muted); }
-.agent-message__media figcaption .agent-message__media-reattach { color: rgb(var(--v-theme-on-surface-variant)); }
 
 .agent-thread {
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-body);
   margin-inline: auto;
-  max-width: calc(var(--wiki-space-12) * 18);
   min-height: calc(var(--wiki-space-12) * 4);
   width: 100%;
 }
@@ -762,6 +851,9 @@ watch(
   position: relative;
   z-index: 1;
   color: var(--agent-mark-color);
+}
+
+.agent-message__assistant-mark--working .agent-message__assistant-spark {
   animation: agent-message-spark-shimmer 7s ease-in-out infinite;
 }
 
@@ -827,6 +919,14 @@ watch(
   border-end-start-radius: var(--wiki-radius-xs);
   box-shadow: var(--wiki-shadow-inset);
   padding: var(--wiki-space-3) var(--wiki-space-4);
+}
+
+.agent-message--user.agent-message--failed .agent-message__surface {
+  border-inline-end: 2px solid rgb(var(--v-theme-error));
+}
+
+.agent-message--user.agent-message--cancelled .agent-message__surface {
+  border-inline-end: 2px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, var(--wiki-surface-border));
 }
 
 .agent-message__identity--user {

@@ -43,6 +43,7 @@ interface ComposerHarness {
   readonly mediaSubmission: Ref<{ attachmentIds: readonly string[]; generationTools?: readonly ('image' | 'video' | 'music')[] }>
   readonly mediaBusy: Ref<boolean>
   readonly draft: Ref<string>
+  readonly coarseInput: Ref<boolean>
   readonly goalMode: Ref<boolean>
   readonly selectedSkillIds: Ref<string[]>
   readonly activeCommandSkill: Ref<TestSkill | null>
@@ -162,7 +163,13 @@ interface RealComposerPublic {
 interface RealComposerOptions {
   readonly skills?: readonly TestSkill[]
   readonly media?: boolean
+  readonly attachments?: boolean
   readonly imageGeneration?: boolean
+  readonly videoGeneration?: boolean
+  readonly musicGeneration?: boolean
+  readonly noSession?: boolean
+  readonly networkBlocked?: boolean
+  readonly invocationLimit?: number
 }
 const mountRealComposers = (options: readonly RealComposerOptions[]) => {
   const host = document.createElement('div')
@@ -170,6 +177,7 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
   const publicRefs = options.map(() => Vue.ref<RealComposerPublic | null>(null))
   const requests: Array<{ path: string; method: string; credentials: RequestCredentials | undefined; csrf: string | null }> = []
   const uploads: Array<{ id: string; filename: string; type: string; bytes: string }> = []
+  let nextUploadId = 100
   const sent: Array<Pick<SentMessage, 'content' | 'invokedSkillVersionIds' | 'mode' | 'media'>> = []
   const drafts: Array<{ sessionId: string; text: string }> = []
   const previousFetch = Object.getOwnPropertyDescriptor(browserWindow, 'fetch')
@@ -183,7 +191,7 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
     if (method === 'POST' && requestPath === `/_api/agents/sessions/${realSessionId}/media`) {
       const file = (init?.body as FormData)?.get('file')
       if (!(file instanceof File)) throw new Error('Real media upload did not provide a multipart File')
-      const id = `00000000-0000-4000-8000-${String(100 + uploads.length).padStart(12, '0')}`
+      const id = `00000000-0000-4000-8000-${String(nextUploadId++).padStart(12, '0')}`
       uploads.push({ id, filename: file.name, type: file.type, bytes: await file.text() })
       return new Response(
         JSON.stringify({
@@ -208,8 +216,16 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
             ref: publicRefs[index],
             sessionId: realSessionId,
             csrfToken: 'csrf',
-            mediaSession: option.media ? { id: realSessionId, version: 3, profileResolutionToken: 'resolved' } : null,
-            mediaCapabilities: option.media ? { ...realMediaCapabilities, imageGeneration: option.imageGeneration ?? false } : undefined,
+            mediaSession: option.media && !option.noSession ? { id: realSessionId, version: 3, profileResolutionToken: 'resolved' } : null,
+            mediaCapabilities: option.media
+              ? {
+                  ...realMediaCapabilities,
+                  attachments: option.attachments ?? true,
+                  imageGeneration: option.imageGeneration ?? false,
+                  videoGeneration: option.videoGeneration ?? false,
+                  musicGeneration: option.musicGeneration ?? false
+                }
+              : undefined,
             generationToolsEnabled: true,
             disabled: false,
             sending: false,
@@ -223,11 +239,11 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
             skillsLoadError: '',
             skillsPartial: false,
             preferredSkills: [],
-            invocationLimit: 3,
+            invocationLimit: option.invocationLimit ?? 3,
             statusLabel: 'Ready',
             statusTone: 'ready',
             initialDraft: '',
-            networkBlocked: false,
+            networkBlocked: option.networkBlocked ?? false,
             onDraftChange: (sessionId: string, text: string) => drafts.push({ sessionId, text }),
             onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', _complete: unknown, media: SentMessage['media']) =>
               sent.push({ content, invokedSkillVersionIds, mode, media })
@@ -291,6 +307,16 @@ const chooseRealAttachmentSource = async (menu: HTMLElement, title: string): Pro
   item.click()
   await waitForRealSurface(() => !menu.isConnected, 'attachment source selection closed')
 }
+const openRealCreationMenu = async (root: HTMLElement): Promise<HTMLElement> => {
+  const create = root.querySelector<HTMLButtonElement>('.agent-composer__create')
+  if (!create) throw new Error('Real Create action did not render')
+  expect(create.disabled).toBe(false)
+  create.click()
+  await waitForRealSurface(() => Boolean(document.querySelector('.v-overlay--active .agent-composer__tool-menu')), 'creation tools menu')
+  const menu = document.querySelector<HTMLElement>('.v-overlay--active .agent-composer__tool-menu')
+  if (!menu) throw new Error('Real creation tools menu did not open')
+  return menu
+}
 
 const makeSkill = (name: string, versionId = `${name}-version`): TestSkill => ({
   id: name,
@@ -326,12 +352,14 @@ const loadComposer = (
     readonly disabled?: boolean
     readonly sending?: boolean
     readonly canStop?: boolean
+    readonly draftEditable?: boolean
   } = {}
 ): ComposerHarness => {
   const props = {
     disabled: options.disabled ?? false,
     sending: options.sending ?? false,
     canStop: options.canStop ?? false,
+    draftEditable: options.draftEditable,
     skillsEnabled: true,
     goalsEnabled: true,
     skills: options.skills ?? [makeSkill('docs')],
@@ -760,6 +788,38 @@ describe('Agent composer slash-command keyboard gates', () => {
     expect(metaEnterComposer.sent[0].content).toBe('/docs')
   })
 
+  it('keeps busy editable Enter native and restores desktop sending after work settles', () => {
+    const busy = loadComposer({ disabled: true, sending: true, canStop: true, draftEditable: true })
+    busy.draft.value = 'Keep editing'
+    expect(press(busy, 'Enter').wasPrevented()).toBe(false)
+    expect(press(busy, 'Enter', { ctrlKey: true }).wasPrevented()).toBe(true)
+    expect(busy.sent).toHaveLength(0)
+    expect(busy.draft.value).toBe('Keep editing')
+
+    const ready = loadComposer({ draftEditable: true })
+    ready.draft.value = 'Ready to send'
+    expect(press(ready, 'Enter').wasPrevented()).toBe(true)
+    expect(ready.sent.map(message => message.content)).toEqual(['Ready to send'])
+  })
+
+  it('allows coarse input new lines without intercepting IME and keeps explicit sending', () => {
+    const composer = loadComposer()
+    composer.coarseInput.value = true
+    composer.draft.value = '/docs'
+    expect(press(composer, 'Enter').wasPrevented()).toBe(false)
+    expect(press(composer, 'Enter', { isComposing: true }).wasPrevented()).toBe(false)
+    expect(composer.selectedSkillIds.value).toEqual([])
+    expect(composer.sent).toHaveLength(0)
+    composer.submit()
+    expect(composer.sent.map(message => message.content)).toEqual(['/docs'])
+
+    const shortcut = loadComposer()
+    shortcut.coarseInput.value = true
+    shortcut.draft.value = 'Send with shortcut'
+    press(shortcut, 'Enter', { metaKey: true })
+    expect(shortcut.sent.map(message => message.content)).toEqual(['Send with shortcut'])
+  })
+
   it('leaves IME composition untouched and Escape dismisses only the command token', () => {
     const composing = loadComposer()
     composing.draft.value = '/docs'
@@ -976,8 +1036,55 @@ describe('Agent composer three-section layout', () => {
     ])
   })
 
-  it('disables attaching once four real uploads settle and rejects a fifth', async () => {
-    const mounted = mountRealComposers([{ media: true }])
+  it('changes real generation preferences without attachment support or uploads', async () => {
+    const mounted = mountRealComposers([
+      {
+        media: true,
+        attachments: false,
+        imageGeneration: true,
+        videoGeneration: true,
+        musicGeneration: true
+      }
+    ])
+    const root = mounted.roots[0]
+    await Vue.nextTick()
+    expect(root.querySelector('.agent-composer__attach')).toBeNull()
+    expect(root.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true)
+    expect(root.querySelector('.sr-only[id$="-attachment-reason"]')?.textContent).toBe(translateEnglish('common:agentComposer.attachmentsUnsupported'))
+    const menu = await openRealCreationMenu(root)
+    const options = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'))
+    expect(options.map(option => option.querySelector('.v-list-item-title')?.textContent?.trim())).toEqual([
+      translateEnglish('common:agentComposerMedia.images'),
+      translateEnglish('common:agentComposerMedia.video'),
+      translateEnglish('common:agentComposerMedia.music')
+    ])
+    for (const option of options) {
+      expect(option.getAttribute('aria-disabled')).not.toBe('true')
+      expect(option.getAttribute('aria-checked')).toBe('true')
+    }
+    options[1].click()
+    await waitForRealSurface(() => !menu.isConnected, 'generation preference menu closed')
+    const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
+    if (!textarea) throw new Error('Real composer textbox did not render')
+    textarea.value = 'Create an image with accompanying music'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
+    await Vue.nextTick()
+    expect(mounted.sent).toEqual([
+      {
+        content: 'Create an image with accompanying music',
+        invokedSkillVersionIds: [],
+        mode: 'message',
+        media: { attachmentIds: [], generationTools: ['image', 'music'] }
+      }
+    ])
+    expect(mounted.uploads).toEqual([])
+    expect(mounted.requests).toEqual([])
+  })
+
+  it('keeps real generation preferences operable at four attachments while rejecting a fifth', async () => {
+    const mounted = mountRealComposers([{ media: true, imageGeneration: true }])
     const root = mounted.roots[0]
     const input = root.querySelector<HTMLInputElement>('input[type="file"]')
     expect(input?.disabled).toBe(false)
@@ -994,9 +1101,21 @@ describe('Agent composer three-section layout', () => {
     const attach = root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
     expect(attach?.disabled).toBe(true)
     expect(input?.disabled).toBe(true)
+    expect(root.querySelector('.agent-composer__attachment-count')?.textContent?.trim()).toBe('4/4')
+    const reasonId = attach?.getAttribute('aria-describedby')
+    expect(reasonId ? document.getElementById(reasonId)?.textContent : '').toBe(translateEnglish('common:agentComposer.attachmentsFull'))
     attach?.click()
     await Vue.nextTick()
     expect(document.querySelector('.v-overlay--active [aria-label="Attachment source"]')).toBeNull()
+    const creationMenu = await openRealCreationMenu(root)
+    const imageOption = creationMenu.querySelector<HTMLElement>('[role="menuitemcheckbox"]')
+    if (!imageOption) throw new Error('Image generation option did not render at attachment capacity')
+    expect(imageOption.getAttribute('aria-disabled')).not.toBe('true')
+    expect(imageOption.getAttribute('aria-checked')).toBe('true')
+    imageOption.click()
+    await waitForRealSurface(() => !creationMenu.isConnected, 'full-capacity generation preference selection')
+    expect(root.querySelector('.agent-composer__create')?.getAttribute('data-state')).toBeNull()
+    expect(mounted.uploads).toHaveLength(4)
     await selectRealFiles(root, [new File(['%PDF-1.4\nfifth\n%%EOF\n'], 'five.pdf', { type: 'application/pdf' })])
     await waitForRealSurface(
       () => root.querySelector('[role="alert"]') !== null || realAttachmentNames(root).includes('five.pdf'),
@@ -1007,6 +1126,7 @@ describe('Agent composer three-section layout', () => {
     expect(root.querySelector('[role="alert"]')).not.toBeNull()
     const remove = root.querySelector<HTMLButtonElement>('[aria-label="Remove two.pdf"]')
     if (!remove) throw new Error('The second ready attachment cannot be removed')
+    expect(remove.disabled).toBe(false)
     remove.click()
     await waitForRealSurface(() => realAttachmentNames(root).length === 3, 'selected attachment removal')
     expect(realAttachmentNames(root)).toEqual(['one.pdf', 'three.pdf', 'four.pdf'])
@@ -1015,6 +1135,77 @@ describe('Agent composer three-section layout', () => {
     ])
     expect(attach?.disabled).toBe(false)
     expect(input?.disabled).toBe(false)
+    expect(root.querySelector('.agent-composer__attachment-count')?.textContent?.trim()).toBe('3/4')
+  })
+
+  it('preserves native text paste and blocks unavailable file navigation with a reason', async () => {
+    for (const option of [{ media: false }, { media: true, noSession: true }, { media: true, networkBlocked: true }]) {
+      const mounted = mountRealComposers([option])
+      const root = mounted.roots[0]
+      const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
+      if (!textarea) throw new Error('Composer textarea did not render')
+      textarea.value = 'Do not lose this draft'
+      textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await Vue.nextTick()
+      const paste = new browserWindow.Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', { value: { files: [], getData: () => 'ordinary text' } })
+      textarea.dispatchEvent(paste)
+      expect(paste.defaultPrevented).toBe(false)
+      const file = new File(['%PDF-1.4\nreport\n%%EOF\n'], 'report.pdf', { type: 'application/pdf' })
+      const drag = new browserWindow.Event('dragover', { bubbles: true, cancelable: true })
+      Object.defineProperty(drag, 'dataTransfer', { value: { types: ['Files'] } })
+      textarea.dispatchEvent(drag)
+      expect(drag.defaultPrevented).toBe(true)
+      const drop = new browserWindow.Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperty(drop, 'dataTransfer', { value: { files: [file], types: ['Files'] } })
+      textarea.dispatchEvent(drop)
+      expect(drop.defaultPrevented).toBe(true)
+      await Vue.nextTick()
+      const key = !option.media
+        ? 'common:agentComposer.attachmentsUnsupported'
+        : 'noSession' in option
+          ? 'common:agentComposer.attachmentsNeedSession'
+          : 'common:agentComposer.attachmentsOffline'
+      expect(root.querySelector('[role="alert"]')?.textContent).toBe(translateEnglish(key))
+      expect(textarea.value).toBe('Do not lose this draft')
+      expect(mounted.uploads).toEqual([])
+      const filePaste = new browserWindow.Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(filePaste, 'clipboardData', { value: { files: [file], getData: () => '' } })
+      textarea.dispatchEvent(filePaste)
+      expect(filePaste.defaultPrevented).toBe(true)
+      await Vue.nextTick()
+      expect(textarea.value).toBe('Do not lose this draft')
+      expect(root.querySelector('[role="alert"]')?.textContent).toBe(translateEnglish(key))
+    }
+  })
+
+  it('explains invocation limits in the real slash list and skills card without selecting', async () => {
+    const mounted = mountRealComposers([{ skills: [makeSkill('docs')], invocationLimit: 0 }])
+    const root = mounted.roots[0]
+    const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
+    if (!textarea) throw new Error('Composer textarea did not render')
+    textarea.value = '/'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    const reason = translateEnglish('common:agentComposerSkillMenu.youHaveMaximum8')
+    const option = root.querySelector<HTMLElement>('[role="option"]')
+    expect(option?.getAttribute('aria-disabled')).toBe('true')
+    expect(option?.textContent).toContain(reason)
+    expect(root.querySelector('.agent-composer__command-limit')?.textContent).toBe(reason)
+    option?.click()
+    await Vue.nextTick()
+    expect(mounted.sent).toEqual([])
+    expect(textarea.value).toBe('/')
+    root.querySelector<HTMLButtonElement>('.agent-composer__more-button')?.click()
+    await waitForRealSurface(() => Boolean(document.querySelector('.v-overlay--active .agent-composer__more-menu')), 'More menu')
+    const skills = Array.from(document.querySelectorAll<HTMLElement>('.agent-composer__more-menu .v-list-item')).find(item =>
+      item.textContent?.includes('Skills')
+    )
+    skills?.click()
+    await waitForRealSurface(() => Boolean(document.querySelector('.agent-composer-skill-menu__card')), 'Skills card')
+    const card = document.querySelector<HTMLElement>('.agent-composer-skill-menu__card')
+    expect(card?.textContent).toContain(reason)
+    expect(card?.querySelector('input[type="checkbox"]')?.hasAttribute('disabled')).toBe(true)
   })
 
   it('re-attaches stored bytes through the real parent public action as fresh pending media', async () => {

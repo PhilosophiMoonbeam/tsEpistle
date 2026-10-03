@@ -470,29 +470,33 @@ describe('Agent store initialization', () => {
     store.thread = thread
     store.sessions = [summaryForThread(thread)]
     markWorkspaceReady(store)
-    store.profiles = [{
-      id: '00000000-0000-4000-8000-000000000074',
-      name: 'Default',
-      media: undefined,
-      googleSearchAvailable: true,
-      googleSearchSuggestionLimit: 5,
-      inputTokens: 0,
-      outputTokens: 0,
-      contextWindowTokens: 400_000,
-      capabilityRevision: 'v1',
-      policyVersion: 1,
-      isGlobalDefault: true
-    } satisfies AgentProviderProfileView]
+    store.profiles = [
+      {
+        id: '00000000-0000-4000-8000-000000000074',
+        name: 'Default',
+        media: undefined,
+        googleSearchAvailable: true,
+        googleSearchSuggestionLimit: 5,
+        inputTokens: 0,
+        outputTokens: 0,
+        contextWindowTokens: 400_000,
+        capabilityRevision: 'v1',
+        policyVersion: 1,
+        isGlobalDefault: true
+      } satisfies AgentProviderProfileView
+    ]
     const patchBodies: unknown[] = []
     vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${thread.session.id}` && method === 'PATCH') {
         patchBodies.push(JSON.parse(String(init?.body)))
-        return Promise.resolve(Response.json({
-          ...thread,
-          session: { ...thread.session, googleSearchEnabled: true, version: 2, updatedAt: '2026-08-23T00:05:00.000Z' }
-        }))
+        return Promise.resolve(
+          Response.json({
+            ...thread,
+            session: { ...thread.session, googleSearchEnabled: true, version: 2, updatedAt: '2026-08-23T00:05:00.000Z' }
+          })
+        )
       }
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
@@ -1774,6 +1778,94 @@ describe('Agent chat pin availability', () => {
     vi.restoreAllMocks()
   })
 
+  it('keeps pinned drafts synchronous without storage churn and persists only changed context selectors', () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const thread = activeThread()
+    const sessionId = thread.session.id
+    const otherSessionId = '00000000-0000-4000-8000-000000000151'
+    const source = {
+      id: 9,
+      locale: 'en',
+      path: 'docs/start',
+      title: 'Start',
+      description: '',
+      sourceRevision: '8',
+      updatedAt: '2026-09-01T00:00:00Z',
+      visibility: 'public' as const,
+      excerpt: 'Private source excerpt',
+      excerptTruncated: false
+    }
+    store.thread = thread
+    store.pinOwnerId = 1
+    markWorkspaceReady(store)
+    store.updateDraft(sessionId, { sources: [source] })
+    store.setCurrentChatPinned(true)
+    const initialBookmark = window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)
+    expect(JSON.parse(initialBookmark!)).toEqual({
+      version: 1,
+      ownerId: 1,
+      sessionId,
+      context: { page: null, includeCurrentPage: true, sources: [{ id: 9, locale: 'en' }] }
+    })
+    const storageWrites = vi.spyOn(Storage.prototype, 'setItem')
+    const pinWrites = () => storageWrites.mock.calls.filter(([key]) => key === AGENT_CHAT_PIN_STORAGE_KEY)
+
+    for (let edit = 1; edit <= 20; edit += 1) {
+      const text = `Private draft ${'x'.repeat(edit)}`
+      store.setDraft(sessionId, text)
+      expect(store.drafts[sessionId]?.text).toBe(text)
+    }
+    store.updateDraft(sessionId, { mode: 'goal' })
+    store.updateDraft(sessionId, { skillVersionIds: ['00000000-0000-4000-8000-000000000152'] })
+    store.updateDraft(sessionId, { scope: { kind: 'selected' } })
+    store.updateDraft(sessionId, {
+      includeCurrentPage: true,
+      sources: [{ ...source, title: 'Refreshed title', excerpt: 'Refreshed private excerpt' }]
+    })
+    const draft = store.drafts[sessionId]
+    expect(draft.text).toBe(`Private draft ${'x'.repeat(20)}`)
+    expect(draft.mode).toBe('goal')
+    expect(draft.skillVersionIds).toEqual(['00000000-0000-4000-8000-000000000152'])
+    expect(draft.scope).toEqual({ kind: 'selected' })
+    expect(draft.sources).toEqual([{ ...source, title: 'Refreshed title', excerpt: 'Refreshed private excerpt' }])
+    expect(pinWrites()).toHaveLength(0)
+    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBe(initialBookmark)
+
+    const expectBookmark = (writes: number, includeCurrentPage: boolean, id: number, locale: string) => {
+      expect(pinWrites()).toHaveLength(writes)
+      const raw = window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!
+      expect(JSON.parse(raw)).toEqual({
+        version: 1,
+        ownerId: 1,
+        sessionId,
+        context: { page: null, includeCurrentPage, sources: [{ id, locale }] }
+      })
+      expect(raw).not.toContain('Private draft')
+      expect(raw).not.toContain('excerpt')
+    }
+    store.updateDraft(sessionId, { includeCurrentPage: false })
+    expectBookmark(1, false, 9, 'en')
+    store.updateDraft(sessionId, { sources: [{ ...source, id: 10 }] })
+    expectBookmark(2, false, 10, 'en')
+    store.updateDraft(sessionId, { sources: [{ ...source, id: 10, locale: 'fr' }] })
+    expectBookmark(3, false, 10, 'fr')
+
+    const currentBookmark = window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)
+    store.updateDraft(otherSessionId, { includeCurrentPage: false, sources: [source] })
+    store.thread = activeThread(1, otherSessionId)
+    store.updateDraft(sessionId, { includeCurrentPage: true })
+    expect(pinWrites()).toHaveLength(3)
+    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBe(currentBookmark)
+
+    store.thread = thread
+    store.pinOwnerId = null
+    store.updateDraft(sessionId, { sources: [source] })
+    expect(pinWrites()).toHaveLength(3)
+    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBe(currentBookmark)
+    expect(store.drafts[sessionId]?.sources[0]?.id).toBe(9)
+  })
+
   it('keeps a retained chat unchanged while a replacement workspace is loading, then pins the committed chat', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
@@ -2492,4 +2584,3 @@ describe('Agent unfiled history clearing', () => {
     store.closeWorkspace()
   })
 })
-
