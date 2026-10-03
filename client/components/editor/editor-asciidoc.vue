@@ -7,16 +7,11 @@
           v-icon(start) mdi-arrow-left-circle
           span {{$t('editor:backToEditor')}}
       template(v-else)
-        v-tooltip(location="bottom", color='primary')
+        v-tooltip(v-for='action in formattingActions.emphasis', :key='action.label', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.bold`)', @click='toggleMarkup({ start: `**` })').mx-0
-              v-icon mdi-format-bold
-          span {{$t('editor:markup.bold')}}
-        v-tooltip(location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.italic`)', @click='toggleMarkup({ start: `__` })').mx-0
-              v-icon mdi-format-italic
-          span {{$t('editor:markup.italic')}}
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(action.label)', @click='runFormattingAction(action)').mx-0
+              v-icon {{ action.icon }}
+          span {{$t(action.label)}}
         v-menu(:open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
             v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.headingLevel`)').mx-0
@@ -29,50 +24,23 @@
                 v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-divider(v-if='idx < 5')
         v-divider.editor-asciidoc-tool-separator(v-if='$vuetify.display.mdAndUp', vertical, aria-hidden='true')
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.subscript`)', @click='toggleMarkup({ start: `~` })').mx-0
-              v-icon mdi-format-subscript
-          span {{$t('editor:markup.subscript')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.superscript`)', @click='toggleMarkup({ start: `^` })').mx-0
-              v-icon mdi-format-superscript
-          span {{$t('editor:markup.superscript')}}
+        template(v-if='$vuetify.display.mdAndUp')
+          v-tooltip(v-for='action in formattingActions.script', :key='action.label', location="bottom", color='primary')
+            template(v-slot:activator='{ props }')
+              v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(action.label)', @click='runFormattingAction(action)').mx-0
+                v-icon {{ action.icon }}
+            span {{$t(action.label)}}
         v-menu(v-if='$vuetify.display.mdAndUp', open-on-hover)
           template(v-slot:activator='{ props }')
             v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.blockFormatting`)').mx-0
               v-icon mdi-alpha-t-box-outline
           v-list.py-0
-            v-list-item(@click='insertBeforeEachLine({ content: `> `})')
-              template(v-slot:append)
-                v-icon mdi-alpha-t-box-outline
-              v-list-item-title {{$t('editor:markup.blockquote')}}
-            v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `NOTE: `})')
-              template(v-slot:append)
-                v-icon(color='blue') mdi-alpha-n-box-outline
-              v-list-item-title {{$t(`editor:editorAsciidoc.noteBlockquote`)}}
-            v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `TIP: `})')
-              template(v-slot:append)
-                v-icon(color='success') mdi-alpha-t-box-outline
-              v-list-item-title {{$t(`editor:editorAsciidoc.tipBlockquote`)}}
-            v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `WARNING: `})')
-              template(v-slot:append)
-                v-icon(color='warning') mdi-alpha-w-box-outline
-              v-list-item-title {{$t('editor:markup.blockquoteWarning')}}
-            v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `CAUTION: `})')
-              template(v-slot:append)
-                v-icon(color='purple') mdi-alpha-c-box-outline
-              v-list-item-title {{$t(`editor:editorAsciidoc.cautionBlockquote`)}}
-            v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `IMPORTANT: `})')
-              template(v-slot:append)
-                v-icon(color='error') mdi-alpha-i-box-outline
-              v-list-item-title {{$t(`editor:editorAsciidoc.importantBlockquote`)}}
+            template(v-for='(action, index) in formattingActions.blocks', :key='action.label')
+              v-divider(v-if='index > 0')
+              v-list-item(@click='runFormattingAction(action)')
+                template(v-slot:append)
+                  v-icon(:color='action.color') {{ action.desktopIcon || action.icon }}
+                v-list-item-title {{$t(action.label)}}
         v-divider.editor-asciidoc-tool-separator(v-if='$vuetify.display.mdAndUp', vertical, aria-hidden='true')
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
@@ -107,51 +75,16 @@
               )
                 v-icon mdi-dots-horizontal
             v-list(nav)
-              v-list-item(@click='insertLink')
+              v-list-item(v-for='action in formattingActions.insert', :key='action.label', @click='runFormattingAction(action)')
                 template(v-slot:prepend)
-                  v-icon.mr-3 mdi-link-plus
-                v-list-item-title {{$t('editor:markup.insertLink')}}
-              v-list-item(@click='toggleModal(`editorModalMedia`)')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-folder-multiple-image
-                v-list-item-title {{$t('editor:markup.insertAssets')}}
-              v-list-item(@click='toggleModal(`editorModalDrawio`)')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-chart-multiline
-                v-list-item-title {{$t('editor:markup.insertDiagram')}}
+                  v-icon.mr-3 {{ action.icon }}
+                v-list-item-title {{$t(action.label)}}
               v-divider
-              v-list-item(@click='toggleMarkup({ start: `~` })')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-format-subscript
-                v-list-item-title {{$t('editor:markup.subscript')}}
-              v-list-item(@click='toggleMarkup({ start: `^` })')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-format-superscript
-                v-list-item-title {{$t('editor:markup.superscript')}}
-              v-list-item(@click='insertBeforeEachLine({ content: `> `})')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-format-quote-open
-                v-list-item-title {{$t('editor:markup.blockquote')}}
-              v-list-item(@click='insertBeforeEachLine({ content: `NOTE: `})')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-alpha-n-box-outline
-                v-list-item-title {{$t(`editor:editorAsciidoc.noteBlockquote`)}}
-              v-list-item(@click='insertBeforeEachLine({ content: `TIP: `})')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-alpha-t-box-outline
-                v-list-item-title {{$t(`editor:editorAsciidoc.tipBlockquote`)}}
-              v-list-item(@click='insertBeforeEachLine({ content: `WARNING: `})')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-alpha-w-box-outline
-                v-list-item-title {{$t('editor:markup.blockquoteWarning')}}
-              v-list-item(@click='insertBeforeEachLine({ content: `CAUTION: `})')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-alpha-c-box-outline
-                v-list-item-title {{$t(`editor:editorAsciidoc.cautionBlockquote`)}}
-              v-list-item(@click='insertBeforeEachLine({ content: `IMPORTANT: `})')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-alpha-i-box-outline
-                v-list-item-title {{$t(`editor:editorAsciidoc.importantBlockquote`)}}
+              template(v-for='group in mobileFormattingGroups', :key='group[0].label')
+                v-list-item(v-for='action in group', :key='action.label', @click='runFormattingAction(action)')
+                  template(v-slot:prepend)
+                    v-icon.mr-3 {{ action.icon }}
+                  v-list-item-title {{$t(action.label)}}
               v-divider
               v-list-item(@click='toggleFullscreen')
                 template(v-slot:prepend)
@@ -160,21 +93,11 @@
 
     .editor-asciidoc-main
       .editor-asciidoc-sidebar(role='toolbar', aria-orientation='vertical', :aria-label='$t(`editor:editorAsciidoc.toolbarInsertTools`)', v-roving-toolbar='{ onEscape: focusEditor }')
-        v-tooltip(location="right")
+        v-tooltip(v-for='(action, index) in formattingActions.insert', :key='action.label', location="right")
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.insertLink`)', @click='insertLink').mx-0
-              v-icon mdi-link-plus
-          span {{$t('editor:markup.insertLink')}}
-        v-tooltip(location="right")
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
-              v-icon(:color='activeModal === `editorModalMedia` ? `primary` : undefined') mdi-folder-multiple-image
-          span {{$t('editor:markup.insertAssets')}}
-        v-tooltip(location="right")
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', :aria-pressed='activeModal === `editorModalDrawio`', @click='toggleModal(`editorModalDrawio`)').mx-0
-              v-icon(:color='activeModal === `editorModalDrawio` ? `primary` : undefined') mdi-chart-multiline
-          span {{$t('editor:markup.insertDiagram')}}
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :class='{ "mt-3": index > 0 }', :aria-label='$t(action.label)', :aria-pressed='action.kind === `modal` ? activeModal === action.value : undefined', @click='runFormattingAction(action)').mx-0
+              v-icon(:color='action.kind === `modal` && activeModal === action.value ? `primary` : undefined') {{ action.icon }}
+          span {{$t(action.label)}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right")
@@ -243,6 +166,41 @@ interface MarkerOptions {
   action: EventListener
 }
 
+type FormattingAction = {
+  readonly label: string
+  readonly icon: string
+  readonly desktopIcon?: string
+  readonly color?: string
+} & (
+  | { readonly kind: 'markup' | 'line' | 'modal'; readonly value: string }
+  | { readonly kind: 'link'; readonly value?: never }
+)
+
+const formattingActions: Readonly<Record<'emphasis' | 'script' | 'blocks' | 'insert', readonly FormattingAction[]>> = {
+  emphasis: [
+    { kind: 'markup', value: '**', icon: 'mdi-format-bold', label: 'editor:markup.bold' },
+    { kind: 'markup', value: '__', icon: 'mdi-format-italic', label: 'editor:markup.italic' }
+  ],
+  script: [
+    { kind: 'markup', value: '~', icon: 'mdi-format-subscript', label: 'editor:markup.subscript' },
+    { kind: 'markup', value: '^', icon: 'mdi-format-superscript', label: 'editor:markup.superscript' }
+  ],
+  blocks: [
+    { kind: 'line', value: '> ', icon: 'mdi-format-quote-open', desktopIcon: 'mdi-alpha-t-box-outline', label: 'editor:markup.blockquote' },
+    { kind: 'line', value: 'NOTE: ', icon: 'mdi-alpha-n-box-outline', color: 'blue', label: 'editor:editorAsciidoc.noteBlockquote' },
+    { kind: 'line', value: 'TIP: ', icon: 'mdi-alpha-t-box-outline', color: 'success', label: 'editor:editorAsciidoc.tipBlockquote' },
+    { kind: 'line', value: 'WARNING: ', icon: 'mdi-alpha-w-box-outline', color: 'warning', label: 'editor:markup.blockquoteWarning' },
+    { kind: 'line', value: 'CAUTION: ', icon: 'mdi-alpha-c-box-outline', color: 'purple', label: 'editor:editorAsciidoc.cautionBlockquote' },
+    { kind: 'line', value: 'IMPORTANT: ', icon: 'mdi-alpha-i-box-outline', color: 'error', label: 'editor:editorAsciidoc.importantBlockquote' }
+  ],
+  insert: [
+    { kind: 'link', icon: 'mdi-link-plus', label: 'editor:markup.insertLink' },
+    { kind: 'modal', value: 'editorModalMedia', icon: 'mdi-folder-multiple-image', label: 'editor:markup.insertAssets' },
+    { kind: 'modal', value: 'editorModalDrawio', icon: 'mdi-chart-multiline', label: 'editor:markup.insertDiagram' }
+  ]
+}
+const mobileFormattingGroups = [formattingActions.script, formattingActions.blocks] as const
+
 // ========================================
 // Vue Component
 // ========================================
@@ -254,7 +212,7 @@ export default defineComponent({
   emits: ['editor-adapter', 'editor-adapter-clear'],
   setup() {
     const { mdAndUp } = useDisplay()
-    return { mdAndUp }
+    return { mdAndUp, formattingActions, mobileFormattingGroups }
   },
   data() {
     return {
@@ -314,6 +272,22 @@ export default defineComponent({
     }
   },
   methods: {
+    runFormattingAction(action: FormattingAction) {
+      switch (action.kind) {
+        case 'markup':
+          this.toggleMarkup({ start: action.value })
+          break
+        case 'line':
+          this.insertBeforeEachLine({ content: action.value })
+          break
+        case 'modal':
+          this.toggleModal(action.value)
+          break
+        case 'link':
+          this.insertLink()
+          break
+      }
+    },
     focusEditor () {
       if (this.previewShown && this.$vuetify.display.smAndDown) {
         this.previewShown = false
