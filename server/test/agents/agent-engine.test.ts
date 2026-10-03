@@ -1753,6 +1753,38 @@ describe('Ax agent engine', () => {
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual([adaptableCitation])
   })
 
+  it.each(['M.', 'M. A.'])('keeps name initials %s inside an immediately cited qualified source claim', async initials => {
+    const source = `- **Discount:** Use ***50/20*** for all *(per ${initials} Quinn to promote the range - 8.23.22)*`
+    const answer = `${source} [[cite:${adaptableCitation}]]`
+    const fixture = questionFixture('native', [
+      { calls: [{ id: 'read-initial-qualified-discount', name: 'pages.get', arguments: { id: 42 } }] },
+      { answer }
+    ], () => questionReadPage(42, '1', 'Product programs', 'product-programs', 'Pricing', 'pricing', source))
+    const result = await fixture.execute('What discount applies, including its qualification?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual([adaptableCitation])
+  })
+
+  it.each([
+    ['uncited preceding sentence', (source: string) => `The program has ended. ${source}`],
+    ['changed discount', (source: string) => source.replace('50/20', '50/30')],
+    ['changed date', (source: string) => source.replace('8.23.22', '8.24.22')],
+    ['changed name', (source: string) => source.replace('Quinn', 'Bell')]
+  ])('rejects %s beside a qualified claim containing a name initial', async (_label, change) => {
+    const source = 'Discount: Use 50/20 for all (per M. Quinn to promote the range - 8.23.22)'
+    const corrected = `${source} [[cite:${adaptableCitation}]]`
+    const fixture = questionFixture('native', [
+      { calls: [{ id: 'read-initial-qualified-discount', name: 'pages.get', arguments: { id: 42 } }] },
+      { answer: `${change(source)} [[cite:${adaptableCitation}]]` },
+      { answer: corrected }
+    ], () => questionReadPage(42, '1', 'Product programs', 'product-programs', 'Pricing', 'pricing', source))
+    await fixture.execute('What discount applies, including its qualification?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([
+      { accepted: false }, { accepted: true }
+    ])
+  })
+
   it.each([
     ['changed identity', adaptableContact.replace('Maya Quinn', 'Noah Bell')],
     ['changed numeric value', adaptableContact.replace('555-0100 x42', '555-0100 x43')],
