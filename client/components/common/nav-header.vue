@@ -50,20 +50,19 @@
               span.nav-header-title-line(v-for='(titleLine, titleLineIndex) in titleLines', :key='titleLineIndex') {{ titleLine }}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
-          v-tooltip(location="bottom", v-if='!hideSearch', :text='transportVerified ? $t(`common:header.browseTags`) : navigationUnavailableReason')
-            template(v-slot:activator='{ props }')
-              v-btn.nav-header-browse(
-                v-bind='props'
-                icon
-                href='/t'
-                :aria-disabled='!transportVerified ? `true` : undefined'
-                data-search-modal-action
-                variant='outlined'
-                :aria-current='mode === `tags` ? `page` : undefined'
-                :aria-label='$t(`common:header.browseTags`)'
-                @click='guardHeaderNavigation'
-              )
-                v-icon(size='18') mdi-tag-outline
+          v-btn.nav-header-browse(
+            v-if='!hideSearch'
+            icon
+            href='/t'
+            :aria-disabled='!transportVerified ? `true` : undefined'
+            data-search-modal-action
+            variant='outlined'
+            :aria-current='mode === `tags` ? `page` : undefined'
+            :aria-label='$t(`common:header.browseTags`)'
+            @click='guardHeaderNavigation'
+          )
+            v-icon(size='18') mdi-tag-outline
+            v-tooltip(activator='parent', location='bottom', :text='transportVerified ? $t(`common:header.browseTags`) : navigationUnavailableReason')
 
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
@@ -100,44 +99,27 @@
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', :aria-label='$t(`common:header.pageLoading`, { defaultValue: `Page loading` })')
-          v-tooltip(location='bottom', :text='$t(`common:header.agent`, { defaultValue: `Wiki Agent` })')
-            template(v-slot:activator='{ props }')
-              v-btn.nav-header-agent(
-                v-bind='props'
-                v-if='canEnterAgent && $vuetify.display.mdAndUp'
-                icon
-                rounded='lg'
-                :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
-                data-search-modal-action
-                @click='openAgent'
-              )
-                v-icon(icon='mdi-creation-outline')
-                ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+          v-btn.nav-header-agent(
+            v-if='canEnterAgent && ($vuetify.display.mdAndUp || ($vuetify.display.smAndDown && !$vuetify.display.xs))'
+            icon
+            rounded='lg'
+            :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
+            data-search-modal-action
+            @click='openAgent'
+          )
+            v-icon(icon='mdi-creation-outline')
+            ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+            v-tooltip(activator='parent', location='bottom', :text='$t(`common:header.agent`, { defaultValue: `Wiki Agent` })')
           template(v-if='hasWritePagesPermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-tooltip(location='bottom', :text='onlineActionReady ? $t(`common:accountMenu.editPage`, { defaultValue: `Edit page` }) : onlineActionUnavailableReason')
-              template(v-slot:activator='{ props }')
-                v-btn.nav-header-edit-btn(
-                  v-bind='props'
-                  icon
-                  rounded='lg'
-                  :aria-disabled='!onlineActionReady ? `true` : undefined'
-                  @click='pageEdit'
-                  :aria-label='$t(`common:header.edit`)'
-                )
-                  v-icon(icon='mdi-pencil')
-          v-tooltip(location='bottom', :text='$t(`common:header.agent`, { defaultValue: `Wiki Agent` })')
-            template(v-slot:activator='{ props }')
-              v-btn.nav-header-agent(
-                v-bind='props'
-                v-if='canEnterAgent && $vuetify.display.smAndDown && !$vuetify.display.xs'
-                icon
-                rounded='lg'
-                :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
-                data-search-modal-action
-                @click='openAgent'
-              )
-                v-icon(icon='mdi-creation-outline')
-                ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+            v-btn.nav-header-edit-btn(
+              icon
+              rounded='lg'
+              :aria-disabled='!onlineActionReady ? `true` : undefined'
+              @click='pageEdit'
+              :aria-label='$t(`common:header.edit`)'
+            )
+              v-icon(icon='mdi-pencil')
+              v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:accountMenu.editPage`, { defaultValue: `Edit page` }) : onlineActionUnavailableReason')
 
           //- (mobile) SEARCH TOGGLE
 
@@ -153,19 +135,18 @@
             :aria-label='searchIsShown ? $t(`common:header.searchCloseLabel`, { defaultValue: `Close search` }) : $t(`common:header.searchOpen`, { defaultValue: `Open search` })'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
-          v-tooltip.nav-header-mobile-browse(v-if='!hideSearch && $vuetify.display.smAndDown && !$vuetify.display.xs', location='bottom', :text='transportVerified ? $t(`common:header.browseTags`) : navigationUnavailableReason')
-            template(v-slot:activator='{ props }')
-              v-btn.nav-header-browse(
-                v-bind='props'
-                icon
-                href='/t'
-                :aria-disabled='!transportVerified ? `true` : undefined'
-                data-search-modal-action
-                :aria-current='mode === `tags` ? `page` : undefined'
-                :aria-label='$t(`common:header.browseTags`)'
-                @click='guardHeaderNavigation'
-              )
-                v-icon mdi-tag-outline
+          v-btn.nav-header-browse(
+            v-if='!hideSearch && $vuetify.display.smAndDown && !$vuetify.display.xs'
+            icon
+            href='/t'
+            :aria-disabled='!transportVerified ? `true` : undefined'
+            data-search-modal-action
+            :aria-current='mode === `tags` ? `page` : undefined'
+            :aria-label='$t(`common:header.browseTags`)'
+            @click='guardHeaderNavigation'
+          )
+            v-icon mdi-tag-outline
+            v-tooltip.nav-header-mobile-browse(activator='parent', location='bottom', :text='transportVerified ? $t(`common:header.browseTags`) : navigationUnavailableReason')
           .nav-header-slot-actions(v-if='($vuetify.display.mdAndUp || mobileActions) && $slots.actions')
             slot(name='actions')
           //- Divider between the authoring cluster (Agent / Edit) and the
@@ -180,16 +161,15 @@
           template(v-if='mode === `view` && locales.length > 0 && $vuetify.display.mdAndUp')
             v-menu(location="bottom end", transition='slide-y-transition', max-height='320px', min-width='210px')
               template(v-slot:activator='{ props: menuProps }')
-                v-tooltip(location="bottom", :text='$t(`common:header.language`)')
-                  template(v-slot:activator='{ props: tooltipProps }')
-                    v-btn(
-                      icon
-                      v-bind='mergeProps(menuProps, tooltipProps)'
-                      :class='$vuetify.locale.isRtl ? `ml-3` : ``'
-                      rounded='lg'
-                      :aria-label='$t(`common:header.language`)'
-                      )
-                      v-icon mdi-web
+                v-btn(
+                  icon
+                  v-bind='menuProps'
+                  :class='$vuetify.locale.isRtl ? `ml-3` : ``'
+                  rounded='lg'
+                  :aria-label='$t(`common:header.language`)'
+                )
+                  v-icon mdi-web
+                  v-tooltip(activator='parent', location='bottom', :text='$t(`common:header.language`)')
               v-list.nav-header-menu(nav)
                 p.nav-header-menu__note(v-if='!readerActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
                 template(v-for='lc of locales', :key='lc.code')
@@ -208,16 +188,14 @@
           template(v-if='hasAnyPagePermissions && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-menu(location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
               template(v-slot:activator='{ props: menuProps }')
-                v-tooltip(location="bottom")
-                  template(v-slot:activator='{ props: tooltipProps }')
-                    v-btn(
-                      icon
-                      v-bind='mergeProps(menuProps, tooltipProps)'
-                      rounded='lg'
-                      :aria-label='$t(`common:header.pageActions`)'
-                      )
-                      v-icon mdi-dots-horizontal
-                  span {{$t('common:header.pageActions')}}
+                v-btn(
+                  icon
+                  v-bind='menuProps'
+                  rounded='lg'
+                  :aria-label='$t(`common:header.pageActions`)'
+                )
+                  v-icon mdi-dots-horizontal
+                  v-tooltip(activator='parent', location='bottom', :text='$t(`common:header.pageActions`)')
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4 {{$t('common:header.currentPage')}}
                 p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
@@ -235,34 +213,29 @@
           //- NEW PAGE
 
           template(v-if='hasNewPagePermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-tooltip(location="bottom")
-              template(v-slot:activator='{ props }')
-                v-btn(
-                  icon
-                  rounded='lg'
-                  v-bind='props'
-                  :aria-disabled='!onlineActionReady ? `true` : undefined'
-                  @click='pageNew'
-                  :aria-label='$t(`common:header.newPage`)'
-                )
-                  v-icon mdi-text-box-plus-outline
-              span {{ onlineActionReady ? $t('common:header.newPage') : onlineActionUnavailableReason }}
+            v-btn(
+              icon
+              rounded='lg'
+              :aria-disabled='!onlineActionReady ? `true` : undefined'
+              @click='pageNew'
+              :aria-label='$t(`common:header.newPage`)'
+            )
+              v-icon mdi-text-box-plus-outline
+              v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:header.newPage`) : onlineActionUnavailableReason')
 
           //- ADMIN
 
           template(v-if='isAuthenticated && isAdmin && $vuetify.display.mdAndUp')
-            v-tooltip(location="bottom", v-if='mode !== `admin`')
-              template(v-slot:activator='{ props }')
-                v-btn(
-                  icon
-                  rounded='lg'
-                  v-bind='props'
-                  :aria-disabled='!onlineActionReady ? `true` : undefined'
-                  @click='openAdmin'
-                  :aria-label='$t(`common:header.admin`)'
-                )
-                  v-icon mdi-cog
-              span {{ onlineActionReady ? $t('common:header.admin') : onlineActionUnavailableReason }}
+            v-btn(
+              v-if='mode !== `admin`'
+              icon
+              rounded='lg'
+              :aria-disabled='!onlineActionReady ? `true` : undefined'
+              @click='openAdmin'
+              :aria-label='$t(`common:header.admin`)'
+            )
+              v-icon mdi-cog
+              v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:header.admin`) : onlineActionUnavailableReason')
             v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)')
               v-icon(start) mdi-exit-to-app
           v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
@@ -364,7 +337,7 @@
             template(v-slot:activator='{ props: menuProps }')
               //- Touch keeps the hover state after a tap; the tooltip must not
               //- stay over the open menu.
-              v-tooltip(location="bottom", :model-value='accountTooltipOpen', @update:model-value='setAccountTooltip')
+              v-tooltip(location="bottom", :model-value='accountTooltipOpen', @update:model-value='setAccountTooltip', :text='`${accountButtonLabel} · ${connectionLabel}`')
                 template(v-slot:activator='{ props: tooltipProps }')
                   v-btn.account-menu__trigger(
                     icon
@@ -393,7 +366,6 @@
                       aria-hidden='true'
                     )
                       v-icon(:icon='connectionPresentation.icon', size='13')
-                span {{ accountButtonLabel }} · {{ connectionLabel }}
             v-list.nav-header-menu.account-menu(:aria-label='accountMenuLabel')
               template(v-if='isAuthenticated')
                 v-list-item.account-menu__profile.py-3.bg-surface-variant(
