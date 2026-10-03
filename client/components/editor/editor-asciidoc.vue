@@ -7,11 +7,9 @@
           v-icon(start) mdi-arrow-left-circle
           span {{$t('editor:backToEditor')}}
       template(v-else)
-        v-tooltip(v-for='action in formattingActions.emphasis', :key='action.label', location="bottom", color='primary')
-          template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(action.label)', @click='runFormattingAction(action)').mx-0
-              v-icon {{ action.icon }}
-          span {{$t(action.label)}}
+        v-btn(v-for='action in formattingActions.emphasis', :key='action.label', icon, rounded='md', variant='text', :aria-label='$t(action.label)', @click='runFormattingAction(action)').mx-0
+          v-icon {{ action.icon }}
+          v-tooltip(activator='parent', location='bottom', color='primary', :text='$t(action.label)')
         v-menu(:open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
             v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.headingLevel`)').mx-0
@@ -25,11 +23,9 @@
               v-divider(v-if='idx < 5')
         v-divider.editor-asciidoc-tool-separator(v-if='$vuetify.display.mdAndUp', vertical, aria-hidden='true')
         template(v-if='$vuetify.display.mdAndUp')
-          v-tooltip(v-for='action in formattingActions.script', :key='action.label', location="bottom", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(action.label)', @click='runFormattingAction(action)').mx-0
-                v-icon {{ action.icon }}
-            span {{$t(action.label)}}
+          v-btn(v-for='action in formattingActions.script', :key='action.label', icon, rounded='md', variant='text', :aria-label='$t(action.label)', @click='runFormattingAction(action)').mx-0
+            v-icon {{ action.icon }}
+            v-tooltip(activator='parent', location='bottom', color='primary', :text='$t(action.label)')
         v-menu(v-if='$vuetify.display.mdAndUp', open-on-hover)
           template(v-slot:activator='{ props }')
             v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.blockFormatting`)').mx-0
@@ -42,69 +38,54 @@
                   v-icon(:color='action.color') {{ action.desktopIcon || action.icon }}
                 v-list-item-title {{$t(action.label)}}
         v-divider.editor-asciidoc-tool-separator(v-if='$vuetify.display.mdAndUp', vertical, aria-hidden='true')
-        template(v-if='$vuetify.display.mdAndUp')
-          v-spacer
-          v-tooltip(location="bottom", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='togglePreview').mx-0
-                v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
-            span {{$t('editor:markup.togglePreviewPane')}}
-        template(v-else)
-          v-spacer
-          v-tooltip(location="bottom", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn.mx-0(
-                icon
-                rounded='md'
-                variant='text'
-                v-bind='props'
-                :aria-label='previewShown ? $t(`editor:editorAsciidoc.showEditor`) : $t(`editor:editorAsciidoc.showPreview`)'
-                :aria-pressed='previewShown'
-                @click='togglePreview'
-              )
-                v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
-            span {{ previewShown ? $t(`editor:editorAsciidoc.showEditor`) : $t('editor:markup.togglePreviewPane') }}
-          v-menu(location="left", min-width='260')
-            template(v-slot:activator='{ props }')
-              v-btn.mx-0(
-                icon
-                rounded='md'
-                variant='text'
-                v-bind='props'
-                :aria-label='$t(`editor:editorAsciidoc.moreFormattingTools`)'
-              )
-                v-icon mdi-dots-horizontal
-            v-list(nav)
-              v-list-item(v-for='action in formattingActions.insert', :key='action.label', @click='runFormattingAction(action)')
+        v-spacer
+        v-btn.mx-0(
+          icon
+          rounded='md'
+          variant='text'
+          :aria-label='$t($vuetify.display.mdAndUp ? `editor:markup.togglePreviewPane` : previewShown ? `editor:editorAsciidoc.showEditor` : `editor:editorAsciidoc.showPreview`)'
+          :aria-pressed='previewShown'
+          @click='togglePreview'
+        )
+          v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
+          v-tooltip(activator='parent', location='bottom', color='primary', :text='$t($vuetify.display.smAndDown && previewShown ? `editor:editorAsciidoc.showEditor` : `editor:markup.togglePreviewPane`)')
+        v-menu(v-if='$vuetify.display.smAndDown', location="left", min-width='260')
+          template(v-slot:activator='{ props }')
+            v-btn.mx-0(
+              icon
+              rounded='md'
+              variant='text'
+              v-bind='props'
+              :aria-label='$t(`editor:editorAsciidoc.moreFormattingTools`)'
+            )
+              v-icon mdi-dots-horizontal
+          v-list(nav)
+            v-list-item(v-for='action in formattingActions.insert', :key='action.label', @click='runFormattingAction(action)')
+              template(v-slot:prepend)
+                v-icon.mr-3 {{ action.icon }}
+              v-list-item-title {{$t(action.label)}}
+            v-divider
+            template(v-for='group in mobileFormattingGroups', :key='group[0].label')
+              v-list-item(v-for='action in group', :key='action.label', @click='runFormattingAction(action)')
                 template(v-slot:prepend)
                   v-icon.mr-3 {{ action.icon }}
                 v-list-item-title {{$t(action.label)}}
-              v-divider
-              template(v-for='group in mobileFormattingGroups', :key='group[0].label')
-                v-list-item(v-for='action in group', :key='action.label', @click='runFormattingAction(action)')
-                  template(v-slot:prepend)
-                    v-icon.mr-3 {{ action.icon }}
-                  v-list-item-title {{$t(action.label)}}
-              v-divider
-              v-list-item(@click='toggleFullscreen')
-                template(v-slot:prepend)
-                  v-icon.mr-3 mdi-arrow-expand-all
-                v-list-item-title {{$t('editor:markup.distractionFreeMode')}}
+            v-divider
+            v-list-item(@click='toggleFullscreen')
+              template(v-slot:prepend)
+                v-icon.mr-3 mdi-arrow-expand-all
+              v-list-item-title {{$t('editor:markup.distractionFreeMode')}}
 
     .editor-asciidoc-main
       .editor-asciidoc-sidebar(role='toolbar', aria-orientation='vertical', :aria-label='$t(`editor:editorAsciidoc.toolbarInsertTools`)', v-roving-toolbar='{ onEscape: focusEditor }')
-        v-tooltip(v-for='(action, index) in formattingActions.insert', :key='action.label', location="right")
-          template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='md', variant='text', v-bind='props', :class='{ "mt-3": index > 0 }', :aria-label='$t(action.label)', :aria-pressed='action.kind === `modal` ? activeModal === action.value : undefined', @click='runFormattingAction(action)').mx-0
-              v-icon(:color='action.kind === `modal` && activeModal === action.value ? `primary` : undefined') {{ action.icon }}
-          span {{$t(action.label)}}
+        v-btn(v-for='(action, index) in formattingActions.insert', :key='action.label', icon, rounded='md', variant='text', :class='{ "mt-3": index > 0 }', :aria-label='$t(action.label)', :aria-pressed='action.kind === `modal` ? activeModal === action.value : undefined', @click='runFormattingAction(action)').mx-0
+          v-icon(:color='action.kind === `modal` && activeModal === action.value ? `primary` : undefined') {{ action.icon }}
+          v-tooltip(activator='parent', location='right', :text='$t(action.label)')
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
-          v-tooltip(location="right")
-            template(v-slot:activator='{ props }')
-              v-btn.mt-3(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
-                v-icon mdi-arrow-expand-all
-            span {{$t('editor:markup.distractionFreeMode')}}
+          v-btn.mt-3(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
+            v-icon mdi-arrow-expand-all
+            v-tooltip(activator='parent', location='right', :text='$t(`editor:markup.distractionFreeMode`)')
       .editor-asciidoc-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')
       transition(name='editor-asciidoc-preview')

@@ -50,7 +50,7 @@
               span.nav-header-title-line(v-for='(titleLine, titleLineIndex) in titleLines', :key='titleLineIndex') {{ titleLine }}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
-          v-tooltip(location="bottom", v-if='!hideSearch')
+          v-tooltip(location="bottom", v-if='!hideSearch', :text='transportVerified ? $t(`common:header.browseTags`) : navigationUnavailableReason')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-browse(
                 v-bind='props'
@@ -64,7 +64,6 @@
                 @click='guardHeaderNavigation'
               )
                 v-icon(size='18') mdi-tag-outline
-            span {{ transportVerified ? $t('common:header.browseTags') : navigationUnavailableReason }}
 
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
@@ -101,7 +100,7 @@
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', :aria-label='$t(`common:header.pageLoading`, { defaultValue: `Page loading` })')
-          v-tooltip(location='bottom')
+          v-tooltip(location='bottom', :text='$t(`common:header.agent`, { defaultValue: `Wiki Agent` })')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-agent(
                 v-bind='props'
@@ -114,9 +113,8 @@
               )
                 v-icon(icon='mdi-creation-outline')
                 ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
-            span {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
           template(v-if='hasWritePagesPermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-tooltip(location='bottom')
+            v-tooltip(location='bottom', :text='onlineActionReady ? $t(`common:accountMenu.editPage`, { defaultValue: `Edit page` }) : onlineActionUnavailableReason')
               template(v-slot:activator='{ props }')
                 v-btn.nav-header-edit-btn(
                   v-bind='props'
@@ -127,8 +125,7 @@
                   :aria-label='$t(`common:header.edit`)'
                 )
                   v-icon(icon='mdi-pencil')
-              span {{ onlineActionReady ? $t('common:accountMenu.editPage', { defaultValue: 'Edit page' }) : onlineActionUnavailableReason }}
-          v-tooltip(location='bottom')
+          v-tooltip(location='bottom', :text='$t(`common:header.agent`, { defaultValue: `Wiki Agent` })')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-agent(
                 v-bind='props'
@@ -141,7 +138,6 @@
               )
                 v-icon(icon='mdi-creation-outline')
                 ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
-            span {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
 
           //- (mobile) SEARCH TOGGLE
 
@@ -157,7 +153,7 @@
             :aria-label='searchIsShown ? $t(`common:header.searchCloseLabel`, { defaultValue: `Close search` }) : $t(`common:header.searchOpen`, { defaultValue: `Open search` })'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
-          v-tooltip.nav-header-mobile-browse(v-if='!hideSearch && $vuetify.display.smAndDown && !$vuetify.display.xs', location='bottom')
+          v-tooltip.nav-header-mobile-browse(v-if='!hideSearch && $vuetify.display.smAndDown && !$vuetify.display.xs', location='bottom', :text='transportVerified ? $t(`common:header.browseTags`) : navigationUnavailableReason')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-browse(
                 v-bind='props'
@@ -170,7 +166,6 @@
                 @click='guardHeaderNavigation'
               )
                 v-icon mdi-tag-outline
-            span {{ transportVerified ? $t('common:header.browseTags') : navigationUnavailableReason }}
           .nav-header-slot-actions(v-if='($vuetify.display.mdAndUp || mobileActions) && $slots.actions')
             slot(name='actions')
           //- Divider between the authoring cluster (Agent / Edit) and the
@@ -185,7 +180,7 @@
           template(v-if='mode === `view` && locales.length > 0 && $vuetify.display.mdAndUp')
             v-menu(location="bottom end", transition='slide-y-transition', max-height='320px', min-width='210px')
               template(v-slot:activator='{ props: menuProps }')
-                v-tooltip(location="bottom")
+                v-tooltip(location="bottom", :text='$t(`common:header.language`)')
                   template(v-slot:activator='{ props: tooltipProps }')
                     v-btn(
                       icon
@@ -195,7 +190,6 @@
                       :aria-label='$t(`common:header.language`)'
                       )
                       v-icon mdi-web
-                  span {{$t('common:header.language')}}
               v-list.nav-header-menu(nav)
                 p.nav-header-menu__note(v-if='!readerActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
                 template(v-for='lc of locales', :key='lc.code')

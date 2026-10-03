@@ -371,7 +371,7 @@ describe('Knowledge / OKF editor panel', () => {
     await Vue.nextTick()
     expect(Array.from(root.querySelectorAll('button')).some(element => element.textContent?.trim() === 'Retry')).toBe(false)
     owner.mode = 'update'
-    owner.pageId = 0
+    store.page.id = 0
     await Vue.nextTick()
     expect(Array.from(root.querySelectorAll('button')).some(element => element.textContent?.trim() === 'Retry')).toBe(false)
   })
