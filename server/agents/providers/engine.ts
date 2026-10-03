@@ -861,8 +861,10 @@ const sentenceBoundaryEnds = (value: string): readonly number[] => {
     if (span !== undefined && index >= span.start && index < span.end) continue
     const end = index + boundary[1]!.length
     const preceding = value.slice(start, index + 1)
-    const abbreviation = preceding.match(/([\p{L}]+)\.$/u)?.[1]?.toLowerCase()
-    if (abbreviation !== undefined && isSourceSentenceAbbreviation(abbreviation)) continue
+    const abbreviation = preceding.match(/([\p{L}]+)\.$/u)?.[1]
+    // The boundary pattern already requires a following capitalized token.
+    // Keep same-line name initials with that token; paragraph/list splits remain separate.
+    if (abbreviation !== undefined && (isSourceSentenceAbbreviation(abbreviation) || (/^\p{Lu}$/u.test(abbreviation) && !/[\r\n]/u.test(boundary[0])))) continue
     ends.push(end)
     start = index + boundary[0].length
   }
