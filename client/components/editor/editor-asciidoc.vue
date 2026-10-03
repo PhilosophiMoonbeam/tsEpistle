@@ -444,16 +444,17 @@ export default defineComponent({
           foundStart = line
         } else if (text === '```' && foundStart !== null) {
           const start = foundStart
-          if (line - start === 2) {
+          const end = line
+          if (end - start === 2) {
             markers.push({
               kind: 'diagram',
               from: { line: start, ch: 3 },
               to: { line: start, ch: 10 },
               text: this.$t('editor:editorAsciidoc.editDiagram'),
               action: () => {
-                editor.setSelection({ line: start, ch: 0 }, { line, ch: 3 })
+                editor.setSelection({ line: start, ch: 0 }, { line: end, ch: 3 })
                 try {
-                  wikiStore.editor.activeModalData = decodeBase64Text(editor.getLine(line - 1))
+                  wikiStore.editor.activeModalData = decodeBase64Text(editor.getLine(end - 1))
                   this.toggleModal('editorModalDrawio')
                 } catch {
                   wikiStore.showNotification({
@@ -464,7 +465,7 @@ export default defineComponent({
                 }
               }
             })
-            editor.foldRange({ line: start, ch: editor.getLine(start).length }, { line, ch: 0 })
+            editor.foldRange({ line: start, ch: editor.getLine(start).length }, { line: end, ch: 0 })
           }
           foundStart = null
         }
@@ -475,7 +476,7 @@ export default defineComponent({
   mounted() {
     wikiStore.editor.editorKey = 'asciidoc'
 
-    if (this.mode === 'create') {
+    if (this.mode === 'create' && !wikiStore.editor.content) {
       wikiStore.editor.content = this.$t('editor:editorAsciidoc.headerContent')
     }
 

@@ -251,6 +251,14 @@ In the reader, the icon-only offline action sits with the other page utilities a
 
 Cached reader date presentation survives an unavailable identity check. A newly authenticated identity refreshes it from that reader's verified preferences; confirmed anonymous identity clears the cached presentation. Connectivity hints alone do not establish identity or erase readable cached dates.
 
+Saved-page cards and the active reader precede the collapsed policy explanation. Its summary exposes pending-page counts; policy errors reveal the explanation. Public and private policy metadata remain separate and are matched to each record's audience, installation, page, and locale.
+
+`/p/offline#downloaded-pages-title` scrolls and focuses the rendered Saved pages heading on direct, in-app, and same-view fragment navigation. A target inside a policy disclosure reveals that disclosure; malformed or missing targets fall back to the view heading.
+
+Ordinary corpus and policy updates revalidate the selected record without dismissing an unchanged article, changing its URL, or resetting focus or reading position. An authoritative body change rerenders the selected page while retaining position. Removal, expiry, or an identity/session-generation boundary clears the reader; selected expiry is enforced at its deadline rather than waiting for the minute refresh.
+
+Bulk saved-page removal requires unlocking an existing private vault. It removes public saved pages for the current installation and pages in the currently unlocked private vault, using each audience's current policy revision and identity fences. Completion is reported only after confirming those corpora are empty. Other installations and vaults are outside that scope; a handle or identity change interrupts removal instead of deleting from a newly opened vault.
+
 ### 8.1 Foreground snapshot synchronization
 
 An app-owned foreground coordinator owns offline snapshot reconciliation. It coalesces startup, online, foreground, manual-download, automatic-policy, and tag-subscription triggers, and runs only while the page is visible and the network is reachable. Each pass captures the session generation and policy revision; generation/revision fences reject stale writes and request a fresh pass. The service worker remains shell/cache-only and never replays snapshot mutations in the background.

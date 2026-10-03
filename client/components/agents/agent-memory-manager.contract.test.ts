@@ -13,6 +13,9 @@ const VueRuntime = await import('vue')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 
+
+const memoryWrites: Array<{ id: string; version: number; target: string; content: string; createdAt: string; updatedAt: string }> = []
+;(globalThis as typeof globalThis & { __memoryContractWrites: typeof memoryWrites }).__memoryContractWrites = memoryWrites
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-memory-manager.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
 const parsed = parse(componentSource, { filename: componentPath })
@@ -73,11 +76,14 @@ const bundledSfc = await Bun.build({
         build.onLoad({ filter: /.*/, namespace: 'agent-memory-manager-api' }, () => ({
           contents: `
             export const getAgentMemories = async () => ({
-              agent: { entries: [], characters: 0, limit: 2200 },
-              user: { entries: [], characters: 0, limit: 1375 }
+              agent: { entries: globalThis.__memoryContractWrites.filter(entry => entry.target === 'agent'), characters: 0, limit: 2200 },
+              user: { entries: globalThis.__memoryContractWrites.filter(entry => entry.target === 'user'), characters: 0, limit: 1375 }
             })
             export const clearAgentMemories = async () => undefined
-            export const createAgentMemory = async () => undefined
+            export const createAgentMemory = async (_fetcher, _csrfToken, input) => {
+              const entries = globalThis.__memoryContractWrites
+              entries.push({ id: String(entries.length + 1), version: 1, createdAt: '2026-10-02T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z', ...input })
+            }
             export const removeAgentMemory = async () => ({ characters: 0, limit: 1375 })
             export const updateAgentMemory = async () => undefined
           `,
@@ -170,6 +176,7 @@ const mountManager = async () => {
 }
 
 afterEach(() => {
+  memoryWrites.length = 0
   for (const unmount of mountedApps.splice(0)) unmount()
   browserWindow.document.body.replaceChildren()
 })
@@ -198,4 +205,27 @@ describe('Agent memory manager rendered contract', () => {
     expect(buttons[0]?.classList.contains('v-btn--active')).toBe(false)
     expect(editorLabel()).toBe('Project or workflow fact')
   })
+
+  for (const modifier of ['ctrlKey', 'metaKey'] as const) {
+    it(`saves with ${modifier}+Enter and prevents the key action without bypassing empty-draft guards`, async () => {
+      const { host, addMemory } = await mountManager()
+      addMemory.click()
+      await settle()
+      const textarea = host.querySelector<HTMLTextAreaElement>('.agent-memory__editor textarea')
+      if (!textarea) throw new Error('The memory editor did not render its textarea')
+      const guarded = new browserWindow.KeyboardEvent('keydown', { key: 'Enter', [modifier]: true, bubbles: true, cancelable: true })
+      textarea.dispatchEvent(guarded)
+      await settle()
+      expect(guarded.defaultPrevented).toBe(true)
+      expect(memoryWrites).toEqual([])
+      textarea.value = 'Keep a local fixture detail'
+      textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await settle()
+      const submit = new browserWindow.KeyboardEvent('keydown', { key: 'Enter', [modifier]: true, bubbles: true, cancelable: true })
+      textarea.dispatchEvent(submit)
+      await settle()
+      expect(submit.defaultPrevented).toBe(true)
+      expect([...host.querySelectorAll('.agent-memory__entry-content p')].map(entry => entry.textContent)).toEqual(['Keep a local fixture detail'])
+    })
+  }
 })

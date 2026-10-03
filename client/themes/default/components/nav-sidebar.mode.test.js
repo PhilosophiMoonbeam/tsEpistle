@@ -324,6 +324,61 @@ describe('Custom Navigation preserves its two views', () => {
   })
 })
 
+describe('directory navigation commits', () => {
+  for (const succeeds of [false, true]) {
+    it(`keeps the previous directory consistent while loading and ${succeeds ? 'commits the new directory on success' : 'after an HTTP failure'}`, async () => {
+      let release
+      const transport = vi.fn(() => new Promise(resolve => { release = resolve }))
+      const { sidebar, host } = renderMountedSidebar({ localStorage: storage('custom'), transport })
+      const root = sidebar.currentParent
+      const directory = treeRow(10, 0, 'Directory A', { isFolder: true })
+      const child = treeRow(11, 10, 'Directory B', { isFolder: true })
+      const oldPage = treeRow(12, 10, 'Page in A')
+      const newPage = treeRow(13, 11, 'Page in B')
+      sidebar.currentMode = 'browse'
+      sidebar.currentParent = directory
+      sidebar.parents = [root, directory]
+      sidebar.currentItems = [child, oldPage]
+      sidebar.loadedCache = [10]
+      await Vue.nextTick()
+      const request = sidebar.fetchBrowseItems(child)
+      await Vue.nextTick()
+      expect(sidebar.currentParent.id).toBe(10)
+      expect(sidebar.parents.map(item => item.id)).toEqual([0, 10])
+      expect(host.querySelector('.nav-sidebar-ancestor-trail')?.textContent).toContain('Directory A')
+      expect(host.querySelector('.nav-sidebar-page')?.textContent).toContain('Page in A')
+      release(succeeds ? treeResponse([newPage]) : {
+        ok: false, status: 500, headers: new Headers({ 'Content-Type': 'application/json' }),
+        json: async () => ({ error: 'Directory unavailable' })
+      })
+      await request
+      await Vue.nextTick()
+      expect(sidebar.navLoading).toBe(false)
+      expect(sidebar.currentParent.id).toBe(succeeds ? 11 : 10)
+      expect(sidebar.parents.map(item => item.id)).toEqual(succeeds ? [0, 10, 11] : [0, 10])
+      expect(host.querySelector('.nav-sidebar-page')?.textContent).toContain(succeeds ? 'Page in B' : 'Page in A')
+      expect(host.querySelector('[data-async-state="error"]') !== null).toBe(!succeeds)
+    })
+  }
+
+  it('does not let an older directory response replace a newer successful selection', async () => {
+    let releaseOlder
+    const transport = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { releaseOlder = resolve }))
+      .mockResolvedValue(treeResponse([treeRow(23, 20, 'Latest page')]))
+    const { sidebar } = mountSidebar({ localStorage: storage('custom'), transport, realDirectory: true })
+    const root = sidebar.currentParent
+    const older = sidebar.fetchBrowseItems(treeRow(10, 0, 'Older folder', { isFolder: true }))
+    await sidebar.fetchBrowseItems(treeRow(20, 0, 'Latest folder', { isFolder: true }))
+    releaseOlder(treeResponse([treeRow(13, 10, 'Obsolete page')]))
+    await older
+    expect(sidebar.currentParent.id).toBe(20)
+    expect(sidebar.parents.map(item => item.id)).toEqual([root.id, 20])
+    expect(sidebar.currentItems.map(item => item.id)).toEqual([23])
+    expect(sidebar.navError).toBe('')
+  })
+})
+
 
 describe('offline navigation continuity', () => {
   it('does not attempt directory requests when the connection is known to be unavailable', async () => {

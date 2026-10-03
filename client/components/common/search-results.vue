@@ -431,8 +431,8 @@ export default defineComponent({
   },
   computed: {
     search: {
-      get(): string { return wikiStore.site.search },
-      set(value: string) { wikiStore.site.search = value }
+      get(): string { return wikiStore.site.search ?? '' },
+      set(value: string | null | undefined) { wikiStore.site.search = value ?? '' }
     },
     searchMode: {
       get(): 'search' | 'ask' { return wikiStore.site.searchMode },
@@ -529,7 +529,7 @@ export default defineComponent({
       return this.response.results
     },
     normalizedSearch(): string {
-      return this.search.trim()
+      return (this.search ?? '').trim()
     },
     suggestions(): string[] {
       return this.response.suggestions
@@ -946,13 +946,13 @@ export default defineComponent({
       this.previewSelector = null
       if (scope === 'downloaded' && this.searchMode === 'ask') this.searchMode = 'search'
     },
-    queueSearch(query: string): void {
+    queueSearch(query: string | null | undefined): void {
       this.cursor = -1
       this.searchRequestId += 1
       const requestId = this.searchRequestId
       this.searchAbortController?.abort()
       this.searchAbortController = null
-      const normalizedQuery = query.trim()
+      const normalizedQuery = (query ?? '').trim()
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
       this.searchIsLoading = false

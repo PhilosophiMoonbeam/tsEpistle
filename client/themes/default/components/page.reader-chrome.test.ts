@@ -267,6 +267,29 @@ const call = (name: string, vm: Record<string, unknown>) => page.computed[name]!
 describe('page reader chrome rules', () => {
   const display = (smAndDown: boolean) => ({ $vuetify: { display: { smAndDown } } })
 
+  it('opens and closes navigation in Links and Discussion while keeping focused Article navigation suppressed', () => {
+    const navigation = page.computed.navigationOpen as unknown as {
+      get: (this: Record<string, unknown>) => boolean
+      set: (this: Record<string, unknown>, value: boolean) => void
+    }
+    const vm = { readerFocus: true, talkActive: false, linksActive: false, navShown: false }
+    navigation.set.call(vm, true)
+    expect(vm.navShown).toBe(false)
+    vm.navShown = true
+    expect(navigation.get.call(vm)).toBe(false)
+    for (const view of ['linksActive', 'talkActive'] as const) {
+      vm[view] = true
+      expect(navigation.get.call(vm)).toBe(true)
+      navigation.set.call(vm, false)
+      expect(navigation.get.call(vm)).toBe(false)
+      navigation.set.call(vm, true)
+      expect(navigation.get.call(vm)).toBe(true)
+      vm[view] = false
+      expect(navigation.get.call(vm)).toBe(false)
+    }
+    expect(vm.readerFocus).toBe(true)
+  })
+
   it('shows one edit control on small screens', () => {
     const shortcuts = (editFab: boolean) => ({ editMenuBar: true, editMenuBtn: true, editFab })
     const cases = [

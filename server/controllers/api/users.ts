@@ -399,7 +399,7 @@ router.patch('/profile', async (req, res, next) => {
     return res.status(400).json({ error: 'Profile fields must be strings' })
   }
   try {
-    await userOperations.updateProfile({ requester: req.user, input, response: res })
+    await userOperations.updateProfile({ requester: req.user, expectedAccountId: req.get('X-TsEpistle-Profile-Account'), input, response: res })
     res.json({ message: 'Profile updated successfully.' })
   } catch (err) {
     next(err)
@@ -411,7 +411,7 @@ router.patch('/profile/preferences', async (req, res, next) => {
     return res.status(400).json({ error: 'Profile preferences are invalid' })
   }
   try {
-    await userOperations.updateProfilePreferences({ requester: req.user, input: result.data, response: res })
+    await userOperations.updateProfilePreferences({ requester: req.user, expectedAccountId: req.get('X-TsEpistle-Profile-Account'), input: result.data, response: res })
     return res.json({ message: 'Profile preferences updated successfully.' })
   } catch (err) {
     return next(err)
@@ -425,7 +425,7 @@ router.post('/profile/password', async (req, res, next) => {
     return res.status(400).json({ error: 'current and newPassword must be strings' })
   }
   try {
-    await userOperations.changePassword({ requester: req.user, current, newPassword, response: res })
+    await userOperations.changePassword({ requester: req.user, expectedAccountId: req.get('X-TsEpistle-Profile-Account'), current, newPassword, response: res })
     res.json({ message: 'Password changed successfully.' })
   } catch (err) {
     next(err)

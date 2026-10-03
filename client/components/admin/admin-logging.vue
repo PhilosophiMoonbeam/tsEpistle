@@ -669,11 +669,19 @@ const applySaved = async () => {
   }
 }
 
+function beforeUnload(event: BeforeUnloadEvent) {
+  if (dirty.value || busy.value) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+}
 onMounted(() => {
   void load()
+  window.addEventListener('beforeunload', beforeUnload)
 })
 onBeforeUnmount(() => {
   loadSequence += 1
+  window.removeEventListener('beforeunload', beforeUnload)
 })
 onBeforeRouteLeave(async () => {
   if (!dirty.value) return true

@@ -24,6 +24,7 @@ const t = useTranslate()
 
 type StorageState = 'uninspected' | 'checking' | 'available' | 'unavailable' | 'unsupported-schema' | 'blocked-upgrade' | 'quota'
 const browserAvailable = typeof window !== 'undefined' && typeof navigator !== 'undefined'
+const settingsRoot = ref<HTMLElement | { $el?: HTMLElement } | null>(null)
 const offlineSyncService = inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY)
 const offlineStorage = shallowRef<OfflineStorage | null>(null)
 const storageEstimate = shallowRef<OfflineStorageEstimate | null>(null)
@@ -79,6 +80,7 @@ const readingStateDescription = computed(() => ({
   unlocked: t('common:offlineSettings.privateOfflinePagesAvailable'),
   unavailable: t('common:offlineSettings.privateOfflineReadingUnavailable')
 }[readingState.value]))
+const removalNeedsUnlock = computed(() => readingState.value === 'locked' || readingState.value === 'unavailable')
 const libraryBusy = ref(false)
 let safetyRevision = 0
 let ownsReloadSafety = false
@@ -328,36 +330,75 @@ async function requestPersistence(): Promise<void> {
 }
 async function removeDownloadedPages(): Promise<void> {
   const storage = offlineStorage.value
-  if (!storage || clearBusy.value) return
+  if (!storage || clearBusy.value || readingBusy.value) return
   clearBusy.value = true
   removeNotice.value = ''
   try {
     if (!browserAvailable) return
     const origin = window.location.origin
+    const handle = currentOfflineReadingHandle()
+    const vault = await storage.getReadingVault()
+    if (vault && (!handle || !isCurrentOfflineReadingHandle(handle) || handle.context.canonicalOrigin !== origin)) {
+      removeNotice.value = t('common:offlineSettings.unlockBeforeRemovingPages', { defaultValue: 'Unlock private reading before removing saved pages.' })
+      await refreshReadingState()
+      return
+    }
     const corpus = await storage.readSnapshotCorpus()
     const expectedSessionGeneration = corpus.sessionGeneration
-    for (const record of corpus.snapshots) {
-      if (record.siteId !== origin) continue
-      const currentPolicy = await storage.readOfflinePolicy({ expectedSessionGeneration })
-      await storage.removeOfflinePage(
-        { siteId: record.siteId, pageId: record.pageId, locale: record.locale },
-        {
-          expectedSessionGeneration,
-          expectedPolicyRevision: currentPolicy.state.policyRevision
-        }
-      )
+    const currentRemoval = (): void => {
+      if (offlineStorage.value !== storage || currentOfflineReadingHandle() !== handle ||
+        (handle && (!isCurrentOfflineReadingHandle(handle) || handle.sessionGeneration !== expectedSessionGeneration)))
+        throw new OfflineStorageError('generation-fenced', t('common:offlineLibrary.savedPagesChangedDevice'))
     }
+    currentRemoval()
+    const privateCorpus = handle
+      ? await storage.readSnapshotCorpus({ readingHandle: handle, expectedSessionGeneration })
+      : null
+    currentRemoval()
+    const scopes = [
+      { records: corpus.snapshots, siteId: origin, readingHandle: undefined },
+      ...(handle && privateCorpus ? [{ records: privateCorpus.snapshots, siteId: handle.context.siteId, readingHandle: handle }] : [])
+    ]
+    for (const scope of scopes) {
+      const removedPages = new Set<number>()
+      for (const record of scope.records) {
+        if (record.siteId !== scope.siteId || removedPages.has(record.pageId)) continue
+        currentRemoval()
+        const options = { expectedSessionGeneration, ...(scope.readingHandle ? { readingHandle: scope.readingHandle } : {}) }
+        const currentPolicy = await storage.readOfflinePolicy(options)
+        currentRemoval()
+        await storage.removeOfflinePage(
+          { siteId: record.siteId, pageId: record.pageId, locale: record.locale },
+          { ...options, expectedPolicyRevision: currentPolicy.state.policyRevision }
+        )
+        removedPages.add(record.pageId)
+      }
+    }
+    currentRemoval()
+    for (const scope of scopes) {
+      const remaining = await storage.readSnapshotCorpus({
+        expectedSessionGeneration,
+        ...(scope.readingHandle ? { readingHandle: scope.readingHandle } : {})
+      })
+      currentRemoval()
+      if (remaining.snapshots.some(record => record.siteId === scope.siteId))
+        throw new OfflineStorageError('transaction', t('common:offlineSettings.savedPagesRemain', { defaultValue: 'Some saved pages remain. Refresh the library before trying again.' }))
+    }
+    const completion = handle
+      ? t('common:offlineSettings.savedPagesRemovedScope', { defaultValue: 'Public saved pages for this site and saved pages in the unlocked private vault were removed.' })
+      : t('common:offlineSettings.publicSavedPagesRemoved', { defaultValue: 'Public saved pages for this site were removed.' })
     const syncResult = offlineSyncService
       ? await offlineSyncService.reconcile('manual')
       : createOfflineSyncUnavailableResult(t('common:offlineSettings.synchronizationWillResumeWhen'))
+    currentRemoval()
     if (syncResult.outcome === 'error') {
-      removeNotice.value = syncResult.diagnostics?.lastError ?? t('common:offlineSettings.savedPagesWereRemoved')
+      removeNotice.value = `${completion} ${syncResult.diagnostics?.lastError ?? ''}`.trim()
     } else if (syncResult.outcome === 'unavailable') {
-      removeNotice.value = t('common:offlineSettings.savedPagesWereRemoved2', { error: syncResult.error, interpolation: { escapeValue: false } })
+      removeNotice.value = `${completion} ${t('common:offlineSettings.removalSyncUnavailable', { defaultValue: 'Synchronization will resume when available: {{error}}', error: syncResult.error, interpolation: { escapeValue: false } })}`
     } else if (syncResult.outcome === 'offline') {
-      removeNotice.value = t('common:offlineSettings.savedPagesWereRemoved3')
+      removeNotice.value = `${completion} ${t('common:offlineSettings.removalSyncOffline', { defaultValue: 'Synchronization will resume when you are online.' })}`
     } else {
-      removeNotice.value = t('common:offlineSettings.savedPagesWereRemoved4')
+      removeNotice.value = completion
     }
     libraryRefreshToken.value += 1
     await refreshStorageStatus()
@@ -456,6 +497,27 @@ function handleLibraryChanged(): void {
   libraryNotice.value = ''
   void refreshStorageStatus()
 }
+
+async function focusSettingsFragment(): Promise<void> {
+  if (!browserAvailable) return
+  await nextTick()
+  const root = settingsRoot.value instanceof HTMLElement ? settingsRoot.value : settingsRoot.value?.$el
+  if (!root || !window.location.hash) return
+  let id: string
+  try {
+    id = decodeURIComponent(window.location.hash.slice(1))
+  } catch {
+    return
+  }
+  const target = document.getElementById(id)
+  if (!target || !root.contains(target) || target.closest('[hidden], [inert]')) return
+  for (let ancestor = target.parentElement; ancestor && root.contains(ancestor); ancestor = ancestor.parentElement) {
+    if (ancestor instanceof HTMLDetailsElement) ancestor.open = true
+  }
+  target.setAttribute('tabindex', '-1')
+  target.scrollIntoView({ block: 'start' })
+  target.focus({ preventScroll: true })
+}
 function handleReadingStateEvent(): void {
   const handle = currentOfflineReadingHandle()
   if (!handle) {
@@ -490,6 +552,8 @@ onMounted(() => {
   })
   window.addEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateEvent)
   window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, handleReadingStateEvent)
+  window.addEventListener('hashchange', focusSettingsFragment)
+  void focusSettingsFragment()
   stopReadingStateEvents = () => {
     window.removeEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateEvent)
     window.removeEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, handleReadingStateEvent)
@@ -505,6 +569,7 @@ onBeforeUnmount(() => {
   unlockController?.abort()
   unlockController = null
   unsubscribeStorageChanges?.()
+  window.removeEventListener('hashchange', focusSettingsFragment)
   clearFocusScope?.deactivate({ restoreFocus: false })
   clearFocusScope = null
   clearRestoreTarget.value = null
@@ -514,7 +579,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <v-container class="offline-settings" fluid>
+  <v-container ref="settingsRoot" class="offline-settings" fluid>
     <header class="offline-settings__heading">
       <v-avatar size="56" color="primary" variant="tonal"><v-icon size="30">mdi-cloud-check-outline</v-icon></v-avatar>
       <div>
@@ -541,7 +606,7 @@ onBeforeUnmount(() => {
       <aside class="offline-settings__utilities" :aria-label="$t('common:offlineSettings.deviceSettings')">
         <v-card class="offline-settings__reading" variant="flat">
           <div class="offline-settings__reading-heading">
-            <h2 class="text-title-large">{{ $t('common:offlineSettings.privateOfflineReading') }}</h2>
+            <h2 id="offline-private-reading-title" class="text-title-large" tabindex="-1">{{ $t('common:offlineSettings.privateOfflineReading') }}</h2>
             <v-chip size="small" :color="readingState === 'unlocked' ? 'success' : 'default'" variant="tonal">{{ readingStateLabel }}</v-chip>
           </div>
           <p>{{ readingStateDescription }}</p>
@@ -610,8 +675,10 @@ onBeforeUnmount(() => {
           <v-divider class="my-4" />
           <h3 class="text-title-medium">{{ $t('common:offlineSettings.removeLocalData') }}</h3>
           <p>{{ $t('common:offlineSettings.removingSavedPagesLeaves') }}</p>
+          <p>{{ $t('common:offlineSettings.removalScope', { defaultValue: 'Removes public saved pages for this site and pages in the currently unlocked private vault. Other vaults and sites are unchanged.' }) }}</p>
+          <p v-if="removalNeedsUnlock"><a href="#offline-private-reading-title">{{ $t('common:offlineSettings.unlockBeforeRemovingPages', { defaultValue: 'Unlock private reading before removing saved pages.' }) }}</a></p>
           <div class="offline-settings__actions">
-            <v-btn variant="text" :disabled="!offlineStorage || clearBusy || persistenceBusy || storageEstimate?.snapshotCount === 0" @click="removeDownloadedPages">{{ $t('common:offlineSettings.removeSavedPages') }}</v-btn>
+            <v-btn variant="text" :disabled="!offlineStorage || clearBusy || readingBusy || removalNeedsUnlock || persistenceBusy || storageEstimate?.snapshotCount === 0" @click="removeDownloadedPages">{{ $t('common:offlineSettings.removeSavedPages') }}</v-btn>
             <v-btn color="error" variant="text" :disabled="!offlineStorage || clearBusy || persistenceBusy" @click="beginClearDeviceData">{{ $t('common:offlineSettings.clearOfflineDataDevice') }}</v-btn>
           </div>
           <p v-if="removeNotice" class="offline-settings__notice" role="status">{{ removeNotice }}</p>

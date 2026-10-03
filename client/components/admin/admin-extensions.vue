@@ -142,7 +142,7 @@ const router = useRouter()
 const workspace = shallowRef<ExtensionsWorkspace | null>(null)
 const loading = ref(true)
 const error = ref('')
-const search = ref('')
+const search = ref<string | null>('')
 const statusFilter = ref('all')
 const statusFilters = [
   { title: t('admin:extensions.allObservations'), value: 'all' },
@@ -157,7 +157,7 @@ let sequence = 0
 let controller: AbortController | null = null
 
 const filteredExtensions = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase()
+  const query = (search.value || '').trim().toLocaleLowerCase()
   return (workspace.value?.extensions || []).filter((extension) => {
     const text = [
       extension.key,

@@ -1661,8 +1661,8 @@ export default defineComponent({
   },
   computed: {
     navigationOpen: {
-      get (): boolean { return (this.talkActive || !this.readerFocus) && this.navShown },
-      set (value: boolean) { if (!this.readerFocus || this.talkActive) this.navShown = value }
+      get (): boolean { return (this.talkActive || this.linksActive || !this.readerFocus) && this.navShown },
+      set (value: boolean) { if (!this.readerFocus || this.talkActive || this.linksActive) this.navShown = value }
     },
     navDrawerWidth (): number {
       return this.$vuetify.display.width >= 1280 ? 269.6 : 244

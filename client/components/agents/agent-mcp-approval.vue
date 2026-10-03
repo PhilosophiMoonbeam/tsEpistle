@@ -66,7 +66,7 @@
           prepend-icon="mdi-refresh"
           :loading="loading"
           :disabled="loading || networkBlocked"
-          @click="load"
+          @click="load()"
         >{{ $t('common:agentMcpApproval.retry') }}</v-btn>
       </div>
     </v-alert>

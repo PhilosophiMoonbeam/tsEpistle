@@ -47,6 +47,13 @@ const routePage = heading =>
     }
   })
 
+const offlinePage = Vue.defineComponent({
+  setup: () => () => Vue.h('section', [
+    Vue.h('h1', 'Offline access'),
+    Vue.h('h2', { id: 'downloaded-pages-title' }, 'Saved pages')
+  ])
+})
+
 let app
 afterEach(() => {
   app?.unmount()
@@ -63,7 +70,7 @@ const settle = async () => {
   }
 }
 
-const mountProfile = async () => {
+const mountProfile = async (initialPath = '/profile') => {
   const wikiStore = { page: { mode: 'view' } }
   const options = evaluate(Vue.defineComponent, Vue.ref, Vue.watch, () => ({ mdAndUp: Vue.ref(true) }), wikiStore, ConfirmDialogHost)
   const router = createRouter({
@@ -71,7 +78,8 @@ const mountProfile = async () => {
     routes: [
       { path: '/profile', component: routePage('Your profile') },
       { path: '/pages', component: routePage('Your pages') },
-      { path: '/loading', component: routePage(null) }
+      { path: '/loading', component: routePage(null) },
+      { path: '/offline', component: () => Promise.resolve(offlinePage) }
     ]
   })
   app = Vue.createApp({ ...options, render })
@@ -98,7 +106,7 @@ const mountProfile = async () => {
   const componentErrors = []
   app.config.errorHandler = error => componentErrors.push(error)
   app.use(router)
-  await router.push('/profile')
+  await router.push(initialPath)
   await router.isReady()
   const host = document.createElement('div')
   document.body.append(host)
@@ -149,6 +157,50 @@ describe('profile route accessibility', () => {
     expect(heading.getAttribute('tabindex')).toBe('-1')
     expect(document.activeElement).toBe(heading)
     expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+  })
+
+  it('resolves and focuses a direct lazy-route fragment instead of its first heading', async () => {
+    const scroll = vi.spyOn(browserWindow.Element.prototype, 'scrollIntoView')
+    const { host, componentErrors } = await mountProfile('/offline#downloaded-pages-title')
+    const target = host.querySelector('#downloaded-pages-title')
+
+    expect(document.activeElement).toBe(target)
+    expect(target.getAttribute('tabindex')).toBe('-1')
+    expect(host.querySelector('main h1').hasAttribute('tabindex')).toBe(false)
+    expect(scroll).toHaveBeenCalledWith({ block: 'start' })
+    expect(componentErrors).toEqual([])
+  })
+
+  it('honors in-app and same-view fragment navigation after rendering', async () => {
+    const { host, router, componentErrors } = await mountProfile()
+    const scroll = vi.spyOn(browserWindow.Element.prototype, 'scrollIntoView')
+
+    await router.push('/offline#downloaded-pages-title')
+    await settle()
+    const target = host.querySelector('#downloaded-pages-title')
+    expect(document.activeElement).toBe(target)
+    expect(scroll).toHaveBeenCalledWith({ block: 'start' })
+
+    await router.push('/offline')
+    await settle()
+    host.querySelector('main h1').setAttribute('tabindex', '-1')
+    host.querySelector('main h1').focus()
+    await router.push('/offline#downloaded%2Dpages%2Dtitle')
+    await settle()
+    expect(document.activeElement).toBe(target)
+    expect(componentErrors).toEqual([])
+  })
+
+  it('falls back to the incoming heading for missing or malformed fragments', async () => {
+    const { host, router, componentErrors } = await mountProfile()
+    await router.push('/offline#missing')
+    await settle()
+    expect(document.activeElement).toBe(host.querySelector('main h1'))
+
+    await router.push('/pages#%E0%A4%A')
+    await settle()
+    expect(document.activeElement).toBe(host.querySelector('main h1'))
+    expect(componentErrors).toEqual([])
   })
 
   it('preserves focus when a route has no heading and can focus the next available heading', async () => {

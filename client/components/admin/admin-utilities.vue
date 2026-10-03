@@ -37,7 +37,7 @@ v-container.admin-utilities(fluid)
         v-card.admin-utilities-nav
           v-card-text.pa-2
             v-select.d-lg-none(
-              v-model='section'
+              :model-value='section'
               :items='tools'
               :item-title='(tool: { title: string }) => $t(tool.title)'
               item-value='key'
@@ -401,11 +401,7 @@ export default defineComponent({
     },
     async selectSection(section: ToolKey) {
       if (this.busy || this.pendingRequest || section === this.section) return
-      if (!(await this.canLeave())) {
-        const value = this.$route.query.section
-        this.section = typeof value === 'string' && tools.some((tool) => tool.key === value) ? (value as ToolKey) : 'content'
-        return
-      }
+      if (!(await this.canLeave())) return
       this.$router.replace({ query: { ...this.$route.query, section } })
     },
     selectReceipt(receipt: string) {

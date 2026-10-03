@@ -406,6 +406,12 @@ const beginDictationSubmit = (): boolean => {
   dictationIntent.value = 'send'
   return true
 }
+const failCapture = (current: number, message: string): void => {
+  if (disposed || current !== generation || props.networkBlocked) return
+  cancelDictation()
+  dictationError.value = message
+  emit('dictationFailed', message)
+}
 /** Speech-activity tick: starts the countdown on voice, endpoints on silence. */
 const monitorSpeech = () => {
   if (!recording.value || recorder === null) return
@@ -431,8 +437,7 @@ const monitorSpeech = () => {
     }
     speechVotes = 0
     if (now - preRollStartedAt >= PRE_SPEECH_LIMIT_MS) {
-      cancelDictation()
-      dictationError.value = t('common:agentComposerMedia.noSpeechWasDetected')
+      failCapture(generation, t('common:agentComposerMedia.noSpeechWasDetected'))
     }
     return
   }
@@ -448,6 +453,7 @@ const startRecording = async () => {
   dictationError.value = ''
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     dictationError.value = t('common:agentComposerMedia.browserDoesNotSupport')
+    emit('dictationFailed', dictationError.value)
     return
   }
   const current = ++generation
@@ -462,7 +468,7 @@ const startRecording = async () => {
   let byteLength = 0
   try {
     const microphone = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true, channelCount: { ideal: 1 } }, video: false })
-    if (disposed || current !== generation || props.networkBlocked) {
+    if (disposed || current !== generation || props.networkBlocked || props.session?.id !== session.id || props.csrfToken !== csrfToken) {
       microphone.getTracks().forEach(track => track.stop())
       if (current === generation) {
         recording.value = false
@@ -479,10 +485,13 @@ const startRecording = async () => {
     captureRecorder.ondataavailable = event => {
       if (current !== generation) return
       byteLength += event.data.size
-      if (byteLength > 10 * 1024 * 1024) { dictationError.value = t('common:agentComposerMedia.recordingExceeded10Mb'); cancelDictation(); return }
+      if (byteLength > 10 * 1024 * 1024) { failCapture(current, t('common:agentComposerMedia.recordingExceeded10Mb')); return }
       chunks.push(event.data)
     }
-    captureRecorder.onerror = () => { if (current !== generation) return; cancelDictation(); dictationError.value = t('common:agentComposerMedia.recordingFailedPleaseTry') }
+    captureRecorder.onerror = () => {
+      if (props.session?.id !== session.id || props.csrfToken !== csrfToken) return
+      failCapture(current, t('common:agentComposerMedia.recordingFailedPleaseTry'))
+    }
     captureRecorder.onstop = () => {
       if (current !== generation || disposed) return
       const type = captureRecorder.mimeType || 'audio/webm'
@@ -502,9 +511,8 @@ const startRecording = async () => {
     document.addEventListener('visibilitychange', handleWakeLockVisibility)
     void acquireWakeLock()
   } catch (value) {
-    if (current === generation && !disposed) {
-      cancelDictation()
-      dictationError.value = value instanceof Error ? value.message : t('common:agentComposerMedia.microphoneAccessWasNot')
+    if (props.session?.id === session.id && props.csrfToken === csrfToken) {
+      failCapture(current, value instanceof Error ? value.message : t('common:agentComposerMedia.microphoneAccessWasNot'))
     }
   }
 }

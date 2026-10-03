@@ -15,7 +15,7 @@
       <ol v-if="rows.length" class="query-results">
         <li v-for="(row, index) in rows" :key="row.id">
           <span class="query-rank">{{ String(index + 1).padStart(2, '0') }}</span>
-          <div class="query-result"><div class="query-result__title"><a :href="pageUrl(row)" target="_blank" rel="noopener">{{ row.title }}<v-icon size="14" :aria-label="$t('admin:searchEvaluate.opensNewTab')">mdi-open-in-new</v-icon></a><span>{{ row.score.toLocaleString(undefined, { maximumFractionDigits: 3 }) }}</span></div><code>{{ row.locale }}/{{ row.path }}</code><p v-if="row.description">{{ row.description }}</p><div class="query-evidence"><span>{{ $t('admin:searchEvaluate.matched') }}</span><v-chip v-for="field in row.matchedFields" :key="field" size="x-small" variant="tonal">{{ matchFieldLabel(field) }}</v-chip><span v-if="!row.matchedFields.length">{{ $t('admin:searchEvaluate.noFieldEvidenceReported') }}</span><v-chip v-if="row.visibility === 'private'" size="x-small" prepend-icon="mdi-lock-outline" variant="outlined">{{ $t('admin:searchEvaluate.private') }}</v-chip></div></div>
+          <div class="query-result"><div class="query-result__title"><a :href="pageHref(row)" target="_blank" rel="noopener">{{ row.title }}<v-icon size="14" :aria-label="$t('admin:searchEvaluate.opensNewTab')">mdi-open-in-new</v-icon></a><span>{{ row.score.toLocaleString(undefined, { maximumFractionDigits: 3 }) }}</span></div><code>{{ row.locale }}/{{ row.path }}</code><p v-if="row.description">{{ row.description }}</p><div class="query-evidence"><span>{{ $t('admin:searchEvaluate.matched') }}</span><v-chip v-for="field in row.matchedFields" :key="field" size="x-small" variant="tonal">{{ matchFieldLabel(field) }}</v-chip><span v-if="!row.matchedFields.length">{{ $t('admin:searchEvaluate.noFieldEvidenceReported') }}</span><v-chip v-if="row.visibility === 'private'" size="x-small" prepend-icon="mdi-lock-outline" variant="outlined">{{ $t('admin:searchEvaluate.private') }}</v-chip></div></div>
         </li>
       </ol>
       <div v-else class="query-empty"><v-icon size="32">mdi-text-search</v-icon><h3>{{ $t('admin:searchEvaluate.noMatchingPages') }}</h3><p>{{ $t('admin:searchEvaluate.tryBroaderQueryRemove') }}</p></div>
@@ -28,6 +28,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, shallowRef } from 'vue'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api.ts'
+import { pageHref } from '../../helpers/admin-pages.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
@@ -41,7 +42,6 @@ const result = shallowRef<PageSearchResult | null>(null)
 const rows = shallowRef<PageSearchRow[]>([])
 const elapsedMs = ref(0)
 let controller: AbortController | null = null
-const pageUrl = (row: PageSearchRow) => `/${encodeURIComponent(row.locale)}/${row.path.split('/').map(encodeURIComponent).join('/')}`
 const matchFieldLabel = (field: PageSearchRow['matchedFields'][number]): string => field === 'knowledge' ? t('admin:searchEvaluate.knowledgeHints') : field
 async function evaluate(cursor?: string | null) {
   if (loading.value) return

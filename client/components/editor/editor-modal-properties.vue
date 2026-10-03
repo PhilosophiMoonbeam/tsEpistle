@@ -782,6 +782,18 @@ export default defineComponent({
     '$vuetify.theme.current.dark' (newValue: boolean) {
       this.cm?.setDark(newValue)
     },
+    isPublishStartShown (shown: boolean) {
+      if (shown) this.publishStartDraft = this.publishStartDate ? this.dateAdapter.parseISO(this.publishStartDate.slice(0, 10)) : null
+    },
+    isPublishEndShown (shown: boolean) {
+      if (shown) this.publishEndDraft = this.publishEndDate ? this.dateAdapter.parseISO(this.publishEndDate.slice(0, 10)) : null
+    },
+    publishStartDate (value: string) {
+      if (!value) this.publishStartDraft = null
+    },
+    publishEndDate (value: string) {
+      if (!value) this.publishEndDraft = null
+    },
     modelValue: {
       immediate: true,
       handler (newValue: boolean) {
@@ -1029,11 +1041,13 @@ export default defineComponent({
       }
     },
     applyPublishStartDate() {
-      this.publishStartDate = this.publishStartDraft ? this.dateAdapter.toISO(this.publishStartDraft) : ''
+      const selectedDate = this.publishStartDraft ? this.dateAdapter.toISO(this.publishStartDraft) : ''
+      if (selectedDate && selectedDate !== this.publishStartDate?.slice(0, 10)) this.publishStartDate = selectedDate
       this.isPublishStartShown = false
     },
     applyPublishEndDate() {
-      this.publishEndDate = this.publishEndDraft ? this.dateAdapter.toISO(this.publishEndDraft) : ''
+      const selectedDate = this.publishEndDraft ? this.dateAdapter.toISO(this.publishEndDraft) : ''
+      if (selectedDate && selectedDate !== this.publishEndDate?.slice(0, 10)) this.publishEndDate = selectedDate
       this.isPublishEndShown = false
     },
     async close() {

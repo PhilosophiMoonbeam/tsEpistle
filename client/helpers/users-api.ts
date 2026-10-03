@@ -263,6 +263,7 @@ function normalizeProfileAvatarMutation(payload: unknown, fallbackMessage: strin
 
 export async function uploadProfileAvatar(
   fetchImpl: FetchImpl,
+  expectedAccountId: number,
   file: File,
   fallbackMessage = 'Profile avatar upload failed'
 ): Promise<ProfileAvatarMutationResult> {
@@ -271,28 +272,29 @@ export async function uploadProfileAvatar(
   const response = await sameOriginJsonFetch(fetchImpl, '/_api/users/profile/avatar', {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', 'X-TsEpistle-Profile-Account': String(expectedAccountId) },
     body: form
   })
   return normalizeProfileAvatarMutation(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function removeProfileAvatar(fetchImpl: FetchImpl, fallbackMessage = 'Profile avatar removal failed'): Promise<ProfileAvatarMutationResult> {
+export async function removeProfileAvatar(fetchImpl: FetchImpl, expectedAccountId: number, fallbackMessage = 'Profile avatar removal failed'): Promise<ProfileAvatarMutationResult> {
   const response = await sameOriginJsonFetch(fetchImpl, '/_api/users/profile/avatar', {
     method: 'DELETE',
     credentials: 'same-origin',
-    headers: { Accept: 'application/json' }
+    headers: { Accept: 'application/json', 'X-TsEpistle-Profile-Account': String(expectedAccountId) }
   })
   return normalizeProfileAvatarMutation(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function sendProfileRequest(fetchImpl: FetchImpl, path: string, method: string, body: unknown, fallbackMessage: string): Promise<string> {
+async function sendProfileRequest(fetchImpl: FetchImpl, expectedAccountId: number, path: string, method: string, body: unknown, fallbackMessage: string): Promise<string> {
   const response = await sameOriginJsonFetch(fetchImpl, `/_api/users/profile${path}`, {
     method,
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json',
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'X-TsEpistle-Profile-Account': String(expectedAccountId)
     },
     body: JSON.stringify(body)
   })
@@ -303,17 +305,18 @@ async function sendProfileRequest(fetchImpl: FetchImpl, path: string, method: st
   return payload.message
 }
 
-export function updateProfile(fetchImpl: FetchImpl, input: ProfileUpdateInput, fallbackMessage = 'Profile update failed'): Promise<string> {
-  return sendProfileRequest(fetchImpl, '', 'PATCH', input, fallbackMessage)
+export function updateProfile(fetchImpl: FetchImpl, expectedAccountId: number, input: ProfileUpdateInput, fallbackMessage = 'Profile update failed'): Promise<string> {
+  return sendProfileRequest(fetchImpl, expectedAccountId, '', 'PATCH', input, fallbackMessage)
 }
 export function updateProfilePreferences(
   fetchImpl: FetchImpl,
+  expectedAccountId: number,
   input: ProfilePreferencesInput,
   fallbackMessage = 'Profile preferences update failed'
 ): Promise<string> {
-  return sendProfileRequest(fetchImpl, '/preferences', 'PATCH', input, fallbackMessage)
+  return sendProfileRequest(fetchImpl, expectedAccountId, '/preferences', 'PATCH', input, fallbackMessage)
 }
 
-export function changeProfilePassword(fetchImpl: FetchImpl, current: string, newPassword: string, fallbackMessage = 'Password change failed'): Promise<string> {
-  return sendProfileRequest(fetchImpl, '/password', 'POST', { current, newPassword }, fallbackMessage)
+export function changeProfilePassword(fetchImpl: FetchImpl, expectedAccountId: number, current: string, newPassword: string, fallbackMessage = 'Password change failed'): Promise<string> {
+  return sendProfileRequest(fetchImpl, expectedAccountId, '/password', 'POST', { current, newPassword }, fallbackMessage)
 }

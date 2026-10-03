@@ -297,18 +297,15 @@ export default defineComponent({
       this.navError = ''
       const item = requestedItem || this.currentParent
       try {
+        let parents: NavigationTreeItem[]
         if (item.id === 0) {
-          this.parents = []
+          parents = []
         } else {
           const flushRightIndex = _.findIndex(this.parents, ['id', item.id])
-          if (flushRightIndex >= 0) {
-            this.parents = _.take(this.parents, flushRightIndex + 1)
-          } else {
-            if (this.parents.length < 1) this.parents.push(this.currentParent)
-            this.parents.push(item)
-          }
+          parents = flushRightIndex >= 0
+            ? _.take(this.parents, flushRightIndex + 1)
+            : [...(this.parents.length > 0 ? this.parents : [this.currentParent]), item]
         }
-        this.currentParent = item
         const items = await fetchPageTree(
           (url, init) => window.fetch(url, { ...init, signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(5_000)]) }),
           {
@@ -318,6 +315,8 @@ export default defineComponent({
           }
         )
         if (requestSequence !== this.browseRequestSequence) return
+        this.parents = parents
+        this.currentParent = item
         this.currentItems = items
         this.loadedCache = _.union(this.loadedCache, [item.id])
       } catch (error) {

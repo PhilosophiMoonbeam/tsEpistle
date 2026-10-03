@@ -155,7 +155,7 @@ const createTiptapConflictHarness = ({
       checkoutDateActive: 'local-checkout-date',
       content: 'local draft'
     },
-    page: { id: 42 }
+    page: { id: 42, sourceRevision: '16' }
   }
   const windowFetchCalls = []
   const window = {
@@ -323,6 +323,7 @@ describe('Tiptap conflict component behavior', () => {
 
     expect(harness.wikiStore.editor.content).toBe(latest.content)
     expect(harness.wikiStore.editor.checkoutDateActive).toBe(latest.updatedAt)
+    expect(harness.wikiStore.page.sourceRevision).toBe(latest.sourceRevision)
     expect(harness.resolutionEvents).toEqual(['resolved'])
     expect(harness.emitted).toEqual([['update:modelValue', false]])
   })
@@ -338,6 +339,7 @@ describe('Tiptap conflict component behavior', () => {
       harness.context.useRemote()
       expect(harness.wikiStore.editor.content).toBe('local draft')
       expect(harness.wikiStore.editor.checkoutDateActive).toBe('local-checkout-date')
+      expect(harness.wikiStore.page.sourceRevision).toBe('16')
       expect(harness.resolutionEvents).toEqual([])
       expect(harness.emitted).toEqual([])
     }
@@ -354,7 +356,7 @@ describe('Tiptap conflict component behavior', () => {
     expectResolutionsIgnored()
   })
 
-  test('Tiptap conflict resolves locally using the latest timestamp without replacing the draft', async () => {
+  test('Tiptap conflict resolves locally using the authoritative timestamp and revision without replacing the draft', async () => {
     const latest = createLatestConflict()
     const harness = createTiptapConflictHarness({
       fetchPageConflictLatest: async () => latest
@@ -365,6 +367,7 @@ describe('Tiptap conflict component behavior', () => {
 
     expect(harness.wikiStore.editor.content).toBe('local draft')
     expect(harness.wikiStore.editor.checkoutDateActive).toBe(latest.updatedAt)
+    expect(harness.wikiStore.page.sourceRevision).toBe(latest.sourceRevision)
     expect(harness.resolutionEvents).toEqual(['reset'])
     expect(harness.emitted).toEqual([['update:modelValue', false]])
   })

@@ -526,7 +526,10 @@ export default defineComponent({
     },
   },
   watch: {
-    screen () {
+    screen (screen: LoginScreen) {
+      if (screen === 'login' && this.filteredStrategies.length === 1) {
+        this.selectedStrategyKey = this.filteredStrategies[0].key
+      }
       this.$nextTick(() => {
         focusComponent(this.$refs.loginHeading)
       })

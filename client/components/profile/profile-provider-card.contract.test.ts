@@ -196,13 +196,13 @@ const mount = async (initialProfile = profile()) => {
   themeStyleContent = themeStyle?.textContent ?? null
   ownProperty(globalThis, 'siteConfig', { lang: 'fr', darkMode: false })
   const activeLoading = new Set<string>()
-  const store = {
-    user: { id: 73, name: 'Example Reader', email: 'reader@example.test', pictureUrl: '', appearance: 'light' },
+  const store = Vue.reactive({
+    user: { authenticated: true, id: initialProfile.id, name: 'Example Reader', email: 'reader@example.test', pictureUrl: '', appearance: 'light' },
     startLoading: vi.fn((key: string) => activeLoading.add(key)),
     stopLoading: vi.fn((key: string) => activeLoading.delete(key)),
     refreshAuth: vi.fn(async () => undefined),
     showNotification: vi.fn(), showError: vi.fn()
-  }
+  })
   const fetch = vi.fn(async (url: string, _init?: RequestInit): Promise<Response> => {
     if (url === '/_api/auth/password-policy') return response({ minimum: 12 })
     if (url === '/_api/users/profile') return response(initialProfile)
@@ -294,8 +294,9 @@ const fillPasswords = async (host: HTMLElement) => {
 }
 const deferred = () => {
   let resolve!: (value: Response) => void
-  const promise = new Promise<Response>(yes => { resolve = yes })
-  return { promise, resolve }
+  let reject!: (reason: Error) => void
+  const promise = new Promise<Response>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
 }
 const requestsTo = (fetch: { mock: { calls: Array<[string, RequestInit?]> } }, url: string) =>
   fetch.mock.calls.filter(([target, init]) => target === url && init?.method === 'PATCH')
@@ -412,6 +413,92 @@ describe('profile workspace contracts', () => {
     expect(store.showNotification).not.toHaveBeenCalled()
     expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
     expect(saveButton(host).hasAttribute('aria-disabled')).toBe(false)
+  })
+
+  test('invalidates the loaded account draft immediately when the authenticated account changes', async () => {
+    const { host, fetch, store } = await mount()
+    await fill(field(host, translations['profile:displayName']!), 'Account A unsaved draft')
+    const accountB = profile({ id: 74, name: 'Account B', handle: 'account_b' })
+    fetch.mockImplementation(async (url: string) => {
+      if (url === '/_api/users/profile') return response(accountB)
+      if (url === '/_api/locales') return response([])
+      throw new Error(`Unexpected account-switch request: ${url}`)
+    })
+
+    store.user.id = 74
+    await settle()
+
+    expect(field(host, translations['profile:displayName']!).value).toBe('Account B')
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    saveButton(host).click()
+    await settle()
+    expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(0)
+  })
+
+  test('ignores an old account save completion instead of applying it or submitting its preferences to the new account', async () => {
+    const { host, fetch, store } = await mount()
+    await fill(field(host, translations['profile:displayName']!), 'Account A pending draft')
+    field(host, translations['profile:reduceMotion']!).click()
+    await settle()
+    const pending = deferred()
+    fetch.mockImplementationOnce(() => pending.promise)
+    saveButton(host).click()
+    await settle()
+    expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(1)
+
+    const accountB = profile({ id: 74, name: 'Account B', handle: 'account_b' })
+    fetch.mockImplementation(async (url: string) => {
+      if (url === '/_api/users/profile') return response(accountB)
+      if (url === '/_api/locales') return response([])
+      throw new Error(`Unexpected stale-save request: ${url}`)
+    })
+    store.user.id = 74
+    await settle()
+    pending.resolve(response({ message: 'Account A saved' }))
+    await settle()
+
+    expect(field(host, translations['profile:displayName']!).value).toBe('Account B')
+    expect(field(host, translations['profile:reduceMotion']!).checked).toBe(false)
+    expect(requestsTo(fetch, '/_api/users/profile/preferences')).toHaveLength(0)
+    expect(store.user.name).toBe('Example Reader')
+    expect(store.showNotification).not.toHaveBeenCalled()
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+  })
+
+  test.each(['account change', 'unmount'])('does not publish an old account avatar failure after %s', async boundary => {
+    const { host, fetch, store, activeLoading } = await mount()
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
+    Object.defineProperty(input, 'files', {
+      configurable: true, value: [new File(['avatar image'], 'avatar.png', { type: 'image/png' })]
+    })
+    const pending = deferred()
+    fetch.mockImplementationOnce(() => pending.promise)
+    input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    await settle()
+    expect(activeLoading.has('profile-avatar')).toBe(true)
+
+    if (boundary === 'account change') {
+      const accountB = profile({ id: 74, name: 'Account B' })
+      fetch.mockImplementation(async (url: string) => {
+        if (url === '/_api/users/profile') return response(accountB)
+        if (url === '/_api/locales') return response([])
+        throw new Error(`Unexpected stale-avatar request: ${url}`)
+      })
+      store.user.id = 74
+      await settle()
+    } else {
+      app!.unmount()
+      app = undefined
+    }
+    pending.reject(new Error('Account A avatar upload denied'))
+    await settle()
+
+    expect(store.showError).not.toHaveBeenCalled()
+    expect(host.querySelector('.profile-avatar-actions [role="alert"]')).toBeNull()
+    expect(activeLoading.has('profile-avatar')).toBe(false)
+    if (boundary === 'account change') {
+      expect(field(host, translations['profile:displayName']!).value).toBe('Account B')
+    }
   })
 
   test('blocks saving an invalid mention handle and explains why in the dock', async () => {

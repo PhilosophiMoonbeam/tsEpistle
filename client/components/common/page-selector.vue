@@ -1037,6 +1037,21 @@ export default defineComponent({
     padding-block: var(--wiki-space-2);
   }
 
+  &__pages-pane &__scroller {
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__pages-pane &__selection-note {
+    flex-shrink: 0;
+  }
+
+  &__pages-list {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
   &__tree,
   &__pages-list {
     padding-block: 0 var(--wiki-space-2);

@@ -469,6 +469,8 @@ export default {
       changePassLoading: false,
       profileLoading: true,
       profileError: '',
+      profileGeneration: 0,
+      disposed: false,
       user: null as Profile | null,
       savedDraft: null as ProfileDraft | null,
       installedCommunicationLocales: [] as LocaleRow[],
@@ -498,6 +500,9 @@ export default {
     }
   },
   computed: {
+    accountId (): number | null {
+      return wikiStore.user.authenticated ? wikiStore.user.id : null
+    },
     picture () {
       const profilePictureUrl = this.user?.pictureUrl
       const pictureUrl = this.user !== null && (typeof profilePictureUrl === 'string' || profilePictureUrl === null)
@@ -534,7 +539,7 @@ export default {
       return Object.keys(this.draftIssues).length
     },
     canSave (): boolean {
-      return this.dirty && this.issueCount === 0 && !this.saving
+      return this.user !== null && this.isProfileCurrent(this.user, this.profileGeneration) && this.dirty && this.issueCount === 0 && !this.saving
     },
     dockMessage (): string {
       if (this.saving) return this.$t('profile:dock.saving', { defaultValue: 'Saving changes…' })
@@ -615,6 +620,20 @@ export default {
     }
   },
   watch: {
+    accountId: {
+      flush: 'sync' as const,
+      handler () {
+        this.profileGeneration += 1
+        this.user = null
+        this.savedDraft = null
+        this.currentPass = ''
+        this.newPass = ''
+        this.verifyPass = ''
+        this.avatarError = ''
+        this.avatarSuccess = ''
+        if (this.accountId !== null && !this.disposed) void this.loadProfile()
+      }
+    },
     // Theme and date/time changes preview at once; Reset, discard and unmount restore the saved values.
     'user.appearance': function (newValue: string) {
       if (!this.user) return
@@ -638,18 +657,30 @@ export default {
     this.loadProfile()
   },
   beforeUnmount() {
+    this.disposed = true
+    this.profileGeneration += 1
     window.removeEventListener('beforeunload', this.beforeUnload)
     // Leaving with an unsaved preview must not keep the previewed theme or date format.
-    if (this.dirty && this.savedDraft) this.applySavedPresentation(this.savedDraft)
+    if (this.dirty && this.savedDraft && this.user?.id === this.accountId) this.applySavedPresentation(this.savedDraft)
   },
   methods: {
+    isProfileCurrent (profile: Profile, generation: number): boolean {
+      return !this.disposed && generation === this.profileGeneration && profile === this.user && profile.id === this.accountId
+    },
     async loadProfile (): Promise<boolean> {
+      const generation = ++this.profileGeneration
+      const accountId = this.accountId
       this.profileLoading = true
       this.profileError = ''
       wikiStore.startLoading('profile-refresh')
       try {
         const fetchImpl = window.fetch.bind(window)
         const [profile, locales] = await Promise.all([fetchProfile(fetchImpl), fetchLocales(fetchImpl).catch((): LocaleRow[] => [])])
+        if (this.disposed || generation !== this.profileGeneration) return false
+        if (accountId === null || profile.id !== accountId || accountId !== this.accountId) {
+          await wikiStore.refreshAuth()
+          throw new Error(this.$t('profile:accountChanged', { defaultValue: 'Your signed-in account changed. Reload your profile before saving.' }))
+        }
         this.installedCommunicationLocales = locales.filter(locale => locale.isInstalled)
         this.savedDraft = snapshotProfileDraft(profile)
         this.user = profile
@@ -657,13 +688,14 @@ export default {
         applyUserPresentation(profile)
         return true
       } catch (err) {
+        if (this.disposed || generation !== this.profileGeneration) return false
         this.user = null
         this.savedDraft = null
         this.profileError = getErrorMessage(err)
         wikiStore.showError(err)
         return false
       } finally {
-        this.profileLoading = false
+        if (generation === this.profileGeneration) this.profileLoading = false
         wikiStore.stopLoading('profile-refresh')
       }
     },
@@ -732,14 +764,18 @@ export default {
       await this.uploadAvatar(file)
     },
     async uploadAvatar (file: File) {
-      if (this.avatarLoading) return
+      const profile = this.user
+      const generation = this.profileGeneration
+      if (!profile || this.avatarLoading || !this.isProfileCurrent(profile, generation)) return
       this.avatarAction = 'upload'
       this.avatarError = ''
       this.avatarSuccess = ''
       wikiStore.startLoading('profile-avatar')
       try {
-        const result = await uploadProfileAvatar(window.fetch.bind(window), file)
+        const result = await uploadProfileAvatar(window.fetch.bind(window), profile.id, file)
+        if (!this.isProfileCurrent(profile, generation)) return
         await wikiStore.refreshAuth()
+        if (!this.isProfileCurrent(profile, generation)) return
         if (this.user) {
           this.user.pictureUrl = result.pictureUrl
           if (wikiStore.user.id === this.user.id) wikiStore.user.pictureUrl = result.pictureUrl ?? ''
@@ -747,6 +783,7 @@ export default {
         this.avatarRevision += 1
         this.avatarSuccess = this.$t('profile:avatar.uploadSuccess', { defaultValue: 'Avatar uploaded successfully.' })
       } catch (err) {
+        if (!this.isProfileCurrent(profile, generation)) return
         this.avatarError = getErrorMessage(err)
         wikiStore.showError(err)
       } finally {
@@ -755,14 +792,18 @@ export default {
       }
     },
     async removeAvatar () {
-      if (this.avatarLoading || !this.hasInternalAvatar) return
+      const profile = this.user
+      const generation = this.profileGeneration
+      if (!profile || this.avatarLoading || !this.hasInternalAvatar || !this.isProfileCurrent(profile, generation)) return
       this.avatarAction = 'remove'
       this.avatarError = ''
       this.avatarSuccess = ''
       wikiStore.startLoading('profile-avatar')
       try {
-        const result = await removeProfileAvatar(window.fetch.bind(window))
+        const result = await removeProfileAvatar(window.fetch.bind(window), profile.id)
+        if (!this.isProfileCurrent(profile, generation)) return
         await wikiStore.refreshAuth()
+        if (!this.isProfileCurrent(profile, generation)) return
         if (this.user) {
           this.user.pictureUrl = result.pictureUrl
           if (wikiStore.user.id === this.user.id) wikiStore.user.pictureUrl = result.pictureUrl ?? ''
@@ -770,6 +811,7 @@ export default {
         this.avatarRevision += 1
         this.avatarSuccess = this.$t('profile:avatar.removeSuccess', { defaultValue: 'Avatar removed successfully.' })
       } catch (err) {
+        if (!this.isProfileCurrent(profile, generation)) return
         this.avatarError = getErrorMessage(err)
         wikiStore.showError(err)
       } finally {
@@ -784,7 +826,8 @@ export default {
     async saveDraft () {
       const profile = this.user
       const saved = this.savedDraft
-      if (!profile || !saved || this.saving || !this.dirty) return
+      const generation = this.profileGeneration
+      if (!profile || !saved || this.saving || !this.dirty || !this.isProfileCurrent(profile, generation)) return
       if (this.issueCount > 0) {
         this.focusField(this.draftIssues.name ? 'name' : 'handle')
         return
@@ -798,7 +841,7 @@ export default {
       try {
         const fetchImpl = window.fetch.bind(window)
         if (detailsChanged) {
-          await updateProfile(fetchImpl, {
+          await updateProfile(fetchImpl, profile.id, {
             name: draft.name,
             handle: draft.handle,
             location: draft.location,
@@ -808,6 +851,7 @@ export default {
             timeFormat: draft.timeFormat,
             appearance: draft.appearance
           })
+          if (!this.isProfileCurrent(profile, generation)) return
           // Match the server's normalization so the saved snapshot compares equal.
           const normalized = {
             name: draft.name.trim(),
@@ -827,12 +871,13 @@ export default {
           this.savedDraft = committed
         }
         if (preferencesChanged) {
-          await updateProfilePreferences(fetchImpl, {
+          await updateProfilePreferences(fetchImpl, profile.id, {
             reduceMotion: draft.reduceMotion,
             underlineLinks: draft.underlineLinks,
             contentTextSize: draft.contentTextSize,
             communicationLocale: draft.communicationLocale
           })
+          if (!this.isProfileCurrent(profile, generation)) return
           committed = {
             ...committed,
             reduceMotion: draft.reduceMotion,
@@ -843,6 +888,7 @@ export default {
           this.savedDraft = committed
         }
         await wikiStore.refreshAuth()
+        if (!this.isProfileCurrent(profile, generation)) return
         if (detailsChanged) {
           wikiStore.user.name = profile.name
           wikiStore.user.appearance = profile.appearance
@@ -853,6 +899,7 @@ export default {
           icon: 'check'
         })
       } catch (err) {
+        if (!this.isProfileCurrent(profile, generation)) return
         wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('profile-save')
@@ -863,7 +910,9 @@ export default {
      * Change Password
      */
     async changePassword () {
-      if (this.changePassLoading) return
+      const profile = this.user
+      const generation = this.profileGeneration
+      if (!profile || this.changePassLoading || !this.isProfileCurrent(profile, generation)) return
       this.passwordErrors = {
         current: [],
         password: [],
@@ -939,9 +988,11 @@ export default {
         try {
           await changeProfilePassword(
             window.fetch.bind(window),
+            profile.id,
             this.currentPass,
             this.newPass
           )
+          if (!this.isProfileCurrent(profile, generation)) return
           this.currentPass = ''
           this.newPass = ''
           this.verifyPass = ''
@@ -949,12 +1000,14 @@ export default {
           this.showNewPass = false
           this.showVerifyPass = false
           await wikiStore.refreshAuth()
+          if (!this.isProfileCurrent(profile, generation)) return
           wikiStore.showNotification({
             message: this.$t('profile:auth.changePassSuccess'),
             style: 'success',
             icon: 'check'
           })
         } catch (err) {
+          if (!this.isProfileCurrent(profile, generation)) return
           wikiStore.showError(err)
         } finally {
           wikiStore.stopLoading('profile-changepassword')

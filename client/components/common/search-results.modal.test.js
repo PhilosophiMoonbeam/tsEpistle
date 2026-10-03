@@ -32,6 +32,48 @@ const compileSearchMethods = (source, names, dependencies = {}) => {
   return new Function(...Object.keys(dependencies), `${compiled}\nreturn methods`)(...Object.values(dependencies))
 }
 
+describe('clearable search recovery', () => {
+  test('clears pending results on null and schedules a replacement query', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
+    const scheduled = []
+    const cancelled = []
+    const methods = compileSearchMethods(source, ['queueSearch'], {
+      window: {
+        clearTimeout: timer => cancelled.push(timer),
+        setTimeout: callback => { scheduled.push(callback); return scheduled.length }
+      },
+      emptySearchResponse: () => ({ results: [], suggestions: [] })
+    })
+    const requests = []
+    let aborted = false
+    const state = {
+      cursor: 2,
+      searchRequestId: 1,
+      searchAbortController: { abort: () => { aborted = true } },
+      searchTimer: 99,
+      searchIsLoading: true,
+      searchMode: 'search',
+      searchError: 'Old error',
+      responseKey: 'old',
+      response: { results: [{ id: 1 }], suggestions: ['old'] },
+      searchRequestKey: 'replacement',
+      runSearch: (...args) => requests.push(args)
+    }
+    methods.queueSearch.call(state, null)
+    expect(aborted).toBe(true)
+    expect(cancelled).toEqual([99])
+    expect(state.response).toEqual({ results: [], suggestions: [] })
+    expect(state.searchIsLoading).toBe(false)
+    expect(state.searchError).toBe('')
+    expect(scheduled).toHaveLength(0)
+    methods.queueSearch.call(state, '  replacement query  ')
+    expect(scheduled).toHaveLength(1)
+    scheduled[0]()
+    expect(requests).toEqual([['replacement query', 'replacement', 3]])
+    expect(state.searchIsLoading).toBe(true)
+  })
+})
+
 describe('Ask modal accessibility contract', () => {
   const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
   test('restores focus to the remounted zero-result Ask action instead of the global trigger', () => {

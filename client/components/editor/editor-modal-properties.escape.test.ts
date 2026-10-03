@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from '@vue/compiler-sfc'
+import type { DateAdapter } from 'vuetify'
 import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { document, resetBody } from '../../test/browser-dom.mts'
 
@@ -8,14 +9,14 @@ const componentPath = join(process.cwd(), 'client/components/editor/editor-modal
 const { descriptor } = parse(readFileSync(componentPath, 'utf8'), { filename: componentPath })
 const script = descriptor.script?.content ?? ''
 
-// Vuetify snapshots browser capabilities, so these imports follow the shared DOM harness.
+// Static imports cannot work here: Vuetify must snapshot capabilities after the shared DOM harness installs them.
 const Vue = await import('vue')
-const { createVuetify } = await import('vuetify')
+const { createVuetify, useDate } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 
 /** Returns the source text of one options-API method, braces balanced. */
 const methodSource = (name: string): string => {
-  const start = script.indexOf(`    ${name} (`)
+  const start = script.search(new RegExp(`    ${name}\\s*\\(`))
   if (start < 0) throw new Error(`${name} was not found`)
   const open = script.indexOf('{', start)
   let depth = 0
@@ -108,4 +109,116 @@ describe('Page Properties Esc', () => {
     field.dispatchEvent(escapeKey())
     expect(onKeydown).toHaveBeenCalledTimes(1)
   })
+})
+
+const scheduleCode = new Bun.Transpiler({ loader: 'ts' }).transformSync(`
+  const behavior = {
+    watch: {
+      ${methodSource('isPublishStartShown')},
+      ${methodSource('isPublishEndShown')},
+      ${methodSource('publishStartDate')},
+      ${methodSource('publishEndDate')}
+    },
+    methods: {
+      ${methodSource('applyPublishStartDate')},
+      ${methodSource('applyPublishEndDate')}
+    }
+  }
+`)
+const scheduleBehavior = new Function(`${scheduleCode}\nreturn behavior`)()
+type ScheduleHarness = {
+  dateAdapter: DateAdapter
+  publishStartDate: string
+  publishEndDate: string
+  publishStartDraft: unknown
+  publishEndDraft: unknown
+  isPublishStartShown: boolean
+  isPublishEndShown: boolean
+  applyPublishStartDate: () => void
+  applyPublishEndDate: () => void
+}
+const mountSchedule = (): ScheduleHarness => {
+  const host = document.body.appendChild(document.createElement('div'))
+  const app = Vue.createApp({
+    ...scheduleBehavior,
+    setup: () => ({ dateAdapter: useDate() }),
+    data: () => ({
+      publishStartDate: '',
+      publishEndDate: '',
+      publishStartDraft: null,
+      publishEndDraft: null,
+      isPublishStartShown: false,
+      isPublishEndShown: false
+    }),
+    render: () => null
+  })
+  app.use(createVuetify({ components: vuetifyComponents }))
+  const context = app.mount(host)
+  unmounts.push(() => { app.unmount(); host.remove() })
+  return context as unknown as ScheduleHarness
+}
+
+describe('Page Properties scheduling draft', () => {
+  for (const picker of [
+    { date: 'publishStartDate', draft: 'publishStartDraft', open: 'isPublishStartShown', accept: 'applyPublishStartDate' },
+    { date: 'publishEndDate', draft: 'publishEndDraft', open: 'isPublishEndShown', accept: 'applyPublishEndDate' }
+  ] as const) {
+    test(`${picker.date} seeds each opening and OK preserves an unchanged schedule exactly`, async () => {
+      const context = mountSchedule()
+      context[picker.date] = '2030-05-17T09:30:00.000Z'
+      context[picker.open] = true
+      await settle()
+      expect(context.dateAdapter.toISO(context[picker.draft])).toBe('2030-05-17')
+      context[picker.accept]()
+      expect(context[picker.date]).toBe('2030-05-17T09:30:00.000Z')
+      expect(context[picker.open]).toBe(false)
+      await settle()
+
+      context[picker.date] = '2031-06-18'
+      context[picker.open] = true
+      await settle()
+      expect(context.dateAdapter.toISO(context[picker.draft])).toBe('2031-06-18')
+      context[picker.accept]()
+      expect(context[picker.date]).toBe('2031-06-18')
+    })
+
+    test(`${picker.date} discards cancelled picker selections and cannot resurrect a cleared date`, async () => {
+      const context = mountSchedule()
+      context[picker.date] = '2030-05-17'
+      context[picker.open] = true
+      await settle()
+      context[picker.draft] = context.dateAdapter.parseISO('2032-07-19')
+      context[picker.open] = false
+      await settle()
+      context[picker.open] = true
+      await settle()
+      expect(context.dateAdapter.toISO(context[picker.draft])).toBe('2030-05-17')
+      context[picker.open] = false
+      context[picker.date] = ''
+      await settle()
+      context[picker.open] = true
+      await settle()
+      expect(context[picker.draft]).toBeNull()
+      context[picker.accept]()
+      expect(context[picker.date]).toBe('')
+    })
+
+    test(`${picker.date} applies a selected day and honours an explicit clear while open`, async () => {
+      const context = mountSchedule()
+      context[picker.date] = '2030-05-17'
+      context[picker.open] = true
+      await settle()
+      context[picker.draft] = context.dateAdapter.parseISO('2032-07-19')
+      context[picker.accept]()
+      expect(context[picker.date]).toBe('2032-07-19')
+      await settle()
+      context[picker.open] = true
+      await settle()
+      context[picker.date] = ''
+      await settle()
+      expect(context[picker.draft]).toBeNull()
+      context[picker.accept]()
+      expect(context[picker.date]).toBe('')
+    })
+  }
 })

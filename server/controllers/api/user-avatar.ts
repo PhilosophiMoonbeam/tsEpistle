@@ -84,7 +84,7 @@ router.use((_req, res, next) => {
 
 router.post('/', requireSelfServiceIdentity, acceptMultipartImage, async (req, res, next) => {
   try {
-    const result = await userOperations.updateAvatar({ requester: req.user, data: req.file!.buffer, response: res })
+    const result = await userOperations.updateAvatar({ requester: req.user, expectedAccountId: req.get('X-TsEpistle-Profile-Account'), data: req.file!.buffer, response: res })
     res.json({ message: 'Profile avatar updated successfully.', pictureUrl: result.pictureUrl })
   } catch (error) {
     if (!sendKnownError(error, res)) next(error)
@@ -93,7 +93,7 @@ router.post('/', requireSelfServiceIdentity, acceptMultipartImage, async (req, r
 
 router.delete('/', requireSelfServiceIdentity, async (req, res, next) => {
   try {
-    const result = await userOperations.clearAvatar({ requester: req.user, response: res })
+    const result = await userOperations.clearAvatar({ requester: req.user, expectedAccountId: req.get('X-TsEpistle-Profile-Account'), response: res })
     res.json({ message: 'Profile avatar removed successfully.', pictureUrl: result.pictureUrl })
   } catch (error) {
     if (!sendKnownError(error, res)) next(error)
