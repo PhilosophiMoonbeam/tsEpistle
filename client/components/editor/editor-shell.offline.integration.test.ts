@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from '@vue/compiler-sfc'
+import { markRaw, reactive, toRaw } from 'vue'
 import _ from 'lodash'
 import * as ts from 'typescript'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
@@ -12,7 +13,8 @@ import {
   OfflineEditorDraftCoordinator,
   type OfflineEditorDraftIdentity,
   type OfflineEditorDraftValues,
-  type OfflineEditorDraftView
+  type OfflineEditorDraftView,
+  type PreparedOfflineSubmission
 } from '../../helpers/offline-editor-drafts.ts'
 import { invalidateOfflineSession } from '../../helpers/offline-session.ts'
 import type {
@@ -152,7 +154,7 @@ type ShellContext = {
   savedState: Record<string, unknown>
   editorAdapter: Adapter
   editorAdapterSafety: AdapterSafety
-  offlineDraftCoordinator: OfflineEditorDraftCoordinator
+  offlineDraftCoordinator: OfflineEditorDraftCoordinator | null
   offlineDraftStatus: string | null
   offlineDraftError: string
   offlineSubmissionCandidates: unknown[]
@@ -173,12 +175,15 @@ type ShellContext = {
   safetyRevision: number
   offlineDraftMutationBlocked: boolean
   save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
+  setupOfflineDraftCoordinator: () => void
+  initializeOfflineDrafts: () => Promise<void>
 }
 
 const evaluateShellBehavior = (
   store: EditorStore,
   testWindow: TestWindow,
-  fetchPage: (fetcher: typeof fetch, id: number, fallback: string) => Promise<unknown>
+  fetchPage: (fetcher: typeof fetch, id: number, fallback: string) => Promise<unknown>,
+  coordinatorClass: typeof OfflineEditorDraftCoordinator = OfflineEditorDraftCoordinator
 ): ShellBehavior => {
   const freezePageInput = (input: PageWriteInput): PageWriteInput => {
     Object.freeze(input.tags)
@@ -207,6 +212,9 @@ const evaluateShellBehavior = (
     'removeEditorPageCss',
     'clearOfflineCreateIdentity',
     'scopeEditorPageCss',
+    'markRaw',
+    'OfflineEditorDraftCoordinator',
+    'pwaState',
     `${executableShellBehavior}\nreturn shellBehavior`
   ) as (...args: unknown[]) => ShellBehavior
   return evaluate(
@@ -229,7 +237,10 @@ const evaluateShellBehavior = (
     (error: unknown) => (error instanceof Error ? error.message : String(error)),
     () => undefined,
     () => undefined,
-    (css: string) => css
+    (css: string) => css,
+    markRaw,
+    coordinatorClass,
+    { connectionState: 'online' }
   )
 }
 
@@ -464,10 +475,11 @@ const createTestWindow = (fetchImpl: typeof fetch): TestWindow => {
 const createShellContext = (
   store: EditorStore,
   testWindow: TestWindow,
-  coordinator: OfflineEditorDraftCoordinator,
-  fetchPage: (fetcher: typeof fetch, id: number, fallback: string) => Promise<unknown>
+  coordinator: OfflineEditorDraftCoordinator | null,
+  fetchPage: (fetcher: typeof fetch, id: number, fallback: string) => Promise<unknown>,
+  options: { reactiveHost?: boolean; coordinatorClass?: typeof OfflineEditorDraftCoordinator } = {}
 ): ShellContext => {
-  const behavior = evaluateShellBehavior(store, testWindow, fetchPage)
+  const behavior = evaluateShellBehavior(store, testWindow, fetchPage, options.coordinatorClass)
   let editVersion = 0
   let nonPersisted = true
   const adapter: Adapter = {
@@ -551,13 +563,31 @@ const createShellContext = (
       shell.safetyRevision += 1
     }
   } as unknown as ShellContext
-  for (const [name, method] of Object.entries(behavior.methods)) context[name] = method.bind(context)
-  Object.defineProperty(context, 'mode', { get: () => behavior.computed.mode.call(context) })
-  Object.defineProperty(context, 'isDirty', { get: () => behavior.computed.isDirty.call(context) })
-  Object.defineProperty(context, 'offlineDraftMutationBlocked', { get: () => behavior.computed.offlineDraftMutationBlocked.call(context) })
-  return context
+  const host = options.reactiveHost ? reactive(context) : context
+  for (const [name, method] of Object.entries(behavior.methods)) host[name] = method.bind(host)
+  Object.defineProperty(host, 'mode', { get: () => behavior.computed.mode.call(host) })
+  Object.defineProperty(host, 'isDirty', { get: () => behavior.computed.isDirty.call(host) })
+  Object.defineProperty(host, 'offlineDraftMutationBlocked', { get: () => behavior.computed.offlineDraftMutationBlocked.call(host) })
+  return host
 }
 
+// Supply only the storage boundary; capture, crypto, receipts, fences and
+// presentation callbacks all execute the production coordinator implementation.
+const createReactiveShellContext = (store: EditorStore, testWindow: TestWindow, storage: ComposedDraftStorage): ShellContext => {
+  class StoredCoordinator extends OfflineEditorDraftCoordinator {
+    constructor(options: ConstructorParameters<typeof OfflineEditorDraftCoordinator>[0]) {
+      super({ ...options, storage: storage as unknown as OfflineStorage, debounceMs: 0 })
+      lifecycleCoordinators.push(this)
+    }
+  }
+  return createShellContext(store, testWindow, null, async () => ({
+    okf: _.cloneDeep(store.page.okf),
+    sourceRevision: store.page.sourceRevision,
+    isSearchable: true
+  }), { reactiveHost: true, coordinatorClass: StoredCoordinator })
+}
+
+const lifecycleCoordinators: OfflineEditorDraftCoordinator[] = []
 let previousWindow: unknown
 
 const installWindow = (testWindow: TestWindow): void => {
@@ -567,6 +597,7 @@ const installWindow = (testWindow: TestWindow): void => {
 }
 
 afterEach(() => {
+  for (const coordinator of lifecycleCoordinators.splice(0)) coordinator.destroy()
   invalidateOfflineSession()
   if (previousWindow === undefined) Reflect.deleteProperty(globalThis, 'window')
   else (globalThis as Record<string, unknown>).window = previousWindow
@@ -575,6 +606,130 @@ afterEach(() => {
 })
 
 describe('composed editor offline submission boundary', () => {
+  for (const outcome of ['success', 'unknown'] as const) {
+    test(`Vue-reactive editor exposes durable receipt transitions for a ${outcome} save outcome`, async () => {
+      const storage = new ComposedDraftStorage()
+      let updateCalls = 0
+      let submittedContent: unknown
+      let releaseNetwork!: () => void
+      let notifyNetworkStarted!: () => void
+      const networkStarted = new Promise<void>(resolve => { notifyNetworkStarted = resolve })
+      const networkRelease = new Promise<void>(resolve => { releaseNetwork = resolve })
+      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = String(input)
+        if (url.endsWith('/_api/offline/draft-key')) return keyFetch()
+        if (url.endsWith('/_api/pages/12') && init?.method === 'PUT') {
+          updateCalls += 1
+          submittedContent = JSON.parse(String(init.body)).content
+          notifyNetworkStarted()
+          await networkRelease
+          if (outcome === 'unknown') throw new TypeError('Failed to fetch')
+          return new Response(JSON.stringify({ page: { updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2' } }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      }
+      const testWindow = createTestWindow(fetchImpl as typeof fetch)
+      installWindow(testWindow)
+      const store = createStore()
+      const shell = createReactiveShellContext(store, testWindow, storage)
+      shell.setupOfflineDraftCoordinator()
+      await shell.initializeOfflineDrafts()
+      const coordinator = shell.offlineDraftCoordinator!
+
+      expect(await coordinator.captureThrough(0)).toBe(true)
+      expect(shell.offlineDraftStatus).toBe('needs-review')
+      expect(shell.editorAdapter.snapshot().nonPersisted).toBe(false)
+      const save = shell.save()
+      await Promise.race([networkStarted, save.then(() => { throw new Error('Save ended before dispatching the prepared receipt') })])
+      expect(submittedContent).toBe('A')
+      expect(shell.offlineDraftStatus).toBe('publishing')
+      const receipt = [...storage.records.values()].find(record => record.submissionId !== null)!
+      expect(receipt).toBeDefined()
+      const handle = await requestDraftKey(keyFetchImpl, {
+        expectedAccountId: ACCOUNT_ID,
+        expectedSessionGeneration: SESSION_GENERATION
+      })
+      expect((await decryptOfflineDraft(handle, receipt)).content).toBe('A')
+      releaseNetwork()
+
+      expect(await save).toBe(outcome === 'success')
+      expect(updateCalls).toBe(1)
+      if (outcome === 'success') {
+        expect(shell.saveFeedback).toBe('saved')
+        expect(shell.isDirty).toBe(false)
+        expect(shell.offlineDraftStatus).toBeNull()
+        expect(shell.offlineSubmissionCandidates).toHaveLength(0)
+        expect(coordinator.hasUnresolvedSubmission).toBe(false)
+        expect(storage.records.size).toBe(0)
+      } else {
+        expect(shell.saveFeedback).toBe('failed')
+        expect(shell.offlineDraftStatus).toBe('outcome-unknown')
+        expect(shell.offlineDraftError).toBe('Failed to fetch')
+        expect(toRaw(shell.offlineSubmissionCandidates)).toMatchObject([{
+          submission: { recordId: receipt.recordId, submissionId: receipt.submissionId },
+          payload: { content: 'A', state: 'outcome-unknown' }
+        }])
+        expect(coordinator.hasUnresolvedSubmission).toBe(true)
+        expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+        expect(await shell.save()).toBe(false)
+        expect(updateCalls).toBe(1)
+        expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+
+        coordinator.destroy()
+        invalidateOfflineSession()
+        const freshStore = createStore()
+        freshStore.editor.content = 'server baseline'
+        const fresh = createReactiveShellContext(freshStore, testWindow, storage)
+        fresh.setupOfflineDraftCoordinator()
+        await fresh.initializeOfflineDrafts()
+        expect(fresh.offlineDraftStatus).toBe('outcome-unknown')
+        expect(toRaw(fresh.offlineSubmissionCandidates)).toMatchObject([{
+          submission: { recordId: receipt.recordId, submissionId: receipt.submissionId },
+          payload: { content: 'A', state: 'outcome-unknown' }
+        }])
+        expect(toRaw(fresh.offlineDraftCandidates)).toMatchObject([{ payload: { content: 'A' } }])
+        expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+      }
+    })
+  }
+
+  test('late receipt callbacks from a replaced coordinator cannot overwrite the Vue-reactive editor', async () => {
+    const storage = new ComposedDraftStorage()
+    const testWindow = createTestWindow(keyFetchImpl)
+    installWindow(testWindow)
+    const shell = createReactiveShellContext(createStore(), testWindow, storage)
+    shell.setupOfflineDraftCoordinator()
+    await shell.initializeOfflineDrafts()
+    const previous = shell.offlineDraftCoordinator!
+    const prepared: PreparedOfflineSubmission | null = await previous.prepareSubmission({ editVersion: 0 })
+    expect(prepared).not.toBeNull()
+    const receipt = cloneEnvelope(storage.records.get(prepared!.recordId)!)
+    const completion = previous.completeSubmission(prepared!, { kind: 'unknown', reason: 'Late network outcome' })
+    shell.offlineDraftCoordinator = null
+    shell.setupOfflineDraftCoordinator()
+    shell.offlineDraftStatus = null
+    shell.offlineDraftError = ''
+    shell.offlineSubmissionCandidates = []
+    const safetyRevision = shell.safetyRevision
+
+    expect(await completion).toBe(true)
+    expect(shell.offlineDraftStatus).toBeNull()
+    expect(shell.offlineDraftError).toBe('')
+    expect(shell.offlineSubmissionCandidates).toHaveLength(0)
+    expect(shell.safetyRevision).toBe(safetyRevision)
+    expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+
+    await shell.initializeOfflineDrafts()
+    expect(shell.offlineDraftStatus).toBe('outcome-unknown')
+    expect(toRaw(shell.offlineSubmissionCandidates)).toMatchObject([{
+      submission: { recordId: receipt.recordId },
+      payload: { content: 'A', state: 'outcome-unknown' }
+    }])
+  })
+
   test('freezes A for the network request and receipt while preserving B for a fresh verified consumer', async () => {
     const storage = new ComposedDraftStorage()
     let requestBody: Record<string, unknown> | undefined

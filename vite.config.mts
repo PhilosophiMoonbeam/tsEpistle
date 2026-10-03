@@ -354,7 +354,17 @@ export default defineConfig(({ command }) => ({
       output: {
         entryFileNames: 'js/[name]-[hash].js',
         chunkFileNames: 'js/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash][extname]'
+        assetFileNames: 'assets/[name]-[hash][extname]',
+        codeSplitting: {
+          groups: [
+            {
+              name: 'lodash-initial',
+              test: /[\\/]node_modules[\\/]lodash-es[\\/]/u,
+              // Coalesce only already-initial utilities; keep editor and other lazy methods lazy.
+              tags: ['$initial']
+            }
+          ]
+        }
       }
     }
   },

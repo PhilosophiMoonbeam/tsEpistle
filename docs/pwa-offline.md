@@ -225,6 +225,8 @@ interface OfflineDraftPayloadV1 {
 
 Capture and restore are wired explicitly through `client/components/editor.vue`, `client/helpers/editor-key.ts`, `client/components/editor/editor-markdown.vue`, `client/components/editor/editor-visual-markdown.vue`, `client/components/editor/editor-ckeditor.vue`, `client/components/editor/editor-asciidoc.vue`, and `client/components/editor/editor-code.vue`; each implementation maps only its canonical `PageEditorKey` and returns the eligible text payload.
 
+The editor host keeps its draft coordinator outside Vue's deep reactivity so durable capture, publishing, and unknown-outcome notifications retain their owning instance identity. Status and retained receipts remain visible for explicit recovery; callbacks queued by a replaced coordinator cannot overwrite the current editor's recovery or reload-safety state.
+
 Transitions:
 
 1. An already-open, online-authorized eligible editor records a base revision and obtains the in-memory key only after same-account verification.

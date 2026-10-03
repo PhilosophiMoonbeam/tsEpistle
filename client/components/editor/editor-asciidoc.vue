@@ -337,7 +337,7 @@ export default defineComponent({
       try {
         const html = await convert(newContent, {
           standalone: false,
-          safe: 'safe',
+          safe: 'secure',
           attributes: { showtitle: true, icons: 'font' }
         })
         if (requestId !== this.previewRequestId || !this.previewShown) return

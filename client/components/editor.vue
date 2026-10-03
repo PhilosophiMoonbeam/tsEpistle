@@ -304,7 +304,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, shallowRef, type PropType } from 'vue'
+import { defineComponent, markRaw, shallowRef, type PropType } from 'vue'
 import moment from 'moment-timezone'
 import { useHotkey } from 'vuetify'
 import { createAsyncComponent } from './common/async-component-state.vue'
@@ -1383,7 +1383,7 @@ export default defineComponent({
         this.offlineCreateIdentity = readOfflineCreateIdentity() ?? createOfflineDraftIdentity()
         writeOfflineCreateIdentity(this.offlineCreateIdentity)
       }
-      const coordinator = new OfflineEditorDraftCoordinator({
+      const coordinator = markRaw(new OfflineEditorDraftCoordinator({
         fetchImpl: window.fetch.bind(window),
         isAuthenticated: () => wikiStore.user.authenticated,
         accountId: () => wikiStore.user.id,
@@ -1417,8 +1417,11 @@ export default defineComponent({
           }
           this.notifySafetyChanged()
         },
-        onSafetyChange: () => this.notifySafetyChanged()
-      })
+        onSafetyChange: () => {
+          if (this.offlineDraftCoordinator !== coordinator) return
+          this.notifySafetyChanged()
+        }
+      }))
       this.offlineDraftCoordinator = coordinator
     },
     getOfflineDraftIdentity() {
