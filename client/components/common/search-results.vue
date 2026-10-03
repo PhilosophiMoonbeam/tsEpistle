@@ -35,7 +35,7 @@
         :selector='previewSelector'
         :query='normalizedSearch'
         :can-ask='canAsk'
-        @close='previewSelector = null'
+        @close='closePreview'
         @ask='askSource'
       )
       .search-results-search(v-if='!isAgentOpen' @click.stop)
@@ -87,6 +87,13 @@
                   @click='togglePathScope'
                 ) {{ $t('common:searchPanel.scopeTree') }}
               span {{ $t('common:searchPanel.scopeNeedsServer') }}
+          v-btn.search-results-close(
+            size='small'
+            variant='text'
+            prepend-icon='mdi-close'
+            @click='closeSearch'
+            data-modal-focus-key='search-close'
+          ) {{ $t('common:searchPanel.closeSearch') }}
         .search-results-content
           .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
             .search-results-capability-note-title {{ serverUnavailable ? $t('common:searchPanel.serverUnavailableTitle') : $t('common:searchPanel.scopeDownloaded') }}
@@ -275,6 +282,9 @@
           span
             kbd ↵
             | {{ $t('common:searchPanel.keyOpen') }}
+          span(v-if='previewAvailable' :title='$t(`common:searchPanel.previewShortcut`)')
+            kbd Alt+↵
+            | {{ $t('common:searchPanel.keyPreview') }}
           span
             kbd Esc
             | {{ $t('common:searchPanel.keyClose') }}
@@ -317,7 +327,7 @@ import {
   type OfflineSnapshotRecord
 } from '../../../shared/offline.ts'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
-import { navigateToWikiPage } from '../../helpers/wiki-navigation'
+import { isWikiNavigationClick, navigateToWikiPage } from '../../helpers/wiki-navigation'
 import { createSearchHighlighter, type SearchTextSegment } from '../../helpers/search-highlight.ts'
 
 type SearchScope = 'wiki' | 'downloaded'
@@ -530,10 +540,11 @@ export default defineComponent({
       return this.$t('common:searchPanel.askNeedsVerify')
     },
     previewAvailable(): boolean {
-      return this.serverCapabilitiesAvailable && this.hasFreshResponse
+      return this.serverCapabilitiesAvailable && !this.offlineSearchActive && !this.searchIsLoading && this.hasFreshResponse
     },
     previewUnavailableReason(): string {
       if (!this.serverCapabilitiesAvailable) return this.$t('common:searchPanel.previewNeedsServer')
+      if (this.offlineSearchActive) return this.$t('common:searchPanel.previewOnlineOnly')
       return this.$t('common:searchPanel.previewNeedsFresh')
     },
     searchRestrictPath: {
@@ -706,6 +717,7 @@ export default defineComponent({
     onSearchExit(this.handleSearchExit)
     void this.$nextTick(this.syncSearchInputA11y)
     document.addEventListener('focusin', this.captureSearchRestoreTarget, true)
+    document.addEventListener('keydown', this.handleSearchPreviewShortcut, true)
     if (this.searchIsFocused) void this.activateAgentModal()
     window.addEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
   },
@@ -724,6 +736,7 @@ export default defineComponent({
     offSearchExit(this.handleSearchExit)
     window.removeEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
     document.removeEventListener('focusin', this.captureSearchRestoreTarget, true)
+    document.removeEventListener('keydown', this.handleSearchPreviewShortcut, true)
     this.deactivateModalLayers(false)
     this.agentResumeSessionId = null
   },
@@ -1018,6 +1031,21 @@ export default defineComponent({
         root?.querySelector<HTMLElement>('.highlighted')?.scrollIntoView({ block: 'nearest' })
       })
     },
+    handleSearchPreviewShortcut(event: KeyboardEvent): void {
+      if (
+        event.defaultPrevented || event.isComposing || event.key !== 'Enter' ||
+        !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+        this.searchMode !== 'search' || !this.searchIsFocused ||
+        !(event.target instanceof HTMLInputElement) ||
+        event.target !== document.activeElement || event.target !== this.findSearchControl()
+      ) return
+      // Alt+Enter never falls through to ordinary navigation or Agent submission.
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (event.repeat || this.previewSelector || !this.previewAvailable) return
+      const result = this.cursor >= 0 && this.cursor < this.results.length ? this.results[this.cursor] : undefined
+      if (result && !isDownloadedSearchRow(result)) this.openPreview(result)
+    },
     async handleSearchEnter(): Promise<void> {
       if (this.canAsk && this.searchMode === 'ask') {
         await this.submitAskPrompt()
@@ -1076,6 +1104,7 @@ export default defineComponent({
     },
     closeSearch(): void {
       const shouldCloseAgentWorkspace = this.isAgentOpen || Boolean(this.agentResumeSessionId)
+      this.previewSelector = null
       this.directPromptHandoffId += 1
       this.pendingAskRestoreTarget = null
       this.finishSearchFocus()
@@ -1137,11 +1166,24 @@ export default defineComponent({
         canonicalPath: item.offlineCanonicalPath
       })
     },
-    openPreview(item: PageSearchRow): void {
-      if (!this.serverCapabilitiesAvailable || !this.hasFreshResponse) return
+    openPreview(item: SearchResultRow): void {
+      if (!this.previewAvailable || this.previewSelector || isDownloadedSearchRow(item)) return
       this.previewSelector = { id: Number(item.id) }
     },
+    async closePreview(): Promise<void> {
+      this.previewSelector = null
+      await this.$nextTick()
+      if (!this.previewSelector && this.searchIsFocused && this.searchMode === 'search') {
+        this.findSearchControl()?.focus({ preventScroll: true })
+      }
+    },
     handleResultClick(event: Event, item: SearchResultRow): void {
+      if (event.defaultPrevented) return
+      if (event instanceof MouseEvent) {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+        const anchor = event.currentTarget
+        if (!isDownloadedSearchRow(item) && anchor instanceof HTMLAnchorElement && !isWikiNavigationClick(event, anchor)) return
+      }
       if (!this.hasFreshResponse) {
         event.preventDefault()
         return
@@ -1547,6 +1589,7 @@ export default defineComponent({
   &-keyboard-hint {
     display: flex;
     flex: 0 0 auto;
+    flex-wrap: wrap;
     gap: var(--wiki-space-4);
     justify-content: flex-end;
     padding: .65rem 1rem;
@@ -1587,6 +1630,7 @@ export default defineComponent({
   &-scope {
     display: flex;
     flex: 0 0 auto;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: flex-start;
     gap: var(--wiki-space-5);
@@ -1601,9 +1645,16 @@ export default defineComponent({
   &-scope-actions {
     align-items: center;
     display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
     flex-wrap: wrap;
     gap: .35rem;
     justify-content: flex-start;
+  }
+
+  &-close {
+    flex: 0 0 auto;
+    margin-inline-start: auto;
   }
 
   // Disabled-with-reason controls stay focusable so their tooltip can explain why.

@@ -22,6 +22,7 @@
           @keydown.down.prevent='searchMove(`down`)'
           @keydown.up.prevent='searchMove(`up`)'
           autocomplete='off'
+          aria-keyshortcuts='Control+k Meta+k Alt+Enter'
         )
     v-row.nav-header-layout(:gap='0')
       v-col.nav-header-brand-col(cols='5', md='4')
@@ -88,7 +89,7 @@
                 @keydown.down.prevent='searchMove(`down`)'
                 @keydown.up.prevent='searchMove(`up`)'
                 autocomplete='off'
-                aria-keyshortcuts='Control+k Meta+k'
+                aria-keyshortcuts='Control+k Meta+k Alt+Enter'
               )
                 template(v-slot:append-inner)
                   kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
@@ -1381,7 +1382,7 @@ export default defineComponent({
       void this.focusSearchField()
     },
     searchEnter (event: KeyboardEvent) {
-      if (event.isComposing) return
+      if (event.defaultPrevented || event.isComposing || event.altKey) return
       if ((event.ctrlKey || event.metaKey) && this.canEnterAgent) {
         event.preventDefault()
         this.searchMode = 'ask'

@@ -1,6 +1,6 @@
 <template lang='pug'>
   .editor-asciidoc(ref='root')
-    v-toolbar.editor-asciidoc-toolbar(density="compact", color='primary', flat, style='overflow-x: hidden;', role='toolbar', :aria-label='$t(`editor:editorAsciidoc.formattingTools`)')
+    v-toolbar.editor-asciidoc-toolbar(density="compact", flat, role='toolbar', :aria-label='$t(`editor:editorAsciidoc.formattingTools`)', v-roving-toolbar='{ onEscape: focusEditor }')
       template(v-if='isModalShown')
         v-spacer
         v-btn(variant="text", @click='closeAllModal')
@@ -9,17 +9,17 @@
       template(v-else)
         v-tooltip(location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.bold`)', @click='toggleMarkup({ start: `**` })').mx-0
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.bold`)', @click='toggleMarkup({ start: `**` })').mx-0
               v-icon mdi-format-bold
           span {{$t('editor:markup.bold')}}
         v-tooltip(location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.italic`)', @click='toggleMarkup({ start: `__` })').mx-0
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.italic`)', @click='toggleMarkup({ start: `__` })').mx-0
               v-icon mdi-format-italic
           span {{$t('editor:markup.italic')}}
         v-menu(:open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.headingLevel`)').mx-0
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.headingLevel`)').mx-0
               v-icon mdi-format-header-pound
           v-list.py-0
             template(v-for='(n, idx) in 6', :key='idx')
@@ -28,19 +28,20 @@
                   v-icon(:size='24 - (idx - 1) * 2') {{ $t(`editor:editorAsciidoc.mdiFormatHeader`, { n, interpolation: { escapeValue: false } }) }}
                 v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-divider(v-if='idx < 5')
+        v-divider.editor-asciidoc-tool-separator(v-if='$vuetify.display.mdAndUp', vertical, aria-hidden='true')
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.subscript`)', @click='toggleMarkup({ start: `~` })').mx-0
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.subscript`)', @click='toggleMarkup({ start: `~` })').mx-0
               v-icon mdi-format-subscript
           span {{$t('editor:markup.subscript')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.superscript`)', @click='toggleMarkup({ start: `^` })').mx-0
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.superscript`)', @click='toggleMarkup({ start: `^` })').mx-0
               v-icon mdi-format-superscript
           span {{$t('editor:markup.superscript')}}
         v-menu(v-if='$vuetify.display.mdAndUp', open-on-hover)
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.blockFormatting`)').mx-0
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:editorAsciidoc.blockFormatting`)').mx-0
               v-icon mdi-alpha-t-box-outline
           v-list.py-0
             v-list-item(@click='insertBeforeEachLine({ content: `> `})')
@@ -72,11 +73,12 @@
               template(v-slot:append)
                 v-icon(color='error') mdi-alpha-i-box-outline
               v-list-item-title {{$t(`editor:editorAsciidoc.importantBlockquote`)}}
+        v-divider.editor-asciidoc-tool-separator(v-if='$vuetify.display.mdAndUp', vertical, aria-hidden='true')
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='togglePreview').mx-0
+              v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='togglePreview').mx-0
                 v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
             span {{$t('editor:markup.togglePreviewPane')}}
         template(v-else)
@@ -85,7 +87,8 @@
             template(v-slot:activator='{ props }')
               v-btn.mx-0(
                 icon
-                rounded='0'
+                rounded='md'
+                variant='text'
                 v-bind='props'
                 :aria-label='previewShown ? $t(`editor:editorAsciidoc.showEditor`) : $t(`editor:editorAsciidoc.showPreview`)'
                 :aria-pressed='previewShown'
@@ -97,7 +100,8 @@
             template(v-slot:activator='{ props }')
               v-btn.mx-0(
                 icon
-                rounded='0'
+                rounded='md'
+                variant='text'
                 v-bind='props'
                 :aria-label='$t(`editor:editorAsciidoc.moreFormattingTools`)'
               )
@@ -128,29 +132,54 @@
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-format-quote-open
                 v-list-item-title {{$t('editor:markup.blockquote')}}
+              v-list-item(@click='insertBeforeEachLine({ content: `NOTE: `})')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-alpha-n-box-outline
+                v-list-item-title {{$t(`editor:editorAsciidoc.noteBlockquote`)}}
+              v-list-item(@click='insertBeforeEachLine({ content: `TIP: `})')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-alpha-t-box-outline
+                v-list-item-title {{$t(`editor:editorAsciidoc.tipBlockquote`)}}
+              v-list-item(@click='insertBeforeEachLine({ content: `WARNING: `})')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-alpha-w-box-outline
+                v-list-item-title {{$t('editor:markup.blockquoteWarning')}}
+              v-list-item(@click='insertBeforeEachLine({ content: `CAUTION: `})')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-alpha-c-box-outline
+                v-list-item-title {{$t(`editor:editorAsciidoc.cautionBlockquote`)}}
+              v-list-item(@click='insertBeforeEachLine({ content: `IMPORTANT: `})')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-alpha-i-box-outline
+                v-list-item-title {{$t(`editor:editorAsciidoc.importantBlockquote`)}}
+              v-divider
+              v-list-item(@click='toggleFullscreen')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-arrow-expand-all
+                v-list-item-title {{$t('editor:markup.distractionFreeMode')}}
 
     .editor-asciidoc-main
-      .editor-asciidoc-sidebar
+      .editor-asciidoc-sidebar(role='toolbar', aria-orientation='vertical', :aria-label='$t(`editor:editorAsciidoc.toolbarInsertTools`)', v-roving-toolbar='{ onEscape: focusEditor }')
         v-tooltip(location="right")
           template(v-slot:activator='{ props }')
-            v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertLink`)', @click='insertLink').mx-0
+            v-btn(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.insertLink`)', @click='insertLink').mx-0
               v-icon mdi-link-plus
           span {{$t('editor:markup.insertLink')}}
         v-tooltip(location="right")
           template(v-slot:activator='{ props }')
-            v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
+            v-btn.mt-3(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `primary` : undefined') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         v-tooltip(location="right")
           template(v-slot:activator='{ props }')
-            v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', :aria-pressed='activeModal === `editorModalDrawio`', @click='toggleModal(`editorModalDrawio`)').mx-0
-              v-icon mdi-chart-multiline
+            v-btn.mt-3(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', :aria-pressed='activeModal === `editorModalDrawio`', @click='toggleModal(`editorModalDrawio`)').mx-0
+              v-icon(:color='activeModal === `editorModalDrawio` ? `primary` : undefined') mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right")
             template(v-slot:activator='{ props }')
-              v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
+              v-btn.mt-3(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-asciidoc-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
@@ -197,6 +226,7 @@ import { convert } from '@asciidoctor/core'
 import { keymap } from '@codemirror/view'
 import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
 import { EditorAdapterController } from './common/editor-adapter'
+import { vRovingToolbar } from './common/roving-toolbar'
 
 // ========================================
 // INIT
@@ -218,6 +248,9 @@ interface MarkerOptions {
 // ========================================
 
 export default defineComponent({
+  directives: {
+    rovingToolbar: vRovingToolbar
+  },
   emits: ['editor-adapter', 'editor-adapter-clear'],
   setup() {
     const { mdAndUp } = useDisplay()
@@ -281,6 +314,14 @@ export default defineComponent({
     }
   },
   methods: {
+    focusEditor () {
+      if (this.previewShown && this.$vuetify.display.smAndDown) {
+        this.previewShown = false
+        void this.$nextTick(() => this.cm?.focus())
+        return
+      }
+      this.cm?.focus()
+    },
     togglePreview () {
       this.previewShown = !this.previewShown
     },
@@ -683,16 +724,52 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
   }
 
   &-toolbar {
-    background: var(--wiki-surface-raised);
+    background: var(--wiki-surface-raised) !important;
     border-block-end: 1px solid var(--wiki-surface-border);
     color: rgb(var(--v-theme-on-surface));
+    min-width: 0;
+    flex: 0 0 auto;
 
     .v-toolbar__content {
-      padding-inline-start: 64px;
+      padding-inline: 64px 8px;
+      gap: 3px;
+      flex-wrap: nowrap;
 
       @include until($tablet) {
-        padding-inline-start: 8px;
+        padding-inline: 8px;
       }
+    }
+  }
+
+  &-tool-separator {
+    align-self: center;
+    flex: 0 0 auto;
+    height: 24px;
+    margin-inline: 4px;
+    border-color: var(--wiki-surface-border);
+    opacity: 1;
+  }
+
+  &-toolbar .v-btn,
+  &-sidebar .v-btn {
+    border-radius: var(--wiki-control-radius, 6px) !important;
+    background: transparent;
+    box-shadow: none;
+
+    &.v-btn--icon {
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
+    }
+
+    &[aria-pressed='true'] {
+      background: rgba(var(--v-theme-primary), .1);
+      color: var(--wiki-accent-ink);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--wiki-accent-ink);
+      outline-offset: -2px;
     }
   }
 
@@ -701,6 +778,7 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
     background-color: var(--wiki-surface-sunken);
     border-inline-end: 1px solid var(--wiki-surface-border);
     width: 64px;
+    flex: 0 0 64px;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
