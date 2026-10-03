@@ -305,8 +305,8 @@ const addFiles = async (files: readonly File[]): Promise<boolean> => {
     }
   }
   try {
-    // Each worker settles files independently; no batch ever has more than two uploads in flight.
-    await Promise.all(Array.from({ length: Math.min(2, files.length) }, () => uploadNext()))
+    // Match the server's single-upload memory admission gate; files settle independently.
+    await uploadNext()
     if (stale()) { discardUploads(); return false }
     attachments.value = [...attachments.value, ...uploaded.filter((media): media is AgentMediaView => media !== null)]
     if (failed.some(Boolean)) {
