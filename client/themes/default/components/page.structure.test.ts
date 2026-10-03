@@ -8,6 +8,7 @@ import { hydrateContentExtensions } from '../../../helpers/content-extension-run
 import { selectMermaidRenderHosts } from '../../../helpers/content-extension-runtimes/mermaid'
 import { trackPageOutline } from '../../../helpers/page-outline'
 import type { PageOutlineTracker } from '../../../helpers/page-outline'
+import { UTILITY_TOOLTIP_GAP } from '../../../helpers/utility-tooltip-placement'
 import boot from '../../../modules/boot'
 
 import Prism from '../../../libs/prism/setup'
@@ -22,21 +23,29 @@ const component = new Function(
   'defineComponent', 'h', 'markRaw', 'mergeProps', 'useGoTo', 'i18next',
   'AsyncState', 'PageBrandingMark', 'StatusIndicator', 'SiteBanner', 'NavSidebar',
   'Prism', 'ClipboardJS', 'hydrateContentExtensions', 'selectMermaidRenderHosts', 'trackPageOutline', 'boot',
+  'siteLangs', 'UTILITY_TOOLTIP_GAP',
   executableScript
 )(
   Vue.defineComponent, Vue.h, Vue.markRaw, Vue.mergeProps, () => () => {}, { t: (key: string) => key },
   componentStub, componentStub, componentStub, componentStub, componentStub,
-  Prism, ClipboardJS, hydrateContentExtensions, selectMermaidRenderHosts, trackPageOutline, boot
-) as { methods: { refreshPageContent: (this: ReaderContentVm) => void } }
+  Prism, ClipboardJS, hydrateContentExtensions, selectMermaidRenderHosts, trackPageOutline, boot,
+  [], UTILITY_TOOLTIP_GAP
+) as {
+  data: () => Record<string, unknown>
+  methods: Record<string, (this: ReaderContentVm, ...args: unknown[]) => unknown>
+}
 
 type ReaderContentVm = {
+  [name: string]: unknown
   $refs: { container: HTMLElement }
   $vuetify: { theme: { current: { dark: boolean } } }
   $nextTick: (callback: () => void) => Promise<void>
   tocFlattened: []
-  mermaidAbortController?: AbortController
-  contentExtensionCleanup?: () => void
-  outlineCleanup?: PageOutlineTracker
+  mermaidAbortController: AbortController | null
+  contentExtensionCleanup: (() => void) | null
+  outlineCleanup: PageOutlineTracker | null
+  refreshPageContent: () => void
+  resetArticleDisclosures: () => void
   setupTocResizeObserver: () => void
   ensureActiveTocVisible: () => void
 }
@@ -73,21 +82,25 @@ const readerContent = (emptyBlocks = false): HTMLElement => {
   </article>`
   document.body.append(main)
   const container = main.querySelector<HTMLElement>('.contents')!
-  const vm: ReaderContentVm = {
+  const vm = {
+    ...component.data(),
     $refs: { container },
     $vuetify: { theme: { current: { dark: false } } },
-    $nextTick: async callback => { callback() },
-    tocFlattened: [],
-    setupTocResizeObserver: () => {},
-    ensureActiveTocVisible: () => {}
-  }
-  component.methods.refreshPageContent.call(vm)
+    $nextTick: async (callback: () => void) => { callback() },
+    tocFlattened: []
+  } as ReaderContentVm
+  for (const [name, method] of Object.entries(component.methods)) vm[name] = method.bind(vm)
+  // The copy fixture has no outline UI; keep only those unrelated layout seams.
+  vm.setupTocResizeObserver = () => {}
+  vm.ensureActiveTocVisible = () => {}
   cleanups.push(() => {
+    vm.resetArticleDisclosures()
     vm.mermaidAbortController?.abort()
     vm.contentExtensionCleanup?.()
     vm.outlineCleanup?.dispose()
     main.remove()
   })
+  vm.refreshPageContent()
   return container
 }
 
