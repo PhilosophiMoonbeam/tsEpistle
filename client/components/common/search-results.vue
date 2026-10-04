@@ -1646,7 +1646,7 @@ export default defineComponent({
   bottom: 0;
   min-height: 0;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   position: fixed;
   text-align: center;
   width: 100%;
@@ -1724,7 +1724,13 @@ export default defineComponent({
     margin-inline: auto;
     max-height: calc(100dvh - var(--search-overlay-top-offset) - max(var(--wiki-space-4), env(safe-area-inset-bottom, 0px)));
     min-height: 0;
-    overflow: hidden;
+    // One scroller keeps filters from consuming the results' entire height at
+    // enlarged text sizes or on short viewports.
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--wiki-space-3);
+    scrollbar-gutter: stable;
     border: 1px solid var(--wiki-surface-border-strong);
     border-radius: var(--wiki-hero-radius);
     background: var(--wiki-surface-raised);
@@ -1809,12 +1815,10 @@ export default defineComponent({
   }
 
   &-content {
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-width: 0;
     min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    overflow: visible;
     padding: var(--wiki-space-4);
   }
   &-summary {
