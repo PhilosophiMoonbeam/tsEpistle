@@ -5,7 +5,9 @@
       <span v-if="loaded" class="agent-memory__count" role="status" aria-live="polite" aria-atomic="true">{{ memoryCountLabel }}</span>
     </AgentPanelHeader>
     <div v-if="loaded && memoryCount > 0" class="agent-memory__search">
-      <v-text-field v-model="searchQuery" :label="$t('common:agentMemoryManager.findMemory')" :aria-label="$t('common:agentMemoryManager.searchAgentMemory')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" clearable hide-details />
+      <v-text-field v-model="searchQuery" :label="$t('common:agentMemoryManager.findMemory')" :aria-label="$t('common:agentMemoryManager.searchAgentMemory')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" clearable hide-details>
+        <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('common:agentMemoryManager.clearSearch')" /></template>
+      </v-text-field>
       <span class="sr-only" role="status" aria-live="polite">{{ memorySearchStatus }}</span>
     </div>
 
@@ -55,10 +57,10 @@
               <legend>{{ $t('common:agentMemoryManager.saveUnder') }}</legend>
               <v-btn-toggle v-model="draftTarget" class="agent-memory__target-toggle" mandatory variant="outlined">
                 <div class="agent-memory__target-hit-area">
-                  <v-btn value="user" prepend-icon="mdi-account-outline">{{ $t('common:agentMemoryManager.you') }}</v-btn>
+                  <v-btn value="user" prepend-icon="mdi-account-outline" :aria-pressed="draftTarget === 'user'">{{ $t('common:agentMemoryManager.you') }}</v-btn>
                 </div>
                 <div class="agent-memory__target-hit-area">
-                  <v-btn value="agent" prepend-icon="mdi-notebook-outline">{{ $t('common:agentMemoryManager.agent') }}</v-btn>
+                  <v-btn value="agent" prepend-icon="mdi-notebook-outline" :aria-pressed="draftTarget === 'agent'">{{ $t('common:agentMemoryManager.agent') }}</v-btn>
                 </div>
               </v-btn-toggle>
             </fieldset>
@@ -401,7 +403,7 @@ const load = async (committedMessage?: string): Promise<AgentRefreshResult> => {
     stale.value = loaded.value
     const reason = message(value, loaded.value ? t('common:agentMemoryManager.agentMemoryCouldNot') : t('common:agentMemoryManager.agentMemoryCouldNotLoad'))
     error.value = loaded.value
-      ? t('common:agentMemoryManager.showingLastLoadedMemory', { prefix: committedMessage ? `${committedMessage}, but memory could not be refreshed. ` : '', reason, interpolation: { escapeValue: false } })
+      ? t('common:agentMemoryManager.showingLastLoadedMemory', { prefix: committedMessage ? `${t('common:agentMemoryManager.butMemoryCouldNot', { committedMessage, interpolation: { escapeValue: false } })} ` : '', reason, interpolation: { escapeValue: false } })
       : reason
     const result = rejectedRefresh(value, true)
     memoryRefreshResult.value = result
@@ -497,7 +499,7 @@ const componentElement = (component: ComponentRoot | null): HTMLElement | null =
   return component.$el instanceof HTMLElement ? component.$el : null
 }
 const saveShortcut = (event: KeyboardEvent): void => {
-  if (!event.ctrlKey && !event.metaKey) return
+  if (event.isComposing || (!event.ctrlKey && !event.metaKey)) return
   event.preventDefault()
   void save()
 }
@@ -1055,6 +1057,10 @@ onBeforeUnmount(() => {
 
   .agent-memory__entry-actions .v-btn {
     flex: 1 1 50%;
+  }
+
+  .agent-memory__editor-actions .v-btn {
+    flex: 1 1 auto;
   }
 
   .agent-memory__shortcut {

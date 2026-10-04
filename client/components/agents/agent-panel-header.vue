@@ -1,5 +1,5 @@
 <template>
-  <header class="agent-panel-header" tabindex="-1" :aria-labelledby="headingId" :aria-describedby="descriptionId">
+  <header class="agent-panel-header" tabindex="-1" :aria-labelledby="headingId" :aria-describedby="$slots.default ? descriptionId : undefined">
     <div class="agent-panel-header__title-row">
       <v-icon :icon="icon" size="20" class="agent-panel-header__icon" aria-hidden="true" />
       <h2 :id="headingId">{{ title }}</h2>
@@ -22,7 +22,7 @@
         </v-tooltip>
       </div>
     </div>
-    <div :id="descriptionId" class="agent-panel-header__description"><slot /></div>
+    <div v-if="$slots.default" :id="descriptionId" class="agent-panel-header__description"><slot /></div>
   </header>
 </template>
 <script setup lang="ts">

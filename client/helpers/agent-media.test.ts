@@ -1,6 +1,6 @@
 import { describe, expect, it } from '../../server/test/bun-test.mts'
 import { validateAgentAttachment } from './agent-media.ts'
-import { agentMediaContentUrl, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from './agents-api.ts'
+import { AgentApiError, agentMediaContentUrl, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from './agents-api.ts'
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
 const media = { id: mediaId, kind: 'attachment', filename: 'diagram.png', mimeType: 'image/png', byteLength: 3, available: true, detached: false }
@@ -40,9 +40,9 @@ describe('Agent private media boundary', () => {
     expect(seen).toBe(true)
   })
   it('surfaces upload denial and validates media responses before showing a preview', async () => {
-    await expect(uploadAgentMedia(async () => response({ message: 'Media is disabled.' }, 403), 'csrf', sessionId, new File(['a'], 'a.png'))).rejects.toThrow(
-      'Media is disabled.'
-    )
+    const deniedUpload = uploadAgentMedia(async () => response({ message: 'Media is disabled.' }, 403), 'csrf', sessionId, new File(['a'], 'a.png'))
+    await expect(deniedUpload).rejects.toBeInstanceOf(AgentApiError)
+    await expect(deniedUpload).rejects.toMatchObject({ status: 403, retryable: false })
     await expect(
       uploadAgentMedia(async () => response({ media: { ...media, id: 'https://remote/image' } }), 'csrf', sessionId, new File(['a'], 'a.png'))
     ).rejects.toThrow('invalid response')

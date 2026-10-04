@@ -1,6 +1,7 @@
 <template>
   <article
     v-if="approvalPending"
+    ref="approvalArticle"
     :id="`agent-approval-${proposal.id}`"
     class="agent-operation"
     :class="[`agent-operation--${statusKey}`, { 'agent-operation--destructive': proposal.risk === 'destructive-write' }]"
@@ -231,11 +232,24 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
+import i18next from 'i18next'
 import type { AgentProposalView, AgentToolCallView, AgentToolState } from '../../../shared/agents/contracts.ts'
 import { agentApprovalTitle, agentProposalReceiptLabel } from './agent-thread-presentation.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
-const t = useTranslate()
+const translate = useTranslate()
+const localeRevision = ref(0)
+const refreshLocale = (): void => { localeRevision.value += 1 }
+i18next.on('languageChanged', refreshLocale)
+i18next.on('loaded', refreshLocale)
+onBeforeUnmount(() => {
+  i18next.off('languageChanged', refreshLocale)
+  i18next.off('loaded', refreshLocale)
+})
+const t: typeof translate = (key, options) => {
+  void localeRevision.value
+  return translate(key, options)
+}
 
 const props = defineProps<{ tool: AgentToolCallView; proposal: AgentProposalView; busy?: boolean; networkBlocked?: boolean }>()
 const emit = defineEmits<{ decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string] }>()
@@ -244,8 +258,10 @@ const expanded = ref(false)
 const confirmationPath = ref('')
 const expiryTick = ref(0)
 const decisionInFlight = ref<'approved' | 'denied' | null>(null)
-const decisionMessage = ref('')
+const decisionMessageKey = ref('')
+const decisionMessage = computed(() => decisionMessageKey.value ? t(decisionMessageKey.value) : '')
 const receiptSummary = useTemplateRef<HTMLElement>('receiptSummary')
+const approvalArticle = useTemplateRef<HTMLElement>('approvalArticle')
 const approveButton = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('approveButton')
 const denyButton = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('denyButton')
 let expiryTimer: number | null = null
@@ -264,8 +280,20 @@ const locallyExpired = computed(() => {
   void expiryTick.value
   return approvalPending.value && hasExpired()
 })
-const approvalTitle = computed(() => agentApprovalTitle(props.proposal.actionName))
-const actionLabel = computed(() => approvalTitle.value.replace(/^Wiki Agent wants to /, '').replace(/^Wiki Agent needs your approval$/, 'review this action'))
+const approvalTitle = computed(() => {
+  const text = agentApprovalTitle(props.proposal.actionName)
+  return t(text.key, text.params)
+})
+const actionLabel = computed(() => {
+  const keys: Partial<Record<AgentProposalView['actionName'], string>> = {
+    'pages.prepareCreate': 'common:agentToolCard.createPage',
+    'pages.preparePatch': 'common:agentToolCard.applyEdit',
+    'pages.prepareMove': 'common:agentToolCard.movePage',
+    'pages.prepareRestore': 'common:agentToolCard.restorePage',
+    'pages.prepareDelete': 'common:agentToolCard.deletePage'
+  }
+  return t(keys[props.proposal.actionName] ?? 'common:agentToolCard.reviewAction')
+})
 const approveLabel = computed(() => {
   if (props.proposal.risk === 'destructive-write') return t('common:agentToolCard.deletePage')
   if (props.proposal.actionName === 'pages.preparePatch') return t('common:agentToolCard.applyEdit')
@@ -284,7 +312,8 @@ const receiptLabel = computed(() => {
   if (props.proposal.approval?.status === 'cancelled' || props.proposal.status === 'cancelled' || props.tool.state === 'cancelled') return t('common:agentToolCard.changeCancelled')
   if (props.tool.state === 'omitted') return t('common:agentToolCard.resultOmitted')
   if (props.tool.state === 'not_executed') return t('common:agentToolCard.notExecuted')
-  return agentProposalReceiptLabel(props.proposal.status)
+  const text = agentProposalReceiptLabel(props.proposal.status)
+  return t(text.key, text.params)
 })
 const statusKey = computed<OperationStatus>(() => {
   if (props.proposal.approval?.status === 'denied') return 'denied'
@@ -317,7 +346,7 @@ const statusIcon = computed(() => ({
   omitted: 'mdi-eye-off-outline',
   not_executed: 'mdi-minus-circle-outline'
 })[statusKey.value])
-const toolStateLabels: Readonly<Record<AgentToolState, string>> = {
+const toolStateLabels = computed<Readonly<Record<AgentToolState, string>>>(() => ({
   preparing: t('common:agentToolCard.preparing'),
   running: t('common:agentToolCard.running'),
   awaitingApproval: t('common:agentToolCard.awaitingApproval'),
@@ -327,8 +356,8 @@ const toolStateLabels: Readonly<Record<AgentToolState, string>> = {
   cancelled: t('common:agentToolCard.cancelled'),
   omitted: t('common:agentToolCard.resultOmitted'),
   not_executed: t('common:agentToolCard.notExecuted')
-}
-const toolStateLabel = computed(() => toolStateLabels[props.tool.state])
+}))
+const toolStateLabel = computed(() => toolStateLabels.value[props.tool.state])
 const receiptNote = computed(() => {
   if (statusKey.value === 'success') return t('common:agentToolCard.approvedOperationCompletedVerification')
   if (statusKey.value === 'omitted') return t('common:agentToolCard.operationCompletedButResult')
@@ -343,7 +372,7 @@ const receiptNote = computed(() => {
   return t('common:agentToolCard.operationWaitingDecision')
 })
 const expiryLabel = computed(() => {
-  if (locallyExpired.value) return 'expired'
+  if (locallyExpired.value) return t('common:agentToolCard.expired')
   const minutes = Math.ceil((new Date(props.proposal.expiresAt).valueOf() - Date.now()) / 60_000)
   return minutes === 1 ? t('common:agentToolCard.expires1Minute') : t('common:agentToolCard.expiresMinutes', { minutes, interpolation: { escapeValue: false } })
 })
@@ -365,8 +394,11 @@ const reviewDescription = computed(() => reviewAdequate.value
   ? t('common:agentToolCard.approveAuthorizesOnlyEffect')
   : t('common:agentToolCard.approvalUnavailableBecauseNeither'))
 const visibleDiff = computed(() => expanded.value ? diffLines.value : diffLines.value.slice(0, collapsedLineCount))
-const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-const formatTimestamp = (value: string | null | undefined): string => value ? dateFormatter.format(new Date(value)) : t('common:agentToolCard.notRecorded')
+const dateFormatter = computed(() => {
+  void localeRevision.value
+  return new Intl.DateTimeFormat(i18next.resolvedLanguage || i18next.language || undefined, { dateStyle: 'medium', timeStyle: 'short' })
+})
+const formatTimestamp = (value: string | null | undefined): string => value ? dateFormatter.value.format(new Date(value)) : t('common:agentToolCard.notRecorded')
 const formatDuration = (start: string | null | undefined, end: string | null | undefined): string => {
   if (!start) return t('common:agentToolCard.notRecorded')
   if (!end) void expiryTick.value
@@ -410,11 +442,32 @@ watch(() => props.proposal.id, () => {
   confirmationPath.value = ''
   expanded.value = false
   decisionInFlight.value = null
-  decisionMessage.value = ''
+  decisionMessageKey.value = ''
 })
+watch(locallyExpired, (expired, wasExpired) => {
+  if (!expired || wasExpired) return
+  const article = approvalArticle.value
+  const focusedControl = document.activeElement
+  if (!article?.contains(focusedControl) || !(focusedControl instanceof HTMLElement)) return
+  if (!focusedControl.closest('.agent-operation__decision, .agent-operation__confirmation')) return
+  const proposalId = props.proposal.id
+  void nextTick(() => {
+    if (props.proposal.id !== proposalId || !locallyExpired.value) return
+    if (document.activeElement !== focusedControl && document.activeElement !== document.body) return
+    approvalArticle.value?.focus()
+  })
+}, { flush: 'sync' })
 watch(approvalPending, (pending, wasPending) => {
-  if (!pending && wasPending) void nextTick(() => receiptSummary.value?.focus())
-})
+  if (pending || !wasPending) return
+  const focusedControl = document.activeElement
+  if (!approvalArticle.value?.contains(focusedControl)) return
+  const proposalId = props.proposal.id
+  void nextTick(() => {
+    if (props.proposal.id !== proposalId) return
+    if (document.activeElement !== focusedControl && document.activeElement !== document.body) return
+    receiptSummary.value?.focus()
+  })
+}, { flush: 'sync' })
 watch(
   [approvalPending, statusKey, () => props.proposal.expiresAt, () => props.tool.completedAt],
   startExpiryTimer,
@@ -425,7 +478,7 @@ watch(() => props.busy, busy => {
   const target = decisionInFlight.value && approvalPending.value
     ? decisionInFlight.value === 'approved' ? approveButton.value : denyButton.value
     : null
-  if (target) decisionMessage.value = t('common:agentToolCard.decisionCouldNotCompleted')
+  if (target) decisionMessageKey.value = 'common:agentToolCard.decisionCouldNotCompleted'
   decisionInFlight.value = null
   if (target) void nextTick(() => elementForRef(target)?.focus())
 })
@@ -441,11 +494,11 @@ const decide = (decision: 'approved' | 'denied'): void => {
   if (decision === 'approved' && !reviewAdequate.value) return
   if (decision === 'approved' && props.proposal.risk === 'destructive-write' && confirmationPath.value !== props.proposal.target?.path) return
   decisionInFlight.value = decision
-  decisionMessage.value = decision === 'approved' ? t('common:agentToolCard.submittingApproval') : t('common:agentToolCard.submittingDenial')
+  decisionMessageKey.value = decision === 'approved' ? 'common:agentToolCard.submittingApproval' : 'common:agentToolCard.submittingDenial'
   emit('decision', props.proposal.id, approval.id, decision, props.proposal.risk === 'destructive-write' ? confirmationPath.value : undefined)
   void nextTick(() => {
     if (props.busy || !approvalPending.value || decisionInFlight.value !== decision) return
-    decisionMessage.value = t('common:agentToolCard.decisionCouldNotCompleted')
+    decisionMessageKey.value = 'common:agentToolCard.decisionCouldNotCompleted'
     decisionInFlight.value = null
     const target = decision === 'approved' ? approveButton.value : denyButton.value
     void nextTick(() => elementForRef(target)?.focus())

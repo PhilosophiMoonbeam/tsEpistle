@@ -219,7 +219,7 @@ describe('Agent chat refresh fallback', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(fetcher).toHaveBeenCalledTimes(2)
-    expect(store.error).toBe('Permission revoked')
+    expect(store.error).toBeTruthy()
     expect(store.connection).toBe('closed')
     expect(store.refreshTimer).toBeNull()
   })

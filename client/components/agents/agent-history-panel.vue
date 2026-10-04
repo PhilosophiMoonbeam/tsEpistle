@@ -27,7 +27,7 @@
     <v-alert v-if="networkBlocked" class="mx-3 mb-3" density="compact" type="warning" variant="tonal" role="status">
       {{ $t('common:agentHistoryPanel.connectionRequiredChangeConversation') }}
     </v-alert>
-    <span id="agent-history-drag-instructions" class="agent-history__search-status">
+    <span :id="dragInstructionsId" class="agent-history__search-status">
       {{ $t('common:agentHistoryPanel.dragConversationRecentSaved') }}
     </span>
     <span class="agent-history__search-status" role="status" aria-live="polite">{{ dragStatus }}</span>
@@ -69,8 +69,8 @@
             'agent-history__drop-target--available': canDropTo(null),
             'agent-history__drop-target--active': isActiveDropTarget(null)
           }"
-          aria-labelledby="agent-history-recent-title"
-          aria-describedby="agent-history-drag-instructions"
+          :aria-labelledby="recentTitleId"
+          :aria-describedby="dragInstructionsId"
           @dragenter="setDropTarget($event, null)"
           @dragover="setDropTarget($event, null)"
           @dragleave="leaveDropTarget($event, null)"
@@ -78,7 +78,7 @@
         >
           <div class="agent-history__section-heading">
             <div>
-              <h3 id="agent-history-recent-title" class="agent-history__section-title">{{ $t('common:agentHistoryPanel.recent') }}</h3>
+              <h3 :id="recentTitleId" class="agent-history__section-title">{{ $t('common:agentHistoryPanel.recent') }}</h3>
               <div class="agent-history__section-copy">{{ $t('common:agentWorkspace.recentCopy') }}</div>
             </div>
             <div class="agent-history__section-actions">
@@ -117,7 +117,7 @@
                   link
                   :disabled="sessionBusy(session.id)"
                   :draggable="canDragSession(session)"
-                  aria-describedby="agent-history-drag-instructions"
+                  :aria-describedby="dragInstructionsId"
                   rounded="lg"
                   @click="openSession(session.id)"
                   @dragstart.stop="beginSessionDrag($event, session)"
@@ -150,10 +150,10 @@
 
         </section>
 
-        <section class="agent-history__folders" aria-labelledby="agent-history-folders-title">
+        <section class="agent-history__folders" :aria-labelledby="foldersTitleId">
           <div class="agent-history__section-heading agent-history__section-heading--folders">
             <div>
-              <h3 id="agent-history-folders-title" class="agent-history__section-title">{{ $t('common:agentHistoryPanel.savedFolders') }}</h3>
+              <h3 :id="foldersTitleId" class="agent-history__section-title">{{ $t('common:agentHistoryPanel.savedFolders') }}</h3>
               <div class="agent-history__section-copy">{{ $t('common:agentHistoryPanel.keptWithoutExpiry') }}</div>
             </div>
             <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" :aria-label="$t('common:agentHistoryPanel.createConversationFolder')" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginCreateFolder">{{ $t('common:agentHistoryPanel.newFolder') }}</v-btn>
@@ -168,7 +168,7 @@
                 'agent-history__drop-target--available': canDropTo(group.folder.id),
                 'agent-history__drop-target--active': isActiveDropTarget(group.folder.id)
               }"
-              aria-describedby="agent-history-drag-instructions"
+              :aria-describedby="dragInstructionsId"
               rounded="lg"
               @dragenter="setDropTarget($event, group.folder.id)"
               @dragover="setDropTarget($event, group.folder.id)"
@@ -206,7 +206,7 @@
                     link
                     :disabled="sessionBusy(session.id)"
                     :draggable="canDragSession(session)"
-                    aria-describedby="agent-history-drag-instructions"
+                    :aria-describedby="dragInstructionsId"
                     rounded="lg"
                     @click="openSession(session.id)"
                     @dragstart.stop="beginSessionDrag($event, session)"
@@ -244,7 +244,7 @@
             data-drop-target="new-folder"
             role="region"
             :aria-label="$t('common:agentHistoryPanel.createFolderConversationsWorth')"
-            aria-describedby="agent-history-drag-instructions"
+            :aria-describedby="dragInstructionsId"
             @dragenter="setDropTarget($event, newFolderDropTarget)"
             @dragover="setDropTarget($event, newFolderDropTarget)"
             @dragleave="leaveDropTarget($event, newFolderDropTarget)"
@@ -292,9 +292,9 @@
     </div>
   </v-card>
 
-  <v-dialog content-class="agent-owned-overlay" v-model="folderEditorOpen" max-width="28rem" aria-labelledby="agent-history-folder-editor-title" :persistent="savingFolder">
+  <v-dialog content-class="agent-owned-overlay" v-model="folderEditorOpen" max-width="28rem" :aria-labelledby="folderEditorTitleId" :persistent="savingFolder">
     <v-card rounded="xl">
-      <v-card-title id="agent-history-folder-editor-title" class="d-flex align-center ga-3 pt-5 px-5">
+      <v-card-title :id="folderEditorTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-folder-outline" aria-hidden="true" /></v-avatar>
         {{ editingFolder ? $t('common:agentHistoryPanel.renameFolder') : $t('common:agentHistoryPanel.newFolder') }}
       </v-card-title>
@@ -330,9 +330,9 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog content-class="agent-owned-overlay" v-model="sessionEditorOpen" max-width="28rem" aria-labelledby="agent-history-session-editor-title" :persistent="savingSessionTitle">
+  <v-dialog content-class="agent-owned-overlay" v-model="sessionEditorOpen" max-width="28rem" :aria-labelledby="sessionEditorTitleId" :persistent="savingSessionTitle">
     <v-card rounded="xl">
-      <v-card-title id="agent-history-session-editor-title" class="d-flex align-center ga-3 pt-5 px-5">
+      <v-card-title :id="sessionEditorTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-pencil-outline" aria-hidden="true" /></v-avatar>
         {{ $t('common:agentHistoryPanel.renameConversation') }}
       </v-card-title>
@@ -350,9 +350,9 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog content-class="agent-owned-overlay" :model-value="Boolean(deletingSession)" max-width="29rem" aria-labelledby="agent-history-delete-title" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelDeleteSession() }">
+  <v-dialog content-class="agent-owned-overlay" :model-value="Boolean(deletingSession)" max-width="29rem" :aria-labelledby="deleteTitleId" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelDeleteSession() }">
     <v-card ref="deleteDialogCard" rounded="xl">
-      <v-card-title id="agent-history-delete-title" class="d-flex align-center ga-3 pt-5 px-5">
+      <v-card-title :id="deleteTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-outline" aria-hidden="true" /></v-avatar>
         {{ $t('common:agentHistoryPanel.deleteConversation') }}
       </v-card-title>
@@ -368,9 +368,9 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog content-class="agent-owned-overlay" :model-value="Boolean(removingFolder)" max-width="30rem" aria-labelledby="agent-history-remove-folder-title" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelRemoveFolder() }">
+  <v-dialog content-class="agent-owned-overlay" :model-value="Boolean(removingFolder)" max-width="30rem" :aria-labelledby="removeFolderTitleId" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelRemoveFolder() }">
     <v-card ref="removeFolderDialogCard" rounded="xl">
-      <v-card-title id="agent-history-remove-folder-title" class="d-flex align-center ga-3 pt-5 px-5">
+      <v-card-title :id="removeFolderTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="warning" size="38" variant="tonal"><v-icon icon="mdi-folder-remove-outline" aria-hidden="true" /></v-avatar>
         {{ $t('common:agentHistoryPanel.removeFolder') }}
       </v-card-title>
@@ -390,7 +390,7 @@
 
 <script setup lang="ts">
 import AgentPanelHeader from './agent-panel-header.vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, onWatcherCleanup, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onWatcherCleanup, ref, shallowRef, useId, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
@@ -401,6 +401,14 @@ import AgentHistorySessionActions from './agent-history-session-actions.vue'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const historyId = useId()
+const recentTitleId = `${historyId}-recent-title`
+const foldersTitleId = `${historyId}-folders-title`
+const dragInstructionsId = `${historyId}-drag-instructions`
+const folderEditorTitleId = `${historyId}-folder-editor-title`
+const sessionEditorTitleId = `${historyId}-session-editor-title`
+const deleteTitleId = `${historyId}-delete-title`
+const removeFolderTitleId = `${historyId}-remove-folder-title`
 const props = defineProps<{ headingId: string; descriptionId: string; networkBlocked?: boolean }>()
 const emit = defineEmits<{ close: []; clear: [] }>()
 const { headingId, descriptionId } = props
@@ -647,7 +655,7 @@ const matchingConversationCount = computed(() => historyPartition.value.matching
 const hasSearchResults = computed(() => matchingConversationCount.value > 0)
 const archiveCountDescription = computed(() => {
   const count = matchingConversationCount.value
-  const variant = `${normalizedSearch.value ? 'matching' : 'all'}${sessionsNextCursor.value ? t('common:agentHistoryPanel.loaded') : ''}`
+  const variant = `${normalizedSearch.value ? 'matching' : 'all'}${sessionsNextCursor.value ? 'Loaded' : ''}`
   return t(`common:agentHistoryPanel.archiveCount.${variant}`, { count })
 })
 const searchStatus = computed(() => normalizedSearch.value
@@ -1240,7 +1248,11 @@ const deleteSession = async (): Promise<void> => {
   deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
   try {
     const committed = await agents.removeSession(session.id)
-    if (!committed || !isOperationCurrent(identity)) return
+    if (!isOperationCurrent(identity)) return
+    if (!committed) {
+      dialogError.value = t('common:agentHistoryPanel.conversationCouldNotDeleted')
+      return
+    }
     committedDeletedSessionIds.value = new Set(committedDeletedSessionIds.value).add(session.id)
     destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
     deletingSession.value = null
@@ -1263,7 +1275,11 @@ const deleteFolder = async (): Promise<void> => {
   deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; foldersRefreshError.value = ''; agents.error = ''
   try {
     const committed = await agents.deleteFolder(folder.id, folder.version)
-    if (!committed || !isOperationCurrent(identity)) return
+    if (!isOperationCurrent(identity)) return
+    if (!committed) {
+      dialogError.value = t('common:agentHistoryPanel.folderCouldNotRemoved')
+      return
+    }
     for (const sessionId of affectedSessionIds) setProjectedFolder(sessionId, null)
     openFolderIds.value = openFolderIds.value.filter(id => id !== folder.id)
     destructiveRestoreTarget.value = null

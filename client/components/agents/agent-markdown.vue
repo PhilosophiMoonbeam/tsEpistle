@@ -204,6 +204,9 @@ const currentTheme = (root: HTMLElement): 'dark' | 'default' => {
     : 'default'
 }
 
+const escapeHtml = (value: string): string =>
+  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
+
 const decorateRenderedHtml = (html: string): string => {
   if (typeof document === 'undefined') return html
   const template = document.createElement('template')
@@ -216,7 +219,7 @@ const decorateRenderedHtml = (html: string): string => {
     if (!selector) continue
     anchor.dataset.sourcePreview = 'true'
     anchor.removeAttribute('target')
-    anchor.setAttribute('aria-label', t('common:agentMarkdown.previewSource', { getAttribute: anchor.getAttribute('aria-label') ?? 'Citation', interpolation: { escapeValue: false } }))
+    anchor.setAttribute('aria-label', t('common:agentMarkdown.previewSource', { getAttribute: anchor.getAttribute('aria-label') ?? t('common:agentMarkdown.citation'), interpolation: { escapeValue: false } }))
     anchor.querySelector('.agent-markdown__new-window')?.remove()
   }
 
@@ -249,6 +252,8 @@ const decorateRenderedHtml = (html: string): string => {
     output.className = 'agent-markdown__diagram-output'
     output.setAttribute('aria-busy', 'true')
     output.setAttribute('aria-label', t('common:agentMarkdown.renderingMermaidDiagram'))
+    output.setAttribute('role', 'status')
+    output.textContent = t('common:agentMarkdown.renderingMermaidDiagram')
     shell.insertBefore(output, sourceDisclosure)
   }
   return template.innerHTML
@@ -264,18 +269,18 @@ const renderMarkdown = (): string => {
       /<pre(?=[\s>])([^>]*)>/g,
       (_match, attributes: string) => {
         const language = attributes.match(/\bdata-language="([a-z0-9][a-z0-9_+.-]{0,31})"/i)?.[1] ?? 'text'
-        return `<div class="agent-markdown__code-shell"><div class="agent-markdown__code-toolbar"><span>${language}</span><button type="button" class="agent-markdown__copy" data-copy-code aria-label="Copy code to clipboard" aria-live="polite">Copy</button></div><pre${attributes} tabindex="0" aria-label="Scrollable ${language} code block"`
+        return `<div class="agent-markdown__code-shell"><div class="agent-markdown__code-toolbar"><span>${language}</span><button type="button" class="agent-markdown__copy" data-copy-code aria-label="${escapeHtml(t('common:agentMarkdown.copyCodeClipboard'))}" aria-live="polite">${escapeHtml(t('common:actions.copy'))}</button></div><pre${attributes} tabindex="0" role="region" aria-label="${escapeHtml(t('common:agentMarkdown.scrollableCode', { language, interpolation: { escapeValue: false } }))}"`
       }
     )
     .replace(/<\/pre>/g, '</pre></div>')
     .replace(
       /<table(?=[\s>])/g,
-      '<div class="agent-markdown__table-shell" tabindex="0" role="region" aria-label="Scrollable table"><table'
+      `<div class="agent-markdown__table-shell" tabindex="0" role="region" aria-label="${escapeHtml(t('common:agentMarkdown.scrollableTable'))}"><table`
     )
     .replace(/<\/table>/g, '</table></div>')
     .replace(
       /<a(?=[^>]*\btarget=["']_blank["'])([^>]*)>([\s\S]*?)<\/a>/g,
-      (_match, attributes: string, anchorContent: string) => `<a${attributes}>${anchorContent}<span class="agent-markdown__new-window"> (opens in a new tab)</span></a>`
+      (_match, attributes: string, anchorContent: string) => `<a${attributes}>${anchorContent}<span class="agent-markdown__new-window"> ${escapeHtml(t('common:agentThread.opensNewTab'))}</span></a>`
     )
   return decorateRenderedHtml(html)
 }
@@ -332,6 +337,8 @@ const enhanceMermaidDiagrams = (version: number): void => {
     shell.setAttribute('aria-busy', 'false')
     output?.setAttribute('aria-busy', 'false')
     output?.removeAttribute('aria-label')
+    output?.replaceChildren()
+    output?.removeAttribute('role')
   }
   if (excess.length > 0) showMermaidLimitNotice(root)
   for (const shell of shells) {
@@ -345,6 +352,8 @@ const enhanceMermaidDiagrams = (version: number): void => {
       shell.setAttribute('aria-busy', 'false')
       output.setAttribute('aria-busy', 'false')
       output.removeAttribute('aria-label')
+      output.replaceChildren()
+      output.removeAttribute('role')
       continue
     }
     const controller = new AbortController()
@@ -354,6 +363,11 @@ const enhanceMermaidDiagrams = (version: number): void => {
     shell.setAttribute('aria-busy', 'true')
     output.setAttribute('aria-busy', 'true')
     output.setAttribute('aria-label', t('common:agentMarkdown.renderingMermaidDiagram'))
+    output.setAttribute('role', 'status')
+    const pending = root.ownerDocument.createElement('span')
+    pending.textContent = t('common:agentMarkdown.renderingMermaidDiagram')
+    const previousDiagram = output.querySelector('svg')
+    output.replaceChildren(...(previousDiagram ? [previousDiagram, pending] : [pending]))
     const isCurrent = (): boolean =>
       !controller.signal.aborted &&
       renderVersion === version &&
@@ -372,6 +386,7 @@ const enhanceMermaidDiagrams = (version: number): void => {
       output.replaceChildren(svg)
       output.removeAttribute('aria-busy')
       output.removeAttribute('aria-label')
+      output.removeAttribute('role')
       shell.removeAttribute('aria-busy')
       shell.dataset.diagramState = 'rendered'
     }).catch(() => {
@@ -383,11 +398,34 @@ const enhanceMermaidDiagrams = (version: number): void => {
       output.replaceChildren(status)
       output.removeAttribute('aria-busy')
       output.removeAttribute('aria-label')
+      output.removeAttribute('role')
       shell.removeAttribute('aria-busy')
       shell.dataset.diagramState = 'failed'
     }).finally(() => {
       diagramControllers.delete(controller)
     })
+  }
+}
+
+let themeObserver: MutationObserver | null = null
+const observeDiagramTheme = (): void => {
+  const root = markdownRoot.value
+  if (!root || typeof MutationObserver === 'undefined') return
+  let theme = currentTheme(root)
+  themeObserver = new MutationObserver(() => {
+    const nextTheme = currentTheme(root)
+    if (nextTheme === theme) return
+    theme = nextTheme
+    cancelDiagramJobs()
+    for (const shell of root.querySelectorAll<HTMLElement>('[data-agent-diagram="true"]')) {
+      delete shell.dataset.diagramState
+    }
+    // Keep the shells in place: disclosure, keyboard focus, scroll and copy
+    // feedback survive while SVGs use the same serialized, abortable renderer.
+    enhanceMermaidDiagrams(renderVersion)
+  })
+  for (let ancestor: HTMLElement | null = root; ancestor; ancestor = ancestor.parentElement) {
+    themeObserver.observe(ancestor, { attributes: true, attributeFilter: ['class'] })
   }
 }
 
@@ -471,10 +509,12 @@ const copyCode = async (event: MouseEvent): Promise<void> => {
 
 onMounted(() => {
   void nextTick(() => enhanceMermaidDiagrams(renderVersion))
+  observeDiagramTheme()
 })
 onBeforeUnmount(() => {
   if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame)
   cancelDiagramJobs()
+  themeObserver?.disconnect()
   for (const reset of resetTimers.values()) window.clearTimeout(reset.timer)
   resetTimers.clear()
 })
@@ -739,6 +779,7 @@ onBeforeUnmount(() => {
   align-items: center;
   display: flex;
   justify-content: center;
+  flex-direction: column;
   min-height: var(--wiki-space-12);
   padding: var(--wiki-space-4);
 }

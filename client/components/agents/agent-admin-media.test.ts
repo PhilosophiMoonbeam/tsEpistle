@@ -60,6 +60,67 @@ const executable = (start: string, end: string): string =>
   new Bun.Transpiler({ loader: 'ts' }).transformSync(source.slice(source.indexOf(start), source.indexOf(end)))
 
 describe('provider editor interactions', () => {
+  it('blocks paid generation until every enabled capability has explicit valid pricing', () => {
+    const profileDraft = { ...draft, mediaVideo: true, mediaMusic: true, videoInputRate: '', videoOutputRate: '', videoTextOutputRate: '', musicSongRate: '' }
+    const valid = new Function(
+      'profileDraft',
+      'computed',
+      't',
+      `${executable('const mediaRateValid =', 'const mediaPayload =')}; return () => mediaSettingsValid.value`
+    )(
+      profileDraft,
+      (fn: () => boolean) => ({
+        get value() {
+          return fn()
+        }
+      }),
+      (key: string) => key
+    )
+    expect(valid()).toBe(false)
+    Object.assign(profileDraft, { videoInputRate: '1', videoOutputRate: '2', videoTextOutputRate: '3' })
+    expect(valid()).toBe(false)
+    profileDraft.musicSongRate = '4'
+    expect(valid()).toBe(true)
+    profileDraft.videoTextOutputRate = '0'
+    expect(valid()).toBe(false)
+  })
+
+  it('keeps dirty grants open until explicit discard and ignores dismissal during save', () => {
+    const actionBusyKey = { value: '' }
+    const grantsDirty = { value: true }
+    const grantsDialog = { value: true }
+    const profileDialog = { value: true }
+    const profileDiscardDialog = { value: false }
+    const discardTarget = { value: 'profile' }
+    const controls = new Function(
+      'actionBusyKey',
+      'grantsDirty',
+      'grantsDialog',
+      'profileDialog',
+      'profileDiscardDialog',
+      'discardTarget',
+      `${executable('const requestGrantsClose =', 'const request =')}; return { requestGrantsClose, discardProfileChanges }`
+    )(actionBusyKey, grantsDirty, grantsDialog, profileDialog, profileDiscardDialog, discardTarget)
+    controls.requestGrantsClose()
+    expect(grantsDialog.value).toBe(true)
+    expect(profileDiscardDialog.value).toBe(true)
+    expect(discardTarget.value).toBe('grants')
+    profileDiscardDialog.value = false
+    expect(grantsDialog.value).toBe(true)
+    actionBusyKey.value = 'grants'
+    controls.requestGrantsClose()
+    expect(profileDiscardDialog.value).toBe(false)
+    actionBusyKey.value = ''
+    controls.requestGrantsClose()
+    controls.discardProfileChanges()
+    expect(grantsDialog.value).toBe(false)
+    expect(profileDialog.value).toBe(true)
+    grantsDialog.value = true
+    grantsDirty.value = false
+    controls.requestGrantsClose()
+    expect(grantsDialog.value).toBe(false)
+  })
+
   it('preserves customized endpoints but applies authentication required by the destination protocol', () => {
     const profileDraft = {
       ...agentProviderProtocolDefaults('legacy-completions'),

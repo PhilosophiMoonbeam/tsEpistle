@@ -45,9 +45,9 @@ const generationOptions = computed(() => [
   { value: 'video' as const, enabled: props.capabilities?.videoGeneration, title: t('common:agentComposerMedia.video'), icon: 'mdi-movie-open-outline' },
   { value: 'music' as const, enabled: props.capabilities?.musicGeneration, title: t('common:agentComposerMedia.music'), icon: 'mdi-music-note-outline' }
 ].filter(option => option.enabled))
-watch(generationOptions, (options, previous = []) => {
-  const previousIds = new Set(previous.map(option => option.value))
-  selectedGenerationTools.value = options.filter(option => !previousIds.has(option.value) || selectedGenerationTools.value.includes(option.value)).map(option => option.value)
+watch(generationOptions, options => {
+  // Availability can revoke a choice, but only a user action can enable one.
+  selectedGenerationTools.value = options.filter(option => selectedGenerationTools.value.includes(option.value)).map(option => option.value)
 }, { immediate: true })
 const error = ref('')
 /** Dictation failures surface through the composer's notice, not the attachment error slot. */

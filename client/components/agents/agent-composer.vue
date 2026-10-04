@@ -142,7 +142,7 @@
         >{{ dictationTimerLabel }}</span>
       </div>
     </div>
-    <p :id="composerIds.keyboardHelp" class="agent-composer__keyboard-help">{{ keyboardHelp }}</p>
+    <p :id="composerIds.keyboardHelp" class="agent-composer__keyboard-help" :class="{ 'sr-only': coarseInput }">{{ keyboardHelp }}</p>
 
     <p v-if="composerNotice" class="agent-composer__notice" role="alert">{{ composerNotice }}</p>
     <p
@@ -173,7 +173,7 @@
       <template #attachments="{ attachments, uploading, locked, removeAttachment }">
         <ul v-if="attachments.length" class="agent-composer__media-attachments" :aria-label="$t('common:agentComposer.attachmentsNextMessage')">
           <li v-for="item in attachments" :key="item.id">
-            <img v-if="item.mimeType.startsWith('image/')" :src="agentMediaContentUrl(item.id)" alt="" />
+            <img v-if="item.mimeType.startsWith('image/')" :src="agentMediaContentUrl(item.id)" width="32" height="32" decoding="async" alt="" />
             <v-icon v-else icon="mdi-file-pdf-box" size="24" aria-hidden="true" />
             <span :title="item.filename">{{ item.filename }}</span>
             <v-btn icon="mdi-close" size="x-small" variant="text" :aria-label="$t('common:agentComposer.remove', { filename: item.filename, interpolation: { escapeValue: false } })" :disabled="locked" @click="removeAttachment(item)" />
@@ -533,7 +533,7 @@ const mediaComposer = useTemplateRef<{
   generationOptions: Ref<ReadonlyArray<{ value: 'image' | 'video' | 'music'; title: string; icon: string }>>
   selectedGenerationTools: Ref<ReadonlyArray<'image' | 'video' | 'music'>>
 }>('mediaComposer')
-const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [] })
+const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [], generationTools: [] })
 const mediaBusy = ref(false)
 // Exposed refs unwrap on a component instance, so accept both the raw ref
 // and its unwrapped value depending on how the media composer is mounted.
@@ -740,6 +740,9 @@ const sendFailed = ref(false)
 const submissionPending = ref(false)
 const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
+watch(attachDisabled, blocked => {
+  if (blocked) attachmentMenuOpen.value = false
+}, { flush: 'sync' })
 // A mixed paste inserts text after file admission; draft edits must not erase the file rejection.
 const attachmentAdmissionError = ref('')
 const composerNotice = computed(() => error.value || attachmentAdmissionError.value)
@@ -860,6 +863,12 @@ const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['create', 'web', 'goal']
 const foldedControls = ref<FoldableControl[]>([])
 const foldMeasureOverride = ref<(() => boolean) | null>(null)
 let foldResizeObserver: ResizeObserver | null = null
+watch(controlsGroup, (group, previous) => {
+  if (!foldResizeObserver) return
+  if (previous) foldResizeObserver.unobserve(previous)
+  if (group) foldResizeObserver.observe(group)
+  void nextTick(handleFoldResize)
+}, { flush: 'post' })
 const isControlFolded = (control: FoldableControl): boolean => foldedControls.value.includes(control)
 const hasMoreMenuContent = computed(() =>
   moreMenuItems.value.length > 0 || props.skillsEnabled
@@ -1305,9 +1314,8 @@ const submitDuringRecording = async (): Promise<void> => {
     media.stopRecording()
     const transcript = await media.waitForDictationTranscript()
     if (transcript === null) {
-      // No speech, failure, or cancellation: keep the typed draft for review
+      // Leave the current draft untouched, including edits made while waiting,
       // and surface the media composer's dictation message in the notice.
-      draft.value = typedDraft
       const mediaMessage = mediaComposer.value?.dictationError as string | undefined
       if (!error.value) error.value = mediaMessage || t('common:agentComposer.noSpeechWasFound')
       return
@@ -1478,13 +1486,13 @@ onBeforeUnmount(() => {
 .agent-composer__attach-wrapper { display: inline-flex; }
 
 .agent-composer {
-  --agent-composer-control-face-height: clamp(28px, calc(var(--wiki-control-height) * .7), 31px);
+  --agent-composer-control-face-height: clamp(34px, calc(var(--wiki-control-height) * .8), 36px);
   --agent-composer-control-hit-height: max(44px, var(--wiki-control-height));
   --agent-composer-control-hit-inset: calc((var(--agent-composer-control-hit-height) - var(--agent-composer-control-face-height)) / -2);
   --agent-composer-control-gap: clamp(5px, calc(var(--wiki-space-2) * .8), 8px);
   --agent-composer-control-padding-inline: calc(var(--wiki-space-3) * .9);
   --agent-composer-control-font-size: var(--v-btn-size, .875rem);
-  --agent-composer-control-min-width: calc(var(--agent-composer-control-face-height) + var(--wiki-space-1));
+  --agent-composer-control-min-width: max(var(--agent-composer-control-hit-height), calc(var(--agent-composer-control-face-height) + var(--wiki-space-1)));
   --agent-composer-padding: calc(var(--wiki-space-2) * .8);
   position: relative;
   display: flex;
@@ -1674,9 +1682,9 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
 }
 
-/* Uniform action faces: every composer control shares one height, font, and
-   pill shape, and retains a 44px effective pointer target through an invisible
-   before-pseudo-element. */
+/* Compact action faces reserve the full 44px inline hit width in layout.
+   Only the block-axis target extends beyond the face, so neighboring pointer
+   targets cannot overlap across the control gap. */
 .agent-composer__attach,
 .agent-composer__create,
 .agent-composer__goal-toggle,
@@ -1986,15 +1994,18 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
+.agent-composer__keyboard-help.sr-only,
 .agent-composer__live-status,
 .agent-composer__command-status {
   position: absolute;
   width: 1px;
   height: 1px;
   margin: -1px;
+  padding: 0;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   border: 0;
+  white-space: nowrap;
 }
 
 @media (max-width: 740px) {
@@ -2048,7 +2059,7 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 599.98px) {
+@media (max-width: 599.98px), (pointer: coarse) {
   .agent-composer {
     /* Touch layout: control faces grow to meet the 44px touch target so the
        desktop's compact faces never carry over unchanged. */

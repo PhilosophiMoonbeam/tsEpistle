@@ -1,5 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import i18next from 'i18next'
+import type { i18n } from 'i18next'
 
 import { compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
@@ -10,25 +12,42 @@ import type { RenderFunction } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { createVuetify } from 'vuetify'
 import * as vuetifyComponents from 'vuetify/components'
-import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentCompletionIssue, AgentGoalView } from '../../../shared/agents/contracts.ts'
+import type { Translate } from '../../helpers/use-translate.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 interface Ref<T> {
   value: T
 }
 
 resetBody()
 
+const english = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8'))
+const goalLocale = i18next.createInstance()
+await goalLocale.init({
+  lng: 'en',
+  fallbackLng: 'en',
+  defaultNS: 'common',
+  initAsync: false,
+  resources: { en: english }
+})
+const localeCleanups: Array<() => void> = []
+
 type GoalEmit = (event: 'update:expanded', value: boolean) => void
 
 interface GoalHarness {
   [key: string]: unknown
+  goal: AgentGoalView
   statusLabel: Ref<string>
   statusColor: Ref<string>
   budgetPercent: Ref<number>
   blockerMessages: Ref<readonly AgentCompletionIssue[]>
+  budgetMetrics: Ref<readonly { label: string; value: string; limit: string }[]>
+  timelineLabel: Ref<string>
+  tokenTierLabel: Ref<string>
+  progressLabel: Ref<string>
   toggleAriaLabel: Ref<string>
   toggleExpanded: () => void
   emit: GoalEmit
@@ -98,13 +117,20 @@ const makeGoal = (overrides: Partial<AgentGoalView> = {}): AgentGoalView => ({
   ...overrides
 })
 
-const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
+const loadGoal = (
+  goal: AgentGoalView,
+  expanded: boolean,
+  localization: { engine: i18n; translate: Translate } = { engine: goalLocale, translate: translateEnglish }
+): GoalHarness => {
   const emit = vi.fn()
   const props = Vue.reactive({ goal, busy: false, runActive: false, expanded })
   const evaluate = new Function(
     'computed',
     'ref',
     'watch',
+    'onUnmounted',
+    'i18next',
+    'useTranslate',
     'defineProps',
     'defineModel',
     'defineEmits',
@@ -157,6 +183,11 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
     Vue.computed,
     Vue.ref,
     () => undefined,
+    (cleanup: () => void) => {
+      localeCleanups.push(cleanup)
+    },
+    localization.engine,
+    () => localization.translate,
     () => props,
     () =>
       Vue.computed({
@@ -168,7 +199,7 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
       }),
     () => emit
   )
-  return { ...harness, emit }
+  return { ...harness, emit, goal: props.goal }
 }
 
 const goalStatusComponent = (goal: AgentGoalView, harness: GoalHarness) =>
@@ -188,7 +219,121 @@ const renderGoalStatus = async (goal: AgentGoalView, expanded = false): Promise<
   return renderToString(app)
 }
 
+afterEach(() => {
+  for (const cleanup of localeCleanups.splice(0)) cleanup()
+  vi.setSystemTime()
+  vi.restoreAllMocks()
+})
+
 describe('Agent goal status interaction', () => {
+  it('refreshes mounted status, goal copy, budget numbers and the timeline after a language change', async () => {
+    vi.setSystemTime(new Date('2026-08-31T10:00:00.000Z'))
+    const engine = i18next.createInstance()
+    await engine.init({
+      lng: 'en',
+      fallbackLng: 'en',
+      defaultNS: 'common',
+      initAsync: false,
+      resources: {
+        en: english,
+        de: {
+          common: {
+            agentGoalStatus: {
+              progress: 'In Bearbeitung',
+              small: 'Klein',
+              currentCycleTokens: 'Token im aktuellen Zyklus',
+              due: 'Fällig',
+              agentWillContinueAcross: 'Der Agent setzt die Arbeit über mehrere Durchläufe fort.',
+              completed: 'Abgeschlossen',
+              completedRun_one: 'In {{count, number}} Durchlauf abgeschlossen.',
+              completedRun_other: 'In {{count, number}} Durchläufen abgeschlossen.'
+            }
+          }
+        }
+      }
+    })
+    const goal = makeGoal({ consumedTokens: 1_450, maxTokens: 2_000, tokenTier: 'small', tokenAllowance: 2_000, budgetCycle: 1 })
+    const translate: Translate = (key, options = {}) => String(engine.t(key, options))
+    const harness = loadGoal(goal, true, { engine, translate })
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp(goalStatusComponent(goal, harness))
+    app.use(createVuetify({ components: vuetifyComponents }))
+    app.config.globalProperties.$t = translate
+    try {
+      app.mount(host)
+      const status = host.querySelector('.agent-goal__status-label')!
+      const timestamp = host.querySelector<HTMLTimeElement>('.agent-goal__continuity time')!
+      const initialTimestamp = timestamp.textContent
+      expect(harness.budgetMetrics.value[0]?.value).toBe('1,450')
+
+      await engine.changeLanguage('de')
+      await Vue.nextTick()
+      expect(host.querySelector('.agent-goal__status-label')).toBe(status)
+      expect(status.textContent).toBe('In Bearbeitung')
+      expect(host.querySelector('.agent-goal__status')?.textContent).toBe('In Bearbeitung')
+      expect(host.querySelector('.agent-goal__budget dt')?.textContent).toBe('Token im aktuellen Zyklus')
+      expect(host.querySelector('.agent-goal__budget dd span')?.textContent).toBe('1.450')
+      expect(harness.tokenTierLabel.value).toBe('Klein')
+      expect(host.querySelector('.agent-goal__summary')?.textContent).toBe('Der Agent setzt die Arbeit über mehrere Durchläufe fort.')
+      expect(host.querySelector('.agent-goal__continuity')?.textContent).toContain('Fällig')
+      expect(timestamp.textContent).not.toBe(initialTimestamp)
+      expect(timestamp.textContent).toBe(
+        new Intl.DateTimeFormat('de', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp.dateTime))
+      )
+
+      harness.goal.status = 'completed'
+      await Vue.nextTick()
+      expect(status.textContent).toBe('Abgeschlossen')
+      expect(harness.progressLabel.value).toBe('In 2 Durchläufen abgeschlossen.')
+    } finally {
+      app.unmount()
+      host.remove()
+    }
+  })
+
+  it('reconsiders the timeline year on a goal update without requiring a new deadline or a clock timer', () => {
+    vi.setSystemTime(new Date('2026-12-30T12:00:00.000Z'))
+    const harness = loadGoal(makeGoal({ deadlineAt: '2026-12-31T10:00:00.000Z' }), true)
+    expect(harness.timelineLabel.value).not.toContain('2026')
+
+    vi.setSystemTime(new Date('2027-01-01T12:00:00.000Z'))
+    harness.goal.version += 1
+    expect(harness.timelineLabel.value).toContain('2026')
+  })
+
+  it('retains the live status node through disclosure changes and references only mounted details', async () => {
+    const goal = makeGoal()
+    const harness = loadGoal(goal, false)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp(goalStatusComponent(goal, harness))
+    app.use(createVuetify({ components: vuetifyComponents }))
+    app.config.globalProperties.$t = translateEnglish
+    try {
+      app.mount(host)
+      const toggle = host.querySelector<HTMLButtonElement>('.agent-goal__toggle')!
+      const status = host.querySelector('[role="status"][aria-live="polite"]')!
+      expect(toggle.getAttribute('aria-controls')).toBeNull()
+      expect(host.querySelector('.agent-goal__details')).toBeNull()
+
+      toggle.click()
+      await Vue.nextTick()
+      expect(host.querySelector('[role="status"][aria-live="polite"]')).toBe(status)
+      expect(status.getAttribute('aria-hidden')).toBeNull()
+      const details = host.querySelector('.agent-goal__details')!
+      expect(toggle.getAttribute('aria-controls')).toBe(details.id)
+
+      toggle.click()
+      await Vue.nextTick()
+      expect(host.querySelector('[role="status"][aria-live="polite"]')).toBe(status)
+      expect(toggle.getAttribute('aria-controls')).toBeNull()
+    } finally {
+      app.unmount()
+      host.remove()
+    }
+  })
+
   it('assigns success, warning, and error tones to semantic goal states', () => {
     expect(loadGoal(makeGoal({ status: 'active' }), false).statusColor.value).toBe('success')
     expect(loadGoal(makeGoal({ status: 'completed' }), false).statusColor.value).toBe('success')

@@ -257,7 +257,7 @@
         </div>
       </v-alert>
 
-      <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" :network-blocked="connectionBlocked" />
+      <AgentMcpApproval v-if="approvalId && !admissionBlocked" :csrf-token="csrfToken" :proposal-id="approvalId" :network-blocked="connectionBlocked" />
       <template v-else>
         <div v-if="isTemporary" class="inline-agent__retention" :aria-label="$t('common:agentWorkspace.temporaryChat')" role="status">
           <v-icon icon="mdi-timer-sand-complete" size="22" aria-hidden="true" />
@@ -268,10 +268,23 @@
         </div>
         <p v-else-if="sessionNotice" class="inline-agent__session-notice" role="status">{{ sessionNotice }}</p>
         <div class="inline-agent__body">
-          <!-- One status slot: the connection notice outranks the others, and
-               only the highest-priority problem is shown at a time. -->
+          <!-- One status slot: admission and connection failures stay distinct,
+               and only the highest-priority problem is shown at a time. -->
           <v-alert
-            v-if="connectionBlocked"
+            v-if="admissionBlocked"
+            class="inline-agent__alert inline-agent__admission-alert"
+            type="warning"
+            variant="tonal"
+            role="alert"
+            icon="mdi-lock-outline"
+          >
+            <div class="inline-agent__initialization-error-content">
+              <span>{{ admissionRequiredMessage }}</span>
+              <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="loading || connectionRetrying" @click="retryInitialization">{{ $t('common:agentWorkspace.retryOpening') }}</v-btn>
+            </div>
+          </v-alert>
+          <v-alert
+            v-else-if="connectionBlocked"
             class="inline-agent__alert inline-agent__connection-alert"
             type="warning"
             variant="tonal"
@@ -299,6 +312,7 @@
             v-else-if="!loading && !providerAvailable"
             class="inline-agent__alert"
             variant="tonal"
+            role="status"
             icon="mdi-connection"
           >
             {{ providerUnavailableMessage }}
@@ -308,6 +322,7 @@
             class="inline-agent__alert"
             type="error"
             variant="tonal"
+            role="alert"
             closable
             @click:close="agents.error = ''"
           >{{ error }}</v-alert>
@@ -444,7 +459,6 @@
                 <footer
                   class="inline-agent__composer"
                   :class="{ 'inline-agent__composer--scrolled': !transcriptFollowing, 'inline-agent__composer--focused': composerFocused }"
-                  :style="{ '--agent-composer-opacity': 1 - 0.15 * (composerFocused ? 0 : transcriptReadingProgress) }"
                   @focusin="handleComposerFocusIn"
                   @focusout="handleComposerFocusOut"
                   @keydown="handleComposerFocusIn"
@@ -537,6 +551,7 @@
     </v-card>
 
     <div
+      v-if="!admissionBlocked"
       v-show="memoryOpen"
       id="agent-memory-panel"
       ref="memoryPanel"
@@ -560,7 +575,7 @@
   </section>
 
   <AgentPersonalSkills
-    v-if="skillsEnabled"
+    v-if="skillsEnabled && !admissionBlocked"
     v-model="skillManagerOpen"
     :csrf-token="csrfToken"
     :owner-id="ownerId"
@@ -701,7 +716,7 @@ const emit = defineEmits<{
 }>()
 const agents = useAgentsStore()
 const userPicture = computed(() => resolveUserPicture(wikiStore.user))
-const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchPending, googleSearchSuggestions, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
+const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchPending, googleSearchSuggestions, initializationAdmissionFailure, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
@@ -784,8 +799,6 @@ const handleTranscriptEngagement = (event: FocusEvent | PointerEvent | WheelEven
 }
 const transcriptFollowing = ref(true)
 const transcriptBottomDistance = ref(0)
-// Restore the composer over the final 160px, with a quiet 24px landing zone.
-const transcriptReadingProgress = computed(() => Math.min(1, Math.max(0, (transcriptBottomDistance.value - 24) / 136)))
 let transcriptObserver: MutationObserver | null = null
 let dockObserver: ResizeObserver | null = null
 let transcriptFrame: number | null = null
@@ -828,7 +841,7 @@ const openGoal = computed(() => {
   return goal && (goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked') ? goal : null
 })
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length || thread.value.goal)))
-const followJumpVisible = computed(() => Boolean(hasConversation.value && transcriptReadingProgress.value > 0 && !approvalJumpVisible.value))
+const followJumpVisible = computed(() => Boolean(hasConversation.value && transcriptBottomDistance.value > 24 && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const mediaProfile = computed(() => thread.value?.session.providerProfileId ? profiles.value.find(profile => profile.id === thread.value?.session.providerProfileId) : profiles.value.find(profile => profile.isGlobalDefault) ?? (profiles.value.length === 1 ? profiles.value[0] : undefined))
 const providerIdentity = computed(() => mediaProfile.value
@@ -852,20 +865,23 @@ const refreshAfterMedia = async () => {
 }
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
 const workspaceReady = computed(() => agents.isWorkspaceReady())
+const admissionBlocked = computed(() => initializationAdmissionFailure.value !== null)
+const admissionRequiredMessage = computed(() => t(initializationAdmissionFailure.value === 'authentication'
+  ? 'common:agentWorkspace.authenticationRequiredMessage'
+  : 'common:agentWorkspace.admissionRequiredMessage'))
 const serverConnectionUnavailable = computed(() =>
   pwaState.connectionState === 'offline' ||
   pwaState.connectionState === 'server-unavailable'
 )
-const connectionBlocked = computed(() =>
+const connectionBlocked = computed(() => !admissionBlocked.value && (
   serverConnectionUnavailable.value ||
   waitingForConnection.value ||
   (networkPaused.value && !workspaceDisposed.value && !loading.value)
-)
+))
 const connectionRequiredMessage = computed(() => {
   if (pwaState.connectionState === 'server-unavailable') return t('common:inlineAgentChat.connectionRequiredServerUnavailable')
   if (pwaState.connectionState === 'offline') return t('common:inlineAgentChat.connectionRequiredYouAppear')
-  if (networkPaused.value || waitingForConnection.value) return t('common:inlineAgentChat.connectionRequiredReconnectContinue')
-  return t('common:inlineAgentChat.connectionRequiredOpenMessage')
+  return t('common:inlineAgentChat.connectionRequiredReconnectContinue')
 })
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? t('common:inlineAgentChat.noEnabledProviderProfile')
@@ -923,7 +939,9 @@ watch(sessionMutationBusy, busy => {
   }
 }, { immediate: true })
 const composerLockVisible = computed(() => Boolean(openGoal.value) || mutationLockMessageVisible.value)
-const submitUnavailableReason = computed(() => connectionBlocked.value
+const submitUnavailableReason = computed(() => admissionBlocked.value
+  ? admissionRequiredMessage.value
+  : connectionBlocked.value
   ? connectionRequiredMessage.value
   : !providerAvailable.value
     ? providerUnavailableMessage.value
@@ -1003,7 +1021,9 @@ const temporaryExpiry = computed(() => {
 })
 const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? t('common:inlineAgentChat.temporaryChat') : t('common:inlineAgentChat.newChat')))
 
-const connectionLabel = computed(() => connectionBlocked.value
+const connectionLabel = computed(() => admissionBlocked.value
+  ? t('common:inlineAgentChat.tryAgain')
+  : connectionBlocked.value
   ? t('common:inlineAgentChat.connectionRequired')
   : loading.value
     ? t('common:inlineAgentChat.opening')
@@ -1092,6 +1112,7 @@ const initializationAuthorityKey = (): string =>
   })
 const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean> => {
   if (disposed) return Promise.resolve(false)
+  if (admissionBlocked.value && !request.forceFresh) return Promise.resolve(false)
   const allowCreate = request.allowCreate ?? true
   const authorityKey = `${initializationAuthorityKey()}:create=${allowCreate}`
   if (!request.bypassConnectionGate && serverConnectionUnavailable.value) {
@@ -1133,7 +1154,8 @@ const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean
           offlineComposerDraft.value = ''
         }
       } else {
-        initializationError.value = error.value || t('common:inlineAgentChat.conversationCouldNotOpened2')
+        if (admissionBlocked.value) waitingForConnection.value = false
+        initializationError.value = admissionBlocked.value ? admissionRequiredMessage.value : error.value || t('common:inlineAgentChat.conversationCouldNotOpened2')
       }
       return initialized
     },
@@ -1153,7 +1175,7 @@ const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean
   return tracked
 }
 const retryAgentConnection = async (): Promise<void> => {
-  if (disposed || connectionRetrying.value) return
+  if (disposed || connectionRetrying.value || admissionBlocked.value) return
   const generation = retryGeneration + 1
   retryGeneration = generation
   const componentOwnerId = props.ownerId
@@ -1175,7 +1197,7 @@ const retryInitialization = async (): Promise<void> => {
     await retryAgentConnection()
     return
   }
-  if (!initializationError.value) return
+  if (!initializationError.value && !admissionBlocked.value) return
   const generation = retryGeneration + 1
   retryGeneration = generation
   const componentOwnerId = props.ownerId
@@ -1411,7 +1433,7 @@ const closeMemory = (): void => {
   memoryOpen.value = false
 }
 const updateMemoryOpen = (open: boolean): void => {
-  if (open && connectionBlocked.value) return
+  if (open && (connectionBlocked.value || admissionBlocked.value)) return
   if (open) memoryOpen.value = true
   else closeMemory()
 }
@@ -1663,13 +1685,19 @@ watch(() => {
 watch(networkPaused, paused => {
   if (!paused && pwaState.connectionState === 'online') waitingForConnection.value = false
 })
+watch(admissionBlocked, blocked => {
+  if (!blocked) return
+  waitingForConnection.value = false
+  memoryOpen.value = false
+  skillManagerOpen.value = false
+})
 watch(() => pwaState.connectionState, state => {
   if (state === 'offline' || state === 'server-unavailable') {
     waitingForConnection.value = true
     agents.pauseNetwork()
     return
   }
-  if (state !== 'online' || !waitingForConnection.value) return
+  if (state !== 'online' || !waitingForConnection.value || admissionBlocked.value) return
   void retryAgentConnection()
 })
 watch(() => props.ownerId, (ownerId, previousOwnerId) => {
@@ -2385,6 +2413,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   width: 100%;
   box-sizing: border-box;
   flex-direction: column;
+  flex: 0 0 auto;
   margin: auto auto 0;
   padding-block-start: var(--wiki-space-3);
   pointer-events: none;
@@ -2418,6 +2447,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   box-shadow: inset var(--wiki-focus-ring);
 }
 .inline-agent__transcript :deep(.agent-thread) {
+  flex: 0 0 auto;
   width: 100%;
   max-width: var(--agent-conversation-width);
   margin-inline: auto;
@@ -2773,20 +2803,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-top: 0;
   background: transparent;
   box-shadow: none;
-  opacity: var(--agent-composer-opacity, 1);
-  transition: opacity 160ms var(--wiki-motion-ease);
-}
-.inline-agent__composer--focused {
-  opacity: 1;
 }
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
   border-color: var(--wiki-surface-border-strong);
   box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
-}
-@media (hover: hover) and (pointer: fine) {
-  .inline-agent__composer:hover {
-    opacity: 1;
-  }
 }
 .inline-agent__composer-inner {
   width: min(100%, var(--agent-conversation-width));
@@ -3222,9 +3242,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @media (forced-colors: active) {
-  .inline-agent__composer {
-    opacity: 1;
-  }
   .inline-agent__welcome-title::before {
     display: none;
   }

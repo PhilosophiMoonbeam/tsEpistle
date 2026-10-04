@@ -3,13 +3,13 @@
     <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click="copyAnswer">{{ copied ? $t('common:agentAnswerActions.copied') : $t('common:agentAnswerActions.copyAnswer') }}</v-btn>
     <v-btn size="small" variant="text" prepend-icon="mdi-file-document-plus-outline" @click="openDraft">{{ $t('common:agentAnswerActions.saveWikiDraft') }}</v-btn>
     <span class="agent-answer-actions__feedback" role="status">{{ feedback }}</span>
-    <v-dialog content-class="agent-owned-overlay" v-model="draftOpen" max-width="860" scrollable :persistent="saving" aria-labelledby="agent-save-draft-title">
+    <v-dialog content-class="agent-owned-overlay" v-model="draftOpen" max-width="860" scrollable :fullscreen="smAndDown" :persistent="saving" aria-labelledby="agent-save-draft-title">
       <v-card class="agent-answer-draft">
         <v-card-title class="agent-answer-draft__heading"><div><span class="agent-answer-draft__eyebrow">{{ $t('common:agentAnswerActions.answerKnowledge') }}</span><h2 id="agent-save-draft-title">{{ $t('common:agentAnswerActions.keepUsefulThought') }}</h2></div><v-btn icon="mdi-close" variant="text" :aria-label="$t('common:agentAnswerActions.closeWikiDraftReview')" :disabled="saving" @click="draftOpen = false" /></v-card-title>
         <v-card-text>
           <template v-if="savedHref">
-            <v-alert type="success" variant="tonal">{{ $t('common:agentAnswerActions.privateWikiDraftReady') }}</v-alert>
-            <v-btn class="mt-4" :href="savedHref" target="_blank" rel="noopener noreferrer" append-icon="mdi-open-in-new">{{ $t('common:agentAnswerActions.openDraft') }}<span class="sr-only"> {{ $t('common:agentAnswerActions.newTab') }}</span></v-btn>
+            <v-alert type="success" variant="tonal" role="status">{{ $t('common:agentAnswerActions.privateWikiDraftReady') }}</v-alert>
+            <v-btn class="mt-4" :href="savedHref" target="_blank" rel="noopener noreferrer" append-icon="mdi-open-in-new">{{ $t('common:agentAnswerActions.openDraft') }}<span class="agent-answer-actions__new-window"> {{ $t('common:agentAnswerActions.newTab') }}</span></v-btn>
           </template>
           <template v-else>
             <p class="agent-answer-draft__intro">{{ $t('common:agentAnswerActions.reviewEditAnswerBefore') }}</p>
@@ -28,6 +28,7 @@
 </template>
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
+import { useDisplay } from 'vuetify'
 import type { AgentCitation, AgentGoogleSearchGrounding } from '../../../shared/agents/contracts.ts'
 import { wikiSourceHref } from '../../../shared/wiki-source.ts'
 import { createPage } from '../../helpers/pages-api.ts'
@@ -37,6 +38,7 @@ import AgentMarkdown from './agent-markdown.vue'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const { smAndDown } = useDisplay()
 const props = defineProps<{ content: string; citations: readonly AgentCitation[]; googleSearchGrounding?: AgentGoogleSearchGrounding; defaultLocale?: string }>()
 const draftOpen = ref(false)
 const saving = ref(false)
@@ -89,7 +91,7 @@ const copyAnswer = async (): Promise<void> => {
 const openDraft = (): void => {
   if (!markdown.value) {
     markdown.value = exportedAnswer()
-    title.value = props.content.split('\n').find(line => line.trim())?.replace(/^#+\s*/, '').replace(/\[\[cite:[^\]]+\]\]/g, '').slice(0, 100) || t('common:agentAnswerActions.agentNotes')
+    title.value = props.content.split('\n').find(line => line.trim())?.replace(/^#+\s*/, '').replace(/\[\[cite:[^\]]+\]\]/g, '').replace(/!?\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/(\*\*|__|~~|`)(.+?)\1/g, '$2').replace(/(^|\s)[*_]([^*_]+)[*_](?=\s|[.,!?;:]|$)/g, '$1$2').trim().slice(0, 100) || t('common:agentAnswerActions.agentNotes')
     locale.value = props.defaultLocale || document.documentElement.lang || 'en'
     path.value = `agent-notes/${title.value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 70) || 'note'}-${Date.now().toString(36)}`
   }
@@ -109,6 +111,7 @@ onBeforeUnmount(() => clearTimeout(copyTimer))
 <style scoped>
 .agent-answer-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .2rem; margin-top: .8rem; opacity: .85; }
 .agent-answer-actions__feedback { font-size: .72rem; }
+.agent-answer-actions__new-window { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .agent-answer-draft__heading { display: flex; justify-content: space-between; align-items: flex-start; padding: 1.5rem !important; gap: 1rem; white-space: normal; }
 .agent-answer-draft__create { color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
 .agent-answer-draft__eyebrow { display: block; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); margin-bottom: .5rem; }
@@ -117,5 +120,7 @@ onBeforeUnmount(() => clearTimeout(copyTimer))
 .agent-answer-draft__location { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: 1rem; }
 .agent-answer-draft__tabs { display: flex; gap: .5rem; margin: .75rem 0; }
 .agent-answer-draft__preview { padding: 1.2rem; border: 1px solid rgba(var(--v-theme-on-surface), .14); border-radius: 1rem; }
+.agent-answer-draft :deep(.v-card-text) { min-height: 0; overflow-y: auto; }
+.agent-answer-draft :deep(.v-card-actions) { flex: 0 0 auto; flex-wrap: wrap; gap: .25rem; }
 @media(max-width: 480px) { .agent-answer-draft h2 { font-size: 1.55rem; } .agent-answer-draft__heading { padding: 1.25rem !important; } .agent-answer-draft__location { grid-template-columns: 1fr; gap: 0; } }
 </style>

@@ -8,7 +8,7 @@
       heading-id="admin-title"
     >
       <template #status>
-        <div class="agent-hero__status" :aria-label="$t('admin:agentAdmin.controlCenterStatus')" role="status" aria-live="polite">
+        <div class="agent-hero__status" role="status" aria-live="polite">
           <v-chip
             size="small"
             variant="tonal"
@@ -208,7 +208,6 @@
             </div>
             <div class="agent-panel__body">
               <v-alert v-if="resourceState.profiles.error || resourceState.runtime.error" type="warning" variant="tonal" role="alert" class="mb-4">{{ resourceState.profiles.error || resourceState.runtime.error }} <v-btn variant="text" :disabled="loading" @click="refreshResources(['profiles', 'runtime'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></v-alert>
-              <v-alert v-for="(warning, id) in profileWarnings" :key="id" type="warning" variant="tonal" closable role="alert" class="mb-4" @click:close="delete profileWarnings[id]">{{ warning }}</v-alert>
               <v-progress-linear v-if="loading" indeterminate class="mb-4" :aria-label="$t('admin:agentAdmin.loadingProviderProfiles')" />
               <aside class="provider-policy-strip" :aria-label="$t('admin:agentAdmin.providerGovernance')">
                 <span><v-icon icon="mdi-connection" size="17" aria-hidden="true" /><strong>{{ $t('admin:agentAdmin.verify') }}</strong>{{ $t('admin:agentAdmin.liveCapabilityCheckEvery') }}</span>
@@ -246,6 +245,7 @@
                       </v-list>
                     </v-menu>
                   </div>
+                  <v-alert v-if="profileWarnings[profile.id]" type="warning" variant="tonal" closable role="alert" class="mt-3" @click:close="delete profileWarnings[profile.id]">{{ profileWarnings[profile.id] }}</v-alert>
                   <div class="provider-card__status">
                     <span :class="['connection-state', `connection-state--${profile.conformed ? 'success' : profile.connectionCheck?.status === 'failed' ? 'error' : 'neutral'}`]">
                       <v-icon :icon="profile.conformed ? 'mdi-check-circle' : profile.connectionCheck?.status === 'failed' ? 'mdi-alert-circle' : 'mdi-clock-outline'" size="15" aria-hidden="true" />
@@ -316,7 +316,7 @@
               <div v-if="filteredBrowserTargets.length" class="target-list">
                 <article v-for="target in filteredBrowserTargets" :key="target.id" class="target-row">
                   <span class="target-row__icon"><v-icon icon="mdi-lock-outline" size="20" aria-hidden="true" /></span>
-                  <div class="target-row__copy"><strong :title="target.canonicalUrl">{{ target.canonicalUrl }}</strong><small :title="$t('admin:agentAdmin.policy', { policySha256: target.policySha256, interpolation: { escapeValue: false } })">{{ $t('admin:agentAdmin.policy2', { policySha256: target.policySha256.slice(0, 16), interpolation: { escapeValue: false } }) }}</small></div>
+                  <div class="target-row__copy"><strong :title="target.canonicalUrl">{{ target.canonicalUrl }}</strong><small :title="$t('admin:agentAdmin.policy', { policySha256: target.policySha256, interpolation: { escapeValue: false } })">{{ $t('admin:agentAdmin.policy2', { policySha256: target.policySha256.slice(0, 16), interpolation: { escapeValue: false } }) }}</small><v-alert v-if="browserWarnings[target.id]" class="mt-2" type="warning" variant="tonal" density="compact" closable role="alert" @click:close="delete browserWarnings[target.id]">{{ browserWarnings[target.id] }}</v-alert></div>
                   <div class="target-row__state"><span>{{ target.enabled ? $t('admin:agentAdmin.allowed') : $t('admin:agentAdmin.paused') }}</span><v-switch :model-value="target.enabled" color="primary" hide-details inset :loading="actionBusyKey === `browser:${target.id}`" :disabled="Boolean(actionBusyKey)" :aria-label="$t('admin:agentAdmin.browserTarget', { enabled: target.enabled ? $t('admin:agentAdmin.pause') : $t('admin:agentAdmin.allow'), canonicalUrl: target.canonicalUrl, interpolation: { escapeValue: false } })" @update:model-value="value => setBrowserEnabled(target, Boolean(value))" /></div>
                 </article>
               </div>
@@ -345,7 +345,7 @@
           <p v-else-if="!connectionHistory.length">{{ $t('admin:agentAdmin.noConnectionChecksHave') }}</p>
           <div v-else class="connection-history">
             <details v-for="check in connectionHistory" :key="check.id">
-              <summary><v-icon :icon="check.status === 'passed' ? 'mdi-check-circle-outline' : 'mdi-alert-circle-outline'" :color="check.status === 'passed' ? 'success' : 'error'" size="20" aria-hidden="true" /><strong>{{ check.status === 'passed' ? $t('admin:agentAdmin.passed') : $t('admin:agentAdmin.failed') }}</strong><time :datetime="check.completedAt">{{ formatConnectionCheckDate(check.completedAt) }}</time></summary>
+              <summary><v-icon :icon="check.status === 'passed' ? 'mdi-check-circle-outline' : 'mdi-alert-circle-outline'" :color="check.status === 'passed' ? 'success' : 'error'" size="20" aria-hidden="true" /><strong>{{ check.status === 'passed' ? $t('admin:agentAdmin.passed') : $t('admin:agentAdmin.failed') }}</strong><time :datetime="check.completedAt">{{ formatConnectionCheckDate(check.completedAt) }}</time><v-icon icon="mdi-chevron-down" size="18" aria-hidden="true" /></summary>
               <p v-if="check.message">{{ check.message }}</p>
               <ul><li v-for="probe in check.checks" :key="probe.name"><strong>{{ probe.passed ? $t('admin:agentAdmin.passed') : $t('admin:agentAdmin.failed') }} · {{ probe.name }}</strong><p v-if="probe.detail">{{ probe.detail }}</p></li></ul>
             </details>
@@ -391,10 +391,10 @@
                   <v-select :model-value="profileDraft.transportKind" :items="protocolOptions" :label="$t('admin:agentAdmin.apiProtocol')" required @update:model-value="selectProtocol">
                     <template #item="{ props: itemProps, internalItem }">
                       <v-list-subheader v-if="internalItem.raw.startsGroup">{{ internalItem.raw.group }}</v-list-subheader>
-                      <v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="internalItem.raw.description" />
+                      <v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="$t(`admin:agentAdmin.protocolDescription.${internalItem.raw.value}`)" />
                     </template>
                   </v-select>
-                  <div class="field-note"><v-icon icon="mdi-information-outline" size="16" aria-hidden="true" /><span>{{ $t('admin:agentAdmin.requestsUse', { description: selectedProtocol.description, interpolation: { escapeValue: false } }) }} <code>{{ selectedProtocol.endpoint }}</code>.</span></div>
+                  <div class="field-note"><v-icon icon="mdi-information-outline" size="16" aria-hidden="true" /><span>{{ $t('admin:agentAdmin.requestsUse', { description: $t(`admin:agentAdmin.protocolDescription.${selectedProtocol.value}`), interpolation: { escapeValue: false } }) }} <code>{{ selectedProtocol.endpoint }}</code>.</span></div>
                 </div>
               </div>
               <aside class="selection-preview"><span class="selection-preview__icon"><v-icon icon="mdi-api" size="22" aria-hidden="true" /></span><div><small>{{ $t('admin:agentAdmin.selectedProtocol') }}</small><strong>{{ selectedProtocol.title }}</strong><p>{{ selectedProtocol.group }} · {{ selectedProtocol.endpoint }}</p></div></aside>
@@ -538,7 +538,7 @@
     </v-dialog>
     <v-dialog v-model="profileDiscardDialog" max-width="32rem" aria-labelledby="provider-discard-title">
       <v-card class="compact-dialog">
-        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon icon="mdi-alert-outline" size="23" aria-hidden="true" /></span><div><div class="agent-panel__eyebrow">{{ $t('admin:agentAdmin.unsavedConfiguration') }}</div><h2 id="provider-discard-title">{{ $t('admin:agentAdmin.discardProviderChanges') }}</h2><p>{{ $t('admin:agentAdmin.editsHaveNotBeen') }}</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon icon="mdi-alert-outline" size="23" aria-hidden="true" /></span><div><div class="agent-panel__eyebrow">{{ $t('admin:agentAdmin.unsavedConfiguration') }}</div><h2 id="provider-discard-title">{{ $t(discardTarget === 'grants' ? 'admin:agentAdmin.discardAccessChanges' : 'admin:agentAdmin.discardProviderChanges') }}</h2><p>{{ $t(discardTarget === 'grants' ? 'admin:agentAdmin.unsavedAccessChanges' : 'admin:agentAdmin.editsHaveNotBeen') }}</p></div></div>
         <v-card-text>{{ $t('admin:agentAdmin.keepEditingReviewDraft') }}</v-card-text>
         <v-card-actions><v-spacer /><v-btn @click="profileDiscardDialog = false">{{ $t('admin:agentAdmin.keepEditing') }}</v-btn><v-btn color="error" variant="tonal" @click="discardProfileChanges">{{ $t('admin:agentAdmin.discardChanges') }}</v-btn></v-card-actions>
       </v-card>
@@ -570,7 +570,7 @@
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="grantsDialog" max-width="40rem" scrollable :persistent="actionBusyKey === 'grants'" aria-labelledby="provider-grants-title">
+    <v-dialog :model-value="grantsDialog" max-width="40rem" scrollable :persistent="actionBusyKey === 'grants'" aria-labelledby="provider-grants-title" @update:model-value="value => { if (!value) requestGrantsClose() }">
       <v-card class="compact-dialog">
         <div class="compact-dialog__header"><span><v-icon icon="mdi-account-multiple-outline" size="23" aria-hidden="true" /></span><div><h2 id="provider-grants-title">{{ grantProfile ? $t('admin:agentAdmin.access2', { displayName: grantProfile.displayName, interpolation: { escapeValue: false } }) : $t('admin:agentAdmin.providerAccess') }}</h2><p>{{ $t('admin:agentAdmin.controlWhoCanDiscover') }}</p></div></div>
         <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" :label="$t('admin:agentAdmin.available2')" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" :label="$t('admin:agentAdmin.wikiGroups')" multiple chips closable-chips :hint="$t('admin:agentAdmin.usersReceiveProviderThrough')" persistent-hint /><v-alert class="mt-4" type="info" variant="tonal" density="compact">{{ $t('admin:agentAdmin.globalDefaultAvailableEveryone') }}</v-alert></v-card-text>
@@ -580,7 +580,7 @@
           <template v-else>{{ $t('admin:agentAdmin.loading') }}</template>
         </div>
         <v-alert v-if="grantProfile?.isGlobalDefault && grantsDirty" class="mx-6 mt-4 mb-0" type="warning" variant="tonal" density="compact">{{ $t('admin:agentAdmin.savingAnyAccessChange') }}</v-alert>
-        <v-card-actions><span class="compact-dialog__audit"><v-icon icon="mdi-text-box-check-outline" size="16" aria-hidden="true" />{{ $t('admin:agentAdmin.accessChangesAudited') }}</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="grantsDialog = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || !grantsDirty || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">{{ grantProfile?.isGlobalDefault ? $t('admin:agentAdmin.saveClearDefault') : $t('admin:agentAdmin.saveAccess') }}</v-btn></v-card-actions>
+        <v-card-actions><span class="compact-dialog__audit"><v-icon icon="mdi-text-box-check-outline" size="16" aria-hidden="true" />{{ $t('admin:agentAdmin.accessChangesAudited') }}</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="requestGrantsClose">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || !grantsDirty || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">{{ grantProfile?.isGlobalDefault ? $t('admin:agentAdmin.saveClearDefault') : $t('admin:agentAdmin.saveAccess') }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
@@ -696,9 +696,10 @@ const resourceState = reactive<Record<AdminResource, { loaded: boolean; loading:
   groups: { loaded: false, loading: false, error: '' }
 })
 const loading = computed(() => Object.values(resourceState).some(state => state.loading))
-const loadFailed = computed(() => Object.values(resourceState).some(state => state.error))
+const loadFailed = computed(() => Boolean(resourceState.runtime.error || resourceState.profiles.error))
 const dataLoaded = computed(() => resourceState.runtime.loaded)
 const profileWarnings = reactive<Record<string, string>>({})
+const browserWarnings = reactive<Record<string, string>>({})
 const profileRail = ref<HTMLElement | null>(null)
 const saving = ref(false)
 const actionBusyKey = ref('')
@@ -728,6 +729,7 @@ const profileDialog = ref(false)
 const grantsDialog = ref(false)
 const browserDialog = ref(false)
 const profileDiscardDialog = ref(false)
+const discardTarget = ref<'profile' | 'grants'>('profile')
 const editingProfile = shallowRef<Profile | null>(null)
 const removingProfile = shallowRef<Profile | null>(null)
 const grantProfile = shallowRef<Profile | null>(null)
@@ -751,12 +753,12 @@ const toolCallingOptions = [
   { title: t('admin:agentAdmin.nativeApiTools'), value: 'native' as const },
   { title: t('admin:agentAdmin.promptEmulatedTools'), value: 'prompt' as const }
 ]
-const connectionDateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+const connectionDateFormatter = new Intl.DateTimeFormat(typeof siteConfig !== 'undefined' ? siteConfig.lang : undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const formatConnectionCheckDate = (completedAt: string): string => {
   const completed = new Date(completedAt)
   return Number.isNaN(completed.getTime()) ? t('admin:agentAdmin.unknownTime') : connectionDateFormatter.format(completed)
 }
-const defaults = (): ProfileDraft => ({ mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false, videoInputRate: '1500000', videoOutputRate: '17500000', videoTextOutputRate: '9000000', musicSongRate: '80000', imageInputRate: '', imageOutputRate: '', speechInputRate: '', speechOutputRate: '', displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
+const defaults = (): ProfileDraft => ({ mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false, videoInputRate: '', videoOutputRate: '', videoTextOutputRate: '', musicSongRate: '', imageInputRate: '', imageOutputRate: '', speechInputRate: '', speechOutputRate: '', displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
 const profileDraft = reactive<ProfileDraft>(defaults())
 const profileDraftFingerprint = (): string => JSON.stringify(profileDraft)
 const profileBaseline = ref(profileDraftFingerprint())
@@ -955,7 +957,11 @@ const canNavigateProfileStep = (index: number): boolean => index <= maxProfileSt
 const navigateProfileStep = (index: number): void => {
   if (saving.value) return
   if (!canNavigateProfileStep(index)) {
-    profileError.value = t('admin:agentAdmin.completeRequiredFieldsStep')
+    const blockingIndex = profileSteps.value.findIndex(step => !profileStepIsValid(step.value))
+    const blocking = profileSteps.value[blockingIndex >= 0 ? blockingIndex : maxProfileStepIndex.value]
+    profileStep.value = blocking.value
+    profileError.value = t('admin:agentAdmin.completeRequiredFieldsNamedStep', { step: blocking.title, interpolation: { escapeValue: false } })
+    void nextTick(() => profileRail.value?.querySelectorAll<HTMLButtonElement>('button')[blockingIndex >= 0 ? blockingIndex : maxProfileStepIndex.value]?.focus())
     return
   }
   profileError.value = ''
@@ -997,7 +1003,7 @@ const previousProfileStep = () => {
   if (previous) profileStep.value = previous.value
 }
 const nextProfileStep = () => {
-  if (!profileStepValid.value) { profileError.value = t('admin:agentAdmin.completeRequiredFieldsStep'); return }
+  if (!profileStepValid.value) { profileError.value = t('admin:agentAdmin.completeRequiredFieldsNamedStep', { step: profileSteps.value[profileStepIndex.value].title, interpolation: { escapeValue: false } }); return }
   const next = profileSteps.value[profileStepIndex.value + 1]
   if (next) {
     profileError.value = ''
@@ -1015,6 +1021,7 @@ const resetProfileDraft = (): void => {
 const requestProfileClose = (): void => {
   if (saving.value) return
   if (profileDirty.value) {
+    discardTarget.value = 'profile'
     profileDiscardDialog.value = true
     return
   }
@@ -1023,9 +1030,19 @@ const requestProfileClose = (): void => {
 const onProfileDialogModelValue = (value: boolean): void => {
   if (!value) requestProfileClose()
 }
+const requestGrantsClose = (): void => {
+  if (actionBusyKey.value === 'grants') return
+  if (grantsDirty.value) {
+    discardTarget.value = 'grants'
+    profileDiscardDialog.value = true
+    return
+  }
+  grantsDialog.value = false
+}
 const discardProfileChanges = (): void => {
   profileDiscardDialog.value = false
-  profileDialog.value = false
+  if (discardTarget.value === 'grants') grantsDialog.value = false
+  else profileDialog.value = false
 }
 
 const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
@@ -1199,7 +1216,7 @@ const testConnection = (profile: Profile) => run(async () => {
   if (result.connectionCheck.status === 'passed') delete profileWarnings[profile.id]
   await refreshResources(profile.isGlobalDefault || (profile.status === 'disabled' && willBecomeDefault(profile)) ? ['profiles', 'runtime'] : ['profiles'])
   if (result.connectionCheck.status === 'failed') throw new Error(result.connectionCheck.message ?? result.connectionCheck.errorCode ?? t('admin:agentAdmin.providerConnectionCheckFailed'))
-}, `test:${profile.id}`)
+}, `test:${profile.id}`, message => { profileWarnings[profile.id] = message })
 const loadConnectionHistory = async () => {
   const profile = connectionHistoryProfile.value
   if (!profile) return
@@ -1265,6 +1282,7 @@ const createBrowserTarget = () => run(async () => {
 const updateBrowserTarget = (target: BrowserTarget, enabled: boolean, onError: (message: string) => void): void => {
   void run(async () => {
     await request(`/_api/agents/admin/browser-targets/${encodeURIComponent(target.id)}`, { method: 'PUT', body: JSON.stringify({ enabled }) })
+    delete browserWarnings[target.id]
     await refreshResources(['browser'])
     if (enabled) browserEnableTarget.value = null
   }, `browser:${target.id}`, onError)
@@ -1276,7 +1294,7 @@ const setBrowserEnabled = (target: BrowserTarget, enabled: boolean): void => {
     browserEnableTarget.value = target
     return
   }
-  updateBrowserTarget(target, false, message => { error.value = message })
+  updateBrowserTarget(target, false, message => { browserWarnings[target.id] = message })
 }
 const allowConfirmedBrowserTarget = (): void => {
   const target = browserEnableTarget.value
@@ -1287,6 +1305,7 @@ onBeforeUnmount(() => {
   connectionHistoryController?.abort()
   for (const controller of resourceControllers.values()) controller.abort()
   resourceControllers.clear()
+  window.removeEventListener('hashchange', restoreSection)
 })
 const restoreSection = () => {
   const requested = window.location.hash.slice(1)
@@ -1302,7 +1321,6 @@ onMounted(() => {
   window.addEventListener('hashchange', restoreSection)
   void load()
 })
-onBeforeUnmount(() => window.removeEventListener('hashchange', restoreSection))
 </script>
 
 <style scoped>
@@ -2852,7 +2870,11 @@ code {
 .media-storage-help dt { font-weight: 600; margin-top: .65rem; }
 .media-storage-help dd { margin: .1rem 0 0; color: var(--wiki-text-muted); }
 .connection-history details { padding-block: 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
-.connection-history summary { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; cursor: pointer; font-size: .85rem; }
+.connection-history summary { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; cursor: pointer; font-size: .85rem; list-style: none; }
+.connection-history summary::-webkit-details-marker { display: none; }
+.connection-history summary > .v-icon:last-child { transition: transform 150ms ease; }
+.connection-history details[open] summary > .v-icon:last-child { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .connection-history summary > .v-icon:last-child { transition: none; } }
 .connection-history summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }
 .connection-history time { margin-inline-start: auto; }
 .connection-history p, .connection-history ul { margin-block: .75rem; font-size: .85rem; line-height: 1.6; overflow-wrap: anywhere; }

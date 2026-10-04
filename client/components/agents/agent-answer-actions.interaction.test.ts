@@ -79,6 +79,36 @@ afterEach(() => {
 })
 
 describe('Answer export and clipboard interactions', () => {
+  it('derives a plain editable draft title and retains edits when the review is hidden', async () => {
+    const host = await mount(AgentAnswerActions, {
+      content: '# **Practical** [guide](https://example.test/guide) and _notes_ [[cite:source]]\n\nKeep the answer body.',
+      citations: []
+    })
+    const openButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button =>
+      button.textContent?.includes(translateEnglish('common:agentAnswerActions.saveWikiDraft'))
+    )
+    if (!openButton) throw new Error('Draft review button was not rendered')
+    await clickAndSettle(openButton, () => Boolean(document.querySelector('.agent-answer-draft input')))
+    const fields = document.querySelectorAll<HTMLInputElement>('.agent-answer-draft input')
+    const titleField = fields[0]
+    const pathField = fields[2]
+    if (!titleField || !pathField) throw new Error('Editable draft location fields were not rendered')
+    expect(titleField.value).toBe('Practical guide and notes')
+    expect(pathField.value).toMatch(/^agent-notes\/practical-guide-and-notes-/)
+    titleField.value = 'My reviewed title'
+    titleField.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    const closeButton = document.querySelector<HTMLButtonElement>(
+      `.agent-answer-draft button[aria-label="${translateEnglish('common:agentAnswerActions.closeWikiDraftReview')}"]`
+    )
+    if (!closeButton) throw new Error('Draft review close button was not rendered')
+    closeButton.click()
+    await Vue.nextTick()
+    openButton.click()
+    await Vue.nextTick()
+    expect(document.querySelector<HTMLInputElement>('.agent-answer-draft input')?.value).toBe('My reviewed title')
+  })
+
   it('exports canonical Wiki numbers through duplicate and unsafe-reference gaps without dropping unused sources or merging Web metadata', async () => {
     setLocation('https://wiki.test/')
     const citations: readonly AgentCitation[] = [

@@ -2,6 +2,7 @@ import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-conte
 import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
 import { z } from 'zod'
 import { sameOriginJsonFetch } from './json-transport.ts'
+import { translate } from '../modules/localization.ts'
 import {
   AGENT_ACTION_NAMES,
   AGENT_EVENT_TYPES,
@@ -399,9 +400,8 @@ const MAX_ERROR_MESSAGE_LENGTH = 512
 const MAX_CURSOR_LENGTH = 512
 
 const fallbackErrorMessage = (status: number): string => {
-  if (status === 401) return 'Your Wiki session expired. Sign in again and retry.'
-  if (status === 403)
-    return 'Wiki Agent rejected this request. Refresh the page, then verify your Agent permission and the configured Site Host if it persists.'
+  if (status === 401) return translate('common:agentWorkspace.authenticationRequiredMessage')
+  if (status === 403) return translate('common:agentWorkspace.admissionRequiredMessage')
   if (status === 409) return 'The Wiki Agent conversation changed. Refresh it and retry.'
   if (status === 429) return 'Wiki Agent is at its current usage limit. Retry later.'
   return `Agent request failed (${status})`
@@ -437,6 +437,7 @@ export class AgentApiError extends Error {
 
 const errorMessage = async (response: Response): Promise<string> => {
   const fallback = fallbackErrorMessage(response.status)
+  if (response.status === 401 || response.status === 403) return fallback
   try {
     const parsed = z.object({ message: z.string().optional(), error: z.string().optional() }).parse(await response.json())
     const supplied = parsed.message?.trim() || parsed.error?.trim()

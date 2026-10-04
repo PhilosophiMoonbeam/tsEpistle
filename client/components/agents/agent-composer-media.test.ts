@@ -989,7 +989,6 @@ describe('Agent media composer lifecycle', () => {
     })
     const pdf = { ...media, id: 'pdf', filename: 'reference.pdf', mimeType: 'application/pdf' }
     harness.api.attachments.value = [pdf]
-    harness.api.toggleGenerationTool('image')
     expect(await harness.api.editImage({ ...media, kind: 'generated-image' })).toBe(true)
     expect(harness.api.attachments.value).toEqual([pdf, media])
     expect(harness.api.selectedGenerationTools.value).toEqual(['image'])
@@ -1228,27 +1227,42 @@ describe('re-attaching a detached attachment', () => {
 })
 
 describe('creation tool selection', () => {
-  it('selects all configured tools, allows multiple selections, and preserves choices after sending', async () => {
+  it('starts with no consent, preserves explicit choices on refresh, and only removes revoked tools', async () => {
     const harness = mount({ media: { attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false } })
-    expect(harness.api.selectedGenerationTools.value).toEqual(['image', 'video', 'music'])
+    expect(harness.api.selectedGenerationTools.value).toEqual([])
+    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
     harness.api.toggleGenerationTool('image')
+    harness.api.toggleGenerationTool('video')
     await nextTick()
-    expect(harness.events).toContainEqual(['change', { attachmentIds: [], generationTools: ['video', 'music'] }])
+    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image', 'video'] }])
+    harness.api.toggleGenerationTool('image')
     harness.api.clear()
+    harness.props.capabilities = { ...harness.props.capabilities! }
     await nextTick()
-    expect(harness.api.selectedGenerationTools.value).toEqual(['video', 'music'])
+    expect(harness.api.selectedGenerationTools.value).toEqual(['video'])
     harness.props.capabilities!.musicGeneration = false
     await nextTick()
+    harness.props.capabilities!.musicGeneration = true
+    await nextTick()
     expect(harness.api.selectedGenerationTools.value).toEqual(['video'])
-    harness.api.toggleGenerationTool('music')
-    expect(harness.api.selectedGenerationTools.value).toEqual(['video'])
+    harness.props.capabilities!.videoGeneration = false
+    await nextTick()
+    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
+    harness.api.toggleGenerationTool('video')
+    expect(harness.api.selectedGenerationTools.value).toEqual([])
+    harness.props.capabilities!.videoGeneration = true
+    await nextTick()
+    expect(harness.api.selectedGenerationTools.value).toEqual([])
     harness.unmount()
   })
   it('allows an explicit empty whitelist and suppresses tools in unsupported execution modes', async () => {
     const harness = mount({ media: { attachments: false, imageGeneration: true, transcription: false } })
     harness.api.toggleGenerationTool('image')
     await nextTick()
-    expect(harness.events).toContainEqual(['change', { attachmentIds: [], generationTools: [] }])
+    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image'] }])
+    harness.api.toggleGenerationTool('image')
+    await nextTick()
+    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
     harness.api.toggleGenerationTool('image')
     harness.props.generationToolsEnabled = false
     await nextTick()

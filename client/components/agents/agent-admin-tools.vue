@@ -37,7 +37,7 @@
             <span class="tool-record__states">
               <span v-for="interfaceName in interfaceNames" :key="interfaceName" class="tool-record__state">{{ $t('admin:agentAdminTools.interfaceEligibility', { interface: interfaceName === 'agent' ? $t('admin:agentAdminTools.wikiAgent') : $t('admin:agentAdminTools.mcpClients'), state: interfaceState(tool, interfaceName), interpolation: { escapeValue: false } }) }}</span>
             </span>
-            <v-icon size="18">mdi-chevron-down</v-icon>
+            <v-icon size="18" aria-hidden="true">mdi-chevron-down</v-icon>
           </summary>
           <div class="tool-record__details">
             <p>{{ tool.description }}</p>
@@ -60,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import type { AgentAdminTool } from '../../../shared/agents/admin.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
@@ -71,6 +71,8 @@ const query = ref<string | null>('')
 const transport = ref<'all' | 'agent' | 'mcp'>('all')
 const state = ref('all')
 const copyMessage = ref('')
+let copyTimer: ReturnType<typeof setTimeout> | undefined
+let disposed = false
 const endpoint = new URL('/mcp', window.location.origin).href
 const transports = [{ title: t('admin:agentAdminTools.eitherInterface'), value: 'all' }, { title: t('admin:agentAdminTools.wikiAgent'), value: 'agent' }, { title: t('admin:agentAdminTools.mcpClients'), value: 'mcp' }]
 const states = [{ title: t('admin:agentAdminTools.allStates'), value: 'all' }, { title: t('admin:agentAdminTools.eligible'), value: 'eligible' }, { title: t('admin:agentAdminTools.deploymentBlocked'), value: 'blocked' }]
@@ -92,9 +94,20 @@ const filteredTools = computed(() => {
 })
 const exposureDescription = (exposed: boolean, blockers: readonly string[]) => !exposed ? t('admin:agentAdminTools.notExposedInterface') : blockers.length ? t('admin:agentAdminTools.enable', { blockers: blockers.join(', '), interpolation: { escapeValue: false } }) : t('admin:agentAdminTools.eligibleSubjectRequestAuthorization')
 async function copyEndpoint() {
-  try { await navigator.clipboard.writeText(endpoint); copyMessage.value = t('admin:agentAdminTools.resourceUrlCopied') }
-  catch { copyMessage.value = t('admin:agentAdminTools.copyUnavailableSelectCopy') }
+  if (copyTimer !== undefined) clearTimeout(copyTimer)
+  copyMessage.value = ''
+  let message: string
+  try { await navigator.clipboard.writeText(endpoint); message = t('admin:agentAdminTools.resourceUrlCopied') }
+  catch { message = t('admin:agentAdminTools.copyUnavailableSelectCopy') }
+  if (disposed) return
+  if (copyTimer !== undefined) clearTimeout(copyTimer)
+  copyMessage.value = message
+  copyTimer = setTimeout(() => { copyMessage.value = ''; copyTimer = undefined }, 2500)
 }
+onBeforeUnmount(() => {
+  disposed = true
+  if (copyTimer !== undefined) clearTimeout(copyTimer)
+})
 </script>
 
 <style scoped>
@@ -116,6 +129,8 @@ a { color: var(--wiki-accent-ink); }
 summary { display: flex; align-items: center; gap: .8rem; padding-block: 1rem; cursor: pointer; list-style: none; }
 summary::-webkit-details-marker { display: none; }
 summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }
+.tool-record summary > .v-icon:last-child { transition: transform 150ms ease; }
+.tool-record[open] summary > .v-icon:last-child { transform: rotate(180deg); }
 .tool-record__name { display: grid; gap: .2rem; flex: 1; min-width: 0; }
 .tool-record__name strong { font-size: .9rem; }
 code { font-family: var(--wiki-font-mono); font-size: .75rem; overflow-wrap: anywhere; }
@@ -130,4 +145,5 @@ dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 1100px) { .mcp-connection, .tool-toolbar { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .5rem; } .tool-record__states { grid-column: 2; grid-row: 2; justify-content: flex-start; max-width: none; } summary > .v-icon:last-child { grid-column: 3; grid-row: 1; } .tool-record__details { padding-inline: 0; } dl > div { grid-template-columns: 1fr; gap: .25rem; } }
 @media (forced-colors: active) { .mcp-connection, .tool-record__state { border-color: CanvasText; background: Canvas; color: CanvasText; } }
+@media (prefers-reduced-motion: reduce) { .tool-record summary > .v-icon:last-child { transition: none; } }
 </style>

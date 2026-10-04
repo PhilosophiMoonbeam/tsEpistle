@@ -17,7 +17,7 @@
         <template v-else>
           <ul class="agent-asset-picker__items" :aria-label="$t('common:agentAssetPicker.filesFolders')">
             <li v-for="folder in folders" :key="`folder-${folder.id}`"><button class="agent-asset-picker__row" type="button" :disabled="busy" @click="openFolder(folder)"><v-icon icon="mdi-folder-outline" aria-hidden="true" /><span class="agent-asset-picker__name">{{ folder.name }}</span><v-icon icon="mdi-chevron-right" size="18" aria-hidden="true" /></button></li>
-            <li v-for="asset in visibleAssets" :key="asset.id"><button class="agent-asset-picker__row" type="button" :disabled="busy || Boolean(unavailable(asset))" :aria-label="$t('common:agentAssetPicker.attach', { filename: asset.filename, interpolation: { escapeValue: false } })" @click="select(asset)"><v-icon :icon="mimeType(asset) === 'application/pdf' ? 'mdi-file-pdf-box' : 'mdi-image-outline'" aria-hidden="true" /><span class="agent-asset-picker__name">{{ asset.filename }}<small v-if="unavailable(asset)">{{ unavailable(asset) }}</small></span><span class="agent-asset-picker__size">{{ formatSize(asset.fileSize) }}</span></button></li>
+            <li v-for="asset in visibleAssets" :key="asset.id"><button class="agent-asset-picker__row" type="button" :disabled="busy || Boolean(unavailable(asset))" :aria-label="assetLabel(asset)" @click="select(asset)"><v-icon :icon="mimeType(asset) === 'application/pdf' ? 'mdi-file-pdf-box' : 'mdi-image-outline'" aria-hidden="true" /><span class="agent-asset-picker__name">{{ asset.filename }}<small v-if="unavailable(asset)">{{ unavailable(asset) }}</small></span><span class="agent-asset-picker__size">{{ formatSize(asset.fileSize) }}</span></button></li>
           </ul>
           <p v-if="!visibleAssets.length" class="agent-asset-picker__state" role="status">{{ query.trim() ? $t('common:agentAssetPicker.noMatchingImagesPdfs') : folders.length ? $t('common:agentAssetPicker.openFolderFindImages') : $t('common:agentAssetPicker.noSupportedImagesPdfs') }}</p>
         </template>
@@ -53,6 +53,12 @@ const unavailable = (asset: Asset): string | null => {
   if (!Number.isSafeInteger(asset.fileSize) || asset.fileSize < 0) return t('common:agentAssetPicker.fileUnavailable')
   const problem = validateAgentAttachment({ type, size: asset.fileSize })
   return problem ? t(problem) : null
+}
+const assetLabel = (asset: Asset): string => {
+  const reason = unavailable(asset)
+  return reason
+    ? t('common:agentAssetPicker.unavailableAsset', { filename: asset.filename, reason, interpolation: { escapeValue: false } })
+    : t('common:agentAssetPicker.attach', { filename: asset.filename, interpolation: { escapeValue: false } })
 }
 const formatSize = (size: number): string => size < 1024 * 1024 ? t('common:agentAssetPicker.kb', { sizeKb: Math.max(1, Math.ceil(size / 1024)), interpolation: { escapeValue: false } }) : t('common:agentAssetPicker.mb', { value: (size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0), interpolation: { escapeValue: false } })
 const close = () => { controller?.abort(); emit('close') }
