@@ -34,7 +34,7 @@ const selected: Record<string, true> = {
 const declarations = methodsNode.properties.filter(node => ts.isMethodDeclaration(node) && selected[node.name.getText(sourceFile)])
 if (declarations.length !== Object.keys(selected).length) throw new Error('A header search handler was not found')
 const breakpointWatcher = watchNode?.properties.find(
-  node => ts.isMethodDeclaration(node) && ts.isStringLiteral(node.name) && node.name.text === '$vuetify.display.smAndDown'
+  node => ts.isPropertyAssignment(node) && ts.isStringLiteral(node.name) && node.name.text === '$vuetify.display.smAndDown'
 )
 if (!breakpointWatcher) throw new Error('Header search breakpoint watcher was not found')
 const compiled = ts.transpileModule(
@@ -81,7 +81,7 @@ const fixture = (mobile = false) => {
     'HTMLElement',
     'emitSearchEnter',
     'emitSearchMove',
-    `${compiled}\nreturn {...methods, onSearchBreakpoint: watchers['$vuetify.display.smAndDown']}`
+    `${compiled}\nreturn {...methods, onSearchBreakpoint: watchers['$vuetify.display.smAndDown'].handler}`
   )(
     document,
     dom.window.HTMLElement,
