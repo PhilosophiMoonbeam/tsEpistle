@@ -270,6 +270,7 @@ describe('Answer export and clipboard interactions', () => {
       const source = host.querySelector<HTMLDetailsElement>('.agent-markdown__diagram-source')
       const copy = host.querySelector<HTMLButtonElement>('[data-copy-code]')
       if (!code || !table || !source || !copy) throw new Error('Markdown reading controls were not rendered')
+      expect(code.querySelector('code')?.textContent).toBe('const source = "wiki"\n')
       code.scrollLeft = 37
       table.scrollLeft = 23
       source.open = true
@@ -285,6 +286,7 @@ describe('Answer export and clipboard interactions', () => {
       expect(translatedCopy?.textContent).toBe('Copier « <code> »')
       expect(translatedCopy?.querySelector('code')).toBeNull()
       expect(host.querySelector('pre')?.getAttribute('aria-label')).toBe('Code défilant ts')
+      expect(host.querySelector('pre code')?.textContent).toBe('const source = "wiki"\n')
       expect(host.querySelector('.agent-markdown__table-shell')?.getAttribute('aria-label')).toBe('Tableau défilant')
       expect(host.querySelector('pre')?.scrollLeft).toBe(37)
       expect(host.querySelector('.agent-markdown__table-shell')?.scrollLeft).toBe(23)

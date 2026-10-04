@@ -1301,6 +1301,21 @@ describe('Agent composer three-section layout', () => {
     expect(activeOwnedMenu(create, '[aria-label="Creation tools"]')).toBeNull()
   })
 
+  it('focuses the native action in an empty Skills popup and restores each opener on Escape', async () => {
+    const mounted = mountRealComposers([{ skills: [] }])
+    const root = mounted.roots[0]
+    const moreMenu = await openRealMoreMenu(root, true)
+    const skillsTrigger = moreMenu.querySelector<HTMLElement>('[aria-haspopup="dialog"]')
+    if (!skillsTrigger) throw new Error('The nested Skills trigger did not render')
+    const skillsMenu = await openOwnedMenu(skillsTrigger, '.agent-composer-skill-menu__card', 'empty Skills popup', true)
+    expect(document.activeElement).toBe(skillsMenu.querySelector('button'))
+    await closeOwnedMenu(skillsMenu)
+    expect(document.activeElement).toBe(skillsTrigger)
+    expect(moreMenu.closest('.v-overlay--active')).not.toBeNull()
+    await closeOwnedMenu(moreMenu)
+    expect(document.activeElement).toBe(root.querySelector('.agent-composer__more-button'))
+  })
+
   it('keeps a cancelled keyboard opening closed after deferred menu work finishes', async () => {
     vi.useFakeTimers()
     try {

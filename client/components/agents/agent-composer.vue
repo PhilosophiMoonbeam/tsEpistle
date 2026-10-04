@@ -750,6 +750,13 @@ const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'cr
     if (menu === 'more' && foldedSkillMenuOpen.value) return
     event.preventDefault()
     event.stopImmediatePropagation()
+    const origin = event.currentTarget
+    const overlayId = origin instanceof HTMLElement ? origin.closest<HTMLElement>('.v-overlay')?.id : null
+    const trigger = origin instanceof HTMLElement && origin.hasAttribute('aria-controls')
+      ? origin
+      : overlayId ? document.querySelector<HTMLElement>(`[aria-controls="${overlayId}"]`) : null
+    // Nested content can unmount before VMenu's deferred focus restoration.
+    trigger?.focus({ preventScroll: true })
     open.value = false
     return
   }
@@ -766,7 +773,7 @@ const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'cr
   if (!open.value || !trigger.isConnected) return
   const overlayId = trigger.getAttribute('aria-controls')
   const targets = overlayId
-    ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>('[tabindex]:not([tabindex="-1"]):not([disabled]):not([aria-disabled="true"])')
+    ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>(':is(a[href], button, input:not([type="hidden"]), select, textarea, [contenteditable="true"], [tabindex]):not([tabindex="-1"]):not([disabled]):not([aria-disabled="true"])')
     : null
   if (!targets) return
   const step = event.key === 'ArrowUp' ? -1 : 1
