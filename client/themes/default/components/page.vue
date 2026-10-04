@@ -5534,7 +5534,17 @@ export default defineComponent({
     border-inline-start-color: rgb(var(--v-theme-primary));
     background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
     color: var(--wiki-accent-ink);
-    font-weight: 600;
+    .page-toc-item-title--depth-0 {
+      font-weight: 700;
+    }
+
+    .page-toc-item-title--depth-1 {
+      font-weight: 600;
+    }
+
+    .page-toc-item-title--depth-2-plus {
+      font-weight: 500;
+    }
 
     &::before {
       content: '';
