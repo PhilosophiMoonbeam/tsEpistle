@@ -299,46 +299,6 @@ export default {
 
 </script>
 <style scoped lang="scss">
-.admin-page-detail { max-width: 1600px; min-width: 0; padding-bottom: 2rem !important; }
-.page-context-strip { display: flex; flex-wrap: wrap; gap: .375rem 1rem; margin: .75rem 0 1rem; font-size: .8125rem; color: var(--wiki-text-muted); overflow-wrap: anywhere; }
-.page-detail-workspace { margin-top: .5rem; overflow: hidden; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
-.pages-kicker { color: var(--wiki-text-muted); font-size: .75rem; font-weight: 600; }
-h2, h3 { font-family: var(--wiki-font-heading); font-weight: 650; line-height: 1.35; margin: .375rem 0 .75rem; }
-h2 { font-size: 1.125rem; } h3 { font-size: 1rem; }
-p { color: var(--wiki-text-muted); line-height: 1.55; font-size: .875rem; }
-.page-overview-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 1.5rem; padding: 1.25rem; }
-.page-overview-grid > *, .page-knowledge-grid > * { min-width: 0; }
-.page-detail-values { margin: .75rem 0; }
-.page-detail-values > div { display: grid; grid-template-columns: minmax(7rem, 28%) minmax(0, 1fr); gap: .75rem; padding: .625rem 0; border-bottom: 1px solid var(--wiki-surface-border); }
-.page-detail-values dt { color: var(--wiki-text-muted); font-size: .8125rem; }
-.page-detail-values dd { margin: 0; font-size: .875rem; overflow-wrap: anywhere; }
-.page-detail-values small { display: block; line-height: 1.5; margin-top: .25rem; color: var(--wiki-text-muted); }
-.page-secondary-links, .page-access-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
-.page-stewardship { border-inline-start: 1px solid var(--wiki-surface-border); padding-inline-start: 1.25rem; }
-.page-person { display: flex; flex-direction: column; gap: .25rem; padding: .75rem 0; border-top: 1px solid var(--wiki-surface-border); overflow-wrap: anywhere; }
-.page-person > span, .page-person time, .page-person small, .page-stewardship > p { font-size: .8125rem; color: var(--wiki-text-muted); }
-.page-person a { color: var(--wiki-accent-ink); font-weight: 600; text-decoration: underline; }
-.page-stewardship > p { margin-top: .75rem; }
-.page-technical, .page-feature-settings { grid-column: 1 / -1; padding-top: 1rem; border-top: 1px solid var(--wiki-surface-border); }
-.page-technical summary, .page-projection-detail summary { display: list-item; min-height: 44px; padding-block: .625rem; cursor: pointer; font-size: .875rem; }
-.page-danger { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .75rem 0; }
-.page-danger p { margin-top: .25rem; max-width: 45rem; font-size: .8125rem; }
-.page-knowledge { padding: 1.25rem; }
-.page-section-intro { max-width: 50rem; margin-bottom: 1rem; }
-.page-knowledge-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
-.page-knowledge-grid p { margin-bottom: .75rem; }
-.page-knowledge-sources article { padding: .75rem 0; border-top: 1px solid var(--wiki-surface-border); }
-.page-knowledge-sources code { display: block; overflow-wrap: anywhere; font-family: var(--wiki-font-mono); font-size: .8125rem; margin-top: .25rem; }
-.page-knowledge ul { padding-inline-start: 1.25rem; margin: .75rem 0; line-height: 1.6; }
-.page-projection-detail { margin-top: 1rem; }
-.page-projection-detail pre { overflow: auto; max-height: 28rem; margin-top: .75rem; font: .75rem/1.55 var(--wiki-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.page-feature-settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; font-size: .8125rem; }
-summary:focus-visible, a:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 3px; }
-@media (max-width: 800px) {
-  .page-overview-grid, .page-knowledge-grid { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
-  .page-stewardship { border-inline-start: 0; border-top: 1px solid var(--wiki-surface-border); padding: 1rem 0 0; }
-  .page-knowledge, .page-overview-grid { padding: 1rem; }
-  .page-detail-values > div { grid-template-columns: 1fr; gap: .25rem; }
-  .page-danger { align-items: start; flex-direction: column; gap: .75rem; }
-}
+.admin-page-detail { max-width:1600px; padding-bottom:4rem !important; }.page-context-strip { display:flex; flex-wrap:wrap; gap:.7rem 1.4rem; margin:1rem 0 2rem; padding:0 .5rem; font-size:.8rem; color:rgb(var(--v-theme-on-surface-variant)); }.page-detail-workspace { background:rgb(var(--v-theme-surface)); border:1px solid rgba(var(--v-border-color),.18); border-radius:0 12px 12px; margin-top:.7rem; overflow:hidden; }.pages-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; color:rgb(var(--v-theme-on-surface-variant)); }h2 { font:500 clamp(1.7rem,2.5vw,2.3rem)/1.15 var(--font-family-serif,Georgia,serif); margin:.7rem 0 1rem; }h3 { font:500 1.5rem/1.25 var(--font-family-serif,Georgia,serif); margin:.7rem 0 1.4rem; }p { line-height:1.7; color:rgb(var(--v-theme-on-surface-variant)); }.page-overview-grid { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:3rem; padding:2rem; }.page-detail-values { margin:1.3rem 0; }.page-detail-values>div { display:grid; grid-template-columns:minmax(7rem,28%) minmax(0,1fr); gap:1rem; padding:1rem 0; border-bottom:1px solid rgba(var(--v-border-color),.14); }.page-detail-values dt { font-size:.8rem; color:rgb(var(--v-theme-on-surface-variant)); }.page-detail-values dd { margin:0; font-size:.9rem; overflow-wrap:anywhere; }.page-detail-values small { display:block; line-height:1.7; margin-top:.4rem; color:rgb(var(--v-theme-on-surface-variant)); }.page-secondary-links { display:flex; gap:.7rem; flex-wrap:wrap; }.page-stewardship { border-left:1px solid rgba(var(--v-border-color),.18); padding-left:2rem; }.page-access-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin:1rem 0; }.page-person { display:flex; flex-direction:column; gap:.4rem; padding:1rem 0; border-top:1px solid rgba(var(--v-border-color),.14); overflow-wrap:anywhere; }.page-person>span,.page-person time,.page-person small { font-size:.8rem; color:rgb(var(--v-theme-on-surface-variant)); }.page-person a { font-weight:600; color:rgb(var(--v-theme-on-surface)); text-decoration:underline; }.page-stewardship>p { font-size:.8rem; margin-top:1rem; }.page-technical { grid-column:1/-1; border-top:1px solid rgba(var(--v-border-color),.18); padding-top:1.5rem; }.page-technical summary,.page-projection-detail summary { cursor:pointer; font-size:.9rem; }.page-danger { display:flex; justify-content:space-between; align-items:center; gap:2rem; padding:1rem 0; }.page-danger p { margin-top:.4rem; max-width:45rem; font-size:.85rem; }.page-knowledge { padding:2rem; }.page-section-intro { max-width:46rem; margin-bottom:2rem; }.page-knowledge-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:3rem; }.page-knowledge-grid p { margin-bottom:1rem; }.page-knowledge-sources article { padding:1rem 0; border-top:1px solid rgba(var(--v-border-color),.15); }.page-knowledge-sources code { display:block; overflow-wrap:anywhere; font-size:.8rem; margin-top:.5rem; }.page-knowledge ul { padding-left:1.5rem; margin:1rem 0; line-height:1.7; }.page-projection-detail { margin-top:1.5rem; }.page-projection-detail pre { overflow:auto; max-height:28rem; font-size:.75rem; margin-top:1rem; }summary:focus-visible,a:focus-visible { outline:2px solid rgb(var(--v-theme-primary)); outline-offset:4px; }@media(max-width:800px) { .page-overview-grid,.page-knowledge-grid { grid-template-columns:minmax(0,1fr); gap:2rem; }.page-stewardship { border-left:0; border-top:1px solid rgba(var(--v-border-color),.18); padding:1.5rem 0 0; }.page-knowledge,.page-overview-grid { padding:1.3rem; }.page-detail-values>div { grid-template-columns:1fr; gap:.4rem; }.page-danger { align-items:start; flex-direction:column; gap:1rem; } }
+.page-feature-settings { grid-column:1/-1; border-top:1px solid rgba(var(--v-border-color),.18); padding-top:1.5rem; }.page-feature-settings-actions { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; margin-top:1rem; }
 </style>

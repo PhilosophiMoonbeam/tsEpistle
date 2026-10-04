@@ -435,27 +435,6 @@ export type PageListRow = {
   tags: string[]
 }
 
-export type PageDirectoryOptions = {
-  limit?: number
-  offset?: number
-  search?: string
-  locale?: string
-  visibility?: 'all' | 'public' | 'private'
-  publication?: 'all' | 'published' | 'unpublished' | 'Draft' | 'Published' | 'Scheduled' | 'Window ended' | 'Invalid schedule' | 'Unavailable' | 'Enabled'
-  orderBy?: 'ID' | 'PATH' | 'TITLE' | 'CREATED' | 'UPDATED'
-  orderByDirection?: 'ASC' | 'DESC'
-  creatorId?: number
-  authorId?: number
-  tag?: string
-  untagged?: boolean
-}
-
-export type PageDirectoryResult = {
-  items: PageListRow[]
-  nextOffset: number | null
-  scanned: number
-}
-
 export type RecentPageRow = {
   id: number
   locale: string
@@ -927,44 +906,6 @@ export async function fetchPageList(fetchImpl: FetchImpl, fallbackMessage = 'Pag
   })
 
   return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizePageListRow))
-}
-
-/**
- * Continue with nextOffset until null, including empty visible batches.
- * scanned is this request's examined candidate count, never a corpus total.
- */
-export async function fetchPageDirectory(
-  fetchImpl: FetchImpl,
-  options: PageDirectoryOptions = {},
-  fallbackMessage = 'Page directory response is invalid'
-): Promise<PageDirectoryResult> {
-  const params = new URLSearchParams()
-  for (const key of ['limit', 'offset', 'search', 'locale', 'visibility', 'publication', 'orderBy', 'orderByDirection', 'creatorId', 'authorId', 'tag', 'untagged'] as const) {
-    if (options[key] !== undefined) params.set(key, String(options[key]))
-  }
-  const suffix = params.toString()
-  const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/directory${suffix ? `?${suffix}` : ''}`, {
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json' }
-  })
-  return normalizeResponse(response, fallbackMessage, payload => {
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) throw new Error(fallbackMessage)
-    const result = payload as Record<string, unknown>
-    if (
-      !Array.isArray(result.items) ||
-      result.items.length > (options.limit ?? 25) ||
-      result.items.length > 100 ||
-      !isNonNegativeSafeInteger(result.scanned) ||
-      result.scanned > 1_000 ||
-      result.scanned < result.items.length ||
-      (result.nextOffset !== null && (!isNonNegativeSafeInteger(result.nextOffset) || result.scanned === 0 || result.nextOffset !== (options.offset ?? 0) + result.scanned))
-    ) throw new Error(fallbackMessage)
-    return {
-      items: normalizeArray(result.items, fallbackMessage, normalizePageListRow),
-      nextOffset: result.nextOffset as number | null,
-      scanned: result.scanned
-    }
-  })
 }
 
 export async function fetchPageTags(fetchImpl: FetchImpl, fallbackMessage = 'Page tags response is invalid'): Promise<PageTagRow[]> {

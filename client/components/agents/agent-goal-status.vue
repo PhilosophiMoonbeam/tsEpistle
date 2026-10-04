@@ -12,6 +12,7 @@
       <span
         :id="goalStatusId"
         class="agent-goal__status-label"
+        :class="{ 'agent-goal__status-label--hidden': expanded }"
         role="status"
         aria-live="polite"
         aria-atomic="true"
@@ -51,31 +52,13 @@
             <p class="agent-goal__eyebrow">{{ $t('common:agentGoalStatus.durableGoal') }}</p>
             <h2 :id="goalTitleId" class="agent-goal__title">{{ goal.objective }}</h2>
           </div>
+          <v-chip class="agent-goal__status" :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
         </header>
 
         <div class="agent-goal__continuity" role="group" :aria-label="$t('common:agentGoalStatus.goalContinuity')">
           <span><v-icon icon="mdi-source-branch" size="15" /> {{ $t('common:agentGoalStatus.run2', { continuationCount: formatBudgetValue(goal.continuationCount + 1), maxContinuations: formatBudgetValue(goal.maxContinuations + 1), interpolation: { escapeValue: false } }) }}</span>
           <span><v-icon icon="mdi-calendar-clock-outline" size="15" /> {{ timelinePrefix }} <time :datetime="timelineAt">{{ timelineLabel }}</time></span>
         </div>
-        <p class="agent-goal__summary">{{ progressLabel }}</p>
-
-        <aside
-          v-if="blockerMessages.length"
-          class="agent-goal__blockers"
-          :class="{ 'agent-goal__blockers--error': goal.status === 'failed' }"
-          :aria-labelledby="goalBlockersTitleId"
-        >
-          <div class="agent-goal__blockers-heading">
-            <v-icon :icon="goal.status === 'failed' ? 'mdi-alert-octagon-outline' : 'mdi-alert-circle-outline'" size="19" />
-            <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? $t('common:agentGoalStatus.whyGoalStopped') : $t('common:agentGoalStatus.needsAttention') }}</h3>
-          </div>
-          <ul>
-            <li v-for="{ issue, key } in blockerEntries" :key="key">
-              <span>{{ issue.message }}</span>
-              <span class="agent-goal__issue-state">{{ issue.retryable ? $t('common:agentGoalStatus.canContinueAfterReview') : $t('common:agentGoalStatus.notAutomaticallyRetryable') }}</span>
-            </li>
-          </ul>
-        </aside>
 
         <div class="agent-goal__progress">
           <div class="agent-goal__progress-heading">
@@ -162,10 +145,29 @@
             prepend-icon="mdi-lightning-bolt-outline"
             :loading="pendingAction === 'renew-budget' && busy"
             :disabled="busy || networkBlocked"
-            @click="budgetDialogOpen = true"
+            @click="renewBudget"
           >{{ $t('common:agentGoalStatus.continueAnotherTokenCycle', { renewalAllowanceLabel, interpolation: { escapeValue: false } }) }}</v-btn>
         </section>
 
+        <p class="agent-goal__summary">{{ progressLabel }}</p>
+
+        <aside
+          v-if="blockerMessages.length"
+          class="agent-goal__blockers"
+          :class="{ 'agent-goal__blockers--error': goal.status === 'failed' }"
+          :aria-labelledby="goalBlockersTitleId"
+        >
+          <div class="agent-goal__blockers-heading">
+            <v-icon :icon="goal.status === 'failed' ? 'mdi-alert-octagon-outline' : 'mdi-alert-circle-outline'" size="19" />
+            <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? $t('common:agentGoalStatus.whyGoalStopped') : $t('common:agentGoalStatus.needsAttention') }}</h3>
+          </div>
+          <ul>
+            <li v-for="{ issue, key } in blockerEntries" :key="key">
+              <span>{{ issue.message }}</span>
+              <span class="agent-goal__issue-state">{{ issue.retryable ? $t('common:agentGoalStatus.canContinueAfterReview') : $t('common:agentGoalStatus.notAutomaticallyRetryable') }}</span>
+            </li>
+          </ul>
+        </aside>
 
         <p v-if="networkBlocked" class="agent-goal__network-note" role="status" aria-live="polite">
           {{ $t('common:agentGoalStatus.connectionRequiredChangeGoal') }}
@@ -211,7 +213,7 @@
     </v-expand-transition>
 
     <v-dialog content-class="agent-owned-overlay" v-model="cancelDialogOpen" max-width="30rem" :aria-labelledby="cancelGoalTitleId">
-      <v-card class="agent-goal__dialog">
+      <v-card rounded="xl">
         <v-card-title class="agent-goal__dialog-title">
           <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-stop-circle-outline" /></v-avatar>
           <span :id="cancelGoalTitleId">{{ $t('common:agentGoalStatus.cancelDurableGoal') }}</span>
@@ -223,30 +225,6 @@
           <v-spacer />
           <v-btn variant="text" :disabled="busy" @click="cancelDialogOpen = false">{{ $t('common:agentGoalStatus.keepGoal') }}</v-btn>
           <v-btn color="error" variant="tonal" :loading="pendingAction === 'cancel' && busy" :disabled="busy || networkBlocked" @click="confirmCancel">{{ $t('common:agentGoalStatus.cancelGoal') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-dialog content-class="agent-owned-overlay" v-model="budgetDialogOpen" max-width="32rem" :aria-labelledby="renewBudgetTitleId" :persistent="busy">
-      <v-card class="agent-goal__dialog">
-        <v-card-title :id="renewBudgetTitleId" class="agent-goal__dialog-title">
-          {{ $t('common:agentGoalStatus.continueAnotherTokenCycle', { renewalAllowanceLabel, interpolation: { escapeValue: false } }) }}
-        </v-card-title>
-        <v-card-text>
-          <p class="agent-goal__dialog-objective">{{ goal.objective }}</p>
-          <dl class="agent-goal__renewal-facts">
-            <div><dt>{{ $t('common:agentGoalStatus.currentCycleUsage') }}</dt><dd>{{ $t('common:agentGoalStatus.tokens', { currentCycleTokens: formatBudgetValue(currentCycleTokens), currentCycleTokenLimit: formatBudgetValue(currentCycleTokenLimit), interpolation: { escapeValue: false } }) }}</dd></div>
-            <div><dt>{{ $t('common:agentGoalStatus.nextCycleAllowance') }}</dt><dd>{{ renewalAllowanceDescription }}</dd></div>
-            <div><dt>{{ $t('common:agentGoalStatus.lifetimeUsage') }}</dt><dd>{{ $t('common:agentGoalStatus.tokens2', { consumedTokens: formatBudgetValue(goal.consumedTokens), interpolation: { escapeValue: false } }) }}</dd></div>
-            <div><dt>{{ $t('common:agentGoalStatus.continuations') }}</dt><dd>{{ $t('common:agentGoalStatus.run2', { continuationCount: formatBudgetValue(goal.continuationCount + 1), maxContinuations: formatBudgetValue(goal.maxContinuations + 1), interpolation: { escapeValue: false } }) }}</dd></div>
-          </dl>
-          <p class="agent-goal__renewal-copy">{{ $t('common:agentGoalStatus.confirmOneContinuationAnother', { renewalAllowanceLabel, interpolation: { escapeValue: false } }) }}</p>
-          <p v-if="networkBlocked" class="agent-goal__network-note" role="status">{{ $t('common:agentGoalStatus.connectionRequiredChangeGoal') }}</p>
-        </v-card-text>
-        <v-card-actions class="agent-goal__dialog-actions">
-          <v-spacer />
-          <v-btn variant="text" :disabled="busy" @click="budgetDialogOpen = false">{{ $t('common:actions.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" :disabled="busy || networkBlocked || !canRenewTokenBudget" :loading="pendingAction === 'renew-budget' && busy" @click="renewBudget">{{ $t('common:agentGoalStatus.continueAnotherTokenCycle', { renewalAllowanceLabel, interpolation: { escapeValue: false } }) }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -279,7 +257,6 @@ const expanded = defineModel<boolean>('expanded', { required: true })
 const emit = defineEmits<{ pause: []; resume: []; cancel: []; 'renew-budget': [] }>()
 const pendingAction = ref<'pause' | 'resume' | 'cancel' | 'renew-budget' | null>(null)
 const cancelDialogOpen = ref(false)
-const budgetDialogOpen = ref(false)
 const goalTitleId = computed(() => `agent-goal-${goal.id}-title`)
 const goalCollapsedObjectiveId = computed(() => `agent-goal-${goal.id}-collapsed-objective`)
 const goalStatusId = computed(() => `agent-goal-${goal.id}-status`)
@@ -288,7 +265,6 @@ const goalDetailsId = computed(() => `agent-goal-${goal.id}-details`)
 const goalBlockersTitleId = computed(() => `agent-goal-${goal.id}-blockers-title`)
 const cancelGoalTitleId = computed(() => `agent-goal-${goal.id}-cancel-title`)
 const goalBudgetTitleId = computed(() => `agent-goal-${goal.id}-budget-title`)
-const renewBudgetTitleId = computed(() => `agent-goal-${goal.id}-renew-title`)
 const toggleAriaLabel = computed(() => {
   void localeRevision.value
   return t('common:agentGoalStatus.durableGoalDetails', { expanded: expanded.value ? t('common:agentGoalStatus.hide') : t('common:agentGoalStatus.show'), objective: goal.objective, interpolation: { escapeValue: false } })
@@ -302,11 +278,9 @@ watch(() => busy, isBusy => { if (!isBusy) pendingAction.value = null })
 watch(() => goal.id, () => {
   pendingAction.value = null
   cancelDialogOpen.value = false
-  budgetDialogOpen.value = false
 })
 watch(() => goal.status, status => {
   if (!['active', 'paused', 'blocked'].includes(status)) cancelDialogOpen.value = false
-  if (status !== 'budget_limited') budgetDialogOpen.value = false
 })
 const runAction = (action: 'pause' | 'resume') => {
   if (busy || networkBlocked) return
@@ -323,26 +297,26 @@ const confirmCancel = () => {
 const renewBudget = (): void => {
   if (busy || networkBlocked || !canRenewTokenBudget.value || pendingAction.value !== null) return
   pendingAction.value = 'renew-budget'
-  budgetDialogOpen.value = false
   emit('renew-budget')
 }
 
 const statusPresentation = computed(() => {
   void localeRevision.value
   return {
-    active: { label: t('common:agentGoalStatus.progress'), icon: 'mdi-bullseye-arrow' },
-    paused: { label: t('common:agentGoalStatus.paused'), icon: 'mdi-pause-circle-outline' },
-    blocked: { label: t('common:agentGoalStatus.needsAttention'), icon: 'mdi-alert-circle-outline' },
-    budget_limited: { label: t('common:agentGoalStatus.limitReached'), icon: 'mdi-speedometer-slow' },
-    completed: { label: t('common:agentGoalStatus.completed'), icon: 'mdi-check-decagram-outline' },
-    cancelled: { label: t('common:agentGoalStatus.cancelled'), icon: 'mdi-close-circle-outline' },
-    failed: { label: t('common:agentGoalStatus.failed'), icon: 'mdi-alert-octagon-outline' }
+    active: { label: t('common:agentGoalStatus.progress'), icon: 'mdi-bullseye-arrow', color: 'success' },
+    paused: { label: t('common:agentGoalStatus.paused'), icon: 'mdi-pause-circle-outline', color: 'warning' },
+    blocked: { label: t('common:agentGoalStatus.needsAttention'), icon: 'mdi-alert-circle-outline', color: 'warning' },
+    budget_limited: { label: t('common:agentGoalStatus.limitReached'), icon: 'mdi-speedometer-slow', color: 'warning' },
+    completed: { label: t('common:agentGoalStatus.completed'), icon: 'mdi-check-decagram-outline', color: 'success' },
+    cancelled: { label: t('common:agentGoalStatus.cancelled'), icon: 'mdi-close-circle-outline', color: 'default' },
+    failed: { label: t('common:agentGoalStatus.failed'), icon: 'mdi-alert-octagon-outline', color: 'error' }
   } as const
 })
 
 const presentation = computed(() => statusPresentation.value[goal.status])
 const statusLabel = computed(() => presentation.value.label)
 const statusIcon = computed(() => presentation.value.icon)
+const statusColor = computed(() => presentation.value.color)
 const canPause = computed(() => goal.status === 'active')
 const canResume = computed(() => !runActive && (goal.status === 'paused' || goal.status === 'blocked'))
 const canCancel = computed(() => goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked')
@@ -506,18 +480,31 @@ const progressLabel = computed(() => {
 <style scoped>
 .agent-goal {
   --goal-accent: rgb(var(--v-theme-success));
-  --goal-transcript-available-block-size: max(0px, calc(100cqh - var(--wiki-space-3) - var(--wiki-space-6) - var(--wiki-space-3) - var(--wiki-space-2) - var(--wiki-space-3)));
-  background: var(--wiki-surface-raised);
-  border: 1px solid var(--wiki-surface-border);
-  border-inline-start: 3px solid var(--goal-accent);
-  border-radius: var(--wiki-panel-radius);
+  --goal-ink: color-mix(in srgb, var(--goal-accent) 72%, rgb(var(--v-theme-on-surface)));
+  --goal-transcript-available-block-size: max(
+    0px,
+    calc(
+      100cqh
+      - var(--wiki-space-3)
+      - var(--wiki-space-6)
+      - var(--wiki-space-3)
+      - var(--wiki-space-2)
+      - var(--wiki-space-3)
+    )
+  );
+  background: color-mix(in srgb, var(--goal-accent) 8%, var(--wiki-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--goal-accent) 30%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
   box-sizing: border-box;
-  color: rgb(var(--v-theme-on-surface));
   display: flex;
   flex-direction: column;
-  min-width: 0;
   overflow: hidden;
+  position: relative;
   width: 100%;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 .agent-goal--active,
 .agent-goal--completed { --goal-accent: rgb(var(--v-theme-success)); }
@@ -525,7 +512,7 @@ const progressLabel = computed(() => {
 .agent-goal--blocked,
 .agent-goal--budget_limited { --goal-accent: rgb(var(--v-theme-warning)); }
 .agent-goal--failed { --goal-accent: rgb(var(--v-theme-error)); }
-.agent-goal--cancelled { --goal-accent: var(--wiki-text-muted); }
+.agent-goal--cancelled { --goal-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent); }
 .agent-goal--expanded { max-block-size: var(--goal-transcript-available-block-size); }
 .agent-goal__summary-row {
   align-items: center;
@@ -533,117 +520,338 @@ const progressLabel = computed(() => {
   flex: 0 0 auto;
   gap: var(--wiki-space-2);
   grid-template-columns: auto auto minmax(0, 1fr) auto auto;
-  min-height: 3.5rem;
-  padding: var(--wiki-space-1) var(--wiki-space-3);
+  min-height: 2.5rem;
+  padding: var(--wiki-space-1) var(--wiki-space-2);
 }
-.agent-goal__mark { color: var(--wiki-text-muted); display: flex; }
-.agent-goal__status-label { font-size: .8125rem; font-weight: 650; line-height: 1.4; }
-.agent-goal__collapsed-objective { font-size: .875rem; font-weight: 550; line-height: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-goal__collapsed-meta { color: var(--wiki-text-muted); display: inline-flex; font-size: .8125rem; font-variant-numeric: tabular-nums; gap: var(--wiki-space-1); white-space: nowrap; }
+.agent-goal--expanded .agent-goal__summary-row {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+.agent-goal__mark {
+  align-items: center;
+  background: color-mix(in srgb, var(--goal-accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--goal-accent) 36%, transparent);
+  border-radius: var(--wiki-control-radius);
+  color: var(--goal-ink);
+  display: flex;
+  height: 1.75rem;
+  justify-content: center;
+  width: 1.75rem;
+}
+.agent-goal__status-label {
+  color: var(--goal-ink);
+  font-size: .7rem;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.agent-goal__status-label--hidden {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+.agent-goal__collapsed-objective {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .78rem;
+  font-weight: 625;
+  line-height: 1.35;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-goal__collapsed-meta {
+  align-items: center;
+  color: var(--wiki-text-muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: var(--wiki-type-micro, .75rem);
+  font-variant-numeric: tabular-nums;
+  gap: var(--wiki-space-1);
+  white-space: nowrap;
+}
 .agent-goal__toggle {
   align-items: center;
   appearance: none;
   background: transparent;
-  border: 1px solid var(--wiki-surface-border);
+  border: 0;
   border-radius: var(--wiki-control-radius);
-  color: var(--wiki-text-muted);
+  color: var(--goal-ink);
   cursor: pointer;
   display: inline-flex;
   font: inherit;
   gap: var(--wiki-space-1);
   justify-content: center;
+  min-height: max(44px, var(--wiki-control-height, 44px));
+  min-width: max(44px, var(--wiki-control-height, 44px));
   padding: 0 var(--wiki-space-2);
+  white-space: nowrap;
+  transition: background 0.2s ease, transform 0.2s ease;
 }
-.agent-goal__toggle:hover { background: var(--wiki-surface-sunken); color: rgb(var(--v-theme-on-surface)); }
-.agent-goal__toggle:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
-.agent-goal__toggle-label { font-size: .8125rem; font-weight: 550; }
-.agent-goal__toggle-icon { transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease); }
+.agent-goal__toggle:hover { background: color-mix(in srgb, var(--goal-accent) 12%, transparent); }
+.agent-goal__toggle:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
+}
+.agent-goal__toggle-label { font-size: var(--wiki-type-micro, .75rem); font-weight: 675; }
+.agent-goal__toggle-icon {
+  transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
+}
 .agent-goal--expanded .agent-goal__toggle-icon { transform: rotate(180deg); }
 .agent-goal__details {
-  border-top: 1px solid var(--wiki-surface-border);
+  border-top: 1px solid color-mix(in srgb, var(--goal-accent) 20%, var(--wiki-surface-border));
   flex: 0 1 auto;
-  max-block-size: min(32rem, max(0px, calc(var(--goal-transcript-available-block-size) - 3.5rem)));
+  max-block-size: min(
+    36rem,
+    max(0px, calc(var(--goal-transcript-available-block-size) - 2.5rem))
+  );
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: var(--wiki-space-4);
+  overscroll-behavior-y: contain;
+  padding: var(--wiki-space-3);
   scrollbar-gutter: stable;
 }
-.agent-goal__body,
+.agent-goal__body { min-width: 0; }
+.agent-goal__header {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--wiki-space-4);
+  justify-content: space-between;
+}
 .agent-goal__heading { min-width: 0; }
-.agent-goal__eyebrow { color: var(--wiki-text-muted); font-size: .8125rem; font-weight: 600; margin: 0 0 var(--wiki-space-1); }
-.agent-goal__title { font-size: 1rem; font-weight: 650; line-height: 1.45; margin: 0; overflow-wrap: anywhere; }
-.agent-goal__continuity { color: var(--wiki-text-muted); display: flex; flex-wrap: wrap; font-size: .8125rem; gap: var(--wiki-space-2) var(--wiki-space-4); margin-top: var(--wiki-space-2); }
+.agent-goal__status { flex: 0 0 auto; }
+.agent-goal__eyebrow {
+  color: var(--goal-ink);
+  font-size: var(--wiki-label-size);
+  font-weight: 750;
+  letter-spacing: .12em;
+  margin: 0 0 var(--wiki-space-1);
+  text-transform: uppercase;
+}
+.agent-goal__title {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .95rem;
+  font-weight: 675;
+  line-height: 1.45;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.agent-goal__continuity {
+  align-items: center;
+  color: var(--wiki-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--wiki-type-micro, .75rem);
+  gap: var(--wiki-space-2) var(--wiki-space-4);
+  margin-top: var(--wiki-space-2);
+}
 .agent-goal__continuity span { align-items: center; display: inline-flex; gap: var(--wiki-space-1); }
-.agent-goal__summary { font-size: .875rem; line-height: 1.5; margin: var(--wiki-space-3) 0 0; }
-.agent-goal__progress { border-top: 1px solid var(--wiki-surface-border); margin-top: var(--wiki-space-4); padding-top: var(--wiki-space-3); }
-.agent-goal__progress-heading { align-items: center; display: flex; flex-wrap: wrap; font-size: .875rem; gap: var(--wiki-space-2); justify-content: space-between; margin-bottom: var(--wiki-space-2); }
-.agent-goal__progress-heading span { font-weight: 600; }
-.agent-goal__progress-heading strong { font-size: .8125rem; font-variant-numeric: tabular-nums; }
-.agent-goal__meter { background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-radius: 2px; height: .375rem; overflow: hidden; }
-.agent-goal__meter > span { background: rgb(var(--v-theme-primary)); display: block; height: 100%; }
+.agent-goal__progress {
+  background: var(--wiki-surface-sunken);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  margin-top: var(--wiki-space-3);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+}
+.agent-goal__progress-heading {
+  align-items: center;
+  display: flex;
+  font-size: var(--wiki-type-micro, .75rem);
+  justify-content: space-between;
+  margin-bottom: var(--wiki-space-2);
+}
+.agent-goal__progress-heading span { color: var(--wiki-text-muted); font-weight: 650; }
+.agent-goal__progress-heading strong { color: var(--goal-ink); font-variant-numeric: tabular-nums; }
+.agent-goal__meter {
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
+  border-radius: var(--wiki-radius-pill);
+  height: var(--wiki-space-1);
+  overflow: hidden;
+}
+.agent-goal__meter > span {
+  background: var(--goal-accent);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width var(--wiki-motion-normal) var(--wiki-motion-ease-out);
+}
 .agent-goal__meter--warning > span { background: rgb(var(--v-theme-warning)); }
 .agent-goal__meter--critical > span { background: rgb(var(--v-theme-error)); }
-.agent-goal__budgets { display: grid; gap: var(--wiki-space-3); grid-template-columns: repeat(3, minmax(0, 1fr)); margin: var(--wiki-space-3) 0 0; }
-.agent-goal__budget { min-width: 0; }
-.agent-goal__budget dt,
-.agent-goal__renewal-facts dt { color: var(--wiki-text-muted); font-size: .8125rem; font-weight: 550; line-height: 1.4; }
-.agent-goal__budget dd { align-items: baseline; display: flex; flex-wrap: wrap; gap: var(--wiki-space-1); margin: var(--wiki-space-1) 0; min-width: 0; }
-.agent-goal__budget dd span { font-size: .9375rem; font-variant-numeric: tabular-nums; font-weight: 650; }
-.agent-goal__budget dd small { color: var(--wiki-text-muted); font-size: .8125rem; overflow-wrap: anywhere; }
-.agent-goal__budget-track { background: var(--wiki-surface-sunken); display: block !important; height: 3px; overflow: hidden; }
-.agent-goal__budget-track > span { background: rgb(var(--v-theme-primary)); display: block; height: 100%; }
-.agent-goal__renewal,
-.agent-goal__blockers { background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-inline-start: 3px solid rgb(var(--v-theme-warning)); border-radius: var(--wiki-control-radius); margin-top: var(--wiki-space-3); padding: var(--wiki-space-3); }
-.agent-goal__renewal--available { border-inline-start-color: rgb(var(--v-theme-primary)); }
-.agent-goal__blockers--error { border-inline-start-color: rgb(var(--v-theme-error)); }
-.agent-goal__renewal-heading,
-.agent-goal__blockers-heading { align-items: center; display: flex; gap: var(--wiki-space-2); }
-.agent-goal__renewal-heading h3,
-.agent-goal__blockers-heading h3 { font-size: .875rem; font-weight: 650; margin: 0; }
-.agent-goal__renewal-facts { display: grid; gap: var(--wiki-space-3); grid-template-columns: repeat(2, minmax(0, 1fr)); margin: var(--wiki-space-3) 0 0; }
+.agent-goal__budgets {
+  display: grid;
+  gap: var(--wiki-space-2);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: var(--wiki-space-2) 0 0;
+}
+.agent-goal__budget {
+  border-inline-start: 1px solid var(--wiki-surface-border);
+  min-width: 0;
+  padding-inline-start: var(--wiki-space-2);
+}
+.agent-goal__budget:first-child { border-inline-start: 0; padding-inline-start: 0; }
+.agent-goal__budget dt {
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-type-micro, .75rem);
+  font-weight: 650;
+}
+.agent-goal__budget dd {
+  align-items: baseline;
+  display: flex;
+  gap: var(--wiki-space-1);
+  margin: var(--wiki-space-1) 0;
+  min-width: 0;
+}
+.agent-goal__budget dd span { font-size: .78rem; font-variant-numeric: tabular-nums; font-weight: 700; }
+.agent-goal__budget dd small {
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-type-micro, .75rem);
+  overflow-wrap: anywhere;
+}
+.agent-goal__budget-track {
+  margin: 0;
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
+  border-radius: var(--wiki-radius-pill);
+  display: block;
+  height: 2px;
+  overflow: hidden;
+}
+.agent-goal__budget-track > span { background: var(--goal-accent); display: block; height: 100%; }
+.agent-goal__summary {
+  color: var(--wiki-text-muted);
+  font-size: .74rem;
+  line-height: 1.5;
+  margin: var(--wiki-space-3) 0 0;
+}
+.agent-goal__renewal {
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 8%, var(--wiki-surface-raised));
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 30%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  margin-top: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
+}
+.agent-goal__renewal--available {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, var(--wiki-surface-raised));
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, var(--wiki-surface-border));
+}
+.agent-goal__renewal-heading { align-items: center; color: var(--goal-ink); display: flex; gap: var(--wiki-space-2); }
+.agent-goal__renewal-heading h3 { font-size: .76rem; font-weight: 750; margin: 0; }
+.agent-goal__renewal-facts {
+  display: grid;
+  gap: var(--wiki-space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: var(--wiki-space-3) 0 0;
+}
 .agent-goal__renewal-facts div { min-width: 0; }
-.agent-goal__renewal-facts dd { font-size: .875rem; font-variant-numeric: tabular-nums; margin: var(--wiki-space-1) 0 0; overflow-wrap: anywhere; }
-.agent-goal__renewal-copy { font-size: .875rem; line-height: 1.5; margin: var(--wiki-space-3) 0 0; }
-.agent-goal__renewal-action { margin-top: var(--wiki-space-3); max-width: 100%; }
-.agent-goal__renewal-action :deep(.v-btn__content) { white-space: normal; }
+.agent-goal__renewal-facts dt {
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-type-micro, .75rem);
+  font-weight: 650;
+}
+.agent-goal__renewal-facts dd {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .76rem;
+  font-variant-numeric: tabular-nums;
+  margin: var(--wiki-space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+.agent-goal__renewal-copy {
+  color: var(--wiki-text-muted);
+  font-size: .74rem;
+  line-height: 1.5;
+  margin: var(--wiki-space-3) 0 0;
+}
+.agent-goal__renewal-action { margin-top: var(--wiki-space-3); }
+.agent-goal__blockers {
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 9%, transparent);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 28%, transparent);
+  border-radius: var(--wiki-control-radius);
+  color: rgb(var(--v-theme-on-surface));
+  margin-top: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
+}
+.agent-goal__blockers--error {
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 8%, transparent);
+  border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 28%, transparent);
+}
+.agent-goal__blockers-heading { align-items: center; color: var(--goal-ink); display: flex; gap: var(--wiki-space-2); }
+.agent-goal__blockers-heading h3 { font-size: .76rem; font-weight: 750; margin: 0; }
 .agent-goal__blockers ul { margin: var(--wiki-space-2) 0 0; padding-inline-start: var(--wiki-space-5); }
-.agent-goal__blockers li { font-size: .875rem; line-height: 1.5; overflow-wrap: anywhere; }
+.agent-goal__blockers li { font-size: .74rem; line-height: 1.45; overflow-wrap: anywhere; padding-inline-start: var(--wiki-space-1); }
 .agent-goal__blockers li + li { margin-top: var(--wiki-space-2); }
-.agent-goal__issue-state { color: var(--wiki-text-muted); display: block; font-size: .8125rem; margin-top: var(--wiki-space-1); }
-.agent-goal__network-note { color: var(--wiki-text-muted); font-size: .875rem; margin-top: var(--wiki-space-3); }
-.agent-goal__pending { align-items: center; color: var(--wiki-primary-ink); display: flex; font-size: .875rem; gap: var(--wiki-space-2); margin: var(--wiki-space-3) 0 0; }
-.agent-goal__actions { border-top: 1px solid var(--wiki-surface-border); display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); margin-top: var(--wiki-space-4); padding-top: var(--wiki-space-3); }
-.agent-goal__dialog { background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); }
-.agent-goal__dialog-title { align-items: center; display: flex; font-size: 1.125rem; gap: var(--wiki-space-3); line-height: 1.4; overflow-wrap: anywhere; padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); white-space: normal; }
-.agent-goal__dialog-objective { font-weight: 600; margin: 0; overflow-wrap: anywhere; }
-.agent-goal__dialog :deep(.v-card-text) { overflow-wrap: anywhere; }
+.agent-goal__issue-state { color: var(--wiki-text-muted); display: block; font-size: .65rem; margin-top: var(--wiki-space-1); }
+.agent-goal__pending {
+  align-items: center;
+  color: var(--wiki-primary-ink);
+  display: flex;
+  font-size: .72rem;
+  gap: var(--wiki-space-2);
+  margin: var(--wiki-space-3) 0 0;
+}
+.agent-goal__actions { display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); margin-top: var(--wiki-space-3); }
+.agent-goal__dialog-title { align-items: center; display: flex; gap: var(--wiki-space-3); overflow-wrap: anywhere; padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); }
 .agent-goal__dialog-actions { flex-wrap: wrap; padding: 0 var(--wiki-space-5) var(--wiki-space-4); }
 .agent-goal__dialog-actions :deep(.v-spacer) { min-width: 0; }
-.agent-goal__dialog-actions :deep(.v-btn__content) { white-space: normal; }
+
+
 @media (max-width: 600px) {
-  .agent-goal__summary-row { grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--wiki-space-1) var(--wiki-space-2); padding-inline: var(--wiki-space-2); }
+  .agent-goal__summary-row {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    padding: var(--wiki-space-1) var(--wiki-space-2);
+  }
   .agent-goal__mark { grid-column: 1; grid-row: 1; }
   .agent-goal__status-label { grid-column: 2; grid-row: 1; }
-  .agent-goal__collapsed-objective { grid-column: 1 / 3; grid-row: 2; }
-  .agent-goal__collapsed-meta { grid-column: 1 / 3; grid-row: 3; flex-wrap: wrap; white-space: normal; }
-  .agent-goal__toggle { grid-column: 3; grid-row: 1 / 4; padding-inline: var(--wiki-space-1); }
-  .agent-goal__toggle-label { max-width: 4.5rem; white-space: normal; }
+  .agent-goal__collapsed-objective { grid-column: 3; grid-row: 1; }
+  .agent-goal__collapsed-meta {
+    grid-column: 2 / 4;
+    grid-row: 2;
+  }
+  .agent-goal__toggle {
+    grid-column: 4;
+    grid-row: 1 / 3;
+    padding: 0 var(--wiki-space-1);
+  }
+  .agent-goal--expanded .agent-goal__summary-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .agent-goal--expanded .agent-goal__collapsed-objective { grid-column: 2; }
+  .agent-goal--expanded .agent-goal__collapsed-meta { grid-column: 2; }
+  .agent-goal--expanded .agent-goal__toggle { grid-column: 3; }
+  .agent-goal__toggle-label {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
   .agent-goal__details { padding: var(--wiki-space-3); }
-  .agent-goal__budgets,
-  .agent-goal__renewal-facts { grid-template-columns: 1fr; }
+  .agent-goal__header { align-items: flex-start; flex-direction: column; gap: var(--wiki-space-2); }
+  .agent-goal__budgets { grid-template-columns: 1fr; }
+  .agent-goal__budget,
+  .agent-goal__budget:first-child { border-inline-start: 0; padding-inline-start: 0; }
   .agent-goal__budget + .agent-goal__budget { border-top: 1px solid var(--wiki-surface-border); padding-top: var(--wiki-space-2); }
-  .agent-goal__actions :deep(.v-btn),
-  .agent-goal__renewal-action { min-height: 44px; height: auto; padding-block: var(--wiki-space-2); }
-  .agent-goal__dialog-actions { align-items: stretch; flex-direction: column; padding-inline: var(--wiki-space-3); }
+  .agent-goal__renewal-facts { grid-template-columns: 1fr; }
+  .agent-goal__actions :deep(.v-btn) { min-height: var(--wiki-control-height); }
+  .agent-goal__dialog-actions {
+    align-items: stretch;
+    flex-direction: column;
+    padding-inline: var(--wiki-space-3);
+  }
   .agent-goal__dialog-actions :deep(.v-spacer) { display: none; }
-  .agent-goal__dialog-actions :deep(.v-btn) { min-height: 44px; height: auto; padding-block: var(--wiki-space-2); width: 100%; }
+  .agent-goal__dialog-actions :deep(.v-btn) { min-height: var(--wiki-control-height); width: 100%; }
+}
+@media (max-height: 520px) {
+  .agent-goal__details { padding-block: var(--wiki-space-2); }
 }
 @media (prefers-reduced-motion: reduce) {
+  .agent-goal__meter > span,
   .agent-goal__toggle-icon { transition: none; }
 }
 @media (forced-colors: active) {
   .agent-goal,
+  .agent-goal__mark,
   .agent-goal__progress,
   .agent-goal__blockers,
   .agent-goal__renewal,

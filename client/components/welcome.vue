@@ -1,16 +1,16 @@
 <template lang='pug'>
   v-app
     auth-shell.welcome(
-      :title='siteTitle'
-      :form-title='$t(`welcome.title`)'
+      :title='$t(`welcome.title`)'
       heading-id='welcome-title'
+      :eyebrow='siteTitle'
       :logo-url='logoUrl'
     )
       template(#lead)
         p {{ $t('welcome.subtitle') }}
-      nav.welcome-actions(:aria-label='$t(`welcome.title`)')
-        v-btn(color='primary', variant='flat', size='large', :href='`/e/` + locale + `/home`', prepend-icon='mdi-plus', block) {{ $t('welcome.createhome') }}
-        v-btn(color='primary', variant='outlined', size='large', href='/a', prepend-icon='mdi-shield-crown-outline', block) {{ $t('welcome.goadmin') }}
+      .welcome-actions
+        v-btn(color='primary', variant='flat', size='large', :href='`/e/` + locale + `/home`', prepend-icon='mdi-plus') {{ $t('welcome.createhome') }}
+        v-btn(color='primary', variant='outlined', size='large', href='/a', prepend-icon='mdi-shield-crown-outline') {{ $t('welcome.goadmin') }}
 </template>
 
 <script setup lang='ts'>
@@ -31,21 +31,14 @@ const siteTitle = computed(() => wikiStore.site.title)
 <style lang='scss'>
 .welcome-actions {
   display: grid;
-  gap: var(--wiki-space-4);
-  margin-top: var(--wiki-space-6);
-  padding-top: var(--wiki-space-5);
-  border-top: 1px solid var(--wiki-surface-border);
+  gap: var(--wiki-space-3);
+  margin-top: var(--wiki-space-2);
 
   .v-btn {
     min-height: var(--wiki-control-height);
     border-radius: var(--wiki-control-radius);
-    padding-block: var(--wiki-space-3);
     font-weight: 680;
     text-transform: none;
-
-    &.v-btn--variant-outlined {
-      color: var(--wiki-accent-ink);
-    }
   }
 }
 </style>

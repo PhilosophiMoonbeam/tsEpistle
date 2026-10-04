@@ -309,7 +309,7 @@ export default defineComponent({
 
 <style lang='scss'>
 .admin {
-  --admin-radius: var(--wiki-panel-radius);
+  --admin-radius: .65rem;
   --admin-muted: var(--wiki-text-muted);
   --wiki-content-max: 92rem;
 
@@ -339,6 +339,25 @@ export default defineComponent({
   .admin .admin-main .v-card-info { flex-wrap: wrap; }
 }
 
+// Kept for account-area save flows that reuse the admin save grammar.
+.admin-save-dock {
+  position: sticky;
+  bottom: calc(var(--wiki-footer-height) + .75rem);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem;
+  margin-top: 1.5rem;
+  padding: .8rem 1rem;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--admin-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-lg);
+
+  &__copy { display: flex; align-items: center; gap: .5rem; font-size: .8rem; color: var(--wiki-text-muted); }
+}
 
 .admin-nav-toggle {
   min-width: 44px !important;
@@ -382,7 +401,7 @@ export default defineComponent({
     display: flex;
     align-items: center;
     gap: var(--wiki-space-3);
-    padding: 1rem 1rem .75rem;
+    padding: 1.5rem 1rem 1rem;
   }
 
   &__brand-icon {
@@ -391,9 +410,9 @@ export default defineComponent({
     height: 2.25rem;
     flex: 0 0 auto;
     place-items: center;
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent);
     border-radius: var(--wiki-control-radius);
-    background: var(--wiki-surface-sunken);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, var(--wiki-surface-raised));
     color: var(--wiki-accent-ink);
   }
 
@@ -407,8 +426,9 @@ export default defineComponent({
     color: var(--wiki-text-muted);
     font-size: var(--wiki-label-size);
     font-weight: var(--wiki-label-weight);
-    letter-spacing: normal;
+    letter-spacing: .1em;
     text-overflow: ellipsis;
+    text-transform: uppercase;
     white-space: nowrap;
   }
 
@@ -473,10 +493,10 @@ export default defineComponent({
 
   &__dashboard {
     min-height: 2.75rem;
-    margin-bottom: .75rem;
-    border: 1px solid var(--wiki-surface-border);
-    background: var(--wiki-surface-sunken);
-    font-weight: 650;
+    margin-bottom: 1rem;
+    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 18%, transparent);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent);
+    font-weight: 680;
 
     .v-list-item__prepend > .v-icon {
       font-size: 1.2rem;
@@ -496,8 +516,8 @@ export default defineComponent({
     color: var(--wiki-text-muted);
     font-size: var(--wiki-label-size);
     font-weight: var(--wiki-label-weight);
-    letter-spacing: .03em;
-    text-transform: none;
+    letter-spacing: .1em;
+    text-transform: uppercase;
   }
 
   &__group + &__group {
@@ -532,7 +552,7 @@ export default defineComponent({
 
   &__section-icon {
     flex: 0 0 auto;
-    color: var(--wiki-text-muted);
+    color: color-mix(in srgb, var(--wiki-ambient-accent) 68%, rgb(var(--v-theme-on-surface)));
   }
 
   &__section-chevron {
@@ -546,7 +566,7 @@ export default defineComponent({
   }
 
   &__item {
-    min-height: 2.75rem;
+    min-height: 2.5rem;
     margin: .125rem 0;
     padding-inline-start: var(--wiki-space-3) !important;
     color: rgb(var(--v-theme-on-surface));
@@ -614,7 +634,7 @@ export default defineComponent({
   > .v-container {
     width: min(100%, var(--wiki-content-max));
     margin: 0 auto;
-    padding: 1rem var(--wiki-page-gutter) var(--wiki-space-12);
+    padding: 1.5rem var(--wiki-page-gutter) var(--wiki-space-12);
   }
 
   > .v-container:not(.admin-agents) {
@@ -639,15 +659,15 @@ export default defineComponent({
     }
 
     .v-card-title {
-      min-height: 3rem;
-      padding: var(--wiki-space-3) var(--wiki-space-4);
+      min-height: 3.625rem;
+      padding: var(--wiki-space-4) var(--wiki-space-5);
       font-size: 1rem;
       font-weight: 680;
       letter-spacing: -.01em;
     }
 
     .v-card-text {
-      padding: var(--wiki-space-4);
+      padding: var(--wiki-space-5);
     }
 
     .v-field,
@@ -676,8 +696,8 @@ export default defineComponent({
         color: var(--wiki-text-muted);
         font-size: var(--wiki-label-size);
         font-weight: var(--wiki-label-weight);
-        letter-spacing: normal;
-        text-transform: none;
+        letter-spacing: .055em;
+        text-transform: uppercase;
       }
 
       tbody tr {
@@ -705,7 +725,7 @@ export default defineComponent({
 .admin-route-bar {
   &__crumbs {
     display: flex;
-    flex-wrap: wrap;
+    overflow: hidden;
     min-width: 0;
     align-items: center;
     gap: var(--wiki-space-2);
@@ -722,8 +742,8 @@ export default defineComponent({
       flex: 0 1 auto;
       color: rgb(var(--v-theme-on-surface));
       font-weight: 680;
-      overflow-wrap: anywhere;
-      white-space: normal;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
@@ -765,7 +785,7 @@ export default defineComponent({
 
 .v-application.admin code {
   box-shadow: none;
-  color: var(--wiki-accent-ink);
+  color: var(--wiki-accent-spectral);
   font-family: var(--wiki-font-mono);
 }
 

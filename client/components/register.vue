@@ -30,7 +30,6 @@
         form.register-form(@submit.prevent='register', :aria-busy='isLoading', novalidate)
           v-text-field(
             variant="outlined"
-            active
             prepend-inner-icon='mdi-account-outline'
             bg-color='surface'
             ref='iptName'
@@ -46,7 +45,6 @@
           )
           v-text-field(
             variant="outlined"
-            active
             prepend-inner-icon='mdi-email-outline'
             bg-color='surface'
             ref='iptEmail'
@@ -62,7 +60,6 @@
           )
           v-text-field(
             variant="outlined"
-            active
             prepend-inner-icon='mdi-lock-outline'
             bg-color='surface'
             ref='iptPassword'
@@ -86,7 +83,6 @@
               password-strength(:model-value='password')
           v-text-field(
             variant="outlined"
-            active
             prepend-inner-icon='mdi-lock-check-outline'
             bg-color='surface'
             ref='iptVerifyPassword'
@@ -297,9 +293,8 @@ export default defineComponent({
 
 <style lang="scss">
 .register-form {
-  padding-top: var(--wiki-space-2);
   .v-input + .v-input {
-    margin-top: var(--wiki-space-3);
+    margin-top: var(--wiki-space-2);
   }
 }
 
@@ -312,7 +307,7 @@ export default defineComponent({
 }
 
 .register-success {
-  padding: var(--wiki-space-6) 0;
+  padding: var(--wiki-space-6) var(--wiki-space-2) var(--wiki-space-2);
   text-align: center;
 
   &__icon {
@@ -333,7 +328,6 @@ export default defineComponent({
   &__copy {
     margin: var(--wiki-space-2) 0 0;
     color: var(--wiki-text-muted);
-    font-size: .9375rem;
     line-height: 1.55;
   }
 }

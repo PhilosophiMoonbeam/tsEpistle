@@ -1,5 +1,5 @@
 <template lang="pug">
-  v-footer.nav-footer(:color='bgColor', role='contentinfo')
+  v-footer.nav-footer(:color='bgColor')
     .footer-attribution
       .footer-attribution__legal(v-if='footerOverride')
         span(v-html='footerOverrideRender')
@@ -63,104 +63,201 @@ export default defineComponent({
 
 <style lang="scss">
 .nav-footer {
+  position: relative;
+  --nav-footer-accent-direction: 90deg;
+  // Vuetify's stock .v-footer uses flex: 1 1 auto, which makes the footer a
+  // growing flex child of .v-application__wrap (min-height 100dvh): on short
+  // pages it stretches to fill the whole viewport remainder (giant footer).
+  // Keep it thin, pinned to the bottom of the shell instead.
   flex: none;
-  min-height: var(--wiki-footer-height);
   margin-top: auto;
-  padding: var(--wiki-space-2) var(--wiki-page-gutter) calc(var(--wiki-space-2) + env(safe-area-inset-bottom));
-  border-block-start: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
-  box-shadow: none;
+  overflow: visible;
+  height: auto;
+  min-height: var(--wiki-footer-height);
+  padding: 0 var(--wiki-page-gutter) env(safe-area-inset-bottom);
+  border-top: 1px solid var(--wiki-surface-border);
+  background:
+    linear-gradient(
+      var(--nav-footer-accent-direction),
+      color-mix(in srgb, var(--wiki-accent-warm) 4%, var(--wiki-surface-raised)),
+      var(--wiki-surface-raised) 38%,
+      var(--wiki-surface-raised) 68%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 4%, var(--wiki-surface-raised))
+    ) !important;
+  box-shadow: 0 calc(var(--wiki-space-1) * -1) var(--wiki-space-8) color-mix(in srgb, var(--wiki-shadow-color) 42%, transparent);
+
+  &::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(
+      var(--nav-footer-accent-direction),
+      transparent,
+      color-mix(in srgb, var(--wiki-accent-warm) 28%, transparent) 28%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 28%, transparent) 72%,
+      transparent
+    );
+    pointer-events: none;
+    content: '';
+  }
 }
 
 .footer-attribution {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--wiki-space-2) var(--wiki-space-4);
   width: min(100%, var(--wiki-shell-max));
   min-width: 0;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-inline: auto;
   color: var(--wiki-text-muted);
   font-family: var(--wiki-font-body);
-  font-size: .75rem;
-  line-height: 1.5;
+  font-size: .625rem;
+  line-height: 1.2;
+  text-align: center;
 
   &__legal {
-    flex: 1 1 24rem;
     min-width: 0;
+    padding-inline-end: 8px;
+    border-inline-end: 1px solid var(--wiki-surface-border);
+    color: var(--wiki-text-muted);
     overflow-wrap: anywhere;
-
-    p { margin: 0; }
   }
 
   &__meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--wiki-space-2);
+    display: inline-flex;
     min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    column-gap: 6px;
+    row-gap: 2px;
     margin: 0;
-    margin-inline-start: auto;
   }
 
   &__product {
-    min-width: 0;
-    overflow-wrap: anywhere;
+    color: var(--wiki-text-muted);
+    font-family: var(--wiki-font-mono);
+    font-size: .625rem;
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .025em;
   }
 
   &__separator {
+    display: inline-block;
     width: 1px;
-    height: 1rem;
+    height: 10px;
     background: var(--wiki-surface-border-strong);
   }
 
   a {
-    border-radius: var(--wiki-control-radius);
+    border-radius: var(--wiki-radius-xs);
     color: var(--wiki-accent-ink);
-    font-weight: 550;
+    font-weight: 650;
     text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--wiki-accent-warm) 34%, transparent);
+    text-decoration-thickness: .0625rem;
     text-underline-offset: .2em;
-    overflow-wrap: anywhere;
+    transition:
+      color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      text-decoration-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    &:hover {
+      color: var(--wiki-accent-ink);
+      text-decoration-color: currentColor;
+    }
 
     &:focus-visible {
-      outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
-      outline-offset: 2px;
+      color: var(--wiki-accent-ink);
+      text-decoration-color: currentColor;
+    }
+  }
+}
+
+.v-locale--is-rtl .nav-footer {
+  --nav-footer-accent-direction: 270deg;
+}
+
+.v-theme--dark .nav-footer {
+  border-top-color: var(--wiki-surface-border-strong);
+  box-shadow: 0 calc(var(--wiki-space-1) * -1) var(--wiki-space-8) color-mix(in srgb, rgb(var(--v-theme-background)) 48%, transparent);
+}
+
+@media (max-width: 959px) {
+  .footer-attribution {
+    flex-direction: column;
+    gap: 2px;
+
+    &__legal {
+      padding-inline-end: 0;
+      border-inline-end: 0;
     }
   }
 }
 
 @media (max-width: 599px) {
-  .footer-attribution {
-    align-items: start;
+  .nav-footer {
+    padding: 0 var(--wiki-space-4) env(safe-area-inset-bottom);
+  }
+}
 
-    &__meta {
-      justify-content: start;
-      margin-inline-start: 0;
-    }
-
-    a {
-      display: inline-flex;
-      align-items: center;
-      min-height: 2.75rem;
-    }
+@media (prefers-reduced-motion: reduce) {
+  .footer-attribution a {
+    transition-duration: .01ms !important;
   }
 }
 
 @media (forced-colors: active) {
-  .nav-footer { border-block-start-color: CanvasText; }
-  .footer-attribution__separator { background: CanvasText; }
+  .nav-footer {
+    border-top-color: CanvasText;
+  }
+
+  .nav-footer::before {
+    display: none;
+  }
+
+  .footer-attribution__separator {
+    background: CanvasText;
+  }
 }
 
 @media print {
   .nav-footer {
     position: static !important;
-    padding-block: 2px !important;
-    border-block-start-color: currentColor;
+    box-shadow: none !important;
     background: transparent !important;
+    border-top: 1px solid currentColor;
+    padding-block: 2px !important;
+
+    &::before {
+      display: none;
+    }
   }
 
-  .footer-attribution,
-  .footer-attribution a { color: inherit; }
-  .footer-attribution__separator { background: currentColor; }
+  .footer-attribution {
+    color: inherit;
+
+    &__legal {
+      border-inline-end-color: currentColor;
+      color: inherit;
+    }
+
+    &__product {
+      color: inherit;
+    }
+
+    &__separator {
+      background: currentColor;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: underline;
+    }
+  }
 }
+
 </style>

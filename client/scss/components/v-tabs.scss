@@ -5,10 +5,10 @@
 
   .v-tab {
     min-height: 2.75rem;
-    border-radius: var(--wiki-control-radius);
-    font-size: var(--wiki-type-body-sm);
-    font-weight: 600;
-    letter-spacing: 0;
+    border-radius: var(--wiki-radius-xs, .375rem);
+    font-size: .75rem;
+    font-weight: 640;
+    letter-spacing: .025em;
     transition:
       color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
       background-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
@@ -21,7 +21,6 @@
 
   .v-tab--selected {
     font-weight: 720;
-    color: var(--wiki-primary-ink);
 
     &:not(.v-btn--disabled) > .v-btn__overlay {
       opacity: .065;
@@ -32,7 +31,7 @@
     height: .1875rem;
     border-start-start-radius: var(--wiki-radius-pill, 999rem);
     border-start-end-radius: var(--wiki-radius-pill, 999rem);
-    box-shadow: none;
+    box-shadow: 0 -.125rem .5rem color-mix(in srgb, currentColor 18%, transparent);
   }
 
   .v-tab.v-btn--disabled {
@@ -43,7 +42,20 @@
     border-block-end: 1px solid var(--wiki-tab-edge);
     border-start-start-radius: var(--wiki-control-radius, .75rem);
     border-start-end-radius: var(--wiki-control-radius, .75rem);
-    background: var(--wiki-surface-sunken);
+    background:
+      linear-gradient(
+        to bottom,
+        color-mix(
+          in srgb,
+          var(--wiki-ambient-accent, rgb(var(--v-theme-primary))) 4%,
+          transparent
+        ),
+        transparent 70%
+      ),
+      var(
+        --wiki-surface-sunken,
+        color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)))
+      );
   }
 }
 

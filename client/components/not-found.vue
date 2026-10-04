@@ -2,18 +2,19 @@
   v-app.notfound-app
     nav-header
     v-main
-      main.workbench-state(aria-labelledby='notfound-title')
-        .workbench-state-panel
-          header.workbench-state-context
-            v-icon(size='28', aria-hidden='true') mdi-file-question-outline
+      main.notfound(aria-labelledby='notfound-title')
+        .notfound-content
+          .newpage-mark(aria-hidden='true')
+            img(src='/_assets/svg/icon-delete-file.svg', alt='')
+          header.newpage-copy
             h1#notfound-title.text-headline-medium.ma-0 {{$t('notfound.title')}}
-            p.text-body-large {{$t('notfound.subtitle')}}
-            .workbench-state-path(v-if='requestedPath')
-              v-icon(size='small', aria-hidden='true') mdi-map-marker-question-outline
-              code
-                bdi(dir='ltr') {{ requestedPath }}
-          .workbench-state-actions(role='group', :aria-label='$t(`notfound.actions`)')
-            v-btn.workbench-state-action(
+            p.text-body-large.mt-3 {{$t('notfound.subtitle')}}
+          .newpage-path(v-if='requestedPath')
+            v-icon(size='small', aria-hidden='true') mdi-map-marker-question-outline
+            code
+              bdi(dir='ltr') {{ requestedPath }}
+          .newpage-actions(role='group', :aria-label='$t(`notfound.actions`)')
+            v-btn.newpage-action.newpage-action--create(
               v-if='editorHref'
               :href='editorHref'
               size='large'
@@ -21,21 +22,22 @@
               variant='flat'
               prepend-icon='mdi-plus'
             ) {{$t('notfound.create')}}
-            v-btn.workbench-state-action(
+            v-btn.newpage-action(
+              :class='editorHref ? `newpage-action--back` : `newpage-action--create`'
               size='large'
               color='primary'
               :variant='editorHref ? `outlined` : `flat`'
               prepend-icon='mdi-magnify'
               @click='searchWiki'
             ) {{$t('notfound.search')}}
-            v-btn.workbench-state-action(
+            v-btn.newpage-action.newpage-action--back(
               href='/'
               size='large'
               color='primary'
               variant='outlined'
               prepend-icon='mdi-home-outline'
             ) {{$t('notfound.gohome')}}
-            v-btn.workbench-state-action(
+            v-btn.newpage-action.newpage-action--back(
               size='large'
               color='primary'
               variant='outlined'

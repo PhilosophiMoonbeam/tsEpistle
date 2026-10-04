@@ -584,10 +584,7 @@ describe('saved-page reader and library settings lifecycle', () => {
     const { host, errors } = await fixture.mount(true)
     const remove = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'common:offlineSettings.removeSavedPages')!
     expect(remove.disabled).toBe(true)
-    const unlock = host.querySelector<HTMLAnchorElement>('a[href="#offline-private-reading-title"]')!
-    expect(unlock).not.toBeNull()
-    expect(unlock.textContent?.trim()).toBeTruthy()
-    expect(host.querySelector(unlock.getAttribute('href')!)).not.toBeNull()
+    expect(host.querySelector('a[href="#offline-private-reading-title"]')!.textContent).toBe('Unlock private reading before removing saved pages.')
     remove.click()
     await fixture.settle()
     expect(fixture.storage.removeOfflinePage).not.toHaveBeenCalled()

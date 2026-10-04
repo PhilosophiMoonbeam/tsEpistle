@@ -21,9 +21,7 @@
     v-card.editor-properties-card(v-show='!brandingPickerShown')
       .dialog-header
         v-icon(color='primary') mdi-tag-text-outline
-        .editor-properties-heading.ml-3
-          .text-body-large#editor-properties-title {{$t('editor:props.pageProperties')}}
-          .editor-properties-location /{{ locale }}/{{ path }}
+        .text-body-large.ml-3#editor-properties-title {{$t('editor:props.pageProperties')}}
         v-spacer
         v-chip.editor-properties-visibility-chip(
           v-if='visibilitySummary.chipKey'
@@ -32,7 +30,7 @@
           :prepend-icon='visibilitySummary.icon'
         ) {{ $t(visibilitySummary.chipKey) }}
       //- Tabs the user cannot use are hidden instead of shown disabled without a reason.
-      v-tabs.editor-properties-nav(v-model='currentTab', color='primary', :direction='$vuetify.display.mdAndUp ? "vertical" : "horizontal"', align-tabs="start", show-arrows, :aria-label='$t("editor:props.pageProperties")')
+      v-tabs(v-model='currentTab', color='primary', align-tabs="center", show-arrows)
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}
         v-tab(v-if='hasScriptPermission', :value='2') {{$t('editor:props.scripts')}}
@@ -1178,11 +1176,11 @@ export default defineComponent({
 <style lang='scss'>
 
 .editor-properties-branding {
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-sunken);
-  margin-bottom: var(--wiki-space-4);
-  padding: var(--wiki-space-3);
+  border: 1px solid rgba(var(--v-theme-on-surface), .12);
+  border-radius: var(--wiki-radius-sm, 10px);
+  background: rgba(var(--v-theme-on-surface), .025);
+  margin-bottom: 20px;
+  padding: 14px;
 }
 
 .editor-properties-branding-heading {
@@ -1197,9 +1195,10 @@ export default defineComponent({
   align-items: center;
   gap: 14px;
   min-height: 72px;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-ink) 25%, var(--wiki-surface-border));
+  border-radius: var(--wiki-radius-xs, 6px);
   background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs), 0 0 12px color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent), var(--wiki-shadow-inset);
   padding: 10px 12px;
 }
 
@@ -1214,8 +1213,9 @@ export default defineComponent({
 
 .editor-properties-branding-preview-copy .text-title-small,
 .editor-properties-branding-preview-copy .text-body-small {
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-properties-branding-preview .page-branding-mark {
@@ -1263,64 +1263,13 @@ export default defineComponent({
 
 
 .editor-properties-card {
-  display: grid;
-  grid-template-columns: 12rem minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   max-height: calc(100dvh - 32px);
   overflow: hidden;
   background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
   color: rgb(var(--v-theme-on-surface));
-  border-radius: var(--wiki-panel-radius);
-  > .dialog-header,
-  > .v-divider,
-  > .editor-properties-actions {
-    grid-column: 1 / -1;
-  }
-  > .editor-properties-nav {
-    grid-column: 1;
-    min-height: 0;
-    height: auto;
-    align-self: stretch;
-    overflow-y: auto;
-    border-inline-end: 1px solid var(--wiki-surface-border);
-    background: var(--wiki-surface-sunken);
-  }
-  .editor-properties-heading {
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-  .editor-properties-location {
-    font-size: .8125rem;
-    color: var(--wiki-text-muted);
-    overflow-wrap: anywhere;
-  }
-  .v-tab {
-    justify-content: flex-start;
-    min-height: 44px;
-  }
-  .v-btn {
-    min-height: 44px;
-  }
-  .v-list-item-title,
-  .v-list-item-subtitle {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-  @media (max-width: 839px) {
-    display: flex;
-    flex-direction: column;
-    max-height: 100dvh;
-    > .editor-properties-nav {
-      min-height: 48px;
-      border-inline-end: 0;
-      border-bottom: 1px solid var(--wiki-surface-border);
-      overflow-y: hidden;
-    }
-    .dialog-header {
-      flex-wrap: wrap;
-    }
-  }
 
   > .dialog-header,
   > .v-tabs,
@@ -1358,11 +1307,10 @@ export default defineComponent({
   }
 
   .editor-properties-subsection {
-    background: var(--wiki-surface-raised);
+    background: rgba(var(--v-theme-on-surface), .035);
   }
 
   .editor-properties-tabs-window {
-    grid-column: 2;
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;

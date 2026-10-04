@@ -2314,7 +2314,7 @@ test.describe('managed login logo auth independence', () => {
       expect(themeBackgrounds[0]).not.toBe(themeBackgrounds[1])
     })
   }
-  test('keeps login busy until the admitted response and shows success before redirect', async ({ page }, testInfo) => {
+  test('shows one decorative TS Epistle book on the first pending loading render and retains it through the redirect window', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     let ordinaryAttempts = 0
@@ -2336,12 +2336,25 @@ test.describe('managed login logo auth independence', () => {
     await page.getByRole('button', { name: 'Log In', exact: true }).click()
 
     const loader = page.locator('.loader-dialog')
+    const illustration = loader.locator('.login-success-animation')
     try {
       await expect.poll(() => ordinaryAttempts).toBe(1)
       await expect(loader).toBeVisible()
-      await expect(page.locator('form.login-form button[type="submit"]')).toBeDisabled()
-      await page.keyboard.press('Escape')
-      await expect(loader).toBeVisible()
+      await expect(illustration).toHaveCount(1)
+      await expect(illustration).toBeVisible()
+      await expect(illustration).toHaveAttribute('width', '72')
+      await expect(illustration).toHaveAttribute('height', '72')
+      await expect(illustration).toHaveAttribute('aria-hidden', 'true')
+      await expect(loader.locator('.atom-spinner')).toHaveCount(0)
+      const animatedPage = illustration.locator('.login-success-animation__page--turn-1')
+      const animationStyle = await animatedPage.evaluate(element => {
+        const style = getComputedStyle(element)
+        return { animationName: style.animationName, animationDuration: style.animationDuration }
+      })
+      expect(animationStyle.animationName).not.toBe('none')
+      expect(animationStyle.animationDuration).toBe('0.9s')
+      const firstBook = await illustration.elementHandle()
+      if (!firstBook) throw new Error('The pending login book is unavailable.')
       const title = loader.locator('.loader-dialog-title')
       const pendingTitle = await title.innerText()
       const response = page.waitForResponse(/\/_api\/auth\/login$/)
@@ -2349,13 +2362,16 @@ test.describe('managed login logo auth independence', () => {
       await response
       await expect(title).not.toHaveText(pendingTitle)
       await expect(loader).toBeVisible()
+      await expect(illustration).toHaveCount(1)
+      await expect(illustration).toBeVisible()
+      expect(await firstBook.evaluate(element => element.isConnected && element === document.querySelector('.loader-dialog .login-success-animation'))).toBe(true)
       expect(ordinaryAttempts).toBe(1)
     } finally {
       loginResponse.resolve()
     }
   })
 
-  test('leaves the busy dialog for a TFA challenge and reopens it only during verification', async ({ page }, testInfo) => {
+  test('keeps the book hidden for a TFA challenge and shows it after authenticated TFA completion', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.route(/\/_api\/auth\/login(?:\/tfa)?$/, async route => {
@@ -2381,11 +2397,13 @@ test.describe('managed login logo auth independence', () => {
     await page.getByRole('button', { name: 'Log In', exact: true }).click()
     const tfaForm = page.locator('form.login-tfa').first()
     await expect(tfaForm).toBeVisible()
-    await expect(page.locator('.loader-dialog')).toBeHidden()
+    await expect(page.locator('.login-success-animation')).toHaveCount(0)
 
     await tfaForm.locator('input[name="security-code"]').fill('123456')
     await tfaForm.locator('button[type="submit"]').click()
     await expect(page.locator('.loader-dialog')).toBeVisible()
+    await expect(page.locator('.login-success-animation')).toBeVisible()
+    await expect(page.locator('.login-success-animation__page--turn-1')).toHaveCSS('animation-name', 'none')
   })
 
   test('paints contrasting TFA setup QR modules and quiet space from genuine SVG', async ({ page }, testInfo) => {
@@ -2433,7 +2451,7 @@ test.describe('managed login logo auth independence', () => {
     await testInfo.attach('native-tfa-qr-contrast', { body: image, contentType: 'image/png' })
   })
 
-  test('surfaces authentication failure without leaving a busy dialog', async ({ page }, testInfo) => {
+  test('keeps the book hidden when authentication fails', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.route(/\/_api\/auth\/login$/, async route => {
       await route.fulfill({
@@ -2449,6 +2467,7 @@ test.describe('managed login logo auth independence', () => {
     await page.getByLabel('Password', { exact: true }).fill('incorrect-password')
     await page.getByRole('button', { name: 'Log In', exact: true }).click()
     await expect(page.locator('.loader-dialog')).toBeHidden()
+    await expect(page.locator('.login-success-animation')).toHaveCount(0)
     await expect(page.locator('.v-alert[role="alert"]')).toBeVisible()
   })
 

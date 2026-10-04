@@ -2,7 +2,7 @@ import { paginateSearch } from '../../helpers/search-pagination.ts'
 import express from 'express'
 import { type Request, type Response, getTransportRuntime, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
-import pageOperations, { type PageDirectoryInput } from '../../operations/pages.ts'
+import pageOperations from '../../operations/pages.ts'
 import { linkPageLocaleRelation, listPageLocaleRelations, unlinkPageLocaleRelation } from '../../operations/page-locale-relations.ts'
 import { canReadPage, canWritePage, managesSystem, principalId, type PageVisibility } from '../../helpers/page-access.ts'
 import { isApiPrincipal } from '../../helpers/api-principal.ts'
@@ -554,35 +554,6 @@ router.get('/', async (req, res, next) => {
     )
   } catch (err) {
     return next(err)
-  }
-})
-
-router.get('/directory', async (req, res, next) => {
-  setPrivatePageHeaders(res)
-  if (!requirePageListAccess(req, res)) return
-  const input: PageDirectoryInput = requesterInput(req)
-  for (const key of ['limit', 'offset', 'creatorId', 'authorId'] as const) {
-    const value = req.query[key]
-    if (value === undefined) continue
-    if (typeof value !== 'string' || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
-      return res.status(400).json({ error: `${key} must be an integer` })
-    }
-    input[key] = Number(value)
-  }
-  for (const key of ['search', 'locale', 'visibility', 'publication', 'orderBy', 'orderByDirection', 'tag'] as const) {
-    const value = req.query[key]
-    if (value === undefined) continue
-    if (typeof value !== 'string') return res.status(400).json({ error: `${key} must be a string` })
-    Reflect.set(input, key, value)
-  }
-  if (req.query.untagged !== undefined) {
-    if (req.query.untagged !== 'true' && req.query.untagged !== 'false') return res.status(400).json({ error: 'untagged must be true or false' })
-    input.untagged = req.query.untagged === 'true'
-  }
-  try {
-    return res.json(await pageOperations.directory(input))
-  } catch (err) {
-    return sendOperationError(res, next, err, 'Page directory could not be loaded')
   }
 })
 

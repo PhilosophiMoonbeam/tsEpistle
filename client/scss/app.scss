@@ -1,77 +1,116 @@
 @use "sass:meta";
 @use "fonts/default";
+
 @use "base/base";
 @use "base/icons";
 @use "base/animation";
 
+
 @include meta.load-css('katex/dist/katex.min.css');
 @include meta.load-css('diff2html/bundles/css/diff2html.min.css');
+
 @include meta.load-css('components/katex');
 @include meta.load-css('components/v-btn');
 @include meta.load-css('components/v-data-table');
 @include meta.load-css('components/v-dialog');
 @include meta.load-css('components/v-form');
 @include meta.load-css('components/v-tabs');
+
 @include meta.load-css('pages/error');
 
-// Knowledge Workbench: solid surfaces and predictable component anatomy.
-// Typography and authored document rules remain owned by their content surfaces.
+// Luminous Archive foundation: editorial type, mineral surfaces and a quiet
+// coordinate field shared by every application shell.
 .v-application {
   color: rgb(var(--v-theme-on-surface));
 }
 
 .v-application__wrap {
-  background: rgb(var(--v-theme-background));
+  background-color: rgb(var(--v-theme-background));
+  background-image:
+    radial-gradient(circle at 8% -6%, color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent), transparent 27rem),
+    radial-gradient(circle at 94% 24%, color-mix(in srgb, rgb(var(--v-theme-secondary)) 7%, transparent), transparent 24rem),
+    linear-gradient(color-mix(in srgb, rgb(var(--v-theme-on-background)) 3.5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background)) 3.5%, transparent) 1px, transparent 1px);
+  background-position: center top;
+  background-size: auto, auto, var(--wiki-grid-size) var(--wiki-grid-size), var(--wiki-grid-size) var(--wiki-grid-size);
 }
 
+.v-application :where(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-block-start: calc(var(--wiki-space-12) + var(--v-layout-top, 0px));
+}
 
-.v-card:is(.v-card--variant-flat, .v-card--variant-elevated) {
+.v-application :where(p, li, dd) {
+  text-wrap: pretty;
+}
+
+.v-application :where(strong, b) {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: 700;
+}
+
+.v-application a:not(:where(.v-btn, .v-list-item, .v-tab, .v-chip)) {
+  color: var(--wiki-accent-ink);
+  text-decoration-color: color-mix(in srgb, var(--wiki-accent-ink) 42%, transparent);
+  text-decoration-thickness: .08em;
+  text-underline-offset: .2em;
+  transition:
+    color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    text-decoration-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+  &:hover {
+    color: color-mix(in srgb, var(--wiki-accent-ink) 76%, rgb(var(--v-theme-on-surface)) 24%);
+    text-decoration-color: currentColor;
+  }
+}
+
+.v-card.v-card--variant-elevated {
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  box-shadow: none;
+  box-shadow: var(--wiki-shadow-sm);
 }
 
 .v-card-title {
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-heading);
-  font-weight: 650;
-  letter-spacing: -.015em;
-  line-height: 1.35;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  line-height: 1.25;
 }
 
 .v-card-subtitle,
 .v-card-text {
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .v-card-subtitle {
   color: var(--wiki-text-muted);
   opacity: 1;
-  white-space: normal;
 }
 
 .v-app-bar {
   border-block-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-chrome-surface);
-  box-shadow: none;
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
 }
 
 .v-navigation-drawer {
   border-color: var(--wiki-surface-border);
   background: var(--wiki-surface-raised);
-  box-shadow: none;
+  box-shadow: var(--wiki-shadow-xs);
 }
 
-// Off states must remain identifiable on every configured palette.
+// Keep every unchecked switch legible on light and dark surfaces: the
+// default track is a faint surface-variant tint that disappears on
+// near-white cards. Off state follows Material 3: an outlined track and an
+// outline-colored thumb, both above the 3:1 non-text contrast minimum.
+// Checked semantic colors and Vuetify's disabled treatment remain untouched.
 .v-switch .v-selection-control:not(.v-selection-control--dirty):not(.v-selection-control--disabled):not(.v-selection-control--error) {
   --wiki-switch-off-outline: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, rgb(var(--v-theme-surface)));
 
   .v-switch__track {
+    box-sizing: border-box;
     border: 2px solid var(--wiki-switch-off-outline);
-    background: var(--wiki-surface-sunken);
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, rgb(var(--v-theme-surface)));
     opacity: 1;
   }
 
@@ -81,19 +120,32 @@
   }
 }
 
-.v-selection-control:not(.v-selection-control--dirty):not(.v-selection-control--disabled) .v-selection-control__input > .v-icon {
-  color: var(--wiki-text-muted);
-  opacity: 1;
+// Keep unchecked admin checkboxes and radios legible against the near-white
+// light surface.
+.admin.v-theme--light .v-selection-control:not(.v-selection-control--dirty):not(.v-selection-control--disabled) {
+  .v-selection-control__input > .v-icon {
+    color: var(--wiki-text-muted);
+    opacity: 1;
+  }
 }
 
 .v-overlay__scrim {
   background: rgb(var(--v-theme-on-surface));
 }
 
+// Vuetify moves focus to the dialog container when a dialog opens. The
+// container is not a control, so it shows the soft shared ring around the
+// rounded card instead of the heavy square control outline.
 .v-dialog > .v-overlay__content:focus-visible {
   border-radius: var(--wiki-panel-radius);
-  outline: .125rem solid var(--wiki-focus-color);
-  outline-offset: var(--wiki-focus-offset);
+  outline: none;
+  box-shadow: var(--wiki-focus-ring);
+}
+
+@media (forced-colors: active) {
+  .v-dialog > .v-overlay__content:focus-visible {
+    outline: .125rem solid Highlight;
+  }
 }
 
 .v-overlay__content > :where(.v-list, .v-sheet):not(.v-card),
@@ -107,16 +159,18 @@
 .v-tooltip > .v-overlay__content {
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-radius-xs);
-  background: rgb(var(--v-theme-on-surface));
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 94%, rgb(var(--v-theme-surface)) 6%);
+  box-shadow: var(--wiki-shadow-sm);
   color: rgb(var(--v-theme-surface));
   font-size: var(--wiki-label-size);
-  font-weight: 550;
+  font-weight: 650;
+  letter-spacing: .025em;
 }
 
 .v-empty-state {
   margin: var(--wiki-space-4);
-  padding: var(--wiki-space-6);
-  border: 1px solid var(--wiki-surface-border);
+  padding: var(--wiki-space-8);
+  border: 1px dashed var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-sunken);
 }
@@ -124,7 +178,8 @@
 .v-empty-state__title {
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-heading);
-  font-weight: 650;
+  font-weight: 700;
+  letter-spacing: -.02em;
 }
 
 .v-empty-state__text,
@@ -132,90 +187,143 @@
   color: var(--wiki-text-muted);
 }
 
-// Existing onboarding and new-page controls retain their original state owners.
+.v-data-table-rows-no-data > td {
+  padding-block: var(--wiki-space-10);
+}
+
+@media (max-width: 599.98px) {
+  .v-empty-state {
+    margin: var(--wiki-space-2);
+    padding: var(--wiki-space-6) var(--wiki-space-4);
+  }
+}
+
+@media print {
+  .v-application__wrap {
+    background-image: none !important;
+  }
+
+  .v-card,
+  .v-app-bar,
+  .v-navigation-drawer,
+  .v-overlay__content {
+    box-shadow: none !important;
+  }
+}
+
+// Shared public-state surfaces. State modifiers provide semantic accents without
+// introducing a second palette or changing the active light/dark theme.
 .onboarding,
+.notfound,
+.unauthorized,
 .newpage {
+  --wiki-state-accent: rgb(var(--v-theme-primary));
+  position: relative;
   display: flex;
   min-height: 100vh;
   min-height: 100dvh;
   align-items: center;
   justify-content: center;
+  overflow: hidden auto;
   padding: var(--wiki-space-8) var(--wiki-page-gutter);
-  background: rgb(var(--v-theme-background));
+  background:
+    radial-gradient(circle at 18% 15%, color-mix(in srgb, var(--wiki-state-accent) 16%, transparent), transparent 28rem),
+    linear-gradient(145deg, rgb(var(--v-theme-background)), color-mix(in srgb, rgb(var(--v-theme-surface)) 88%, var(--wiki-state-accent) 12%));
   color: rgb(var(--v-theme-on-background));
+  font-family: var(--v-font-body);
+
+  &::before {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(color-mix(in srgb, rgb(var(--v-theme-on-background)) 7%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background)) 7%, transparent) 1px, transparent 1px);
+    background-position: 0 0;
+    background-repeat: repeat;
+    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
+    content: '';
+    mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-background)), transparent 85%);
+    opacity: .64;
+  }
+
+  &::after {
+    position: absolute;
+    inset: auto auto -13rem -10rem;
+    width: 30rem;
+    height: 30rem;
+    border: 1px solid color-mix(in srgb, var(--wiki-state-accent) 18%, transparent);
+    border-radius: 50%;
+    box-shadow:
+      0 0 0 68px color-mix(in srgb, var(--wiki-state-accent) 8%, transparent),
+      0 0 0 136px color-mix(in srgb, var(--wiki-state-accent) 5%, transparent);
+    content: '';
+  }
 
   &-content {
+    position: relative;
+    z-index: 2;
     display: flex;
-    width: min(100%, 42rem);
-    min-width: 0;
+    width: min(100%, 680px);
+    min-height: 420px;
     flex-direction: column;
     align-items: center;
-    gap: var(--wiki-space-4);
-    padding: clamp(1.5rem, 4vw, 2.5rem);
+    justify-content: center;
+    padding: clamp(var(--wiki-space-8), 6vw, calc(var(--wiki-space-12) + var(--wiki-space-4)));
     border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius);
+    border-radius: var(--wiki-hero-radius);
     background: var(--wiki-surface-raised);
+    box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
     text-align: center;
   }
 
   img {
-    max-width: min(12rem, 68vw);
-    height: 6rem;
+    width: auto;
+    max-width: min(240px, 68vw);
+    height: 140px;
+    margin: 0 0 var(--wiki-space-6);
     object-fit: contain;
   }
 
   .text-headline-medium {
     color: rgb(var(--v-theme-on-surface));
-    font-family: var(--wiki-font-display);
-    font-size: clamp(1.5rem, 4vw, 2rem);
-    font-weight: 650;
-    line-height: 1.25;
+    font-size: clamp(2rem, 5vw, 3.3rem);
+    font-weight: 760;
+    letter-spacing: -.055em;
+    line-height: 1.05;
+    text-wrap: balance;
   }
 
   .text-body-large {
-    max-width: 34rem;
+    max-width: 520px;
     color: var(--wiki-text-muted);
-    line-height: 1.5;
+    line-height: 1.6;
+    text-wrap: balance;
+  }
+
+  .v-btn {
+    min-height: var(--wiki-control-height);
+    font-weight: 670;
   }
 }
 
-.newpage-mark {
-  display: grid;
-  width: 7rem;
-  height: 7rem;
-  place-items: center;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-sunken);
+.notfound {
+  --wiki-state-accent: rgb(var(--v-theme-error));
+}
+
+.unauthorized {
+  --wiki-state-accent: rgb(var(--v-theme-warning));
+}
+
+.onboarding {
+  &-content {
+    min-height: 470px;
+  }
 
   img {
-    width: auto;
-    height: 4rem;
-  }
-}
-
-.newpage-copy {
-  min-width: 0;
-  max-width: 36rem;
-
-  p { margin-bottom: 0; }
-}
-
-.newpage-path {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-2) var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
-  color: var(--wiki-text-muted);
-
-  code {
-    min-width: 0;
-    font-size: var(--wiki-type-body-sm);
-    overflow-wrap: anywhere;
+    width: min(290px, 70vw);
+    max-width: none;
+    height: auto;
+    filter: grayscale(100%) brightness(2.2);
   }
 }
 
@@ -224,12 +332,263 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: var(--wiki-space-3);
+  margin-top: var(--wiki-space-6);
 
   .v-btn {
     min-width: 10rem;
-    min-height: var(--wiki-control-height);
   }
 }
+
+@media (max-width: 599.98px) {
+  .onboarding,
+  .notfound,
+  .unauthorized,
+  .newpage {
+    padding: 0;
+
+    &-content {
+      width: 100%;
+      min-height: 100dvh;
+      padding: var(--wiki-space-6) var(--wiki-space-4);
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    img {
+      height: 112px;
+      margin-bottom: var(--wiki-space-4);
+    }
+
+    .v-btn.mt-5 {
+      width: min(100%, 320px);
+      margin-top: var(--wiki-space-3);
+    }
+  }
+
+  .newpage-actions {
+    width: min(100%, 320px);
+    flex-direction: column;
+
+    .v-btn {
+      width: 100%;
+    }
+  }
+
+  .onboarding img {
+    width: min(250px, 70vw);
+    height: auto;
+  }
+}
+
+@media (max-height: 500px) and (min-width: 600px) {
+  .notfound {
+    padding: var(--wiki-space-3) var(--wiki-page-gutter);
+
+    &-content {
+      min-height: 0;
+      height: calc(100dvh - var(--wiki-space-6));
+      padding: var(--wiki-space-4) var(--wiki-space-6);
+    }
+
+    img {
+      height: 96px;
+      margin-bottom: var(--wiki-space-2);
+    }
+
+    .text-headline-medium {
+      font-size: 2rem;
+    }
+
+    .text-body-large {
+      line-height: 1.3;
+    }
+
+    .v-btn.mt-5 {
+      margin-top: var(--wiki-space-2);
+    }
+  }
+}
+
+
+
+// State pages (new page, not found, unauthorized) share the new-page anatomy:
+// mark, copy, optional path, and one equal-size action group.
+.notfound-app .notfound,
+.unauthorized-app .unauthorized {
+  min-height: calc(100dvh - var(--v-layout-top, var(--wiki-chrome-height)));
+}
+
+@media (max-width: 599.98px) {
+  .notfound-app .notfound-content {
+    min-height: calc(100dvh - var(--v-layout-top, var(--wiki-chrome-height)));
+  }
+}
+
+.notfound-content,
+.unauthorized-content,
+.newpage-content {
+  overflow: hidden;
+  isolation: isolate;
+
+  &::before {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: 0;
+    height: var(--wiki-space-1);
+    background: linear-gradient(
+      90deg,
+      var(--wiki-accent-warm),
+      var(--wiki-ambient-accent),
+      var(--wiki-accent-spectral)
+    );
+    content: '';
+  }
+}
+
+.newpage-mark {
+  display: grid;
+  width: calc(var(--wiki-space-12) * 3);
+  height: calc(var(--wiki-space-12) * 3);
+  margin-bottom: var(--wiki-space-6);
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
+  border-radius: var(--wiki-hero-radius);
+  background:
+    radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--wiki-accent-spectral) 18%, transparent), transparent 64%),
+    var(--wiki-surface-sunken);
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+
+  img {
+    width: auto;
+    height: calc(var(--wiki-space-12) * 2);
+    margin: 0;
+  }
+}
+
+.newpage-copy {
+  max-width: 36rem;
+
+  p {
+    margin-bottom: 0;
+  }
+}
+
+.newpage-path {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  margin-top: var(--wiki-space-5);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-pill);
+  background: var(--wiki-surface-sunken);
+  color: var(--wiki-text-muted);
+
+  code {
+    overflow: hidden;
+    font-size: .8125rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.newpage-actions {
+  .newpage-action {
+    min-width: 10rem;
+    border-radius: var(--wiki-control-radius);
+    font-weight: 680;
+    letter-spacing: .01em;
+    transition:
+      transform var(--wiki-motion-fast) var(--wiki-motion-ease-out),
+      box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease-out),
+      background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    &:hover {
+      transform: translateY(calc(var(--wiki-space-1) * -.25));
+    }
+  }
+
+  .newpage-action--create {
+    box-shadow: var(--wiki-shadow-sm);
+
+    &:hover {
+      box-shadow: var(--wiki-shadow-md);
+    }
+  }
+
+  .newpage-action--back {
+    background: var(--wiki-surface-raised);
+  }
+}
+
+@media (max-width: 599px) {
+  .newpage-mark {
+    width: calc(var(--wiki-space-12) * 2.5);
+    height: calc(var(--wiki-space-12) * 2.5);
+    margin-bottom: var(--wiki-space-4);
+
+    img {
+      height: calc(var(--wiki-space-10) + var(--wiki-space-4));
+    }
+  }
+
+  .newpage-path {
+    max-width: min(100%, 20rem);
+  }
+
+  .newpage-actions {
+    gap: var(--wiki-space-2);
+    margin-top: var(--wiki-space-5);
+  }
+}
+
+@media (max-height: 500px) and (min-width: 600px) {
+  .newpage {
+    padding-block: var(--wiki-space-3);
+
+    &-content {
+      min-height: 0;
+      height: calc(100dvh - var(--wiki-space-6));
+      padding: var(--wiki-space-4) var(--wiki-space-6);
+    }
+  }
+
+  .newpage-mark {
+    width: calc(var(--wiki-space-12) * 2);
+    height: calc(var(--wiki-space-12) * 2);
+    margin-bottom: var(--wiki-space-2);
+
+    img {
+      height: var(--wiki-space-10);
+    }
+  }
+
+  .newpage-copy .text-body-large {
+    line-height: 1.3;
+  }
+
+  .newpage-path,
+  .newpage-actions {
+    margin-top: var(--wiki-space-3);
+  }
+}
+
+@media (forced-colors: active) {
+  .newpage-mark,
+  .newpage-path {
+    border-color: CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .newpage-action {
+    transform: none !important;
+    transition: none !important;
+  }
+}
+
 
 .editor-status-bar {
   position: fixed !important;
@@ -237,38 +596,4 @@
   width: 100% !important;
   transform: none !important;
   z-index: 1004 !important;
-}
-
-@media (max-width: 599.98px) {
-  .v-empty-state {
-    margin: var(--wiki-space-2);
-    padding: var(--wiki-space-4);
-  }
-
-  .onboarding,
-  .newpage {
-    padding: var(--wiki-space-4) var(--wiki-page-gutter);
-  }
-
-  .newpage-actions {
-    width: 100%;
-    flex-direction: column;
-
-    .v-btn { width: 100%; }
-  }
-}
-
-@media (forced-colors: active) {
-  .v-dialog > .v-overlay__content:focus-visible { outline-color: Highlight; }
-
-  .newpage-mark,
-  .newpage-path,
-  .v-empty-state { border-color: CanvasText; }
-}
-
-@media print {
-  .v-card,
-  .v-app-bar,
-  .v-navigation-drawer,
-  .v-overlay__content { box-shadow: none !important; }
 }

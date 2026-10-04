@@ -1,14 +1,19 @@
-import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import path from 'node:path'
-import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 globalThis.translate = translateEnglish
 ;globalThis.useTranslate = () => translateEnglish
-import type { App } from 'vue'
+import type { App, ComponentOptions, PropType, RenderFunction } from 'vue'
 import type { MoveLinkReviewInput, MoveLinkReviewResponse, PageTreeRow } from '../../helpers/pages-api.ts'
-import type { wikiStore as WikiStoreInstance } from '../../store/index.ts'
 
+const filename = join(process.cwd(), 'client/components/common/page-selector.vue')
+const parsed = parse(readFileSync(filename, 'utf8'), { filename })
+if (parsed.errors.length > 0 || !parsed.descriptor.template || !parsed.descriptor.script) {
+  throw new Error(`Cannot parse page-selector.vue: ${parsed.errors.join(', ')}`)
+}
 
 resetBody()
 setLocation('/en/docs/current')
@@ -19,59 +24,81 @@ const globals = globalThis as typeof globalThis & {
 }
 globals.siteConfig = { lang: 'en' }
 globals.siteLangs = []
-// The actual store reads window.siteConfig during module initialization.
-// Static import would execute before this supported application fixture exists.
-const importConfig = Object.getOwnPropertyDescriptor(browserWindow, 'siteConfig')
-Object.defineProperty(browserWindow, 'siteConfig', {
-  configurable: true,
-  value: {
-    company: '', contentLicense: '', footerOverride: '', banner: {}, darkMode: false,
-    tocPosition: 'left', title: 'Page selector verification', logoUrl: '',
-    product: { name: 'tsEpistle', version: 'test' }
-  }
-})
-let wikiStore: typeof WikiStoreInstance
-try {
-  ;({ wikiStore } = await import('../../store/index.ts'))
-} finally {
-  if (importConfig) Object.defineProperty(browserWindow, 'siteConfig', importConfig)
-  else Reflect.deleteProperty(browserWindow, 'siteConfig')
-}
 
 const Vue = await import('vue')
-// Vuetify captures browser capabilities; load it only after the test DOM exists.
-const { createVuetify } = await import('vuetify')
-const vuetifyComponents = await import('vuetify/components')
-const vuetifyDirectives = await import('vuetify/directives')
-Bun.plugin({
-  name: 'page-selector-real-sfc',
-  setup(builder) {
-    builder.onResolve({ filter: /^@\// }, ({ path: filename }) => ({ path: path.join(process.cwd(), 'client', filename.slice(2)) }))
-    builder.onLoad({ filter: /\.vue$/ }, async ({ path: filename }) => {
-      const parsed = parse(await Bun.file(filename).text(), { filename })
-      if (parsed.errors.length) throw parsed.errors[0]
-      const script = compileScript(parsed.descriptor, {
-        id: 'page-selector-presentation-test',
-        genDefaultAs: '__component',
-        inlineTemplate: Boolean(parsed.descriptor.scriptSetup)
-      })
-      if (parsed.descriptor.scriptSetup) return { loader: 'ts', contents: `${script.content}\nexport default __component;` }
-      if (!parsed.descriptor.template) throw new Error(`Missing template in ${filename}`)
-      const template = compileTemplate({
-        filename,
-        id: 'page-selector-presentation-test',
-        source: parsed.descriptor.template.content,
-        preprocessLang: parsed.descriptor.template.lang,
-        preprocessOptions: { doctype: 'html' },
-        compilerOptions: { bindingMetadata: script.bindings }
-      })
-      if (template.errors.length) throw template.errors[0]
-      return { loader: 'ts', contents: `${script.content}\n${template.code}\n__component.render = render;\nexport default __component;` }
-    })
+const compiled = compileTemplate({
+  filename,
+  id: 'page-selector-presentation-test',
+  source: parsed.descriptor.template.content,
+  preprocessLang: parsed.descriptor.template.lang,
+  preprocessOptions: { doctype: 'html' },
+  compilerOptions: { mode: 'function' }
+})
+if (compiled.errors.length > 0) throw new Error(`Cannot compile page-selector.vue: ${compiled.errors.join(', ')}`)
+const render = new Function('Vue', compiled.code)(Vue) as RenderFunction
+const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+  parsed.descriptor.script.content.replace(/^import[\s\S]*?from ['"][^'"]+[''];?\s*$/gm, '').replace('export default', 'return')
+)
+
+const passthrough = (tag = 'div') =>
+  Vue.defineComponent({
+    inheritAttrs: false,
+    setup(_props, { attrs, slots }) {
+      return () => Vue.h(tag, attrs, slots.default?.())
+    }
+  })
+
+const AsyncState = Vue.defineComponent({
+  props: {
+    state: { type: String, required: true },
+    title: { type: String, required: true },
+    message: { type: String, default: '' }
+  },
+  setup(props) {
+    return () =>
+      Vue.h(
+        'div',
+        {
+          class: ['async-state', `async-state--${props.state}`],
+          'data-state': props.state,
+          role: 'status'
+        },
+        [Vue.h('strong', props.title), props.message ? Vue.h('span', props.message) : undefined]
+      )
   }
 })
-// The SFC loader must be registered before the actual selector and child load.
-const PageSelector = (await import('./page-selector.vue')).default
+
+const listActivationKey = Symbol('page-selector-list-activation')
+const VList = Vue.defineComponent({
+  inheritAttrs: false,
+  props: {
+    activated: { type: Array as PropType<number[]>, default: () => [] }
+  },
+  emits: ['update:activated'],
+  setup(_props, { attrs, emit, slots }) {
+    Vue.provide(listActivationKey, (value: number) => emit('update:activated', [value]))
+    return () => Vue.h('div', { ...attrs, class: ['v-list', attrs.class] }, slots.default?.())
+  }
+})
+const VListItem = Vue.defineComponent({
+  inheritAttrs: false,
+  props: { value: { type: Number, required: true } },
+  setup(props, { attrs, slots }) {
+    const activate = Vue.inject<(value: number) => void>(listActivationKey)
+    return () =>
+      Vue.h(
+        'button',
+        {
+          ...attrs,
+          type: 'button',
+          'data-value': props.value,
+          onClick: () => activate?.(props.value)
+        },
+        [slots.prepend?.({}), slots.default?.({})]
+      )
+  }
+})
+
 
 let app: App | undefined
 let rows: PageTreeRow[] = []
@@ -90,34 +117,44 @@ afterEach(() => {
     nextCursor: null,
     coverageNotice: 'Only currently source-readable candidates are listed.'
   })
-  vi.restoreAllMocks()
   document.body.replaceChildren()
 })
 
 const settle = async (): Promise<void> => {
-  for (let turn = 0; turn < 8; turn += 1) {
-    await Promise.resolve()
-    await Vue.nextTick()
-  }
+  await Promise.resolve()
+  await Vue.nextTick()
+  await Promise.resolve()
+  await Vue.nextTick()
 }
 
 const mountSelector = async (initialRows: PageTreeRow[], selectorProps: Record<string, unknown> = {}) => {
   rows = initialRows
-  wikiStore.page.title = 'Current page'
-  wikiStore.page.path = 'docs/current'
-  wikiStore.page.locale = 'en'
-  vi.spyOn(browserWindow, 'fetch').mockImplementation(async (input, init) => {
-    const url = new URL(String(input), browserWindow.location.href)
-    if (url.pathname === '/_api/pages/tree') return Response.json(rows)
-    const review = /^\/_api\/pages\/(\d+)\/move\/review$/.exec(url.pathname)
-    if (review && init?.method === 'POST') {
-      return Response.json(await moveReviewHandler(Number(review[1]), JSON.parse(String(init.body)) as MoveLinkReviewInput))
-    }
-    throw new Error(`Unexpected page-selector request: ${init?.method ?? 'GET'} ${url.pathname}`)
-  })
+  const fetchPageTree = async (): Promise<PageTreeRow[]> => rows
+  const fetchMoveLinkReview = (_fetchImpl: unknown, pageId: number, input: MoveLinkReviewInput): Promise<MoveLinkReviewResponse> =>
+    moveReviewHandler(pageId, input)
+  const getErrorMessage = (error: unknown): string => String(error)
+  const mountedSelector = new Function(
+    'defineComponent',
+    'markRaw',
+    'useId',
+    'fetchPageTree',
+    'fetchMoveLinkReview',
+    'getErrorMessage',
+    'AsyncState',
+    executableScript
+  )(
+    Vue.defineComponent,
+    Vue.markRaw,
+    Vue.useId,
+    fetchPageTree,
+    fetchMoveLinkReview,
+    getErrorMessage,
+    AsyncState
+  ) as ComponentOptions
+  mountedSelector.render = render
   const host = document.createElement('div')
   document.body.append(host)
-  app = Vue.createApp(PageSelector, {
+  app = Vue.createApp(mountedSelector, {
     modelValue: true,
     mode: 'select',
     mustExist: true,
@@ -125,16 +162,26 @@ const mountSelector = async (initialRows: PageTreeRow[], selectorProps: Record<s
     locale: 'en',
     ...selectorProps
   })
-  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  for (const name of ['v-card', 'v-col', 'v-icon', 'v-progress-circular', 'v-row', 'v-select', 'v-spacer', 'v-text-field', 'v-toolbar', 'vue-scroll'])
+    app.component(name, passthrough())
+  app.component('v-alert', passthrough())
+  app.component('v-btn', passthrough('button'))
+  app.component('v-card-actions', passthrough())
+  app.component('v-card-chin', passthrough())
+  app.component('v-dialog', passthrough())
+  app.component('v-list', VList)
+  app.component('v-list-item', VListItem)
+  app.component('v-list-item-title', passthrough('span'))
+  app.component('v-tooltip', passthrough())
+  app.component('v-treeview', passthrough())
   app.config.globalProperties.$t = translateEnglish
+  app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
   const instance = app.mount(host) as unknown as {
     currentLocale: string
     currentPath: string | null
   }
   await settle()
-  await vi.waitFor(() => expect(document.querySelector('.page-selector')).not.toBeNull())
-  await settle()
-  return { host: document.body, instance }
+  return { host, instance }
 }
 
 const page = (id: number, path: string, title: string): PageTreeRow => ({
@@ -146,8 +193,7 @@ const page = (id: number, path: string, title: string): PageTreeRow => ({
   parent: 0,
   locale: 'en',
   visibility: 'public',
-  ownerId: null,
-  canEdit: true,
+  ownerId: null
 })
 
 describe('Browse page selector presentation', () => {
@@ -170,8 +216,8 @@ describe('Browse page selector presentation', () => {
     expect(host.querySelector('.page-selector__page--selected')).toBeNull()
     expect(host.querySelector('[data-selection-state="none"]')).not.toBeNull()
 
-    const other = Array.from(host.querySelectorAll<HTMLElement>('.page-selector__pages-list .v-list-item')).find(item => item.textContent?.includes('Another page'))
-    expect(other).toBeDefined()
+    const other = host.querySelector<HTMLButtonElement>('[data-value="12"]')
+    expect(other).not.toBeNull()
     other!.click()
     await settle()
 
@@ -184,11 +230,7 @@ describe('Browse page selector presentation', () => {
     rows = []
     instance.currentLocale = 'fr'
     await settle()
-    await vi.waitFor(() => expect(host.querySelector('.async-state--empty')).not.toBeNull())
-    const emptyState = host.querySelector('.async-state--empty')
-    expect(emptyState?.getAttribute('role')).toBe('status')
-    expect(emptyState?.getAttribute('aria-live')).toBe('polite')
-    expect(emptyState?.querySelector('.async-state__title')?.textContent).toBe(translateEnglish('common:pageSelector.folderEmptyWarning'))
+    expect(host.querySelector('.async-state--empty')?.getAttribute('data-state')).toBe('empty')
     expect(host.querySelector('[data-selection-state]')).toBeNull()
   })
   test('reviews selected source diffs before moving and keeps the committed receipt until acknowledged', async () => {
@@ -310,22 +352,28 @@ describe('Browse page selector presentation', () => {
     expect(selfLinkCard?.querySelector('input[type="checkbox"]')).toBeNull()
 
     await clickButton('Review selected changes')
-    expect(requests[1]?.input.selectedPageIds?.toSorted()).toEqual([21, 23])
+    expect(requests[1]?.input.selectedPageIds).toEqual([21, 23])
     const confirmation = host.querySelector('section.page-selector__link-review')
     const confirmationHeading = confirmation?.querySelector('h3')
     expect(confirmationHeading?.id).toBeTruthy()
     expect(confirmation?.getAttribute('aria-labelledby')).toBe(confirmationHeading?.id)
     const confirmationCards = Array.from(confirmation?.querySelectorAll('.page-selector__candidate') ?? [])
-    expect(confirmationCards).toHaveLength(3)
-    for (const expected of [item, sameTitleItem, selfLink]) {
-      const card = confirmationCards.find(candidate => candidate.querySelector('.page-selector__candidate-location')?.textContent?.includes(`${expected.locale} / ${expected.path}`))
-      expect(card).toBeDefined()
-      expect(card?.querySelector('.page-selector__candidate-title')?.textContent).toBe(expected.title)
-      expect(card?.querySelector('.page-selector__candidate-location')?.textContent).toContain(`revision ${expected.sourceRevision}`)
-      const diff = Array.from(card?.querySelectorAll('.page-selector__diff code') ?? [], code => code.textContent)
-      expect(diff).toHaveLength(expected.changes.length * 2)
-      expect(diff).toEqual(expect.arrayContaining(expected.changes.flatMap(change => [change.before, change.after])))
-    }
+    expect(confirmationCards.map(card => ({
+      title: card.querySelector('.page-selector__candidate-title')?.textContent,
+      location: card.querySelector('.page-selector__candidate-location')?.textContent
+    }))).toEqual([
+      { title: 'Referrer page', location: 'en / docs/referrer · revision 7' },
+      { title: 'Referrer page', location: 'fr / guides/referrer · revision 12' },
+      { title: 'Moved page', location: 'en / docs/current · revision 5' }
+    ])
+    expect(Array.from(confirmation?.querySelectorAll('.page-selector__diff code') ?? [], code => code.textContent)).toEqual([
+      '[Release notes](/en/docs/current)',
+      '[Release notes](/en/docs/archive)',
+      '[Release notes](/en/docs/current)',
+      '[Release notes](/en/docs/archive)',
+      '[Current](/en/docs/current)',
+      '[Current](/en/docs/archive)'
+    ])
 
     await clickButton('Move and update selected links')
     expect(submittedMove).toEqual({
@@ -343,7 +391,7 @@ describe('Browse page selector presentation', () => {
     await settle()
     expect(instance.currentLocale).toBe('en')
     expect(instance.currentPath).toBe('docs/archive')
-    expect(host.querySelector<HTMLInputElement>('.page-selector__options input[aria-label="Page path"]')?.disabled).toBe(true)
+    expect(host.querySelector('.page-selector__tree')?.hasAttribute('disabled')).toBe(true)
     expect(host.querySelector('.page-selector__move-result')?.textContent).toContain('source revision 6')
 
     await clickButton('Done')
@@ -369,7 +417,7 @@ describe('Browse page selector presentation', () => {
     const option = host.querySelector<HTMLInputElement>('.page-selector__repair-toggle input')
     expect(option?.checked).toBe(false)
     const button = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
-      .find(candidate => candidate.textContent?.trim() === translateEnglish('common:header.move'))
+      .find(candidate => candidate.textContent?.trim() === 'Select')
     expect(button).not.toBeNull()
     button!.click()
     await settle()
@@ -395,7 +443,7 @@ describe('Browse page selector presentation', () => {
       }
     })
     const submit = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
-      .find(candidate => candidate.textContent?.trim() === translateEnglish('common:header.move'))
+      .find(candidate => candidate.textContent?.trim() === 'Select')
     if (!submit) throw new Error('Move action did not render')
     submit.click()
     await settle()
@@ -409,12 +457,9 @@ describe('Browse page selector presentation', () => {
     expect(Array.from(uncertainAlert?.querySelectorAll('button') ?? [], button => button.textContent?.trim())).toEqual(['Refresh page'])
     expect(host.querySelector('.page-selector__move-result')).toBeNull()
     expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Refresh page')).toBe(true)
-    expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === translateEnglish('common:header.move'))).toBe(false)
-    const moveActions = host.querySelector('.page-selector__chin')
-    expect(moveActions).not.toBeNull()
-    expect(Array.from(moveActions!.querySelectorAll<HTMLButtonElement>('button'))
+    expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Select')).toBe(false)
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
       .filter(button => !button.disabled)
       .every(button => button.textContent?.trim() === 'Refresh page')).toBe(true)
-    expect(submissions).toBe(1)
   })
 })

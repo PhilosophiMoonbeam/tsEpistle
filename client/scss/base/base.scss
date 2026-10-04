@@ -2,6 +2,7 @@
   --wiki-shell-max: 110rem;
   --wiki-content-max: 97.5rem;
   --wiki-page-gutter: clamp(.875rem, 2.2vw, 2rem);
+  --wiki-grid-size: 4rem;
   --wiki-space-1: .25rem;
   --wiki-space-2: .5rem;
   --wiki-space-3: .75rem;
@@ -12,19 +13,19 @@
   --wiki-space-10: 2.5rem;
   --wiki-space-12: 3rem;
   --wiki-radius-xs: .375rem;
-  --wiki-control-radius: .5rem;
-  --wiki-panel-radius: .75rem;
+  --wiki-control-radius: .75rem;
+  --wiki-panel-radius: 1rem;
   --wiki-radius-sm: var(--wiki-control-radius);
   --wiki-radius-md: var(--wiki-panel-radius);
-  --wiki-hero-radius: var(--wiki-panel-radius);
+  --wiki-hero-radius: 1.375rem;
   --wiki-radius-pill: 999rem;
-  // Minimum footer clearance; wrapping footers remain intrinsically sized.
-  --wiki-footer-height: 2.25rem;
+  --wiki-footer-height: 1rem;
   --wiki-control-height: 2.75rem;
-  // Shared layout geometry: regular header, dense header and search control.
-  --wiki-chrome-height: 4rem;
-  --wiki-chrome-height-dense: 3.5rem;
-  --wiki-search-field-height: 2.75rem;
+  /* Chrome bars (Wiki header + agent header) share one reduced height; the
+     search field rides inside the Wiki header at ~80% of the control height. */
+  --wiki-chrome-height: 3.25rem;
+  --wiki-chrome-height-dense: 3rem;
+  --wiki-search-field-height: 2.25rem;
   // Scripts the bundled faces do not cover fall through to a vendored
   // hieroglyph face, then to system fonts that commonly cover historic and
   // symbol blocks, before the generic family.
@@ -35,34 +36,34 @@
   --wiki-font-body: var(--wiki-font-selected);
   --wiki-font-heading: var(--wiki-font-selected);
   --wiki-font-reader: var(--wiki-font-selected);
-  --wiki-font-display: var(--wiki-font-selected);
+  --wiki-font-display: var(--wiki-font-newsreader);
   --wiki-font-mono: 'Roboto Mono', 'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;
   --wiki-leading-body: 1.625;
   --wiki-leading-heading: 1.12;
-  --wiki-label-size: .75rem;
+  --wiki-label-size: .6875rem;
   --wiki-label-weight: 650;
   --wiki-type-micro: .75rem;
   --wiki-type-label: .8125rem;
   --wiki-type-body-sm: .875rem;
   // Secondary text that must stay readable (meets WCAG AA on standard surfaces).
-  --wiki-text-muted: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, rgb(var(--v-theme-surface)));
-  // Subtle ink is for non-essential decoration, not secondary content.
-  --wiki-text-subtle: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, rgb(var(--v-theme-surface)));
-  --wiki-surface-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, rgb(var(--v-theme-surface)));
-  --wiki-surface-border-strong: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 26%, rgb(var(--v-theme-surface)));
+  --wiki-text-muted: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+  // Decorative or non-essential text only (dividers, placeholders); never for content.
+  --wiki-text-subtle: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
+  --wiki-surface-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 13%, transparent);
+  --wiki-surface-border-strong: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent);
   // The edge that identifies a control, such as a text field outline. It must
   // reach 3:1 against the control and page surfaces (WCAG 1.4.11).
   --wiki-control-edge: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 44%, transparent);
-  --wiki-surface-raised: rgb(var(--v-theme-surface));
+  --wiki-surface-raised: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-surface-bright)) 6%);
   --wiki-surface-sunken: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, rgb(var(--v-theme-surface)) 28%);
   --wiki-surface-soft: var(--wiki-surface-sunken);
-  --wiki-glass-bg: var(--wiki-surface-raised);
-  --wiki-glass-blur: none;
-  --wiki-chrome-surface: var(--wiki-surface-raised);
-  --wiki-chrome-blur: none;
-  --wiki-glass-border: var(--wiki-surface-border);
+  --wiki-glass-bg: color-mix(in srgb, rgb(var(--v-theme-surface)) 82%, transparent);
+  --wiki-glass-blur: blur(16px) saturate(180%);
+  --wiki-chrome-surface: rgba(var(--v-theme-surface), .30);
+  --wiki-chrome-blur: blur(16px) saturate(180%);
+  --wiki-glass-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
   --wiki-accent-warm: rgb(var(--v-theme-primary));
-  --wiki-accent-ink: var(--wiki-primary-ink);
+  --wiki-accent-ink: color-mix(in srgb, var(--wiki-accent-warm) 38%, rgb(var(--v-theme-on-surface)) 62%);
   --wiki-accent-spectral: rgb(var(--v-theme-secondary));
   // Palette colors as text or icons on page surfaces. Each ink keeps its palette
   // color when that color already meets 4.5:1 and otherwise deepens or lightens
@@ -77,10 +78,10 @@
   --wiki-ambient-accent: color-mix(in srgb, rgb(var(--v-theme-primary)) 62%, rgb(var(--v-theme-secondary)) 38%);
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 15%, transparent);
   --wiki-shadow-xs: 0 1px 2px var(--wiki-shadow-color);
-  --wiki-shadow-sm: 0 2px 6px var(--wiki-shadow-color);
-  --wiki-shadow-md: 0 4px 16px var(--wiki-shadow-color);
-  --wiki-shadow-lg: 0 8px 24px var(--wiki-shadow-color);
-  --wiki-shadow-inset: none;
+  --wiki-shadow-sm: 0 .375rem 1rem color-mix(in srgb, var(--wiki-shadow-color) 60%, transparent);
+  --wiki-shadow-md: 0 .875rem 2.5rem color-mix(in srgb, var(--wiki-shadow-color) 72%, transparent);
+  --wiki-shadow-lg: 0 1.75rem 5rem color-mix(in srgb, var(--wiki-shadow-color) 86%, transparent);
+  --wiki-shadow-inset: inset 0 1px 0 color-mix(in srgb, rgb(var(--v-theme-surface-bright)) 62%, transparent);
   --wiki-motion-fast: 120ms;
   --wiki-motion-normal: 180ms;
   --wiki-motion-slow: 320ms;
@@ -138,7 +139,7 @@
 
 .v-theme--dark {
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, transparent);
-  --wiki-shadow-inset: none;
+  --wiki-shadow-inset: inset 0 1px 0 color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
 }
 
 html.wiki-theme-switching,
@@ -203,8 +204,8 @@ body {
 }
 
 ::selection {
-  background: var(--wiki-purpose-primary-fill);
-  color: var(--wiki-purpose-primary-ink);
+  background: color-mix(in srgb, var(--wiki-accent-spectral) 26%, transparent);
+  color: rgb(var(--v-theme-on-surface));
 }
 
 :where(a, button, [role='button'], input, textarea, select, summary, [tabindex]):focus-visible {
@@ -236,7 +237,9 @@ body {
   transition:
     color var(--wiki-motion-fast) var(--wiki-motion-ease),
     background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease),
+    transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
 }
 
 .wiki-purpose-control[data-purpose='primary'] {
@@ -297,12 +300,15 @@ body {
 }
 
 @media (hover: hover) {
-  // Selected controls retain their state under hover.
+  /* A control in its selected/active state keeps that look under hover; the
+   selected:hover rule below adds the hover glow on top. Without this
+   exclusion the hover rule (higher specificity) would repaint a
+   component-styled selected control back to its neutral face. */
 .wiki-purpose-control:hover:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled):not([aria-pressed='true']):not([aria-selected='true']):not([aria-current='true']):not([data-state='active']):not([data-state='selected']):not(.is-active):not(.is-selected):not(.v-btn--active) {
     border-color: var(--wiki-purpose-control-edge);
     background-color: var(--wiki-purpose-control-fill);
     color: var(--wiki-purpose-control-ink);
-    box-shadow: inset 0 0 0 .0625rem var(--wiki-purpose-control-edge);
+    box-shadow: 0 0 0 .1875rem color-mix(in srgb, var(--wiki-purpose-control-edge) 18%, transparent);
   }
 
   .wiki-purpose-control:is(
@@ -315,10 +321,15 @@ body {
     .is-selected,
     .v-btn--active
   ):hover {
-    box-shadow: inset 0 0 0 .0625rem var(--wiki-purpose-control-edge);
+    box-shadow:
+      inset 0 0 0 .0625rem var(--wiki-purpose-control-edge),
+      0 0 0 .1875rem color-mix(in srgb, var(--wiki-purpose-control-edge) 18%, transparent);
   }
 }
 
+.wiki-purpose-control:active:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled) {
+  transform: translateY(1px);
+}
 
 .wiki-purpose-control:focus-visible {
   outline: .125rem solid var(--wiki-focus-color);
@@ -337,11 +348,13 @@ body {
 }
 
 .wiki-close-control {
-  border-radius: var(--wiki-control-radius);
+  border-radius: 50%;
   color: var(--wiki-purpose-neutral-ink);
   transition:
     color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease),
+    transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
 }
 
 .wiki-close-control :where(.v-icon, .v-btn__content, svg) {
@@ -351,6 +364,7 @@ body {
 .wiki-close-control:is(:hover, :active) {
   color: var(--wiki-purpose-error-ink);
   background-color: var(--wiki-purpose-error-fill);
+  transform: scale(1.04);
 }
 
 .wiki-close-control:focus-visible {
@@ -545,7 +559,10 @@ body {
 @media (max-width: 599.98px) {
   :root {
     --wiki-page-gutter: .875rem;
-    --wiki-control-height: 2.75rem;
+    --wiki-grid-size: 3rem;
+    --wiki-control-height: 2.625rem;
+    --wiki-panel-radius: .875rem;
+    --wiki-hero-radius: 1rem;
   }
 }
 

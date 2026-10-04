@@ -3,7 +3,7 @@
     <admin-hero
       icon="mdi-palette-outline"
       :title="$t('admin:theme.title')"
-      :description="[$t('admin:theme.paletteLibrary'), $t('admin:theme.readerLayout'), $t('admin:theme.customCode')].join(' · ')"
+      :description="$t('admin:theme.shapeQuietLegibleHome')"
     >
       <template #actions>
         <v-btn
@@ -43,7 +43,7 @@
       >{{ notice }}</v-alert
     >
     <template v-if="saved && draft && palette">
-      <div class="theme-status" role="status">
+      <div class="theme-status">
         <span
           ><i :class="{ 'is-draft': dirty }" />{{
             dirty ? $t('admin:theme.unsavedThemeDraft') : $t('admin:theme.showingSavedSettings')
@@ -54,7 +54,6 @@
             : $t('admin:theme.runtimeActivationNeedsAttention2')
         }}</span>
       </div>
-      <div class="theme-shell">
       <nav class="theme-tabs" :aria-label="$t('admin:theme.themeSections')">
         <button
           v-for="tab in sections"
@@ -71,7 +70,8 @@
         <section class="theme-editor">
           <template v-if="section === 'palettes'">
             <div class="theme-heading">
-              <h2>{{ $t('admin:theme.paletteLibrary') }}</h2>
+              <span class="theme-kicker">{{ $t('admin:theme.n01ColorLanguage') }}</span>
+              <h2>{{ $t('admin:theme.palettePlace') }}</h2>
               <p>
                 {{ $t('admin:theme.keepCollectionPossibilitiesChoose') }}
               </p>
@@ -190,7 +190,8 @@
           </template>
           <template v-else-if="section === 'reader'">
             <div class="theme-heading">
-              <h2>{{ $t('admin:theme.readerLayout') }}</h2>
+              <span class="theme-kicker">{{ $t('admin:theme.n02ReadingRhythm') }}</span>
+              <h2>{{ $t('admin:theme.makeRoomThought') }}</h2>
               <p>
                 {{ $t('admin:theme.setReadingProportionsAcross') }}
               </p>
@@ -276,7 +277,8 @@
           </template>
           <template v-else-if="section === 'code'">
             <div class="theme-heading">
-              <h2>{{ $t('admin:theme.customCode') }}</h2>
+              <span class="theme-kicker">{{ $t('admin:theme.n03FinishingDetails') }}</span>
+              <h2>{{ $t('admin:theme.beyondPalette') }}</h2>
               <p>
                 {{ $t('admin:theme.extendReaderPagesCustom') }}
               </p>
@@ -313,7 +315,8 @@
           </template>
           <template v-else>
             <div class="theme-heading">
-              <h2>{{ $t('admin:theme.activity') }}</h2>
+              <span class="theme-kicker">{{ $t('admin:theme.n04PublicationRecord') }}</span>
+              <h2>{{ $t('admin:theme.shapeChange') }}</h2>
               <p>
                 {{ $t('admin:theme.latest50SavedTheme') }}
               </p>
@@ -349,7 +352,7 @@
         <aside class="theme-aside">
           <div class="theme-preview-controls">
             <div>
-              <span class="theme-kicker">{{ $t('admin:theme.readerPreview') }}</span
+              <span class="theme-kicker">{{ $t('admin:theme.liveSpecimen') }}</span
               ><strong>{{ palette.name || $t('admin:theme.untitledPalette') }}</strong>
             </div>
             <div class="theme-segmented" :aria-label="$t('admin:theme.previewAppearance')">
@@ -477,7 +480,6 @@
           </section>
         </aside>
       </div>
-      </div>
       <div v-if="dirty" class="theme-savebar">
         <span
           >{{ $t('admin:theme.themeDraftChanged', { changedFieldsCount: changedFields.length, changedFields: changedFields.length === 1 ? "area" : "areas", interpolation: { escapeValue: false } }) }}</span
@@ -492,7 +494,7 @@
       </div>
     </template>
     <v-dialog v-model="deleteOpen" max-width="520"
-      ><v-card v-if="draft && palette" class="theme-confirmation" :title="$t('admin:theme.deletePalette2')"
+      ><v-card v-if="draft && palette" :title="$t('admin:theme.deletePalette2')"
         ><v-card-text
           ><p>
             {{ $t('admin:theme.removeDraftYouCan', { name: palette.name, interpolation: { escapeValue: false } }) }}
@@ -518,8 +520,8 @@
         ></v-card
       ></v-dialog
     >
-    <v-dialog v-model="reviewing" :persistent="busy" :fullscreen="$vuetify.display.smAndDown" max-width="900" :aria-label="$t('admin:theme.publishThemeChanges')"
-      ><v-card v-if="reviewed && saved" class="theme-confirmation" :title="$t('admin:theme.publishThemeChanges')"
+    <v-dialog v-model="reviewing" :persistent="busy" max-width="900"
+      ><v-card v-if="reviewed && saved" :title="$t('admin:theme.publishThemeChanges')"
         ><v-card-text
           ><p class="mb-5">
             {{ $t('admin:theme.reviewExactDraftBelow') }}

@@ -2,7 +2,7 @@
 
 @use "sass:math";
 
-// Document typography follows the saved reading preferences.
+// Modern reading surface
 .v-main .contents,
 .editor-page-canvas.contents,
 .contents .tiptap {
@@ -102,7 +102,7 @@
     padding: 0 0 var(--wiki-space-3, .75rem) 0;
     inline-size: fit-content;
     max-inline-size: calc(100% - var(--wiki-heading-permalink-lane, 2rem));
-    color: rgb(var(--v-theme-on-surface));
+    color: var(--wiki-accent-ink);
     font-size: 2.375rem;
     font-weight: 700;
     letter-spacing: -.04em;
@@ -114,6 +114,21 @@
       font-weight: inherit;
     }
 
+    &::after {
+      content: '';
+      position: absolute;
+      inset-block-end: 0;
+      inset-inline-start: 0;
+      inline-size: 100%;
+      block-size: 1.5px;
+      background: linear-gradient(to right, color-mix(in srgb, rgb(var(--v-theme-primary)) 60%, transparent), transparent);
+      border-radius: var(--wiki-radius-pill);
+    }
+
+    &[dir='rtl']::after,
+    [dir='rtl'] &::after {
+      background: linear-gradient(to left, color-mix(in srgb, rgb(var(--v-theme-primary)) 60%, transparent), transparent);
+    }
 
   }
 
@@ -582,7 +597,14 @@
     height: 1px;
     margin: var(--wiki-space-10, 2.5rem) 0;
     border: 0;
-    background: var(--wiki-surface-border-strong);
+    background:
+      linear-gradient(
+        to right,
+        transparent,
+        var(--wiki-surface-border-strong) 18%,
+        var(--wiki-surface-border-strong) 82%,
+        transparent
+      );
 
     &.footnotes-sep {
       display: block;
@@ -594,24 +616,40 @@
     padding: .16em .42em;
     border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-radius-xs, 4px);
-    background: var(--wiki-surface-sunken);
-    color: rgb(var(--v-theme-on-surface));
+    background: color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-sunken));
+    color: var(--wiki-accent-ink);
     font-family: var(--wiki-font-mono);
     font-size: .88em;
     box-shadow: none;
     overflow-wrap: anywhere;
   }
 
-  // Inline code remains click-to-copy with explicit outcome feedback.
+  // ---------------------------------
+  // INLINE CODE ATTRACTOR CHIP
+  // ---------------------------------
+  // Backtick-enclosed chips are click-to-copy (page.vue) and carry the same
+  // hover-triggered shimmer sweep as the code-block copy button. The sweep
+  // rides the chip's own background (band parked at the 100% position of a
+  // 300%-wide gradient) rather than an absolutely-positioned pseudo-element,
+  // because absolute insets on wrapped inline elements are unreliable.
   :not(pre) > code {
     cursor: copy;
+    background-image: linear-gradient(100deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 22%, transparent) 50%, transparent 60%);
+    background-size: 300% 100%;
+    background-repeat: no-repeat;
+    background-position: 100% 0;
     transition: color .15s ease, background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
 
     &:hover {
-      border-color: var(--wiki-surface-border-strong);
-      background-color: var(--wiki-surface-raised);
+      border-color: color-mix(in srgb, var(--wiki-accent-warm) 45%, var(--wiki-surface-border));
+      background-color: color-mix(in srgb, var(--wiki-accent-spectral) 10%, var(--wiki-surface-sunken));
     }
 
+    // Twice the rate of the code-block sweeps: the chip is a small target and
+    // the click acknowledgment should read snappier than the block gestures.
+    &.wiki-inline-shimmer-run {
+      animation: wiki-inline-code-shimmer-sweep .95s ease-in-out 1 both;
+    }
 
     &[data-inline-copy-state='success'] {
       color: var(--wiki-purpose-success-ink);
@@ -620,7 +658,7 @@
     }
 
     &[data-inline-copy-state='error'] {
-      color: var(--wiki-error-ink);
+      color: rgb(var(--v-theme-error));
       border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 40%, var(--wiki-surface-border));
       background-color: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, var(--wiki-surface-sunken));
     }
@@ -671,8 +709,8 @@
 
     .line-highlight {
       margin-block-start: 1rem;
-      border-inline-start: 3px solid rgb(var(--v-theme-primary));
-      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, var(--wiki-surface-sunken));
+      border-inline-start: 3px solid rgba(255, 193, 7, .82);
+      background: linear-gradient(90deg, rgba(255, 193, 7, .17), rgba(255, 193, 7, .06));
     }
   }
 
@@ -708,87 +746,133 @@
     }
   }
 
-  // Prism keeps Copy in a separate toolbar so it cannot cover authored code.
+  // ---------------------------------
+  // CODE BLOCK COPY BUTTON
+  // ---------------------------------
+  // Prism's toolbar plugin emits `<div class="toolbar">` after the `pre`
+  // inside the `.code-toolbar` wrapper it creates. Prism's own toolbar CSS is
+  // not loaded, so without these rules the copy button renders as a static
+  // full-width row below the block. Instead it floats inside the block's
+  // upper corner: small, out of the scroll flow, and tinted entirely through
+  // theme tokens so light/dark adapt automatically.
   .code-toolbar {
-    display: flex;
-    flex-direction: column-reverse;
-    min-width: 0;
-    margin: var(--wiki-space-6, 1.5rem) 0;
-
-    > pre,
-    > .prismjs {
-      margin: 0;
-      border-block-start: 0;
-      border-start-start-radius: 0;
-      border-start-end-radius: 0;
-    }
+    position: relative;
 
     > .toolbar {
-      display: flex;
-      justify-content: end;
-      padding: var(--wiki-space-2);
-      border: 1px solid var(--wiki-surface-border);
-      border-block-end: 1px solid var(--wiki-surface-border);
-      border-start-start-radius: var(--wiki-panel-radius);
-      border-start-end-radius: var(--wiki-panel-radius);
-      background: var(--wiki-surface-sunken);
+      position: absolute;
+      top: 0;
+      inset-inline-end: 0;
+      z-index: 4;
+      display: block;
+      line-height: 0;
+      opacity: .72;
+      transition: opacity .18s ease;
+
+      &:hover,
+      &:focus-within {
+        opacity: 1;
+      }
     }
 
     .toolbar-item {
-      display: inline-flex;
-      min-width: 0;
-      max-width: 100%;
+      display: inline-block;
     }
 
     .toolbar button {
+      position: relative;
+      overflow: hidden;
       display: inline-flex;
       align-items: center;
-      justify-content: center;
-      min-width: 2.75rem;
-      min-height: 2.75rem;
-      max-width: 100%;
-      padding: var(--wiki-space-2) var(--wiki-space-3);
-      border: 1px solid var(--wiki-surface-border-strong);
-      border-radius: var(--wiki-control-radius);
-      background: var(--wiki-surface-raised);
-      color: rgb(var(--v-theme-on-surface));
-      font-family: var(--wiki-font-body);
-      font-size: .8125rem;
+      padding: .25rem .625rem;
+      // Attached-tab silhouette: flush against the block's top-inline corner.
+      // The outer corner radius matches the block's own radius (minus its 1px
+      // border) so the button reads as part of the block boundary rather than
+      // a separate floating pill; the two inner edges carry a hairline seam.
+      border: 0;
+      border-start-end-radius: calc(var(--wiki-panel-radius, 1rem) - 1px);
+      border-end-start-radius: var(--wiki-radius-sm, .75rem);
+      background: color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent);
+      color: var(--wiki-text-muted);
+      font-family: var(--wiki-font-mono);
+      font-size: .75rem;
       font-weight: 600;
-      line-height: 1.4;
+      letter-spacing: .05em;
+      line-height: 1.5;
       cursor: pointer;
       appearance: none;
-      transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+      backdrop-filter: blur(3px);
+      box-shadow: inset 1px 0 0 var(--wiki-surface-border), inset 0 -1px 0 var(--wiki-surface-border);
+      transition: color .15s ease, background .15s ease, box-shadow .15s ease;
 
-      &:hover {
-        background: var(--wiki-surface-sunken);
+      &:hover,
+      &:focus-visible {
+        color: var(--wiki-accent-ink);
+        background: color-mix(in srgb, var(--wiki-accent-warm) 14%, var(--wiki-surface-raised) 86%);
+        box-shadow: inset 1px 0 0 color-mix(in srgb, var(--wiki-accent-warm) 45%, var(--wiki-surface-border-strong)), inset 0 -1px 0 color-mix(in srgb, var(--wiki-accent-warm) 45%, var(--wiki-surface-border-strong));
+        outline: none;
       }
 
-      &:focus-visible {
-        outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
-        outline-offset: 2px;
+      // Attractor: a soft accent sweep. Scheduled from page.vue so the first
+      // hover of a block fires it immediately and the ambient cadence resumes
+      // on a randomized timer afterwards; idle otherwise, kept out of the way.
+      &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent) 50%, transparent 60%);
+        transform: translateX(-130%);
+        pointer-events: none;
+      }
+
+      &.wiki-copy-shimmer-run::after {
+        animation: wiki-code-copy-shimmer-sweep 1.9s ease-in-out 1 both;
       }
 
       &[data-copy-state='success'] {
         color: var(--wiki-purpose-success-ink);
-        border-color: var(--wiki-purpose-success-edge);
+        background: color-mix(in srgb, var(--wiki-purpose-success-edge) 12%, var(--wiki-surface-raised) 88%);
       }
 
       &[data-copy-state='error'] {
-        color: var(--wiki-error-ink);
-        border-color: rgb(var(--v-theme-error));
+        color: rgb(var(--v-theme-error));
+        background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, var(--wiki-surface-raised) 90%);
       }
     }
+
   }
 
-  .codeblock-framed > .code-toolbar {
-    margin: 0;
+  // Whole-block copy acknowledgment: applied to the block's own pre (or to
+  // the enclosing .codeblock-framed for titled cards) only at the moment the
+  // Copy button is clicked. Idle otherwise — no timers, no hover triggers on
+  // the block itself. The pre is used rather than the .code-toolbar wrapper
+  // so the sweep stays flush with the panel and is clipped by the pre's own
+  // overflow instead of straying past the block's start edge.
+  .code-toolbar > pre.wiki-code-copy-flash-run,
+  .codeblock-framed.wiki-code-copy-flash-run {
+    position: relative;
+  }
 
-    > .toolbar {
-      border: 0;
-      border-block-end: 1px solid var(--wiki-surface-border);
-      border-radius: 0;
-    }
+  .code-toolbar > pre.wiki-code-copy-flash-run::after,
+  .codeblock-framed.wiki-code-copy-flash-run::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    // Above the toolbar button (z-index 4): the band must ride over the Copy
+    // button too, or the final stretch of the sweep hides underneath it and
+    // the gesture reads as dying at the button instead of reaching the edge.
+    z-index: 5;
+    border-radius: inherit;
+    // The band lives on a 300%-wide background whose position slides from
+    // 100% (band's leading tail parked at the block's start edge — no dead
+    // lag) to 0% (tail exits at the far edge). Nothing ever transforms, so
+    // the pre's scrollable overflow never grows and no horizontal scrollbar
+    // appears during the sweep.
+    background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
+    background-size: 300% 100%;
+    background-repeat: no-repeat;
+    pointer-events: none;
+    animation: wiki-code-block-copy-sweep .95s ease-in-out 1 both;
   }
 
   mark {
@@ -1912,12 +1996,13 @@ html[data-reader-motion='reduced'] .wiki-page {
   padding: 3rem 4rem 2rem;
   border: 0;
   border-radius: 8px;
-  background: rgb(18, 18, 18);
+  background: rgba(18, 18, 18, .97);
   color: #FFF;
   box-shadow: 0 20px 60px rgba(0, 0, 0, .55);
 
   &::backdrop {
     background: rgba(0, 0, 0, .78);
+    backdrop-filter: blur(4px);
   }
 
   &__figure {
@@ -1954,7 +2039,7 @@ html[data-reader-motion='reduced'] .wiki-page {
     height: 44px;
     place-items: center;
     border: 0;
-    border-radius: var(--wiki-control-radius);
+    border-radius: 50%;
     background: rgba(255, 255, 255, .14);
     color: #FFF;
     font: inherit;
@@ -2082,3 +2167,40 @@ html[data-reader-motion='reduced'] .wiki-page {
   }
 }
 
+// Single attractor sweep for the code-block copy button; scheduling lives in
+// page.vue (first-hover trigger + randomized ambient cadence).
+@keyframes wiki-code-copy-shimmer-sweep {
+  from { transform: translateX(-130%); }
+  to { transform: translateX(130%); }
+}
+
+// Whole-block acknowledgment sweep: fired only when the code block's Copy
+// button is clicked (page.vue wires it alongside the clipboard action), so
+// the entire block lights up the same way an inline backtick chip does when
+// the user clicks it to copy. Rides background-position on a stationary
+// full-inset band (the chip's pattern) rather than a transform: a transform
+// would drag the pseudo's bounds past the pre's edges, growing the
+// scrollable overflow and flashing a horizontal scrollbar, and the clipped
+// off-block start read as lag before the band became visible.
+//
+// Position arithmetic: with background-size 300% and gradient stops at
+// 40%/60% (band = image coords [1.2W, 1.8W]), the image offset is
+// (W - 3W) * p. The band's right edge touches the block's start edge at
+// position 90% and its left edge touches the block's far edge at position
+// 10%, so sweeping 90% -> 10% travels the band exactly edge-to-edge with
+// zero dead travel on either end: never visible while off-block, never
+// stalling short of the far edge.
+@keyframes wiki-code-block-copy-sweep {
+  from { background-position: 90% 0; }
+  to { background-position: 10% 0; }
+}
+
+// Inline-code chip attractor: the band rides the chip's own 300%-wide
+// background gradient. Background-position percentages interpolate smoothly,
+// so 100% parks the band fully off the left edge and 0% fully off the right;
+// fires only from the click-to-copy interaction (page.vue) and runs at twice
+// the code-block sweeps' rate: the chip acknowledgment should read snappier.
+@keyframes wiki-inline-code-shimmer-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}

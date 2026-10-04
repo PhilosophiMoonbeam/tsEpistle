@@ -1,9 +1,9 @@
 .storage-workspace,
 .storage-dialog {
-  --storage-line: var(--wiki-surface-border);
+  --storage-line: rgba(var(--v-theme-on-surface), .16);
   --storage-muted: var(--wiki-text-muted);
   --storage-accent: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
-  --storage-wash: var(--wiki-surface-sunken);
+  --storage-wash: rgba(var(--v-theme-on-surface), .035);
   color: rgb(var(--v-theme-on-surface));
 
   p {
@@ -13,11 +13,11 @@
   }
 
   h2 {
-    font-family: var(--wiki-font-body);
-    font-size: clamp(1.25rem, 2vw, 1.5rem);
-    font-weight: 650;
-    line-height: 1.35;
-    letter-spacing: normal
+    font-family: var(--wiki-font-display);
+    font-size: clamp(2rem, 3vw, 3.1rem);
+    font-weight: 500;
+    line-height: 1.13;
+    letter-spacing: -.035em
   }
 
   h3 {
@@ -51,15 +51,13 @@
 }
 
 .storage-workspace {
-  min-width: 0;
-  padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-12);
-  background: var(--wiki-surface)
+  padding: 24px 32px 80px
 }
 
 .storage-kicker {
-  text-transform: none;
-  letter-spacing: normal;
-  font-size: .8125rem;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  font-size: .68rem;
   font-weight: 650;
   color: var(--storage-muted)
 }
@@ -70,7 +68,7 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 14px 0;
+  padding: 22px 0;
   font-size: .77rem;
   color: var(--storage-muted);
 
@@ -94,17 +92,16 @@
 
 .storage-tabs {
   display: flex;
-  gap: 8px;
+  gap: 30px;
   border-bottom: 1px solid var(--storage-line);
-  margin-bottom: 24px;
-  flex-wrap: wrap;
+  margin-bottom: 36px;
+  overflow: auto;
 
   button {
     font-size: .88rem;
     white-space: nowrap;
     cursor: pointer;
-    min-height: 44px;
-    padding: 10px 14px;
+    padding: 14px 0;
     border-bottom: 2px solid transparent;
 
     &[aria-current=page] {
@@ -117,10 +114,10 @@
 
 .storage-heading {
   max-width: 740px;
-  margin-bottom: 20px;
+  margin-bottom: 32px;
 
   h2 {
-    margin: 8px 0 10px
+    margin: 13px 0 18px
   }
 
   p {
@@ -132,7 +129,7 @@
 .storage-overview {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 290px;
-  gap: 24px;
+  gap: 56px;
   align-items: start
 }
 
@@ -140,13 +137,13 @@
   padding: 25px;
   background: var(--storage-wash);
   border: 1px solid var(--storage-line);
-  border-radius: var(--wiki-panel-radius);
+  border-radius: 5px;
 
   h3 {
     margin: 12px 0 16px;
-    font-family: var(--wiki-font-body);
-    font-size: 1.125rem;
-    font-weight: 650
+    font-family: var(--wiki-font-display);
+    font-size: 1.45rem;
+    font-weight: 500
   }
 
   p {
@@ -173,7 +170,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 28px;
-  padding: 18px 0;
+  padding: 30px 0;
   margin-bottom: 12px;
   border-bottom: 1px solid var(--storage-line);
 
@@ -185,10 +182,10 @@
 
   strong {
     display: block;
-    font-size: 1.75rem;
-    font-weight: 650;
+    font-size: 2.7rem;
+    font-weight: 500;
     line-height: 1.4;
-    letter-spacing: normal;
+    letter-spacing: -.035em;
     font-variant-numeric: tabular-nums
   }
 
@@ -272,7 +269,7 @@
   font-weight: 600;
   padding: 5px 9px;
   border: 1px solid var(--storage-line);
-  border-radius: var(--wiki-control-radius);
+  border-radius: 4px;
   color: var(--storage-muted);
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -305,10 +302,10 @@
   align-items: center;
   gap: 18px;
   border: 1px solid var(--storage-line);
-  border-inline-start: 3px solid var(--storage-accent);
+  border-left: 3px solid var(--storage-accent);
   padding: 20px 22px;
   margin-bottom: 30px;
-  border-radius: var(--wiki-panel-radius);
+  border-radius: 4px;
 
   >div {
     flex: 1;
@@ -355,14 +352,14 @@
 .storage-target-layout {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
-  gap: 24px;
+  gap: 35px;
   align-items: start
 }
 
 .storage-catalog {
   min-width: 0;
   position: sticky;
-  top: calc(var(--wiki-chrome-height) + 1rem);
+  top: 24px;
 
   nav {
     margin: 18px 0
@@ -374,7 +371,7 @@
     align-items: center;
     gap: 12px;
     padding: 16px 12px;
-    text-align: start;
+    text-align: left;
     border: 1px solid transparent;
     border-bottom-color: var(--storage-line);
     cursor: pointer;
@@ -408,8 +405,8 @@
     &[aria-current=page] {
       background: var(--storage-wash);
       border: 1px solid var(--storage-line);
-      border-inline-start: 3px solid var(--storage-accent);
-      border-radius: var(--wiki-control-radius);
+      border-left: 3px solid var(--storage-accent);
+      border-radius: 4px;
 
       & strong {
         color: var(--storage-accent)
@@ -428,8 +425,7 @@
 .storage-target-detail {
   padding: 28px 32px 10px;
   border: 1px solid var(--storage-line);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
+  border-radius: 5px;
   min-width: 0
 }
 
@@ -447,9 +443,9 @@
   }
 
   h3 {
-    font-family: var(--wiki-font-body);
-    font-size: 1.25rem;
-    font-weight: 650;
+    font-family: var(--wiki-font-display);
+    font-size: 2rem;
+    font-weight: 500;
     margin: 8px 0 12px
   }
 
@@ -585,10 +581,10 @@
 
   button {
     width: 100%;
-    text-align: start;
+    text-align: left;
     padding: 18px 15px;
     border: 1px solid var(--storage-line);
-    border-radius: var(--wiki-control-radius);
+    border-radius: 4px;
     margin-bottom: 8px;
     cursor: pointer;
 
@@ -610,7 +606,7 @@
     }
 
     &[aria-current=page] {
-      border-inline-start: 3px solid var(--storage-accent);
+      border-left: 3px solid var(--storage-accent);
       background: var(--storage-wash)
     }
   }
@@ -620,17 +616,16 @@
   min-width: 0;
   padding: 26px 30px;
   border: 1px solid var(--storage-line);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
+  border-radius: 5px;
 
   >.storage-section-head {
     margin-top: 0
   }
 
   >h3 {
-    font-family: var(--wiki-font-body);
-    font-size: 1.25rem;
-    font-weight: 650;
+    font-family: var(--wiki-font-display);
+    font-size: 1.9rem;
+    font-weight: 500;
     margin-bottom: 15px
   }
 
@@ -871,11 +866,11 @@
   gap: 14px;
   padding: 15px 20px;
   margin: 30px 0 0;
-  background: var(--wiki-surface-raised);
+  background: rgb(var(--v-theme-surface));
   border: 1px solid var(--storage-line);
-  border-inline-start: 3px solid var(--storage-accent);
-  border-radius: var(--wiki-panel-radius);
-  box-shadow: none;
+  border-left: 3px solid var(--storage-accent);
+  border-radius: 5px;
+  box-shadow: 0 4px 25px rgba(0, 0, 0, .08);
   z-index: 3;
 
   >div {
@@ -900,8 +895,8 @@
 
 .storage-dialog {
   .v-card-title {
-    font-family: var(--wiki-font-body);
-    font-size: 1.25rem;
+    font-family: var(--wiki-font-display);
+    font-size: 1.6rem;
     padding: 25px 28px 16px;
     white-space: normal
   }
@@ -1009,8 +1004,8 @@
   }
 
   .storage-tabs {
-    gap: 8px;
-    margin-bottom: 20px
+    gap: 23px;
+    margin-bottom: 26px
   }
 
   .storage-target-layout,

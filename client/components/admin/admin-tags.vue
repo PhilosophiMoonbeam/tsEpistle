@@ -1,38 +1,40 @@
 <template>
   <v-container fluid class="admin-taxonomy">
-    <admin-hero :title="$t('admin:tags.title')" :description="$t('admin:tags.defineMeaningfulLabelsUnderstand')" icon="mdi-tag-multiple-outline">
+    <admin-hero :title="$t('admin:tags.title')" :description="$t('admin:tags.sharedVocabularyPeopleAgents')" icon="mdi-tag-multiple-outline">
       <template #actions>
         <v-btn :aria-disabled="hasUnsavedChanges || undefined" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ hasUnsavedChanges ? $t('admin:tags.saveResetTagChanges') : $t('admin:tags.reloadSavedTags') }}</v-tooltip></v-btn>
-        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" :disabled="busy" @click="openCreate">{{ $t('admin:tags.createTag') }}</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-plus" :disabled="busy" @click="openCreate">{{ $t('admin:tags.createTag') }}</v-btn>
       </template>
     </admin-hero>
 
-    <section v-if="inventoryLoaded" class="taxonomy-register-summary" :aria-label="$t('admin:tags.tagDirectory')">
-      <span class="taxonomy-register-scope">{{ loadedNamesLabel }}</span>
+    <section class="taxonomy-intro" aria-labelledby="taxonomy-intro-title">
+      <div>
+        <span class="taxonomy-kicker">{{ $t('admin:tags.sharedVocabulary') }}</span>
+        <h2 id="taxonomy-intro-title">{{ $t('admin:tags.giveKnowledgeCommonLanguage') }}</h2>
+        <p>{{ $t('admin:tags.defineMeaningfulLabelsUnderstand') }}</p>
+      </div>
       <dl>
-        <div><dt>{{ $t('admin:tags.activeTags') }}</dt><dd>{{ inventoryCounts.active }}</dd></div>
-        <div><dt>{{ $t('admin:tags.aliases') }}</dt><dd>{{ inventoryCounts.alias }}</dd></div>
-        <div><dt>{{ $t('admin:tags.unusedActive') }}</dt><dd>{{ inventoryCounts.unused }}</dd></div>
+        <div><dt>{{ $t('admin:tags.activeTags') }}</dt><dd>{{ tags.filter(t => state(t) === 'active').length }}</dd></div>
+        <div><dt>{{ $t('admin:tags.aliases') }}</dt><dd>{{ tags.filter(t => state(t) === 'alias').length }}</dd></div>
+        <div><dt>{{ $t('admin:tags.unusedActive') }}</dt><dd>{{ tags.filter(t => state(t) === 'active' && !t.pageCount).length }}</dd></div>
       </dl>
     </section>
 
     <v-alert v-if="success" type="success" variant="tonal" class="mb-4" role="status" closable @click:close="success = ''">{{ success }}</v-alert>
     <v-alert v-for="warning in warnings" :key="warning" type="warning" variant="tonal" class="mb-4">{{ warning }}</v-alert>
-    <v-alert v-if="loadError && inventoryLoaded" type="error" variant="tonal" class="mb-4">
+    <v-alert v-if="loadError && tags.length" type="error" variant="tonal" class="mb-4">
       <span>{{ loadError }}</span>
       <v-btn variant="text" size="small" class="ms-2" :disabled="busy || hasUnsavedChanges" @click="refresh">{{ $t('admin:tags.retryReload') }}</v-btn>
     </v-alert>
 
-    <async-state v-if="loading && !inventoryLoaded" state="loading" :title="$t('admin:tags.loadingVocabulary')" :message="$t('admin:tags.readingTagDefinitionsPage')" />
-    <async-state v-else-if="!inventoryLoaded && loadError" state="error" :title="$t('admin:tags.vocabularyCouldNotLoaded')" :message="loadError" :retry-label="$t('admin:tags.tryAgain')" @retry="refresh" />
+    <async-state v-if="loading && !tags.length" state="loading" :title="$t('admin:tags.loadingVocabulary')" :message="$t('admin:tags.readingTagDefinitionsPage')" />
+    <async-state v-else-if="!tags.length && loadError" state="error" :title="$t('admin:tags.vocabularyCouldNotLoaded')" :message="loadError" :retry-label="$t('admin:tags.tryAgain')" @retry="refresh" />
     <div v-else class="taxonomy-workspace">
       <aside class="taxonomy-directory" :aria-label="$t('admin:tags.tagDirectory')" :aria-busy="loading">
         <div class="taxonomy-directory-heading"><h3>{{ $t('admin:tags.vocabulary') }}</h3><span>{{ $t('admin:tags.namesCount', { count: tags.length }) }}</span></div>
-        <p class="taxonomy-directory-scope">{{ $t('admin:tags.filterLoadedNames', { defaultValue: 'Search and views filter the loaded tag register.' }) }}</p>
-        <v-progress-linear v-if="loading" indeterminate :aria-label="$t('admin:tags.loadingVocabulary')" />
         <v-text-field v-model="search" :label="$t('admin:tags.findTagLabel')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable :disabled="busy" @update:model-value="pagination = 1" />
         <v-select v-model="view" :items="views" :label="$t('admin:tags.vocabularyView')" variant="outlined" density="compact" hide-details :disabled="busy" @update:model-value="pagination = 1" />
-        <p class="taxonomy-directory-count" role="status">{{ registerRangeLabel }}</p>
+        <p class="taxonomy-directory-count" role="status">{{ $t('admin:tags.view', { tValue: $t('admin:tags.namesCount', { count: filtered.length }), interpolation: { escapeValue: false } }) }}</p>
         <div v-if="!filtered.length" class="taxonomy-empty">
           <v-icon icon="mdi-tag-search-outline" size="30" aria-hidden="true" />
           <h4>{{ tags.length ? $t('admin:tags.noMatchingNames') : $t('admin:tags.startSharedVocabulary') }}</h4>
@@ -40,15 +42,13 @@
           <v-btn v-if="tags.length" size="small" variant="text" :disabled="busy" @click="search = ''; view = 'all'">{{ $t('admin:tags.clearFilters') }}</v-btn>
         </div>
         <div v-else class="taxonomy-records">
-          <button v-for="entry in visible" :key="entry.id" type="button" class="taxonomy-record" :class="{ 'is-selected': selectedId === entry.id }" :aria-pressed="selectedId === entry.id" :aria-label="`${entry.title || entry.tag}, ${stateLabel(entry)}${selectedId === entry.id ? $t('admin:tags.selected') : ''}`" :disabled="mutationBusy" @click="select(entry.id)">
+          <button v-for="entry in visible" :key="entry.id" type="button" class="taxonomy-record" :class="{ 'is-selected': selectedId === entry.id }" :aria-pressed="selectedId === entry.id" :aria-label="`${entry.title || entry.tag}, ${state(entry)}${selectedId === entry.id ? $t('admin:tags.selected') : ''}`" :disabled="mutationBusy" @click="select(entry.id)">
             <v-icon :icon="selectedId === entry.id ? 'mdi-check' : state(entry) === 'alias' ? 'mdi-arrow-u-right-top' : state(entry) === 'archived' ? 'mdi-archive-outline' : 'mdi-pound'" size="18" aria-hidden="true" />
             <span><strong><bdi>{{ entry.tag }}</bdi></strong><small><bdi>{{ entry.title || (state(entry) === 'alias' ? $t('admin:tags.alias') : $t('admin:tags.noDisplayLabel')) }}</bdi></small></span>
-            <span class="taxonomy-record-meta"><b>{{ entry.pageCount }}</b><small>{{ state(entry) === 'active' ? $t('admin:tags.pagesLabel', { defaultValue: 'pages' }) : stateLabel(entry) }}</small></span>
+            <span class="taxonomy-record-meta"><b>{{ entry.pageCount }}</b><small>{{ state(entry) === 'active' ? 'pages' : state(entry) }}</small></span>
           </button>
         </div>
         <v-pagination v-if="pageCount > 1" v-model="pagination" :length="pageCount" :total-visible="3" density="compact" :aria-label="$t('admin:tags.tagDirectoryPages')" :disabled="busy" />
-        <v-select v-if="tags.length" v-model="directoryPageSize" :items="[12, 24, 48]" :label="$t('admin:tags.namesPerPage', { defaultValue: 'Names per page' })" variant="outlined" density="compact" hide-details :disabled="busy" />
-        <v-btn v-if="inspection" variant="text" prepend-icon="mdi-crosshairs-gps" :disabled="busy" @click="locateSelected">{{ $t('admin:tags.locateSelected', { defaultValue: 'Show selected in register' }) }}</v-btn>
         <v-btn v-if="inspection" class="taxonomy-view-selected" variant="outlined" prepend-icon="mdi-eye-outline" :disabled="busy" @click="viewSelected">{{ $t('admin:tags.viewSelectedTag') }}</v-btn>
         <p class="taxonomy-directory-note">{{ $t('admin:tags.aliasesKeepOldNames') }}</p>
       </aside>
@@ -58,19 +58,24 @@
         <async-state v-if="detailLoading" state="loading" :title="$t('admin:tags.readingTag')" :message="$t('admin:tags.gatheringPageAssignmentsAccess')" />
         <async-state v-else-if="detailError" state="error" :title="$t('admin:tags.tagCouldNotOpened')" :message="detailError" :retry-label="$t('admin:tags.tryAgain')" @retry="loadDetail(selectedId)" />
         <div v-else-if="!inspection" class="taxonomy-welcome">
-          <v-icon icon="mdi-tag-search-outline" size="24" aria-hidden="true" />
-          <h3>{{ $t('admin:tags.selectedTagDetails') }}</h3>
-          <p>{{ $t('admin:tags.chooseNameUnderstandReach') }}</p>
+          <div class="taxonomy-welcome-mark" aria-hidden="true">#</div>
+          <span class="taxonomy-kicker">{{ $t('admin:tags.vocabularyCanGrow') }}</span>
+          <h3>{{ $t('admin:tags.chooseNameUnderstandReach') }}</h3>
+          <p>{{ $t('admin:tags.everyTagHasDefinition') }}</p>
+          <div class="taxonomy-principles">
+            <div><v-icon icon="mdi-tag-outline" aria-hidden="true" /><strong>{{ $t('admin:tags.define') }}</strong><p>{{ $t('admin:tags.giveEachConceptClear') }}</p></div>
+            <div><v-icon icon="mdi-source-merge" aria-hidden="true" /><strong>{{ $t('admin:tags.consolidate') }}</strong><p>{{ $t('admin:tags.bringOverlappingConceptsTogether') }}</p></div>
+            <div><v-icon icon="mdi-history" aria-hidden="true" /><strong>{{ $t('admin:tags.preserve') }}</strong><p>{{ $t('admin:tags.keepHistoricalLabelsVocabulary') }}</p></div>
+          </div>
         </div>
         <template v-else>
           <p class="taxonomy-loaded-status" role="status">{{ $t('admin:tags.loaded') }} <bdi>{{ current.title || current.tag }}</bdi></p>
           <header class="taxonomy-identity">
-            <v-icon icon="mdi-tag-outline" size="24" class="taxonomy-identity-icon" aria-hidden="true" />
+            <div class="taxonomy-identity-mark" aria-hidden="true">#</div>
             <div class="taxonomy-identity-main">
-              <div class="taxonomy-identity-meta"><span class="taxonomy-kicker">{{ state(current) === 'alias' ? $t('admin:tags.historicalName') : state(current) === 'archived' ? $t('admin:tags.archivedVocabulary') : $t('admin:tags.canonicalTag') }}</span><v-chip size="small" variant="outlined">{{ stateLabel(current) }}</v-chip></div>
+              <div class="taxonomy-identity-meta"><span class="taxonomy-kicker">{{ state(current) === 'alias' ? $t('admin:tags.historicalName') : state(current) === 'archived' ? $t('admin:tags.archivedVocabulary') : $t('admin:tags.canonicalTag') }}</span><v-chip size="small" variant="outlined">{{ state(current) }}</v-chip></div>
               <h2 id="taxonomy-selected-title" tabindex="-1"><bdi>{{ current.title || current.tag }}</bdi></h2>
               <p v-if="current.title && current.title !== current.tag" class="taxonomy-name"><bdi>{{ current.tag }}</bdi></p>
-              <p v-if="state(current) === 'active'" class="taxonomy-definition-status" :class="{ 'is-draft': dirty }" role="status"><v-icon :icon="dirty ? 'mdi-pencil-outline' : 'mdi-check-circle-outline'" size="16" />{{ dirty ? $t('admin:tags.unsavedDefinition') : $t('admin:tags.matchesSavedDefinition') }}</p>
             </div>
           </header>
           <div v-if="current.redirectToId" class="taxonomy-destination"><v-icon icon="mdi-arrow-u-right-top" size="18" aria-hidden="true" /><span>{{ current.isArchived ? $t('admin:tags.retiredAlias') : $t('admin:tags.resolves') }} <button type="button" :disabled="mutationBusy" @click="select(current.redirectToId!)"><bdi>{{ destination?.tag || $t('admin:tags.tag2', { redirectToId: current.redirectToId, interpolation: { escapeValue: false } }) }}</bdi></button></span></div>
@@ -113,7 +118,7 @@
       </section>
     </div>
 
-    <v-dialog :model-value="createOpen" max-width="560" :persistent="creating" aria-labelledby="create-taxonomy-title" @update:model-value="setCreateDialog" @after-leave="restoreCreateFocus">
+    <v-dialog :model-value="createOpen" max-width="560" :persistent="creating" aria-labelledby="create-taxonomy-title" @update:model-value="setCreateDialog">
       <v-card class="taxonomy-dialog">
         <div class="taxonomy-dialog-heading"><span class="taxonomy-kicker">{{ $t('admin:tags.buildVocabulary') }}</span><h3 id="create-taxonomy-title">{{ $t('admin:tags.createTag2') }}</h3><p>{{ $t('admin:tags.reserveClearNameNow') }}</p></div>
         <form @submit.prevent="create">
@@ -175,7 +180,6 @@ export default {
   data() {
     return {
       tags: [] as TaxonomyTag[],
-      inventoryLoaded: false,
       inspection: null as TaxonomyInspection | null,
       loading: false,
       loadError: '',
@@ -189,7 +193,6 @@ export default {
       view: 'active',
       pagination: 1,
       pageLimit: 25,
-      directoryPageSize: 12,
       section: 'definition',
       draft: emptyDefinition(),
       mergeTarget: null as number | null,
@@ -197,7 +200,6 @@ export default {
       success: '',
       warnings: [] as string[],
       createOpen: false,
-      createReturnFocus: null as HTMLElement | null,
       creating: false,
       createError: '',
       newTag: emptyDefinition(),
@@ -232,36 +234,14 @@ export default {
     createDirty(): boolean { return Boolean(this.newTag.tag || this.newTag.title) },
     hasUnsavedChanges(): boolean { return this.dirty || this.createDirty },
     validDefinition(): boolean { return this.definitionValid(this.draft) },
-    loadedNamesLabel(): string {
-      return this.$t('admin:tags.loadedNames', { defaultValue: '{{count}} names loaded', count: this.tags.length })
-    },
-    registerRangeLabel(): string {
-      return this.$t('admin:tags.registerRange', {
-        defaultValue: '{{start}}–{{end}} of {{count}} matching names',
-        start: this.filtered.length ? (this.pagination - 1) * this.directoryPageSize + 1 : 0,
-        end: Math.min(this.pagination * this.directoryPageSize, this.filtered.length),
-        count: this.filtered.length
-      })
-    },
-    inventoryCounts(): { active: number; alias: number; unused: number } {
-      const counts = { active: 0, alias: 0, unused: 0 }
-      for (const tag of this.tags) {
-        const state = this.state(tag)
-        if (state === 'active') {
-          counts.active++
-          if (!tag.pageCount) counts.unused++
-        } else if (state === 'alias') counts.alias++
-      }
-      return counts
-    },
     filtered(): TaxonomyTag[] {
       const query = (this.search || '').trim().toLocaleLowerCase()
       return this.tags
         .filter(t => (this.view === 'all' || this.view === 'unused' ? this.view === 'all' || (this.state(t) === 'active' && !t.pageCount) : this.state(t) === this.view) && (!query || `${t.tag} ${t.title}`.toLocaleLowerCase().includes(query)))
         .sort((a, b) => a.tag.localeCompare(b.tag))
     },
-    pageCount(): number { return Math.ceil(this.filtered.length / this.directoryPageSize) },
-    visible(): TaxonomyTag[] { return this.filtered.slice((this.pagination - 1) * this.directoryPageSize, this.pagination * this.directoryPageSize) },
+    pageCount(): number { return Math.ceil(this.filtered.length / 12) },
+    visible(): TaxonomyTag[] { return this.filtered.slice((this.pagination - 1) * 12, this.pagination * 12) },
     mergeTargets(): TaxonomyTag[] { return this.tags.filter(t => this.state(t) === 'active' && t.id !== this.selectedId).sort((a, b) => a.tag.localeCompare(b.tag)) },
     reviewTitle(): string { return this.preview?.change.action === 'merge' ? this.$t('admin:tags.bringTwoConceptsTogether') : this.preview?.change.action === 'archive' ? this.$t('admin:tags.retireName') : this.preview?.change.action === 'restore' ? this.$t('admin:tags.restoreName') : this.preview?.destination ? this.$t('admin:tags.renameConcept') : this.$t('admin:tags.updateDisplayLabel') },
     reviewExplanation(): string {
@@ -278,8 +258,6 @@ export default {
     }
   },
   watch: {
-    directoryPageSize() { this.pagination = 1 },
-    pageCount(count: number) { this.pagination = Math.min(this.pagination, Math.max(1, count)) },
     selectedId(id: number) {
       this.section = 'definition'
       this.loadDetail(id)
@@ -287,16 +265,6 @@ export default {
   },
   methods: {
     state: taxonomyState,
-    stateLabel(tag: TaxonomyTag): string {
-      return this.state(tag) === 'active' ? this.$t('admin:tags.activeState', { defaultValue: 'Active' }) : this.state(tag) === 'alias' ? this.$t('admin:tags.alias') : this.$t('admin:tags.archived')
-    },
-    locateSelected() {
-      if (this.busy || !this.inspection) return
-      this.search = ''
-      this.view = 'all'
-      const index = this.filtered.findIndex(tag => tag.id === this.current.id)
-      if (index >= 0) this.pagination = Math.floor(index / this.directoryPageSize) + 1
-    },
     definitionValid(value: { tag: string; title: string }): boolean {
       return Boolean(value.tag.trim()) && value.tag.trim().length <= 255 && value.title.trim().length <= 255 && !/[\u0000-\u001f\u007f]/.test(value.tag + value.title)
     },
@@ -358,7 +326,6 @@ export default {
         const tags = await fetchTaxonomy()
         if (this.disposed || sequence !== this.inventorySequence) return false
         this.tags = tags
-        this.inventoryLoaded = true
         this.pagination = Math.min(this.pagination, Math.max(1, this.pageCount))
         return true
       } catch (error) {
@@ -401,13 +368,11 @@ export default {
         if (!this.disposed && sequence === this.loadSequence) this.detailLoading = false
       }
     },
-    async openCreate(event?: MouseEvent) {
-      const returnFocusTo = event?.currentTarget ?? document.activeElement
+    async openCreate() {
       if (this.busy || !(await this.confirmUnsaved(this.$t('admin:tags.discardUnsavedTagChanges'))) || this.busy) return
       this.resetDraft()
       this.newTag = emptyDefinition()
       this.createError = ''
-      this.createReturnFocus = returnFocusTo instanceof HTMLElement ? returnFocusTo : null
       this.createOpen = true
     },
     setCreateDialog(value: boolean) {
@@ -428,13 +393,6 @@ export default {
       this.createError = ''
       return true
     },
-    restoreCreateFocus(): void {
-      const target = this.createReturnFocus
-      this.createReturnFocus = null
-      if (this.disposed || this.createOpen || !target?.isConnected || target.matches(':disabled') ||
-          target.closest('[inert], [aria-hidden="true"]')) return
-      target.focus({ preventScroll: true })
-    },
     async create(): Promise<void> {
       if (this.creating || this.applying || this.reviewing || !this.definitionValid(this.newTag)) return
       const definition = { tag: this.newTag.tag, title: this.newTag.title }
@@ -450,7 +408,6 @@ export default {
         }
         if (this.disposed) return
         this.newTag = emptyDefinition()
-        this.createReturnFocus = null
         this.createOpen = false
         this.success = this.$t('admin:tags.tagCreatedReadyAssign')
         this.view = 'active'
@@ -592,32 +549,11 @@ export default {
 </script>
 <style lang="scss" scoped>
 .admin-taxonomy {
-  --taxonomy-border: var(--wiki-surface-border);
+  --taxonomy-border: var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+  --taxonomy-border-strong: var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .28));
   --taxonomy-muted: var(--wiki-text-muted);
   min-width: 0;
   color: rgb(var(--v-theme-on-surface));
-}
-
-.admin-taxonomy :deep(.v-input),
-.taxonomy-dialog :deep(.v-input) { min-width: 0; }
-
-.admin-taxonomy :deep(.v-btn),
-.taxonomy-dialog :deep(.v-btn) {
-  max-width: 100%;
-  min-height: 40px;
-  height: auto;
-  .v-btn__content { white-space: normal; padding-block: 6px; }
-}
-
-.taxonomy-definition-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  color: var(--wiki-success-ink);
-  font-size: .8125rem;
-  line-height: 1.5;
-  &.is-draft { color: var(--wiki-warning-ink); }
 }
 
 .taxonomy-kicker {
@@ -625,39 +561,65 @@ export default {
   color: var(--taxonomy-muted);
   font-size: .75rem;
   font-weight: 750;
-  line-height: 1.4;
+  letter-spacing: .13em;
+  line-height: 1.3;
+  text-transform: uppercase;
 }
 
-.taxonomy-register-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px 24px;
-  padding: 12px 16px;
-  margin-block: 16px;
-  border: 1px solid var(--taxonomy-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  font-size: .8125rem;
-  color: var(--taxonomy-muted);
-  dl { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 0; }
-  dl > div { display: flex; gap: 8px; align-items: baseline; }
-  dd { margin: 0; font-weight: 650; color: rgb(var(--v-theme-on-surface)); font-variant-numeric: tabular-nums; }
-}
+.taxonomy-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 32px;
+  padding: 24px 0 32px;
+  min-width: 0;
 
-.taxonomy-directory-scope {
-  margin: 0;
-  color: var(--taxonomy-muted);
-  font-size: .8125rem;
-  line-height: 1.5;
+  h2 {
+    margin: 8px 0;
+    font-family: var(--wiki-font-display, var(--wiki-font-heading, sans-serif));
+    font-size: clamp(1.5rem, 2.6vw, 2.1rem);
+    font-weight: 600;
+    letter-spacing: -.035em;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  p {
+    max-width: 680px;
+    margin: 0;
+    color: var(--taxonomy-muted);
+    font-size: .9375rem;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(72px, 1fr));
+    gap: 24px;
+    margin: 0;
+  }
+
+  dt {
+    color: var(--taxonomy-muted);
+    font-size: .8125rem;
+    line-height: 1.35;
+  }
+
+  dd {
+    margin: 6px 0 0;
+    font-size: 1.75rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    line-height: 1;
+  }
 }
 
 .taxonomy-workspace {
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   align-items: start;
-  gap: 16px;
+  gap: 24px;
   min-width: 0;
 }
 
@@ -673,7 +635,7 @@ export default {
   grid-template-columns: minmax(0, 1fr);
   display: grid;
   gap: 12px;
-  padding: 16px;
+  padding: 24px;
 }
 
 .taxonomy-directory-heading {
@@ -708,9 +670,6 @@ export default {
   display: grid;
   gap: 4px;
   min-width: 0;
-  max-height: min(64dvh, 680px);
-  overflow-y: auto;
-  padding: 3px;
 }
 
 .taxonomy-record {
@@ -722,7 +681,7 @@ export default {
   gap: 10px;
   padding: 8px;
   border: 1px solid transparent;
-  border-radius: var(--wiki-control-radius);
+  border-radius: var(--wiki-radius-xs, 6px);
   background: transparent;
   color: rgb(var(--v-theme-on-surface));
   cursor: pointer;
@@ -754,13 +713,12 @@ export default {
   }
 
   &:hover {
-    background: var(--wiki-surface-sunken);
+    background: rgba(var(--v-theme-on-surface), .04);
   }
 
   &.is-selected {
-    border-color: var(--wiki-accent-ink);
-    background: var(--wiki-surface-sunken);
-    color: var(--wiki-accent-ink);
+    border-color: rgba(var(--v-theme-primary), .35);
+    background: rgba(var(--v-theme-primary), .1);
   }
 }
 
@@ -830,20 +788,21 @@ export default {
 }
 
 .taxonomy-welcome {
-  padding: 24px 20px;
-  text-align: start;
+  padding: 56px 32px;
+  text-align: center;
 
   h3 {
     margin: 8px 0;
-    font-family: var(--wiki-font-heading);
-    font-size: 1.125rem;
-    font-weight: 650;
-    line-height: 1.4;
+    font-family: var(--wiki-font-heading, sans-serif);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -.025em;
+    line-height: 1.25;
   }
 
   > p {
     max-width: 480px;
-    margin: 0;
+    margin: 0 auto;
     color: var(--taxonomy-muted);
     font-size: .9375rem;
     line-height: 1.75;
@@ -851,6 +810,37 @@ export default {
   }
 }
 
+.taxonomy-welcome-mark {
+  padding-bottom: 16px;
+  color: var(--wiki-primary-ink);
+  font-size: 3.5rem;
+  font-weight: 250;
+  line-height: 1;
+}
+
+.taxonomy-principles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px solid var(--taxonomy-border);
+  text-align: start;
+
+  strong {
+    display: block;
+    margin: 8px 0 4px;
+    font-size: .875rem;
+  }
+
+  p {
+    margin: 0;
+    color: var(--taxonomy-muted);
+    font-size: .8125rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+}
 
 .taxonomy-identity {
   display: flex;
@@ -860,9 +850,17 @@ export default {
   padding: 24px 24px 16px;
 }
 
-.taxonomy-identity-icon {
+.taxonomy-identity-mark {
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
-  color: var(--wiki-accent-ink);
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--taxonomy-border);
+  border-radius: var(--wiki-panel-radius, 12px);
+  color: var(--wiki-primary-ink);
+  font-size: 2.5rem;
+  font-weight: 250;
 }
 
 .taxonomy-identity-main {
@@ -872,9 +870,10 @@ export default {
   h2 {
     margin: 8px 0 4px;
     font-family: var(--wiki-font-heading, sans-serif);
-    font-size: 1.25rem;
+    font-size: 1.75rem;
     font-weight: 650;
-    line-height: 1.35;
+    letter-spacing: -.035em;
+    line-height: 1.25;
     overflow-wrap: anywhere;
   }
 }
@@ -940,7 +939,7 @@ export default {
 
   dd {
     margin: 6px 0 0;
-    font-size: 1.125rem;
+    font-size: 1.5rem;
     font-variant-numeric: tabular-nums;
     font-weight: 600;
   }
@@ -963,11 +962,10 @@ export default {
     color: var(--taxonomy-muted);
     font-family: var(--wiki-font-heading, sans-serif);
     font-size: .875rem;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
 
     &[aria-selected='true'] {
-      border-bottom-color: var(--wiki-accent-ink);
-      background: var(--wiki-surface-sunken);
+      border-bottom-color: rgb(var(--v-theme-primary));
       color: rgb(var(--v-theme-on-surface));
       font-weight: 650;
     }
@@ -998,7 +996,7 @@ export default {
   h3 {
     margin: 0 0 8px;
     font-family: var(--wiki-font-heading, sans-serif);
-    font-size: 1.0625rem;
+    font-size: 1.2rem;
     font-weight: 650;
     letter-spacing: -.02em;
   }
@@ -1220,7 +1218,7 @@ export default {
 }
 
 .taxonomy-dialog {
-  --taxonomy-border: var(--wiki-surface-border);
+  --taxonomy-border: var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
   --taxonomy-muted: var(--wiki-text-muted);
   max-width: 100%;
   max-height: calc(100dvh - 32px);
@@ -1404,7 +1402,6 @@ export default {
 button:focus-visible,
 a:focus-visible,
 summary:focus-visible,
-.taxonomy-impact-table:focus-visible,
 .taxonomy-view-selected:focus-visible {
   outline: 2px solid var(--wiki-focus-color, rgb(var(--v-theme-primary)));
   outline-offset: var(--wiki-focus-offset, 2px);
@@ -1414,7 +1411,6 @@ summary:focus-visible,
   button:focus-visible,
   a:focus-visible,
   summary:focus-visible,
-  .taxonomy-impact-table:focus-visible,
   .taxonomy-view-selected:focus-visible {
     outline-color: Highlight;
   }
@@ -1432,12 +1428,19 @@ summary:focus-visible,
 }
 
 @media (max-width: 599.98px) {
-  .admin-taxonomy :deep(.v-btn),
-  .taxonomy-dialog :deep(.v-btn) { min-height: 44px; }
-  .admin-taxonomy :deep(.v-selection-control__input),
-  .taxonomy-dialog :deep(.v-selection-control__input) { min-width: 44px; min-height: 44px; }
-  .taxonomy-directory :deep(.v-pagination__list) { flex-wrap: wrap; }
-  .taxonomy-register-summary { padding: 12px; gap: 12px; dl { gap: 8px 16px; } }
+  .taxonomy-intro {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding-block: 16px 24px;
+
+    dl {
+      gap: 12px;
+    }
+
+    dd {
+      font-size: 1.5rem;
+    }
+  }
 
   .taxonomy-directory {
     padding: 16px;
@@ -1454,6 +1457,12 @@ summary:focus-visible,
     padding: 16px;
   }
 
+  .taxonomy-identity-mark {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--wiki-radius-xs, 6px);
+    font-size: 2rem;
+  }
 
   .taxonomy-identity-main h2 {
     font-size: 1.4rem;
@@ -1521,6 +1530,11 @@ summary:focus-visible,
     }
   }
 
+  .taxonomy-principles {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin-top: 32px;
+  }
 
   .taxonomy-review-summary,
   .taxonomy-definition-review {

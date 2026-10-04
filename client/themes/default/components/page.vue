@@ -1,12 +1,12 @@
 <template lang="pug">
-  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !printView && !talkActive && !linksActive }]')
+  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive }]')
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
     nav-header(v-if='!printView', reserve-actions)
     //- Decorative: a live progressbar would announce every scroll step.
     .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
     .page-reading-chrome(v-show='readerFocus && !printView && !talkActive && !linksActive', @keydown.esc.capture='readerSectionsEscape')
-      .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)')
+      .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
         v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
         .page-reading-dock-context
           span.page-reading-dock-title {{ readerSection ? readerSection.title : title }}
@@ -93,13 +93,35 @@
       ref='content'
       :aria-busy='navigationPending ? `true` : undefined'
     )
-      v-container.page-context-band(
+      v-container.page-hero(
+        ref='pageHero'
         fluid
-        :class='{ "page-context-band--accent-present": hasPageBrandingAccent }'
+        :class='{ "page-hero--with-toc": tocPosition !== `off`, "page-hero--accent-present": hasPageBrandingAccent }'
         :style='pageBrandingStyle'
       )
-        .page-header-section
-          .page-document-context
+        v-row.page-header-section(:gap='0')
+          v-col.page-col-content.is-page-header(
+            cols='12'
+            :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, `page-header--toc-${tocPosition}`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
+            )
+            .page-header-headings(
+              :class='{ "page-header-headings--branded": pageBrandingVisible }'
+            )
+              .page-document-label
+                span {{$t('common:page.documentKind')}}
+                span.page-document-label__divider(aria-hidden='true') /
+                bdi(dir='ltr') {{ locale.toUpperCase() }}
+              .page-title-row.d-flex.align-center
+                h1.page-title(ref='pageTitle', :id='pageTitleId') {{title}}
+                v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
+              page-branding-mark(
+                v-if='pageBranding && !pageBrandingDuplicatesSiteLogo'
+                :branding='pageBranding'
+                :failed='brandingFailureIdentity === pageBrandingIdentity'
+                @error='pageBrandingImageError'
+              )
+            .page-header-summary(v-if='description')
+              p.page-description {{description}}
             nav.page-header-path(
               v-if='!printView && path !== `home`'
               role='navigation'
@@ -126,30 +148,13 @@
                     :aria-current='props.item.href === breadcrumbs[breadcrumbs.length - 1].href ? `page` : undefined'
                   )
                     span.breadcrumbs-nav__label {{props.item.title}}
-            .page-header-headings(
-              :class='{ "page-header-headings--branded": pageBrandingVisible }'
-            )
-              .page-document-label
-                span {{$t('common:page.documentKind')}}
-                span.page-document-label__divider(aria-hidden='true') /
-                bdi(dir='ltr') {{ locale.toUpperCase() }}
-              .page-title-row.d-flex.align-center
-                h1.page-title(ref='pageTitle', :id='pageTitleId') {{title}}
-                v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
-              page-branding-mark(
-                v-if='pageBranding && !pageBrandingDuplicatesSiteLogo'
-                :branding='pageBranding'
-                :failed='brandingFailureIdentity === pageBrandingIdentity'
-                @error='pageBrandingImageError'
-              )
-            .page-header-summary(v-if='description')
-              p.page-description {{description}}
             //- One static unpublished surface: chip plus one sentence.
             .page-header-unpublished(v-if='!isPublished', role='note')
               v-chip.page-unpublished-chip(size='small', color='warning', variant='tonal', prepend-icon='mdi-eye-off-outline') {{$t('common:page.unpublished')}}
               span.page-header-unpublished-text.text-body-small {{$t('common:page.unpublishedWarning')}}
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
+              :class='tocPosition === `right` ? `is-right` : ``'
             )
               v-btn(
                 v-if='showHeaderEditButton'
@@ -169,18 +174,22 @@
               )
                 v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
                 span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
-          #page-header-tools.page-header-tools
       v-container.page-body(fluid)
-        .page-workspace(:class='`page-workspace--toc-${tocPosition}`')
+        v-row
           #page-mobile-tools.page-mobile-tools
           #page-tablet-tools.page-tablet-tools
 
-          .page-col-sd(
+          v-col.page-col-sd(
+            ref='desktopRailCol'
+            cols='12'
             :class='[tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
             )
-            #page-desktop-rail.page-desktop-rail
+            #page-desktop-rail.page-desktop-rail(ref='desktopRail')
 
-          .page-col-content(
+
+
+          v-col.page-col-content(
+            cols='12'
             :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
             )
             v-menu(
@@ -244,8 +253,9 @@
               .comments-main
                 slot(name='comments')
           #page-mobile-metadata.page-mobile-metadata
-          #page-tablet-metadata.page-tablet-metadata
-          //- Keyless teleports move the existing controls without losing menu or focus state.
+          //- No :key here: remounting on breakpoint changes makes deferred
+          //- teleports land in reverse order in the shared rail container
+          //- (Tags jumped above the utilities). `:to` moves content in order.
           Teleport(
             defer
             :to='pageToolsHost'
@@ -256,7 +266,6 @@
               //- first side of the card where they cover no content (see
               //- placeUtilityTooltip); their width is capped so long reasons wrap.
               .page-tools-card__utilities(v-if='!printView')
-                span.page-tools-card__label {{$t('common:page.pageTools')}}
                 v-menu(:location='isTocMobile ? "top end" : `bottom`', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(v-bind='utilityTooltipProps(`share`)')
@@ -443,7 +452,8 @@
                     )
                       v-icon(aria-hidden='true') mdi-history
                   span {{$t('common:page.viewHistory')}}
-              //- Provenance stays beside the document tools, not inside the outline.
+              v-divider.page-tools-card__divider(v-if='updatedAt || hasAuthor')
+              //- Centered metadata column between the utilities and the outline.
               .page-tools-card__provenance(v-if='updatedAt || hasAuthor')
                 .page-document-provenance
                   .page-document-row.page-document-row--date(v-if='updatedAt')
@@ -453,12 +463,8 @@
                       | {{ authorAttribution.before }}
                       bdi.page-provenance-author(:title='authorName') {{ authorName }}
                       | {{ authorAttribution.after }}
-          Teleport(
-            defer
-            :to='pageOutlineHost'
-            :disabled='printView'
-          )
-            //- The same outline tree moves into the focus picker with its state intact.
+            //- Move the same outline into the picker: filter and branch state,
+            //- focusable links, and disclosure IDs stay attached to one tree.
             Teleport(
               defer
               to='#page-reading-sections-host'
@@ -514,10 +520,11 @@
                     v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
                     span.text-body-small {{$t('common:page.noSections')}}
 
-          //- Keep metadata keyless so it follows the same document across breakpoints.
+          //- Keep this keyless too so both teleports move as a pair and keep
+          //- their source order (shortcuts/provenance/toc before tags/comments).
           Teleport(
             defer
-            :to='isTocMobile ? `#page-mobile-metadata` : winWidth < 1280 ? `#page-tablet-metadata` : `#page-desktop-rail`'
+            :to='isTocMobile ? `#page-mobile-metadata` : winWidth < 1280 ? `#page-tablet-tools` : `#page-desktop-rail`'
             :disabled='printView'
           )
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
@@ -1003,6 +1010,19 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
     text: () => env.code || ''
   })
 
+  // The whole block acknowledges the copy with the same attractor sweep the
+  // inline backtick chips use on their click-to-copy: a single soft accent
+  // band rides the block boundary. Fires on the click itself, not on the
+  // clipboard outcome.
+  linkCopy.addEventListener('click', () => {
+    const toolbar = linkCopy.closest<HTMLElement>('.code-toolbar')
+    if (!toolbar) return
+    // Flash the block's own pre (or the framed card) so the sweep stays
+    // clipped inside the panel instead of straying past its start edge.
+    const block = toolbar.closest<HTMLElement>('.codeblock-framed') ?? toolbar.querySelector<HTMLElement>('pre')
+    if (!block) return
+    flashCodeBlockCopy(block)
+  })
 
   clip.on('success', () => {
     linkCopy.textContent = i18next.t('page.codeCopied', { ns: 'common' })
@@ -1025,8 +1045,122 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
     }, 5000)
   }
 })
-// Inline code retains click-to-copy and explicit success/error feedback.
 
+// ---------------------------------------------------------------------------
+// Code-block copy button shimmer scheduler
+//
+// The attractor sweep is JS-scheduled so it can react to the reader: the
+// first time a code block is hovered the sweep fires immediately, then the
+// ambient randomized cadence resumes after a short pause. Never-hovered
+// blocks keep the ambient cadence from mount.
+// ---------------------------------------------------------------------------
+
+const COPY_SHIMMER_SWEEP_MS = 1_900
+const COPY_SHIMMER_RESUME_DELAY_MS = 3_000
+const COPY_SHIMMER_AMBIENT_MIN_MS = 9_000
+const COPY_SHIMMER_AMBIENT_MAX_MS = 18_000
+
+const copyShimmerStates = new WeakMap<HTMLElement, { timer?: number; everHovered: boolean }>()
+const copyShimmerWired = new WeakSet<HTMLElement>()
+
+const copyShimmerAmbientDelay = (): number => COPY_SHIMMER_AMBIENT_MIN_MS + Math.floor(Math.random() * (COPY_SHIMMER_AMBIENT_MAX_MS - COPY_SHIMMER_AMBIENT_MIN_MS))
+
+function triggerCopyShimmerSweep (toolbar: HTMLElement): void {
+  const button = toolbar.querySelector<HTMLButtonElement>('.toolbar button')
+  if (!button) return
+  button.classList.remove('wiki-copy-shimmer-run')
+  // Force a style flush so a sweep can restart from its beginning even if
+  // one was already mid-flight.
+  void button.offsetWidth
+  button.classList.add('wiki-copy-shimmer-run')
+  button.addEventListener('animationend', () => {
+    button.classList.remove('wiki-copy-shimmer-run')
+  }, { once: true })
+}
+
+function scheduleCopyShimmer (toolbar: HTMLElement, delayMs: number): void {
+  const state = copyShimmerStates.get(toolbar)
+  if (!state) return
+  if (state.timer !== undefined) clearTimeout(state.timer)
+  state.timer = window.setTimeout(() => {
+    const fresh = copyShimmerStates.get(toolbar)
+    if (!fresh || !toolbar.isConnected) return
+    triggerCopyShimmerSweep(toolbar)
+    scheduleCopyShimmer(toolbar, copyShimmerAmbientDelay())
+  }, delayMs)
+}
+
+function handleCopyToolbarFirstHover (toolbar: HTMLElement): void {
+  let state = copyShimmerStates.get(toolbar)
+  if (!state) {
+    state = { everHovered: false }
+    copyShimmerStates.set(toolbar, state)
+  }
+  state.everHovered = true
+  // Drop any pending ambient sweep: the hover sweep fires now and the
+  // randomized cadence only resumes after the sweep plus a short pause.
+  if (state.timer !== undefined) {
+    clearTimeout(state.timer)
+    state.timer = undefined
+  }
+  triggerCopyShimmerSweep(toolbar)
+  // The randomized cadence resumes only after the sweep has completed and
+  // the deliberate post-hover pause has elapsed.
+  scheduleCopyShimmer(toolbar, COPY_SHIMMER_SWEEP_MS + COPY_SHIMMER_RESUME_DELAY_MS + copyShimmerAmbientDelay())
+}
+
+// Single whole-block sweep acknowledging a code-block copy click. The band
+// rides the block's boundary (::after on the block container) so every line
+// of code lights up together, matching the inline chip's click sweep.
+const BLOCK_COPY_FLASH_CLASS = 'wiki-code-copy-flash-run'
+const BLOCK_COPY_SWEEP_NAME = 'wiki-code-block-copy-sweep'
+
+function flashCodeBlockCopy (block: HTMLElement): void {
+  block.classList.remove(BLOCK_COPY_FLASH_CLASS)
+  // Force a style flush so the sweep restarts from its beginning even if a
+  // previous one was still mid-flight.
+  void block.offsetWidth
+  block.classList.add(BLOCK_COPY_FLASH_CLASS)
+  block.addEventListener('animationend', (event: Event) => {
+    // Only our own band's animation ends on the block; the toolbar button's
+    // shimmer sweep bubbles its animationend through the same subtree.
+    const anim = event as AnimationEvent
+    if (anim.animationName === BLOCK_COPY_SWEEP_NAME) {
+      block.classList.remove(BLOCK_COPY_FLASH_CLASS)
+    }
+  }, { once: true })
+}
+
+function setupCodeCopyShimmer (container: HTMLElement): void {
+  for (const toolbar of container.querySelectorAll<HTMLElement>('.code-toolbar')) {
+    if (!copyShimmerStates.has(toolbar)) {
+      copyShimmerStates.set(toolbar, { everHovered: false })
+      scheduleCopyShimmer(toolbar, copyShimmerAmbientDelay())
+    }
+  }
+  if (copyShimmerWired.has(container)) return
+  copyShimmerWired.add(container)
+  container.addEventListener('mouseover', (event: MouseEvent) => {
+    const target = event.target instanceof Element ? event.target : null
+    if (!target) return
+    const toolbar = target.closest<HTMLElement>('.code-toolbar')
+    if (!toolbar || !container.contains(toolbar)) return
+    // Only genuine entries into the block, not movement between its children.
+    if (event.relatedTarget instanceof Node && toolbar.contains(event.relatedTarget)) return
+    const state = copyShimmerStates.get(toolbar)
+    if (!state || state.everHovered) return
+    handleCopyToolbarFirstHover(toolbar)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Inline-code copy + click-acknowledgment sweep
+//
+// Backtick-enclosed chips (`:not(pre) > code`) become click-to-copy: clicking
+// anywhere on the chip copies its text, with a short success/error tint plus
+// the sweep as the interaction acknowledgment. The sweep fires only on the
+// click that performs the copy — never on a timer, never on hover.
+// ---------------------------------------------------------------------------
 
 const INLINE_COPY_FEEDBACK_MS = 1_400
 
@@ -1036,6 +1170,16 @@ function isStandaloneInlineCode (element: Element | null): element is HTMLElemen
   return element instanceof HTMLElement && !element.closest('pre') && !element.closest('.code-toolbar')
 }
 
+function triggerInlineShimmerSweep (codeEl: HTMLElement): void {
+  codeEl.classList.remove('wiki-inline-shimmer-run')
+  // Force a style flush so a sweep can restart from its beginning even if
+  // one was already mid-flight.
+  void codeEl.offsetWidth
+  codeEl.classList.add('wiki-inline-shimmer-run')
+  codeEl.addEventListener('animationend', () => {
+    codeEl.classList.remove('wiki-inline-shimmer-run')
+  }, { once: true })
+}
 
 function setInlineCopyFeedback (codeEl: HTMLElement, state: 'success' | 'error'): void {
   codeEl.dataset.inlineCopyState = state
@@ -1082,6 +1226,8 @@ function setupInlineCodeCopy (container: HTMLElement): void {
     if (!isStandaloneInlineCode(codeEl) || !container.contains(codeEl)) return
     void copyInlineCodeText(codeEl).then(copied => {
       setInlineCopyFeedback(codeEl, copied ? 'success' : 'error')
+      // The attractor acknowledges the interaction with its own sweep.
+      triggerInlineShimmerSweep(codeEl)
     })
   })
 }
@@ -1541,8 +1687,26 @@ export default defineComponent({
       printDetailsState: null as Map<HTMLDetailsElement, boolean> | null,
       contentExtensionCleanup: null as (() => void) | null,
       mermaidAbortController: null as AbortController | null,
+      routeAnimationAbortController: null as AbortController | null,
       scrollAnimationFrame: null as number | null,
-      scrollAnimationToken: 0
+      railScrollHandler: null as (() => void) | null,
+      railRafId: 0,
+      scrollAnimationToken: 0,
+      railSettleRafId: 0,
+      railSettleFrameCount: 0,
+      railSettleStableFrames: 0,
+      lastSampledRailTop: -1,
+      railSettleHandler: null as (() => void) | null,
+      lastRailMaxHeight: -1,
+      lastRailAlignmentOffset: null as number | null,
+      railAlignmentDirty: true,
+      railStickyTop: 80,
+      railSpacingGap: 8,
+      cachedRailEl: null as HTMLElement | null,
+      navFooterEl: null as HTMLElement | null,
+      cachedHeaderEl: null as HTMLElement | null,
+      cachedTitleEl: null as HTMLElement | null,
+      railResizeObserver: null as ResizeObserver | null
     }
   },
   computed: {
@@ -1551,7 +1715,7 @@ export default defineComponent({
       set (value: boolean) { if (!this.readerFocus || this.talkActive || this.linksActive) this.navShown = value }
     },
     navDrawerWidth (): number {
-      return this.$vuetify.display.width >= 1280 ? 264 : 244
+      return this.$vuetify.display.width >= 1280 ? 269.6 : 244
     },
     // Below 1280 the drawer floats over the content, so the reading bar keeps
     // its full width; docked, it starts where the sidebar ends.
@@ -1852,12 +2016,9 @@ export default defineComponent({
     readerSection (): FlattenedTableOfContentsNode | null {
       return this.readerHasSections ? this.tocFlattened[this.readerSectionIndex] ?? null : null
     },
-    // Tools belong to the title band on desktop and the compact reading hosts below it.
+    // The card moves between three hosts; utility tooltips anchor to the
+    // card in its current host and open below it (see the template).
     pageToolsHost (): string {
-      if (this.isTocMobile) return '#page-mobile-tools'
-      return this.winWidth < 1280 ? '#page-tablet-tools' : '#page-header-tools'
-    },
-    pageOutlineHost (): string {
       if (this.isTocMobile) return '#page-mobile-tools'
       return this.winWidth < 1280 ? '#page-tablet-tools' : '#page-desktop-rail'
     },
@@ -2017,8 +2178,12 @@ export default defineComponent({
       }
     },
     tocPosition () {
+      this.resetDesktopRailMeasurementState()
       this.$nextTick(() => {
+        this.setupDesktopRailObserver()
         this.setupTocResizeObserver()
+        this.updateDesktopRailMeasurements(true)
+        this.startDesktopRailSettling()
         this.ensureActiveTocVisible()
       })
     },
@@ -2029,7 +2194,9 @@ export default defineComponent({
         this.syncPageStore()
         this.resetPageRouteState()
         await this.$nextTick()
+        this.setupDesktopRailObserver()
         this.refreshPageContent()
+        this.updateDesktopRailMeasurements(true)
         const offlinePageId = this.pageId
         const offlineLocale = this.locale
         void this.recordOfflineReaderVisit().then(() => {
@@ -2042,6 +2209,8 @@ export default defineComponent({
           this.offlinePassiveRefreshPending = false
           void this.refreshOfflinePageState()
         })
+        this.startDesktopRailSettling()
+        this.animatePageRoute()
         this.focusPageTitle()
         if (this.isAuthenticated) {
           void this.loadPageWatchState()
@@ -2084,11 +2253,18 @@ export default defineComponent({
     // -> Check side navigation visibility
     this.handleSideNavVisibility()
     this.resizeHandler = () => {
+      this.markDesktopRailAlignmentDirty()
       this.handleSideNavVisibility()
+      this.updateDesktopRailMeasurements(true)
+      this.startDesktopRailSettling()
       this.ensureActiveTocVisible()
     }
     window.addEventListener('resize', this.resizeHandler)
 
+    this.railScrollHandler = () => this.onDesktopRailScroll()
+    window.addEventListener('scroll', this.railScrollHandler, { passive: true })
+
+    this.setupDesktopRailObserver()
     this.setupTocResizeObserver()
 
     this.refreshPageContent()
@@ -2106,10 +2282,19 @@ export default defineComponent({
       void this.refreshOfflinePageState()
     })
     this.$nextTick(() => {
+      this.setupDesktopRailObserver()
       this.setupTocResizeObserver()
+      this.updateDesktopRailMeasurements(true)
+      this.startDesktopRailSettling()
       this.ensureActiveTocVisible()
     })
 
+    if (typeof document !== 'undefined' && 'fonts' in document && document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        this.updateDesktopRailMeasurements(true)
+        this.startDesktopRailSettling()
+      }).catch(() => {})
+    }
 
     this.beforePrintHandler = () => this.preparePrintView()
     this.afterPrintHandler = () => this.restorePrintView()
@@ -2153,6 +2338,28 @@ export default defineComponent({
     this.offlineUnlockSecret = ''
     this.offlineUnlockError = ''
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
+    if (this.railScrollHandler) window.removeEventListener('scroll', this.railScrollHandler)
+    this.railScrollHandler = null
+    if (this.railRafId) {
+      window.cancelAnimationFrame(this.railRafId)
+      this.railRafId = 0
+    }
+    this.cancelDesktopRailSettling()
+    this.railSettleHandler = null
+    if (this.cachedRailEl) {
+      this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
+      this.cachedRailEl.style.removeProperty('--page-desktop-rail-align-offset')
+      this.cachedRailEl = null
+    }
+    this.navFooterEl = null
+    if (this.railResizeObserver) {
+      this.railResizeObserver.disconnect()
+      this.railResizeObserver = null
+    }
+    this.cachedHeaderEl = null
+    this.cachedTitleEl = null
+    this.lastRailAlignmentOffset = null
+    this.railAlignmentDirty = true
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
@@ -2165,6 +2372,8 @@ export default defineComponent({
       this.tocRevealRafId = null
     }
     this.restorePrintView()
+    this.routeAnimationAbortController?.abort()
+    this.routeAnimationAbortController = null
     this.mermaidAbortController?.abort()
     this.mermaidAbortController = null
     this.cancelScheduledScroll()
@@ -2924,6 +3133,7 @@ export default defineComponent({
       this.outlineCleanup?.dispose()
       this.outlineCleanup = null
       this.cancelScheduledScroll()
+      this.resetDesktopRailMeasurementState()
       this.closeReaderSections()
       this.tocQuery = ''
       this.readingProgress = 0
@@ -2984,6 +3194,32 @@ export default defineComponent({
         this.tocScrollBound = true
       }
     },
+    applyTocActiveMarquee (active: HTMLElement | null): void {
+      if (typeof window === 'undefined') return
+      const root = this.$el as HTMLElement
+      if (!root) return
+      for (const el of [...root.querySelectorAll<HTMLElement>('.page-toc-item-title--marquee')]) {
+        if (active && el.parentElement === active) continue
+        el.classList.remove('page-toc-item-title--marquee')
+        el.style.removeProperty('--toc-marquee-shift')
+        el.style.removeProperty('--toc-marquee-duration')
+      }
+      if (!active) return
+      const title = active.querySelector<HTMLElement>('.page-toc-item-title')
+      if (!title) return
+      const overflow = title.scrollWidth - title.clientWidth
+      if (overflow <= 2) return
+      const rtl = getComputedStyle(title).direction === 'rtl'
+      const desiredShift = `${rtl ? overflow : -overflow}px`
+      // Keep the running animation untouched when re-measured with the same
+      // values; re-adding the class would restart the oscillation.
+      if (title.classList.contains('page-toc-item-title--marquee')
+        && title.style.getPropertyValue('--toc-marquee-shift') === desiredShift) return
+      title.classList.add('page-toc-item-title--marquee')
+      title.style.setProperty('--toc-marquee-shift', desiredShift)
+      const duration = Math.min(8, Math.max(2.5, 2 + overflow / 24))
+      title.style.setProperty('--toc-marquee-duration', `${duration.toFixed(2)}s`)
+    },
     ensureActiveTocVisible(): void {
       if (this.tocUserScrollAt && performance.now() - this.tocUserScrollAt < 900) return
       if (this.tocRevealRafId !== null || !this.$el) return
@@ -2994,6 +3230,7 @@ export default defineComponent({
         const visible = (item: HTMLElement): boolean => item.getClientRects().length > 0
         let active = links.find(item => item.getAttribute('aria-current') === 'location' && visible(item))
         if (!active) active = links.find(item => item.classList.contains('page-toc-item--descendant-active') && visible(item))
+        this.applyTocActiveMarquee(active ?? null)
         if (!active) return
         const row = active.closest('.page-toc-row') as HTMLElement | null
         if (!row) return
@@ -3041,6 +3278,7 @@ export default defineComponent({
         })
       const mermaidHosts = selectMermaidRenderHosts(mermaidCandidates)
       Prism.highlightAllUnder(container)
+      setupCodeCopyShimmer(container)
       setupInlineCodeCopy(container)
       void renderPageMermaidDiagrams(
         this.$t,
@@ -3071,6 +3309,29 @@ export default defineComponent({
       }, progress => { this.readingProgress = progress })
       this.setupTocResizeObserver()
       boot.notify('page-ready')
+    },
+    animatePageRoute(): void {
+      this.routeAnimationAbortController?.abort()
+      this.routeAnimationAbortController = null
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      const contentRef = this.$refs.content as HTMLElement | { $el?: unknown }
+      const element = contentRef instanceof HTMLElement
+        ? contentRef
+        : contentRef.$el instanceof HTMLElement
+          ? contentRef.$el
+          : null
+      if (!element) return
+      const controller = markRaw(new AbortController())
+      this.routeAnimationAbortController = controller
+      element.classList.remove('page-main--route-enter')
+      void element.offsetWidth
+      element.classList.add('page-main--route-enter')
+      element.addEventListener('animationend', () => {
+        element.classList.remove('page-main--route-enter')
+        if (this.routeAnimationAbortController === controller) {
+          this.routeAnimationAbortController = null
+        }
+      }, { once: true, signal: controller.signal })
     },
     toggleToc () {
       this.tocExpanded = !this.tocExpanded
@@ -3882,6 +4143,7 @@ export default defineComponent({
       const previousWidth = this.winWidth
       const nextWidth = window.innerWidth
       if (nextWidth === previousWidth) { return }
+      this.markDesktopRailAlignmentDirty()
       this.winWidth = nextWidth
       if (previousWidth >= 1280 && nextWidth < 1280) {
         this.tocExpanded = false
@@ -3891,6 +4153,21 @@ export default defineComponent({
       } else {
         this.navShown = false
       }
+    },
+    markDesktopRailAlignmentDirty(): void {
+      this.railAlignmentDirty = true
+    },
+    resetDesktopRailMeasurementState(): void {
+      this.cancelDesktopRailSettling()
+      if (this.cachedRailEl) {
+        this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
+        this.cachedRailEl.style.removeProperty('--page-desktop-rail-align-offset')
+      }
+      this.cachedRailEl = null
+      this.navFooterEl = null
+      this.lastRailMaxHeight = -1
+      this.lastRailAlignmentOffset = null
+      this.railAlignmentDirty = true
     },
     selectPageView(value: unknown): void {
       if (value === 'article' || value === 'talk' || (value === 'links' && this.linksVisible)) this.$emit('update:activeView', value)
@@ -3906,11 +4183,238 @@ export default defineComponent({
         if (focusNewComment) document.querySelector<HTMLElement>('#discussion-new')?.focus()
       })
     },
+    getPageHeaderElement(): HTMLElement | null {
+      const heroRef = this.$refs.pageHero as { $el?: HTMLElement } | HTMLElement | undefined
+      if (heroRef && '$el' in heroRef && heroRef.$el instanceof HTMLElement) {
+        return heroRef.$el
+      }
+      if (heroRef instanceof HTMLElement) {
+        return heroRef
+      }
+      if (typeof document !== 'undefined') {
+        return (document.querySelector('.page-hero') as HTMLElement | null)
+          ?? (document.querySelector('.page-header-section') as HTMLElement | null)
+      }
+      return null
+    },
     getPageTitleElement(): HTMLElement | null {
       const titleRef = this.$refs.pageTitle as HTMLElement | undefined
       if (titleRef instanceof HTMLElement) return titleRef
       if (typeof document !== 'undefined') return document.querySelector('.page-title')
       return null
+    },
+    setupDesktopRailObserver(): void {
+      if (typeof window === 'undefined' || typeof ResizeObserver === 'undefined') return
+
+      if (!this.railResizeObserver) {
+        this.railResizeObserver = new ResizeObserver(() => {
+          this.markDesktopRailAlignmentDirty()
+          this.updateDesktopRailMeasurements(true)
+          this.startDesktopRailSettling()
+        })
+      }
+
+      const headerEl = this.getPageHeaderElement()
+      if (headerEl !== this.cachedHeaderEl) {
+        this.markDesktopRailAlignmentDirty()
+        if (this.cachedHeaderEl) {
+          try {
+            this.railResizeObserver.unobserve(this.cachedHeaderEl)
+          } catch {}
+        }
+        this.cachedHeaderEl = headerEl
+        if (headerEl) this.railResizeObserver.observe(headerEl)
+      }
+
+      const titleEl = this.getPageTitleElement()
+      if (titleEl !== this.cachedTitleEl) {
+        this.markDesktopRailAlignmentDirty()
+        if (this.cachedTitleEl) {
+          try {
+            this.railResizeObserver.unobserve(this.cachedTitleEl)
+          } catch {}
+        }
+        this.cachedTitleEl = titleEl
+        if (titleEl) this.railResizeObserver.observe(titleEl)
+      }
+    },
+    getDesktopRailElement(): HTMLElement | null {
+      const colRef = this.$refs.desktopRailCol as { $el?: HTMLElement } | HTMLElement | undefined
+      if (colRef && '$el' in colRef && colRef.$el instanceof HTMLElement) {
+        return colRef.$el
+      }
+      if (colRef instanceof HTMLElement) {
+        return colRef
+      }
+      const innerRef = this.$refs.desktopRail as HTMLElement | undefined
+      if (innerRef instanceof HTMLElement) {
+        return innerRef.closest('.page-col-sd') ?? innerRef.parentElement
+      }
+      if (typeof document !== 'undefined') {
+        return document.querySelector('.page-col-sd')
+      }
+      return null
+    },
+    onDesktopRailScroll(): void {
+      if (this.railRafId) return
+      this.railRafId = window.requestAnimationFrame(() => {
+        this.railRafId = 0
+        this.updateDesktopRailMeasurements(false)
+      })
+    },
+    cancelDesktopRailSettling(): void {
+      if (this.railSettleRafId) {
+        window.cancelAnimationFrame(this.railSettleRafId)
+        this.railSettleRafId = 0
+      }
+    },
+    startDesktopRailSettling(): void {
+      if (typeof window === 'undefined') return
+      this.markDesktopRailAlignmentDirty()
+      if (window.innerWidth < 1280 || this.tocPosition === 'off') {
+        this.cancelDesktopRailSettling()
+        return
+      }
+
+      this.cancelDesktopRailSettling()
+      this.railSettleFrameCount = 0
+      this.railSettleStableFrames = 0
+      this.lastSampledRailTop = -1
+
+      if (!this.railSettleHandler) {
+        this.railSettleHandler = () => this.stepDesktopRailSettling()
+      }
+      this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler)
+    },
+    stepDesktopRailSettling(): void {
+      this.railSettleRafId = 0
+      if (typeof window === 'undefined') return
+      if (window.innerWidth < 1280 || this.tocPosition === 'off') return
+
+      const railEl = (this.cachedRailEl && this.cachedRailEl.isConnected)
+        ? this.cachedRailEl
+        : this.getDesktopRailElement()
+      this.cachedRailEl = railEl
+      if (!railEl) {
+        this.railSettleFrameCount++
+        if (this.railSettleFrameCount < 120) {
+          this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler!)
+        }
+        return
+      }
+
+      const currentTop = railEl.getBoundingClientRect().top
+      this.railSettleFrameCount++
+
+      const topChanged = this.lastSampledRailTop === -1 || Math.abs(currentTop - this.lastSampledRailTop) >= 0.5
+      if (topChanged) {
+        this.lastSampledRailTop = currentTop
+        this.railSettleStableFrames = 0
+        this.updateDesktopRailMeasurements(true)
+      } else {
+        this.railSettleStableFrames++
+      }
+
+      const MAX_SETTLE_FRAMES = 120
+      const MIN_SETTLE_FRAMES = 60
+      const STABLE_FRAMES_NEEDED = 15
+
+      const isStable = this.railSettleFrameCount >= MIN_SETTLE_FRAMES && this.railSettleStableFrames >= STABLE_FRAMES_NEEDED
+      const reachedMax = this.railSettleFrameCount >= MAX_SETTLE_FRAMES
+
+      if (!isStable && !reachedMax) {
+        this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler!)
+      } else {
+        this.updateDesktopRailMeasurements(true)
+      }
+    },
+    updateDesktopRailMeasurements(isResize = false): void {
+      if (typeof window === 'undefined') return
+      if (isResize) this.markDesktopRailAlignmentDirty()
+
+      const previousRailEl = this.cachedRailEl
+      const railEl = (this.cachedRailEl && this.cachedRailEl.isConnected)
+        ? this.cachedRailEl
+        : this.getDesktopRailElement()
+      if (railEl !== previousRailEl) this.markDesktopRailAlignmentDirty()
+      this.cachedRailEl = railEl
+      if (!railEl) return
+
+      if (window.innerWidth < 1280 || this.tocPosition === 'off') {
+        this.resetDesktopRailMeasurementState()
+        return
+      }
+
+      if (isResize || !this.navFooterEl || !this.navFooterEl.isConnected) {
+        this.navFooterEl = document.querySelector('.nav-footer')
+        const computed = getComputedStyle(railEl)
+        const parsedTop = parseFloat(computed.top)
+        this.railStickyTop = Number.isFinite(parsedTop) ? parsedTop : 80
+        const rawGap = computed.getPropertyValue('--wiki-space-2').trim()
+        let resolvedGap = 8
+        if (rawGap.endsWith('px')) {
+          const parsed = parseFloat(rawGap)
+          if (Number.isFinite(parsed) && parsed > 0) resolvedGap = parsed
+        } else if (rawGap.endsWith('rem')) {
+          const remVal = parseFloat(rawGap)
+          if (Number.isFinite(remVal) && remVal > 0) {
+            const rootFontSize = typeof document !== 'undefined'
+              ? (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16)
+              : 16
+            const derived = remVal * rootFontSize
+            if (Number.isFinite(derived) && derived > 0) resolvedGap = derived
+          }
+        }
+        this.railSpacingGap = Number.isFinite(resolvedGap) && resolvedGap > 0 ? resolvedGap : 8
+      }
+
+      // Deferred Teleport content can be appended after the outline when the
+      // rail returns from TOC-off. Restore DOM and keyboard order before measuring.
+      const toolsCard = railEl.querySelector('.page-tools-card')
+      const tocCard = railEl.querySelector('.page-toc-card')
+      if (toolsCard && tocCard && toolsCard.parentElement === tocCard.parentElement &&
+          (tocCard.compareDocumentPosition(toolsCard) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+        tocCard.parentElement?.insertBefore(toolsCard, tocCard)
+        this.markDesktopRailAlignmentDirty()
+      }
+
+      let railRect = railEl.getBoundingClientRect()
+      if (window.scrollY <= 1 && (isResize || this.railAlignmentDirty)) {
+        const heroEl = this.getPageHeaderElement()
+        const toolsEl = railEl.querySelector('.page-tools-card')
+        const heroRect = heroEl?.getBoundingClientRect()
+        const toolsRect = toolsEl?.getBoundingClientRect()
+        if (heroRect && toolsRect && toolsRect.height > 0 && railRect.height > 0) {
+          const inlineOffset = parseFloat(railEl.style.getPropertyValue('--page-desktop-rail-align-offset'))
+          const currentOffset = this.lastRailAlignmentOffset ?? (Number.isFinite(inlineOffset) ? inlineOffset : 0)
+          // The seam between the utilities/metadata card and the page contents
+          // card rests on the boundary between the page header (hero) and the
+          // page reader area. The card gap is space-4, so the seam midpoint
+          // sits railSpacingGap (space-2) below the utilities card bottom.
+          const currentSeam = toolsRect.bottom + this.railSpacingGap
+          const nextOffset = currentOffset + heroRect.bottom - currentSeam
+          if (Number.isFinite(nextOffset)) {
+            if (this.lastRailAlignmentOffset === null || Math.abs(nextOffset - currentOffset) >= 0.25) {
+              this.lastRailAlignmentOffset = nextOffset
+              railEl.style.setProperty('--page-desktop-rail-align-offset', `${nextOffset}px`)
+              railRect = railEl.getBoundingClientRect()
+            }
+            this.railAlignmentDirty = false
+          }
+        }
+      }
+
+      const footerTop = this.navFooterEl
+        ? this.navFooterEl.getBoundingClientRect().top
+        : window.innerHeight
+      const boundedBottom = Math.min(window.innerHeight, footerTop)
+      const effectiveRailTop = Math.max(railRect.top, this.railStickyTop)
+      const calculatedMaxHeight = Math.max(0, Math.floor(boundedBottom - effectiveRailTop - this.railSpacingGap))
+
+      if (this.lastRailMaxHeight !== calculatedMaxHeight) {
+        this.lastRailMaxHeight = calculatedMaxHeight
+        railEl.style.setProperty('--page-desktop-rail-max-height', `${calculatedMaxHeight}px`)
+      }
     },
   }
 })
@@ -3918,21 +4422,19 @@ export default defineComponent({
 
 <style lang="scss">
 .wiki-page {
-  --page-layout-shell-max: 100rem;
+  --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
+  --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-6));
+  --page-layout-shell-max: 132rem;
   --page-reader-shell-max: var(--page-layout-shell-max);
-  --page-shortcut-target: 2.75rem;
-  --page-metadata-rail-width: 16rem;
+  --page-shortcut-target: 36px;
+  --page-metadata-rail-width: calc(8 * var(--page-shortcut-target) + 9 * var(--wiki-space-1) + 2px);
   --page-reader-column-gap: var(--wiki-space-6);
   --page-reader-copy-max: var(--wiki-reader-copy-width, 74ch);
-  --page-header-offset: max(var(--v-layout-top, 0px), var(--wiki-chrome-height, 4rem));
 
   font-family: var(--wiki-font-body);
-
-  &:has(.nav-header--dense) {
-    --page-header-offset: max(var(--v-layout-top, 0px), var(--wiki-chrome-height-dense, 3.5rem));
-  }
 }
 
+// The document identity and outline use the same quiet editorial hierarchy.
 .page-skip-link {
   position: fixed;
   inset-block-start: .5rem;
@@ -3940,332 +4442,60 @@ export default defineComponent({
   z-index: 3000;
   padding: .75rem 1rem;
   border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-raised);
+  background: rgb(var(--v-theme-surface));
   color: rgb(var(--v-theme-on-surface));
   transform: translateY(-200%);
-
   &:focus { transform: translateY(0); }
-}
-
-.page-main {
-  --page-reader-background: rgb(var(--v-theme-background));
-  min-width: 0;
-  background: var(--page-reader-background);
-}
-
-.page-navigation {
-  border-inline-end: 1px solid var(--wiki-surface-border) !important;
-  box-shadow: none !important;
-}
-
-.page-nav-scroll {
-  background: var(--wiki-surface-raised);
-}
-
-.page-context-band {
-  padding: 0 !important;
-  border-block-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
-
-  &--accent-present {
-    border-inline-start: 3px solid rgb(var(--page-branding-rgb));
-  }
-}
-
-.page-header-section {
-  width: min(100%, var(--page-reader-shell-max));
-  margin-inline: auto;
-  padding: var(--wiki-space-5) var(--wiki-page-gutter) 0;
-}
-
-.page-document-context {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "path path"
-    "headings edits"
-    "summary summary"
-    "status status";
-  align-items: start;
-  gap: var(--wiki-space-2) var(--wiki-space-4);
-  min-width: 0;
-  padding-block-end: var(--wiki-space-5);
-}
-
-.page-header-path {
-  grid-area: path;
-  min-width: 0;
-}
-
-.breadcrumbs-nav {
-  min-width: 0;
-  max-width: 100%;
-  padding: 0 !important;
-  color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  flex-wrap: wrap;
-
-  :is(.v-breadcrumbs-item, .v-breadcrumbs__item) {
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .v-btn {
-    height: auto;
-    min-height: 2.25rem;
-    min-width: 0;
-    max-width: 100%;
-    padding-inline: var(--wiki-space-2);
-    border-radius: var(--wiki-control-radius);
-    color: inherit;
-    font-size: inherit;
-    letter-spacing: 0;
-
-    &__content {
-      min-width: 0;
-      max-width: 100%;
-      white-space: normal;
-      text-transform: none;
-      text-align: start;
-    }
-  }
-
-  .breadcrumbs-nav__label {
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-
-  .v-breadcrumbs-divider {
-    padding-inline: var(--wiki-space-1);
-    color: var(--wiki-text-muted);
-  }
-}
-
-.page-header-headings {
-  grid-area: headings;
-  min-width: 0;
-}
-
-.page-header-headings--branded {
-  --page-branding-mark-size: 4rem;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--page-branding-mark-size);
-  gap: var(--wiki-space-2) var(--wiki-space-4);
-
-  > .page-document-label { grid-column: 1; }
-  > .page-title-row { grid-column: 1; }
-
-  > .page-branding-mark {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    align-self: center;
-    justify-self: end;
-    max-inline-size: var(--page-branding-mark-size);
-    max-block-size: var(--page-branding-mark-size);
-  }
 }
 
 .page-document-label {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--wiki-space-2);
-  margin-block-end: var(--wiki-space-2);
+  gap: .375rem;
+  margin-block-end: .625rem;
   color: var(--wiki-text-muted);
-  font-size: .75rem;
-  font-weight: var(--wiki-label-weight);
+  font-size: .6875rem;
+  font-weight: 650;
+  letter-spacing: .12em;
+  text-transform: uppercase;
 }
 
 .page-document-label__divider {
-  color: var(--wiki-text-muted);
+  color: var(--wiki-text-subtle);
 }
 
-.page-title-row {
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: var(--wiki-space-2) var(--wiki-space-3);
-}
-
-.page-title {
-  min-width: 0;
-  margin: 0;
-  color: rgb(var(--v-theme-on-surface));
-  font-family: var(--wiki-font-display);
-  font-size: clamp(1.75rem, 1.4rem + 1.1vw, 2.375rem);
-  font-optical-sizing: auto;
-  font-weight: 650;
-  letter-spacing: -.025em;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
-
-.page-visibility {
-  margin-inline-start: 0 !important;
-  font-weight: var(--wiki-label-weight);
-}
-
-.page-header-summary {
-  grid-area: summary;
-  min-width: 0;
-}
-
-.page-description {
-  max-width: 80ch;
-  margin: 0;
-  color: var(--wiki-text-muted);
-  font-size: 1rem;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.page-header-unpublished {
-  grid-area: status;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--wiki-space-2);
-  min-width: 0;
-}
-
-.page-header-unpublished-text {
-  color: var(--wiki-text-muted);
-  overflow-wrap: anywhere;
-}
-
-.page-edit-shortcuts {
-  grid-area: edits;
-  display: flex;
-  align-items: center;
-  justify-content: end;
-  flex-wrap: wrap;
-  gap: var(--wiki-space-2);
-  max-width: 24rem;
-
-  .v-btn {
-    height: auto;
-    min-height: var(--page-shortcut-target);
-    min-width: 0;
-    max-width: 100%;
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-control-radius);
-    background: var(--wiki-surface-raised);
-    color: rgb(var(--v-theme-on-surface));
-    font-size: .8125rem;
-    box-shadow: none;
-
-    &__content {
-      min-width: 0;
-      white-space: normal;
-      overflow-wrap: anywhere;
-      text-align: start;
-    }
-  }
-}
-
-.page-header-tools {
-  min-width: 0;
-}
-
-.page-tools-card {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--wiki-space-2) var(--wiki-space-4);
-  min-width: 0;
-  margin: 0 !important;
-  padding: var(--wiki-space-2) 0;
-  border: 0;
-  border-block-start: 1px solid var(--wiki-surface-border);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-
-  &__utilities {
-    display: flex;
-    align-items: center;
-    flex: 1 1 28rem;
-    flex-wrap: wrap;
-    gap: var(--wiki-space-1);
-    min-width: 0;
-
-    > .v-btn {
-      width: var(--page-shortcut-target) !important;
-      min-width: var(--page-shortcut-target) !important;
-      height: var(--page-shortcut-target) !important;
-      min-height: var(--page-shortcut-target) !important;
-      padding: 0;
-      border-radius: var(--wiki-control-radius) !important;
-      color: rgb(var(--v-theme-on-surface));
-
-      .v-icon { font-size: 20px; }
-
-      &:hover:not([aria-disabled='true']) {
-        background: var(--wiki-surface-sunken);
-      }
-
-      &[aria-pressed='true']:not(.page-offline-control),
-      &.page-watch-control--watching {
-        background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, var(--wiki-surface-raised));
-        color: var(--wiki-primary-ink);
-      }
-    }
-  }
-
-  &__label {
-    margin-inline-end: var(--wiki-space-2);
-    color: var(--wiki-text-muted);
-    font-size: .8125rem;
-    font-weight: var(--wiki-label-weight);
-  }
-
-  &__provenance {
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: 100%;
-    margin-inline-start: auto;
-    color: var(--wiki-text-muted);
-    font-size: .8125rem;
-    line-height: 1.45;
-  }
-}
-
-.page-document-provenance {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--wiki-space-1) var(--wiki-space-4);
-  min-width: 0;
-}
-
-.page-document-row {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.page-document-author,
-.page-provenance-author {
-  overflow-wrap: anywhere;
-}
-
+// Hidden for one frame while placeUtilityTooltip measures it.
 .page-tool-tip--measuring {
   visibility: hidden !important;
 }
 
+// Tooltip second line: why a focusable aria-disabled utility does nothing.
 .page-tool-blocked-reason {
   display: block;
-  margin-block-start: var(--wiki-space-1);
+  margin-block-start: 2px;
   font-size: .75rem;
+  opacity: .86;
 }
 
 .page-tool-helper {
   margin: var(--wiki-space-2) 0 0;
   color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  line-height: 1.45;
+  font-size: .75rem;
+  line-height: 1.4;
 }
 
-.page-offline-status,
-.page-toc-heading .d-sr-only,
-.page-toc-toggle .d-sr-only {
+.page-document-provenance {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 2px 5px;
+}
+
+
+
+.page-offline-status {
+  // Full state text for screen readers; sighted users read the tooltip.
   position: absolute;
   width: 1px;
   height: 1px;
@@ -4277,412 +4507,159 @@ export default defineComponent({
 }
 
 .page-offline-control {
+  flex: 0 0 auto;
+  transition: color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+  // One color per meaning. The glyph also changes, so color is never the only cue.
   &--saved { color: var(--wiki-primary-ink) !important; }
   &--warning { color: var(--wiki-warning-ink) !important; }
   &--error { color: var(--wiki-error-ink) !important; }
   &--muted { color: var(--wiki-text-muted) !important; }
   &--action { color: var(--wiki-info-ink) !important; }
-  &--blocked { cursor: default; }
+
+  &--blocked {
+    cursor: default;
+  }
 }
 
 .page-offline-tooltip {
   display: grid;
-  gap: var(--wiki-space-1);
+  gap: 2px;
 }
 
-.page-offline-tooltip__title { font-weight: 650; }
-.page-offline-tooltip__detail { font-size: .8125rem; line-height: 1.45; }
-
-.page-body {
-  width: min(100%, var(--page-reader-shell-max));
-  margin-inline: auto;
-  padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-12) !important;
+.page-offline-tooltip__title {
+  font-weight: 650;
 }
 
-.page-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: var(--page-reader-column-gap);
+.page-offline-tooltip__detail {
+  font-size: .8125rem;
+  line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-offline-control { transition: none; }
+}
+
+.page-document-row {
+  display: inline-flex;
   min-width: 0;
+  align-items: center;
+  gap: 4px;
 }
 
-.page-col-content {
-  order: 1;
+.page-document-row--date {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: 550;
+}
+
+.page-document-row--author {
   min-width: 0;
-  padding: var(--wiki-space-6);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
+  max-width: 100%;
+  color: var(--wiki-text-muted);
+  font-size: .6875rem;
+  line-height: 1.35;
 }
 
-.page-col-sd,
-.page-mobile-tools,
-.page-tablet-tools,
-.page-tablet-metadata,
-.page-mobile-metadata {
-  display: none;
+.page-document-author {
   min-width: 0;
-}
-
-.page-desktop-rail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--wiki-space-3);
-
-  > .v-card,
-  > .wiki-page-ratings {
-    flex: 0 0 auto;
-    width: 100%;
-    min-width: 0;
-    margin-block-end: 0 !important;
-  }
-}
-
-.page-toc-card,
-.page-tags-card,
-.page-comments-card {
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: none;
-}
-
-.page-toc-card {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
+  max-width: 100%;
   overflow: hidden;
-  max-height: min(36rem, calc(100dvh - var(--page-header-offset) - 7rem));
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.page-toc-heading,
-.page-toc-toggle {
+.page-provenance-author {
+  overflow-wrap: anywhere;
+}
+
+.page-toc-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex: 0 0 auto;
-  gap: var(--wiki-space-2);
-  min-height: var(--page-shortcut-target);
-  padding-inline: var(--wiki-space-4);
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.page-toc-heading-label {
-  color: rgb(var(--v-theme-on-surface));
+  color: var(--wiki-accent-ink);
   font-family: var(--wiki-font-body);
   font-size: .8125rem;
   font-weight: var(--wiki-label-weight) !important;
-  letter-spacing: 0 !important;
-  text-transform: none;
+  letter-spacing: .09em !important;
+  text-transform: uppercase;
 }
 
 .page-toc-count {
   color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
-  font-size: .75rem;
+  font-size: .6875rem;
 }
 
-.page-toc-toggle {
-  width: 100%;
-  border-radius: var(--wiki-control-radius);
-  text-transform: none;
-
-  .v-btn__content {
-    justify-content: space-between;
-    width: 100%;
-  }
-
-  &[aria-expanded='true'] {
-    border-block-end: 1px solid var(--wiki-surface-border);
-    border-end-start-radius: 0;
-    border-end-end-radius: 0;
-  }
-}
-
-.page-toc-toggle-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wiki-space-2);
-}
-
-.page-toc-content,
-.page-toc-tree-wrap {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
+// Accessible clarification of the section count, hidden visually.
+.page-toc-heading .d-sr-only,
+.page-toc-toggle .d-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .page-toc-filter {
-  flex: 0 0 auto;
-  margin: var(--wiki-space-2) var(--wiki-space-3);
-
-  .v-field { border-radius: var(--wiki-control-radius); }
-  .v-field__input,
-  .v-label { font-size: .8125rem; }
+  margin: .5rem .75rem;
+  .v-field { border-radius: .5rem; }
+  .v-field__input, .v-label { font-size: .8125rem; }
 }
 
-.page-toc-filter-empty,
-.page-toc-empty {
-  padding: var(--wiki-space-4);
+.page-toc-filter-empty {
+  padding: .75rem 1rem;
   color: var(--wiki-text-muted);
   font-size: .8125rem;
-  line-height: 1.45;
 }
 
-.page-toc-empty {
-  display: flex;
-  align-items: center;
-  gap: var(--wiki-space-2);
+.page-toc-item[aria-current='location'] {
+  border-inline-start-color: rgb(var(--v-theme-primary));
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+  color: var(--wiki-accent-ink);
 }
 
-.page-toc-list,
-.page-toc-sublist {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.page-main {
+  --page-reader-background: rgb(var(--v-theme-background));
+  transition: none;
+  background: var(--page-reader-background);
 }
-
-.page-toc-content .page-toc-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: min(27rem, 50dvh);
-  padding: var(--wiki-space-1) var(--wiki-space-2) var(--wiki-space-2);
-  overflow-y: auto;
-  overflow-x: clip;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-gutter: stable;
-}
-
-.page-toc-node { margin: 0; padding: 0; }
-
-.page-toc-row {
-  display: flex;
-  align-items: start;
-  gap: 2px;
-  min-height: 2.25rem;
-  padding-inline-start: var(--toc-indent, 0px);
-}
-
-.page-toc-branch-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 2rem;
-  width: 2rem;
-  height: 2.25rem;
-  padding: 0;
-  border: 0;
-  border-radius: var(--wiki-control-radius);
-  background: transparent;
-  color: var(--wiki-text-muted);
-  cursor: pointer;
-
-  &:hover {
-    background: var(--wiki-surface-sunken);
-    color: rgb(var(--v-theme-on-surface));
-  }
-
-  .page-toc-chevron { font-size: 18px; }
-}
-
-.page-toc-leaf-spacer {
-  flex: 0 0 2rem;
-  width: 2rem;
-}
-
-.page-toc-item {
-  display: flex;
-  align-items: center;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 2.25rem;
-  padding: var(--wiki-space-2);
-  border-inline-start: 2px solid transparent;
-  border-radius: var(--wiki-control-radius);
-  color: var(--wiki-text-muted);
-  text-decoration: none;
-  transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
-
-  &:hover {
-    background: var(--wiki-surface-sunken);
-    color: rgb(var(--v-theme-on-surface));
-  }
-
-  &[aria-current='location'],
-  &--active {
-    border-inline-start-color: rgb(var(--v-theme-primary));
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, var(--wiki-surface-raised));
-    color: var(--wiki-accent-ink);
-  }
-
-  &--descendant-active {
-    border-inline-start-color: var(--wiki-surface-border-strong);
-    color: rgb(var(--v-theme-on-surface));
+.page-main--route-enter {
+  .page-header-headings,
+  .page-body > .v-row {
+    animation: wiki-page-route-enter var(--wiki-motion-normal) var(--wiki-motion-ease-out) both;
   }
 }
 
-.page-toc-item-title {
-  min-width: 0;
-  font-size: .8125rem;
-  line-height: 1.45;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
+@keyframes wiki-page-route-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--wiki-space-2));
+  }
 
-.page-toc-item-title--depth-0 { font-weight: 650; }
-.page-toc-item-title--depth-1 { font-weight: 550; }
-.page-toc-item-title--depth-2-plus { font-weight: 400; }
-
-.page-tags-card,
-.page-comments-card {
-  .pa-5 { padding: var(--wiki-space-4) !important; }
-
-  .text-label-small {
-    color: var(--wiki-text-muted) !important;
-    font-size: .8125rem !important;
-    font-weight: var(--wiki-label-weight);
-    letter-spacing: 0;
-    text-transform: none;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-.page-tags-card {
-  .v-chip {
-    max-width: 100%;
-    height: auto;
-    min-height: 2rem;
-    border-radius: var(--wiki-control-radius);
-  }
 
-  .v-chip__content {
-    min-width: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
+.page-navigation {
+  border-inline-end: 1px solid var(--wiki-surface-border) !important;
+  box-shadow: none !important;
 }
 
-.page-comments-card .v-btn {
-  min-width: 0;
-  min-height: var(--page-shortcut-target);
-  height: auto;
-  border-color: var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
-
-  .v-btn__content {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-}
-
-.page-col-content > .contents {
-  min-width: 0;
-  min-height: 12rem;
-  padding: var(--wiki-space-2) 0;
-  scroll-margin-block-start: calc(var(--page-header-offset) + var(--wiki-space-6));
-
-  > div {
-    width: 100%;
-    min-width: 0;
-
-    > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
-      max-inline-size: var(--page-reader-copy-max);
-    }
-  }
-
-  :where(h1, h2, h3, h4, h5, h6) {
-    position: relative;
-    padding-inline-end: 1.3em;
-    scroll-margin-block-start: calc(var(--page-header-offset) + var(--wiki-space-6));
-
-    .toc-anchor {
-      position: absolute;
-      inset-block-end: .08em;
-      inset-inline-end: 0;
-      display: inline-flex;
-      color: var(--wiki-accent-ink);
-      font-size: .72em;
-      opacity: 0;
-    }
-
-    &:hover .toc-anchor,
-    .toc-anchor:focus-visible { opacity: 1; }
-  }
-
-  :where(.footnote-item, .footnote-ref > [id]) {
-    scroll-margin-block-start: calc(var(--page-header-offset) + var(--wiki-space-6));
-  }
-
-  :where(pre, code) {
-    direction: ltr;
-    unicode-bidi: isolate;
-    text-align: start;
-  }
-}
-
-.page-page-context { margin-block-end: var(--wiki-space-4); }
-
-.page-view-tabs {
-  max-width: 100%;
-  margin-block-end: var(--wiki-space-5);
-  border-block-end: 1px solid var(--wiki-surface-border);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-
-  .v-tab {
-    min-height: var(--page-shortcut-target);
-    text-transform: none;
-  }
-}
-
-.comments-container {
-  min-width: 0;
-  overflow: hidden;
-  margin-block-start: var(--wiki-space-6);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-}
-
-.page-view-tabs ~ .comments-container { margin-block-start: 0; }
-
-.comments-header {
-  display: flex;
-  align-items: center;
-  gap: var(--wiki-space-3);
-  padding: var(--wiki-space-4);
-  border-block-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
-}
-
-.comments-header-icon {
-  display: grid;
-  flex: 0 0 auto;
-  width: var(--page-shortcut-target);
-  height: var(--page-shortcut-target);
-  place-items: center;
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.comments-title {
-  margin: 0;
-  color: rgb(var(--v-theme-on-surface));
-  font-size: 1rem;
-  font-weight: 650;
-}
-
-.comments-subtitle {
-  margin-block-start: var(--wiki-space-1);
-  color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  overflow-wrap: anywhere;
+.page-nav-scroll {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 6%, rgb(var(--v-theme-surface))),
+      rgb(var(--v-theme-surface)) calc(var(--wiki-grid-size) * 3)
+    );
 }
 
 .page-edit-fab,
@@ -4690,40 +4667,1818 @@ export default defineComponent({
 .page-return-top {
   position: fixed !important;
   z-index: 1005;
-  width: var(--page-shortcut-target) !important;
-  min-width: var(--page-shortcut-target) !important;
-  height: var(--page-shortcut-target) !important;
-  min-height: var(--page-shortcut-target) !important;
-  border-radius: var(--wiki-control-radius) !important;
-  box-shadow: var(--wiki-shadow-sm) !important;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-primary)) 14%, transparent);
+  box-shadow: var(--wiki-shadow-md) !important;
+  transition:
+    transform var(--wiki-motion-normal) var(--wiki-motion-ease-out),
+    box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+
+  &:hover {
+    box-shadow: var(--wiki-shadow-lg) !important;
+    transform: translateY(calc(var(--wiki-space-1) * -.5));
+  }
+}
+
+.v-speed-dial__content {
+  gap: var(--wiki-space-2);
+
+  > .v-btn {
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius) !important;
+    box-shadow: var(--wiki-shadow-sm);
+  }
+
+  > .v-btn.bg-white {
+    background: var(--wiki-surface-raised) !important;
+    color: rgb(var(--v-theme-on-surface)) !important;
+  }
 }
 
 .page-edit-fab {
-  inset-block-end: calc(max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) + env(safe-area-inset-bottom) + var(--wiki-space-4));
-  inset-inline-end: calc(env(safe-area-inset-right) + var(--wiki-space-4) + var(--page-shortcut-target) + var(--wiki-space-2));
-}
-
-.page-nav-toggle,
-.page-return-top {
-  inset-block-start: auto !important;
-  inset-block-end: calc(max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) + env(safe-area-inset-bottom) + var(--wiki-space-4)) !important;
+  inset-block-end: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-5));
+  inset-inline-end: calc(var(--wiki-space-5) + var(--wiki-control-height) + var(--wiki-space-3));
 }
 
 .page-nav-toggle {
+  inset-block-start: auto !important;
   inset-inline-end: auto !important;
-  inset-inline-start: calc(env(safe-area-inset-left) + var(--wiki-space-4)) !important;
+  inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + var(--wiki-grid-size) + 24px) !important;
+  inset-inline-start: calc(env(safe-area-inset-left) + var(--wiki-space-5)) !important;
+}
+
+.page-nav-toggle--open {
+  z-index: 1007;
 }
 
 .page-return-top {
+  inset-block-start: auto !important;
   inset-inline-start: auto !important;
-  inset-inline-end: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
+  inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + var(--wiki-grid-size) + 24px) !important;
+  inset-inline-end: calc(env(safe-area-inset-right) + var(--wiki-space-5)) !important;
 }
 
-.page-nav-toggle--open { z-index: 1007; }
+.is-rtl {
+  .page-nav-toggle {
+    inset-inline-start: calc(env(safe-area-inset-right) + var(--wiki-space-5)) !important;
+  }
+  .page-return-top {
+    inset-inline-end: calc(env(safe-area-inset-left) + var(--wiki-space-5)) !important;
+  }
+}
 
+.breadcrumbs-nav {
+  min-width: 0;
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+
+  :is(.v-breadcrumbs-item, .v-breadcrumbs__item) {
+    min-width: 0;
+  }
+
+  .v-btn {
+    min-width: 0;
+    border-radius: var(--wiki-radius-xs);
+    font-size: inherit;
+    letter-spacing: .01em;
+
+    // The label, not the flex content box, truncates: an ellipsis on a flex
+    // container never shows, and centered overflow clipped both ends.
+    &__content {
+      min-width: 0;
+      max-width: 100%;
+      text-transform: none;
+    }
+
+    &:hover {
+      background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
+      color: var(--wiki-accent-ink);
+    }
+  }
+
+  .breadcrumbs-nav__label {
+    display: block;
+    min-width: 0;
+    max-width: min(24rem, 34vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .v-breadcrumbs-divider {
+    padding-inline: var(--wiki-space-2);
+    color: var(--wiki-text-subtle);
+  }
+
+  .v-breadcrumbs-divider:nth-child(2) {
+    padding-inline-start: var(--wiki-space-3);
+  }
+}
+
+.page-header-path {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-end: auto;
+  align-items: center;
+}
+
+.breadcrumbs-nav--inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  padding-block: 0;
+  margin-block: 0;
+  align-self: center;
+  overflow-x: auto;
+  overflow-inline: auto;
+  scrollbar-width: none;
+
+  .v-btn {
+    height: 1.625rem;
+    min-height: 1.625rem;
+  }
+
+  &::-webkit-scrollbar { display: none; }
+
+  // Pull the first crumb's glyph flush with the page-description text start.
+  .v-btn:first-child,
+  .v-btn:first-of-type {
+    margin-inline-start: -12px;
+  }
+}
+
+.page-hero {
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+  min-height: 0;
+  padding: 0 !important;
+  background: rgb(var(--v-theme-surface));
+  border-block-end: 1px solid var(--wiki-surface-border);
+
+  &.page-hero--accent-present::before {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: 0;
+    z-index: 0;
+    width: 37.5%;
+    pointer-events: none;
+    content: '';
+    background: linear-gradient(
+      to bottom left,
+      rgb(var(--page-branding-rgb) / var(--page-branding-alpha)) 0%,
+      rgb(var(--page-branding-rgb) / calc(var(--page-branding-alpha) * .62)) 20%,
+      rgb(var(--page-branding-rgb) / calc(var(--page-branding-alpha) * .24)) 38%,
+      rgb(var(--page-branding-rgb) / 0) 54%,
+      rgb(var(--page-branding-rgb) / 0) 100%
+    );
+  }
+}
+
+
+.page-hero--with-toc,
+.page-hero--with-toc .page-header-section {
+  min-height: 0;
+}
+
+// Static state: no pulse, so the indicator does not move while people read.
+.page-header-unpublished {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wiki-space-1) var(--wiki-space-2);
+  margin-block-start: var(--wiki-space-2);
+  min-width: 0;
+}
+
+.page-header-unpublished-text {
+  color: var(--wiki-text-muted);
+}
+
+.page-header-section {
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+  width: min(100%, var(--page-reader-shell-max));
+  min-height: 0;
+  margin-inline: auto;
+
+  > .is-page-header {
+    position: relative;
+    overflow: visible;
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto auto auto;
+    column-gap: var(--wiki-space-4);
+    row-gap: 0;
+    align-items: start;
+    align-content: start;
+    padding:
+      calc(var(--wiki-space-2) + 2px)
+      var(--wiki-page-gutter) !important;
+  }
+
+  > .is-page-header > .page-header-headings {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  > .is-page-header > .page-header-summary {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  > .is-page-header > .page-header-path {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  > .is-page-header > .page-header-unpublished {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    justify-self: start;
+  }
+
+  > .is-page-header > .page-edit-shortcuts {
+    grid-column: 1 / -1;
+    grid-row: 5;
+    justify-self: end;
+  }
+
+
+  .page-header-summary {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-2) var(--wiki-space-4);
+    min-width: 0;
+    margin-block-start: var(--wiki-space-1);
+
+    .page-description { flex: 1 1 18rem; margin: 0; }
+  }
+
+  .page-header-headings {
+    width: 100%;
+    min-width: 0;
+    max-width: 80rem;
+    margin-inline: 0;
+    text-align: start;
+  }
+
+  .page-header-headings--branded {
+    --page-branding-mark-size: 80px;
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--page-branding-mark-size);
+    grid-template-rows: auto auto auto;
+    row-gap: 0;
+    isolation: isolate;
+
+    > .page-document-label {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
+    > .page-title-row {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    > .page-description {
+      grid-column: 1;
+      grid-row: 3;
+    }
+
+    > .page-branding-mark {
+      position: absolute;
+      grid-column: 2;
+      grid-row: 2 / span 2;
+      inset-block-start: calc(var(--wiki-space-2) * -1);
+      right: 0;
+      z-index: 2;
+      max-inline-size: var(--page-branding-mark-size);
+      max-block-size: 100%;
+    }
+  }
+
+
+  .page-title-row {
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: var(--wiki-space-2) var(--wiki-space-3);
+  }
+
+  .page-title,
+  .page-description {
+    font-family: var(--wiki-font-body);
+    font-optical-sizing: auto;
+  }
+
+  .page-title {
+    font-family: var(--wiki-font-display);
+    min-width: 0;
+    margin: 0;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: clamp(2.125rem, 1.6rem + 1.8vw, 3.25rem);
+    font-weight: 550;
+    letter-spacing: -.035em;
+    line-height: 1.02;
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+  }
+
+  .page-visibility {
+    flex: 0 0 auto;
+    margin-inline-start: 0 !important;
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 28%, transparent);
+    font-weight: var(--wiki-label-weight);
+  }
+
+  .page-description {
+    max-width: 68ch;
+    margin: var(--wiki-space-1) 0 0;
+    color: var(--wiki-text-muted);
+    font-size: 1.0625rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
+  }
+
+  .page-edit-shortcuts {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--wiki-space-2);
+    align-self: center;
+    overflow: visible;
+
+    .v-btn {
+      height: 1.625rem;
+      min-height: 1.625rem;
+      padding-inline: var(--wiki-space-3);
+      border: 1px solid var(--wiki-surface-border) !important;
+      border-radius: var(--wiki-radius-md) !important;
+      background: var(--wiki-surface-raised) !important;
+      color: rgb(var(--v-theme-on-surface));
+      font-size: .75rem;
+      box-shadow: var(--wiki-shadow-sm);
+      transition:
+        border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+        box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
+        transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
+
+      .v-icon {
+        color: var(--wiki-primary-ink);
+      }
+
+      &:hover {
+        border-color: color-mix(in srgb, var(--wiki-accent-warm) 38%, var(--wiki-surface-border)) !important;
+        box-shadow: var(--wiki-shadow-md);
+        transform: translateY(calc(var(--wiki-space-1) * -.5));
+      }
+    }
+  }
+}
+.wiki-page.is-rtl .page-header-headings--branded {
+  grid-template-columns: var(--page-branding-mark-size) minmax(0, 1fr);
+
+  > .page-document-label,
+  > .page-title-row,
+  > .page-description {
+    grid-column: 2;
+  }
+
+  > .page-branding-mark {
+    grid-column: 1;
+  }
+}
+
+
+
+
+
+ 
+
+@media (min-width: 600px) {
+  .page-header-section .page-header-headings--branded {
+    --page-branding-mark-size: 96px;
+  }
+
+  .page-header-section {
+    > .is-page-header {
+      grid-template-columns: minmax(0, 1fr) max-content;
+
+      > .page-header-headings {
+        grid-column: 1 / -1;
+      }
+
+      > .page-header-unpublished {
+        grid-column: 1;
+        grid-row: 4;
+      }
+
+      > .page-edit-shortcuts {
+        grid-column: 2;
+        grid-row: 4;
+      }
+    }
+
+    .page-edit-shortcuts { max-width: 100%; flex-wrap: wrap; }
+  }
+}
+
+@media (min-width: 1280px) {
+  .page-header-section .page-header-headings--branded {
+    --page-branding-mark-size: 128px;
+  }
+
+  .page-header-section {
+    > .is-page-header {
+      min-height: inherit;
+      column-gap: var(--page-reader-column-gap);
+      row-gap: 0;
+      align-content: center;
+    }
+
+    > .page-header--toc-left {
+      grid-template-columns:
+        var(--page-metadata-rail-width)
+        minmax(0, 1fr);
+
+      .page-header-headings {
+        grid-column: 2;
+        padding-inline-start: var(--wiki-space-4);
+      }
+    }
+
+
+    > .page-header--toc-right {
+      grid-template-columns:
+        minmax(0, 1fr)
+        var(--page-metadata-rail-width);
+    }
+
+
+    > .page-header--toc-left > .page-header-summary {
+      padding-inline-start: var(--wiki-space-4);
+      grid-column: 2 / -1;
+    }
+
+    > .page-header--toc-right > .page-header-summary {
+      grid-column: 1 / -2;
+    }
+
+    > .page-header--toc-left > .page-header-path,
+    > .page-header--toc-left > .page-header-unpublished {
+      padding-inline-start: var(--wiki-space-4);
+      grid-column: 2 / -1;
+    }
+
+    > .page-header--toc-left > .page-edit-shortcuts {
+      grid-column: 2 / -1;
+    }
+
+    > .page-header--toc-right > .page-header-path,
+    > .page-header--toc-right > .page-header-unpublished,
+    > .page-header--toc-right > .page-edit-shortcuts {
+      grid-column: 1 / -2;
+    }
+    > .page-header--toc-right > .page-header-headings {
+      grid-column: 1;
+    }
+
+
+    > .is-page-header > .page-header-unpublished,
+    > .is-page-header > .page-edit-shortcuts {
+      grid-row: 4;
+    }
+  }
+}
+
+
+/* Stacking context must paint above .page-hero (z-index: 2) so upward-lifted desktop rail cards remain visible and interactive */
+.page-body {
+  position: relative;
+  z-index: 3;
+  width: min(100%, var(--page-reader-shell-max));
+  margin-inline: auto;
+  // Block-start padding is deliberately compact: the page hero already closes
+  // with its own divider, so the body starts close beneath it and the reader
+  // meets the first heading without a wide empty band.
+  padding:
+    var(--wiki-space-4)
+    var(--wiki-page-gutter)
+    var(--wiki-space-12) !important;
+}
+
+.page-col-sd {
+  position: sticky;
+  inset-block-start: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-4));
+  align-self: flex-start;
+  max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-6));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in srgb, var(--wiki-accent-warm) 54%, transparent) transparent;
+  scrollbar-width: thin;
+
+  &::-webkit-scrollbar {
+    width: var(--wiki-space-2);
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border: var(--wiki-space-1) solid transparent;
+    border-radius: var(--wiki-radius-pill);
+    background: color-mix(in srgb, var(--wiki-accent-warm) 54%, transparent);
+    background-clip: padding-box;
+  }
+
+  > .v-card,
+  > .page-desktop-rail > .v-card {
+
+    overflow: hidden;
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-panel-radius);
+    background: var(--wiki-surface-raised);
+    box-shadow: var(--wiki-shadow-xs);
+  }
+
+  .text-label-small {
+    color: var(--wiki-accent-ink);
+    font-weight: var(--wiki-label-weight) !important;
+    letter-spacing: .09em !important;
+    text-transform: uppercase;
+  }
+
+  .v-chip {
+    border-radius: var(--wiki-radius-xs);
+  }
+}
+
+.page-mobile-tools,
+.page-tablet-tools,
+.page-mobile-metadata {
+  display: none;
+}
+
+.page-desktop-rail {
+  display: contents;
+}
+
+.page-desktop-rail > .wiki-page-ratings,
+.page-tablet-tools > .wiki-page-ratings,
+.page-mobile-metadata > .wiki-page-ratings {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.page-desktop-rail > .wiki-page-ratings {
+  margin-block-end: var(--wiki-space-5);
+}
+
+.page-col-sd--with-toc {
+  margin-block-start: calc(
+    (var(--page-toc-desktop-lift) * -1) +
+    var(--page-desktop-rail-align-offset, 0px)
+  );
+}
+
+.page-col-sd--toc-off,
+.page-col-content--toc-off {
+  flex: 0 0 100%;
+  max-width: 100%;
+}
+.page-col-sd--toc-left,
+.page-col-sd--toc-right {
+  order: 2;
+}
+
+.page-col-content--toc-left,
+.page-col-content--toc-right {
+  order: 1;
+}
+
+
+@media (min-width: 1280px) {
+  .page-col-sd {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    max-height: var(--page-desktop-rail-max-height, calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-6)));
+  }
+
+  .page-desktop-rail {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .page-tools-card {
+    flex: 0 0 auto;
+  }
+
+  .page-toc-card {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .page-toc-heading,
+  .page-toc-filter,
+  .page-toc-filter-empty {
+    flex: 0 0 auto;
+  }
+
+  .page-toc-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-tree-wrap {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-content .page-toc-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: clip;
+    overscroll-behavior: contain;
+  }
+
+  .page-tags-card,
+  .page-comments-card {
+    flex: 0 0 auto;
+  }
+
+  .page-col-sd--toc-left,
+  .page-col-content--toc-right {
+    order: 1;
+  }
+
+  .page-col-sd--toc-right,
+  .page-col-content--toc-left {
+    order: 2;
+  }
+
+  // When TOC is off, keep the primary article before the full-width metadata.
+  .page-col-content--toc-off {
+    order: 1;
+  }
+
+  .page-col-sd--toc-off {
+    order: 2;
+  }
+
+  .page-col-sd--with-toc {
+    flex: 0 0 var(--page-metadata-rail-width);
+    max-width: var(--page-metadata-rail-width);
+  }
+
+  .page-col-content--with-toc {
+    flex: 0 0 calc(100% - var(--page-metadata-rail-width) - var(--v-col-gap-x));
+    max-width: calc(100% - var(--page-metadata-rail-width) - var(--v-col-gap-x));
+  }
+}
+
+
+.page-toc-card {
+  display: flex;
+  min-height: var(--page-toc-empty-height);
+  flex-direction: column;
+  border: 1px solid var(--wiki-surface-border) !important;
+  border-radius: var(--wiki-panel-radius);
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 6%, transparent),
+      transparent 34%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 5%, transparent)
+    ),
+    color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent) !important;
+  box-shadow: var(--wiki-shadow-xs);
+
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    backdrop-filter: var(--wiki-chrome-blur);
+    -webkit-backdrop-filter: var(--wiki-chrome-blur);
+    border-color: var(--wiki-glass-border) !important;
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background: var(--wiki-surface-raised) !important;
+  }
+
+  > .page-toc-heading {
+    padding:
+      var(--wiki-space-4)
+      var(--wiki-space-4)
+      var(--wiki-space-2) !important;
+    font-family: var(--wiki-font-body);
+  }
+
+  .page-toc-heading-label {
+    color: var(--wiki-accent-ink);
+    font-family: var(--wiki-font-body);
+    font-size: .8125rem;
+    font-weight: var(--wiki-label-weight) !important;
+    letter-spacing: .09em !important;
+    text-transform: uppercase;
+  }
+
+  .page-toc-toggle-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wiki-space-2);
+  }
+
+  .page-toc-content {
+    min-width: 0;
+  }
+}
+
+.page-toc-list,
+.page-toc-sublist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.page-toc-content .page-toc-list {
+  max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-12));
+  overflow-y: auto;
+  overflow-x: clip;
+  overscroll-behavior: contain;
+  padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-2);
+}
+
+.page-toc-node {
+  margin: 0;
+  padding: 0;
+}
+
+.page-toc-row {
+  display: flex;
+  align-items: center;
+  min-height: 2rem;
+  padding-inline-start: var(--toc-indent, 0px);
+  gap: 2px;
+}
+
+.page-toc-branch-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--wiki-radius-xs);
+  background: transparent;
+  color: var(--wiki-text-muted);
+  cursor: pointer;
+  flex: 0 0 28px;
+
+  &:hover {
+    background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent);
+    color: var(--wiki-accent-ink);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
+    outline-offset: 1px;
+  }
+
+  .v-icon,
+  .page-toc-chevron {
+    font-size: 16px !important;
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.page-toc-leaf-spacer {
+  display: inline-block;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+}
+
+.page-toc-item {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
+  padding: 2px var(--wiki-space-1);
+  border-inline-start: 2px solid transparent;
+  border-radius: var(--wiki-radius-xs);
+  color: var(--wiki-text-muted);
+  text-decoration: none;
+  transition:
+    background-color 180ms var(--wiki-motion-ease),
+    border-color 180ms var(--wiki-motion-ease),
+    color 180ms var(--wiki-motion-ease);
+
+  // Faint amber glow behind the active row. Each row owns its glow (it fades
+  // in and out in place instead of sliding across the list) and it is clipped
+  // by the card's rounded overflow box. Text and icons stay sharp above it.
+  &::after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: -7px -10px;
+    border-radius: var(--wiki-radius-sm);
+    background: radial-gradient(
+      62% 95% at 32% 50%,
+      color-mix(in srgb, var(--wiki-accent-warm) 26%, transparent),
+      transparent 76%
+    );
+    opacity: 0;
+    transition: opacity 180ms var(--wiki-motion-ease);
+    pointer-events: none;
+  }
+
+  &:hover {
+    background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
+    color: var(--wiki-accent-ink);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
+    outline-offset: 1px;
+  }
+
+  &[aria-current='location'],
+  &.page-toc-item--active {
+    border-inline-start-color: rgb(var(--v-theme-primary));
+    background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+    color: var(--wiki-accent-ink);
+    .page-toc-item-title--depth-0 {
+      font-weight: 700;
+    }
+
+    .page-toc-item-title--depth-1 {
+      font-weight: 600;
+    }
+
+    .page-toc-item-title--depth-2-plus {
+      font-weight: 500;
+    }
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset-inline-start: -2px;
+      inset-inline-end: 0;
+      inset-block: 0;
+      height: auto;
+      border-radius: inherit;
+      background-image: linear-gradient(to right, rgb(var(--v-theme-primary)), transparent);
+      background-position: bottom;
+      background-size: 100% 2px;
+      background-repeat: no-repeat;
+      pointer-events: none;
+    }
+
+    &[dir='rtl']::before,
+    [dir='rtl'] &::before {
+      background-image: linear-gradient(to left, rgb(var(--v-theme-primary)), transparent);
+    }
+
+    &::after {
+      opacity: 1;
+    }
+  }
+
+  &.page-toc-item--descendant-active {
+    border-inline-start-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 40%, transparent);
+  }
+}
+
+// Nested entries stay visually subordinate to top-level sections.
+.page-toc-sublist .page-toc-item {
+  color: var(--wiki-text-muted);
+
+  &:hover,
+  &[aria-current='location'],
+  &.page-toc-item--active {
+    color: var(--wiki-accent-ink);
+  }
+}
+
+.page-toc-item-title {
+  padding-inline: 0 !important;
+  font-size: .8125rem;
+  line-height: 1.4;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+// Long active headings oscillate: the text starts clipped at its end, eases
+// left until the beginning is clipped, then eases back and repeats. Runs
+// unconditionally so the behavior does not depend on the reduced-motion
+// media query.
+// The animated span slides out of the clipped title box (whole box would
+// leave the highlight), so the oscillation targets an inner text span while
+// the title box itself stretches across the full highlight width; the clip
+// edge then coincides with the highlight's own left/right edges.
+.page-toc-item-title--marquee {
+  margin-inline: calc(var(--wiki-space-1) * -1);
+  padding-inline: var(--wiki-space-1) !important;
+  text-overflow: clip;
+}
+
+.page-toc-item-title--marquee .page-toc-item-title-text {
+  display: inline-block;
+  animation: page-toc-marquee var(--toc-marquee-duration, 4s) ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes page-toc-marquee {
+  0%, 32% { transform: translateX(0); }
+  62%, 84% { transform: translateX(var(--toc-marquee-shift, 0px)); }
+  100% { transform: translateX(0); }
+}
+
+.page-toc-item-title--depth-0 {
+  font-weight: 650;
+}
+
+.page-toc-item-title--depth-1 {
+  font-weight: 550;
+}
+
+.page-toc-item-title--depth-2-plus {
+  font-weight: 400;
+}
+
+.page-tags-card,
+.page-comments-card {
+  .pa-5 {
+    padding: var(--wiki-space-4) !important;
+  }
+}
+
+.page-tags-card {
+  .v-chip {
+    max-width: 100%;
+    margin:
+      0
+      var(--wiki-space-1)
+      var(--wiki-space-1)
+      0 !important;
+  }
+
+  .v-chip__content {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.page-comments-card {
+  .v-btn {
+    min-width: 0;
+    border-color: var(--wiki-surface-border-strong);
+    border-radius: var(--wiki-control-radius);
+  }
+}
+.page-tools-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--wiki-space-1);
+
+  border: 1px solid var(--wiki-surface-border) !important;
+  overflow: hidden !important;
+  border-radius: var(--wiki-panel-radius);
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 6%, transparent),
+      transparent 34%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 5%, transparent)
+    ),
+    color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent) !important;
+  box-shadow: var(--wiki-shadow-xs);
+
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    backdrop-filter: var(--wiki-chrome-blur);
+    -webkit-backdrop-filter: var(--wiki-chrome-blur);
+    border-color: var(--wiki-glass-border) !important;
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background: var(--wiki-surface-raised) !important;
+  }
+
+  &__utilities {
+    display: flex;
+    flex: 0 0 100%;
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wiki-space-1);
+    padding: var(--wiki-space-1);
+  }
+
+  &__utilities .v-btn[aria-pressed='true']:not(.page-offline-control),
+  &__utilities .page-watch-control--watching {
+    color: var(--wiki-primary-ink);
+  }
+
+  &__divider {
+    flex: 0 0 100%;
+    opacity: 1;
+    border-color: var(--wiki-surface-border);
+  }
+  &__provenance {
+    display: flex;
+    flex: 0 0 100%;
+    min-width: 0;
+    justify-content: center;
+    padding: var(--wiki-space-2) var(--wiki-space-2);
+  }
+
+  // Neutral resting icons at a readable contrast; active toggles stay amber
+  // with a glyph change as the non-color cue.
+  .v-btn {
+    width: var(--page-shortcut-target) !important;
+    min-width: var(--page-shortcut-target) !important;
+    max-width: var(--page-shortcut-target) !important;
+    height: var(--page-shortcut-target) !important;
+    min-height: var(--page-shortcut-target) !important;
+    max-height: var(--page-shortcut-target) !important;
+    padding: 0 !important;
+    border-radius: var(--wiki-radius-xs) !important;
+    flex: 0 0 var(--page-shortcut-target) !important;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 84%, transparent);
+
+    .v-icon {
+      font-size: 20px !important;
+      width: 20px !important;
+      height: 20px !important;
+    }
+
+    &:hover:not([aria-disabled='true']) {
+      background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+      color: var(--wiki-accent-ink);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
+      outline-offset: 2px;
+      box-shadow: var(--wiki-focus-ring);
+    }
+  }
+  // Date and author sit in one centered column under the utilities.
+  .page-document-provenance {
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: center;
+    row-gap: 2px;
+    font-size: .75rem;
+    line-height: 1.35;
+    text-align: center;
+  }
+
+}
+
+.v-theme--dark .page-tools-card {
+  // Neutral charcoal: keep the warm cast restrained so the surface never
+  // reads brown in dark mode.
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 3%, transparent),
+      transparent 34%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 3%, transparent)
+    ),
+    color-mix(in srgb, var(--wiki-surface-raised) 92%, transparent) !important;
+}
+
+.page-col-content:not(.is-page-header) {
+  min-width: 0;
+  padding-inline: var(--wiki-space-4) 0;
+}
+
+.page-col-content--toc-right:not(.is-page-header) {
+  padding-inline: 0 var(--wiki-space-4);
+}
+
+.page-col-content > .contents {
+  --page-reader-surface-padding: var(--wiki-space-3);
+
+  min-height: calc(var(--wiki-grid-size) * 3);
+  scroll-margin-block-start: calc(var(--v-layout-top, 64px) + 24px);
+  padding: var(--page-reader-surface-padding) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+
+  > div {
+    width: 100%;
+    margin: 0;
+
+    // Keep prose comfortable while tables, diagrams and code use the canvas.
+    > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+      max-inline-size: var(--page-reader-copy-max);
+    }
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    position: relative;
+    scroll-margin-block-start: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-8));
+    padding-inline-end: 1.3em;
+
+    .toc-anchor {
+      position: absolute;
+      inset-block-end: .08em;
+      inset-inline-end: 0;
+      inset-inline-start: auto;
+      display: inline-flex;
+      color: var(--wiki-accent-ink);
+      font-size: .72em;
+      opacity: 0;
+      transition:
+        color var(--wiki-motion-fast) var(--wiki-motion-ease),
+        opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
+    }
+
+    &:hover .toc-anchor,
+    .toc-anchor:focus-visible {
+      display: inline-flex;
+      color: var(--wiki-accent-ink);
+      opacity: .72;
+    }
+  }
+
+  :where(.footnote-item, .footnote-ref > [id]) {
+    scroll-margin-block-start: calc(max(var(--v-layout-top, 0px), var(--wiki-grid-size, 64px)) + var(--wiki-space-8));
+  }
+
+}
+.page-col-content > .contents :where(pre, code) {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
+
+.page-view-tabs {
+  width: fit-content;
+  margin-block-end: var(--wiki-space-5);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
+}
+
+.page-view-tabs ~ .comments-container {
+  margin-block-start: 0;
+}
+
+.comments-container {
+  overflow: hidden;
+  margin-block-start: var(--wiki-space-8);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-hero-radius);
+  background: rgb(var(--v-theme-surface));
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.comments-header {
+  display: flex;
+  gap: var(--wiki-space-3);
+  align-items: center;
+  padding: var(--wiki-space-5) var(--wiki-space-6);
+  border-block-end: 1px solid var(--wiki-surface-border);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--wiki-accent-spectral) 7%, rgb(var(--v-theme-surface))),
+      rgb(var(--v-theme-surface))
+    );
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.comments-header-icon {
+  display: grid;
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent);
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+  color: var(--wiki-primary-ink);
+}
+
+.comments-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 720;
+  letter-spacing: -.01em;
+}
+
+.comments-subtitle {
+  margin-block-start: var(--wiki-space-1);
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+}
+
+@media (max-width: 1279px) {
+  .page-hero--with-toc,
+  .page-hero--with-toc .page-header-section {
+    min-height: 0;
+  }
+
+  .page-col-sd {
+    display: none;
+  }
+
+
+  .page-toc-card {
+    display: flex;
+    flex-direction: column;
+    min-height: var(--wiki-control-height);
+    max-height: calc(var(--wiki-grid-size) * 5);
+  }
+
+  .page-toc-card .page-toc-toggle {
+    display: flex;
+    flex: 0 0 auto;
+    min-height: var(--wiki-control-height);
+    justify-content: space-between;
+    padding-inline: var(--wiki-space-4) !important;
+    border: 1px solid transparent;
+    border-radius: var(--wiki-radius-xs);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 7%, var(--wiki-surface-raised)) !important;
+    color: var(--wiki-accent-ink);
+    transition:
+      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      background var(--wiki-motion-fast) var(--wiki-motion-ease),
+      color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    &:hover {
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 34%, var(--wiki-surface-border-strong));
+      background: color-mix(in srgb, var(--wiki-ambient-accent) 13%, var(--wiki-surface-raised)) !important;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--wiki-focus-color);
+      outline-offset: -2px;
+      box-shadow: var(--wiki-focus-ring);
+    }
+
+    &[aria-expanded='true'] {
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, var(--wiki-surface-border-strong));
+      background:
+        linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--wiki-accent-warm) 12%, var(--wiki-surface-raised)),
+          color-mix(in srgb, var(--wiki-accent-spectral) 9%, var(--wiki-surface-raised))
+        ) !important;
+      color: var(--wiki-accent-ink);
+      box-shadow: var(--wiki-shadow-inset);
+    }
+
+    .v-btn__content { width: 100%; justify-content: space-between; }
+  }
+
+  .page-toc-row,
+  .page-toc-item {
+    min-height: 2.5rem;
+  }
+
+  .page-toc-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-filter,
+  .page-toc-filter-empty {
+    flex: 0 0 auto;
+  }
+
+  .page-toc-tree-wrap {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-content .page-toc-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: clip;
+    overscroll-behavior: contain;
+  }
+  .page-col-content:not(.is-page-header),
+  .page-col-content--toc-right:not(.is-page-header) {
+    padding-inline: 0;
+  }
+  .v-theme--dark .page-toc-card .page-toc-toggle {
+    background: color-mix(in srgb, var(--wiki-surface-sunken) 90%, transparent) !important;
+
+    &[aria-expanded='true'] {
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, var(--wiki-surface-border-strong));
+      background:
+        linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--wiki-accent-warm) 14%, var(--wiki-surface-raised)),
+          color-mix(in srgb, var(--wiki-accent-spectral) 8%, var(--wiki-surface-raised))
+        ) !important;
+    }
+  }
+
+}
+@media (min-width: 600px) and (max-width: 1279px) {
+  .page-tablet-tools {
+    display: flex;
+    width: 100%;
+    flex: 0 0 100%;
+    flex-direction: column;
+    gap: var(--wiki-space-4);
+  }
+
+  .page-tablet-tools > .page-tools-card,
+  .page-tablet-tools > .page-toc-card,
+  .page-tablet-tools > .page-tags-card,
+  .page-tablet-tools > .page-comments-card,
+  .page-tablet-tools > .wiki-page-ratings {
+    order: initial;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
+    margin-block-end: 0 !important;
+  }
+
+  .page-body > .v-row {
+    gap: var(--wiki-space-4);
+  }
+}
+
+@media (max-width: 959px) {
+  .page-nav-toggle,
+  .page-return-top {
+    inset-block-start: auto !important;
+    inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + 16px) !important;
+  }
+
+  .page-col-sd {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-header-section > .is-page-header {
+    padding-inline: var(--wiki-page-gutter) !important;
+  }
+
+  .page-col-content > .contents {
+    padding: var(--wiki-space-8) 0;
+  }
+}
+
+@media (max-width: 599px) {
+  .breadcrumbs-nav {
+    font-size: .75rem;
+  }
+
+  // Phones: the current page may use most of the row; parents stay short.
+  .breadcrumbs-nav [aria-current='page'] .breadcrumbs-nav__label {
+    max-width: calc(100vw - 8rem);
+  }
+
+  .page-header-path {
+    flex-basis: 100%;
+    margin-inline-end: 0;
+  }
+
+
+  .page-hero,
+  .page-header-section {
+    min-height: 0;
+  }
+
+  .page-header-section {
+    > .is-page-header {
+      grid-template-columns: minmax(0, 1fr);
+      padding:
+        var(--wiki-space-3)
+        var(--wiki-page-gutter)
+        var(--wiki-space-4) !important;
+    }
+
+    .page-title {
+      font-size: clamp(1.875rem, 1.55rem + 2vw, 2.25rem);
+      line-height: 1.05;
+    }
+
+    .page-description {
+      margin-block-start: var(--wiki-space-1);
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+  }
+
+
+  .page-body {
+    padding:
+      var(--wiki-space-3)
+      var(--wiki-page-gutter)
+      var(--wiki-space-10) !important;
+  }
+
+  .page-col-sd {
+    gap: var(--wiki-space-3);
+    padding-block-end: var(--wiki-space-4);
+  }
+
+  .page-mobile-tools {
+    display: flex;
+    width: 100%;
+    flex: 0 0 100%;
+    flex-direction: column;
+    gap: var(--wiki-space-3);
+  }
+
+  .page-mobile-metadata {
+    display: flex;
+    width: 100%;
+    flex: 0 0 100%;
+    order: 2;
+    flex-direction: column;
+    gap: var(--wiki-space-3);
+  }
+
+  .page-mobile-metadata > .v-card,
+  .page-mobile-metadata > .wiki-page-ratings {
+    width: 100%;
+    max-width: 100%;
+    flex: 0 0 auto;
+    margin-block-end: 0 !important;
+  }
+
+  .page-mobile-tools > .page-tools-card,
+  .page-mobile-tools > .page-toc-card {
+    width: 100%;
+    max-width: 100%;
+    flex: 0 0 auto;
+    margin-block-end: 0 !important;
+  }
+
+  .page-toc-card .page-toc-toggle {
+    display: flex;
+    flex: 0 0 auto;
+    min-height: var(--wiki-control-height);
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--wiki-space-3) var(--wiki-space-4) !important;
+  }
+
+
+  .page-toc-card {
+    min-height: var(--wiki-control-height);
+    max-height: calc(var(--wiki-grid-size) * 5);
+  }
+
+  .page-col-content > .contents {
+    min-height: calc(var(--wiki-grid-size) * 2);
+    padding:
+      var(--wiki-space-6)
+      0
+      var(--wiki-space-8);
+    border-radius: 0;
+
+    h1 .toc-anchor {
+      opacity: .48;
+    }
+
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+      .toc-anchor {
+        opacity: .48;
+      }
+    }
+  }
+
+  .comments-container {
+    margin-block-start: var(--wiki-space-4);
+    border-radius: var(--wiki-panel-radius);
+  }
+
+  .comments-header,
+  .comments-main {
+    padding-inline: var(--wiki-space-4);
+  }
+
+  .comments-subtitle {
+    display: none;
+  }
+
+  .page-edit-fab {
+    inset-block-end: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-4));
+    inset-inline-end: calc(var(--wiki-space-4) + var(--wiki-control-height) + var(--wiki-space-3));
+  }
+
+  .page-nav-toggle,
+  .page-return-top {
+    width: 40px !important;
+    min-width: 40px !important;
+    max-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    inset-block-start: auto !important;
+    inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + 12px) !important;
+  }
+
+  .page-nav-toggle {
+    inset-inline-end: auto !important;
+    inset-inline-start: calc(env(safe-area-inset-left) + var(--wiki-space-4)) !important;
+  }
+
+  .page-return-top {
+    inset-inline-start: auto !important;
+    inset-inline-end: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
+  }
+
+  .is-rtl {
+    .page-nav-toggle {
+      inset-inline-start: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
+    }
+    .page-return-top {
+      inset-inline-end: calc(env(safe-area-inset-left) + var(--wiki-space-4)) !important;
+    }
+  }
+}
+
+@media print {
+  .page-navigation,
+  .page-nav-toggle,
+  .page-header-path,
+  .page-edit-shortcuts,
+  .page-edit-fab,
+  .page-return-top,
+  .page-mobile-tools,
+  .page-tablet-tools,
+  .page-mobile-metadata,
+  .page-col-sd,
+  .page-tools-card__utilities,
+  .page-tools-card__divider,
+  .page-tools-history-link,
+  .page-toc-card,
+  .page-tags-card,
+  .page-comments-card,
+  .comments-container {
+    display: none !important;
+  }
+
+  .page-header-section > .is-page-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-header-section > .is-page-header > .page-header-headings {
+    grid-column: 1;
+    padding-inline-start: 0;
+  }
+
+  .page-header-section > .is-page-header > .page-header-summary,
+  .page-header-section > .is-page-header > .page-header-unpublished {
+    grid-column: 1;
+    padding-inline-start: 0;
+  }
+  .page-tools-card {
+    width: 100%;
+    min-height: 0;
+    margin: 0 0 var(--wiki-space-4) !important;
+    border: 0 !important;
+    border-block-end: 1px solid currentColor !important;
+    border-radius: 0;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .page-tools-card__provenance {
+    min-height: 0;
+    padding: 0 0 var(--wiki-space-2) !important;
+    color: CanvasText;
+  }
+
+  .page-tools-card .page-document-row--date,
+  .page-tools-card .page-document-row--author,
+  .page-tools-card time {
+    color: CanvasText;
+  }
+
+  .page-tools-card .page-document-author {
+    max-width: 100%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    color: CanvasText;
+  }
+
+  .page-main,
+  .page-hero,
+  .page-col-content > .contents {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .page-hero::before {
+    display: none;
+  }
+
+  .page-branding-mark {
+    display: none !important;
+  }
+
+  .page-header-headings--branded {
+    display: block;
+  }
+
+  .page-hero,
+  .page-header-section,
+  .page-header-section > .is-page-header {
+    min-height: 0;
+  }
+
+  .page-header-section > .is-page-header {
+    padding:
+      0
+      0
+      var(--wiki-space-6) !important;
+  }
+
+  .page-header-section .page-title,
+  .page-header-section .page-description {
+    color: CanvasText;
+  }
+  .page-header-section .page-title {
+    font-size: 28pt;
+    font-weight: 700;
+    line-height: 1.05;
+  }
+
+  .page-header-section .page-description {
+    font-size: 12pt;
+    line-height: 1.4;
+  }
+
+  .page-body,
+  .page-col-content > .contents {
+    width: 100%;
+    padding: 0 !important;
+  }
+
+  .page-col-content {
+    max-width: 100% !important;
+    flex-basis: 100% !important;
+  }
+
+  .page-col-content > .contents {
+    > div {
+      width: 100%;
+      max-width: none;
+    }
+
+    .toc-anchor {
+      display: none !important;
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .page-col-content > .contents,
+  .page-col-sd > .v-card,
+  .comments-container {
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+  .page-toc-card {
+    border-color: CanvasText !important;
+    background: Canvas !important;
+    box-shadow: none;
+  }
+
+  .page-toc-card .page-toc-toggle {
+    border-color: CanvasText;
+    background: Canvas !important;
+    color: CanvasText;
+    box-shadow: none;
+
+    .v-icon {
+      color: currentColor;
+    }
+
+    &:focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: 2px;
+      box-shadow: none;
+    }
+
+    &[aria-expanded='true'] {
+      border-color: Highlight;
+      background: Highlight !important;
+      color: HighlightText;
+    }
+  }
+
+  .page-toc-item::before {
+    display: none !important;
+  }
+
+  .page-hero--accent-present::before {
+    display: none !important;
+  }
+
+  .page-branding-mark {
+    display: none !important;
+  }
+
+  .page-header-headings--branded {
+    display: block;
+  }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .page-return-top,
+  .page-edit-fab,
+  .page-nav-toggle,
+  .page-header-section .page-edit-shortcuts .v-btn,
+  .page-toc-item,
+  .page-toc-item::after {
+    transition-duration: .001ms !important;
+  }
+
+  .page-main--route-enter .page-header-headings,
+  .page-main--route-enter .page-body > .v-row {
+    animation: none !important;
+  }
+
+  .page-return-top:hover,
+  .page-edit-fab:hover,
+  .page-nav-toggle:hover,
+  .page-header-section .page-edit-shortcuts .v-btn:hover {
+    transform: none;
+  }
+}
 .page-position {
   position: fixed;
-  inset-block-start: var(--wiki-chrome-height, 4rem);
+  transition: inset-inline-start var(--wiki-motion-fast, .15s) var(--wiki-motion-ease, ease);
+  /* The Wiki header is a 52px chrome bar (48px dense) plus a 1px bottom
+     border; --v-layout-top is not emitted for it, so anchor to the shared
+     chrome token and sit flush under the border. */
+  inset-block-start: calc(var(--wiki-chrome-height, 3.25rem) + 1px);
   inset-inline: 0;
   z-index: 1004;
   height: 2px;
@@ -4731,73 +6486,104 @@ export default defineComponent({
 }
 
 .nav-header--dense + .page-position {
-  inset-block-start: var(--wiki-chrome-height-dense, 3.5rem);
+  inset-block-start: calc(var(--wiki-chrome-height-dense, 3rem) + 1px);
 }
 
 .page-position-fill {
   width: 100%;
   height: 100%;
-  background: var(--wiki-accent-ink);
+  /* Reading-position wash: very faint at the reading start, strengthening
+     along the scroll direction up to a strong accent at the leading edge. */
+  background: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-ink) 25%, transparent), color-mix(in srgb, var(--wiki-accent-ink) 85%, transparent));
   transform-origin: left;
 }
 
-.is-rtl .page-position-fill { transform-origin: right; }
+.is-rtl .page-position-fill {
+  transform-origin: right;
+  background: linear-gradient(270deg, color-mix(in srgb, var(--wiki-accent-ink) 25%, transparent), color-mix(in srgb, var(--wiki-accent-ink) 85%, transparent));
+}
+
+
 
 .page-reading-chrome {
   position: fixed;
-  inset-block-end: calc(var(--wiki-footer-height) + env(safe-area-inset-bottom) + var(--wiki-space-4));
-  inset-inline: var(--wiki-space-4);
+  inset-block-end: calc(var(--wiki-footer-height) + env(safe-area-inset-bottom) + 1rem);
+  inset-inline-start: calc(1rem + env(safe-area-inset-left));
+  inset-inline-end: calc(1rem + env(safe-area-inset-right));
   z-index: 1006;
-  width: min(48rem, calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  width: max-content;
+  max-width: min(46rem, calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
   margin-inline: auto;
 }
 
 .page-reading-dock {
   display: flex;
   align-items: center;
-  gap: var(--wiki-space-3);
-  min-width: 0;
-  padding: var(--wiki-space-2) var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-chrome-surface);
+  gap: .5rem;
+  width: 100%;
+  isolation: isolate;
+  padding: .25rem .375rem .25rem .75rem;
+  border: 1px solid color-mix(in srgb, var(--wiki-surface-border-strong) 82%, transparent);
+  border-radius: var(--wiki-radius-pill);
+  background-color: var(--wiki-chrome-surface) !important;
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent)) !important;
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-sm);
+  box-shadow: var(--wiki-shadow-md);
+  backdrop-filter: var(--wiki-chrome-blur) !important;
+  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
 
-  .v-btn {
-    flex-shrink: 0;
-    min-height: var(--page-shortcut-target);
-    height: auto;
-    border-radius: var(--wiki-control-radius);
-    color: rgb(var(--v-theme-on-surface));
-    text-transform: none;
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    border-color: var(--wiki-glass-border);
   }
+
+  .v-icon,
+  .page-reading-dock-title,
+  .v-btn {
+    opacity: 1;
+  }
+
+  .v-btn { flex-shrink: 0; min-height: 36px; height: 36px; color: var(--wiki-accent-ink); }
 }
 
-.page-reading-dock-context { flex: 1 1 auto; min-width: 0; }
-.page-reading-dock-actions { display: flex; align-items: center; gap: var(--wiki-space-1); flex: 0 0 auto; }
 
-.page-reading-dock-title {
-  display: block;
+.page-reading-dock-context {
+  flex: 1 1 auto;
   min-width: 0;
-  max-block-size: 4.5em;
-  overflow-y: auto;
-  overflow-wrap: anywhere;
-  font-size: .9375rem;
-  font-weight: 650;
+}
+
+.page-reading-dock-actions {
+  display: flex;
+  align-items: center;
+  gap: .125rem;
+  flex: 0 0 auto;
 }
 
 .page-reading-dock-meta {
   display: flex;
-  gap: var(--wiki-space-2);
+  gap: .625rem;
   min-width: 0;
-  margin-block-start: var(--wiki-space-1);
   color: var(--wiki-text-muted);
-  font-size: .75rem;
+  font-size: .6875rem;
 }
 
 .page-reading-dock-position { flex: 0 0 auto; }
-.page-reading-dock-document { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.page-reading-dock-document {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-reading-dock-title {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--wiki-font-display);
+  font-size: .9375rem;
+}
 
 .page-reading-sections {
   position: absolute;
@@ -4805,25 +6591,49 @@ export default defineComponent({
   inset-inline: 0;
   display: flex;
   flex-direction: column;
-  width: min(28rem, 100%);
-  max-height: min(36rem, calc(100dvh - var(--page-header-offset) - var(--wiki-footer-height) - env(safe-area-inset-bottom) - 12rem));
+  width: min(26rem, 100%);
+  max-height: min(36rem, calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - var(--wiki-footer-height) - env(safe-area-inset-bottom) - 10rem));
   margin-inline: auto;
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-sm);
+  box-shadow: var(--wiki-shadow-md);
 
   > .page-toc-card {
     flex: 1 1 auto;
     min-height: 0;
     max-height: none;
-    margin: 0 !important;
-    border: 0;
+    margin-bottom: 0 !important;
+    border: 0 !important;
     border-radius: 0;
+    background: none !important;
+    box-shadow: none;
   }
 
-  .page-toc-list { max-height: none; }
+  .page-toc-content,
+  .page-toc-tree-wrap {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-filter,
+  .page-toc-heading,
+  .page-toc-filter-empty {
+    flex: 0 0 auto;
+  }
+
+  .page-toc-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 .page-reading-sections-header {
@@ -4832,274 +6642,116 @@ export default defineComponent({
   justify-content: space-between;
   flex: 0 0 auto;
   gap: var(--wiki-space-2);
-  min-height: var(--page-shortcut-target);
   padding-inline: var(--wiki-space-4) var(--wiki-space-2);
-  border-block-end: 1px solid var(--wiki-surface-border);
-  color: rgb(var(--v-theme-on-surface));
-  font-size: .875rem;
-  font-weight: var(--wiki-label-weight);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  color: var(--wiki-accent-ink);
+  font-family: var(--wiki-font-display);
 }
 
-.wiki-page :is(.page-toc-item, .page-toc-branch-toggle, .page-tools-card .v-btn, .page-edit-shortcuts .v-btn, .page-reading-chrome .v-btn):focus-visible {
-  outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
-  outline-offset: 2px;
-}
+.wiki-page.wiki-page--reading {
+  --page-reader-shell-max: 64rem;
+  --page-reader-copy-max: min(72ch, var(--wiki-reader-copy-width, 74ch));
 
-@media (min-width: 1280px) {
-  .page-workspace--toc-left { grid-template-columns: var(--page-metadata-rail-width) minmax(0, 1fr); }
-  .page-workspace--toc-right { grid-template-columns: minmax(0, 1fr) var(--page-metadata-rail-width); }
-  .page-col-sd--toc-left { order: 0; }
-  .page-col-sd--toc-right { order: 2; }
+  .page-col-sd,
+  .page-mobile-tools,
+  .page-tablet-tools,
+  .page-mobile-metadata,
+  .page-body > .v-row > .v-card,
+  .page-tools-card,
+  .page-edit-shortcuts,
+  .page-edit-fab { display: none !important; }
 
-  .page-col-sd {
-    position: sticky;
-    inset-block-start: calc(var(--page-header-offset) + var(--wiki-space-4));
-    display: block;
-    max-height: calc(100dvh - var(--page-header-offset) - var(--wiki-space-8) - env(safe-area-inset-bottom));
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-gutter: stable;
-  }
-
-  .page-col-sd--toc-off {
-    position: static;
-    order: 2;
-    max-height: none;
-    overflow: visible;
-
-    .page-desktop-rail {
-      flex-direction: row;
-      align-items: start;
-      flex-wrap: wrap;
-
-      > .v-card,
-      > .wiki-page-ratings { flex: 1 1 16rem; width: auto; }
-    }
-  }
-}
-
-@media (max-width: 1279px) {
-  .page-header-tools { display: none; }
-  .page-toc-card { max-height: min(32rem, 65dvh); margin: 0 !important; }
-
-  .page-tools-card {
-    padding: var(--wiki-space-2);
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius);
-    background: var(--wiki-surface-raised);
-
-    &__label {
-      flex: 0 0 100%;
-      margin: 0;
-      padding: var(--wiki-space-1) var(--wiki-space-2);
-    }
-
-    &__provenance {
-      flex: 0 0 100%;
-      margin: 0;
-      padding: var(--wiki-space-2);
-      border-block-start: 1px solid var(--wiki-surface-border);
-    }
-  }
-
-  .page-tablet-tools {
-    display: flex;
-    flex-direction: column;
-    order: 0;
-    gap: var(--wiki-space-3);
-
-    > .v-card,
-    > .wiki-page-ratings { width: 100%; min-width: 0; margin: 0 !important; }
-  }
-
-  .page-tablet-metadata {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
-    align-items: start;
-    order: 2;
-    gap: var(--wiki-space-3);
-
-    > .v-card,
-    > .wiki-page-ratings { width: 100%; min-width: 0; margin: 0 !important; }
-  }
-
-  .page-toc-branch-toggle {
-    flex-basis: var(--page-shortcut-target);
-    width: var(--page-shortcut-target);
-    height: var(--page-shortcut-target);
-  }
-
-  .page-toc-leaf-spacer { flex-basis: var(--page-shortcut-target); width: var(--page-shortcut-target); }
-  .page-toc-row,
-  .page-toc-item { min-height: var(--page-shortcut-target); }
-}
-
-@media (max-width: 767px) {
-  .page-document-context {
+  .page-header-section > .is-page-header {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "path" "headings" "summary" "status" "edits";
+    padding-block: var(--wiki-space-4) !important;
   }
 
-  .page-edit-shortcuts { justify-content: start; max-width: 100%; }
+  .page-header-section .page-header-headings {
+    grid-column: 1;
+    max-width: none;
+    margin-inline: 0;
+    font-size: 1.0625rem;
+    padding-inline-start: 0;
+  }
+
+  // Keep the mark anchored to the standard responsive edge while its focused
+  // heading containing block preserves the mark's standard rendered size.
+  .page-header-section,
+  .page-header-section > .is-page-header {
+    position: static;
+  }
+
+  .page-header-headings--branded > .page-branding-mark {
+    inset-inline-end: calc((min(100vw, var(--page-layout-shell-max)) - min(100vw, var(--page-reader-shell-max))) / -2);
+  }
+
+  .page-col-content:not(.is-page-header) {
+    flex: 0 0 100%;
+    max-width: 100%;
+    padding-inline: 0;
+  }
+
+  .page-col-content > .contents {
+    padding-block-start: var(--wiki-space-4);
+    border-color: transparent;
+    border-radius: 0;
+    box-shadow: none;
+
+    > div { margin-inline: auto; }
+  }
+
+  .page-header-section > .is-page-header > .page-header-summary {
+    grid-column: 1;
+    padding-inline-start: 0;
+  }
+
+  .page-main,
+  .page-body { background: var(--page-reader-background); }
+}
+
+@media (max-width: 599px) {
+  .page-reading-chrome {
+    width: calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right));
+  }
 
   .page-reading-dock {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    gap: .25rem;
+    padding: .5rem .375rem .25rem;
+    border-radius: var(--wiki-panel-radius);
 
     > .v-icon { display: none; }
+    .v-btn { min-height: 44px; height: 44px; }
     .page-reading-previous,
-    .page-reading-next { width: var(--page-shortcut-target); }
+    .page-reading-next { width: 44px; }
     .page-reading-exit .v-btn__prepend { display: none; }
   }
 
+  .page-reading-dock-context { padding-inline: .375rem; }
   .page-reading-dock-document { display: none; }
 
   .page-reading-dock-actions {
     display: grid;
-    grid-template-columns: var(--page-shortcut-target) var(--page-shortcut-target) minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: 44px 44px minmax(0, 1fr) minmax(0, 1fr);
 
     &:not(:has(.page-reading-sections-toggle)) { grid-template-columns: minmax(0, 1fr); }
 
     .v-btn {
       min-width: 0;
-      padding-inline: var(--wiki-space-1);
-      font-size: .75rem;
-
-      &__content { white-space: normal; }
+      padding-inline: .25rem;
+      font-size: .6875rem;
+      white-space: normal;
     }
   }
-}
 
-@media (max-width: 599px) {
-  .page-header-section { padding-block-start: var(--wiki-space-3); }
-  .page-header-headings--branded { --page-branding-mark-size: 3rem; gap: var(--wiki-space-2); }
-  .page-body { padding-block: var(--wiki-space-4) var(--wiki-space-12) !important; }
-  .page-workspace { gap: var(--wiki-space-4); }
-  .page-col-content { padding: var(--wiki-space-4); }
-  .breadcrumbs-nav .v-btn { min-height: var(--page-shortcut-target); }
-  .page-tablet-tools,
-  .page-tablet-metadata { display: none; }
-
-  .page-mobile-tools,
-  .page-mobile-metadata {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wiki-space-3);
-
-    > .v-card,
-    > .wiki-page-ratings { width: 100%; min-width: 0; margin: 0 !important; }
-  }
-
-  .page-mobile-tools { order: 0; }
-  .page-mobile-metadata { order: 2; }
-  .page-col-content > .contents :where(h1, h2, h3, h4, h5, h6) .toc-anchor { opacity: .7; }
-  .comments-header { padding: var(--wiki-space-3); }
-}
-
-.wiki-page.wiki-page--reading {
-  --page-reader-shell-max: 70rem;
-  --page-reader-copy-max: min(72ch, var(--wiki-reader-copy-width, 74ch));
-
-  .page-header-tools,
-  .page-col-sd,
-  .page-mobile-tools,
-  .page-tablet-tools,
-  .page-tablet-metadata,
-  .page-mobile-metadata,
-  .page-tools-card,
-  .page-edit-shortcuts,
-  .page-edit-fab { display: none !important; }
-
-  .page-document-context {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "path" "headings" "summary" "status";
-  }
-
-  .page-workspace { grid-template-columns: minmax(0, 1fr); }
-  .page-body { padding-block-end: 12rem !important; }
-  .page-col-content > .contents > div { margin-inline: auto; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .page-toc-item { transition: none; }
-}
-
-@media (forced-colors: active) {
-  .page-col-content,
-  .page-toc-card,
-  .page-tools-card,
-  .page-tags-card,
-  .page-comments-card,
-  .comments-container,
-  .page-reading-dock,
-  .page-reading-sections {
-    border-color: CanvasText;
-    background: Canvas;
-    box-shadow: none;
-  }
-
-  .page-toc-item[aria-current='location'],
-  .page-toc-item--active { border-inline-start-color: Highlight; color: LinkText; }
-  .page-context-band--accent-present { border-inline-start-color: CanvasText; }
+  .page-reading-sections-header .v-btn { min-width: 44px; min-height: 44px; }
 }
 
 @media print {
-  .page-navigation,
-  .page-nav-toggle,
-  .page-header-path,
-  .page-header-tools,
-  .page-edit-shortcuts,
-  .page-edit-fab,
-  .page-return-top,
-  .page-mobile-tools,
-  .page-tablet-tools,
-  .page-mobile-metadata,
-  .page-tablet-metadata,
-  .page-col-sd,
-  .page-tools-card__utilities,
-  .page-toc-card,
-  .page-tags-card,
-  .page-comments-card,
-  .page-view-tabs,
-  .comments-container,
   .page-position,
+  .page-focus-control,
   .page-reading-chrome { display: none !important; }
-
-  .page-document-context { display: block; padding: 0; }
-  .page-header-headings--branded { display: block; }
-  .page-branding-mark { display: none !important; }
-  .page-title { font-size: 28pt; }
-  .page-description { margin-block-start: .5rem; font-size: 12pt; }
-  .page-title,
-  .page-description { color: CanvasText; }
-
-  .page-header-section,
-  .page-body,
-  .page-col-content { width: 100%; padding: 0 !important; }
-  .page-header-section { padding-block-end: var(--wiki-space-6) !important; }
-  .page-main,
-  .page-context-band,
-  .page-col-content { border: 0; background: transparent; box-shadow: none; }
-  .page-workspace { display: block; }
-
-  .page-col-content > .contents {
-    padding: 0;
-
-    > div > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-inline-size: none; }
-    .toc-anchor { display: none !important; }
-  }
-
-  .page-tools-card {
-    display: block !important;
-    margin-block-start: var(--wiki-space-4) !important;
-    padding: var(--wiki-space-2) 0;
-    border: 0;
-    border-block-start: 1px solid currentColor;
-    border-radius: 0;
-    background: transparent;
-  }
-
-  .page-tools-card__provenance { margin: 0; padding: 0; color: CanvasText; }
 }
+
 </style>

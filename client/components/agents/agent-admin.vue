@@ -1,11 +1,13 @@
 <template>
   <section class="agent-control" aria-labelledby="admin-title">
-    <header class="agent-console-header">
-      <div>
-        <h1 id="admin-title">{{ embedded ? $t('admin:agentAdmin.agents') : $t('admin:agentAdmin.agentAdministration') }}</h1>
-        <p>{{ $t('admin:agentAdmin.connectModelsCurateExpertise') }}</p>
-      </div>
-      <div class="agent-console-header__actions">
+    <AdminHero
+      :title="embedded ? $t('admin:agentAdmin.agents') : $t('admin:agentAdmin.agentAdministration')"
+      :description="$t('admin:agentAdmin.connectModelsCurateExpertise')"
+      icon="mdi-robot-outline"
+      :eyebrow="$t('admin:agentAdmin.intelligenceConnections')"
+      heading-id="admin-title"
+    >
+      <template #status>
         <div class="agent-hero__status" role="status" aria-live="polite">
           <v-chip
             size="small"
@@ -16,9 +18,11 @@
             {{ loadFailed ? dataLoaded ? $t('admin:agentAdmin.refreshFailedShowingLast') : $t('admin:agentAdmin.deploymentStateUnavailable') : !dataLoaded ? $t('admin:agentAdmin.readingDeploymentState') : runtime?.enabled ? $t('admin:agentAdmin.agentRuntimeActive') : $t('admin:agentAdmin.agentRuntimePaused') }}
           </v-chip>
         </div>
+      </template>
+      <template #actions>
         <v-btn class="agent-hero__refresh" variant="tonal" color="primary" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || Boolean(actionBusyKey)" @click="load">{{ $t('admin:agentAdmin.refreshStatus') }}</v-btn>
-      </div>
-    </header>
+      </template>
+    </AdminHero>
 
     <v-alert v-if="error" class="agent-global-error" type="error" variant="tonal" closable role="alert" @click:close="error = ''">
       <strong>{{ $t('admin:agentAdmin.controlCenterCouldNot') }}</strong>
@@ -43,7 +47,6 @@
           :tabindex="tab === section.value ? 0 : -1"
           :aria-selected="tab === section.value"
           :aria-controls="`agent-panel-${section.value}`"
-          :title="section.description"
           @click="tab = section.value"
           @keydown.left="selectHorizontalSection(index, -1, $event)"
           @keydown.right="selectHorizontalSection(index, 1, $event)"
@@ -116,7 +119,18 @@
                 <article><v-icon icon="mdi-file-certificate-outline" aria-hidden="true" /><h3>{{ $t('admin:agentAdmin.approvedExpertise') }}</h3><p>{{ $t('admin:agentAdmin.organizationSkillsPackagePage') }}</p><button type="button" @click="tab = 'skills'">{{ $t('admin:agentAdmin.manageSkills') }} <v-icon icon="mdi-arrow-right" size="16" aria-hidden="true" /></button></article>
                 <article><v-icon icon="mdi-account-lock-outline" aria-hidden="true" /><h3>{{ $t('admin:agentAdmin.personalMemory') }}</h3><p>{{ $t('admin:agentAdmin.preferencesProjectNotesBelong') }}</p><p>{{ $t('admin:agentAdmin.updatesRecalledNextConversation') }}</p></article>
               </div>
-              <v-btn variant="text" prepend-icon="mdi-archive-clock-outline" @click="tab = 'runtime'">{{ $t('admin:agentAdmin.conversationRetention') }} <v-icon icon="mdi-arrow-right" size="16" aria-hidden="true" /></v-btn>
+              <section class="runtime-section">
+                <div class="section-heading"><div><h3>{{ $t('admin:agentAdmin.conversationRetention') }}</h3><p>{{ $t('admin:agentAdmin.historySeparatePersonalMemory') }}</p></div></div>
+                <dl v-if="runtime" class="agent-retention">
+                  <div><dt>{{ $t('admin:agentAdmin.temporaryConversations') }}</dt><dd>{{ $t('admin:agentAdmin.hours', { temporarySessionHours: runtime.retention.temporarySessionHours, interpolation: { escapeValue: false } }) }}</dd></div>
+                  <div><dt>{{ $t('admin:agentAdmin.recentConversationsNotFolder') }}</dt><dd>{{ $t('admin:agentAdmin.daysWithoutActivity', { savedSessionDays: runtime.retention.savedSessionDays, interpolation: { escapeValue: false } }) }}</dd></div>
+                  <div><dt>{{ $t('admin:agentAdmin.conversationsFolders') }}</dt><dd>{{ $t('admin:agentAdmin.keptUntilRemovedFolder') }}</dd></div>
+                  <div><dt>{{ $t('admin:agentAdmin.mcpProposalContent') }}</dt><dd>{{ $t('admin:agentAdmin.days', { mcpContentDays: runtime.retention.mcpContentDays, interpolation: { escapeValue: false } }) }}</dd></div>
+                  <div><dt>{{ $t('admin:agentAdmin.auditEvidence') }}</dt><dd>{{ $t('admin:agentAdmin.days2', { auditDays: runtime.retention.auditDays, interpolation: { escapeValue: false } }) }}</dd></div>
+                </dl>
+                <v-alert v-else type="info" variant="tonal">{{ $t('admin:agentAdmin.retentionConfigurationUnavailableRefresh') }}</v-alert>
+                <p class="agent-overview__caption">{{ $t('admin:agentAdmin.expiryEnforcedMaintenanceActive') }}</p>
+              </section>
             </div>
           </section>
         </v-window-item>
@@ -169,22 +183,10 @@
                     <dl><div><dt>{{ $t('admin:agentAdmin.continuations') }}</dt><dd>{{ runtime.goals.maxContinuations }}</dd></div><div><dt>{{ $t('admin:agentAdmin.aggregateTokens') }}</dt><dd>{{ runtime.goals.maxTokens }}</dd></div><div><dt>{{ $t('admin:agentAdmin.toolCalls') }}</dt><dd>{{ runtime.goals.maxToolCalls }}</dd></div><div><dt>{{ $t('admin:agentAdmin.maximumDuration') }}</dt><dd>{{ $t('admin:agentAdmin.min', { maxDurationMilliseconds: runtime.goals.maxDurationMilliseconds / 60000, interpolation: { escapeValue: false } }) }}</dd></div></dl>
                   </article>
                   <article class="policy-card">
-                    <div class="policy-card__title"><span><v-icon icon="mdi-archive-clock-outline" size="19" aria-hidden="true" /></span><h4>{{ $t('admin:agentAdmin.maintenanceBatch') }}</h4></div>
-                    <dl><div><dt>{{ $t('admin:agentAdmin.maintenanceBatch') }}</dt><dd>{{ runtime.retention.maintenanceBatchSize }}</dd></div></dl>
+                    <div class="policy-card__title"><span><v-icon icon="mdi-archive-clock-outline" size="19" aria-hidden="true" /></span><h4>{{ $t('admin:agentAdmin.retention') }}</h4></div>
+                    <dl><div><dt>{{ $t('admin:agentAdmin.temporarySessions') }}</dt><dd>{{ $t('admin:agentAdmin.hr', { temporarySessionHours: runtime.retention.temporarySessionHours, interpolation: { escapeValue: false } }) }}</dd></div><div><dt>{{ $t('admin:agentAdmin.mcpProposals') }}</dt><dd>{{ $t('admin:agentAdmin.days', { mcpContentDays: runtime.retention.mcpContentDays, interpolation: { escapeValue: false } }) }}</dd></div><div><dt>{{ $t('admin:agentAdmin.auditLedger') }}</dt><dd>{{ $t('admin:agentAdmin.days2', { auditDays: runtime.retention.auditDays, interpolation: { escapeValue: false } }) }}</dd></div><div><dt>{{ $t('admin:agentAdmin.maintenanceBatch') }}</dt><dd>{{ runtime.retention.maintenanceBatchSize }}</dd></div></dl>
                   </article>
                 </div>
-              </section>
-              <section class="runtime-section">
-                <div class="section-heading"><div><h3>{{ $t('admin:agentAdmin.conversationRetention') }}</h3><p>{{ $t('admin:agentAdmin.historySeparatePersonalMemory') }}</p></div></div>
-                <dl v-if="runtime" class="agent-retention">
-                  <div><dt>{{ $t('admin:agentAdmin.temporaryConversations') }}</dt><dd>{{ $t('admin:agentAdmin.hours', { temporarySessionHours: runtime.retention.temporarySessionHours, interpolation: { escapeValue: false } }) }}</dd></div>
-                  <div><dt>{{ $t('admin:agentAdmin.recentConversationsNotFolder') }}</dt><dd>{{ $t('admin:agentAdmin.daysWithoutActivity', { savedSessionDays: runtime.retention.savedSessionDays, interpolation: { escapeValue: false } }) }}</dd></div>
-                  <div><dt>{{ $t('admin:agentAdmin.conversationsFolders') }}</dt><dd>{{ $t('admin:agentAdmin.keptUntilRemovedFolder') }}</dd></div>
-                  <div><dt>{{ $t('admin:agentAdmin.mcpProposalContent') }}</dt><dd>{{ $t('admin:agentAdmin.days', { mcpContentDays: runtime.retention.mcpContentDays, interpolation: { escapeValue: false } }) }}</dd></div>
-                  <div><dt>{{ $t('admin:agentAdmin.auditEvidence') }}</dt><dd>{{ $t('admin:agentAdmin.days2', { auditDays: runtime.retention.auditDays, interpolation: { escapeValue: false } }) }}</dd></div>
-                </dl>
-                <v-alert v-else type="info" variant="tonal">{{ $t('admin:agentAdmin.retentionConfigurationUnavailableRefresh') }}</v-alert>
-                <p class="agent-overview__caption">{{ $t('admin:agentAdmin.expiryEnforcedMaintenanceActive') }}</p>
               </section>
               <aside class="metrics-note"><span><v-icon icon="mdi-chart-timeline-variant-shimmer" size="20" aria-hidden="true" /></span><div><strong>{{ $t('admin:agentAdmin.metricsHealthRemainIsolated') }}</strong><p>{{ $t('admin:agentAdmin.runProposalArtifactUsage') }} <code>/healthz</code>.</p></div></aside>
             </div>
@@ -219,7 +221,6 @@
                 <v-text-field v-model="providerQuery" :label="$t('admin:agentAdmin.findProvider')" prepend-inner-icon="mdi-magnify" clearable hide-details />
                 <v-select v-model="providerState" :items="providerStates" :label="$t('admin:agentAdmin.providerState')" hide-details />
               </div>
-              <p v-if="profiles.length" class="provider-inventory-count">{{ $t('admin:agentAdmin.loadedProviderFilterScope') }}</p>
               <p v-if="profiles.length" class="provider-inventory-count" role="status">{{ $t('admin:agentAdmin.providers2', { filteredProfilesCount: filteredProfiles.length, profilesCount: profiles.length, interpolation: { escapeValue: false } }) }}</p>
               <div v-if="filteredProfiles.length" class="provider-grid">
                 <article v-for="profile in filteredProfiles" :key="profile.id" class="provider-card">
@@ -1332,7 +1333,8 @@ onMounted(() => {
   color: var(--wiki-accent-ink);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
-  letter-spacing: .02em;
+  letter-spacing: .13em;
+  text-transform: uppercase;
 }
 
 .agent-hero__status {
@@ -1379,6 +1381,7 @@ onMounted(() => {
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 9%, var(--wiki-surface-raised));
   color: var(--wiki-accent-ink);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .agent-panel__icon--teal,
@@ -1406,12 +1409,8 @@ onMounted(() => {
 }
 
 
-.agent-console-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--wiki-space-4); margin-block-end: var(--wiki-space-5); }
-.agent-console-header h1 { margin: 0; font: 700 1.5rem/1.3 var(--wiki-font-heading); }
-.agent-console-header p { margin-block: var(--wiki-space-2) 0; color: var(--wiki-text-muted); max-width: 65ch; }
-.agent-console-header__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--wiki-space-3); }
-.agent-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--wiki-space-4); }
-.agent-sections { display: flex; gap: var(--wiki-space-1); min-width: 0; overflow-x: auto; padding: var(--wiki-space-2); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-raised); scrollbar-width: thin; }
+.agent-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--wiki-space-6); }
+.agent-sections { display: flex; gap: var(--wiki-space-1); min-width: 0; overflow-x: auto; padding-block-end: var(--wiki-space-2); border-block-end: 1px solid var(--wiki-surface-border); scrollbar-width: thin; }
 .agent-section {
   position: relative;
   display: flex;
@@ -1489,7 +1488,10 @@ onMounted(() => {
   font-weight: 700;
 }
 
-.agent-section__copy small { display: none; }
+.agent-section__copy small {
+  color: var(--wiki-text-muted);
+  font-size: max(.7rem, var(--wiki-label-size));
+}
 
 .agent-section__badge {
   justify-self: end;
@@ -1506,17 +1508,20 @@ onMounted(() => {
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
 }
 
 .agent-panel__header {
   display: flex;
-  min-height: var(--wiki-control-height);
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10));
   align-items: center;
   justify-content: space-between;
   gap: var(--wiki-space-5);
   padding: var(--wiki-space-4) var(--wiki-space-5);
   border-block-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--wiki-ambient-accent) 5%, transparent), transparent 48%),
+    var(--wiki-surface-raised);
 }
 
 .agent-panel__heading {
@@ -1668,6 +1673,14 @@ onMounted(() => {
   background: var(--wiki-surface-sunken);
 }
 
+.policy-card::after {
+  position: absolute;
+  inset-block: var(--wiki-space-4);
+  inset-inline-start: 0;
+  width: .125rem;
+  background: color-mix(in srgb, var(--wiki-accent-warm) 62%, transparent);
+  content: '';
+}
 
 .policy-card__title {
   display: flex;
@@ -1808,25 +1821,34 @@ code {
 
 .provider-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  gap: var(--wiki-space-3);
 }
 
 .provider-card {
   position: relative;
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--wiki-space-3) var(--wiki-space-5);
+  overflow: hidden;
+  flex-direction: column;
   padding: var(--wiki-space-4);
-  border-block-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--wiki-ambient-accent) 4%, transparent), transparent 48%),
+    var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  transition:
+    border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
+    transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
 }
-.provider-card__top, .provider-card > .v-alert, .provider-card__error { grid-column: 1 / -1; }
 
 .provider-card:hover,
 .provider-card:focus-within {
-  background: var(--wiki-surface-sunken);
+  border-color: color-mix(in srgb, var(--wiki-accent-warm) 28%, var(--wiki-surface-border));
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+  transform: translateY(calc(var(--wiki-space-1) * -.5));
 }
 
 .provider-card__top {
@@ -1853,10 +1875,13 @@ code {
 }
 
 .provider-card__name h3 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  margin: var(--wiki-space-1) 0 0;
+  font-size: .96rem;
+  font-weight: 730;
+  letter-spacing: -.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .provider-card__identity > p {
@@ -1869,7 +1894,7 @@ code {
   display: flex;
   flex-wrap: wrap;
   gap: var(--wiki-space-2);
-  margin: 0;
+  margin-block: var(--wiki-space-4) var(--wiki-space-1);
 }
 .provider-card__checked {
   display: block;
@@ -1926,8 +1951,10 @@ code {
 }
 
 .provider-card__models code {
-  font-size: .8rem;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  font-size: .72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .provider-card__models small {
@@ -1951,7 +1978,7 @@ code {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--wiki-space-3);
-  margin: 0;
+  margin-block-start: var(--wiki-space-4);
 }
 
 .provider-card__meta > div {
@@ -1968,21 +1995,22 @@ code {
 }
 
 .provider-card__meta strong {
+  overflow: hidden;
   color: rgb(var(--v-theme-on-surface));
-  font-size: .8rem;
+  font-size: .7rem;
   font-weight: 640;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .provider-card__edit {
   display: flex;
-  width: 100%;
+  width: calc(100% + var(--wiki-space-8));
   min-height: var(--wiki-control-height);
   align-items: center;
   justify-content: space-between;
-  grid-column: 1 / -1;
-  margin: 0;
-  padding: var(--wiki-space-2) 0;
+  margin: var(--wiki-space-4) calc(var(--wiki-space-4) * -1) calc(var(--wiki-space-4) * -1);
+  padding: var(--wiki-space-2) var(--wiki-space-4);
   border: 0;
   border-block-start: 1px solid var(--wiki-surface-border);
   background: transparent;
@@ -2008,10 +2036,10 @@ code {
 
 .agent-empty {
   display: grid;
-  min-height: 12rem;
+  min-height: calc(var(--wiki-space-12) * 7);
   place-items: center;
   align-content: center;
-  padding: var(--wiki-space-6);
+  padding: var(--wiki-space-12) var(--wiki-space-6);
   border: 1px dashed var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-sunken);
@@ -2080,14 +2108,15 @@ code {
 }
 
 .target-row__copy strong {
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .target-row__copy small {
   color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: max(.7rem, var(--wiki-label-size));
-  overflow-wrap: anywhere;
 }
 
 .target-row__state {
@@ -2102,9 +2131,9 @@ code {
 .profile-editor {
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-panel-radius) !important;
+  border-radius: var(--wiki-hero-radius) !important;
   background: var(--wiki-surface-raised) !important;
-  box-shadow: var(--wiki-shadow-lg) !important;
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
 }
 
 .profile-editor__header {
@@ -2114,7 +2143,9 @@ code {
   gap: var(--wiki-space-3);
   padding: var(--wiki-space-4) var(--wiki-space-5);
   border-block-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent), transparent 55%),
+    var(--wiki-surface-raised);
 }
 
 .profile-editor__mark {
@@ -2450,6 +2481,7 @@ code {
   padding: var(--wiki-space-3) var(--wiki-space-4);
   border-block-start: 1px solid var(--wiki-surface-border);
   background: var(--wiki-surface-raised);
+  box-shadow: 0 calc(var(--wiki-space-1) * -1) var(--wiki-space-6) color-mix(in srgb, var(--wiki-shadow-color) 32%, transparent);
 }
 
 .profile-editor__position,
@@ -2484,7 +2516,7 @@ code {
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius) !important;
   background: var(--wiki-surface-raised) !important;
-  box-shadow: var(--wiki-shadow-lg) !important;
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
 }
 
 .compact-dialog__header {
@@ -2568,29 +2600,29 @@ code {
 }
 
 
-.agent-overview__intro { max-width: 65ch; padding-block-end: var(--wiki-space-4); }
-.agent-overview__intro h2 { font: 700 1.2rem/1.4 var(--wiki-font-heading); margin-block: var(--wiki-space-2); }
-.agent-overview__intro p { font-size: .9rem; line-height: 1.6; margin-block: var(--wiki-space-2); }
-.agent-overview__grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--wiki-space-4); }
-.agent-setup, .agent-default { padding: var(--wiki-space-4); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
-.agent-setup h3, .agent-default h3 { font: 700 1rem/1.4 var(--wiki-font-heading); margin-block: 0 var(--wiki-space-2); }
+.agent-overview__intro { max-width: 43rem; padding-block: var(--wiki-space-1) calc(var(--wiki-space-6) + var(--wiki-space-1)); }
+.agent-overview__intro h2 { font: 500 clamp(1.6rem, 2.4vw, 2rem)/1.2 var(--wiki-font-display); margin-block: var(--wiki-space-3) var(--wiki-space-4); }
+.agent-overview__intro p { max-width: 60ch; font-size: .95rem; line-height: 1.7; }
+.agent-overview__grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--wiki-space-6); }
+.agent-setup, .agent-default { padding: clamp(var(--wiki-space-4), 2vw, calc(var(--wiki-space-6) + var(--wiki-space-1))); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
+.agent-setup h3, .agent-default h3 { font: 500 1.4rem var(--wiki-font-display); }
 .agent-overview__caption { font-size: .8rem; line-height: 1.6; margin-block: var(--wiki-space-3) var(--wiki-space-4); }
 .agent-setup__step { appearance: none; background: transparent; color: inherit; border: 0; cursor: pointer; display: flex; width: 100%; align-items: center; gap: var(--wiki-space-3); padding: var(--wiki-space-4) 0; border-top: 1px solid var(--wiki-surface-border); text-align: start; }
 .agent-setup__step > span { display: grid; flex: 1; gap: var(--wiki-space-1); min-width: 0; }
 .agent-setup__step strong { font-size: .9rem; }
 .agent-setup__step small { font-size: .8rem; line-height: 1.5; overflow-wrap: anywhere; }
 .agent-setup__step:focus-visible, .agent-pathways button:focus-visible, .agent-memory-sources button:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }
-.agent-default h3 { margin-block: var(--wiki-space-3) var(--wiki-space-2); overflow-wrap: anywhere; }
+.agent-default { background: color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised)); }
+.agent-default h3 { margin-block: var(--wiki-space-6) var(--wiki-space-2); overflow-wrap: anywhere; }
 .agent-default code { font-family: var(--wiki-font-mono); font-size: .85rem; overflow-wrap: anywhere; }
 .agent-default p { font-size: .85rem; line-height: 1.7; margin-block: var(--wiki-space-4) var(--wiki-space-6); }
 .agent-pathways { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--wiki-surface-border); }
-.agent-pathways button { appearance: none; background: transparent; color: inherit; border: 0; cursor: pointer; display: flex; align-items: start; gap: var(--wiki-space-3); padding: var(--wiki-space-4); text-align: start; }
+.agent-pathways button { appearance: none; background: transparent; color: inherit; border: 0; cursor: pointer; display: flex; align-items: start; gap: var(--wiki-space-3); padding: var(--wiki-space-6) var(--wiki-space-4); text-align: start; }
 .agent-pathways button > span { display: grid; gap: var(--wiki-space-2); flex: 1; }
 .agent-pathways strong { font-size: .9rem; }
 .agent-pathways small { font-size: .8rem; line-height: 1.6; }
-.agent-memory-sources { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--wiki-space-4); margin-bottom: var(--wiki-space-5); }
-.agent-memory-sources article { padding-block-end: var(--wiki-space-4); border-block-end: 1px solid var(--wiki-surface-border); }
-.agent-memory-sources h3 { font: 700 1rem/1.4 var(--wiki-font-heading); margin-block: var(--wiki-space-2); }
+.agent-memory-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--wiki-space-6); margin-bottom: var(--wiki-space-8); }
+.agent-memory-sources h3 { font: 500 1.2rem var(--wiki-font-display); margin-block: var(--wiki-space-3); }
 .agent-memory-sources p { font-size: .85rem; line-height: 1.7; margin-block: var(--wiki-space-3); }
 .agent-memory-sources button { appearance: none; border: 0; background: transparent; cursor: pointer; }
 .agent-memory-sources a, .agent-memory-sources button { color: var(--wiki-accent-ink); font-size: .85rem; text-decoration: underline; }
@@ -2618,9 +2650,7 @@ code {
 }
 
 @media (max-width: 760px) {
-  .agent-overview__grid, .provider-inventory-toolbar, .provider-card { grid-template-columns: minmax(0, 1fr); }
-  .agent-section, .agent-setup__step, .agent-pathways button, .agent-memory-sources button, .provider-card__edit { min-height: 44px; }
-  .agent-console-header__actions { width: 100%; }
+  .agent-overview__grid, .provider-inventory-toolbar { grid-template-columns: 1fr; }
   .agent-retention > div { grid-template-columns: 1fr; gap: var(--wiki-space-1); }
 
 
@@ -2720,7 +2750,10 @@ code {
     padding: var(--wiki-space-2);
   }
 
-  .profile-editor__footer > .v-spacer { display: none; }
+  .profile-editor__footer > .v-spacer,
+  .profile-editor__footer > .v-btn:first-of-type {
+    display: none;
+  }
 
   .protocol-summary > div {
     grid-template-columns: minmax(0, 1fr);

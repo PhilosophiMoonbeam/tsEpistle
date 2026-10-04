@@ -1,12 +1,10 @@
 .developer-flags-workspace {
-  --flags-line: var(--wiki-surface-border);
+  --flags-line: rgba(var(--v-theme-on-surface), 0.14);
   --flags-muted: var(--wiki-text-muted);
   max-width: 1420px;
   margin: 0 auto;
-  padding: 20px 24px 40px;
+  padding: 28px 30px 40px;
   min-width: 0;
-  color: rgb(var(--v-theme-on-surface));
-  overflow-wrap: anywhere;
 
   h1,
   h2,
@@ -17,21 +15,22 @@
 
   h1,
   h2 {
-    font-family: var(--wiki-font-display);
-    font-weight: 650;
-    line-height: 1.3;
+    font-family: var(--wiki-font-editorial, Georgia, serif);
+    font-weight: 500;
+    letter-spacing: -0.035em;
+    line-height: 1.12;
   }
 
   h1 {
-    font-size: 1.5rem;
+    font-size: clamp(32px, 3.2vw, 46px);
   }
 
   h2 {
-    font-size: 1.35rem;
+    font-size: clamp(26px, 2.4vw, 34px);
   }
 
   h3 {
-    font-size: 1rem;
+    font-size: 18px;
     line-height: 1.35;
   }
 
@@ -40,15 +39,10 @@
     line-height: 1.65;
   }
 
-  .flags-draft-status {
-    margin: 12px 0;
-    font-size: .8rem;
-  }
-
   button:focus-visible,
   a:focus-visible {
-    outline: 2px solid var(--wiki-accent-ink);
-    outline-offset: 2px;
+    outline: 2px solid rgb(var(--v-theme-primary));
+    outline-offset: 4px;
   }
 
   .flags-section-head,
@@ -65,32 +59,33 @@
     color: var(--flags-muted);
     font-size: var(--wiki-label-size);
     font-weight: 700;
-    margin-bottom: 6px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
   }
 
   .flags-strip {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     border-block: 1px solid var(--flags-line);
-    margin-bottom: 16px;
-    background: var(--wiki-surface-raised);
+    margin-bottom: 28px;
   }
 
   .flags-strip > div {
     min-width: 0;
-    padding: 12px 16px 12px 0;
+    padding: 19px 22px 19px 0;
   }
 
   .flags-strip > div + div {
-    border-inline-start: 1px solid var(--flags-line);
-    padding-inline-start: 16px;
+    border-left: 1px solid var(--flags-line);
+    padding-left: 22px;
   }
 
   .flags-strip span,
   .flags-facts dt,
   .flags-history-row time {
     color: var(--flags-muted);
-    font-size: .8rem;
+    font-size: 11px;
   }
 
   .flags-strip strong {
@@ -102,9 +97,9 @@
 
   .flags-nav {
     display: flex;
-    gap: 4px;
+    gap: 28px;
     border-bottom: 1px solid var(--flags-line);
-    margin-bottom: 20px;
+    margin-bottom: 30px;
     overflow-x: auto;
   }
 
@@ -116,15 +111,13 @@
     cursor: pointer;
     font-size: 13px;
     font-weight: 600;
-    min-height: 44px;
-    padding: 10px 14px;
+    padding: 16px 0;
     white-space: nowrap;
   }
 
   .flags-nav button[aria-current='page'] {
-    border-color: var(--wiki-accent-ink);
+    border-color: rgb(var(--v-theme-on-surface));
     color: rgb(var(--v-theme-on-surface));
-    background: var(--wiki-surface-sunken);
   }
 
   .flags-section-head {
@@ -143,22 +136,17 @@
     grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.85fr);
     gap: 24px;
   }
-  .flags-grid > *,
-  .flags-flag__head > div {
-    min-width: 0;
-  }
 
   .flags-panel,
   .flags-flag,
   .flags-history-row {
     border: 1px solid var(--flags-line);
-    border-radius: var(--wiki-panel-radius);
-    background: var(--wiki-surface-raised);
+    border-radius: 6px;
   }
 
   .flags-panel {
     min-width: 0;
-    padding: 18px;
+    padding: 26px;
   }
 
   .flags-panel > p + p,
@@ -167,11 +155,11 @@
   }
 
   .flags-panel--quiet {
-    background: var(--wiki-surface-sunken);
+    background: rgba(var(--v-theme-on-surface), 0.025);
   }
 
   .flags-flag {
-    padding: 18px;
+    padding: 24px;
   }
 
   .flags-flag + .flags-flag {
@@ -228,8 +216,8 @@
     bottom: 16px;
     margin-top: 24px;
     border: 1px solid rgb(var(--v-theme-primary));
-    border-radius: var(--wiki-panel-radius);
-    background: var(--wiki-surface-raised);
+    border-radius: 6px;
+    background: rgb(var(--v-theme-surface));
     padding: 15px 18px;
   }
 
@@ -252,9 +240,7 @@
   .flags-history {
     display: grid;
     gap: 12px;
-    margin: 12px 0 0;
-    max-height: 600px;
-    overflow: auto;
+    margin: 18px 0 0;
     padding: 0;
     list-style: none;
   }
@@ -270,8 +256,8 @@
   }
 
   .flags-history-row time {
-    flex: 0 1 240px;
-    text-align: end;
+    flex: 0 0 auto;
+    text-align: right;
   }
 
   .flags-empty {
@@ -302,9 +288,9 @@
     }
 
     .flags-strip > div + div {
-      border-inline-start: 0;
+      border-left: 0;
       border-top: 1px solid var(--flags-line);
-      padding-inline-start: 0;
+      padding-left: 0;
     }
 
     .flags-facts > div {
@@ -315,8 +301,5 @@
     .flags-history-row time {
       text-align: left;
     }
-    .v-btn { min-height: 44px; max-width: 100%; }
-    .v-btn__content, .v-label { white-space: normal; }
-    .flags-flag__head { flex-wrap: wrap; gap: 10px; }
   }
 }

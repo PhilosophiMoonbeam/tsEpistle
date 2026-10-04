@@ -1,21 +1,6 @@
 <template lang="pug">
-  .auth-shell(:class='shellClass')
+  .auth-shell(:class='shellClass', :style='backgroundStyle')
     main.auth-shell__card(:aria-busy='busy ? `true` : `false`', :aria-labelledby='headingId')
-      header.auth-shell__heading
-        h1(:id='headingId') {{ formTitle || eyebrow || title }}
-      .auth-shell__lead(v-if='$slots.lead')
-        slot(name='lead')
-      slot
-      footer.auth-shell__footer(v-if='footerLinkLabel')
-        span {{ footerParts[0] }}
-        a(
-          :href='footerHref'
-          :aria-disabled='footerDisabled ? `true` : undefined'
-          :tabindex='footerDisabled ? -1 : undefined'
-          @click='footerDisabled && $event.preventDefault()'
-        ) {{ footerLinkLabel }}
-        span {{ footerParts[1] }}
-    section.auth-shell__identity(:style='backgroundStyle', :aria-label='title')
       header.auth-shell__brand
         .auth-shell__logo
           img(
@@ -30,9 +15,19 @@
           .auth-shell__logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
         .auth-shell__title
           .auth-shell__eyebrow(v-if='eyebrow') {{ eyebrow }}
-          h2 {{ title }}
-      .auth-shell__context(v-if='$slots.context')
-        slot(name='context')
+          h1(:id='headingId') {{ title }}
+      .auth-shell__lead(v-if='$slots.lead')
+        slot(name='lead')
+      slot
+      footer.auth-shell__footer(v-if='footerLinkLabel')
+        span {{ footerParts[0] }}
+        a(
+          :href='footerHref'
+          :aria-disabled='footerDisabled ? `true` : undefined'
+          :tabindex='footerDisabled ? -1 : undefined'
+          @click='footerDisabled && $event.preventDefault()'
+        ) {{ footerLinkLabel }}
+        span {{ footerParts[1] }}
     slot(name='aside')
 </template>
 
@@ -43,14 +38,13 @@ import { defineComponent, type PropType } from 'vue'
 const AUTH_SHELL_LINK_MARKER = '{{link}}'
 
 /**
- * Shared two-zone entry frame: a task pane and an independent site-identity pane.
- * The aside stays a direct child for the optional particle-logo renderer.
- * Both panes remain in document flow on small and short viewports.
+ * Shared frame for sign-in, registration, first-run setup and welcome pages:
+ * one background, one card position, one brand block and one footer link.
+ * Text is supplied by the caller so the shell also works without i18n.
  */
 export default defineComponent({
   props: {
     title: { type: String, required: true },
-    formTitle: { type: String, default: '' },
     headingId: { type: String, default: 'auth-shell-title' },
     eyebrow: { type: String, default: '' },
     logoUrl: { type: String, default: '' },
@@ -109,81 +103,113 @@ export default defineComponent({
 <style lang="scss">
 .auth-shell {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 38rem) minmax(0, 1fr);
-  align-content: start;
+  display: flex;
   min-height: 100vh;
   min-height: 100dvh;
-  gap: var(--wiki-space-6);
-  padding: var(--wiki-space-6);
-  background: var(--wiki-surface-sunken);
-  color: rgb(var(--v-theme-on-surface));
+  align-items: center;
+  overflow: hidden auto;
+  padding: var(--wiki-space-10) clamp(var(--wiki-space-6), 6vw, var(--wiki-space-12));
+  background-color: rgb(var(--v-theme-background));
+  background-position: center;
+  background-size: cover;
+  color: rgb(var(--v-theme-on-background));
   font-family: var(--wiki-font-body);
   isolation: isolate;
 
-  &__card {
-    position: relative;
-    z-index: 1;
-    align-self: start;
-    min-width: 0;
-    min-height: calc(100dvh - var(--wiki-space-12));
-    padding: clamp(var(--wiki-space-5), 4vw, var(--wiki-space-10));
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius);
-    background: var(--wiki-surface-raised);
+  &::before {
+    position: absolute;
+    z-index: -2;
+    inset: 0;
+    background:
+      radial-gradient(
+        circle at 72% 50%,
+        var(
+          --login-logo-aura,
+          color-mix(in srgb, var(--wiki-accent-spectral) 24%, transparent)
+        ),
+        transparent 38rem
+      ),
+      linear-gradient(
+        108deg,
+        color-mix(in srgb, rgb(var(--v-theme-background)) 94%, transparent),
+        color-mix(in srgb, rgb(var(--v-theme-background)) 76%, transparent) 62%,
+        color-mix(in srgb, rgb(var(--v-theme-background)) 90%, transparent)
+      );
+    content: '';
+    pointer-events: none;
   }
 
-  &__heading {
-    margin-bottom: var(--wiki-space-6);
-    padding-bottom: var(--wiki-space-5);
-    border-bottom: 1px solid var(--wiki-surface-border);
+  &::after {
+    position: absolute;
+    z-index: -1;
+    inset: var(--wiki-space-8);
+    border: 1px solid color-mix(in srgb, var(--wiki-accent-spectral) 14%, transparent);
+    border-radius: var(--wiki-hero-radius);
+    background-image:
+      linear-gradient(var(--wiki-surface-border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--wiki-surface-border) 1px, transparent 1px);
+    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
+    content: '';
+    mask-image: linear-gradient(90deg, transparent 38%, rgb(var(--v-theme-on-surface)));
+    opacity: .42;
+    pointer-events: none;
+  }
 
-    h1 {
-      margin: 0;
-      overflow-wrap: anywhere;
-      font-family: var(--wiki-font-heading);
-      font-size: 1.5rem;
-      font-weight: 700;
-      line-height: 1.3;
+  &__card {
+    position: relative;
+    width: min(100%, 30rem);
+    max-height: calc(100dvh - var(--wiki-space-12));
+    margin: 0;
+    padding: var(--wiki-space-8);
+    overflow-y: auto;
+    border: 1px solid var(--wiki-surface-border-strong);
+    border-radius: var(--wiki-hero-radius);
+    background: var(--wiki-surface-raised);
+    box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
+
+    @supports ((backdrop-filter: blur(16px)) or (-webkit-backdrop-filter: blur(16px))) {
+      background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, transparent);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
   }
 
-  &__identity {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: var(--wiki-space-8);
-    padding: var(--wiki-space-6);
-    border-radius: var(--wiki-panel-radius);
-    background-position: center;
-    background-size: cover;
-  }
-
   &__brand {
-    position: relative;
-    z-index: 1;
     display: flex;
     gap: var(--wiki-space-4);
     align-items: center;
-    padding: var(--wiki-space-4);
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius);
-    background: var(--wiki-surface-raised);
+    margin-bottom: var(--wiki-space-5);
   }
 
   &__logo {
-    display: grid;
-    flex: 0 0 3rem;
-    width: 3rem;
-    height: 3rem;
-    place-items: center;
+    position: relative;
+    display: flex;
+    flex: 0 0 3.25rem;
+    width: 3.25rem;
+    height: 3.25rem;
+    padding: var(--wiki-space-2);
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+    border-radius: var(--wiki-control-radius);
+    background:
+      linear-gradient(
+        145deg,
+        color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised)),
+        color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised))
+      );
+    box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
 
     > img {
       display: block;
       width: 100%;
+      max-width: 100%;
       height: 100%;
+      max-height: 100%;
       object-fit: contain;
+      object-position: center;
     }
   }
 
@@ -192,111 +218,75 @@ export default defineComponent({
     width: 100%;
     height: 100%;
     place-items: center;
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-control-radius);
-    background: var(--wiki-surface-sunken);
+    color: rgb(var(--v-theme-on-surface));
     font-size: 1.25rem;
-    font-weight: 700;
+    font-weight: 720;
+    line-height: 1;
   }
 
   &__title {
     min-width: 0;
 
-    h2 {
+    h1 {
       margin: var(--wiki-space-1) 0 0;
       overflow-wrap: anywhere;
-      font-family: var(--wiki-font-heading);
-      font-size: 1.125rem;
-      font-weight: 700;
-      line-height: 1.4;
+      color: rgb(var(--v-theme-on-surface));
+      font-size: 1.25rem;
+      font-weight: 720;
+      letter-spacing: -.035em;
+      line-height: var(--wiki-leading-heading);
     }
   }
 
   &__eyebrow {
-    color: var(--wiki-text-muted);
-    font-size: .875rem;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
+    color: var(--wiki-accent-ink);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .1em;
+    line-height: 1rem;
+    text-transform: uppercase;
   }
 
-  &__lead,
-  &__context {
+  &__lead {
+    margin: 0 0 var(--wiki-space-4);
     color: var(--wiki-text-muted);
-    font-size: .9375rem;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
-
-    a {
-      color: var(--wiki-accent-ink);
-      text-underline-offset: var(--wiki-space-1);
-    }
+    font-size: .875rem;
+    line-height: 1.55;
 
     p {
       margin: 0;
     }
   }
 
-  &__lead {
-    margin-bottom: var(--wiki-space-5);
-  }
-
-  &__context {
-    position: relative;
-    z-index: 1;
-    padding: var(--wiki-space-5);
-    border-inline-start: 2px solid var(--wiki-surface-border-strong);
-    background: var(--wiki-surface-sunken);
-  }
-
   &__card > .v-alert {
     margin-bottom: var(--wiki-space-4) !important;
-    border-radius: var(--wiki-control-radius);
-  }
-
-  .v-field {
-    border-radius: var(--wiki-control-radius);
-  }
-
-  .v-input__details {
-    overflow-wrap: anywhere;
-  }
-
-  .v-btn {
-    min-height: var(--wiki-control-height);
-    border-radius: var(--wiki-control-radius);
-    letter-spacing: 0;
-    text-transform: none;
-
-    &:not(.v-btn--icon) {
-      height: auto;
-      padding-block: var(--wiki-space-3);
-    }
-
-    .v-btn__content {
-      white-space: normal;
-      overflow-wrap: anywhere;
-    }
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 28%, transparent);
   }
 
   &__footer {
-    margin-top: var(--wiki-space-6);
-    padding-top: var(--wiki-space-5);
+    display: block;
+    margin: var(--wiki-space-6) calc(-1 * var(--wiki-space-8)) calc(-1 * var(--wiki-space-8));
+    padding: var(--wiki-space-4) var(--wiki-space-8);
     border-top: 1px solid var(--wiki-surface-border);
+    background: var(--wiki-surface-sunken);
     color: var(--wiki-text-muted);
-    font-size: .875rem;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
+    font-size: .8125rem;
+    line-height: 1.5;
+    text-align: center;
 
     a {
-      display: inline-flex;
-      min-height: var(--wiki-control-height);
-      align-items: center;
       color: var(--wiki-accent-ink);
       font-weight: 650;
+      text-decoration-thickness: .0625rem;
       text-underline-offset: var(--wiki-space-1);
 
+      &:hover,
       &:focus-visible {
-        border-radius: var(--wiki-control-radius);
+        text-decoration-thickness: .125rem;
+      }
+
+      &:focus-visible {
+        border-radius: var(--wiki-radius-xs);
         outline: 2px solid var(--wiki-focus-color);
         outline-offset: 2px;
       }
@@ -309,52 +299,92 @@ export default defineComponent({
   }
 
   &--wide {
-    grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
+    align-items: flex-start;
+    justify-content: center;
+
+    &::after {
+      mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-surface)), transparent 88%);
+    }
+
+    .auth-shell__card {
+      width: min(100%, 61.25rem);
+      max-height: none;
+      overflow: visible;
+    }
   }
 }
 
-@media (max-width: 959px) {
-  .auth-shell {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--wiki-space-4);
-    padding: var(--wiki-space-4);
-
-    &__identity {
-      grid-row: 1;
-      padding: 0;
-      gap: var(--wiki-space-3);
-      background-image: none !important;
-    }
-
-    &__card {
-      min-height: 0;
-      padding: var(--wiki-space-6);
-    }
-
-    &__context {
-      padding: var(--wiki-space-3) var(--wiki-space-4);
-    }
+@media (prefers-reduced-transparency: reduce) {
+  .auth-shell__card {
+    background: var(--wiki-surface-raised);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }
 
 @media (max-width: 599px) {
   .auth-shell {
-    padding: var(--wiki-space-3);
+    align-items: stretch;
+    padding: 0;
+    background-image: none !important;
 
-    &__card {
-      padding: var(--wiki-space-5) var(--wiki-space-4);
+    &::after {
+      inset: 0;
+      border: 0;
+      border-radius: 0;
+      opacity: .2;
+    }
+
+    &__card,
+    &--wide .auth-shell__card {
+      width: 100%;
+      max-height: none;
+      min-height: 100dvh;
+      padding: var(--wiki-space-6) var(--wiki-space-5);
+      border: 0;
+      border-radius: 0;
+      background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background)));
+      box-shadow: none;
     }
 
     &__brand {
-      padding: var(--wiki-space-3);
+      margin-bottom: var(--wiki-space-4);
     }
 
-    &__heading {
-      margin-bottom: var(--wiki-space-5);
+    &__footer {
+      margin: var(--wiki-space-6) calc(-1 * var(--wiki-space-5)) calc(-1 * var(--wiki-space-6));
+      padding-inline: var(--wiki-space-5);
+    }
+  }
+}
 
-      h1 {
-        font-size: 1.25rem;
-      }
+@media (max-height: 650px) and (min-width: 600px) {
+  .auth-shell {
+    align-items: flex-start;
+    padding-block: var(--wiki-space-3);
+
+    &__card {
+      max-height: calc(100dvh - var(--wiki-space-6));
+      padding: var(--wiki-space-4) var(--wiki-space-6);
+    }
+
+    &--wide .auth-shell__card {
+      max-height: none;
+    }
+
+    &__brand {
+      margin-bottom: var(--wiki-space-1);
+    }
+
+    &__logo {
+      flex-basis: 2.5rem;
+      width: 2.5rem;
+      height: 2.5rem;
+    }
+
+    &__footer {
+      margin: var(--wiki-space-3) calc(-1 * var(--wiki-space-6)) calc(-1 * var(--wiki-space-4));
+      padding: var(--wiki-space-2) var(--wiki-space-6);
     }
   }
 }
@@ -369,8 +399,7 @@ export default defineComponent({
 }
 
 @media (forced-colors: active) {
-  .auth-shell__card,
-  .auth-shell__brand {
+  .auth-shell__card {
     border-color: CanvasText;
     background: Canvas;
   }
@@ -378,17 +407,18 @@ export default defineComponent({
 
 @media print {
   .auth-shell {
-    display: block;
     padding: 0;
-    background: transparent;
+    background: transparent !important;
 
-    &__card {
-      min-height: 0;
-      border: 0;
+    &::before,
+    &::after {
+      display: none;
     }
 
-    &__identity {
-      display: none;
+    &__card {
+      max-height: none;
+      border: 0;
+      box-shadow: none;
     }
   }
 }

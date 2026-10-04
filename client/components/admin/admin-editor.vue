@@ -1,9 +1,9 @@
 <template>
   <v-container fluid class="admin-authoring">
-    <admin-hero :title="$t('admin:editor.editors')" :description="$t('admin:editor.chooseEditorsBelongAuthoring')" icon="mdi-pencil-ruler">
+    <admin-hero :title="$t('admin:editor.editors')" :description="$t('admin:editor.shapeHowPeopleCreate')" icon="mdi-pencil-ruler">
       <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :disabled="saving || reviewOpen" :loading="loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:editor.reloadSavedEditorPolicy') }}</v-tooltip></v-btn><v-btn variant="flat" color="primary" :disabled="!dirty || loading || saving || !valid" @click="reviewOpen = true">{{ $t('admin:editor.reviewChanges') }}</v-btn></template>
     </admin-hero>
-    <dl class="authoring-summary"><div><dt>{{ $t('admin:editor.availableDraft') }}</dt><dd>{{ loaded ? draft.available.length : '—' }}<small> / {{ editors.length }}</small></dd></div><div><dt>{{ $t('admin:editor.existingPages') }}</dt><dd>{{ loaded ? totalPages : '—' }}</dd></div><div><dt>{{ $t('admin:editor.chooserFormatsUse') }}</dt><dd>{{ loaded ? usedFormats : '—' }}</dd></div></dl>
+    <section class="authoring-intro"><div><span class="authoring-kicker">{{ $t('admin:editor.authoringExperience') }}</span><h2>{{ $t('admin:editor.goodStartingPointEvery') }}</h2><p>{{ $t('admin:editor.offerRightToolsRecommend') }}</p></div><dl><div><dt>{{ $t('admin:editor.availableDraft') }}</dt><dd>{{ loaded ? draft.available.length : '—' }}<small> / {{ editors.length }}</small></dd></div><div><dt>{{ $t('admin:editor.existingPages') }}</dt><dd>{{ loaded ? totalPages : '—' }}</dd></div><div><dt>{{ $t('admin:editor.chooserFormatsUse') }}</dt><dd>{{ loaded ? usedFormats : '—' }}</dd></div></dl></section>
     <v-alert v-if="success" type="success" variant="tonal" closable class="mb-4" @click:close="success = ''">{{ success }}</v-alert>
     <v-alert v-for="warning in warnings" :key="warning" type="warning" variant="tonal" class="mb-4">{{ warning }}</v-alert>
     <async-state v-if="loading" state="loading" :title="$t('admin:editor.loadingAuthoringWorkspace')" :message="$t('admin:editor.readingSavedPolicyEditor')" />
@@ -12,13 +12,7 @@
       <div class="authoring-tabs-row"><div class="authoring-tabs" role="tablist" :aria-label="$t('admin:editor.editorWorkspaceSections')"><button v-for="tab in tabs" :id="`authoring-tab-${tab.value}`" :key="tab.value" role="tab" :aria-selected="section === tab.value" :aria-controls="`authoring-panel-${tab.value}`" :tabindex="section === tab.value ? 0 : -1" @click="setSection(tab.value)" @keydown="tabKey($event, tab.value)">{{ tab.title }}</button></div><span class="authoring-draft-state" aria-live="polite">{{ dirty ? $t('admin:editor.unsavedPolicy') : $t('admin:editor.matchesSavedPolicy') }}</span></div>
       <div v-show="section === 'policy'" id="authoring-panel-policy" role="tabpanel" aria-labelledby="authoring-tab-policy" class="authoring-policy">
         <section class="authoring-catalogue"><div class="authoring-section-heading"><div><h3>{{ $t('admin:editor.availableNewPages') }}</h3><p>{{ $t('admin:editor.chooseEditorsBelongAuthoring') }}</p></div><v-btn size="small" variant="text" :disabled="saving || reviewOpen || allAvailable" @click="selectAll">{{ $t('admin:editor.enableAllRegistered') }}</v-btn></div>
-          <div class="authoring-catalogue-filter"><v-text-field v-model="editorQuery" :label="$t('admin:editor.searchEditors', { defaultValue: 'Search editors' })" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable /><span>{{ filteredEditors.length }} / {{ editors.length }}</span></div>
-          <div class="authoring-options"><article v-for="editor in filteredEditors" :key="editor.key" class="authoring-option" :class="{ 'is-enabled': enabled(editor.key) }">
-            <div class="authoring-option-identity"><v-icon :icon="editor.icon" size="22" /><div><h4>{{ editor.title }}</h4><span class="authoring-format">{{ editor.format }}</span><p>{{ editor.description }}</p><p v-if="!registered(editor.key)" class="authoring-registration">{{ $t('admin:editor.missingServerRegistryRepair') }}</p></div></div>
-            <div class="authoring-option-usage"><span>{{ $t('admin:editor.existingPagesCount', { count: usage(editor.key).pages }) }}</span><small v-if="usage(editor.key).privatePages">{{ $t('admin:editor.private', { key: usage(editor.key).privatePages, interpolation: { escapeValue: false } }) }}</small></div>
-            <div class="authoring-option-control"><label><input type="checkbox" :checked="enabled(editor.key)" :disabled="saving || reviewOpen || (enabled(editor.key) && draft.available.length === 1) || (!enabled(editor.key) && !registered(editor.key))" :aria-label="$t('admin:editor.availability', { title: editor.title, interpolation: { escapeValue: false } })" @change="toggle(editor.key)" /><span>{{ enabled(editor.key) ? $t('admin:editor.availableCreation') : $t('admin:editor.hiddenCreation') }}</span></label><span v-if="draft.recommended === editor.key" class="authoring-recommended"><v-icon icon="mdi-star-outline" size="18" />{{ $t('admin:editor.recommended') }}</span></div>
-          </article></div>
-          <p v-if="!filteredEditors.length" class="authoring-footnote" role="status">{{ $t('admin:editor.noMatchingEditors', { defaultValue: 'No editors match this search.' }) }}</p>
+          <div class="authoring-options"><article v-for="editor in editors" :key="editor.key" class="authoring-option" :class="{ 'is-enabled': enabled(editor.key) }"><div class="authoring-option-top"><v-icon :icon="editor.icon" size="28" /><span class="authoring-format">{{ editor.format }}</span></div><h4>{{ editor.title }}</h4><p>{{ editor.description }}</p><div class="authoring-option-usage"><span>{{ $t('admin:editor.existingPagesCount', { count: usage(editor.key).pages }) }}</span><small v-if="usage(editor.key).privatePages">{{ $t('admin:editor.private', { key: usage(editor.key).privatePages, interpolation: { escapeValue: false } }) }}</small></div><div class="authoring-option-control"><label><input type="checkbox" :checked="enabled(editor.key)" :disabled="saving || reviewOpen || (enabled(editor.key) && draft.available.length === 1) || (!enabled(editor.key) && !registered(editor.key))" :aria-label="$t('admin:editor.availability', { title: editor.title, interpolation: { escapeValue: false } })" @change="toggle(editor.key)" /><span>{{ enabled(editor.key) ? $t('admin:editor.availableCreation') : $t('admin:editor.hiddenCreation') }}</span></label><v-icon v-if="draft.recommended === editor.key" icon="mdi-star-outline" size="18" :aria-label="$t('admin:editor.workspaceRecommendation2')" /></div><p v-if="!registered(editor.key)" class="authoring-registration">{{ $t('admin:editor.missingServerRegistryRepair') }}</p></article></div>
           <p class="authoring-footnote">{{ $t('admin:editor.leastOneEditorStays') }}</p>
         </section>
         <aside class="authoring-guidance"><section class="authoring-recommendation"><span class="authoring-kicker">{{ $t('admin:editor.guideFirstChoice') }}</span><h3>{{ $t('admin:editor.workspaceRecommendation') }}</h3><p>{{ $t('admin:editor.putPreferredEditorFirst') }}</p><v-select v-model="draft.recommended" :items="recommendations" :label="$t('admin:editor.recommendedEditor')" variant="outlined" density="comfortable" hide-details :disabled="saving || reviewOpen" /><p v-if="recommendationNotice" class="authoring-notice" role="status">{{ recommendationNotice }}</p></section><section class="authoring-flow"><span class="authoring-kicker">{{ $t('admin:editor.newPageJourney') }}</span><ol><li><span>01</span><div><strong>{{ $t('admin:editor.startPage') }}</strong><small>{{ $t('admin:editor.authorChoosesLocationLanguage') }}</small></div></li><li><span>02</span><div><strong>{{ draft.available.length === 1 ? $t('admin:editor.open', { title: title(draft.available[0]!), interpolation: { escapeValue: false } }) : $t('admin:editor.chooseEditors', { availableCount: draft.available.length, interpolation: { escapeValue: false } }) }}</strong><small>{{ draft.available.length === 1 ? $t('admin:editor.oneOptionChooserSkipped') : draft.recommended ? $t('admin:editor.appearsFirstRecommendation', { recommended: title(draft.recommended), interpolation: { escapeValue: false } }) : $t('admin:editor.everyEnabledEditorOffered') }}</small></div></li><li><span>03</span><div><strong>{{ $t('admin:editor.writeChosenFormat') }}</strong><small>{{ $t('admin:editor.existingPagesContinueUsing') }}</small></div></li></ol><v-btn variant="text" size="small" append-icon="mdi-arrow-right" @click="setSection('preview')">{{ $t('admin:editor.previewStartingPoint') }}</v-btn></section><div class="authoring-reset"><span>{{ dirty ? $t('admin:editor.changesLocalUntilSaved') : $t('admin:editor.workspaceUsingPolicy') }}</span><v-btn variant="text" size="small" :disabled="!dirty || saving || reviewOpen" @click="reset">{{ $t('admin:editor.resetDraft') }}</v-btn></div></aside>
@@ -39,12 +33,10 @@ import type { PageEditorKey } from '../../../shared/page-editors.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store.ts'
 export default {
   components: { AsyncState },
-  data() { return { editors: PAGE_EDITOR_DEFINITIONS, editorQuery: '' as string | null, draft: { available: [], recommended: null } as EditorPolicy, saved: null as EditorPolicySnapshot | null, registeredKeys: [] as string[], counts: [] as EditorUsage[], loading: true, loadError: '', saving: false, saveError: '', reviewOpen: false, success: '', warnings: [] as string[], recommendationNotice: '', section: 'policy', previewMode: 'draft',
+  data() { return { editors: PAGE_EDITOR_DEFINITIONS, draft: { available: [], recommended: null } as EditorPolicy, saved: null as EditorPolicySnapshot | null, registeredKeys: [] as string[], counts: [] as EditorUsage[], loading: true, loadError: '', saving: false, saveError: '', reviewOpen: false, success: '', warnings: [] as string[], recommendationNotice: '', section: 'policy', previewMode: 'draft',
     tabs: [{ title: this.$t('admin:editor.creationPolicy'), value: 'policy' }, { title: this.$t('admin:editor.formatsUsage'), value: 'formats' }, { title: this.$t('admin:editor.authorPreview'), value: 'preview' }] } },
-  // Filtering affects only the visible inventory, never availability or recommendation.
   computed: {
     loaded(): boolean { return Boolean(this.saved) && !this.loadError },
-    filteredEditors(): PageEditorDefinition[] { const query = (this.editorQuery || '').trim().toLocaleLowerCase(); return this.editors.filter(editor => !query || [editor.title, editor.key, editor.format, editor.description].join(' ').toLocaleLowerCase().includes(query)) },
     dirty(): boolean { return Boolean(this.saved && (this.saved.recommended !== this.draft.recommended || this.saved.available.join(',') !== this.draft.available.join(','))) },
     valid(): boolean { return validateEditorPolicy(this.draft).ok && this.draft.available.every(this.registered) },
     allAvailable(): boolean { return this.editors.filter(editor => this.registered(editor.key)).every(editor => this.enabled(editor.key)) },
@@ -80,104 +72,41 @@ export default {
 }
 </script>
 <style lang="scss" scoped>
-.admin-authoring, .authoring-review { min-width: 0; color: rgb(var(--v-theme-on-surface)); overflow-wrap: anywhere; }
-.authoring-kicker { display: block; font-size: .75rem; font-weight: 600; color: var(--wiki-text-muted); }
-.authoring-summary { display: flex; flex-wrap: wrap; gap: .75rem 2rem; padding: .75rem 0; margin-bottom: 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
-.authoring-summary > div { display: flex; align-items: baseline; gap: .5rem; }
-.authoring-summary dt, .authoring-summary small { font-size: .75rem; color: var(--wiki-text-muted); }
-.authoring-summary dd { margin: 0; font-size: .875rem; font-weight: 650; font-variant-numeric: tabular-nums; }
-.authoring-tabs-row { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; border-bottom: 1px solid var(--wiki-surface-border); margin-bottom: 1rem; }
-.authoring-tabs { display: flex; flex-wrap: wrap; gap: .25rem; }
-.authoring-tabs button { min-height: 44px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--wiki-text-muted); padding: .65rem .75rem; font-size: .8125rem; }
-.authoring-tabs button[aria-selected=true] { color: inherit; border-bottom-color: var(--wiki-primary-ink); font-weight: 650; }
-.authoring-draft-state { margin-inline-start: auto; font-size: .75rem; color: var(--wiki-text-muted); }
-.authoring-policy { display: grid; grid-template-columns: minmax(0,2fr) minmax(260px,1fr); gap: 1rem; align-items: start; }
-.authoring-catalogue { min-width: 0; }
-.authoring-section-heading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: .75rem; margin-bottom: .75rem; }
-.authoring-section-heading h3 { font-size: 1rem; font-weight: 650; margin: .25rem 0 .35rem; }
-.authoring-section-heading p { margin: 0; color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.6; }
-.authoring-catalogue-filter { display: flex; align-items: center; gap: .75rem; margin-bottom: .75rem; }
-.authoring-catalogue-filter .v-text-field { min-width: 0; }
-.authoring-catalogue-filter > span { flex-shrink: 0; font-size: .75rem; color: var(--wiki-text-muted); }
-.authoring-options { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); overflow: hidden; }
-.authoring-option { display: grid; grid-template-columns: minmax(0,1fr) minmax(110px,.35fr); gap: .5rem 1rem; min-width: 0; border-bottom: 1px solid var(--wiki-surface-border); padding: 1rem; }
-.authoring-option:last-child { border-bottom: 0; }
-.authoring-option-identity { display: flex; align-items: flex-start; gap: .75rem; min-width: 0; }
-.authoring-option-identity > .v-icon { flex-shrink: 0; margin-top: .15rem; }
-.authoring-option-identity > div { min-width: 0; }
-.authoring-option h4 { font-size: .9375rem; font-weight: 650; margin: 0 0 .25rem; line-height: 1.4; }
-.authoring-option p { font-size: .8125rem; color: var(--wiki-text-muted); line-height: 1.6; margin: .35rem 0 0; }
-.authoring-format { font-size: .75rem; color: var(--wiki-text-muted); }
-.authoring-option-usage { display: flex; flex-direction: column; gap: .25rem; font-size: .8125rem; padding-block: .15rem; }
-.authoring-option-usage small { color: var(--wiki-text-muted); font-size: .75rem; }
-.authoring-option-control { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; grid-column: 1 / -1; }
-.authoring-option-control label { display: flex; align-items: center; gap: .65rem; min-height: 44px; font-size: .8125rem; cursor: pointer; }
-.authoring-option-control input { width: 18px; height: 18px; flex-shrink: 0; accent-color: rgb(var(--v-theme-primary)); }
-.authoring-option-control input:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 3px; }
-.authoring-recommended { display: flex; align-items: center; gap: .35rem; color: var(--wiki-text-muted); font-size: .75rem; }
-.authoring-registration { font-size: .75rem; }
-.authoring-footnote { font-size: .75rem; line-height: 1.6; color: var(--wiki-text-muted); margin: .75rem 0 0; }
-.authoring-guidance { display: grid; gap: 1rem; min-width: 0; }
-.authoring-recommendation, .authoring-flow { background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); padding: 1rem; }
-.authoring-recommendation h3, .authoring-flow h3 { font-size: 1rem; font-weight: 650; margin: .35rem 0; }
-.authoring-recommendation p, .authoring-flow p { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.6; margin: 0 0 .75rem; }
-.authoring-flow ol { list-style: none; padding: 0; margin: .75rem 0; }
-.authoring-flow li { display: flex; gap: .75rem; padding: .5rem 0; }
-.authoring-flow li > span { color: var(--wiki-text-muted); font: .75rem var(--wiki-font-mono); flex-shrink: 0; padding-top: .15rem; }
-.authoring-flow strong { display: block; font-size: .8125rem; font-weight: 600; margin-bottom: .25rem; }
-.authoring-flow small { display: block; font-size: .75rem; line-height: 1.6; color: var(--wiki-text-muted); }
-.authoring-reset { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
-.authoring-reset span { font-size: .75rem; color: var(--wiki-text-muted); }
-.authoring-notice { margin: .75rem 0 0; font-size: .75rem; }
-.authoring-format-panel, .authoring-preview-panel { min-width: 0; }
-.authoring-comparison { overflow: auto; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
-.authoring-comparison table { border-collapse: collapse; width: 100%; text-align: start; font-size: .8125rem; }
-.authoring-comparison th, .authoring-comparison td { padding: .75rem; border-bottom: 1px solid var(--wiki-surface-border); min-width: 115px; vertical-align: middle; }
-.authoring-comparison thead th { font-size: .75rem; font-weight: 600; color: var(--wiki-text-muted); background: var(--wiki-surface-sunken); }
-.authoring-comparison tbody th { font-weight: 650; min-width: 200px; }
-.authoring-comparison tbody th .v-icon { margin-inline-end: .5rem; }
-.authoring-comparison small { display: block; font-size: .75rem; color: var(--wiki-text-muted); margin-top: .25rem; font-weight: 400; }
-.authoring-format-notes { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1rem; margin-top: 1rem; }
-.authoring-format-notes h4 { font-size: .875rem; font-weight: 650; margin-bottom: .35rem; }
-.authoring-format-notes p { font-size: .8125rem; line-height: 1.6; color: var(--wiki-text-muted); margin: 0; }
-.authoring-preview-toggle { display: flex; flex-wrap: wrap; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); padding: 3px; }
-.authoring-preview-toggle button { min-height: 44px; color: var(--wiki-text-muted); border: 0; background: transparent; padding: .5rem .75rem; border-radius: var(--wiki-control-radius); font-size: .8125rem; }
-.authoring-preview-toggle button[aria-pressed=true] { background: var(--wiki-surface-sunken); color: inherit; }
-.authoring-preview-window { margin-top: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); overflow: hidden; }
-.authoring-preview-chrome { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .75rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); font-size: .8125rem; background: var(--wiki-surface-sunken); }
-.authoring-preview-chrome small { margin-inline-start: auto; color: var(--wiki-text-muted); font-size: .75rem; }
-.authoring-preview-title { padding: 1rem 1rem 0; }
-.authoring-preview-title h4 { font-size: 1.125rem; font-weight: 650; }
-.authoring-preview-title p { font-size: .8125rem; color: var(--wiki-text-muted); margin: .35rem 0 0; }
-.authoring-preview-choices { padding: 1rem; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .75rem; }
-.authoring-preview-choices article { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); padding: 1rem; }
-.authoring-preview-choices article > div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; align-items: center; }
-.authoring-preview-choices article.is-recommended { border-color: var(--wiki-primary-ink); background: var(--wiki-surface-sunken); }
-.authoring-preview-choices h5 { font-size: .9375rem; font-weight: 650; margin: .5rem 0 .35rem; }
-.authoring-preview-choices p { font-size: .8125rem; line-height: 1.6; color: var(--wiki-text-muted); margin: 0 0 .5rem; }
-.authoring-preview-choices small, .authoring-preview-choices span { font-size: .75rem; color: var(--wiki-text-muted); }
-.authoring-direct-preview { padding: 1.5rem 1rem; }
-.authoring-direct-preview h4 { font-size: 1.125rem; font-weight: 650; margin: .75rem 0 .35rem; }
-.authoring-direct-preview p { margin: 0 0 .75rem; font-size: .8125rem; line-height: 1.6; color: var(--wiki-text-muted); }
-.authoring-preview-format { font-size: .75rem; color: var(--wiki-text-muted); }
-.authoring-review :deep(.v-card-actions) { flex-wrap: wrap; gap: .5rem; padding: .75rem 1rem; border-top: 1px solid var(--wiki-surface-border); }
-.authoring-review-heading { padding: 1rem 1rem .5rem; }
-.authoring-review-heading h3 { font-size: 1.125rem; font-weight: 650; line-height: 1.4; margin: .35rem 0; }
-.authoring-review-heading p { font-size: .8125rem; color: var(--wiki-text-muted); line-height: 1.6; margin: 0; }
-.authoring-review-diff { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 1rem; }
-.authoring-review-diff h4 { font-size: .875rem; font-weight: 650; }
-.authoring-review-diff ul { padding-inline-start: 1rem; font-size: .8125rem; margin: .5rem 0 0; }
-.authoring-review-diff li { padding: .25rem 0; }
-.authoring-review-diff small { display: block; font-size: .75rem; color: var(--wiki-text-muted); margin-top: .25rem; }
-.authoring-review-diff p { font-size: .8125rem; color: var(--wiki-text-muted); margin: .5rem 0 0; }
-.authoring-review-recommendation { display: grid; gap: .35rem; border-block: 1px solid var(--wiki-surface-border); padding: .75rem 0; margin-top: 1rem; }
-.authoring-review-recommendation span { font-size: .75rem; color: var(--wiki-text-muted); }
-.authoring-review-recommendation strong { font-size: .875rem; font-weight: 650; }
-.admin-authoring button:focus-visible, .authoring-comparison:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
-.admin-authoring :deep(.v-btn), .authoring-review :deep(.v-btn) { max-width: 100%; height: auto; }
-.admin-authoring :deep(.v-btn__content), .authoring-review :deep(.v-btn__content) { white-space: normal; padding-block: .4rem; }
-@media(max-width:599px) { .admin-authoring :deep(.v-btn), .authoring-review :deep(.v-btn) { min-height: 44px; } }
-@media(max-width:1100px) { .authoring-draft-state { flex-basis: 100%; margin: .5rem 0; } .authoring-option { grid-template-columns: 1fr; } .authoring-option-control { grid-column: auto; } }
-@media(max-width:840px) { .authoring-policy { grid-template-columns: 1fr; } .authoring-format-notes { grid-template-columns: 1fr; } }
-@media(max-width:599px) { .authoring-preview-choices, .authoring-review-diff { grid-template-columns: 1fr; } .authoring-tabs button { padding-inline: .5rem; } }
+.admin-authoring { --authoring-border:rgba(var(--v-theme-on-surface),.13); --authoring-muted:var(--wiki-text-muted); }
+.authoring-kicker { display:block; font-size:.65rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--authoring-muted); }
+.authoring-intro { display:flex; align-items:center; justify-content:space-between; gap:2rem; padding:1.8rem 0 2rem; h2 { font-size:clamp(1.4rem,2.3vw,1.9rem); font-weight:600; letter-spacing:-.04em; line-height:1.2; margin:.6rem 0; } p { font-size:.84rem; line-height:1.75; max-width:620px; color:var(--authoring-muted); margin:0; } dl { display:flex; gap:2rem; flex-shrink:0; } dt { font-size:.67rem; color:var(--authoring-muted); } dd { margin:.5rem 0 0; font-size:1.9rem; line-height:1; font-weight:550; } dd small { font-size:.8rem; color:var(--authoring-muted); } }
+.authoring-tabs-row { display:flex; align-items:center; gap:.8rem; border-block:1px solid var(--authoring-border); margin-bottom:1.7rem; }
+.authoring-tabs { display:flex; align-items:center; gap:.8rem; button { border:0; border-bottom:2px solid transparent; background:transparent; color:var(--authoring-muted); padding:.9rem .5rem; font-size:.8rem; white-space:nowrap; &[aria-selected=true] { color:rgb(var(--v-theme-on-surface)); border-bottom-color:rgb(var(--v-theme-primary)); font-weight:650; } &:focus-visible { outline:2px solid rgb(var(--v-theme-on-surface)); outline-offset:-3px; } } }
+.authoring-draft-state { margin-left:auto; font-size:.68rem; color:var(--authoring-muted); }
+.authoring-policy { display:grid; grid-template-columns:minmax(0,2fr) minmax(260px,1fr); gap:1.6rem; align-items:start; }
+.authoring-section-heading { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1.2rem; h3 { font-size:1.12rem; font-weight:600; letter-spacing:-.02em; margin:.35rem 0 .4rem; } p { margin:0; color:var(--authoring-muted); font-size:.77rem; line-height:1.75; } }
+.authoring-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.85rem; }
+.authoring-option { display:flex; flex-direction:column; min-width:0; border:1px solid var(--authoring-border); border-radius:10px; background:rgb(var(--v-theme-surface)); padding:1.15rem; &.is-enabled { border-color:rgba(var(--v-theme-primary),.4); } h4 { font-size:1rem; font-weight:600; margin:.9rem 0 .4rem; letter-spacing:-.02em; } >p { font-size:.74rem; color:var(--authoring-muted); line-height:1.75; margin:0 0 1rem; flex:1; } }
+.authoring-option-top { display:flex; justify-content:space-between; align-items:center; .v-icon { color:var(--wiki-primary-ink); } }
+.authoring-format { font-size:.65rem; padding:.25rem .5rem; border:1px solid var(--authoring-border); border-radius:4px; color:var(--authoring-muted); }
+.authoring-option-usage { display:flex; justify-content:space-between; align-items:center; gap:.5rem; font-size:.69rem; padding:.6rem 0; small { color:var(--authoring-muted); } }
+.authoring-option-control { display:flex; align-items:center; justify-content:space-between; gap:.6rem; border-top:1px solid var(--authoring-border); padding-top:.8rem; label { display:flex; align-items:center; gap:.6rem; font-size:.73rem; cursor:pointer; } input { width:17px; height:17px; flex-shrink:0; accent-color:rgb(var(--v-theme-primary)); } }
+.authoring-registration { font-size:.68rem!important; margin:.8rem 0 0!important; }
+.authoring-footnote { font-size:.72rem; line-height:1.8; color:var(--authoring-muted); margin:1rem 0 0; }
+.authoring-guidance { display:grid; gap:1rem; min-width:0; }
+.authoring-recommendation,.authoring-flow { background:rgb(var(--v-theme-surface)); border:1px solid var(--authoring-border); border-radius:10px; padding:1.3rem; h3 { font-size:1rem; font-weight:600; margin:.7rem 0 .5rem; } p { color:var(--authoring-muted); font-size:.76rem; line-height:1.8; margin:0 0 1.2rem; } }
+.authoring-flow ol { list-style:none; padding:0; margin:1rem 0; li { display:flex; gap:.8rem; position:relative; padding-bottom:1.5rem; &:last-child { padding-bottom:0; } >span { border:1px solid var(--authoring-border); border-radius:50%; width:27px; height:27px; display:grid; place-items:center; flex-shrink:0; font-size:.6rem; } strong { display:block; font-size:.77rem; font-weight:550; margin:.2rem 0 .3rem; } small { display:block; font-size:.7rem; line-height:1.7; color:var(--authoring-muted); } } }
+.authoring-reset { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.6rem; padding:.2rem; span { font-size:.7rem; color:var(--authoring-muted); } }
+.authoring-notice { margin:.75rem 0 0!important; font-size:.7rem!important; }
+.authoring-format-panel,.authoring-preview-panel { min-width:0; }
+.authoring-comparison { overflow:auto; border:1px solid var(--authoring-border); border-radius:10px; background:rgb(var(--v-theme-surface)); table { border-collapse:collapse; width:100%; text-align:left; font-size:.75rem; } th,td { padding:1rem; border-bottom:1px solid var(--authoring-border); min-width:115px; vertical-align:middle; } thead th { font-size:.66rem; font-weight:600; color:var(--authoring-muted); } tbody th { font-weight:600; min-width:200px; .v-icon { margin-right:.6rem; } } small { display:block; font-size:.65rem; color:var(--authoring-muted); margin-top:.4rem; font-weight:400; } }
+.authoring-format-notes { display:grid; grid-template-columns:repeat(3,1fr); gap:1.6rem; margin-top:1.7rem; h4 { font-size:.86rem; font-weight:600; margin-bottom:.6rem; } p { font-size:.74rem; line-height:1.8; color:var(--authoring-muted); margin:0; } }
+.authoring-preview-toggle { display:flex; border:1px solid var(--authoring-border); border-radius:6px; padding:3px; button { color:var(--authoring-muted); border:0; background:transparent; padding:.4rem .7rem; border-radius:4px; font-size:.73rem; &[aria-pressed=true] { background:rgba(var(--v-theme-on-surface),.08); color:rgb(var(--v-theme-on-surface)); } } }
+.authoring-preview-window { max-width:850px; margin:1.6rem auto 0; border:1px solid var(--authoring-border); border-radius:12px; background:rgb(var(--v-theme-surface)); overflow:hidden; }
+.authoring-preview-chrome { display:flex; align-items:center; gap:.7rem; padding:1rem 1.4rem; border-bottom:1px solid var(--authoring-border); font-size:.8rem; small { margin-left:auto; color:var(--authoring-muted); font-size:.65rem; } }
+.authoring-preview-title { padding:1.7rem 1.7rem 0; h4 { font-size:1.3rem; font-weight:600; letter-spacing:-.03em; } p { font-size:.8rem; color:var(--authoring-muted); margin:.5rem 0 0; } }
+.authoring-preview-choices { padding:1.4rem 1.7rem 1.7rem; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.85rem; article { border:1px solid var(--authoring-border); border-radius:8px; padding:1.2rem; >div { display:flex; justify-content:space-between; gap:.5rem; align-items:center; } &.is-recommended { border-color:rgba(var(--v-theme-primary),.65); background:rgba(var(--v-theme-primary),.04); } h5 { font-size:.9rem; font-weight:600; margin:.75rem 0 .4rem; } p { font-size:.73rem; line-height:1.7; color:var(--authoring-muted); margin:0 0 .8rem; } small,span { font-size:.65rem; color:var(--authoring-muted); } } .authoring-template-preview { border-style:dashed; } }
+.authoring-direct-preview { text-align:center; padding:3.5rem 2rem; h4 { font-size:1.3rem; font-weight:600; margin:1rem 0 .6rem; } p { max-width:380px; margin:0 auto 1rem; font-size:.8rem; line-height:1.8; color:var(--authoring-muted); } }
+.authoring-preview-format { font-size:.7rem; border:1px solid var(--authoring-border); padding:.4rem .7rem; border-radius:5px; }
+.authoring-review { --authoring-border:rgba(var(--v-theme-on-surface),.13); --authoring-muted:var(--wiki-text-muted); .v-card-actions { padding:1rem 1.5rem; border-top:1px solid var(--authoring-border); } }
+.authoring-review-heading { padding:1.6rem 1.5rem 1rem; h3 { font-size:1.5rem; font-weight:600; letter-spacing:-.04em; margin:.6rem 0; } p { font-size:.8rem; color:var(--authoring-muted); line-height:1.8; margin:0; } }
+.authoring-review-diff { display:grid; grid-template-columns:1fr 1fr; gap:1.4rem; h4 { font-size:.8rem; font-weight:600; } ul { padding-left:1rem; font-size:.8rem; margin:.7rem 0 0; } li { padding:.3rem 0; } small { display:block; font-size:.68rem; color:var(--authoring-muted); margin-top:.3rem; } p { font-size:.73rem; color:var(--authoring-muted); margin:.7rem 0 0; } }
+.authoring-review-recommendation { display:grid; gap:.5rem; border-block:1px solid var(--authoring-border); padding:1rem 0; margin-top:1.4rem; span { font-size:.68rem; color:var(--authoring-muted); } strong { font-size:.9rem; font-weight:550; } }
+@media(max-width:1150px) { .authoring-intro { align-items:flex-start; flex-direction:column; gap:1.4rem; } .authoring-policy { grid-template-columns:minmax(0,1.8fr) minmax(230px,1fr); gap:1rem; } .authoring-section-heading { align-items:flex-start; flex-wrap:wrap; } .authoring-options { grid-template-columns:1fr; } }
+@media(max-width:760px) { .authoring-policy { grid-template-columns:1fr; } .authoring-guidance { grid-row:1; } .authoring-flow { display:none; } .authoring-tabs-row { flex-wrap:wrap; gap:0; } .authoring-tabs { gap:.2rem; button { font-size:.7rem; padding:.9rem .45rem; } } .authoring-draft-state { flex-basis:100%; margin:0 0 .7rem .45rem; } .authoring-format-notes { grid-template-columns:1fr; gap:1.2rem; } .authoring-intro dl { gap:1.8rem; dt { font-size:.62rem; } dd { font-size:1.6rem; } } .authoring-preview-choices { grid-template-columns:1fr; padding:1.2rem; } .authoring-preview-title { padding:1.2rem 1.2rem 0; } .authoring-preview-chrome { padding:1rem; gap:.5rem; small { font-size:.58rem; } } .authoring-review-diff { grid-template-columns:1fr; gap:1.2rem; } .authoring-direct-preview { padding:2.5rem 1.3rem; } }
 </style>

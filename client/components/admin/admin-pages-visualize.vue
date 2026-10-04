@@ -4,22 +4,7 @@
     <section class="atlas-intro"><div><span class="atlas-kicker">{{ $t('admin:pagesVisualize.structureRelationships') }}</span><h2>{{ $t('admin:pagesVisualize.followShapeKnowledge') }}</h2><p>{{ $t('admin:pagesVisualize.foldersRevealOrganizationPage') }}</p></div><dl><div><dt>{{ $t('admin:pagesVisualize.pages', { currentLocale, interpolation: { escapeValue: false } }) }}</dt><dd>{{ pages.length }}</dd></div><div><dt>{{ $t('admin:pagesVisualize.linksWithinView') }}</dt><dd>{{ internalLinkCount }}</dd></div></dl></section>
     <div class="atlas-controls"><v-select v-model="currentLocale" :items="locales" item-value="code" item-title="name" :label="$t('admin:pagesVisualize.language')" variant="outlined" density="compact" hide-details /><v-btn-toggle v-model="directory" mandatory color="primary" :aria-label="$t('admin:pagesVisualize.atlasView')"><v-btn :value="false">{{ $t('admin:pagesVisualize.diagram') }}</v-btn><v-btn :value="true">{{ $t('admin:pagesVisualize.connectionDirectory') }}</v-btn></v-btn-toggle><v-select v-if="!directory" v-model="graphMode" :items="[{ title: $t('admin:pagesVisualize.folderTree'), value: 'htree' }, { title: $t('admin:pagesVisualize.radialFolders'), value: 'hradial' }, { title: $t('admin:pagesVisualize.pageRelationships'), value: 'rradial' }]" :label="$t('admin:pagesVisualize.diagramStructure')" variant="outlined" density="compact" hide-details /><v-btn v-if="!directory" variant="text" :disabled="loading" @click="redraw">{{ $t('admin:pagesVisualize.resetView') }}</v-btn></div>
     <async-state v-if="loading" state="loading" :title="$t('admin:pagesVisualize.loadingAtlas')" :message="$t('admin:pagesVisualize.fetchingAccessiblePageConnections')" /><async-state v-else-if="errorMessage" state="error" :title="$t('admin:pagesVisualize.atlasCouldNotLoaded')" :message="errorMessage" :retry-label="$t('admin:pagesVisualize.tryAgain')" @retry="loadPages" /><async-state v-else-if="!pages.length" state="empty" :title="$t('admin:pagesVisualize.noPages', { currentLocale, interpolation: { escapeValue: false } })" :message="$t('admin:pagesVisualize.chooseAnotherLanguageReturn')" />
-    <template v-else>
-      <div v-show="!directory" class="atlas-diagram">
-        <p>{{ $t('admin:pagesVisualize.useTabFocusPage', { value: graphMode === 'rradial' ? $t('admin:pagesVisualize.focusPageLabelHighlight3') : $t('admin:pagesVisualize.pageLabelsOpenTheir'), interpolation: { escapeValue: false } }) }}</p>
-        <div ref="svgContainer" class="admin-pages-visualize-svg" />
-      </div>
-      <section v-show="directory" class="atlas-directory" :aria-label="$t('admin:pagesVisualize.pageConnectionDirectory')">
-        <v-text-field v-model="search" :label="$t('admin:pagesVisualize.findPageLinkedPath')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable />
-        <p role="status">{{ $t('admin:pagesVisualize.pages2', { directoryPagesCount: directoryPages.length, interpolation: { escapeValue: false } }) }}</p>
-        <article v-for="page in directoryWindow" :key="page.id">
-          <div><router-link :to="`/pages/${page.id}`">{{ page.title }}</router-link><code>{{ page.path }}</code></div>
-          <div><span>{{ $t('admin:pagesVisualize.outgoingLinksCount', { count: page.links.length }) }}</span><ul v-if="page.links.length"><li v-for="link in page.links" :key="link"><router-link v-if="pages.some(item => item.path === link)" :to="`/pages/${pages.find(item => item.path === link)?.id}`">{{ link }}</router-link><code v-else>{{ link }}</code></li></ul><small v-else>{{ $t('admin:pagesVisualize.noOutgoingPageLinks') }}</small></div>
-        </article>
-        <p v-if="!directoryPages.length">{{ $t('admin:pages.noPagesMatchView') }}</p>
-        <v-pagination v-if="directoryPageCount > 1" v-model="directoryPage" :length="directoryPageCount" :total-visible="$vuetify.display.smAndDown ? 3 : 6" :aria-label="$t('admin:pages.pagesPagination')" />
-      </section>
-    </template>
+    <template v-else><div v-show="!directory" class="atlas-diagram"><p>{{ $t('admin:pagesVisualize.useTabFocusPage', { value: graphMode === 'rradial' ? $t('admin:pagesVisualize.focusPageLabelHighlight3') : $t('admin:pagesVisualize.pageLabelsOpenTheir'), interpolation: { escapeValue: false } }) }}</p><div ref="svgContainer" class="admin-pages-visualize-svg" /></div><section v-show="directory" class="atlas-directory" :aria-label="$t('admin:pagesVisualize.pageConnectionDirectory')"><v-text-field v-model="search" :label="$t('admin:pagesVisualize.findPageLinkedPath')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable /><p role="status">{{ $t('admin:pagesVisualize.pages2', { directoryPagesCount: directoryPages.length, interpolation: { escapeValue: false } }) }}</p><article v-for="page in directoryPages" :key="page.id"><div><router-link :to="`/pages/${page.id}`">{{ page.title }}</router-link><code>{{ page.path }}</code></div><div><span>{{ $t('admin:pagesVisualize.outgoingLinksCount', { count: page.links.length }) }}</span><ul v-if="page.links.length"><li v-for="link in page.links" :key="link"><router-link v-if="pages.some(item => item.path === link)" :to="`/pages/${pages.find(item => item.path === link)?.id}`">{{ link }}</router-link><code v-else>{{ link }}</code></li></ul><small v-else>{{ $t('admin:pagesVisualize.noOutgoingPageLinks') }}</small></div></article></section></template>
     <p class="atlas-footnote">{{ $t('admin:pagesVisualize.onlyPagesLinksVisible') }}</p>
   </v-container>
 </template>
@@ -76,7 +61,6 @@ type TreePointRoot = d3.HierarchyPointNode<PageGraphNode> & TreeRootMetadata
 
 type AdminPagesVisualizeState = {
   graphMode: GraphMode
-  directoryPage: number
   directory: boolean
   search: string
   width: number
@@ -101,7 +85,6 @@ export default defineComponent({
       graphMode: 'htree',
       directory: false,
       search: '',
-      directoryPage: 1,
       width: 800,
       radius: 400,
       pages: [],
@@ -115,12 +98,9 @@ export default defineComponent({
   },
   computed: {
     directoryPages(): PageLinkRow[] { const term = (this.search || '').trim().toLocaleLowerCase(); return this.pages.filter(page => !term || [page.title, page.path, ...page.links].some(value => value.toLocaleLowerCase().includes(term))) },
-    directoryWindow(): PageLinkRow[] { return this.directoryPages.slice((this.directoryPage - 1) * 25, this.directoryPage * 25) },
-    directoryPageCount(): number { return Math.ceil(this.directoryPages.length / 25) },
     internalLinkCount(): number { const paths = new Set(this.pages.map(page => page.path)); return this.pages.reduce((count, page) => count + page.links.filter(path => paths.has(path)).length, 0) }
   },
   watch: {
-    search() { this.directoryPage = 1 },
     loading: {
       handler (loading: boolean) {
         if (!loading) {
@@ -147,7 +127,6 @@ export default defineComponent({
       this.loading = true
       this.errorMessage = ''
       this.pages = []
-      this.directoryPage = 1
       wikiStore.startLoading('admin-pages-refresh')
       try {
         const fetchImpl = window.fetch.bind(window)
@@ -581,42 +560,53 @@ export default defineComponent({
 })
 </script>
 
-<style lang="scss">
+<style lang='scss'>
+.admin-pages-visualize-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.admin-pages-visualize-controls .v-select {
+  flex: 0 1 14rem;
+  min-width: 10rem;
+}
+
 .admin-pages-visualize-svg {
   display: flex;
   min-height: min(65dvh, 48rem);
-  overflow: hidden;
   text-align: center;
-  > svg { width: 100%; height: 100%; min-height: inherit; }
+  overflow: hidden;
+
+  > svg {
+    height: 100%;
+    min-height: inherit;
+    width: 100%;
+  }
+}
+
+@media (max-width: 599.98px) {
+  .admin-pages-visualize-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-pages-visualize-controls .v-select,
+  .admin-pages-visualize-controls .v-btn-toggle {
+    width: 100%;
+  }
+
+  .admin-pages-visualize-controls .v-btn-toggle {
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+
+  .admin-pages-visualize-controls .v-btn {
+    flex: 1 0 auto;
+  }
 }
 </style>
 <style scoped lang="scss">
-.pages-atlas { max-width: 1600px; min-width: 0; padding-bottom: 2rem !important; }
-.atlas-intro { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding: 1rem 0; }
-.atlas-intro > div { min-width: 0; }
-.atlas-kicker { color: var(--wiki-text-muted); font-size: .75rem; font-weight: 600; }
-h2 { font: 650 1.125rem/1.35 var(--wiki-font-heading); margin: .375rem 0 .5rem; }
-.atlas-intro p { max-width: 50rem; color: var(--wiki-text-muted); font-size: .875rem; line-height: 1.55; }
-.atlas-intro dl { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; }
-.atlas-intro dt { color: var(--wiki-text-muted); font-size: .75rem; }
-.atlas-intro dd { font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabular-nums; margin: .25rem 0 0; }
-.atlas-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .75rem 0; }
-.atlas-controls .v-select { flex: 1 1 12rem; min-width: 0; max-width: 20rem; }
-.atlas-controls .v-btn-toggle { max-width: 100%; overflow-x: auto; }
-.atlas-diagram, .atlas-directory { padding: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
-.atlas-diagram > p, .atlas-footnote, .atlas-directory > p { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.55; }
-.atlas-directory > p { padding: .75rem 0; }
-.atlas-directory article { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: .875rem 0; border-top: 1px solid var(--wiki-surface-border); }
-.atlas-directory article > div { min-width: 0; }
-.atlas-directory code { display: block; overflow-wrap: anywhere; font: .8125rem/1.5 var(--wiki-font-mono); margin-top: .25rem; }
-.atlas-directory a { color: var(--wiki-accent-ink); text-decoration: underline; overflow-wrap: anywhere; }
-.atlas-directory ul { padding-inline-start: 1.25rem; margin-top: .5rem; font-size: .8125rem; line-height: 1.7; }
-.atlas-directory small { display: block; margin-top: .375rem; color: var(--wiki-text-muted); }
-.atlas-footnote { margin: 1rem 0; }
-.atlas-directory a:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 3px; }
-@media (max-width: 600px) {
-  .atlas-directory article { grid-template-columns: minmax(0, 1fr); gap: .75rem; }
-  .atlas-controls .v-select { max-width: none; flex-basis: 100%; }
-  .atlas-directory li a { display: inline-block; min-height: 44px; padding-block: .5rem; }
-}
+.pages-atlas { max-width:1600px; padding-bottom:4rem !important; }.atlas-intro { display:flex; align-items:center; justify-content:space-between; gap:3rem; padding:2rem .5rem; }.atlas-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }h2 { font:500 clamp(1.7rem,2.5vw,2.5rem)/1.15 var(--font-family-serif,Georgia,serif); margin:.7rem 0 1rem; }.atlas-intro p { line-height:1.7; max-width:45rem; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-intro dl { display:flex; flex-shrink:0; gap:2rem; }.atlas-intro dt { font-size:.75rem; }.atlas-intro dd { font:500 2.2rem Georgia,serif; margin:.4rem 0 0; }.atlas-controls { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; padding:1rem 0; }.atlas-controls .v-select { flex:1 1 12rem; max-width:20rem; }.atlas-diagram,.atlas-directory { border:1px solid rgba(var(--v-border-color),.18); border-radius:12px; background:rgb(var(--v-theme-surface)); padding:1.5rem; }.atlas-diagram>p,.atlas-footnote { font-size:.8rem; line-height:1.7; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-directory>p { padding:1rem 0; font-size:.8rem; }.atlas-directory article { display:grid; grid-template-columns:1fr 1fr; gap:2rem; border-top:1px solid rgba(var(--v-border-color),.18); padding:1.4rem 0; }.atlas-directory article>div { min-width:0; }.atlas-directory code { display:block; font-size:.8rem; overflow-wrap:anywhere; margin-top:.4rem; }.atlas-directory a { color:rgb(var(--v-theme-on-surface)); text-decoration:underline; overflow-wrap:anywhere; }.atlas-directory ul { padding-left:1.1rem; margin-top:.6rem; font-size:.8rem; line-height:1.8; }.atlas-directory small { display:block; margin-top:.5rem; }.atlas-footnote { margin:1.5rem 0; }.atlas-directory a:focus-visible { outline:2px solid rgb(var(--v-theme-primary)); outline-offset:3px; }@media(max-width:900px) { .atlas-intro { align-items:start; flex-direction:column; gap:1.5rem; } }@media(max-width:600px) { .atlas-directory article { grid-template-columns:1fr; gap:1rem; }.atlas-controls .v-select { max-width:none; }.atlas-diagram,.atlas-directory { padding:1rem; } }
 </style>

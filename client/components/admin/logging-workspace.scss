@@ -1,12 +1,9 @@
 .logging-workspace {
-  --logging-line: var(--wiki-surface-border);
+  --logging-line: rgba(var(--v-theme-on-surface), 0.13);
   --logging-muted: var(--wiki-text-muted);
-  --logging-soft: var(--wiki-surface-sunken);
+  --logging-soft: rgba(var(--v-theme-on-surface), 0.04);
   max-width: 1660px;
-  padding: 20px 24px 40px;
-  min-width: 0;
-  color: rgb(var(--v-theme-on-surface));
-  overflow-wrap: anywhere;
+  padding-bottom: 72px;
 
   .logging-state-line {
     display: flex;
@@ -14,9 +11,9 @@
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px 24px;
-    padding: 12px 0;
+    padding: 22px 0 16px;
     color: var(--logging-muted);
-    font-size: .8rem;
+    font-size: 12px;
     span:first-child {
       display: flex;
       align-items: center;
@@ -35,14 +32,14 @@
 
   .logging-tabs {
     display: flex;
-    gap: 4px;
+    gap: 28px;
     overflow-x: auto;
-    margin-bottom: 20px;
+    margin-bottom: 36px;
     border-bottom: 1px solid var(--logging-line);
     button {
       appearance: none;
-      min-height: 44px;
-      padding: 10px 14px;
+      min-height: 48px;
+      padding: 10px 0 14px;
       border: 0;
       border-bottom: 2px solid transparent;
       background: transparent;
@@ -51,8 +48,7 @@
       font-size: 14px;
       white-space: nowrap;
       &[aria-current] {
-        border-color: var(--wiki-accent-ink);
-        background: var(--logging-soft);
+        border-color: rgb(var(--v-theme-primary));
         color: rgb(var(--v-theme-on-surface));
         font-weight: 650;
       }
@@ -62,14 +58,14 @@
   button:focus-visible,
   a:focus-visible,
   summary:focus-visible {
-    outline: 2px solid var(--wiki-accent-ink);
-    outline-offset: 2px;
+    outline: 2px solid rgb(var(--v-theme-primary));
+    outline-offset: 4px;
   }
 
   .logging-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 290px;
-    gap: 24px;
+    gap: 40px;
     align-items: start;
   }
   .logging-layout-wide {
@@ -80,45 +76,47 @@
   }
   .logging-heading {
     max-width: 760px;
-    margin-bottom: 16px;
+    margin-bottom: 30px;
   }
   .logging-heading h2 {
-    margin: 0 0 8px;
-    font-family: var(--wiki-font-display);
-    font-size: 1.35rem;
-    font-weight: 650;
-    line-height: 1.3;
+    margin: 10px 0 13px;
+    font-family: var(--font-editorial, Georgia, serif);
+    font-size: clamp(30px, 3vw, 42px);
+    font-weight: 500;
+    letter-spacing: -0.035em;
+    line-height: 1.15;
   }
   .logging-heading p,
   .logging-provider-head p {
     color: var(--logging-muted);
     font-size: 15px;
-    line-height: 1.55;
+    line-height: 1.7;
   }
   .logging-kicker {
     color: var(--logging-muted);
-    font-size: .75rem;
+    font-size: 10px;
     font-weight: 650;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
   }
   .logging-panel {
     min-width: 0;
-    margin-bottom: 16px;
-    padding: 16px;
+    margin-bottom: 22px;
+    padding: 26px;
     border: 1px solid var(--logging-line);
-    border-radius: var(--wiki-panel-radius);
-    background: var(--wiki-surface-raised);
+    border-radius: 10px;
+    background: rgb(var(--v-theme-surface));
   }
   .logging-section-head {
     display: flex;
     align-items: start;
     justify-content: space-between;
     gap: 16px 24px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
+    margin-bottom: 24px;
   }
   .logging-section-head h3,
   .logging-section-head h4 {
-    font-size: 1rem;
+    font-size: 18px;
     font-weight: 650;
     letter-spacing: -0.015em;
   }
@@ -146,23 +144,20 @@
 
   .logging-destination-layout {
     display: grid;
-    grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
-    gap: 16px;
+    grid-template-columns: minmax(210px, 285px) minmax(0, 1fr);
+    gap: 26px;
     padding: 0;
     overflow: hidden;
   }
   .logging-catalogue {
-    min-width: 0;
-    padding: 16px;
-    border-inline-end: 1px solid var(--logging-line);
+    padding: 22px;
+    border-right: 1px solid var(--logging-line);
     background: var(--logging-soft);
   }
   .logging-destination-list {
     display: grid;
     gap: 3px;
-    margin-top: 12px;
-    max-height: 480px;
-    overflow: auto;
+    margin-top: 18px;
   }
   .logging-destination-list button {
     display: flex;
@@ -170,56 +165,50 @@
     justify-content: space-between;
     gap: 12px;
     width: 100%;
-    min-height: 44px;
-    padding: 10px 8px;
-    border: 1px solid transparent;
-    border-inline-start: 2px solid transparent;
-    border-radius: var(--wiki-control-radius);
+    padding: 13px 12px;
+    border: 0;
+    border-left: 2px solid transparent;
     background: transparent;
     color: rgb(var(--v-theme-on-surface));
     cursor: pointer;
-    text-align: start;
+    text-align: left;
     strong {
       display: block;
       font-size: 13px;
       font-weight: 600;
-      overflow-wrap: anywhere;
     }
     small {
       display: block;
       margin-top: 3px;
       color: var(--logging-muted);
-      font-size: .75rem;
+      font-size: 11px;
     }
     &[aria-current] {
-      border-inline-start-color: var(--wiki-accent-ink);
-      background: var(--wiki-surface-raised);
+      border-left-color: rgb(var(--v-theme-primary));
+      background: rgb(var(--v-theme-surface));
     }
   }
   .logging-destination-detail {
     min-width: 0;
-    padding: 20px;
+    padding: 30px;
   }
   .logging-provider-head {
     display: flex;
     align-items: start;
-    gap: 12px;
-    min-width: 0;
-  }
-  .logging-provider-head > div,
-  .logging-destination-list button > span {
+    gap: 20px;
     min-width: 0;
   }
   .logging-provider-icon {
-    flex: 0 0 48px;
+    flex: 0 0 64px;
     margin-top: 4px;
     color: var(--wiki-accent-ink);
   }
   .logging-provider-head h3 {
-    margin: 6px 0 8px;
-    font-family: var(--wiki-font-display);
-    font-size: 1.25rem;
-    font-weight: 650;
+    margin: 9px 0 8px;
+    font-family: var(--font-editorial, Georgia, serif);
+    font-size: 29px;
+    font-weight: 500;
+    letter-spacing: -0.025em;
   }
   .logging-provider-head a {
     display: inline-flex;
@@ -233,7 +222,7 @@
     margin-bottom: 18px;
     padding: 18px;
     border: 1px solid var(--logging-line);
-    border-radius: var(--wiki-control-radius);
+    border-radius: 8px;
     background: var(--logging-soft);
   }
   .logging-secret-head {
@@ -273,9 +262,9 @@
   }
   .logging-steps b {
     color: var(--logging-muted);
-    font-family: var(--wiki-font-display);
-    font-size: 1rem;
-    font-weight: 650;
+    font-family: Georgia, serif;
+    font-size: 26px;
+    font-weight: 400;
   }
   .logging-steps small {
     color: var(--logging-muted);
@@ -288,14 +277,14 @@
     padding-top: 9px;
   }
   .logging-aside-card {
-    border-top: 1px solid var(--logging-line);
-    padding-top: 16px;
+    border-top: 2px solid var(--logging-line);
+    padding-top: 20px;
   }
   .logging-aside-card h3 {
-    margin: 8px 0;
-    font-family: var(--wiki-font-display);
-    font-size: 1rem;
-    font-weight: 650;
+    margin: 13px 0 8px;
+    font-family: var(--font-editorial, Georgia, serif);
+    font-size: 20px;
+    font-weight: 500;
     overflow-wrap: anywhere;
   }
   .logging-aside-card > p {
@@ -319,9 +308,7 @@
     color: var(--logging-muted);
   }
   .logging-aside-card dd {
-    text-align: end;
-    margin: 0;
-    overflow-wrap: anywhere;
+    text-align: right;
   }
   .logging-aside-note {
     display: flex;
@@ -341,16 +328,12 @@
   }
   .logging-history {
     border-top: 1px solid var(--logging-line);
-    padding-top: 16px;
-    max-height: 440px;
-    overflow: auto;
+    padding-top: 20px;
   }
   .logging-history summary {
     cursor: pointer;
     font-size: 13px;
     font-weight: 600;
-    min-height: 44px;
-    padding-block: 12px;
   }
   .logging-history article {
     padding: 16px 0;
@@ -425,7 +408,7 @@
       grid-template-columns: minmax(0, 1fr);
     }
     .logging-catalogue {
-      border-inline-end: 0;
+      border-right: 0;
       border-bottom: 1px solid var(--logging-line);
     }
     .logging-destination-list {
@@ -471,29 +454,13 @@
 .logging-workspace .logging-legacy-toggle {
   display: block;
   margin: 14px 0 4px;
-  padding: 10px 0;
-  min-height: 44px;
+  padding: 8px 0;
   color: rgb(var(--v-theme-on-surface));
   background: transparent;
   border: 0;
-  text-align: start;
+  text-align: left;
   font-size: 12px;
   text-decoration: underline;
   text-underline-offset: 4px;
   cursor: pointer;
-}
-
-.logging-workspace .logging-filter-context {
-  margin-top: 10px;
-  font-size: .8rem;
-  color: var(--logging-muted);
-}
-@media (max-width: 600px) {
-  .logging-workspace {
-    padding: 16px 12px 28px;
-    .v-btn { min-height: 44px; max-width: 100%; }
-    .v-btn__content, .v-label { white-space: normal; }
-    .logging-secret-head { flex-direction: column; }
-    .logging-secret-head > .v-select { flex: auto; width: 100%; }
-  }
 }

@@ -17,11 +17,9 @@
 
 <script setup lang="ts">
 import { computed, useId } from 'vue'
-import { useTheme } from 'vuetify'
 
 const props = defineProps<{ suggestions: readonly string[] }>()
 const headingId = `${useId()}-search-suggestions-title`
-const theme = useTheme()
 
 const isolatedDocument = computed(() => `<!doctype html>
 <html><head>
@@ -30,12 +28,11 @@ const isolatedDocument = computed(() => `<!doctype html>
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root { color-scheme: ${theme.current.value.dark ? 'dark' : 'light'}; font: 14px/1.6 sans-serif; }
-body { margin: 0; padding: 12px; color: CanvasText; background: Canvas; }
+:root { color-scheme: light dark; font: 14px/1.45 sans-serif; }
+body { margin: 0; padding: 8px; color: CanvasText; background: Canvas; }
 html { overflow: auto; }
 body { overflow-wrap: anywhere; }
-a { display: inline-flex; align-items: center; min-height: 44px; color: LinkText; overflow-wrap: anywhere; text-underline-offset: 3px; }
-a:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; border-radius: 8px; }
+a { color: LinkText; overflow-wrap: anywhere; }
 img, video, audio, iframe, object, embed, form, input, button { display: none !important; }
 </style>
 </head><body>${props.suggestions.join('\n')}</body></html>`)
@@ -49,27 +46,27 @@ const frameHeight = computed(() => Math.min(280, 48 + props.suggestions.length *
   overflow: auto;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-raised);
+  background: var(--wiki-surface-sunken);
 }
 .agent-search-suggestions header {
   display: flex;
-  min-height: 44px;
+  min-height: var(--wiki-space-9);
   flex-wrap: wrap;
   align-items: center;
   gap: var(--wiki-space-2);
-  padding: var(--wiki-space-2) var(--wiki-space-3);
+  padding-inline: var(--wiki-space-3);
   border-block-end: 1px solid var(--wiki-surface-border);
   color: var(--wiki-text-muted);
-  font-size: .85rem;
+  font-size: .76rem;
 }
 .agent-search-suggestions header strong { color: rgb(var(--v-theme-on-surface)); }
-.agent-search-suggestions header span { margin-inline-start: auto; font-size: .8rem; }
+.agent-search-suggestions header span { margin-inline-start: auto; }
 .agent-search-suggestions iframe {
   min-width: 0;
   display: block;
   width: 100%;
   border: 0;
-  background: var(--wiki-surface-raised);
+  background: transparent;
 }
 @media (forced-colors: active) {
   .agent-search-suggestions { border-color: CanvasText; background: Canvas; color: CanvasText; }

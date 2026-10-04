@@ -1,8 +1,9 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 56 : 64', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :extension-height='56')
+  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :extension-height='52', :style='{ "--v-toolbar-height": dense ? "48px" : "52px", "backdrop-filter": "var(--wiki-chrome-blur)" }')
     template(v-slot:extension)
       .nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search')
         v-text-field.nav-header-search-control(
+          style='backdrop-filter: blur(12px) saturate(150%);'
           ref='searchFieldMobile'
           v-model='search'
           clearable
@@ -32,7 +33,7 @@
           a.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
             :href='homePath'
-            :aria-label='`${title} · ${$t(`common:header.home`)}`'
+            :aria-label='$t(`common:header.home`)'
           )
             img.org-logo(
               v-if='logoUrl && !logoImageFailed'
@@ -45,7 +46,9 @@
             )
             .nav-header-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
           v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp')
-            span.nav-header-title-single(:title='title') {{title}}
+            span.nav-header-title-single {{title}}
+            span.nav-header-title-stacked(ref='navHeaderTitleStacked', :style='navHeaderTitleStackedStyle')
+              span.nav-header-title-line(v-for='(titleLine, titleLineIndex) in titleLines', :key='titleLineIndex') {{ titleLine }}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
           v-btn.nav-header-browse(
@@ -65,6 +68,7 @@
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field.nav-header-search-control(
+                style='backdrop-filter: blur(12px) saturate(150%);'
                 ref='searchField',
                 v-if='searchIsShown && $vuetify.display.mdAndUp',
                 v-model='search',
@@ -99,65 +103,25 @@
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', :aria-label='$t(`common:header.pageLoading`, { defaultValue: `Page loading` })')
           v-btn.nav-header-agent(
             v-if='canEnterAgent && ($vuetify.display.mdAndUp || ($vuetify.display.smAndDown && !$vuetify.display.xs))'
-            :icon='$vuetify.display.width < 1200'
-            variant='tonal'
+            icon
+            rounded='lg'
             :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
             data-search-modal-action
             @click='openAgent'
           )
-            v-icon(:start='$vuetify.display.width >= 1200', icon='mdi-creation-outline')
-            span(v-if='$vuetify.display.width >= 1200') {{ $t('common:header.agent', { defaultValue: 'Agent' }) }}
+            v-icon(icon='mdi-creation-outline')
+            ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
             v-tooltip(activator='parent', location='bottom', :text='$t(`common:header.agent`, { defaultValue: `Wiki Agent` })')
           template(v-if='hasWritePagesPermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-btn.nav-header-edit-btn(
-              :icon='$vuetify.display.width < 1440'
-              variant='text'
+              icon
+              rounded='lg'
               :aria-disabled='!onlineActionReady ? `true` : undefined'
               @click='pageEdit'
               :aria-label='$t(`common:header.edit`)'
             )
-              v-icon(:start='$vuetify.display.width >= 1440', icon='mdi-pencil')
-              span(v-if='$vuetify.display.width >= 1440') {{ $t('common:header.edit') }}
+              v-icon(icon='mdi-pencil')
               v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:accountMenu.editPage`, { defaultValue: `Edit page` }) : onlineActionUnavailableReason')
-          //- NEW PAGE
-
-          template(v-if='hasNewPagePermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-btn.nav-header-new(
-              :icon='$vuetify.display.width < 1440'
-              variant='outlined'
-              :aria-disabled='!onlineActionReady ? `true` : undefined'
-              @click='pageNew'
-              :aria-label='$t(`common:header.newPage`)'
-            )
-              v-icon(:start='$vuetify.display.width >= 1440') mdi-text-box-plus-outline
-              span(v-if='$vuetify.display.width >= 1440') {{ $t('common:header.newPage') }}
-              v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:header.newPage`) : onlineActionUnavailableReason')
-          //- PAGE ACTIONS
-
-          template(v-if='hasAnyPagePermissions && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-menu(location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
-              template(v-slot:activator='{ props: menuProps }')
-                v-btn(
-                  icon
-                  v-bind='menuProps'
-                  rounded='lg'
-                  :aria-label='$t(`common:header.pageActions`)'
-                )
-                  v-icon mdi-dots-horizontal
-                  v-tooltip(activator='parent', location='bottom', :text='$t(`common:header.pageActions`)')
-              v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
-                .text-label-small.pa-4 {{$t('common:header.currentPage')}}
-                p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
-                v-list-item.pl-4(
-                  v-for='action of desktopPageMenuActions'
-                  :key='action.handler'
-                  role='button'
-                  link
-                  :disabled='action.handler === `pageView` ? !readerActionReady : !onlineActionReady'
-                  @click='runPageMenuAction(action.handler)'
-                )
-                  template(v-slot:prepend): v-icon(:color='action.handler === `pageDelete` ? `error` : `primary`') {{ action.icon }}
-                  v-list-item-title.text-body-medium {{ $t(`common:header.${action.label}`) }}
 
           //- (mobile) SEARCH TOGGLE
 
@@ -187,7 +151,8 @@
             v-tooltip.nav-header-mobile-browse(activator='parent', location='bottom', :text='transportVerified ? $t(`common:header.browseTags`) : navigationUnavailableReason')
           .nav-header-slot-actions(v-if='($vuetify.display.mdAndUp || mobileActions) && $slots.actions')
             slot(name='actions')
-          //- Separate contextual work from workspace/account controls.
+          //- Divider between the authoring cluster (Agent / Edit) and the
+            {{ $t(`common:navHeader.globalPageAccountControls`) }}
           v-divider(
             v-if='$vuetify.display.mdAndUp && (canEnterAgent || (hasWritePagesPermission && path && mode !== `edit`))'
             vertical
@@ -220,7 +185,45 @@
                     template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : undefined', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
 
+          //- PAGE ACTIONS
 
+          template(v-if='hasAnyPagePermissions && path && mode !== `edit` && $vuetify.display.mdAndUp')
+            v-menu(location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
+              template(v-slot:activator='{ props: menuProps }')
+                v-btn(
+                  icon
+                  v-bind='menuProps'
+                  rounded='lg'
+                  :aria-label='$t(`common:header.pageActions`)'
+                )
+                  v-icon mdi-dots-horizontal
+                  v-tooltip(activator='parent', location='bottom', :text='$t(`common:header.pageActions`)')
+              v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
+                .text-label-small.pa-4 {{$t('common:header.currentPage')}}
+                p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
+                v-list-item.pl-4(
+                  v-for='action of desktopPageMenuActions'
+                  :key='action.handler'
+                  role='button'
+                  link
+                  :disabled='action.handler === `pageView` ? !readerActionReady : !onlineActionReady'
+                  @click='runPageMenuAction(action.handler)'
+                )
+                  template(v-slot:prepend): v-icon(:color='action.handler === `pageDelete` ? `error` : `primary`') {{ action.icon }}
+                  v-list-item-title.text-body-medium {{ $t(`common:header.${action.label}`) }}
+
+          //- NEW PAGE
+
+          template(v-if='hasNewPagePermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
+            v-btn(
+              icon
+              rounded='lg'
+              :aria-disabled='!onlineActionReady ? `true` : undefined'
+              @click='pageNew'
+              :aria-label='$t(`common:header.newPage`)'
+            )
+              v-icon mdi-text-box-plus-outline
+              v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:header.newPage`) : onlineActionUnavailableReason')
 
           //- ADMIN
 
@@ -474,7 +477,7 @@
       :source-visibility='sourceVisibility'
       @move-acknowledged='pageMoveAcknowledged'
     )
-    page-selector(mode='create', duplicate, v-model='duplicateOpts.modal', :open-handler='pageDuplicateHandle', :path='duplicateOpts.path', :locale='duplicateOpts.locale')
+    page-selector(mode='create', v-model='duplicateOpts.modal', :open-handler='pageDuplicateHandle', :path='duplicateOpts.path', :locale='duplicateOpts.locale')
     page-delete(v-model='deletePageModal', v-if='path && path.length')
     page-convert(v-model='convertPageModal', v-if='path && path.length')
 
@@ -495,6 +498,7 @@ import {
 } from '@/store/index.ts'
 import AccountNotifications from './account-notifications.vue'
 import AccountOfflineSummary from './account-offline-summary.vue'
+import ControlBorderBeam from './control-border-beam.vue'
 import { fetchPageLocaleRelations, movePage, type MovePageReceipt } from '../../helpers/pages-api'
 import { useAgentsStore } from '../../store/agents.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
@@ -557,6 +561,7 @@ const ADMIN_PERMISSION_NAMES = new Set([
 export default defineComponent({
   components: {
     AccountNotifications,
+    ControlBorderBeam,
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
     AccountOfflineSummary,
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
@@ -606,6 +611,8 @@ export default defineComponent({
       searchFocusGeneration: 0,
       searchIsComposing: false,
       logoutPending: false,
+      navHeaderTitleFitScale: 1 as number,
+      navHeaderTitleResizeObserver: null as ResizeObserver | null,
       duplicateOpts: {
         locale: 'en',
         path: 'new-page',
@@ -644,6 +651,28 @@ export default defineComponent({
       return pwa.pwaConnectionPresentation(pwa.pwaState)
     },
     title(): string { return wikiStore.site.title },
+    titleWords(): string[] { return this.title.trim().split(/\s+/u).filter(Boolean) },
+    // Balanced two-line split for small screens: pick the word boundary that
+    // minimizes the longest resulting line so both halves read evenly.
+    titleLines(): string[] {
+      const words = this.titleWords
+      if (words.length <= 1) return words
+      let bestSplit = 1
+      let bestWidest = Number.POSITIVE_INFINITY
+      for (let split = 1; split < words.length; split += 1) {
+        const first = words.slice(0, split).join(' ')
+        const second = words.slice(split).join(' ')
+        const widest = Math.max(first.length, second.length)
+        if (widest < bestWidest) {
+          bestWidest = widest
+          bestSplit = split
+        }
+      }
+      return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')]
+    },
+    navHeaderTitleStackedStyle(): Record<string, string> {
+      return { '--nav-header-title-fit': this.navHeaderTitleFitScale.toFixed(3) }
+    },
     logoUrl(): string { return wikiStore.site.logoUrl },
     logoImageFailed (): boolean { return this.failedLogoUrl === this.logoUrl },
     logoFallback (): string {
@@ -754,7 +783,7 @@ export default defineComponent({
       return tabs
     },
     permissions(): string[] { return wikiStore.user.permissions },
-    searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.searchKnowledge', { defaultValue: 'Search knowledge' }) },
+    searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
     canEnterAgent(): boolean {
       return Boolean(
         siteConfig.agentsEnabled &&
@@ -809,6 +838,9 @@ export default defineComponent({
   watch: {
     approvalsTabVisible(visible: boolean): void {
       if (!visible && this.accountMenuTab === 'approvals') this.accountMenuTab = 'notifications'
+    },
+    title(): void {
+      void this.$nextTick().then(() => this.applyNavHeaderTitleFit())
     },
     transportVerified(connected: boolean, previous: boolean): void {
       if (connected && previous === false && !wikiStore.authRefreshPending) void wikiStore.refreshAuth()
@@ -871,6 +903,16 @@ export default defineComponent({
     onSearchFocus(this.handleSearchFocusCommand)
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
+    if (typeof ResizeObserver !== 'undefined') {
+      const titleBox = this.$refs.navHeaderTitleStacked as HTMLElement | undefined
+      if (titleBox) {
+        this.navHeaderTitleResizeObserver = markRaw(new ResizeObserver(() => this.applyNavHeaderTitleFit()))
+        this.navHeaderTitleResizeObserver.observe(titleBox)
+      }
+    }
+    if (typeof document !== 'undefined' && typeof document.fonts !== 'undefined' && document.fonts.ready) {
+      void document.fonts.ready.then(() => this.applyNavHeaderTitleFit()).catch(() => {})
+    }
     window.addEventListener('keydown', this.handleSearchShortcut)
     document.addEventListener('visibilitychange', this.handleNotificationVisibility)
     window.addEventListener('focus', this.handleNotificationFocus)
@@ -896,10 +938,48 @@ export default defineComponent({
       window.cancelAnimationFrame(this.pageActionsFocusFrame)
       this.pageActionsFocusFrame = null
     }
+    this.navHeaderTitleResizeObserver?.disconnect()
+    this.navHeaderTitleResizeObserver = null
   },
   methods: {
     runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler']): void {
       this[handler]()
+    },
+    // Keeps the workspace title whole on narrow screens. The stacked variant
+    // starts from a balanced two-word-group split and lets each group wrap
+    // (balanced) onto more lines. If a word or the line count still does not
+    // fit the header, the text steps down in size. Each run starts again at
+    // full size, so the result depends only on the available space and cannot
+    // oscillate. At the smallest step an over-long word breaks instead of
+    // being cut off.
+    applyNavHeaderTitleFit (): void {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return
+      const box = this.$refs.navHeaderTitleStacked as HTMLElement | undefined
+      if (!box) return
+      if (box.clientWidth <= 0 || box.getBoundingClientRect().width <= 0) {
+        // Hidden on this breakpoint (the single desktop line owns wide screens).
+        this.navHeaderTitleFitScale = 1
+        return
+      }
+      const lines = Array.from(box.querySelectorAll<HTMLElement>('.nav-header-title-line'))
+      // Flex-shrunk, overflow-hidden lines can clip even when the box fits.
+      const fits = (): boolean =>
+        box.scrollHeight <= box.clientHeight + 1 && lines.every(line =>
+          line.scrollWidth <= line.clientWidth + 1 && line.scrollHeight <= line.clientHeight + 1
+        )
+      const steps = [1, 0.92, 0.84, 0.76, 0.7]
+      let next = steps[steps.length - 1]!
+      box.classList.add('is-measuring')
+      for (const scale of steps) {
+        box.style.setProperty('--nav-header-title-fit', scale.toFixed(3))
+        if (fits()) {
+          next = scale
+          break
+        }
+      }
+      box.classList.remove('is-measuring')
+      box.style.setProperty('--nav-header-title-fit', next.toFixed(3))
+      this.navHeaderTitleFitScale = next
     },
     handleLogoError (event: Event): void {
       const image = event.currentTarget
@@ -1333,122 +1413,567 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-.nav-header {
-  border-block-end: 1px solid var(--wiki-surface-border) !important;
-  background: var(--wiki-chrome-surface) !important;
-  color: rgb(var(--v-theme-on-surface));
-  box-shadow: none !important;
+.nav-header-search-key {
+  flex: 0 0 auto;
+  padding: .125rem .375rem;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: .375rem;
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-size: .6875rem;
+  white-space: nowrap;
+}
+.nav-header-agent {
+  position: relative;
+  isolation: isolate;
+  flex: 0 0 auto;
+  margin-inline: 0;
+  // The spark beam sweeping the button border shares the Agent icon's accent,
+  // overriding the global warm/spectral beam palette for this control only.
+  --wiki-beam-violet: var(--nav-header-agent-icon-color);
+  --wiki-beam-cool: color-mix(in srgb, var(--nav-header-agent-icon-color) 62%, rgb(var(--v-theme-surface)));
+}
+/* The Agent entry button keeps the shared focus outline but semi-transparent:
+   40% of the neutral focus color instead of the fully opaque default. */
+.nav-header-agent:focus-visible {
+  outline-color: color-mix(in srgb, var(--wiki-focus-color) 40%, transparent);
+}
 
-  > .v-toolbar__content { overflow: hidden; }
-  .v-toolbar__extension {
-    padding-inline: 1rem;
-    background: var(--wiki-chrome-surface);
-    border-block-start: 1px solid var(--wiki-surface-border);
+.nav-header {
+  // Same palette-aware agent mark color as the Wiki Agent thread (agent-thread.vue).
+  --nav-header-agent-icon-color: color-mix(in srgb, rgb(var(--v-theme-info)) 85%, rgb(var(--v-theme-on-surface)));
+  --nav-header-edit-icon-color: #fdb600;
+  --nav-header-edit-eraser-color: #dbb7bb;
+  --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
+  --nav-header-surface: var(--wiki-chrome-surface);
+  isolation: isolate;
+  border-bottom: 1px solid var(--wiki-surface-border) !important;
+  background-color: var(--nav-header-surface) !important;
+  background-image: var(--nav-header-tint) !important;
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
+  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+  backdrop-filter: var(--wiki-chrome-blur) !important;
+
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    border-bottom-color: var(--wiki-glass-border) !important;
   }
+
+  > .v-toolbar__content {
+    overflow: hidden;
+    background: transparent !important;
+  }
+
+  .v-toolbar__extension {
+    overflow: hidden;
+    padding-inline: var(--wiki-space-4);
+    background-color: var(--nav-header-surface) !important;
+    background-image: var(--nav-header-tint) !important;
+    -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+    backdrop-filter: var(--wiki-chrome-blur) !important;
+
+    .v-toolbar__content {
+      height: auto !important;
+      min-height: var(--wiki-control-height);
+      padding: 0;
+      background: transparent !important;
+    }
+  }
+
   .nav-header-layout {
-    display: grid;
-    grid-template-columns: minmax(0, .65fr) minmax(0, 1.6fr) max-content;
     width: min(100%, var(--wiki-shell-max));
     height: 100%;
-    margin: 0 auto;
+    margin-inline: auto;
   }
+
   .nav-header-brand-col,
   .nav-header-search-col,
   .nav-header-actions-col {
-    width: auto;
-    max-width: none;
     min-width: 0;
-    padding: 0;
   }
+
   .nav-header-inner {
     display: flex;
-    min-width: 0;
+    width: 100%;
     height: 100%;
     align-items: center;
-    gap: .375rem;
+    gap: var(--wiki-space-1);
   }
-  .nav-header-brand { padding-inline: 1rem; gap: .625rem; }
+
+  .nav-header-brand {
+    min-width: 0;
+    gap: var(--wiki-space-3);
+    padding-inline: var(--wiki-space-4) var(--wiki-space-3);
+  }
+
   .nav-header-logo {
+    position: relative;
     display: inline-flex;
-    flex: 0 0 auto;
-    max-width: 5rem;
+    flex: 0 1 auto;
+    width: max-content;
     min-width: 44px;
+    max-width: 112px;
     height: 44px;
+    min-height: 44px;
     align-items: center;
     justify-content: center;
-    color: inherit;
-    text-decoration: none;
+    overflow: hidden;
+    padding: 2px 4px;
+    border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
     border-radius: var(--wiki-control-radius);
+    background:
+      linear-gradient(
+        145deg,
+        color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised)),
+        color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised))
+      );
+    box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+    cursor: pointer;
+    text-decoration: none;
+    transition:
+      transform var(--wiki-motion-normal) var(--wiki-motion-ease-out),
+      border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+      box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+
+    &:hover {
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, var(--wiki-surface-border));
+      box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+    }
+
+    &:active {
+      transform: translateY(0);
+    }
   }
-  .org-logo { max-width: 100%; max-height: 36px; object-fit: contain; }
-  .nav-header-logo-fallback { font-size: 1rem; font-weight: 750; }
+
+  .org-logo {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: 40px;
+    max-height: 40px;
+    object-fit: contain;
+    object-position: center;
+  }
+
+  .nav-header-logo-fallback {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: 1rem;
+    font-weight: 720;
+    line-height: 1;
+  }
+
   .nav-header-title {
     min-width: 0;
-    margin: 0;
-    color: inherit;
-    font-family: var(--wiki-font-heading);
-    font-size: .9375rem;
-    font-weight: 700;
-    line-height: 1.3;
-  }
-  .nav-header-title-single { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .nav-header-command { gap: .5rem; padding-inline: .25rem .75rem; }
-  .nav-header-search-control {
     flex: 1 1 auto;
-    min-width: 0;
-    .v-field {
-      min-height: var(--wiki-search-field-height, 2.75rem);
-      border: 1px solid var(--wiki-control-edge);
-      border-radius: var(--wiki-control-radius);
-      background: var(--wiki-surface-raised) !important;
-      color: rgb(var(--v-theme-on-surface));
-      box-shadow: none;
+    margin: 0;
+    overflow: hidden;
+    color: rgb(var(--v-theme-on-surface));
+    font-family: var(--wiki-font-heading);
+    font-size: 1rem;
+    font-weight: 720;
+    letter-spacing: -.018em;
+    line-height: var(--wiki-leading-heading);
+
+    // Wide screens: one line when it fits, otherwise balanced lines.
+    .nav-header-title-single {
+      display: block;
+      overflow: hidden;
+      overflow-wrap: break-word;
+      text-wrap: balance;
+      white-space: normal;
+      line-height: 1.15;
     }
+
+    // Small-screen stacked workspace title: multi-word names start from two
+    // balanced word groups, and each group may wrap (balanced) again. A title
+    // that still does not fit shrinks in steps via --nav-header-title-fit,
+    // measured by applyNavHeaderTitleFit(). Nothing is cut off with an ellipsis.
+    .nav-header-title-stacked {
+      display: none;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 0;
+      min-width: 0;
+      max-width: 100%;
+      max-height: 3rem;
+      overflow: hidden;
+      font-size: calc(.8125rem * var(--nav-header-title-fit, 1));
+      letter-spacing: -.012em;
+      line-height: 1.16;
+      padding-block: 2px;
+    }
+
+    .nav-header-title-line {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      overflow-wrap: break-word;
+      text-wrap: balance;
+      white-space: normal;
+    }
+
+    // While measuring, long words overflow instead of breaking, so the fit
+    // can prefer a smaller size over a word split mid-way.
+    .nav-header-title-stacked.is-measuring .nav-header-title-line {
+      overflow-wrap: normal;
+    }
+  }
+
+
+  .nav-header-command {
+    justify-content: stretch;
+    gap: var(--wiki-space-1);
+  }
+
+  .nav-header-search-control {
+    min-width: 0;
+    max-width: 34rem;
+
+    .v-field {
+      min-height: var(--wiki-search-field-height, 2.25rem);
+      overflow: hidden;
+      border: 1px solid var(--wiki-surface-border-strong, var(--wiki-surface-border));
+      border-radius: var(--wiki-control-radius);
+      background-color: rgba(var(--v-theme-surface), .42) !important;
+      background-image: none !important;
+      color: rgb(var(--v-theme-on-surface)) !important;
+      -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
+      backdrop-filter: blur(12px) saturate(150%) !important;
+      box-shadow: var(--wiki-shadow-inset);
+      transition:
+        border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+        background-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+        box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+    }
+
+    .v-field__overlay {
+      background: transparent !important;
+      opacity: 1 !important;
+    }
+
     .v-field__input {
-      min-height: var(--wiki-search-field-height, 2.75rem);
+      min-height: var(--wiki-search-field-height, 2.25rem);
       padding-block: 0;
       font-size: .875rem;
-      line-height: var(--wiki-search-field-height, 2.75rem);
+      font-weight: 560;
+      letter-spacing: .005em;
+      opacity: 1 !important;
     }
-    .v-label { color: var(--wiki-text-muted); opacity: 1; }
-    .v-field--focused { border-color: var(--wiki-focus-color); box-shadow: var(--wiki-focus-ring); }
+
+    /* Vuetify puts .v-field__input ON the native input here, so the text row
+       needs the height on the input itself: a full-height line box makes the
+       text caret span the whole field instead of hovering mid-field with dead
+       space above and below. */
+    input.v-field__input {
+      opacity: 1 !important;
+      line-height: var(--wiki-search-field-height, 2.25rem);
+    }
+
+    .v-field__prepend-inner {
+      color: var(--wiki-ambient-accent);
+      opacity: 1;
+    }
+
+    .v-field__prepend-inner > .v-icon,
+    .v-field__append-inner > .v-icon,
+    .v-field__clearable > .v-icon {
+      opacity: 1 !important;
+    }
+
+    .v-label {
+      color: var(--wiki-text-muted);
+      font-size: .8125rem;
+      opacity: 1;
+    }
+
+    .v-field--focused {
+      border-color: var(--wiki-focus-color);
+      background-color: rgba(var(--v-theme-surface), .54) !important;
+      box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
+
+      .v-field__prepend-inner {
+        color: var(--wiki-primary-ink);
+      }
+    }
+
+    .v-progress-linear {
+      color: var(--wiki-accent-spectral) !important;
+    }
   }
-  .nav-header-mobile-search { width: 100%; display: flex; align-items: center; height: 100%; }
-  .nav-header-actions { padding-inline: .25rem 1rem; }
-  .nav-header-slot-actions { display: flex; min-width: 0; gap: .375rem; align-items: center; }
-  .nav-header-inner .v-btn {
-    flex: 0 0 auto;
-    min-width: 40px;
-    height: 40px !important;
-    border-radius: var(--wiki-control-radius) !important;
-    color: rgb(var(--v-theme-on-surface));
-    letter-spacing: 0;
-    font-weight: 600;
-  }
-  .nav-header-inner .v-btn--icon { width: 40px; padding: 0; }
-  .nav-header-agent { color: var(--wiki-primary-ink) !important; }
-  .nav-header-inner .v-divider { height: 24px; align-self: center; margin-inline: .25rem; }
-  .nav-header-dev {
-    position: absolute;
-    inset-block-start: 100%;
-    inset-inline-start: 1rem;
+
+  .nav-header-mobile-search {
+    --wiki-search-field-height: 44px;
     display: flex;
     align-items: center;
-    gap: .5rem;
-    padding: .375rem .75rem;
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-control-radius);
-    background: var(--wiki-surface-raised);
-    color: rgb(var(--v-theme-on-surface));
+    width: 100%;
+    height: 100%;
+    background-color: var(--nav-header-surface) !important;
+    background-image: var(--nav-header-tint) !important;
+    -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+    backdrop-filter: var(--wiki-chrome-blur) !important;
+
+    .nav-header-search-control {
+      max-width: none;
+      width: 100%;
+
+      .v-field__input {
+        font-size: 1rem;
+      }
+    }
   }
-}
-.nav-header-search-key {
-  padding: .125rem .375rem;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: .25rem;
-  color: var(--wiki-text-muted);
-  font-size: .6875rem;
-  white-space: nowrap;
+
+  .nav-header-mobile-browse {
+    display: none;
+  }
+
+
+
+  @media (max-width: 959.98px) {
+    .nav-header-mobile-browse {
+      display: block;
+      flex: 0 0 auto;
+    }
+  }
+
+  .nav-header-actions {
+    gap: var(--wiki-space-2, 8px);
+    padding-inline: var(--wiki-space-3) var(--wiki-space-4);
+  }
+
+  .nav-header-slot-actions {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--wiki-space-1);
+  }
+
+  .nav-header-inner .v-btn {
+    min-width: var(--wiki-control-height);
+    height: var(--wiki-control-height) !important;
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
+    border-radius: var(--wiki-control-radius) !important;
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 80%, rgb(var(--v-theme-surface)) 20%);
+    opacity: 1;
+    transition:
+      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+
+    .v-icon {
+      color: currentColor !important;
+    }
+
+    // Hover-only chrome cast: guarded so touch taps can't latch :hover
+    // (mobile browsers keep the hover state until the user taps elsewhere,
+    // which made the tint linger after opening the Agent). Touch feedback
+    // stays with the button's own :active/ripple.
+    @media (hover: hover) {
+      &:hover {
+        border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent);
+        background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
+        color: var(--wiki-primary-ink);
+        transform: none;
+      }
+    }
+
+    &:focus-visible {
+      border-color: color-mix(in srgb, var(--wiki-focus-color) 48%, transparent);
+      background: color-mix(in srgb, var(--wiki-focus-color) 8%, transparent);
+      color: var(--wiki-primary-ink);
+    }
+
+    &:active {
+      transform: translateY(0);
+    }
+
+    &[aria-expanded='true'] {
+      border-color: color-mix(in srgb, var(--wiki-accent-spectral) 34%, transparent);
+      background: color-mix(in srgb, var(--wiki-accent-spectral) 10%, transparent);
+      color: var(--wiki-accent-spectral);
+    }
+
+    &.v-btn--disabled {
+      border-color: transparent;
+      background: transparent;
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .38;
+      transform: none;
+    }
+  }
+  // Agent + Edit share the transparent square chrome AND the standard theme
+  // hover cast of the other header controls (.nav-header-inner .v-btn above);
+  // only their border tint follows each control's own fixed icon accent.
+  // Hover-only border tint is guarded so touch taps can't latch :hover
+  // (mobile browsers keep hover until the next tap elsewhere).
+  @media (hover: hover) {
+    .nav-header-inner .nav-header-agent:hover {
+      border-color: color-mix(in srgb, var(--nav-header-agent-icon-color) 48%, transparent) !important;
+    }
+    .nav-header-inner .nav-header-edit-btn:hover {
+      border-color: color-mix(in srgb, var(--nav-header-edit-icon-color) 48%, transparent) !important;
+    }
+
+    // Hover accents touch only the glyph and label: the button fill keeps its
+    // resting value. Each accent blends the control's own hue with the active
+    // palette (secondary for Agent, primary for Edit) so custom themes follow.
+    .nav-header-inner .nav-header-agent:hover:not(.v-btn--disabled):not([aria-disabled='true']),
+    .nav-header-inner .nav-header-edit-btn:hover:not(.v-btn--disabled):not([aria-disabled='true']) {
+      background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
+
+      > .v-btn__overlay {
+        opacity: 0;
+      }
+    }
+    .nav-header-inner .nav-header-agent:hover:not(.v-btn--disabled) {
+      --nav-header-hover-accent: color-mix(in oklab, var(--nav-header-agent-icon-color) 55%, var(--wiki-accent-spectral));
+      color: var(--nav-header-hover-accent);
+    }
+    .nav-header-inner .nav-header-edit-btn:hover:not(.v-btn--disabled):not([aria-disabled='true']) {
+      --nav-header-hover-accent: color-mix(in oklab, var(--nav-header-edit-icon-color) 60%, var(--wiki-accent-warm));
+      color: var(--nav-header-hover-accent);
+    }
+    .nav-header-inner .nav-header-agent:hover:not(.v-btn--disabled) .v-icon,
+    .nav-header-inner .nav-header-edit-btn:hover:not(.v-btn--disabled):not([aria-disabled='true']) .v-icon {
+      color: var(--nav-header-hover-accent) !important;
+      // !important also pauses the Agent shimmer keyframes while hovered.
+      filter: drop-shadow(0 0 4px color-mix(in srgb, var(--nav-header-hover-accent) 45%, transparent)) !important;
+    }
+    // The pencil keeps its eraser cap; only the barrel takes the accent.
+    .nav-header-inner .nav-header-edit-btn:hover:not(.v-btn--disabled):not([aria-disabled='true']) .v-icon::before {
+      background: linear-gradient(45deg, var(--nav-header-hover-accent) 67%, var(--nav-header-edit-eraser-color) 67%);
+      background-clip: text;
+    }
+  }
+  .nav-header-inner .nav-header-agent:focus-visible {
+    border-color: color-mix(in srgb, var(--nav-header-agent-icon-color) 48%, transparent) !important;
+  }
+  .nav-header-inner .nav-header-edit-btn:focus-visible {
+    border-color: color-mix(in srgb, var(--nav-header-edit-icon-color) 48%, transparent) !important;
+  }
+
+  .nav-header-inner .nav-header-agent .v-icon,
+  .nav-header-inner .nav-header-edit-btn .v-icon {
+    transition:
+      transform var(--wiki-motion-fast) var(--wiki-motion-ease-out),
+      color var(--wiki-motion-normal) var(--wiki-motion-ease),
+      filter var(--wiki-motion-normal) var(--wiki-motion-ease);
+  }
+
+  // Icon accents: the Agent spark follows the palette info color (the agent mark)
+  // and the Edit pencil stays pencil yellow with a pink eraser in every theme.
+  // Labels and button chrome keep inheriting the surrounding accent-ink color.
+  .nav-header-inner .nav-header-agent .v-icon {
+    color: var(--nav-header-agent-icon-color) !important;
+    animation: nav-header-agent-spark-shimmer 7s ease-in-out infinite;
+  }
+
+  // Periodic sparkle: the spark rests for most of each 7s cycle, then glows and
+  // brightens briefly around the 90% mark before settling again.
+  @keyframes nav-header-agent-spark-shimmer {
+    0%, 84%, 100% {
+      filter: none;
+      opacity: 1;
+    }
+    88% {
+      filter: brightness(1.35) drop-shadow(0 0 7px color-mix(in srgb, var(--nav-header-agent-icon-color) 70%, transparent));
+      opacity: 1;
+    }
+    91% {
+      opacity: .6;
+    }
+    95% {
+      filter: brightness(1.15) drop-shadow(0 0 3px color-mix(in srgb, var(--nav-header-agent-icon-color) 45%, transparent));
+      opacity: 1;
+    }
+  }
+
+  .nav-header-inner .nav-header-edit-btn .v-icon {
+    color: var(--nav-header-edit-icon-color) !important;
+  }
+  // The MDI pencil points toward the upper right; a hard stop across its
+  // diagonal separates its eraser cap without changing the icon silhouette.
+  .nav-header-inner .nav-header-edit-btn .v-icon::before {
+    background: linear-gradient(45deg, var(--nav-header-edit-icon-color) 67%, var(--nav-header-edit-eraser-color) 67%);
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  @media (hover: hover) {
+    .nav-header-inner .nav-header-agent:hover .v-icon,
+    .nav-header-inner .nav-header-edit-btn:hover .v-icon {
+      transform: translateY(-1px);
+    }
+  }
+  .nav-header-inner .nav-header-agent:focus-visible .v-icon,
+  .nav-header-inner .nav-header-edit-btn:focus-visible .v-icon {
+    transform: translateY(-1px);
+  }
+  .nav-header-command .nav-header-browse:hover {
+    transform: none;
+  }
+
+  .nav-header-browse {
+    flex: 0 0 auto;
+    margin-inline-start: 0;
+  }
+  .nav-header-inner .nav-header-browse {
+    width: var(--wiki-control-height);
+    min-width: var(--wiki-control-height);
+  }
+  @media (min-width: 960px) {
+    .nav-header-inner .nav-header-browse {
+      min-height: 36px;
+      height: 36px !important;
+      width: 36px;
+      min-width: 36px;
+      border-radius: var(--wiki-radius-pill) !important;
+    }
+  }
+
+  .nav-header-inner .v-divider {
+    align-self: center;
+    height: var(--wiki-space-6);
+    max-height: var(--wiki-space-6);
+    // The actions row's flex gap already spaces the divider 8px per side.
+    margin-inline: 0;
+    border-color: var(--wiki-surface-border);
+    opacity: 1;
+  }
+
+  .nav-header-dev {
+    position: absolute;
+    top: 50%;
+    inset-inline-start: calc(25% - var(--wiki-space-10));
+    z-index: 3;
+    display: flex;
+    max-width: 13rem;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    padding: var(--wiki-space-1) var(--wiki-space-3);
+    transform: translateY(-50%);
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 30%, transparent);
+    border-radius: var(--wiki-radius-pill);
+    background: color-mix(in srgb, rgb(var(--v-theme-error)) 9%, var(--wiki-surface-raised));
+    color: rgb(var(--v-theme-error));
+    box-shadow: var(--wiki-shadow-xs);
+
+    .text-label-small {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+
+      &:nth-child(2) {
+        text-transform: none;
+      }
+    }
+  }
 }
 
 .nav-header-menu {
@@ -1489,9 +2014,9 @@ export default defineComponent({
     }
 
     &.v-list-item--active {
-      border-color: var(--wiki-surface-border-strong);
-      background: var(--wiki-surface-sunken);
-      color: var(--wiki-primary-ink);
+      border-color: color-mix(in srgb, var(--wiki-accent-spectral) 28%, transparent);
+      background: color-mix(in srgb, var(--wiki-accent-spectral) 10%, transparent);
+      color: var(--wiki-accent-spectral);
     }
 
     &.v-list-item--disabled {
@@ -1710,49 +2235,289 @@ export default defineComponent({
   padding: var(--wiki-space-2) var(--wiki-space-3);
 }
 
-.navHeaderSearch-enter-active,
-.navHeaderSearch-leave-active { transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease); }
-.navHeaderSearch-enter-from,
-.navHeaderSearch-leave-to { opacity: 0; }
-.navHeaderLoading { flex: 0 0 22px; }
+.navHeaderSearch {
+  &-enter-active,
+  &-leave-active {
+    opacity: 1;
+    transition:
+      opacity var(--wiki-motion-normal) var(--wiki-motion-ease),
+      transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
+  }
 
-@media (max-width: 839.98px) {
-  .nav-header {
-    .nav-header-layout { grid-template-columns: minmax(0, 1fr) max-content; }
-    .nav-header-brand { padding-inline: .75rem .25rem; gap: .5rem; }
-    .nav-header-actions { padding-inline: .25rem .75rem; }
-    .nav-header-inner .v-btn { min-width: 44px; height: 44px !important; }
-    .nav-header-inner .v-btn--icon { width: 44px; }
-    .nav-header-dev { display: none; }
-    .navHeaderLoading { position: absolute; inset-inline-end: .5rem; inset-block-end: 0; }
+  &-enter-active {
+    transition-delay: var(--wiki-motion-fast);
+  }
+
+  &-enter-from,
+  &-leave-to {
+    opacity: 0;
+    transform: translateY(calc(var(--wiki-space-1) * -1)) scale(.98);
   }
 }
-@media (max-width: 599.98px) {
-  .nav-header {
-    .nav-header-logo { max-width: 44px; }
-    .nav-header-sign-in { display: none; }
-    .nav-header-title-single { font-size: .8125rem; }
-    .nav-header-actions { gap: .125rem; padding-inline-end: .375rem; }
+
+.nav-header--dense {
+  .nav-header-logo {
+    min-width: 44px;
+    max-width: 100px;
+    width: max-content;
+    height: 40px;
+    min-height: 40px;
   }
+
+
+  .nav-header-inner .v-btn {
+    min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+    height: calc(var(--wiki-control-height) - var(--wiki-space-1)) !important;
+  }
+}
+
+.navHeaderLoading {
+  flex: 0 0 var(--wiki-space-6);
+  width: var(--wiki-space-6);
+}
+
+.v-theme--dark .nav-header {
+  border-bottom-color: var(--wiki-surface-border-strong) !important;
+}
+
+@media (min-width: 960px) {
+  .nav-header {
+    .nav-header-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr);
+    }
+
+    &.nav-header--dense.nav-header--reserved-actions {
+      .nav-header-layout {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+      }
+
+      .nav-header-actions-col {
+        min-width: max-content;
+      }
+    }
+    .nav-header-brand-col,
+    .nav-header-search-col,
+    .nav-header-actions-col {
+      width: auto;
+      max-width: none;
+    }
+
+    .nav-header-actions {
+      justify-content: flex-end;
+      min-width: max-content;
+    }
+
+    .nav-header-command {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 34rem) 36px;
+      justify-content: center;
+      gap: var(--wiki-space-2, 8px);
+    }
+
+    .nav-header-command > .nav-header-browse {
+      grid-column: 1;
+      justify-self: start;
+      margin: 0;
+    }
+
+    .nav-header-command > .nav-header-search-control {
+      grid-column: 2;
+      justify-self: center;
+      width: 100%;
+    }
+
+
+    .nav-header-slot-actions {
+      flex: 0 0 auto;
+    }
+  }
+}
+
+@media (max-width: 1279px) {
+  .nav-header .nav-header-dev {
+    display: none;
+  }
+}
+
+@media (min-width: 960px) and (max-width: 1319px) {
+  .nav-header {
+    .nav-header-brand {
+      padding-inline: var(--wiki-space-3) var(--wiki-space-2);
+    }
+
+    .nav-header-actions {
+      padding-inline: var(--wiki-space-2);
+    }
+
+    .nav-header-actions .v-btn {
+      min-width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+      height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
+      padding-inline: var(--wiki-space-2);
+    }
+    .nav-header-actions .v-divider {
+      margin-inline: 0;
+    }
+
+    .nav-header-search-control .v-field__input {
+      font-size: .8125rem;
+    }
+  }
+}
+
+@media (max-width: 959px) {
+  .nav-header {
+    .nav-header-layout { flex-wrap: nowrap; }
+    .nav-header-brand-col { flex: 1 1 0; width: auto; max-width: none; }
+    .nav-header-actions-col { flex: 0 0 auto; width: auto; max-width: none; }
+    .nav-header-agent { margin-inline: 0; }
+
+    .nav-header-brand {
+      padding-inline: var(--wiki-space-3) var(--wiki-space-2);
+    }
+
+    .nav-header-actions {
+      min-width: 0;
+      padding-inline: var(--wiki-space-2) var(--wiki-space-3);
+    }
+
+    .nav-header-title {
+      font-size: .9375rem;
+    }
+
+    .nav-header-inner .v-btn {
+      min-width: var(--wiki-control-height);
+      padding-inline: var(--wiki-space-2);
+    }
+    .nav-header-mobile-search .nav-header-search-control .v-field__input {
+      font-size: 1rem;
+    }
+  }
+}
+
+@media (max-width: 599px) {
+  .nav-header {
+    .v-toolbar__extension {
+      padding-inline: var(--wiki-space-3);
+    }
+
+    .nav-header-brand {
+      gap: var(--wiki-space-2);
+      padding-inline: var(--wiki-space-3) var(--wiki-space-1);
+    }
+
+    // Square 44px targets with a small gap leave the workspace title room
+    // to show whole at a readable size.
+    .nav-header-actions {
+      flex: 1 1 auto;
+      gap: var(--wiki-space-1);
+      min-width: 0;
+      padding-inline: var(--wiki-space-1) var(--wiki-space-2);
+
+      > .v-btn.v-btn--icon {
+        width: 44px;
+        min-width: 44px;
+      }
+    }
+
+    .nav-header-title {
+      font-size: .875rem;
+
+      .nav-header-title-single {
+        display: none;
+      }
+
+      .nav-header-title-stacked {
+        display: flex;
+      }
+    }
+
+    .nav-header-logo {
+      min-width: 44px;
+      max-width: 72px;
+      width: max-content;
+      height: 40px;
+      min-height: 40px;
+      padding: 2px 3px;
+    }
+
+
+    .nav-header-inner .v-btn {
+      min-width: 44px;
+      min-height: 44px;
+      height: 44px !important;
+    }
+
+    .navHeaderLoading {
+      margin-inline-end: var(--wiki-space-1) !important;
+    }
+  }
+
   .nav-header-menu {
-    max-width: calc(100vw - 1rem);
-    max-height: 75dvh;
+    width: min(calc(100vw - (var(--wiki-space-4) * 2)), 20rem);
+    max-height: min(70dvh, 34rem);
     overflow-y: auto;
-    .v-list-item { min-height: 44px; }
   }
-  .account-menu__tab { min-height: 44px; }
 }
-@media (max-width: 379.98px) {
-  .nav-header .nav-header-title { display: none; }
+@media (pointer: coarse) {
+  .nav-header .nav-header-inner .nav-header-browse {
+    min-width: 2.75rem;
+  }
 }
+
 @media (forced-colors: active) {
   .nav-header,
+  .nav-header .nav-header-logo,
   .nav-header .nav-header-search-control .v-field,
-  .nav-header-menu { border-color: CanvasText !important; }
+  .nav-header-menu,
+  .nav-header-menu .v-list-item {
+    border-color: CanvasText !important;
+  }
+  .nav-header .nav-header-inner .nav-header-agent,
+  .nav-header .nav-header-inner .nav-header-edit-btn {
+    border-color: ButtonText !important;
+    background: ButtonFace !important;
+    color: ButtonText !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .nav-header .nav-header-inner .nav-header-agent .v-icon,
+  .nav-header .nav-header-inner .nav-header-edit-btn .v-icon {
+    color: ButtonText !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .nav-header .nav-header-inner .nav-header-edit-btn .v-icon::before {
+    background: none;
+    -webkit-text-fill-color: ButtonText;
+  }
+
+  .account-menu__connectivity-indicator {
+    background: transparent;
+    color: ButtonText;
+  }
+
+  .nav-header::after {
+    display: none;
+  }
 }
+
 @media (prefers-reduced-motion: reduce) {
+  .nav-header *,
   .navHeaderSearch-enter-active,
   .navHeaderSearch-leave-active,
-  .nav-header-menu .v-list-item { transition: none; }
+  .nav-header-menu .v-list-item {
+    transition-duration: .01ms !important;
+  }
+  .nav-header .nav-header-inner .nav-header-agent .v-icon {
+    animation: none !important;
+  }
+  .nav-header .nav-header-inner .nav-header-agent:hover .v-icon,
+  .nav-header .nav-header-inner .nav-header-agent:focus-visible .v-icon,
+  .nav-header .nav-header-inner .nav-header-edit-btn:hover .v-icon,
+  .nav-header .nav-header-inner .nav-header-edit-btn:focus-visible .v-icon {
+    transform: none !important;
+  }
 }
 </style>

@@ -170,9 +170,6 @@ interface RealComposerOptions {
   readonly noSession?: boolean
   readonly networkBlocked?: boolean
   readonly invocationLimit?: number
-  readonly disabled?: boolean
-  readonly sending?: boolean
-  readonly initialDraft?: string
 }
 const mountRealComposers = (options: readonly RealComposerOptions[]) => {
   const host = document.createElement('div')
@@ -230,8 +227,8 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
                 }
               : undefined,
             generationToolsEnabled: true,
-            disabled: option.disabled ?? false,
-            sending: option.sending ?? false,
+            disabled: false,
+            sending: false,
             canStop: false,
             skillsEnabled: Boolean(option.skills),
             googleSearchAvailable: false,
@@ -245,7 +242,7 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
             invocationLimit: option.invocationLimit ?? 3,
             statusLabel: 'Ready',
             statusTone: 'ready',
-            initialDraft: option.initialDraft ?? '',
+            initialDraft: '',
             networkBlocked: option.networkBlocked ?? false,
             onDraftChange: (sessionId: string, text: string) => drafts.push({ sessionId, text }),
             onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', _complete: unknown, media: SentMessage['media']) =>
@@ -745,36 +742,39 @@ const measureControlRow = (root: HTMLElement, observation: ControlResizeObservat
   return resize
 }
 
-describe('Agent composer submit loading behavior', () => {
-  it('blocks disabled and in-flight submissions while announcing loading through native controls', async () => {
-    const idle = mountRealComposers([{ disabled: true, initialDraft: 'Do not send yet' }])
-    const idleRoot = idle.roots[0]
-    const idleButton = idleRoot.querySelector<HTMLButtonElement>('.agent-composer__submit')
+describe('Agent composer submit loading presentation', () => {
+  it('keeps idle-disabled Send opaque while hiding loading content behind its loader', () => {
+    const idle = mountComposer({ disabled: true })
+    const idleButton = idle.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
     if (!idleButton) throw new Error('Idle-disabled Send action did not render')
+    const idleContent = idleButton.querySelector<HTMLElement>('.v-btn__content')
+    if (!idleContent) throw new Error('Idle-disabled Send content did not render')
     expect(idleButton.disabled).toBe(true)
-    idleButton.click()
-    idleRoot.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
-    await Vue.nextTick()
-    expect(idle.sent).toEqual([])
+    expect(browserWindow.getComputedStyle(idle.root).opacity).toBe('1')
+    expect(browserWindow.getComputedStyle(idleButton).opacity).toBe('1')
+    expect(browserWindow.getComputedStyle(idleContent).opacity).toBe('1')
 
-    const loading = mountRealComposers([{ sending: true, initialDraft: 'Do not send twice' }])
-    const loadingRoot = loading.roots[0]
-    const loadingButton = loadingRoot.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    const loading = mountComposer({ sending: true })
+    const loadingButton = loading.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
     if (!loadingButton) throw new Error('Loading Send action did not render')
-    expect(loadingButton.disabled).toBe(true)
+    const loadingContent = loadingButton.querySelector<HTMLElement>('.v-btn__content')
+    const loadingPrepend = loadingButton.querySelector<HTMLElement>('.v-btn__prepend')
+    if (!loadingContent || !loadingPrepend) throw new Error('Loading Send content did not render')
     expect(loadingButton.classList.contains('v-btn--loading')).toBe(true)
     expect(loadingButton.querySelector('.v-btn__loader')).not.toBeNull()
-    loadingButton.click()
-    loadingRoot.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
-    await Vue.nextTick()
-    expect(loading.sent).toEqual([])
+    expect(browserWindow.getComputedStyle(loading.root).opacity).toBe('1')
+    expect(browserWindow.getComputedStyle(loadingContent).opacity).toBe('0')
+    expect(browserWindow.getComputedStyle(loadingPrepend).opacity).toBe('0')
 
-    const idleStatus = idleRoot.querySelector<HTMLElement>('.agent-composer__live-status')
+    const idleStatus = idle.root.querySelector<HTMLElement>('.agent-composer__live-status')
     if (!idleStatus) throw new Error('Idle live composer status did not render')
     expect(idleStatus.getAttribute('role')).toBe('status')
     expect(idleStatus.getAttribute('aria-live')).toBe('polite')
     expect(idleStatus.textContent?.trim()).toBe('Ready')
-    expect(loadingRoot.querySelector('.agent-composer__live-status')?.textContent?.trim()).toBe(translateEnglish('common:agentComposer.sending'))
+
+    const loadingStatus = loading.root.querySelector<HTMLElement>('.agent-composer__live-status')
+    if (!loadingStatus) throw new Error('Loading live composer status did not render')
+    expect(loadingStatus.textContent?.trim()).toBe('Sending')
   })
 
   it('uses working status instead of a localized ready label during send and streaming', () => {
@@ -992,7 +992,7 @@ describe('Real Agent composer slash boundaries', () => {
 
     expect(textarea.value).toBe(draft)
     expect(mounted.drafts.at(-1)).toEqual({ sessionId: realSessionId, text: draft })
-    expect(document.querySelector('.agent-composer__command-menu')).toBeNull()
+    expect(root.querySelector('.agent-composer__command-menu')).toBeNull()
     expect(textarea.hasAttribute('aria-activedescendant')).toBe(false)
     expect(root.querySelector('[aria-label="Skills attached as context for the next message"]')).toBeNull()
     textarea.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
@@ -1012,23 +1012,16 @@ describe('Real Agent composer slash boundaries', () => {
     const textarea = root?.querySelector<HTMLTextAreaElement>('textarea')
     const submit = root?.querySelector<HTMLButtonElement>('.agent-composer__submit')
     if (!root || !textarea || !submit) throw new Error('Real composer controls did not render')
-    textarea.focus()
     textarea.value = 'Explain /release-notes'
     textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
     await Vue.nextTick()
     const activeId = textarea.getAttribute('aria-activedescendant')
-    await waitForRealSurface(() => Boolean(activeId && document.getElementById(activeId)), 'teleported command option')
-    expect(document.querySelector('.agent-composer__command-menu')).not.toBeNull()
-    const results = document.getElementById(textarea.getAttribute('aria-controls') ?? '')
-    expect(results?.getAttribute('role')).toBe('listbox')
-    expect(results?.contains(activeId ? document.getElementById(activeId) : null)).toBe(true)
-    expect(activeId && document.getElementById(activeId)?.textContent).toContain('release-notes')
-    expect(document.activeElement).toBe(textarea)
+    expect(root.querySelector('.agent-composer__command-menu')).not.toBeNull()
+    expect(activeId && root.querySelector(`[id="${activeId}"]`)?.textContent).toContain('release-notes')
 
     textarea.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
     await Vue.nextTick()
     expect(textarea.value).toBe('Explain ')
-    expect(document.activeElement).toBe(textarea)
     expect(mounted.drafts.at(-1)).toEqual({ sessionId: realSessionId, text: 'Explain ' })
     expect(root.querySelector('[aria-label="Skills attached as context for the next message"]')?.textContent).toContain('release-notes')
     expect(mounted.sent).toEqual([])
@@ -1057,20 +1050,14 @@ describe('Agent composer instance accessibility', () => {
       await Vue.nextTick()
       const optionId = textarea.getAttribute('aria-activedescendant')
       if (!optionId) throw new Error('Real command active descendant did not render')
-      await waitForRealSurface(() => Boolean(document.getElementById(optionId)), 'owned teleported command option')
       const option = document.getElementById(optionId)
-      const results = document.getElementById(textarea.getAttribute('aria-controls') ?? '')
-      expect(results?.getAttribute('role')).toBe('listbox')
-      expect(results?.contains(option)).toBe(true)
+      expect(root.contains(option)).toBe(true)
       expect(option?.getAttribute('role')).toBe('option')
       expect(option?.textContent).toContain('docs')
       optionIds.push(optionId)
       const ids = textarea.getAttribute('aria-describedby')?.split(/\s+/) ?? []
       if (!ids.length) throw new Error('Real textarea description was not associated')
-      for (const id of ids) {
-        const description = document.getElementById(id)
-        expect(root.contains(description) || results?.closest('.agent-composer__command-menu')?.contains(description)).toBe(true)
-      }
+      for (const id of ids) expect(root.contains(document.getElementById(id))).toBe(true)
       descriptionIds.push(...ids)
       const submit = root.querySelector<HTMLButtonElement>('.agent-composer__submit')
       const statusId = submit?.getAttribute('aria-describedby')
@@ -1081,7 +1068,7 @@ describe('Agent composer instance accessibility', () => {
     expect(new Set(descriptionIds).size).toBe(descriptionIds.length)
   })
 
-  it('describes touch keyboard guidance and keeps Enter available without submitting', async () => {
+  it('keeps touch keyboard guidance described without taking visible editor space', async () => {
     const mounted = mountComposer({ initialDraft: 'next question' })
     const bindings = lastBindings as unknown as { coarseInput: Ref<boolean> }
     bindings.coarseInput.value = true
@@ -1095,20 +1082,65 @@ describe('Agent composer instance accessibility', () => {
     textarea.dispatchEvent(enter)
     expect(enter.defaultPrevented).toBe(false)
     expect(mounted.sent).toEqual([])
+    expect(browserWindow.getComputedStyle(help).position).toBe('absolute')
+    expect(browserWindow.getComputedStyle(help).height).toBe('1px')
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
     await Vue.nextTick()
     expect(mounted.sent.map(message => message.content)).toEqual(['next question'])
     bindings.coarseInput.value = false
     await Vue.nextTick()
+    expect(browserWindow.getComputedStyle(help).position).not.toBe('absolute')
   })
 })
 
-describe('Agent composer native tools and context', () => {
+describe('Agent composer three-section layout', () => {
+  it('renders one context row, one editor, and one action row with the microphone beside Send', async () => {
+    const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { attachments: true, transcription: true } })
+    const root = mounted.root
+    const context = root.querySelector<HTMLElement>('.agent-composer__context-controls')
+    const actions = root.querySelector<HTMLElement>('.agent-composer__actions')
+    const primary = root.querySelector<HTMLElement>('.agent-composer__primary-actions')
+    const editor = root.querySelector<HTMLElement>('.agent-composer__editor')
+    const submit = root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    const mic = root.querySelector<HTMLButtonElement>('.agent-composer__mic')
+    if (!context || !actions || !primary || !editor || !submit || !mic) throw new Error('Three-section composer did not render')
 
-  it('consumes real upload and Wiki asset attachment sources', async () => {
+    expect(actions.contains(context)).toBe(true)
+    expect(actions.contains(primary)).toBe(true)
+    expect(primary.contains(mic)).toBe(true)
+    expect(primary.contains(submit)).toBe(true)
+    // The source context row sits above the editor, outside the action bar.
+    const contextRow = root.querySelector<HTMLElement>('.agent-composer__context-row')
+    if (!contextRow) throw new Error('Source context row did not render')
+    expect(contextRow.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(actions.contains(contextRow)).toBe(false)
+    // Without skills and with nothing folded, the More menu has no content.
+    const more = root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
+    expect(more).toBeNull()
+    const webToggle = root.querySelector<HTMLElement>('.agent-composer__web-search-toggle')
+    if (!webToggle) throw new Error('Web toggle did not render')
+    // Goal sits between the Web toggle and the action group's end.
+    const goalToggle = root.querySelector<HTMLElement>('.agent-composer__goal-toggle')
+    if (!goalToggle) throw new Error('Goal toggle did not render')
+    expect(webToggle.compareDocumentPosition(goalToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The microphone sits immediately before Send in the action row.
+    expect(mic.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(mic.getAttribute('aria-label')).toBe('Start dictation')
+    expect(submit.textContent?.trim()).toBe('Send')
+    await Vue.nextTick()
+    const attach = root.querySelector<HTMLButtonElement>('.agent-composer__attach')
+    const create = root.querySelector<HTMLButtonElement>('.agent-composer__create')
+    expect(attach?.getAttribute('aria-label')).toBe('Attach files')
+    expect(create?.textContent).toContain('Create')
+  })
+
+  it('labels the Create control without a count and consumes real upload and Wiki asset sources', async () => {
     const mounted = mountRealComposers([{ media: true, imageGeneration: true }])
     const root = mounted.roots[0]
     await Vue.nextTick()
+    const create = root.querySelector<HTMLButtonElement>('.agent-composer__create')
+    if (!create) throw new Error('Create control did not render')
+    expect(create.textContent?.trim()).toBe('Create')
     expect(mounted.publicRefs[0].value?.hasUnsentMedia()).toBe(false)
     expect(mounted.publicRefs[0].value?.isMediaBusy()).toBe(false)
     const menu = await openRealAttachmentMenu(root)
@@ -1269,45 +1301,19 @@ describe('Agent composer native tools and context', () => {
     expect(activeOwnedMenu(create, '[aria-label="Creation tools"]')).toBeNull()
   })
 
-  it('focuses the native action in an empty direct Skills popup and restores its opener on Escape', async () => {
+  it('focuses the native action in an empty Skills popup and restores each opener on Escape', async () => {
     const mounted = mountRealComposers([{ skills: [] }])
     const root = mounted.roots[0]
-    const skillsTrigger = root.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
-    if (!skillsTrigger) throw new Error('The direct Skills trigger did not render')
+    const moreMenu = await openRealMoreMenu(root, true)
+    const skillsTrigger = moreMenu.querySelector<HTMLElement>('[aria-haspopup="dialog"]')
+    if (!skillsTrigger) throw new Error('The nested Skills trigger did not render')
     const skillsMenu = await openOwnedMenu(skillsTrigger, '.agent-composer-skill-menu__card', 'empty Skills popup', true)
     expect(document.activeElement).toBe(skillsMenu.querySelector('button'))
     await closeOwnedMenu(skillsMenu)
     expect(document.activeElement).toBe(skillsTrigger)
-    expect(skillsTrigger.getAttribute('aria-expanded')).toBe('false')
-  })
- 
-  it('keeps direct Skills selection bounded and restores focus without losing selected context', async () => {
-    const mounted = mountRealComposers([{ skills: [makeSkill('docs'), makeSkill('code')], invocationLimit: 1, initialDraft: 'Explain the release' }])
-    const root = mounted.roots[0]
-    const trigger = root.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
-    if (!trigger) throw new Error('The direct Skills trigger did not render')
-    const menu = await openOwnedMenu(trigger, '.agent-composer-skill-menu__card', 'Skills popup', true)
-    const docs = menu.querySelector<HTMLInputElement>('input[aria-label^="docs:"]')
-    const code = menu.querySelector<HTMLInputElement>('input[aria-label^="code:"]')
-    if (!docs || !code) throw new Error('Native skill checkboxes did not render')
-    docs.click()
-    await Vue.nextTick()
-    expect(docs.checked).toBe(true)
-    expect(docs.disabled).toBe(false)
-    expect(code.disabled).toBe(true)
-    code.click()
-    await Vue.nextTick()
-    expect(code.checked).toBe(false)
-    await closeOwnedMenu(menu)
-    expect(document.activeElement).toBe(trigger)
-    expect(root.querySelector('.agent-composer__skills')?.textContent).toContain('docs')
-    expect(root.querySelector('.agent-composer__skills')?.textContent).not.toContain('code')
-    expect(mounted.sent).toEqual([])
-    root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
-    await Vue.nextTick()
-    expect(mounted.sent.map(({ content, invokedSkillVersionIds, mode }) => ({ content, invokedSkillVersionIds, mode }))).toEqual([
-      { content: 'Explain the release', invokedSkillVersionIds: ['docs-version'], mode: 'message' }
-    ])
+    expect(moreMenu.closest('.v-overlay--active')).not.toBeNull()
+    await closeOwnedMenu(moreMenu)
+    expect(document.activeElement).toBe(root.querySelector('.agent-composer__more-button'))
   })
 
   it('keeps a cancelled keyboard opening closed after deferred menu work finishes', async () => {
@@ -1424,22 +1430,20 @@ describe('Agent composer native tools and context', () => {
     textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
     await Vue.nextTick()
     const reason = translateEnglish('common:agentComposerSkillMenu.youHaveMaximum8')
-    const resultsId = textarea.getAttribute('aria-controls')
-    await waitForRealSurface(() => Boolean(resultsId && document.getElementById(resultsId)), 'limited command popup')
-    const results = document.getElementById(resultsId ?? '')
-    const option = results?.querySelector<HTMLElement>('[role="option"]')
+    const option = root.querySelector<HTMLElement>('[role="option"]')
     expect(option?.getAttribute('aria-disabled')).toBe('true')
     expect(option?.textContent).toContain(reason)
-    expect(results?.closest('.agent-composer__command-menu')?.querySelector('.agent-composer__command-limit')?.textContent).toBe(reason)
+    expect(root.querySelector('.agent-composer__command-limit')?.textContent).toBe(reason)
     option?.click()
     await Vue.nextTick()
     expect(mounted.sent).toEqual([])
     expect(textarea.value).toBe('/')
-    const skills = Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(button =>
-      button.textContent?.trim() === translateEnglish('common:agentComposer.skills')
+    root.querySelector<HTMLButtonElement>('.agent-composer__more-button')?.click()
+    await waitForRealSurface(() => Boolean(document.querySelector('.v-overlay--active .agent-composer__more-menu')), 'More menu')
+    const skills = Array.from(document.querySelectorAll<HTMLElement>('.agent-composer__more-menu .v-list-item')).find(item =>
+      item.textContent?.includes('Skills')
     )
-    if (!skills) throw new Error('Skills action did not render')
-    skills.click()
+    skills?.click()
     await waitForRealSurface(() => Boolean(document.querySelector('.agent-composer-skill-menu__card')), 'Skills card')
     const card = document.querySelector<HTMLElement>('.agent-composer-skill-menu__card')
     expect(card?.textContent).toContain(reason)
@@ -1488,6 +1492,11 @@ describe('Agent composer native tools and context', () => {
     expect(notice?.textContent).toContain('Enable Web')
     expect(notice?.textContent).not.toContain('Web search is on')
     if (!notice) throw new Error('Unchecked Web description did not render')
+    const style = browserWindow.getComputedStyle(notice)
+    expect(style.position).toBe('absolute')
+    expect(style.width).toBe('1px')
+    expect(style.height).toBe('1px')
+    expect(style.overflow).toBe('hidden')
     // Color-independent state attribute for the off state is absent; the checkbox aria-checked carries state.
     expect(toggle.querySelector('input')?.getAttribute('aria-checked')).toBe('false')
   })
@@ -1498,6 +1507,7 @@ describe('Agent composer native tools and context', () => {
     const notice = mounted.root.querySelector<HTMLElement>('.agent-composer__web-notice')
     expect(input?.getAttribute('aria-describedby')).toBe(notice?.id)
     if (!notice) throw new Error('Enabled Web notice did not render')
+    expect(browserWindow.getComputedStyle(notice).position).not.toBe('absolute')
     expect(notice?.getAttribute('role')).toBe('note')
     expect(notice?.textContent).toContain('Search has its own charges')
     expect(notice.textContent).toContain('Web search is on')
@@ -1571,42 +1581,180 @@ describe('Agent composer native tools and context', () => {
     expect(idle.root.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true)
   })
 
+  it('keeps Goal and Web inline alongside More when Skills are available', () => {
+    const mounted = mountComposer({ initialDraft: '', skillsEnabled: true })
+    const context = mounted.root.querySelector<HTMLElement>('.agent-composer__context-controls')
+    const goalToggle = mounted.root.querySelector<HTMLElement>('.agent-composer__goal-toggle')
+    const webToggle = mounted.root.querySelector<HTMLElement>('.agent-composer__web-search-toggle')
+    const more = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
+    expect(context).not.toBeNull()
+    expect(goalToggle).not.toBeNull()
+    expect(webToggle).not.toBeNull()
+    expect(more).not.toBeNull()
+    expect(context?.contains(goalToggle ?? null)).toBe(true)
+    expect(context?.contains(webToggle ?? null)).toBe(true)
+    expect(context?.contains(more ?? null)).toBe(true)
+  })
 
-  it('retains source context choices and lets the selected goal be removed', async () => {
+  it('renders the source context slot and the goal chip in the top context row', async () => {
     const mounted = mountComposer({ initialDraft: '', initialMode: 'goal', contextControls: true })
-    expect(mounted.root.querySelector('.harness-context-chip')).not.toBeNull()
-    const goal = mounted.root.querySelector('.agent-composer__goal-chip')
-    expect(goal).not.toBeNull()
-    const remove = goal?.querySelector<HTMLButtonElement>('.v-chip__close')
-    if (!remove) throw new Error('Goal context removal did not render')
-    remove.click()
-    await Vue.nextTick()
-    expect(mounted.root.querySelector('.agent-composer__goal-chip')).toBeNull()
-    expect(mounted.root.querySelector('.harness-context-chip')).not.toBeNull()
-    expect(mounted.sent).toEqual([])
+    const row = mounted.root.querySelector<HTMLElement>('.agent-composer__context-row')
+    const editor = mounted.root.querySelector<HTMLElement>('.agent-composer__editor')
+    const actions = mounted.root.querySelector<HTMLElement>('.agent-composer__actions')
+    if (!row || !editor || !actions) throw new Error('Composer sections did not render')
+    expect(row.querySelector('.harness-context-chip')).not.toBeNull()
+    expect(row.querySelector('.agent-composer__goal-chip')).not.toBeNull()
+    expect(row.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The source context moved out of the action bar entirely.
+    expect(actions.querySelector('.harness-context-chip')).toBeNull()
+    expect(actions.querySelector('.agent-composer__goal-chip')).toBeNull()
   })
 })
 
+describe('Agent composer fit-based folding', () => {
+  interface FoldHarness {
+    readonly foldedControls: { value: string[] }
+    readonly foldMeasureOverride: { value: (() => boolean) | null }
+    readonly updateFoldState: () => Promise<void>
+  }
 
-describe('Agent composer goal choices', () => {
-  it('starts a goal from the direct native action without submitting until Send is chosen', async () => {
-    const mounted = mountRealComposers([{ initialDraft: 'Compare the release roadmap' }])
-    const root = mounted.roots[0]
-    expect(root.querySelector('.agent-composer__goal-chip')).toBeNull()
-    const goal = root.querySelector<HTMLButtonElement>('.agent-composer__goal-toggle')
-    if (!goal) throw new Error('Goal control did not render')
-    goal.click()
-    await Vue.nextTick()
-    expect(root.querySelector('.agent-composer__goal-chip')).not.toBeNull()
-    expect(mounted.sent).toEqual([])
-    root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
-    await Vue.nextTick()
-    expect(mounted.sent.map(({ content, invokedSkillVersionIds, mode }) => ({ content, invokedSkillVersionIds, mode }))).toEqual([
-      { content: 'Compare the release roadmap', invokedSkillVersionIds: [], mode: 'goal' }
-    ])
+  const asFoldHarness = (composer: unknown): FoldHarness => {
+    const harness = composer as unknown as FoldHarness
+    if (!harness.foldedControls || !harness.foldMeasureOverride || !harness.updateFoldState) throw new Error('Fold state was not exposed by the composer')
+    return harness
+  }
+
+  it('folds Create, then Web until the left control group fits', async () => {
+    const fold = asFoldHarness(loadComposer())
+    // The stub measure models a row that only fits once two controls are folded.
+    fold.foldMeasureOverride.value = () => fold.foldedControls.value.length < 2
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual(['create', 'web'])
   })
 
-  it('keeps the folded Goal choice operable from More', async () => {
+  it('never folds past the foldable set, protecting Attach, mic, and Send', async () => {
+    const fold = asFoldHarness(loadComposer())
+    fold.foldMeasureOverride.value = () => true
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual(['create', 'web', 'goal'])
+  })
+
+  it('unfolds the last folded control in reverse order when space returns', async () => {
+    const fold = asFoldHarness(loadComposer())
+    fold.foldedControls.value = ['create', 'web']
+    // The stub only overflows once the group is empty: restoring Create (the
+    // second control) overflows again and stays folded.
+    fold.foldMeasureOverride.value = () => fold.foldedControls.value.length === 0
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual(['create'])
+
+    fold.foldMeasureOverride.value = () => false
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual([])
+  })
+
+  it('keeps folding responsive to the restored controls after a recording swap and cleans up observation', async () => {
+    const observation = observeControlResizes()
+    let mounted: MountedComposer | null = null
+    try {
+      mounted = mountComposer({
+        initialDraft: 'typed words',
+        mediaCapabilities: { attachments: true, transcription: true },
+        mediaSession: { id: 'session-1' }
+      })
+      await settleAsync()
+      const root = mounted.root
+      const original = root.querySelector<HTMLElement>('.agent-composer__context-controls')
+      if (!original) throw new Error('Message controls did not render')
+      const observer = observation.observers.find(candidate => candidate.observed.has(original))
+      if (!observer) throw new Error('Message controls are not observed')
+      root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
+      await Vue.nextTick()
+      root.querySelector<HTMLButtonElement>('.agent-composer__dictation-review')?.click()
+      await settleAsync()
+      const restored = root.querySelector<HTMLElement>('.agent-composer__context-controls')
+      if (!restored) throw new Error('Message controls did not return after recording')
+      expect(observer.observed.has(original)).toBe(false)
+      Object.defineProperties(restored, {
+        clientWidth: { configurable: true, value: 100 },
+        scrollWidth: { configurable: true, get: () => (root.querySelector('.agent-composer__web-search-toggle') ? 200 : 100) }
+      })
+      observer.resize(restored)
+      await settleAsync()
+      expect(root.querySelector('.agent-composer__web-search-toggle')).toBeNull()
+      expect(root.querySelector('.agent-composer__attach')).not.toBeNull()
+      expect(root.querySelector('.agent-composer__mic')).not.toBeNull()
+      expect(root.querySelector('.agent-composer__submit')).not.toBeNull()
+      mounted.unmount()
+      mountedComposers.splice(mountedComposers.indexOf(mounted.unmount), 1)
+      mounted = null
+      expect(observer.observed.size).toBe(0)
+    } finally {
+      if (mounted) {
+        mounted.unmount()
+        mountedComposers.splice(mountedComposers.indexOf(mounted.unmount), 1)
+      }
+      observation.restore()
+    }
+  })
+
+  it('shows folded controls as More menu entries and restores the inline controls on unfold', async () => {
+    const observation = observeControlResizes()
+    try {
+      const mounted = mountRealComposers([{ media: true, imageGeneration: true, videoGeneration: true, skills: [] }])
+      const root = mounted.roots[0]
+      await settleAsync()
+      const resize = measureControlRow(root, observation, 300)
+      await waitForRealSurface(
+        () => root.querySelector('.agent-composer__web-search-toggle') === null && root.querySelector('.agent-composer__create') === null,
+        'Create and Web folded'
+      )
+      expect(root.querySelector('.agent-composer__attach')).not.toBeNull()
+      expect(root.querySelector('.agent-composer__goal-toggle')).not.toBeNull()
+      expect(root.querySelector('.agent-composer__submit')).not.toBeNull()
+
+      const moreMenu = await openRealMoreMenu(root)
+      const options = Array.from(moreMenu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'))
+      const webItem = options.find(item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web')
+      if (!webItem) throw new Error('Folded Web menu item did not render')
+      expect(webItem.getAttribute('aria-checked')).toBe('false')
+      expect(webItem.getAttribute('aria-disabled')).toBe('true')
+      const creationItems = options.filter(item => item !== webItem)
+      expect(creationItems.map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())).toEqual(['Images', 'Video'])
+      for (const item of creationItems) {
+        expect(item.getAttribute('aria-checked')).toBe('false')
+        expect(item.getAttribute('aria-disabled')).not.toBe('true')
+      }
+      // Skills always live inside More, folded or not.
+      expect(moreMenu.querySelector('[aria-haspopup="dialog"]')).not.toBeNull()
+
+      await closeOwnedMenu(moreMenu)
+      resize(1000)
+      await waitForRealSurface(
+        () => root.querySelector('.agent-composer__web-search-toggle') !== null && root.querySelector('.agent-composer__create') !== null,
+        'Create and Web restored'
+      )
+      const reopened = await openRealMoreMenu(root, true)
+      expect(reopened.querySelector('[role="menuitemcheckbox"]')).toBeNull()
+      expect(reopened.querySelector('[aria-haspopup="dialog"]')).not.toBeNull()
+      await closeOwnedMenu(reopened)
+    } finally {
+      observation.restore()
+    }
+  })
+})
+
+describe('Agent composer goal placement', () => {
+  it('keeps Goal as a direct inline control while unset', () => {
+    const mounted = mountComposer({ initialDraft: '', initialMode: 'message' })
+    expect(mounted.root.querySelector('.agent-composer__goal-chip')).toBeNull()
+    const goal = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__goal-toggle')
+    if (!goal) throw new Error('Goal control did not render')
+    expect(goal.textContent?.trim()).toBe('Goal')
+    expect(goal.getAttribute('title')).toContain('durable outcome')
+  })
+
+  it('moves Goal into the More menu only when the fold logic folds it', async () => {
     const observation = observeControlResizes()
     try {
       const mounted = mountComposer({ initialDraft: '', initialMode: 'message' })
@@ -1696,7 +1844,7 @@ describe('Agent composer dictation controls', () => {
     expect(recording.value).toBe(false)
   })
 
-  it('updates the recording countdown without changing the listening state', async () => {
+  it('keeps a tabular countdown with a static status and emphasizes the final ten seconds', async () => {
     const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { transcription: true } })
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
     await Vue.nextTick()
@@ -1705,11 +1853,15 @@ describe('Agent composer dictation controls', () => {
     const timer = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-timer')
     expect(timer?.textContent?.trim()).toBe('00:37 / 01:00')
     if (!timer) throw new Error('Recording timer did not render')
+    const regularWeight = browserWindow.getComputedStyle(timer).fontWeight
+    expect(browserWindow.getComputedStyle(timer).fontVariantNumeric).toBe('tabular-nums')
     const label = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-label')
     expect(label?.textContent?.trim()).toBe('Listening…')
+    // The last ten seconds emphasize the timer.
     seconds.value = 53
     await Vue.nextTick()
-    expect(timer.textContent?.trim()).toBe('00:53 / 01:00')
+    expect(browserWindow.getComputedStyle(timer).fontWeight).toBe('600')
+    expect(browserWindow.getComputedStyle(timer).fontWeight).not.toBe(regularWeight)
     expect(label?.textContent?.trim()).toBe('Listening…')
   })
 

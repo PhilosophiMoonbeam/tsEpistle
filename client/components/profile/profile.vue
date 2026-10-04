@@ -32,14 +32,6 @@
               strong {{ savedDraft ? savedDraft.name : user.name }}
               span {{ user.email }}
 
-      nav.profile-section-nav(:aria-label='$t("profile:nav.label", { defaultValue: "Profile sections" })')
-        a(href='#profile-info-title') {{ $t('profile:myInfo') }}
-        a(href='#profile-preferences-title') {{ $t('profile:preferences') }}
-        a(href='#profile-avatar-title') {{ $t('profile:avatar.title', { defaultValue: 'Profile avatar' }) }}
-        a(href='#profile-auth-title') {{ $t('profile:auth.title') }}
-        a(href='#profile-groups-title') {{ $t('profile:groups.title') }}
-        a(href='#profile-activity-title') {{ $t('profile:activity.title') }}
-
       .profile-layout
         .profile-column
           section.profile-section(aria-labelledby='profile-info-title')
@@ -1029,9 +1021,8 @@ export default {
 
 <style lang='scss'>
 .profile-workspace {
-  --profile-radius: var(--wiki-panel-radius);
+  --profile-radius: .65rem;
   padding-bottom: var(--wiki-space-6);
-  h2[id] { scroll-margin-block-start: calc(var(--wiki-chrome-height) + 1rem); }
 }
 
 .profile-identity {
@@ -1050,46 +1041,23 @@ export default {
       color: rgb(var(--v-theme-on-surface));
       font-size: .92rem;
       font-weight: 650;
-      overflow-wrap: anywhere;
-      white-space: normal;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     > span {
       overflow: hidden;
       color: var(--wiki-text-muted);
       font-size: .82rem;
-      overflow-wrap: anywhere;
-      white-space: normal;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-  }
-}
-
-.profile-section-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .5rem;
-  margin-block-end: var(--wiki-space-5);
-  padding-block: .75rem;
-  border-block: 1px solid var(--wiki-surface-border);
-
-  a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 44px;
-    padding: .5rem .75rem;
-    border-radius: var(--wiki-control-radius);
-    color: var(--wiki-accent-ink);
-    font-size: .875rem;
-    font-weight: 600;
-    text-decoration: none;
-
-    &:hover { background: var(--wiki-surface-sunken); }
   }
 }
 
 .profile-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
   align-items: start;
   gap: var(--wiki-space-5);
 }
@@ -1097,12 +1065,11 @@ export default {
 .profile-column {
   display: grid;
   min-width: 0;
-  gap: var(--wiki-space-4);
+  gap: var(--wiki-space-5);
 }
 
 .profile-section {
   min-width: 0;
-  scroll-margin-block-start: calc(var(--wiki-chrome-height) + 1rem);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--profile-radius);
   background: var(--wiki-surface-raised);

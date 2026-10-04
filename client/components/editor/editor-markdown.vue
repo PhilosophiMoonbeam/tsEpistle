@@ -130,11 +130,10 @@
     .editor-markdown-main
       .editor-markdown-sidebar(
         role='toolbar'
-        aria-orientation='horizontal'
+        aria-orientation='vertical'
         :aria-label='$t(`editor:markup.insertTools`)'
         v-roving-toolbar='{ onEscape: focusEditor }'
       )
-        span.editor-insert-label {{ $t('editor:markup.insertGroup') }}
         v-btn.editor-tool(
           v-for='toolId of sidebarTools'
           :key='toolId'
@@ -157,11 +156,9 @@
               v-icon mdi-help-circle-outline
               v-tooltip(activator='parent', location='right') {{$t('editor:markup.markdownFormattingHelp')}}
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
-        .editor-pane-label {{ $t('editor:editor.source') }} · {{ $t('editor:editorMarkdown.markdown') }}
         div(ref='cm')
       transition(name='editor-markdown-preview', :css='$vuetify.display.mdAndUp')
         .editor-markdown-preview(v-if='previewShown')
-          .editor-pane-label {{ $t('editor:markup.showPreview') }}
           .editor-markdown-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer')
             v-alert.mb-3(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
               span {{previewError}}
@@ -1379,17 +1376,7 @@ export default defineComponent({
   overflow: hidden;
 
   &-main {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-
-    > .editor-markdown-sidebar { grid-column: 1 / -1; }
-    > .editor-markdown-editor:last-child { grid-column: 1 / -1; }
-
-    @include until($tablet) {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(0, 1fr);
-    }
+    display: flex;
     flex: 1 1 0;
     min-width: 0;
     min-height: 0;
@@ -1400,7 +1387,6 @@ export default defineComponent({
   &-editor {
     background: rgb(var(--v-theme-background));
     display: flex;
-    flex-direction: column;
     flex: 1 1 0;
     min-width: 0;
     min-height: 0;
@@ -1416,7 +1402,7 @@ export default defineComponent({
       width: 100%;
     }
 
-    > div:not(.editor-pane-label) {
+    > div {
       display: flex;
       flex: 1 1 auto;
       min-width: 0;
@@ -1456,14 +1442,13 @@ export default defineComponent({
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    padding: 0;
-    border-inline-start: 1px solid var(--wiki-surface-border);
+    padding: 1rem;
     position: relative;
 
     @include until($tablet) {
       flex: 1 1 0;
       max-width: 100%;
-      padding: 0;
+      padding: 12px;
       width: 100%;
     }
 
@@ -1473,7 +1458,7 @@ export default defineComponent({
       min-width: 0;
       min-height: 0;
       overflow-y: auto;
-      padding: var(--wiki-space-4);
+      padding: 0;
       width: 100%;
 
       @include until($tablet) {
@@ -1580,15 +1565,17 @@ export default defineComponent({
 
   &-sidebar {
     background: var(--wiki-surface-sunken);
-    border-block-end: 1px solid var(--wiki-surface-border);
+    border-inline-end: 1px solid var(--wiki-surface-border);
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     justify-content: flex-start;
     align-items: center;
-    padding: var(--wiki-space-1) var(--wiki-space-3);
-    width: 100%;
-    flex: 0 0 100%;
-    gap: var(--wiki-space-1);
+    padding-block: 12px 16px;
+    padding-inline: 0;
+    width: 60px;
+    flex: 0 0 60px;
+
+    gap: 8px;
 
     .v-btn.v-btn--icon {
       width: 44px;
@@ -1602,8 +1589,9 @@ export default defineComponent({
   &-sidebar-actions {
     align-items: center;
     display: flex;
-    flex-direction: row;
-    gap: var(--wiki-space-1);
+    flex-direction: column;
+    gap: 8px;
+    transform: translateY(-24px);
   }
 
   &-sysbar {

@@ -1,8 +1,7 @@
 <template>
-  <v-dialog v-model="isShown" max-width="680" :fullscreen="$vuetify.display.xs" scrollable persistent content-class="editorselect-dialog" aria-labelledby="editor-select-title">
+  <v-dialog v-model="isShown" max-width="780" scrollable persistent content-class="editorselect-dialog" aria-labelledby="editor-select-title">
     <v-card class="editor-select">
       <header class="editor-select__heading"><div><span>{{ $t('editor:editorModalEditorselect.newPage') }}</span><h2 id="editor-select-title">{{ $t('editor:editorModalEditorselect.howWouldYouLike') }}</h2></div><v-btn icon="mdi-arrow-left" variant="text" :aria-label="$t('editor:editorModalEditorselect.goBack')" :disabled="templateLoading" @click="goBack" /></header>
-      <div class="editor-select__location">/{{ locale }}/{{ path }}</div>
       <v-card-text class="editor-select__content">
         <p class="editor-select__intro">{{ $t('editor:editorModalEditorselect.chooseEditorPage', { availableEditors: recommendation ? $t('editor:editorModalEditorselect.workspaceRecommendationHighlighted') : $t('editor:editorModalEditorselect.workspaceOffersEditors', { availableEditorsCount: availableEditors.length, interpolation: { escapeValue: false } }), interpolation: { escapeValue: false } }) }}</p>
         <v-alert v-if="templateError" type="error" variant="tonal" class="mb-4">{{ templateError }}</v-alert>
@@ -105,72 +104,16 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-.editor-select {
-  min-height: 0;
-  overflow: hidden;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius) !important;
-  background: var(--wiki-surface-raised);
-  color: rgb(var(--v-theme-on-surface));
-}
-.editor-select__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.25rem;
-  span { color: var(--wiki-text-muted); font-size: .8125rem; }
-  h2 { margin: .25rem 0 0; font-size: 1.25rem; line-height: 1.4; font-weight: 650; }
-}
-.editor-select__location {
-  padding: .75rem 1.25rem;
-  border-block: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-sunken);
-  color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  overflow-wrap: anywhere;
-}
-.editor-select__content { min-height: 0; overflow-y: auto; padding: 1rem 1.25rem !important; }
-.editor-select__intro, .editor-select__footnote {
-  color: var(--wiki-text-muted);
-  font-size: .875rem;
-  line-height: 1.6;
-  margin: 0 0 1rem;
-}
-.editor-select__grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
-.editor-select__option {
-  appearance: none;
-  display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) auto;
-  gap: .25rem .75rem;
-  text-align: start;
-  min-width: 0;
-  padding: .875rem;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-raised);
-  color: rgb(var(--v-theme-on-surface));
-  cursor: pointer;
-  overflow-wrap: anywhere;
-  &:hover { background: var(--wiki-surface-sunken); }
-  &:focus-visible { outline: 2px solid var(--wiki-primary-ink); outline-offset: 2px; }
-  &:disabled { opacity: .6; cursor: wait; }
-  &--recommended { border-color: var(--wiki-primary-ink); }
-  h3 { grid-column: 2; grid-row: 1; font-size: 1rem; font-weight: 650; margin: 0; }
-  p { grid-column: 2 / -1; font-size: .875rem; line-height: 1.5; color: var(--wiki-text-muted); margin: 0; }
-}
-.editor-select__option-top {
-  display: contents;
-  .v-icon { grid-column: 1; grid-row: 1 / 3; color: var(--wiki-primary-ink); }
-}
-.editor-select__recommendation { grid-column: 2 / -1; grid-row: 3; font-size: .8125rem; color: var(--wiki-primary-ink); }
-.editor-select__format { grid-column: 3; grid-row: 1; align-self: center; font-size: .75rem; color: var(--wiki-text-muted); }
-.editor-select__footnote { border-top: 1px solid var(--wiki-surface-border); padding-top: 1rem; margin: 1rem 0 0; }
-@media (max-width: 600px) {
-  .editor-select { border: 0; border-radius: 0 !important; }
-  .editor-select__heading, .editor-select__location { padding-inline: 1rem; }
-  .editor-select__content { padding: 1rem !important; }
-  .editor-select__option { grid-template-columns: 2rem minmax(0, 1fr); }
-  .editor-select__format { grid-column: 2; grid-row: 4; }
-}
+.editor-select { --editor-choice-border:rgba(var(--v-theme-on-surface),.15); --editor-choice-muted:rgba(var(--v-theme-on-surface),.72); min-height:0; overflow:hidden; border:1px solid var(--editor-choice-border); border-radius:14px!important; }
+.editor-select__heading { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; padding:1.7rem 1.7rem 1.3rem; border-bottom:1px solid var(--editor-choice-border); span { display:block; font-size:.65rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--editor-choice-muted); } h2 { font-size:1.55rem; line-height:1.25; font-weight:600; letter-spacing:-.035em; margin:.6rem 0 0; } }
+.editor-select__content { flex:1 1 auto; min-height:0; overflow-y:auto; padding:1.4rem 1.7rem 1.7rem!important; }
+.editor-select__intro { font-size:.82rem; line-height:1.75; color:var(--editor-choice-muted); margin:0 0 1.2rem; }
+.editor-select__grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.85rem; }
+.editor-select__option { appearance:none; display:block; text-align:left; border:1px solid var(--editor-choice-border); border-radius:9px; padding:1.2rem; background:transparent; color:rgb(var(--v-theme-on-surface)); cursor:pointer; min-width:0; transition:background .15s,border-color .15s; &:hover { background:rgba(var(--v-theme-on-surface),.04); } &:focus-visible { outline:2px solid rgb(var(--v-theme-on-surface)); outline-offset:3px; } &:disabled { opacity:.6; cursor:wait; } &--recommended { border-color:rgba(var(--v-theme-primary),.65); background:rgba(var(--v-theme-primary),.05); } &--template { border-style:dashed; } h3 { font-size:1rem; font-weight:600; margin:.8rem 0 .4rem; } p { font-size:.76rem; line-height:1.6; color:var(--editor-choice-muted); margin:0 0 1rem; } }
+.editor-select__option-top { display:flex; align-items:center; justify-content:space-between; gap:.7rem; .v-icon { color:var(--wiki-primary-ink); } }
+.editor-select__recommendation { font-size:.6rem; line-height:1.5; text-align:right; max-width:105px; color:var(--editor-choice-muted); }
+.editor-select__format { display:inline-block; border:1px solid var(--editor-choice-border); border-radius:4px; padding:.2rem .5rem; font-size:.64rem; color:var(--editor-choice-muted); }
+.editor-select__footnote { border-top:1px solid var(--editor-choice-border); padding-top:1rem; margin:1.2rem 0 0; font-size:.7rem; line-height:1.8; color:var(--editor-choice-muted); }
+@media(max-width:600px) { .editor-select { border:0; border-radius:0!important; } .editor-select__heading { padding:1.4rem 1.2rem 1rem; h2 { font-size:1.4rem; } } .editor-select__content { padding:1.2rem!important; } .editor-select__grid { grid-template-columns:1fr; } .editor-select__option { padding:1rem; } }
+@media(prefers-reduced-motion:reduce) { .editor-select__option { transition:none; } }
 </style>

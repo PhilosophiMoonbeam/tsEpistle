@@ -1,8 +1,8 @@
 <template lang='pug'>
   v-app.page-unlock-app
-    main.page-unlock(aria-labelledby='page-unlock-title')
+    main.page-unlock
       v-card.page-unlock-card(variant='flat')
-        header.page-unlock-context
+        v-card-text.page-unlock-content
           .page-unlock-brand
             .page-unlock-logo
               img.page-unlock-logo-image(
@@ -15,12 +15,13 @@
                 @load='handleLogoLoad'
               )
               .page-unlock-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
-            .page-unlock-brand-title.text-title-large {{ siteTitle }}
-          v-icon(size='28', aria-hidden='true') mdi-lock-outline
-          h1#page-unlock-title.text-headline-small {{ $t('common:pageUnlock.title') }}
-          p.page-unlock-page-title.text-title-medium(v-if='pageTitle') {{ pageTitle }}
-          p.text-body-large {{ $t('common:pageUnlock.body') }}
-        v-card-text.page-unlock-content
+            .page-unlock-brand-title
+              .text-title-large {{ siteTitle }}
+          .page-unlock-context
+            v-icon(color='primary', size='32', aria-hidden='true') mdi-lock-outline
+            h1.text-headline-small {{ $t('common:pageUnlock.title') }}
+          p.page-unlock-page-title.text-title-medium.mb-1(v-if='pageTitle') {{ pageTitle }}
+          p.text-body-large.text-medium-emphasis.mb-6 {{ $t('common:pageUnlock.body') }}
           v-alert#page-unlock-error.mb-4(
             v-if='error'
             type='error'
@@ -59,11 +60,9 @@
           template(v-else)
             v-alert.mb-4(type='error', variant='tonal', role='alert') {{ $t('common:pageUnlock.unavailable') }}
           v-btn.page-unlock-return(
-            variant='outlined'
+            variant='text'
             color='primary'
             href='/'
-            block
-            prepend-icon='mdi-home-outline'
           ) {{ $t('common:pageUnlock.returnHome') }}
 </template>
 
@@ -154,93 +153,140 @@ export default defineComponent({
 
 <style lang='scss' scoped>
 .page-unlock {
-  display: grid;
+  display: flex;
   min-height: 100vh;
   min-height: 100dvh;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
   padding: var(--wiki-page-gutter);
-  place-items: center;
   background: rgb(var(--v-theme-background));
-  color: rgb(var(--v-theme-on-background));
 }
 
 .page-unlock-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  width: min(100%, 880px);
+  width: min(100%, 480px);
+  overflow: hidden;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  box-shadow: none;
-}
-
-.page-unlock-context,
-.page-unlock-content {
-  min-width: 0;
-  padding: clamp(24px, 4vw, 40px);
-  overflow-wrap: anywhere;
-}
-
-.page-unlock-context {
-  border-inline-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-sunken);
-
-  h1 { margin-block: 12px; }
-  p { margin-block: 12px 0; line-height: 1.6; }
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
 }
 
 .page-unlock-content {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  padding: clamp(24px, 5vw, 36px);
 }
 
 .page-unlock-brand {
   display: flex;
   min-width: 0;
-  gap: 12px;
+  gap: var(--wiki-space-3);
   align-items: center;
-  margin-block-end: 32px;
+  margin-bottom: var(--wiki-space-6);
 }
 
 .page-unlock-logo {
-  display: grid;
-  flex: 0 0 auto;
-  max-width: 112px;
-  min-width: 44px;
-  height: 44px;
-  place-items: center;
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 52px;
+  max-width: 128px;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 22%, transparent);
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface)));
 }
 
 .page-unlock-logo-image {
   display: block;
+  width: auto;
   max-width: 100%;
-  max-height: 44px;
+  height: 42px;
+  max-height: 42px;
   object-fit: contain;
+  object-position: center;
 }
 
 .page-unlock-logo-fallback {
   display: grid;
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
+  width: 36px;
+  height: 36px;
   place-items: center;
+  color: rgb(var(--v-theme-on-surface));
   font-size: 1.25rem;
-  font-weight: 700;
+  font-weight: 720;
+  line-height: 1;
 }
 
-.page-unlock-brand-title { min-width: 0; }
-.page-unlock-return { margin-block-start: 24px; min-height: 44px; }
+.page-unlock-brand-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 
-@media (max-width: 699px) {
-  .page-unlock { padding: 16px; align-items: start; }
-  .page-unlock-card { grid-template-columns: minmax(0, 1fr); }
-  .page-unlock-context {
-    border-inline-end: 0;
-    border-block-end: 1px solid var(--wiki-surface-border);
+.page-unlock-eyebrow {
+  color: var(--wiki-accent-ink);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.page-unlock-context {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.page-unlock-context h1 {
+  margin: 0;
+}
+
+.page-unlock-page-title {
+  overflow-wrap: anywhere;
+}
+
+.page-unlock-return {
+  margin-top: 12px;
+  color: var(--wiki-accent-ink) !important;
+}
+
+@media (max-width: 599px) {
+  .page-unlock {
+    align-items: stretch;
+    padding: 0;
   }
-  .page-unlock-context,
-  .page-unlock-content { padding: 24px; }
-  .page-unlock-brand { margin-block-end: 24px; }
+
+  .page-unlock-card {
+    width: 100%;
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .page-unlock-content {
+    padding-block:
+      calc(var(--wiki-space-6) + var(--wiki-space-1) + env(safe-area-inset-top))
+      calc(var(--wiki-space-6) + var(--wiki-space-1) + env(safe-area-inset-bottom));
+    padding-inline:
+      calc(var(--wiki-space-4) + var(--wiki-space-1) + env(safe-area-inset-left))
+      calc(var(--wiki-space-4) + var(--wiki-space-1) + env(safe-area-inset-right));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-unlock *,
+  .page-unlock *::before,
+  .page-unlock *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
 }
 </style>

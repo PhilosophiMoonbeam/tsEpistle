@@ -1,257 +1,373 @@
+import fs from 'node:fs'
 import path from 'node:path'
-import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { afterEach, beforeEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
-import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
-import { translateEnglish as t } from '../../test/english-translate.mts'
+import { browserWindow, document } from '../../test/browser-dom.mts'
+import { afterEach, vi } from '../../../server/test/bun-test.mts'
+import { compileTemplate } from '@vue/compiler-sfc'
+import { fetchPageList as realFetchPageList } from '../../helpers/pages-api.ts'
+import { applyPublication, inspectPublication, publicationState } from '../../helpers/admin-pages.ts'
 
-resetBody()
-// Platform modules must capture the prepared DOM; the SFC import intentionally
-// follows registration of the module-loading test boundary.
+import { translateEnglish } from '../../test/english-translate.mts'
 const Vue = await import('vue')
+const { compile } = Vue
 const { createVuetify } = await import('vuetify')
-const components = await import('vuetify/components')
-const directives = await import('vuetify/directives')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
 const { createRouter, createMemoryHistory } = await import('vue-router')
-// Static store import would initialize against window.siteConfig before the fixture exists.
-const importConfig = Object.getOwnPropertyDescriptor(browserWindow, 'siteConfig')
-Object.defineProperty(browserWindow, 'siteConfig', { configurable: true, value: {
-  company: '', contentLicense: '', footerOverride: '', banner: {}, darkMode: false,
-  tocPosition: 'left', title: 'Directory verification', logoUrl: '', product: { name: 'tsEpistle', version: 'test' }
-} })
-let wikiStore
-try {
-  ;({ wikiStore } = await import('../../store/index.ts'))
-} finally {
-  if (importConfig) Object.defineProperty(browserWindow, 'siteConfig', importConfig)
-  else Reflect.deleteProperty(browserWindow, 'siteConfig')
-}
-
-// Load complete SFC modules, including the publication review and real HTTP
-// normalizer. Only styles and unrelated shell chrome are omitted.
-Bun.plugin({
-  name: 'admin-page-directory-consumer',
-  setup(builder) {
-    builder.onResolve({ filter: /^@\// }, ({ path: filename }) => ({ path: path.join(process.cwd(), 'client', filename.slice(2)) }))
-    builder.onLoad({ filter: /\/(admin-pages|admin-pages-publication|async-state|status-indicator)\.vue$/ }, async ({ path: filename }) => {
-      const parsed = parse(await Bun.file(filename).text(), { filename })
-      if (parsed.errors.length) throw parsed.errors[0]
-      const id = `directory-${path.basename(filename, '.vue')}`
-      const script = compileScript(parsed.descriptor, { id, genDefaultAs: '__component', inlineTemplate: true })
-      let template = ''
-      if (!parsed.descriptor.scriptSetup) {
-        const result = compileTemplate({ source: parsed.descriptor.template.content, filename, id })
-        if (result.errors.length) throw result.errors[0]
-        template = `${result.code}\n__component.render = render;`
-      }
-      return { loader: 'ts', contents: `${script.content}\n${template}\nexport default __component;` }
-    })
-  }
-})
-const Directory = (await import('./admin-pages.vue')).default
-const cleanups = []
-beforeEach(() => vi.useFakeTimers())
+const mounted = []
 afterEach(() => {
-  for (const cleanup of cleanups.splice(0).reverse()) cleanup()
-  vi.useRealTimers()
+  for (const { app, host } of mounted.splice(0)) { app.unmount(); host.remove() }
   vi.restoreAllMocks()
-  vi.unstubAllGlobals()
-  resetBody()
 })
-const settle = async () => {
-  for (let turn = 0; turn < 8; turn++) { await Promise.resolve(); await Vue.nextTick() }
-  await vi.advanceTimersByTimeAsync(0)
-  await Vue.nextTick()
-}
-const until = async ready => {
-  for (let turn = 0; turn < 100; turn++) {
-    await settle()
-    if (ready()) return
-    await vi.advanceTimersByTimeAsync(300)
+const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); await Vue.nextTick() }
+
+const extractMethod = (script, name) => {
+  const methodStart = script.search(new RegExp('async\\s+' + name + '\\s*\\('))
+  if (methodStart === -1) return null
+
+  const bodyStart = script.indexOf('{', methodStart)
+  let depth = 0
+  for (let idx = bodyStart; idx < script.length; idx++) {
+    if (script[idx] === '{') {
+      depth++
+    } else if (script[idx] === '}') {
+      depth--
+      if (depth === 0) return script.slice(methodStart, idx + 1)
+    }
   }
-  throw new Error('Directory consumer did not settle')
+  return null
 }
-const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
-const batch = (items, nextOffset = null, scanned = items.length) => response({ items, nextOffset, scanned })
-const row = (id, overrides = {}) => ({
-  id, title: `Record ${id}`, path: `records/${id}`, locale: 'en', description: null, tags: [], isPublished: true,
-  visibility: 'public', ownerId: null, contentType: 'markdown',
-  createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z', ...overrides
+
+const compileMethod = (method, dependencies) => {
+  const executable = method.replace(/^async\s+\w+\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/, 'async function () {')
+  return new Function(...Object.keys(dependencies), `return (${executable})`)(...Object.values(dependencies))
+}
+
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const createWikiStore = () => {
+  const loadingEvents = []
+  const notifications = []
+  const errors = []
+  return {
+    loadingEvents,
+    notifications,
+    errors,
+    store: {
+      startLoading: id => loadingEvents.push(['start', id]),
+      stopLoading: id => loadingEvents.push(['stop', id]),
+      showNotification: notification => notifications.push(notification),
+      showError: error => errors.push(error)
+    }
+  }
+}
+
+const createViewModel = loadPages => ({
+  pages: [],
+  errorMessage: '',
+  loading: false,
+  loadRequestId: 0,
+  loadPages
 })
-const deferred = () => Promise.withResolvers()
-const button = (root, key) => {
-  const control = [...root.querySelectorAll('button')].find(item => item.textContent.trim() === t(key))
-  if (!control) throw new Error(`Missing directory action: ${key}`)
-  return control
-}
-const click = async (root, key) => { button(root, key).click(); await settle() }
-const links = host => [...host.querySelectorAll('.admin-record-link')].map(link => link.getAttribute('href'))
-const loadingKeys = () => Object.keys(wikiStore.loadingCounts).filter(key => key.startsWith('admin-pages-refresh'))
-const mount = async (transport, query = {}) => {
-  setLocation('/a/pages')
-  vi.stubGlobal('siteLangs', [{ code: 'en' }, { code: 'fr' }])
-  const saved = { user: wikiStore.user, loadingCounts: { ...wikiStore.loadingCounts }, notification: { ...wikiStore.notification } }
-  wikiStore.user = { ...wikiStore.user, id: 7, permissions: [] }
-  cleanups.push(() => { wikiStore.user = saved.user; wikiStore.loadingCounts = saved.loadingCounts; wikiStore.notification = saved.notification })
-  const fetch = vi.spyOn(browserWindow, 'fetch').mockImplementation(transport)
-  const notify = vi.spyOn(wikiStore, 'showNotification')
-  const errors = vi.spyOn(wikiStore, 'showError')
-  const router = createRouter({ history: createMemoryHistory('/a'), routes: [{ path: '/pages/:id?', component: { render: () => null } }] })
-  await router.push({ path: '/pages', query }); await router.isReady()
-  const host = document.createElement('div'); document.body.append(host)
-  const app = Vue.createApp(Directory)
-  app.config.globalProperties.$t = t
-  app.use(router)
-  app.use(createVuetify({ components, directives, defaults: { VDialog: { transition: false } } }))
-  app.component('admin-hero', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('header', slots.actions?.()) }))
-  const vm = app.mount(host)
-  let mounted = true
-  const unmount = () => { if (mounted) { app.unmount(); host.remove(); mounted = false } }
-  cleanups.push(unmount)
-  await settle()
-  return { host, vm, router, fetch, notify, errors, unmount }
-}
-const enterSearch = async (host, value) => {
-  const input = host.querySelector('.pages-search input:not([role="combobox"])')
-  input.value = value; input.dispatchEvent(new browserWindow.Event('input', { bubbles: true })); await settle()
-}
 
-describe('mounted administrative page directory', () => {
-  test('renders administration identity and retains selected snapshots across windows and filter changes for review', async () => {
-    const selected = row(7, { title: 'Original selected title', tags: ['review'] })
-    const { host } = await mount(async url => {
-      const parsed = new URL(url, browserWindow.location.href)
-      if (parsed.pathname === '/_api/pages/7') return response({ error: 'Snapshot unavailable' }, 503)
-      if (parsed.searchParams.get('search')) return batch([row(9)])
-      if (parsed.searchParams.get('offset') === '25') return batch([row(8)])
-      return batch([selected], 25, 25)
+describe('admin-pages root UI facade migration guard', () => {
+  const componentPath = path.join(process.cwd(), 'client/components/admin/admin-pages.vue')
+  const source = fs.readFileSync(componentPath, 'utf8')
+  const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)[1]
+  const loadPagesSource = extractMethod(script, 'loadPages')
+  const checkboxTemplate = source.match(/<input type="checkbox"[^\n]*\/>/)[0]
+  const renderCheckbox = compile(checkboxTemplate)
+  const refreshSource = extractMethod(script, 'refresh')
+  const windowStub = { fetch: () => {} }
+
+  const createComponentOptions = ({ fetchPageList, wikiStore, window = windowStub, publication = () => 'Published' }) => {
+    const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
+
+    return new Function(
+      'AsyncState',
+      'AdminPagesPublication',
+      'StatusIndicator',
+      'getErrorMessage',
+      'fetchPageList',
+      'publicationState',
+      'wikiStore',
+      'window',
+      executableScript
+    )(
+      {},
+      {},
+      {},
+      error => (error instanceof Error ? error.message : String(error)),
+      fetchPageList,
+      publication,
+      wikiStore,
+      window
+    )
+  }
+
+  const template = compileTemplate({
+    source: source.match(/<template>([\s\S]*?)<\/template>\s*<script/)[1],
+    filename: componentPath,
+    id: 'pages-register-contract',
+    compilerOptions: { mode: 'function' }
+  })
+  if (template.errors.length) throw template.errors[0]
+  const render = new Function('Vue', template.code)(Vue)
+  const row = (id, title, pagePath) => ({
+    id, title, path: pagePath, locale: 'en', description: null, tags: [], isPublished: true,
+    visibility: 'public', ownerId: null, contentType: 'markdown',
+    createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z'
+  })
+  const publicationSource = fs.readFileSync(path.join(process.cwd(), 'client/components/admin/admin-pages-publication.vue'), 'utf8')
+  const publicationScript = publicationSource.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1]
+  const publicationExecutable = new Bun.Transpiler({ loader: 'ts' }).transformSync(publicationScript.replace(/^import .*$/gm, '').replace('export default', 'return'))
+  const publicationTemplate = compileTemplate({
+    source: publicationSource.match(/<template>([\s\S]*?)<\/template>\s*<script/)[1],
+    filename: 'admin-pages-publication.vue', id: 'publication-review-contract',
+    compilerOptions: { mode: 'function' }
+  })
+  if (publicationTemplate.errors.length) throw publicationTemplate.errors[0]
+  const publicationOptions = new Function('defineComponent', 'applyPublication', 'inspectPublication', 'publicationState', publicationExecutable)(
+    Vue.defineComponent, applyPublication, inspectPublication, publicationState
+  )
+  publicationOptions.render = new Function('Vue', publicationTemplate.code)(Vue)
+  const mountRegister = async rows => {
+    const fetch = vi.spyOn(browserWindow, 'fetch').mockImplementation(async url => ({
+      ok: url === '/_api/pages', headers: { get: () => 'application/json' },
+      json: async () => url === '/_api/pages' ? rows : { error: 'Review snapshot unavailable' }
+    }))
+    const wiki = createWikiStore()
+    wiki.store.user = { permissions: [] }
+    const options = createComponentOptions({
+      fetchPageList: realFetchPageList, wikiStore: wiki.store, window: browserWindow, publication: publicationState
     })
-    expect(links(host)).toEqual(['/a/pages/7'])
-    host.querySelector('.pages-record input').click(); await settle()
-    await click(host, 'admin:groups.next')
-    expect(links(host)).toEqual(['/a/pages/8'])
-    await enterSearch(host, 'another corpus window')
-    await until(() => links(host).includes('/a/pages/9'))
-    expect(links(host)).toEqual(['/a/pages/9'])
-    expect(host.querySelector('.pages-selection')).not.toBeNull()
-    await click(host, 'admin:pages.reviewPublication')
-    expect([...document.querySelectorAll('.publication-review-list article strong')].map(node => node.textContent)).toEqual(['Original selected title'])
-    expect(document.querySelector('[role="dialog"]').textContent).toContain('Snapshot unavailable')
+    options.components.AdminPagesPublication = publicationOptions
+    const router = createRouter({
+      history: createMemoryHistory('/a'),
+      routes: [{ path: '/pages/:id?', component: { render: () => null } }]
+    })
+    await router.push('/pages')
+    await router.isReady()
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp({ ...options, render })
+    app.config.globalProperties.$t = translateEnglish
+    app.use(router)
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives, defaults: { VDialog: { transition: false } } }))
+    app.component('admin-hero', { render: () => null })
+    const vm = app.mount(host)
+    mounted.push({ app, host })
+    await settle()
+    return { vm, host, fetch }
+  }
+
+  test('loads the REST register and renders returned records linked to their administration destinations', async () => {
+    expect(script).not.toMatch(/\$store\.commit/)
+    expect(script).not.toMatch(/apollo\s*:|this\.\$apollo/)
+    const page = row(7, 'Returned record', 'docs/returned')
+    const { host, fetch } = await mountRegister([page])
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/_api/pages'])
+    expect(fetch.mock.calls[0][1]).toMatchObject({ credentials: 'same-origin', headers: { Accept: 'application/json' } })
+    const record = host.querySelector('article.pages-record')
+    expect(record.textContent).toContain('Returned record')
+    expect(record.querySelector('a').getAttribute('href')).toBe('/a/pages/7')
   })
 
-  test('caps cross-window selection at 25 while selected rows remain deselectable', async () => {
-    const { host } = await mount(async url => new URL(url, browserWindow.location.href).searchParams.get('offset') === '25'
-      ? batch([row(25), row(26)]) : batch(Array.from({ length: 24 }, (_, index) => row(index + 1)), 25, 25))
-    await click(host, 'admin:pages.selectPage')
-    expect([...host.querySelectorAll('.pages-record input')].filter(input => input.checked)).toHaveLength(24)
-    await click(host, 'admin:groups.next')
-    const [selected, unselected] = host.querySelectorAll('.pages-record input')
-    expect(selected.checked).toBe(false)
-    expect(unselected.disabled).toBe(false)
-    selected.click(); await settle()
-    expect(selected.checked).toBe(true)
-    expect(selected.disabled).toBe(false)
-    expect(unselected.disabled).toBe(true)
-    unselected.click(); await settle()
-    expect(unselected.checked).toBe(false)
-    selected.click(); await settle()
-    expect(unselected.disabled).toBe(false)
-    unselected.click(); await settle()
-    expect(unselected.checked).toBe(true)
+  test('sorts and paginates records and reviews selections retained outside the active filter', async () => {
+    const rows = [row(1, 'Zulu', 'a-first'), row(2, 'Alpha', 'z-last'),
+      ...Array.from({ length: 14 }, (_, index) => row(index + 3, `Middle ${String(index).padStart(2, '0')}`, `middle-${index}`))]
+    const { vm, host, fetch } = await mountRegister(rows)
+    const titles = () => [...host.querySelectorAll('.pages-record a')].map(link => link.textContent)
+    const selectSort = async value => {
+      const control = [...host.querySelectorAll('.v-select')].find(element => element.querySelector('label')?.textContent === 'Order pages')
+      control.querySelector('[role="combobox"]').dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      await settle()
+      const title = vm.sortOptions.find(option => option.value === value).title
+      const option = [...document.querySelectorAll('[role="option"]')].find(element => element.textContent.includes(title))
+      expect(option).toBeDefined()
+      option.click()
+      await settle()
+    }
+    await selectSort('title')
+    expect(titles()[0]).toBe('Alpha')
+    expect(titles()).not.toContain('Zulu')
+    const pagination = host.querySelector('nav[aria-label]')
+    expect(pagination).not.toBeNull()
+    const secondPage = pagination.querySelector('[aria-label="Go to page 2"]')
+    expect(secondPage).not.toBeNull()
+    secondPage.click()
+    await settle()
+    expect(titles()).toEqual(['Zulu'])
+    await selectSort('path')
+    expect(titles()[0]).toBe('Zulu')
+    const checkbox = host.querySelector('.pages-record input[type="checkbox"]')
+    checkbox.click()
+    await settle()
+    const search = host.querySelector('.pages-search input:not([role="combobox"])')
+    search.value = 'Alpha'
+    search.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await settle()
+    expect(titles()).toEqual(['Alpha'])
+    expect(vm.hiddenSelected).toBe(1)
+    const selection = host.querySelector('[role="region"][aria-label]')
+    expect(selection.textContent).toMatch(/1 selected.*1 outside/s)
+    const reviewButton = [...selection.querySelectorAll('button')].find(button => button.textContent.includes('Review'))
+    reviewButton.click()
+    await settle()
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect([...dialog.querySelectorAll('.publication-review-list article strong')].map(title => title.textContent)).toEqual(['Zulu'])
+    expect(vm.selectedPages).toEqual([rows[0]])
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/_api/pages', '/_api/pages/1'])
   })
 
-  test('restores creator/editor OR filters with private visibility and changes the native quick view without local filtering', async () => {
-    const candidates = [
-      { page: row(31, { visibility: 'private', ownerId: 7 }), creator: 7, editor: 90 },
-      { page: row(32, { visibility: 'private', ownerId: 7 }), creator: 90, editor: 8 },
-      { page: row(33), creator: 7, editor: 8 },
-      { page: row(34, { visibility: 'private', ownerId: 7 }), creator: 90, editor: 90 }
-    ]
-    const { host } = await mount(async url => {
-      const params = new URL(url, browserWindow.location.href).searchParams
-      const creator = params.get('creatorId'), editor = params.get('authorId')
-      const matching = candidates
-        .filter(item => (!creator && !editor) || item.creator === Number(creator) || item.editor === Number(editor))
-        .filter(item => params.get('visibility') !== 'private' || item.page.visibility === 'private')
-      return batch(matching.map(item => item.page))
-    }, { creatorId: '7', authorId: '8', visibility: 'private' })
-    expect(links(host)).toEqual(['/a/pages/31', '/a/pages/32'])
-    await click(host, 'admin:pages.privatePages')
-    await until(() => links(host).length === 3)
-    expect(links(host)).toEqual(['/a/pages/31', '/a/pages/32', '/a/pages/34'])
+  test('limits page selection to 25 pages and disables only unselected checkboxes at capacity', () => {
+    const options = createComponentOptions({ fetchPageList: async () => [], wikiStore: {} })
+    const pages = Array.from({ length: 27 }, (_, index) => ({ id: index + 1 }))
+    const viewModel = { ...options.data.call({ $t: translateEnglish }), $t: translateEnglish, visiblePages: pages }
+    const renderPageCheckbox = id =>
+      renderCheckbox(
+        {
+          page: pages[id - 1],
+          selectedIds: viewModel.selectedIds,
+          bulkOpen: false,
+          $t: translateEnglish,
+          toggleSelected: selectedId => options.methods.toggleSelected.call(viewModel, selectedId)
+        },
+        []
+      )
+
+    options.methods.selectVisible.call(viewModel)
+    expect(viewModel.selectedIds).toEqual(pages.slice(0, 25).map(page => page.id))
+    expect(renderPageCheckbox(26).props.disabled).toBe(true)
+
+    options.methods.toggleSelected.call(viewModel, 26)
+    expect(viewModel.selectedIds).toEqual(pages.slice(0, 25).map(page => page.id))
+
+    const selectedCheckbox = renderPageCheckbox(25)
+    expect(selectedCheckbox.props.disabled).toBe(false)
+    selectedCheckbox.props.onChange()
+    expect(viewModel.selectedIds).toEqual(pages.slice(0, 24).map(page => page.id))
   })
 
-  test('makes previous rows unselectable immediately during filter debounce and after a current error', async () => {
-    const pending = deferred()
-    const { host, fetch } = await mount(vi.fn().mockResolvedValueOnce(batch([row(1)])).mockImplementation(() => pending.promise))
-    await enterSearch(host, 'different')
-    expect(host.querySelector('.pages-record input').disabled).toBe(true)
-    expect(button(host, 'admin:pages.selectPage').disabled).toBe(true)
-    host.querySelector('.pages-record input').click(); await settle()
-    expect(host.querySelector('.pages-selection')).toBeNull()
-    expect(button(host, 'admin:shell.reload').disabled).toBe(true)
-    await until(() => fetch.mock.calls.length === 2)
-    pending.resolve(response({ error: 'Directory unavailable' }, 503)); await settle()
-    expect(host.textContent).toContain('Directory unavailable')
-    expect(host.querySelector('.pages-record input').disabled).toBe(true)
-    expect(loadingKeys()).toEqual([])
+  test('applies only the latest page-list response and balances loading for superseded requests', async () => {
+    const firstRequest = deferred()
+    const secondRequest = deferred()
+    const requests = [firstRequest, secondRequest]
+    const wiki = createWikiStore()
+    const loadPages = compileMethod(loadPagesSource, {
+      fetchPageList: () => requests.shift().promise,
+      getErrorMessage: error => error.message,
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const viewModel = createViewModel(loadPages)
+
+    const firstLoad = loadPages.call(viewModel)
+    const secondLoad = loadPages.call(viewModel)
+    const latestPages = [{ id: 2, title: 'Latest' }]
+    secondRequest.resolve(latestPages)
+    expect(await secondLoad).toBe(true)
+    expect(viewModel.pages).toBe(latestPages)
+    expect(viewModel.loading).toBe(false)
+
+    firstRequest.resolve([{ id: 1, title: 'Stale' }])
+    expect(await firstLoad).toBe(false)
+    expect(viewModel.pages).toBe(latestPages)
+    expect(viewModel.errorMessage).toBe('')
+    expect(viewModel.loading).toBe(false)
+    expect(wiki.errors).toEqual([])
+    expect(wiki.loadingEvents).toEqual([
+      ['start', 'admin-pages-refresh'],
+      ['start', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh']
+    ])
   })
 
-  test('keeps the newest request, balances real store loading, and ignores superseded failures', async () => {
-    const oldest = deferred(), middle = deferred(), newest = deferred()
-    const { host, vm, errors } = await mount(vi.fn().mockImplementationOnce(() => oldest.promise).mockImplementationOnce(() => middle.promise).mockImplementationOnce(() => newest.promise))
-    const middleLoad = vm.loadPages(), newestLoad = vm.loadPages()
-    middle.reject(new Error('Superseded transport failure'))
-    expect(await middleLoad).toBe(false); await settle()
-    expect(vm.loading).toBe(true)
-    expect(loadingKeys().length).toBeGreaterThan(0)
-    expect(errors).not.toHaveBeenCalled()
-    newest.resolve(batch([row(3)]))
-    expect(await newestLoad).toBe(true); await settle()
-    expect(links(host)).toEqual(['/a/pages/3'])
-    oldest.resolve(batch([row(1)])); await settle()
-    expect(links(host)).toEqual(['/a/pages/3'])
-    expect(vm.loading).toBe(false)
-    expect(loadingKeys()).toEqual([])
-    expect(host.textContent).not.toContain('Superseded transport failure')
+  test('ignores superseded page-list errors without hiding the current request loading state', async () => {
+    const staleRequest = deferred()
+    const currentRequest = deferred()
+    const requests = [staleRequest, currentRequest]
+    const wiki = createWikiStore()
+    const loadPages = compileMethod(loadPagesSource, {
+      fetchPageList: () => requests.shift().promise,
+      getErrorMessage: error => error.message,
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const viewModel = createViewModel(loadPages)
+
+    const staleLoad = loadPages.call(viewModel)
+    const currentLoad = loadPages.call(viewModel)
+    staleRequest.reject(new Error('stale failure'))
+    expect(await staleLoad).toBe(false)
+    expect(viewModel.loading).toBe(true)
+    expect(viewModel.errorMessage).toBe('')
+    expect(wiki.errors).toEqual([])
+
+    currentRequest.resolve([{ id: 3, title: 'Current' }])
+    expect(await currentLoad).toBe(true)
+    expect(viewModel.loading).toBe(false)
   })
 
-  test('preserves selected rows on current refresh errors and visibly recovers on retry', async () => {
-    const { host } = await mount(vi.fn().mockResolvedValueOnce(batch([row(1)]))
-      .mockResolvedValueOnce(response({ error: 'Page access denied' }, 403)).mockResolvedValueOnce(batch([row(2)])))
-    host.querySelector('.pages-record input').click(); await settle()
-    await click(host, 'admin:shell.reload')
-    expect(host.textContent).toContain('Page access denied')
-    expect(host.querySelector('.pages-selection')).not.toBeNull()
-    expect(loadingKeys()).toEqual([])
-    await click(host, 'admin:shell.reload')
-    expect(links(host)).toEqual(['/a/pages/2'])
-    expect(host.textContent).not.toContain('Page access denied')
-    expect(host.querySelector('.pages-selection')).not.toBeNull()
-    expect(loadingKeys()).toEqual([])
+  test('surfaces the current REST error and releases page-list loading', async () => {
+    const failure = new Error('page list failed')
+    const wiki = createWikiStore()
+    const loadPages = compileMethod(loadPagesSource, {
+      fetchPageList: async () => {
+        throw failure
+      },
+      getErrorMessage: error => `Message: ${error.message}`,
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const viewModel = createViewModel(loadPages)
+
+    expect(await loadPages.call(viewModel)).toBe(false)
+    expect(viewModel.pages).toEqual([])
+    expect(viewModel.errorMessage).toBe('Message: page list failed')
+    expect(viewModel.loading).toBe(false)
+    expect(wiki.errors).toEqual([failure])
+    expect(wiki.loadingEvents).toEqual([
+      ['start', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh']
+    ])
   })
 
-  test('advances and returns through a zero-visible window without inferring exhaustion', async () => {
-    const { host } = await mount(async url => new URL(url, browserWindow.location.href).searchParams.get('offset') === '1000'
-      ? batch([row(50)]) : batch([], 1000, 1000))
-    expect(links(host)).toEqual([])
-    expect(button(host, 'admin:groups.next').disabled).toBe(false)
-    expect(button(host, 'admin:groups.previous').disabled).toBe(true)
-    await click(host, 'admin:groups.next')
-    expect(links(host)).toEqual(['/a/pages/50'])
-    expect(button(host, 'admin:groups.next').disabled).toBe(true)
-    await click(host, 'admin:groups.previous')
-    expect(links(host)).toEqual([])
-    expect(button(host, 'admin:groups.next').disabled).toBe(false)
-  })
+  test('refresh notifies only after a successful page-list load and invalidates requests on unmount', async () => {
+    const wiki = createWikiStore()
+    const refresh = compileMethod(refreshSource, { wikiStore: wiki.store })
+    const viewModel = { loadPages: async () => false, $t: translateEnglish }
 
-  test('invalidates a pending request on actual unmount and releases its loading entry', async () => {
-    const pending = deferred()
-    const { unmount, vm, errors, notify } = await mount(() => pending.promise)
-    unmount()
-    pending.resolve(batch([row(99)])); await settle()
-    expect(vm.pages).toEqual([])
-    expect(loadingKeys()).toEqual([])
-    expect(errors).not.toHaveBeenCalled()
-    expect(notify).not.toHaveBeenCalled()
+    await refresh.call(viewModel)
+    expect(wiki.notifications).toEqual([])
+
+    viewModel.loadPages = async () => true
+    await refresh.call(viewModel)
+    expect(wiki.notifications).toHaveLength(1)
+    expect(wiki.notifications[0]).toMatchObject({ style: 'success' })
+    const pendingRequest = deferred()
+    const options = createComponentOptions({
+      fetchPageList: () => pendingRequest.promise,
+      wikiStore: wiki.store
+    })
+    const unmountedViewModel = options.data.call({ $t: translateEnglish })
+    const pendingLoad = options.methods.loadPages.call(unmountedViewModel)
+    options.beforeUnmount.call(unmountedViewModel)
+    pendingRequest.resolve([{ id: 4, title: 'Unmounted' }])
+    expect(await pendingLoad).toBe(false)
+    expect(unmountedViewModel.pages).toEqual([])
+    expect(wiki.loadingEvents.slice(-2)).toEqual([
+      ['start', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh']
+    ])
   })
 })

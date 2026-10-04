@@ -535,6 +535,33 @@ describe('search header affordances', () => {
 })
 
 
+describe('workspace title responsiveness', () => {
+  it('splits multi-word workspace titles onto two balanced lines for the stacked small-screen variant', async () => {
+    wikiStore.site.title = `Tim O'Pedia`
+    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
+
+    const stacked = mounted.host.querySelector('.nav-header-title-stacked')
+    expect(stacked).not.toBeNull()
+    expect([...stacked!.querySelectorAll('.nav-header-title-line')].map(line => line.textContent)).toEqual(['Tim', `O'Pedia`])
+    expect(stacked?.querySelectorAll('.nav-header-title-line').length).toBe(2)
+    expect(mounted.host.querySelector('.nav-header-title-single')?.textContent).toBe(`Tim O'Pedia`)
+  })
+
+  it('keeps a single-word title whole in the stacked variant', async () => {
+    wikiStore.site.title = 'Encyclopedia'
+    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
+
+    expect(mounted.host.querySelector('.nav-header-title-stacked')?.textContent).toBe('Encyclopedia')
+    expect(mounted.host.querySelector('.nav-header-title-stacked')?.querySelectorAll('.nav-header-title-line').length).toBe(1)
+  })
+
+  it('renders one balanced split for four-word titles by minimizing the longest line', async () => {
+    wikiStore.site.title = 'Wiki Knowledge Base Portal'
+    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
+
+    expect([...mounted.host.querySelectorAll('.nav-header-title-stacked .nav-header-title-line')].map(line => line.textContent)).toEqual(['Wiki Knowledge', 'Base Portal'])
+  })
+})
 
 describe('notification header identity recovery', () => {
   it('recovers an A-to-B shared-cookie identity without displaying stale items or retrying while stale', async () => {

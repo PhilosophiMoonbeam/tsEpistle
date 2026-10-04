@@ -55,6 +55,7 @@ let execCommandDescriptor: PropertyDescriptor | undefined
 beforeEach(() => {
   resetBody()
   vi.useFakeTimers()
+  vi.spyOn(Math, 'random').mockReturnValue(0)
   // The test preload bridges window timers to the fake global clock.
   clipboardDescriptor = Object.getOwnPropertyDescriptor(browserWindow.navigator, 'clipboard')
   execCommandDescriptor = Object.getOwnPropertyDescriptor(document, 'execCommand')
@@ -101,6 +102,11 @@ const readerContent = (emptyBlocks = false): HTMLElement => {
   return container
 }
 
+const finishAnimation = (element: Element, name?: string): void => {
+  const event = new Event('animationend', { bubbles: true })
+  if (name) Object.defineProperty(event, 'animationName', { value: name })
+  element.dispatchEvent(event)
+}
 
 const hover = (element: Element, relatedTarget: EventTarget | null = null): void => {
   element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget }))
@@ -117,16 +123,40 @@ describe('reader code copy interactions', () => {
     const inline = container.querySelector<HTMLElement>('#inline-code')!
     hover(inline)
     await vi.advanceTimersByTimeAsync(36_000)
+    expect(inline.classList.contains('wiki-inline-shimmer-run')).toBe(false)
     expect(writeText).not.toHaveBeenCalled()
     inline.click()
     resolve()
     await vi.advanceTimersByTimeAsync(0)
     expect(writeText).toHaveBeenCalledWith('npm run example')
     expect(inline.dataset.inlineCopyState).toBe(succeeds ? 'success' : 'error')
+    expect(inline.classList.contains('wiki-inline-shimmer-run')).toBe(true)
+    finishAnimation(inline)
+    expect(inline.classList.contains('wiki-inline-shimmer-run')).toBe(false)
   })
 
+  it('runs ambient and first-entry button sweeps, ignores child movement and later entries, then resumes', async () => {
+    const container = readerContent()
+    const pre = container.querySelector<HTMLElement>('#ordinary')!
+    const toolbar = pre.closest<HTMLElement>('.code-toolbar')!
+    const button = toolbar.querySelector<HTMLButtonElement>('.toolbar button')!
+    expect(button.classList.contains('wiki-copy-shimmer-run')).toBe(false)
+    await vi.advanceTimersByTimeAsync(9_000)
+    expect(button.classList.contains('wiki-copy-shimmer-run')).toBe(true)
+    finishAnimation(button)
+    hover(pre)
+    expect(button.classList.contains('wiki-copy-shimmer-run')).toBe(true)
+    finishAnimation(button)
+    hover(button, pre)
+    hover(pre)
+    expect(button.classList.contains('wiki-copy-shimmer-run')).toBe(false)
+    await vi.advanceTimersByTimeAsync(9_000)
+    expect(button.classList.contains('wiki-copy-shimmer-run')).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_900 + 3_000)
+    expect(button.classList.contains('wiki-copy-shimmer-run')).toBe(true)
+  })
 
-  it.each([true, false])('reports ordinary and titled block copy outcomes for nonempty and empty content (nonempty: %s)', nonempty => {
+  it.each([true, false])('flashes ordinary and titled panels for nonempty and empty clipboard content (nonempty: %s)', nonempty => {
     // ClipboardJS emits error for an empty copy action, not for execCommand
     // returning false. Exercise that actual dependency boundary on empty code.
     Object.defineProperty(document, 'execCommand', { configurable: true, value: () => true })
@@ -136,7 +166,12 @@ describe('reader code copy interactions', () => {
       const toolbar = id === 'ordinary' ? panel.closest<HTMLElement>('.code-toolbar')! : panel.querySelector<HTMLElement>('.code-toolbar')!
       const button = toolbar.querySelector<HTMLButtonElement>('.toolbar button')!
       button.click()
+      expect(panel.classList.contains('wiki-code-copy-flash-run')).toBe(true)
+      expect(toolbar.classList.contains('wiki-code-copy-flash-run')).toBe(false)
+      if (id === 'framed') expect(panel.querySelector('pre')!.classList.contains('wiki-code-copy-flash-run')).toBe(false)
       expect(button.dataset.copyState).toBe(nonempty ? 'success' : 'error')
+      finishAnimation(panel, 'wiki-code-block-copy-sweep')
+      expect(panel.classList.contains('wiki-code-copy-flash-run')).toBe(false)
     }
   })
 })

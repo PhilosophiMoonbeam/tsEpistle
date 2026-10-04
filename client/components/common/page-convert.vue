@@ -9,19 +9,14 @@
     @after-enter='focusEditor'
     @after-leave='restoreFocus'
     )
-    v-card.page-convert
-      .dialog-header
-        v-icon.me-2(aria-hidden='true') mdi-file-document-edit-outline
-        h2#page-convert-dialog-title {{$t('common:page.convert')}}
-      v-card-text
-        .page-convert__identity
-          strong {{ pageTitle }}
-          span.page-convert__path /{{ pageLocale }}/{{ pagePath }}
-          span.page-convert__current(v-if='pageVisibility === `private`') {{ $t('common:page.privatePage', { defaultValue: 'Private page' }) }}
-          span.page-convert__current {{ $t('common:pageConvert.currentEditor', { defaultValue: 'Current editor' }) }}: {{ currentEditorTitle }}
-        i18next#page-convert-dialog-description.page-convert__description(path='common:page.convertTitle', tag='p')
+    v-card
+      .dialog-header.is-short.is-dark
+        v-icon.me-2(color='white') mdi-lightning-bolt
+        span#page-convert-dialog-title {{$t('common:page.convert')}}
+      v-card-text.pt-5
+        i18next#page-convert-dialog-description.text-body-medium(path='common:page.convertTitle', tag='div')
           strong(place='title') {{pageTitle}}
-        v-select.page-convert__editor(
+        v-select.mt-5(
           ref='editorSelect'
           :items='editorOptions'
           variant="outlined"
@@ -29,10 +24,9 @@
           hide-details
           :label='$t(`common:pageConvert.newEditor`)'
           v-model='newEditor'
-          :disabled='loading'
         )
-        v-alert.page-convert__consequences(
-          type='warning'
+        v-alert.mt-5(
+          color='warning'
           variant='tonal'
           density='compact'
         ) {{$t('common:page.convertSubtitle')}}
@@ -87,8 +81,7 @@ export default defineComponent({
       { value: 'ckeditor', title: this.$t('common:pageConvert.editorVisualHtml') },
       { value: 'code', title: this.$t('common:pageConvert.editorRawHtml') }
     ]) },
-    canConvert(): boolean { return Boolean(this.newEditor) && this.newEditor !== this.pageEditor },
-    currentEditorTitle(): string { return this.editorOptions.find(editor => editor.value === this.pageEditor)?.title ?? this.pageEditor }
+    canConvert(): boolean { return Boolean(this.newEditor) && this.newEditor !== this.pageEditor }
   },
   watch: {
     isShown: {
@@ -172,33 +165,3 @@ export default defineComponent({
   }
 })
 </script>
-
-<style lang='scss'>
-.page-convert {
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  color: rgb(var(--v-theme-on-surface));
-  .dialog-header h2 { margin: 0; font-size: 1rem; }
-  .v-card-text { padding: 1.25rem; }
-  .v-card-chin { border-block-start: 1px solid var(--wiki-surface-border); gap: .5rem; padding: .75rem 1.25rem; background: var(--wiki-surface-raised); }
-  .v-btn { min-height: 44px; }
-}
-.page-convert__identity {
-  display: grid;
-  gap: .375rem;
-  padding: 1rem;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
-  overflow-wrap: anywhere;
-}
-.page-convert__path,
-.page-convert__current { color: var(--wiki-text-muted); font-size: .8125rem; }
-.page-convert__description { margin-block: 1rem; line-height: 1.5; }
-.page-convert__consequences { margin-block-start: 1rem; }
-@media (max-width: 599.98px) {
-  .page-convert .v-card-chin { flex-wrap: wrap; }
-  .page-convert .v-card-chin .v-btn { flex: 1 1 auto; }
-}
-</style>

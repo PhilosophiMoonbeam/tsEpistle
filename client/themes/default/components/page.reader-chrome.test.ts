@@ -45,7 +45,6 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   isTocMobile: false,
   winWidth: 1440,
   pageToolsHost: '#page-desktop-rail',
-  pageOutlineHost: '#page-desktop-rail',
   tocDisclosureExpanded: true,
   isPublished: true,
   visibility: 'public',
@@ -97,35 +96,30 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
 const countText = (html: string, needle: string): number => html.split(needle).length - 1
 
 describe('page reader chrome template', () => {
-  it('provides one named outline and an empty state when the document has no sections', async () => {
+  it('shows the empty outline message once', async () => {
     const { document } = await renderTemplate(PAGE, baseState())
-    const outlines = document.querySelectorAll('[aria-label="common:page.onThisPage"]')
-    expect(outlines).toHaveLength(1)
-    expect(outlines[0]!.textContent).toContain('common:page.noSections')
-    expect(outlines[0]!.querySelector('[data-stub="page-toc-tree"]')).toBeNull()
+    const empty = document.querySelectorAll('.page-toc-empty')
+    expect(empty).toHaveLength(1)
+    expect(countText(empty[0]!.textContent ?? '', 'common:page.noSections')).toBe(1)
   })
 
-  it('exposes a mobile disclosure whose controlled outline follows its expanded state', async () => {
+  it('uses one "On this page" heading that becomes a disclosure button only below the rail breakpoint', async () => {
     const wide = (await renderTemplate(PAGE, baseState())).document
-    expect(wide.querySelectorAll('[aria-label="common:page.onThisPage"]')).toHaveLength(1)
-    expect(wide.querySelector('[aria-label="common:page.onThisPage"] [aria-controls][aria-expanded]')).toBeNull()
+    expect(wide.querySelectorAll('.page-toc-card .page-toc-heading')).toHaveLength(1)
+    expect(wide.querySelector('.page-toc-card .page-toc-toggle')).toBeNull()
+    expect(wide.querySelector('.page-toc-card')?.textContent).toContain('common:page.onThisPage')
 
-    for (const expanded of [false, true]) {
-      const { document } = await renderTemplate(PAGE, baseState({
-        isTocCompact: true,
-        isTocMobile: true,
-        winWidth: 390,
-        pageOutlineHost: '#page-mobile-tools',
-        tocDisclosureExpanded: expanded
-      }))
-      const outlines = document.querySelectorAll('[aria-label="common:page.onThisPage"]')
-      expect(outlines).toHaveLength(1)
-      const toggle = outlines[0]!.querySelector('[aria-controls][aria-expanded]')!
-      expect(toggle).not.toBeNull()
-      expect(toggle.getAttribute('aria-expanded')).toBe(String(expanded))
-      const controlled = document.getElementById(toggle.getAttribute('aria-controls')!)!
-      expect(controlled).not.toBeNull()
-      expect(controlled.style.display === 'none').toBe(!expanded)
+    const compact = (
+      await renderTemplate(PAGE, baseState({ isTocCompact: true, winWidth: 900, pageToolsHost: '#page-tablet-tools', tocDisclosureExpanded: false }))
+    ).document
+    const toggle = compact.querySelector('.page-toc-card .page-toc-toggle')
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle?.getAttribute('aria-controls')).toBe('page-toc-content')
+    expect(compact.querySelector('.page-toc-card .page-toc-heading')).toBeNull()
+
+    for (const doc of [wide, compact]) {
+      expect(doc.querySelector('.page-toc-card')?.getAttribute('aria-label')).toBe('common:page.onThisPage')
+      expect(doc.body.innerHTML).not.toContain('common:page.toc')
     }
   })
 
@@ -431,6 +425,16 @@ describe('page reader chrome rules', () => {
     ])
   })
 
+  it('anchors utility tooltips to the card in the host it is teleported to', () => {
+    const target = (vm: Record<string, unknown>) => {
+      vm.pageToolsHost = call('pageToolsHost', vm)
+      vm.$t = (_key: string, options: { pageToolsHost: string }) => `${options.pageToolsHost} .page-tools-card`
+      return call('utilityTooltipTarget', vm)
+    }
+    expect(target({ isTocMobile: false, winWidth: 1440 })).toBe('#page-desktop-rail .page-tools-card')
+    expect(target({ isTocMobile: false, winWidth: 1100 })).toBe('#page-tablet-tools .page-tools-card')
+    expect(target({ isTocMobile: true, winWidth: 390 })).toBe('#page-mobile-tools .page-tools-card')
+  })
 
   it('names the browser time zone on Updated only when the account could not load and no zone is saved', () => {
     const vmFor = (known: boolean) => {
@@ -528,7 +532,7 @@ describe('focus reading section navigation', () => {
       ensureActiveTocVisible: () => {},
       ...overrides
     })
-    for (const name of ['pageOutlineHost', 'readerHasSections', 'readerSectionsAvailable', 'readerSectionIndex', 'readerSection', 'tocTree', 'tocTreeVisible']) {
+    for (const name of ['readerHasSections', 'readerSectionsAvailable', 'readerSectionIndex', 'readerSection', 'tocTree', 'tocTreeVisible']) {
       Object.defineProperty(vm, name, { configurable: true, get: () => call(name, vm) })
     }
     for (const name of [
@@ -603,7 +607,7 @@ describe('focus reading section navigation', () => {
     expect(vm.tocQuery).toBe('Conclusion')
   })
 
-  it('keeps one searchable outline and the filter when closing the focus picker', async () => {
+  it('moves the sole searchable outline into the picker without changing compact disclosure state', async () => {
     const entries = Array.from({ length: 47 }, (_, index) => ({
       anchor: `#section-${index + 1}`,
       title: `Section ${index + 1}`,
@@ -621,24 +625,20 @@ describe('focus reading section navigation', () => {
       pageToolsHost: '#page-mobile-tools'
     })
     const open = await renderTemplate(PAGE, vm)
-    const outlines = open.document.querySelectorAll('[aria-label="common:page.onThisPage"]')
-    expect(outlines).toHaveLength(1)
+    const outline = open.document.querySelector<HTMLElement>('#page-toc-content')!
+    expect(open.document.querySelectorAll('#page-toc-content')).toHaveLength(1)
     expect(open.document.querySelectorAll('[data-stub="page-toc-tree"]')).toHaveLength(1)
-    expect(outlines[0]!.querySelector('[label="common:page.findSection"]')).not.toBeNull()
-    expect((vm.tocTreeVisible as Array<{ anchor: string }>).map(section => section.anchor)).toEqual(['#section-23'])
-    const opener = open.document.querySelector('[aria-haspopup="dialog"][aria-expanded]')!
-    expect(opener.getAttribute('aria-expanded')).toBe('true')
-    const dialog = open.document.getElementById(opener.getAttribute('aria-controls')!)!
-    expect(dialog.getAttribute('role')).toBe('dialog')
-    expect(dialog.style.display).not.toBe('none')
+    expect(outline.closest('[data-teleport="#page-reading-sections-host"]')).not.toBeNull()
+    expect(outline.style.display).not.toBe('none')
+    expect(outline.querySelector('.page-toc-filter')?.getAttribute('modelvalue')).toBe('Section 23')
+    expect(open.document.querySelector('.page-reading-sections-toggle')?.getAttribute('aria-expanded')).toBe('true')
+    expect(open.document.querySelector('.page-toc-toggle')).toBeNull()
 
     page.methods.closeReaderSections!.call(vm)
     const closed = await renderTemplate(PAGE, vm)
-    expect(closed.document.querySelectorAll('[aria-label="common:page.onThisPage"]')).toHaveLength(1)
-    expect(closed.document.querySelectorAll('[data-stub="page-toc-tree"]')).toHaveLength(1)
-    expect(closed.document.querySelector('[aria-haspopup="dialog"][aria-expanded]')?.getAttribute('aria-expanded')).toBe('false')
-    expect(closed.document.getElementById(opener.getAttribute('aria-controls')!)?.style.display).toBe('none')
-    expect(vm.tocDisclosureExpanded).toBe(false)
+    expect(closed.document.querySelectorAll('#page-toc-content')).toHaveLength(1)
+    expect(closed.document.querySelector('#page-toc-content')?.closest('[data-teleport="#page-mobile-tools"]')).not.toBeNull()
+    expect(closed.document.querySelector('.page-toc-toggle')?.getAttribute('aria-expanded')).toBe('false')
     expect(vm.tocQuery).toBe('Section 23')
   })
 
