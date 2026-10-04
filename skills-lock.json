@@ -25,6 +25,12 @@
       "skillPath": "skills/peccable/SKILL.md",
       "computedHash": "3187431ff32636dca2d6c04479d57d5a9dc1e0e41176eed33422d62f25434ea1"
     },
+    "shadcn-vue": {
+      "source": "unovue/shadcn-vue",
+      "sourceType": "github",
+      "skillPath": "skills/shadcn-vue/SKILL.md",
+      "computedHash": "99c23e506f7fa3a1b26dede8e837d067549ba2fbc339ea9030d1563c1f4badf2"
+    },
     "threejs": {
       "source": "PhilosophiMoonbeam/threejs-skills",
       "sourceType": "github",
