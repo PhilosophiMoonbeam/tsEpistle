@@ -2,6 +2,8 @@
 
 Search locates knowledge; Wiki Agent works with it. Desktop and tablet headers keep direct Agent and icon-only **Browse by Tags** entrances. Below 600px, those actions remain available in the existing **Page actions** menu; Search and Account stay direct, with full-sized touch targets and room for the workspace title. Closing an Agent opened from that menu restores focus to the stable menu activator rather than its hidden row. The rounded **Pin** control sits in the Agent header beside **New**. **Ask about this** prepares an editable question and carries the current search scope into the Agent. Source and Search handoffs remain drafts; they never start a model request by themselves. Existing unsent text is retained when preparing a handoff. When no route-synced session is explicitly addressed, the Agent workspace opens a fresh saved session unless this handoff requests a resume or a valid tab-scoped, account-matching pin restores one. **Pin** remains disabled while the workspace is loading or session selection, initialization, or mutation is unsettled; after the selected session commits and transitions settle, provider inference being unavailable or disabled does not by itself disable the pin.
 
+On desktop, **Browse by Tags** sits immediately before Search with the same 8px gap as the other grouped header buttons. The command group is bounded to Search's maximum width so wider headers do not separate the two controls; Search remains centered.
+
 Opening Agent from an already-open Search dialog retires the previous Search focus scope before capturing the rendered menu activator. Vuetify's activator slot retains its own ref; restoration targets the actual overflow button.
 
 ## Sources in place
