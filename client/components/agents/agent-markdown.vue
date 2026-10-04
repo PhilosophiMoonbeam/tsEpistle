@@ -277,7 +277,7 @@ const renderMarkdown = (): string => {
       /<pre(?=[\s>])([^>]*)>/g,
       (_match, attributes: string) => {
         const language = attributes.match(/\bdata-language="([a-z0-9][a-z0-9_+.-]{0,31})"/i)?.[1] ?? 'text'
-        return `<div class="agent-markdown__code-shell"><div class="agent-markdown__code-toolbar"><span>${language}</span><button type="button" class="agent-markdown__copy" data-copy-code aria-label="${escapeHtml(t('common:agentMarkdown.copyCodeClipboard'))}" aria-live="polite">${escapeHtml(t('common:actions.copy'))}</button></div><pre${attributes} tabindex="0" role="region" aria-label="${escapeHtml(t('common:agentMarkdown.scrollableCode', { language, interpolation: { escapeValue: false } }))}"`
+        return `<div class="agent-markdown__code-shell"><div class="agent-markdown__code-toolbar"><span>${language}</span><button type="button" class="agent-markdown__copy" data-copy-code aria-label="${escapeHtml(t('common:agentMarkdown.copyCodeClipboard'))}" aria-live="polite">${escapeHtml(t('common:actions.copy'))}</button></div><pre${attributes} tabindex="0" role="region" aria-label="${escapeHtml(t('common:agentMarkdown.scrollableCode', { language, interpolation: { escapeValue: false } }))}">`
       }
     )
     .replace(/<\/pre>/g, '</pre></div>')
