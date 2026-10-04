@@ -5541,15 +5541,19 @@ export default defineComponent({
       position: absolute;
       inset-inline-start: -2px;
       inset-inline-end: 0;
-      inset-block-end: 0;
-      height: 2px;
-      background: linear-gradient(to right, rgb(var(--v-theme-primary)), transparent);
+      inset-block: 0;
+      height: auto;
+      border-radius: inherit;
+      background-image: linear-gradient(to right, rgb(var(--v-theme-primary)), transparent);
+      background-position: bottom;
+      background-size: 100% 2px;
+      background-repeat: no-repeat;
       pointer-events: none;
     }
 
     &[dir='rtl']::before,
     [dir='rtl'] &::before {
-      background: linear-gradient(to left, rgb(var(--v-theme-primary)), transparent);
+      background-image: linear-gradient(to left, rgb(var(--v-theme-primary)), transparent);
     }
 
     &::after {
