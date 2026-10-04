@@ -72,9 +72,8 @@
               v-list-item-title {{$t('editor:markup.distractionFreeMode')}}
 
     .editor-asciidoc-main
-      .editor-asciidoc-sidebar(role='toolbar', aria-orientation='horizontal', :aria-label='$t(`editor:editorAsciidoc.toolbarInsertTools`)', v-roving-toolbar='{ onEscape: focusEditor }')
-        span.editor-insert-label {{ $t('editor:markup.insertGroup') }}
-        v-btn(v-for='action in formattingActions.insert', :key='action.label', icon, rounded='md', variant='text', :aria-label='$t(action.label)', :aria-pressed='action.kind === `modal` ? activeModal === action.value : undefined', @click='runFormattingAction(action)').mx-0
+      .editor-asciidoc-sidebar(role='toolbar', aria-orientation='vertical', :aria-label='$t(`editor:editorAsciidoc.toolbarInsertTools`)', v-roving-toolbar='{ onEscape: focusEditor }')
+        v-btn(v-for='(action, index) in formattingActions.insert', :key='action.label', icon, rounded='md', variant='text', :class='{ "mt-3": index > 0 }', :aria-label='$t(action.label)', :aria-pressed='action.kind === `modal` ? activeModal === action.value : undefined', @click='runFormattingAction(action)').mx-0
           v-icon(:color='action.kind === `modal` && activeModal === action.value ? `primary` : undefined') {{ action.icon }}
           v-tooltip(activator='parent', location='right', :text='$t(action.label)')
         template(v-if='$vuetify.display.mdAndUp')
@@ -83,11 +82,9 @@
             v-icon mdi-arrow-expand-all
             v-tooltip(activator='parent', location='right', :text='$t(`editor:markup.distractionFreeMode`)')
       .editor-asciidoc-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
-        .editor-pane-label {{ $t('editor:editor.source') }} · {{ $t('editor:editorAsciidoc.asciidoc') }}
         div(ref='cm')
       transition(name='editor-asciidoc-preview')
         .editor-asciidoc-preview(v-if='previewShown')
-          .editor-pane-label {{ $t('editor:editorAsciidoc.showPreview') }}
           .editor-asciidoc-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer', :aria-busy='previewLoading', :lang='locale', :dir='contentDirection')
             v-alert(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
               span {{previewError}}
@@ -546,20 +543,12 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+$editor-ascii-height: calc(100dvh - 137px);
+$editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
 
 .editor-asciidoc {
   &-main {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-
-    > .editor-asciidoc-sidebar { grid-column: 1 / -1; }
-    > .editor-asciidoc-editor:last-child { grid-column: 1 / -1; }
-
-    @include until($tablet) {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(0, 1fr);
-    }
+    display: flex;
     width: 100%;
     min-height: 0;
     flex: 1 1 auto;
@@ -567,45 +556,42 @@ export default defineComponent({
 
   &-editor {
     background-color: rgb(var(--v-theme-background));
-    flex: 1 1 0;
-    display: flex;
-    flex-direction: column;
+    flex: 1 1 50%;
+    display: block;
+    height: $editor-ascii-height;
     min-width: 0;
     min-height: 0;
     position: relative;
+
+    @include until($tablet) {
+      height: $editor-ascii-height-mobile;
+    }
 
     &.is-mobile-hidden {
       display: none;
     }
 
-    > div:not(.editor-pane-label) {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow: hidden;
+    > div {
+      height: 100%;
       direction: ltr;
-      .cm-editor { height: 100%; }
     }
   }
 
   &-preview {
-    flex: 1 1 0;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    border-inline-start: 1px solid var(--wiki-surface-border);
-    flex-direction: column;
+    flex: 1 1 50%;
     background-color: rgb(var(--v-theme-background));
     position: relative;
+    height: $editor-ascii-height;
     overflow: hidden;
-    padding: 0;
+    padding: 1rem;
 
 
     @include until($tablet) {
-      display: flex;
+      display: block;
       flex: 1 1 100%;
       width: 100%;
       max-width: 100vw !important;
-      padding: 0;
+      padding: 12px;
     }
 
     &-enter-active, &-leave-active {
@@ -622,11 +608,21 @@ export default defineComponent({
     }
 
     &-content {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow-y: auto;
-      padding: var(--wiki-space-4);
-      width: 100%;
+      height: $editor-ascii-height;
+      overflow-y: scroll;
+      padding: 0;
+      width: calc(100% + 17px);
+      // -ms-overflow-style: none;
+
+      // &::-webkit-scrollbar {
+      //   width: 0px;
+      //   background: transparent;
+      // }
+
+      @include until($tablet) {
+        height: $editor-ascii-height-mobile;
+        width: 100%;
+      }
 
       > div {
         outline: none;
@@ -685,7 +681,7 @@ export default defineComponent({
     flex: 0 0 auto;
 
     .v-toolbar__content {
-      padding-inline: 8px;
+      padding-inline: 64px 8px;
       gap: 3px;
       flex-wrap: nowrap;
 
@@ -730,14 +726,14 @@ export default defineComponent({
 
   &-sidebar {
     background-color: var(--wiki-surface-sunken);
-    border-block-end: 1px solid var(--wiki-surface-border);
-    width: 100%;
-    flex: 0 0 100%;
+    border-inline-end: 1px solid var(--wiki-surface-border);
+    width: 64px;
+    flex: 0 0 64px;
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     justify-content: flex-start;
     align-items: center;
-    padding: var(--wiki-space-1) var(--wiki-space-3);
+    padding: 24px 0;
 
     @include until($tablet) {
       display: none;
@@ -745,9 +741,6 @@ export default defineComponent({
   }
 
   &-sysbar {
-    position: static !important;
-    flex: 0 0 24px;
-    min-height: 24px;
     padding-inline-start: 0;
     background: var(--wiki-surface-raised) !important;
     border-top: 1px solid var(--wiki-surface-border);

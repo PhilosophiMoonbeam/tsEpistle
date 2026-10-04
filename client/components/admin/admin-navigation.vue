@@ -3,15 +3,26 @@
     <admin-hero
       icon="mdi-compass-outline"
       :title="$t('admin:navigation.title')"
-      :description="$t('admin:navigation.buildPurposefulMenuEach')"
+      :description="$t('admin:navigation.giveEveryReaderClear')"
+      ><template #actions
+        ><v-btn
+          variant="text"
+          prepend-icon="mdi-refresh"
+          :loading="loading"
+          :disabled="busy || initializing"
+          @click="reload"
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:navigation.reloadSavedNavigation') }}</v-tooltip></v-btn
+        ><v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset"
+          >{{ $t('admin:navigation.resetDraft') }}</v-btn
+        ><v-btn
+          color="primary"
+          variant="flat"
+          :disabled="locked || !dirty"
+          @click="review"
+          >{{ $t('admin:navigation.reviewChanges') }}</v-btn
+        ></template
+      ></admin-hero
     >
-      <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || initializing" @click="reload">
-          {{ $t('admin:shell.reload') }}
-          <v-tooltip activator="parent" location="bottom">{{ $t('admin:navigation.reloadSavedNavigation') }}</v-tooltip>
-        </v-btn>
-      </template>
-    </admin-hero>
     <p v-if="!saved && loading" class="navigation-empty" role="status">
       {{ $t('admin:navigation.loadingNavigationLocalesAudiences') }}
     </p>
@@ -29,17 +40,17 @@
       >{{ notice }}</v-alert
     >
     <template v-if="saved && draft">
-      <div class="navigation-status" role="status">
-        <div class="navigation-status-context">
-          <strong :class="{ 'is-draft': dirty }"><v-icon :icon="dirty ? 'mdi-pencil-outline' : 'mdi-check-circle-outline'" size="18" />{{ dirty ? $t('admin:navigation.unsavedNavigationDraft') : $t('admin:navigation.showingSavedNavigation') }}</strong>
-          <span :class="{ 'needs-attention': saved.runtime.state !== 'applied' }">{{ saved.runtime.state === 'applied' ? $t('admin:navigation.runtimeConfigurationCurrent') : $t('admin:navigation.runtimeActivationNeedsAttention2') }}</span>
-        </div>
-        <div class="navigation-status-actions">
-          <v-btn variant="text" :disabled="locked || !dirty" @click="reset">{{ $t('admin:navigation.resetDraft') }}</v-btn>
-          <v-btn color="primary" variant="flat" :disabled="locked || !dirty" @click="review">{{ $t('admin:navigation.reviewChanges') }}</v-btn>
-        </div>
+      <div class="navigation-status">
+        <span
+          ><i :class="{ 'is-draft': dirty }" />{{
+            dirty ? $t('admin:navigation.unsavedNavigationDraft') : $t('admin:navigation.showingSavedNavigation')
+          }}</span
+        ><span>{{
+          saved.runtime.state === "applied"
+            ? $t('admin:navigation.runtimeConfigurationCurrent')
+            : $t('admin:navigation.runtimeActivationNeedsAttention2')
+        }}</span>
       </div>
-      <div class="navigation-layout">
       <nav class="navigation-tabs" :aria-label="$t('admin:navigation.navigationSections')">
         <button
           v-for="tab in sections"
@@ -52,10 +63,14 @@
           {{ tab.title }}
         </button>
       </nav>
-        <section class="navigation-editor" :aria-label="sections.find(tab => tab.key === section)?.title">
+      <div class="navigation-layout">
+        <section class="navigation-editor">
           <template v-if="section === 'structure'">
             <div class="navigation-heading">
-              <h2>{{ $t('admin:navigation.menuStructure') }}</h2>
+              <span class="navigation-kicker"
+                >{{ $t('admin:navigation.n01UsefulWayfindingSystem') }}</span
+              >
+              <h2>{{ $t('admin:navigation.arrangeEssentials') }}</h2>
               <p>
                 {{ $t('admin:navigation.buildPurposefulMenuEach') }}
               </p>
@@ -325,7 +340,10 @@
           </template>
           <template v-else-if="section === 'display'">
             <div class="navigation-heading">
-              <h2>{{ $t('admin:navigation.displayLocales') }}</h2>
+              <span class="navigation-kicker"
+                >{{ $t('admin:navigation.n02PathsIntoWorkspace') }}</span
+              >
+              <h2>{{ $t('admin:navigation.chooseHowReadersExplore') }}</h2>
               <p>
                 {{ $t('admin:navigation.balanceCuratedMenuPage') }}
               </p>
@@ -408,7 +426,8 @@
           </template>
           <template v-else
             ><div class="navigation-heading">
-              <h2>{{ $t('admin:navigation.activity') }}</h2>
+              <span class="navigation-kicker">{{ $t('admin:navigation.n03PublicationRecord') }}</span>
+              <h2>{{ $t('admin:navigation.consideredPathForward') }}</h2>
               <p>
                 {{ $t('admin:navigation.latest50NavigationPublications') }}
               </p>
@@ -488,6 +507,18 @@
             >
           </div>
         </aside>
+      </div>
+      <div v-if="dirty" class="navigation-savebar">
+        <span
+          >{{ $t('admin:navigation.navigationDraftChanged', { changedFieldsCount: changedFields.length, changedFields: changedFields.length === 1 ? "area" : "areas", interpolation: { escapeValue: false } }) }}</span
+        ><v-btn variant="text" :disabled="locked" @click="reset">{{ $t('admin:navigation.reset') }}</v-btn
+        ><v-btn
+          color="primary"
+          variant="flat"
+          :disabled="locked"
+          @click="review"
+          >{{ $t('admin:navigation.reviewChanges') }}</v-btn
+        >
       </div>
     </template>
     <page-selector

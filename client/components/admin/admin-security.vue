@@ -54,7 +54,7 @@
         class="mt-5"
         >{{ notice }}</v-alert
       >
-      <div class="security-status" role="status">
+      <div class="security-status">
         <span
           ><i :class="dirty || endSessions ? 'is-draft' : ''" />{{
             dirty || endSessions
@@ -67,7 +67,6 @@
             : $t('admin:security.runtimeConfigurationNeedsAttention')
         }}</span>
       </div>
-      <div class="security-shell">
       <nav class="security-tabs" :aria-label="$t('admin:security.securitySections')">
         <button
           v-for="tab in sections"
@@ -84,6 +83,7 @@
         <section class="security-editor">
           <template v-if="section === 'access'">
             <div class="security-heading">
+              <span class="security-kicker">{{ $t('admin:security.peopleCredentials') }}</span>
               <h2>{{ $t('admin:security.accessSessions') }}</h2>
               <p>
                 {{ $t('admin:security.makeNewSignIns') }}
@@ -198,6 +198,7 @@
           </template>
           <template v-else-if="section === 'browser'">
             <div class="security-heading">
+              <span class="security-kicker">{{ $t('admin:security.browserBoundary') }}</span>
               <h2>{{ $t('admin:security.browserTransport') }}</h2>
               <p>
                 {{ $t('admin:security.configureHeadersApplicationSends') }}
@@ -321,6 +322,7 @@
           </template>
           <template v-else-if="section === 'files'">
             <div class="security-heading">
+              <span class="security-kicker">{{ $t('admin:security.sharedMaterial') }}</span>
               <h2>{{ $t('admin:security.files') }}</h2>
               <p>
                 {{ $t('admin:security.controlWhatNewUploads') }}
@@ -398,6 +400,7 @@
           </template>
           <template v-else-if="section === 'signin'">
             <div class="security-heading">
+              <span class="security-kicker">{{ $t('admin:security.clearWay') }}</span>
               <h2>{{ $t('admin:security.signExperience') }}</h2>
               <p>
                 {{ $t('admin:security.shapeArrivalFlowWhile') }}
@@ -478,6 +481,7 @@
           </template>
           <template v-else>
             <div class="security-heading">
+              <span class="security-kicker">{{ $t('admin:security.policyRecord') }}</span>
               <h2>{{ $t('admin:security.activity') }}</h2>
               <p>
                 {{ $t('admin:security.latest50ReviewedChanges') }}
@@ -558,7 +562,6 @@
             /></router-link>
           </div>
         </aside>
-      </div>
       </div>
     </template>
     <v-dialog

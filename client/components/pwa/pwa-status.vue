@@ -269,7 +269,7 @@ const applyUpdate = async (): Promise<void> => {
   border-radius: var(--wiki-panel-radius) !important;
   background: var(--wiki-surface-raised) !important;
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: none !important;
+  box-shadow: var(--wiki-shadow-md) !important;
 }
 .pwa-status-panel__body {
   padding: var(--wiki-space-4);
@@ -285,11 +285,11 @@ const applyUpdate = async (): Promise<void> => {
 .pwa-status-panel__eyebrow {
   margin: 0 0 var(--wiki-space-1);
   color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  font-weight: 600;
-  letter-spacing: normal;
-  line-height: 1.4;
-  text-transform: none;
+  font-size: .6875rem;
+  font-weight: 700;
+  letter-spacing: .09em;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .pwa-status-panel h2,

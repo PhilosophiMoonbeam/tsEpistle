@@ -8,7 +8,7 @@
       <v-text-field v-model="searchQuery" :label="$t('common:agentMemoryManager.findMemory')" :aria-label="$t('common:agentMemoryManager.searchAgentMemory')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" clearable hide-details>
         <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('common:agentMemoryManager.clearSearch')" /></template>
       </v-text-field>
-      <p class="agent-memory__entry-meta" role="status" aria-live="polite">{{ memorySearchStatus }}</p>
+      <span class="sr-only" role="status" aria-live="polite">{{ memorySearchStatus }}</span>
     </div>
 
     <v-progress-linear v-if="loading" indeterminate color="primary" :aria-label="$t('common:agentMemoryManager.loadingAgentMemoryLabel')" />
@@ -106,15 +106,14 @@
             <div class="agent-memory__section-mark" :class="`agent-memory__section-mark--${section.target}`" aria-hidden="true">
               <v-icon :icon="section.icon" size="18" />
             </div>
-            <div><h3 :id="`agent-memory-${section.target}`" class="text-title-small">{{ section.title }}<span class="agent-memory__section-count">{{ section.entries.length }}</span></h3><p class="agent-memory__entry-meta">{{ $t('common:agentMemoryManager.characterCapacity', { count: section.store.characters, limit: section.store.limit }) }}</p></div>
-            <v-btn size="small" variant="text" prepend-icon="mdi-plus" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading || networkBlocked || !canAddTo(section.target)" @click="beginAdd(section.target)">{{ $t('common:agentMemoryManager.addMemory') }}</v-btn>
+            <h3 :id="`agent-memory-${section.target}`" class="text-title-small">{{ section.title }}<span class="agent-memory__section-count">{{ section.entries.length }}</span></h3>
           </header>
 
           <div v-if="section.entries.length" class="agent-memory__entries">
-            <article v-for="(entry, index) in section.entries.slice(memoryPages[section.target] * 30, (memoryPages[section.target] + 1) * 30)" :key="entry.id" class="agent-memory__entry">
-              <div class="agent-memory__entry-index" aria-hidden="true">{{ String(memoryPages[section.target] * 30 + index + 1).padStart(2, '0') }}</div>
+            <article v-for="(entry, index) in section.entries" :key="entry.id" class="agent-memory__entry">
+              <div class="agent-memory__entry-index" aria-hidden="true">{{ String(index + 1).padStart(2, '0') }}</div>
               <div class="agent-memory__entry-content">
-                <div class="agent-memory__entry-meta">{{ memoryDateLabel(entry) }} · v{{ entry.version }}</div>
+                <div class="agent-memory__entry-meta">{{ memoryDateLabel(entry) }}</div>
                 <p>{{ entry.content }}</p>
               </div>
               <div class="agent-memory__entry-actions" role="group" :aria-label="$t('common:agentMemoryManager.actionsMemory', { value: index + 1, interpolation: { escapeValue: false } })">
@@ -123,8 +122,7 @@
               </div>
             </article>
           </div>
-          <div v-if="section.entries.length > 30" class="agent-memory__entry-meta"><v-btn variant="text" :disabled="memoryPages[section.target] === 0" :aria-label="$t('common:agentMemoryManager.previousLoadedMemories')" @click="memoryPages[section.target]--"><v-icon icon="mdi-chevron-left" /></v-btn><span>{{ memoryPages[section.target] * 30 + 1 }}–{{ Math.min((memoryPages[section.target] + 1) * 30, section.entries.length) }}/{{ section.entries.length }}</span><v-btn variant="text" :disabled="(memoryPages[section.target] + 1) * 30 >= section.entries.length" :aria-label="$t('common:agentMemoryManager.nextLoadedMemories')" @click="memoryPages[section.target]++"><v-icon icon="mdi-chevron-right" /></v-btn></div>
-          <div v-if="!section.entries.length" class="agent-memory__empty">
+          <div v-else class="agent-memory__empty">
             <v-icon :icon="section.icon" size="20" aria-hidden="true" />
             <p>{{ section.empty }}</p>
             <v-btn class="agent-memory__accent-action" variant="tonal" prepend-icon="mdi-plus" :aria-label="$t('common:agentMemoryManager.add', { target: section.target === 'user' ? $t('common:agentMemoryManager.personalDetailLowercase') : $t('common:agentMemoryManager.agentNote'), title: section.title, interpolation: { escapeValue: false } })" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading || !canAddTo(section.target)" @click="beginAdd(section.target)">
@@ -245,8 +243,6 @@ const draftContent = ref('')
 const draftRevision = ref(0)
 const searchQuery = ref('')
 const searchTerm = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())
-const memoryPages = ref({ user: 0, agent: 0 })
-watch([searchTerm, memories], () => { memoryPages.value = { user: 0, agent: 0 } })
 const memoryEditor = useTemplateRef<{ focus: () => void; $el: HTMLElement }>('memoryEditor')
 type MemoryStore = AgentMemoryView[AgentMemoryTarget]
 type ComponentRoot = ComponentPublicInstance | HTMLElement
@@ -671,7 +667,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   border: 1px solid var(--wiki-surface-border-strong);
   background: var(--wiki-surface-raised);
-  border-radius: var(--wiki-panel-radius) !important;
+  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
   color: rgb(var(--v-theme-on-surface));
 }
 
@@ -754,9 +750,10 @@ onBeforeUnmount(() => {
 
 .agent-memory__editor {
   padding: var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border-strong);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 32%, var(--wiki-surface-border));
   border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-sunken);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised));
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
 }
 
 .agent-memory__editor-header {
@@ -856,7 +853,7 @@ onBeforeUnmount(() => {
 
 .agent-memory__section-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: calc(var(--wiki-control-height) - var(--wiki-space-2)) minmax(0, 1fr);
   gap: var(--wiki-space-2);
   align-items: center;
   margin-bottom: var(--wiki-space-2);
@@ -881,7 +878,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border);
   border-radius: .75rem;
-  background: var(--wiki-surface-raised);
+  background: color-mix(in srgb, var(--wiki-surface-sunken) 45%, var(--wiki-surface-raised));
 }
 
 .agent-memory__entry {
@@ -926,7 +923,8 @@ onBeforeUnmount(() => {
   gap: var(--wiki-space-1);
   grid-column: 2;
   justify-content: flex-end;
-  opacity: 1;
+  opacity: .8;
+  transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
 .agent-memory__entry:hover .agent-memory__entry-actions,
@@ -991,7 +989,7 @@ onBeforeUnmount(() => {
 .agent-memory__dialog {
   border: 1px solid var(--wiki-surface-border-strong);
   background: var(--wiki-surface-raised);
-  border-radius: var(--wiki-panel-radius) !important;
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
 }
 
 .agent-memory__dialog-title {

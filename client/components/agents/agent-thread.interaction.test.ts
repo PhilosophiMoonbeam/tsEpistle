@@ -1,9 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { compileScript, parse } from '@vue/compiler-sfc'
-import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
+import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import type { RenderFunction } from 'vue'
 import i18next from 'i18next'
+import type { i18n } from 'i18next'
 import type { Translate } from '../../helpers/use-translate.ts'
 import type {
   AgentArtifactView,
@@ -14,8 +16,16 @@ import type {
   AgentThreadState,
   AgentToolCallView
 } from '../../../shared/agents/contracts.ts'
+import { agentLiveAnnouncement, buildAgentThreadPresentation, placeAgentArtifacts } from './agent-thread-presentation.ts'
+import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
+import { wikiSourceSelectorFromHref } from '../../../shared/wiki-source.ts'
 import { resolveUserPicture, type UserPicture } from '../../helpers/user-picture.ts'
 
+const componentPath = path.join(process.cwd(), 'client/components/agents/agent-thread.vue')
+const componentSource = fs.readFileSync(componentPath, 'utf8')
+const parsedSfc = parse(componentSource, { filename: componentPath })
+if (parsedSfc.errors.length > 0) throw new Error(`Could not parse agent-thread.vue: ${parsedSfc.errors.join(', ')}`)
+if (!parsedSfc.descriptor.template || !parsedSfc.descriptor.scriptSetup) throw new Error('AgentThread template and setup script are required')
 
 import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
@@ -24,30 +34,119 @@ setLocation('https://wiki.test/')
 
 resetBody()
 
-// Vue and Vuetify must load after JSDOM so they capture the test browser.
+// Vue must load after JSDOM so runtime-dom captures the test document.
 const Vue = await import('vue')
-const { createVuetify } = await import('vuetify')
-const vuetifyComponents = await import('vuetify/components')
-const vuetifyDirectives = await import('vuetify/directives')
+const compiledTemplate = compileTemplate({
+  source: parsedSfc.descriptor.template.content,
+  filename: componentPath,
+  id: 'agent-thread-interaction-test',
+  compilerOptions: { mode: 'function' }
+})
+const renderAgentThread = new Function('Vue', compiledTemplate.code)(Vue) as RenderFunction
+
+// Load real children only after registering the SFC loader; static imports bypass this test boundary.
 Bun.plugin({
-  name: 'agent-thread-real-sfc',
+  name: 'agent-thread-real-children',
   setup(builder) {
-    builder.onLoad({ filter: /\.vue$/ }, async ({ path: filename }) => {
+    builder.onLoad({ filter: /(?:agent-artifact-grid|status-indicator)\.vue$/ }, async ({ path: filename }) => {
       const parsed = parse(await Bun.file(filename).text(), { filename })
       if (parsed.errors.length) throw parsed.errors[0]
-      const script = compileScript(parsed.descriptor, {
-        id: `agent-thread-real-${path.basename(filename, '.vue')}`,
-        genDefaultAs: '__component',
-        inlineTemplate: true
-      })
+      const script = compileScript(parsed.descriptor, { id: 'agent-thread-real-artifact-grid', genDefaultAs: '__component', inlineTemplate: true })
       return { loader: 'ts', contents: `${script.content}\nexport default __component;` }
     })
   }
 })
+const AgentArtifactGrid = (await import('./agent-artifact-grid.vue')).default
+// The test loader must be installed before this known module is imported.
+const StatusIndicator = (await import('../common/status-indicator.vue')).default
+
+const scriptWithoutImports = parsedSfc.descriptor.scriptSetup.content.replace(/import[\s\S]*?from\s+['"][^'"]+['"]\s*/g, '')
+const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scriptWithoutImports)
+const evaluateAgentThread = new Function(
+  'computed',
+  'ref',
+  'watch',
+  'onUnmounted',
+  'i18next',
+  'useTranslate',
+  'defineProps',
+  'defineEmits',
+  'wikiSourceSelectorFromHref',
+  'agentLiveAnnouncement',
+  'buildAgentThreadPresentation',
+  'agentMediaContentUrl',
+  'placeAgentArtifacts',
+  `${executableScript}
+return { artifactPlacement, artifactTimeLabel, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, activityOpen, markActivityToggle, handleActivityToggle, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
+) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const NullStub = Vue.defineComponent({
   inheritAttrs: false,
   setup: () => () => null
+})
+const AvatarStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: {
+    size: { type: [Number, String], default: 28 },
+    color: String,
+    variant: String
+  },
+  setup(props, { attrs, slots }) {
+    return () =>
+      Vue.h(
+        'div',
+        {
+          ...attrs,
+          class: ['v-avatar', attrs.class],
+          'data-size': props.size,
+          style: { height: `${props.size}px`, width: `${props.size}px` }
+        },
+        slots.default?.()
+      )
+  }
+})
+const ImageStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: {
+    src: { type: String, required: true },
+    alt: { type: String, default: '' },
+    cover: Boolean
+  },
+  setup(props, { attrs }) {
+    return () => Vue.h('img', { ...attrs, class: ['v-img', attrs.class], src: props.src, alt: props.alt })
+  }
+})
+const IconStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: { icon: String, size: [Number, String], color: String },
+  setup(props, { attrs }) {
+    return () => Vue.h('i', { ...attrs, class: ['v-icon', attrs.class], 'data-icon': props.icon, 'data-color': props.color })
+  }
+})
+const BeamStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: { enabled: Boolean, phaseOffsetMs: Number },
+  setup(props) {
+    return () =>
+      props.enabled
+        ? Vue.h('svg', {
+            class: 'control-border-beam',
+            'aria-hidden': 'true',
+            focusable: 'false',
+            tabindex: '-1',
+            role: 'presentation',
+            'data-phase-offset-ms': props.phaseOffsetMs
+          })
+        : null
+  }
+})
+const ButtonStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: { disabled: Boolean },
+  emits: ['click'],
+  setup(props, { attrs, emit, slots }) {
+    return () => Vue.h('button', { ...attrs, disabled: props.disabled, onClick: (event: MouseEvent) => emit('click', event) }, slots.default?.())
+  }
 })
 const PreviewStub = Vue.defineComponent({
   props: { selector: { type: Object, required: true } },
@@ -55,15 +154,6 @@ const PreviewStub = Vue.defineComponent({
     return () => Vue.h('div', { class: 'wiki-source-preview', 'data-selector': JSON.stringify(props.selector) })
   }
 })
-// Isolate unrelated child workflows; the transcript and native Vuetify controls
-// are real, and the existing artifact consumer coverage keeps its real child.
-vi.mockModule('./agent-answer-actions.vue', import.meta.url, () => ({ default: NullStub }))
-vi.mockModule('./agent-markdown.vue', import.meta.url, () => ({ default: NullStub }))
-vi.mockModule('./agent-task-progress.vue', import.meta.url, () => ({ default: NullStub }))
-vi.mockModule('./agent-tool-card.vue', import.meta.url, () => ({ default: NullStub }))
-vi.mockModule('../common/wiki-source-preview.vue', import.meta.url, () => ({ default: PreviewStub }))
-// Static imports would bypass the registered test SFC loader and child mocks.
-const AgentThread = (await import('./agent-thread.vue')).default
 
 const makeSession = (id: string): AgentSessionView => ({
   id,
@@ -148,6 +238,14 @@ const makeThread = (sessionId: string, overrides: Partial<AgentThreadState> = {}
   ...overrides
 })
 
+interface PresentedMessage {
+  readonly message: AgentMessageView
+  readonly run: { readonly pageLinks: readonly unknown[] } | null
+  readonly citationGroups: readonly { readonly sections: readonly unknown[] }[]
+  readonly googleSearchCitations: readonly unknown[]
+  readonly statusLabel: string
+  readonly temporal: { readonly time: string; readonly timestamp: string }
+}
 
 interface MountedThread {
   readonly host: HTMLElement
@@ -156,6 +254,7 @@ interface MountedThread {
   readonly userPicture: { value: UserPicture }
   readonly emittedReattachments: unknown[][]
   readonly emittedSuggestions: unknown[][]
+  readonly projection: { readonly value: { readonly orderedMessages: readonly PresentedMessage[] } }
   readonly unmount: () => void
 }
 
@@ -169,7 +268,7 @@ const mountThread = async (
   initialThread: AgentThreadState,
   initialConnection = 'connected',
   initialUserPicture: UserPicture = resolveUserPicture({ id: 42, name: 'Ada Lovelace', pictureUrl: '' }),
-  localization: { readonly translate: Translate } = { translate: translateEnglish }
+  localization: { readonly translate: Translate; readonly engine: i18n } = { translate: translateEnglish, engine: i18next }
 ): Promise<MountedThread> => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -178,21 +277,61 @@ const mountThread = async (
   const connection = Vue.ref(initialConnection)
   const emittedReattachments: unknown[][] = []
   const emittedSuggestions: unknown[][] = []
+  let projection: MountedThread['projection']
+  const agentThread = Vue.defineComponent({
+    name: 'AgentThreadInteractionHarness',
+    props: {
+      thread: { type: Object, required: true },
+      connection: { type: String, required: true },
+      userPicture: { type: Object, required: true },
+      decidingApprovalId: { type: String, default: null },
+      canSubmit: { type: Boolean, default: true },
+      networkBlocked: { type: Boolean, default: false }
+    },
+    emits: ['askSource', 'suggest', 'decision', 'reattach'],
+    setup(props, { emit }) {
+      const setup = evaluateAgentThread(
+        Vue.computed,
+        Vue.ref,
+        Vue.watch,
+        Vue.onUnmounted,
+        localization.engine,
+        () => localization.translate,
+        () => props,
+        () => emit,
+        wikiSourceSelectorFromHref,
+        agentLiveAnnouncement,
+        buildAgentThreadPresentation,
+        agentMediaContentUrl,
+        placeAgentArtifacts
+      )
+      projection = setup.threadProjection as MountedThread['projection']
+      return setup
+    },
+    render: renderAgentThread
+  })
   const harness = Vue.defineComponent({
     setup: () => ({ thread, connection, userPicture }),
     render: () =>
-      Vue.h(AgentThread, {
+      Vue.h(agentThread, {
         thread: thread.value,
         connection: connection.value,
         userPicture: userPicture.value,
-        canSubmit: true,
         onReattach: (...args: unknown[]) => emittedReattachments.push(args),
         onSuggest: (...args: unknown[]) => emittedSuggestions.push(args)
       })
   })
   const app = Vue.createApp(harness)
   app.config.globalProperties.$t = localization.translate
-  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'AgentToolCard']) app.component(name, NullStub)
+  app.component('StatusIndicator', StatusIndicator)
+  app.component('v-avatar', AvatarStub)
+  app.component('v-icon', IconStub)
+  app.component('v-img', ImageStub)
+  app.component('ControlBorderBeam', BeamStub)
+  app.component('v-btn', ButtonStub)
+  app.component('WikiSourcePreview', PreviewStub)
+  app.component('AgentArtifactGrid', AgentArtifactGrid)
   app.mount(host)
   await settle()
   const unmount = (): void => {
@@ -200,48 +339,16 @@ const mountThread = async (
     host.remove()
   }
   mountedApps.push(unmount)
-  return { host, thread, connection, userPicture, emittedReattachments, emittedSuggestions, unmount }
+  return { host, thread, connection, userPicture, projection: projection!, emittedReattachments, emittedSuggestions, unmount }
 }
 
-afterEach(async () => {
+afterEach(() => {
   for (const unmount of mountedApps.splice(0)) unmount()
   document.body.replaceChildren()
-  vi.unstubAllGlobals()
-  if (i18next.isInitialized) await i18next.changeLanguage('en')
 })
 
 describe('AgentThread identity presentation', () => {
   it('keeps the assistant mark decorative and updates the user avatar when the account picture changes', async () => {
-    // JSDOM does not report viewport intersections. Deliver visible entries
-    // through the browser boundary so native lazy VImg still owns rendering
-    // and subsequent account-picture updates; do not replace it with an img stub.
-    class VisibleIntersectionObserver implements IntersectionObserver {
-      readonly root = null
-      readonly rootMargin = '0px'
-      readonly thresholds = [0]
-      readonly targets = new Set<Element>()
-      constructor(readonly callback: IntersectionObserverCallback) {}
-      observe(target: Element): void {
-        this.targets.add(target)
-        queueMicrotask(() => {
-          if (!target.isConnected || !this.targets.has(target)) return
-          const bounds = target.getBoundingClientRect()
-          this.callback([{
-            target,
-            time: performance.now(),
-            isIntersecting: true,
-            intersectionRatio: 1,
-            boundingClientRect: bounds,
-            intersectionRect: bounds,
-            rootBounds: null
-          }], this)
-        })
-      }
-      unobserve(target: Element): void { this.targets.delete(target) }
-      disconnect(): void { this.targets.clear() }
-      takeRecords(): IntersectionObserverEntry[] { return [] }
-    }
-    vi.stubGlobal('IntersectionObserver', VisibleIntersectionObserver)
     const mounted = await mountThread(
       makeThread('session-identities', {
         messages: [
@@ -446,7 +553,7 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(mounted.host.querySelector('.sr-status')).toBe(secondStatus)
   })
 
-  it('moves from preparing to generating with one central announcement and suppresses repeated streaming announcements', async () => {
+  it('moves from preparing to generating with one central announcement and animates only live assistant identities', async () => {
     const mounted = await mountThread(
       makeThread('session-transition', {
         messages: [
@@ -456,6 +563,8 @@ describe('AgentThread live status and interaction behavior', () => {
       })
     )
     const articles = mounted.host.querySelectorAll('.agent-message')
+    expect(articles[0]?.querySelector('.control-border-beam')).toBeNull()
+    expect(articles[1]?.querySelector('.control-border-beam')).not.toBeNull()
     expect(articles[1]?.querySelector('.agent-message__status')?.textContent).toContain('Preparing a response')
     expect(mounted.host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
     const indicator = articles[1]?.querySelector('.status-indicator')
@@ -486,11 +595,12 @@ describe('AgentThread live status and interaction behavior', () => {
       )
     }
     await settle()
+    expect(mounted.host.querySelectorAll('.control-border-beam')).toHaveLength(0)
     expect(articles[1]?.querySelector('.agent-message__status')).toBeNull()
     expect(mounted.host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
   })
 
-  it('updates rendered timestamps, evidence links and recovery state after changed snapshots and removes absent messages', async () => {
+  it('preserves untouched projected messages, runs and citations during polling, invalidating changed presentation inputs and evicting removed entries', async () => {
     const messages = Array.from({ length: 100 }, (_, index) =>
       makeMessage({
         id: `message-${index}`,
@@ -510,16 +620,25 @@ describe('AgentThread live status and interaction behavior', () => {
         )
       })
     )
+    const initial = mounted.projection.value.orderedMessages
     mounted.thread.value = structuredClone(mounted.thread.value)
     mounted.thread.value = {
       ...mounted.thread.value,
       messages: mounted.thread.value.messages.map(message => (message.id === 'message-99' ? { ...message, content: 'Evidence text continues' } : message))
     }
     await settle()
-    const firstArticle = mounted.host.querySelector<HTMLElement>('.agent-message')!
-    const originalTimestamp = firstArticle.querySelector('time')?.textContent
-    expect(firstArticle.querySelector<HTMLAnchorElement>('.agent-sources__sections a')?.getAttribute('href')).toBe('/en/page-0#section')
-    expect(firstArticle.querySelector<HTMLAnchorElement>('.agent-web-sources a')?.getAttribute('href')).toBe('https://source.test/evidence')
+    const streamed = mounted.projection.value.orderedMessages
+    for (let index = 0; index < 99; index += 1) {
+      expect(streamed[index]).toBe(initial[index])
+      expect(streamed[index]?.run).toBe(initial[index]?.run)
+      expect(streamed[index]?.run?.pageLinks).toBe(initial[index]?.run?.pageLinks)
+      expect(streamed[index]?.citationGroups).toBe(initial[index]?.citationGroups)
+      expect(streamed[index]?.googleSearchCitations).toBe(initial[index]?.googleSearchCitations)
+    }
+    expect(streamed[99]).not.toBe(initial[99])
+    expect(streamed[99]?.citationGroups[0]).toBe(initial[99]?.citationGroups[0])
+    expect(streamed[99]?.run).toBe(initial[99]?.run)
+    expect(streamed[99]?.googleSearchCitations).toBe(initial[99]?.googleSearchCitations)
 
     mounted.thread.value = {
       ...mounted.thread.value,
@@ -536,22 +655,20 @@ describe('AgentThread live status and interaction behavior', () => {
       )
     }
     await settle()
-    expect(firstArticle.querySelector('time')?.textContent).not.toBe(originalTimestamp)
-    expect(firstArticle.querySelector<HTMLAnchorElement>('.agent-sources__sections a')?.getAttribute('href')).toBe('/en/revised#section')
-    expect(firstArticle.querySelector<HTMLAnchorElement>('.agent-web-sources a')?.getAttribute('href')).toBe('https://source.test/new')
-    expect(firstArticle.querySelector('.agent-message__recovery')).not.toBeNull()
-    expect(firstArticle.getAttribute('aria-label')).toContain('Partial')
-    expect(mounted.host.querySelectorAll('.agent-message__recovery')).toHaveLength(1)
+    const changed = mounted.projection.value.orderedMessages[0]!
+    expect(changed).not.toBe(streamed[0])
+    expect(changed.temporal.timestamp).not.toBe(streamed[0]?.temporal.timestamp)
+    expect(changed.citationGroups).not.toBe(streamed[0]?.citationGroups)
+    expect(changed.googleSearchCitations).not.toBe(streamed[0]?.googleSearchCitations)
+    expect(changed.statusLabel).toBe('Partial')
+    expect(mounted.projection.value.orderedMessages[1]).toBe(streamed[1])
 
     const savedThread = mounted.thread.value
     mounted.thread.value = { ...savedThread, messages: savedThread.messages.slice(1), tools: savedThread.tools.slice(1) }
     await settle()
-    expect(mounted.host.querySelectorAll('.agent-message')).toHaveLength(99)
-    expect(mounted.host.querySelector('.agent-message__recovery')).toBeNull()
     mounted.thread.value = structuredClone(savedThread)
     await settle()
-    expect(mounted.host.querySelectorAll('.agent-message')).toHaveLength(100)
-    expect(mounted.host.querySelector('.agent-message__recovery')).not.toBeNull()
+    expect(mounted.projection.value.orderedMessages[0]).not.toBe(changed)
   })
 
   it('defaults live activity open, preserves manual preference across polls, collapses clean completion and keeps exceptional outcomes inspectable', async () => {
@@ -615,7 +732,7 @@ describe('AgentThread live status and interaction behavior', () => {
 
   it('resolves runtime statuses, activity, recovery, section labels and accessible announcements through the current catalog', async () => {
     const english = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8'))
-    const engine = i18next
+    const engine = i18next.createInstance()
     await engine.init({
       lng: 'en',
       fallbackLng: 'en',
@@ -662,8 +779,9 @@ describe('AgentThread live status and interaction behavior', () => {
       }),
       'connected',
       undefined,
-      { translate: (key, options = {}) => String(engine.t(key, options)) }
+      { engine, translate: (key, options = {}) => String(engine.t(key, options)) }
     )
+    const englishProjection = mounted.projection.value.orderedMessages
     await engine.changeLanguage('fr')
     await settle()
     const articles = mounted.host.querySelectorAll('.agent-message')
@@ -674,6 +792,8 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(mounted.host.querySelector('.agent-activity small')?.textContent).toBe('En cours')
     expect(mounted.host.querySelector('.agent-sources__label')?.textContent).toBe('Vue de la page')
     expect(mounted.host.querySelector('.sr-status')?.textContent).toBe('Préparation en cours.')
+    expect(mounted.projection.value.orderedMessages[0]).not.toBe(englishProjection[0])
+    expect(mounted.projection.value.orderedMessages[0]?.temporal.timestamp).not.toBe(englishProjection[0]?.temporal.timestamp)
 
     mounted.thread.value = {
       ...mounted.thread.value,
@@ -730,6 +850,9 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(Array.from(rows ?? []).map(row => row.querySelector('strong')?.textContent)).toEqual(['Get page', 'Get page', 'Get page'])
     expect(Array.from(rows ?? []).map(row => row.querySelector('small')?.textContent)).toEqual(['Complete', 'Result omitted', 'Not executed'])
     expect(activity?.textContent).not.toContain('pages.get')
+    expect(rows?.[0]?.querySelector('.v-icon')?.getAttribute('data-color')).toBe('success')
+    expect(rows?.[1]?.querySelector('.v-icon')?.getAttribute('data-color')).toBeNull()
+    expect(rows?.[2]?.querySelector('.v-icon')?.getAttribute('data-color')).toBeNull()
     expect(activity?.textContent?.toLowerCase()).not.toContain('failed')
   })
 

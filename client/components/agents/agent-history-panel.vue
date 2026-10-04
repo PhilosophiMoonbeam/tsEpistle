@@ -2,6 +2,7 @@
   <v-card
     class="agent-history"
     elevation="0"
+    rounded="xl"
     :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
     <AgentPanelHeader ref="historyCloseButton" :title="$t('common:agentHistoryPanel.conversations4')" icon="mdi-history" :close-label="$t('common:agentHistoryPanel.closeChatHistory')" :heading-id="headingId" :description-id="descriptionId" @close="closeHistory">
@@ -21,16 +22,7 @@
         variant="outlined"
       />
       <span class="agent-history__search-status" role="status" aria-live="polite">{{ searchStatus }}</span>
-      <span v-if="showLoadedHistorySearchScope" class="agent-history__loaded-scope" role="status">{{ $t('common:agentHistoryPanel.loadedHistorySearchScope') }}</span>
-    </div>
-    <div class="agent-history__directory-tools">
-      <span class="agent-history__directory-count">{{ archiveCountDescription }}</span>
-      <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="outlined" :aria-label="$t('common:agentHistoryPanel.createConversationFolder')" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginCreateFolder">{{ $t('common:agentHistoryPanel.newFolder') }}</v-btn>
-    </div>
-    <div class="agent-history__scope-controls" role="group" :aria-label="$t('common:agentHistoryPanel.conversations4')">
-      <v-btn size="small" variant="text" :aria-pressed="directoryView === 'all'" @click="directoryView = 'all'">{{ $t('common:agentHistoryPanel.conversations4') }}</v-btn>
-      <v-btn size="small" variant="text" :aria-pressed="directoryView === 'recent'" @click="directoryView = 'recent'">{{ $t('common:agentHistoryPanel.recent') }}</v-btn>
-      <v-btn size="small" variant="text" :aria-pressed="directoryView === 'folders'" @click="directoryView = 'folders'">{{ $t('common:agentHistoryPanel.savedFolders') }}</v-btn>
+      <span v-if="showLoadedHistorySearchScope" class="agent-history__section-copy" role="status">{{ $t('common:agentHistoryPanel.loadedHistorySearchScope') }}</span>
     </div>
     <v-alert v-if="networkBlocked" class="mx-3 mb-3" density="compact" type="warning" variant="tonal" role="status">
       {{ $t('common:agentHistoryPanel.connectionRequiredChangeConversation') }}
@@ -72,7 +64,6 @@
 
       <template v-else>
         <section
-          v-show="showRecent"
           class="agent-history__recent"
           :class="{
             'agent-history__drop-target--available': canDropTo(null),
@@ -127,7 +118,7 @@
                   :disabled="sessionBusy(session.id)"
                   :draggable="canDragSession(session)"
                   :aria-describedby="dragInstructionsId"
-                  rounded="0"
+                  rounded="lg"
                   @click="openSession(session.id)"
                   @dragstart.stop="beginSessionDrag($event, session)"
                   @dragend="finishSessionDrag"
@@ -159,12 +150,13 @@
 
         </section>
 
-        <section v-show="showFolders" class="agent-history__folders" :aria-labelledby="foldersTitleId">
+        <section class="agent-history__folders" :aria-labelledby="foldersTitleId">
           <div class="agent-history__section-heading agent-history__section-heading--folders">
             <div>
               <h3 :id="foldersTitleId" class="agent-history__section-title">{{ $t('common:agentHistoryPanel.savedFolders') }}</h3>
               <div class="agent-history__section-copy">{{ $t('common:agentHistoryPanel.keptWithoutExpiry') }}</div>
             </div>
+            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" :aria-label="$t('common:agentHistoryPanel.createConversationFolder')" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginCreateFolder">{{ $t('common:agentHistoryPanel.newFolder') }}</v-btn>
           </div>
 
           <v-expansion-panels v-if="visibleFolderGroups.length" :model-value="openFolderIds" @update:model-value="updateOpenFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
@@ -177,7 +169,7 @@
                 'agent-history__drop-target--active': isActiveDropTarget(group.folder.id)
               }"
               :aria-describedby="dragInstructionsId"
-              rounded="0"
+              rounded="lg"
               @dragenter="setDropTarget($event, group.folder.id)"
               @dragover="setDropTarget($event, group.folder.id)"
               @dragleave="leaveDropTarget($event, group.folder.id)"
@@ -191,7 +183,7 @@
               <v-menu content-class="agent-owned-overlay" location="bottom end">
                 <template #activator="{ props: menuProps }">
                   <span :ref="element => setFolderActionTrigger(group.folder.id, element as ComponentRoot | null)" class="agent-history__folder-action-anchor">
-                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="small" variant="text" :aria-label="$t('common:agentHistoryPanel.actions', { name: group.folder.name, interpolation: { escapeValue: false } })" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" />
+                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="$t('common:agentHistoryPanel.actions', { name: group.folder.name, interpolation: { escapeValue: false } })" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" />
                   </span>
                 </template>
                 <v-list density="compact" :aria-label="$t('common:agentHistoryPanel.folderActions', { name: group.folder.name, interpolation: { escapeValue: false } })">
@@ -215,7 +207,7 @@
                     :disabled="sessionBusy(session.id)"
                     :draggable="canDragSession(session)"
                     :aria-describedby="dragInstructionsId"
-                    rounded="0"
+                    rounded="lg"
                     @click="openSession(session.id)"
                     @dragstart.stop="beginSessionDrag($event, session)"
                     @dragend="finishSessionDrag"
@@ -270,37 +262,38 @@
           </div>
         </section>
       </template>
+            <div
+              v-if="sessionsNextCursor || sessionsLoadingMore || sessionsLoadMoreError"
+              class="agent-history__pagination"
+              aria-live="polite"
+            >
+              <div v-if="sessionsLoadingMore" class="agent-history__pagination-status" role="status">
+                <v-progress-circular color="primary" indeterminate size="18" width="2" />
+                <span>{{ $t('common:agentHistoryPanel.loadingOlderConversations') }}</span>
+              </div>
+              <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
+                <div class="agent-history__refresh-error">
+                  <span>{{ sessionsLoadMoreError }}</span>
+                  <v-btn :aria-label="$t('common:agentHistoryPanel.retryLoadingOlderConversations')" size="small" variant="text" :disabled="networkBlocked" @click="loadMoreSessions">{{ $t('common:agentHistoryPanel.retry') }}</v-btn>
+                </div>
+              </v-alert>
+              <v-btn
+                v-else
+                block
+                prepend-icon="mdi-chevron-down"
+                variant="tonal"
+                :disabled="refreshingHistory || sessionsReloading || networkBlocked"
+                @click="loadMoreSessions"
+              >
+                {{ $t('common:agentHistoryPanel.loadMore') }}
+              </v-btn>
+            </div>
+
     </div>
-      <div
-        v-if="sessionsNextCursor || sessionsLoadingMore || sessionsLoadMoreError"
-        class="agent-history__pagination"
-        aria-live="polite"
-      >
-        <div v-if="sessionsLoadingMore" class="agent-history__pagination-status" role="status">
-          <v-progress-circular color="primary" indeterminate size="18" width="2" />
-          <span>{{ $t('common:agentHistoryPanel.loadingOlderConversations') }}</span>
-        </div>
-        <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
-          <div class="agent-history__refresh-error">
-            <span>{{ sessionsLoadMoreError }}</span>
-            <v-btn :aria-label="$t('common:agentHistoryPanel.retryLoadingOlderConversations')" size="small" variant="text" :disabled="networkBlocked" @click="loadMoreSessions">{{ $t('common:agentHistoryPanel.retry') }}</v-btn>
-          </div>
-        </v-alert>
-        <v-btn
-          v-else
-          block
-          prepend-icon="mdi-chevron-down"
-          variant="outlined"
-          :disabled="refreshingHistory || sessionsReloading || networkBlocked"
-          @click="loadMoreSessions"
-        >
-          {{ $t('common:agentHistoryPanel.loadMore') }}
-        </v-btn>
-      </div>
   </v-card>
 
   <v-dialog content-class="agent-owned-overlay" v-model="folderEditorOpen" max-width="28rem" :aria-labelledby="folderEditorTitleId" :persistent="savingFolder">
-    <v-card class="agent-history__dialog">
+    <v-card rounded="xl">
       <v-card-title :id="folderEditorTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-folder-outline" aria-hidden="true" /></v-avatar>
         {{ editingFolder ? $t('common:agentHistoryPanel.renameFolder') : $t('common:agentHistoryPanel.newFolder') }}
@@ -338,7 +331,7 @@
   </v-dialog>
 
   <v-dialog content-class="agent-owned-overlay" v-model="sessionEditorOpen" max-width="28rem" :aria-labelledby="sessionEditorTitleId" :persistent="savingSessionTitle">
-    <v-card class="agent-history__dialog">
+    <v-card rounded="xl">
       <v-card-title :id="sessionEditorTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-pencil-outline" aria-hidden="true" /></v-avatar>
         {{ $t('common:agentHistoryPanel.renameConversation') }}
@@ -358,7 +351,7 @@
   </v-dialog>
 
   <v-dialog content-class="agent-owned-overlay" :model-value="Boolean(deletingSession)" max-width="29rem" :aria-labelledby="deleteTitleId" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelDeleteSession() }">
-    <v-card ref="deleteDialogCard" class="agent-history__dialog">
+    <v-card ref="deleteDialogCard" rounded="xl">
       <v-card-title :id="deleteTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-outline" aria-hidden="true" /></v-avatar>
         {{ $t('common:agentHistoryPanel.deleteConversation') }}
@@ -376,7 +369,7 @@
   </v-dialog>
 
   <v-dialog content-class="agent-owned-overlay" :model-value="Boolean(removingFolder)" max-width="30rem" :aria-labelledby="removeFolderTitleId" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelRemoveFolder() }">
-    <v-card ref="removeFolderDialogCard" class="agent-history__dialog">
+    <v-card ref="removeFolderDialogCard" rounded="xl">
       <v-card-title :id="removeFolderTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="warning" size="38" variant="tonal"><v-icon icon="mdi-folder-remove-outline" aria-hidden="true" /></v-avatar>
         {{ $t('common:agentHistoryPanel.removeFolder') }}
@@ -520,10 +513,7 @@ const rejectedRefresh = (error?: unknown): AgentRefreshResult => ({
 })
 
 const normalizedSearch = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())
-const showLoadedHistorySearchScope = computed(() => Boolean(sessionsNextCursor.value))
-const directoryView = ref<'all' | 'recent' | 'folders'>('all')
-const showRecent = computed(() => directoryView.value !== 'folders')
-const showFolders = computed(() => directoryView.value !== 'recent')
+const showLoadedHistorySearchScope = computed(() => Boolean(normalizedSearch.value && sessionsNextCursor.value))
 type SessionTimeGroupLabel = 'Today' | 'Yesterday' | 'Previous 7 days' | 'Earlier'
 const sessionTimeGroupLabels: readonly SessionTimeGroupLabel[] = ['Today', 'Yesterday', 'Previous 7 days', 'Earlier']
 const sessionTimeGroupKeys: Record<SessionTimeGroupLabel, string> = { Today: 'today', Yesterday: 'yesterday', 'Previous 7 days': 'previous7Days', Earlier: 'earlier' }
@@ -662,19 +652,14 @@ const clearHistoryDisabled = computed(() =>
 const recentSessionGroups = computed(() => historyPartition.value.recentGroups)
 const visibleFolderGroups = computed(() => historyPartition.value.visibleFolderGroups)
 const matchingConversationCount = computed(() => historyPartition.value.matchingConversationCount)
-const directoryConversationCount = computed(() => directoryView.value === 'recent'
-  ? filteredRecentSessions.value.length
-  : directoryView.value === 'folders'
-    ? matchingConversationCount.value - filteredRecentSessions.value.length
-    : matchingConversationCount.value)
-const hasSearchResults = computed(() => directoryConversationCount.value > 0 || (showFolders.value && visibleFolderGroups.value.length > 0))
+const hasSearchResults = computed(() => matchingConversationCount.value > 0)
 const archiveCountDescription = computed(() => {
-  const count = directoryConversationCount.value
+  const count = matchingConversationCount.value
   const variant = `${normalizedSearch.value ? 'matching' : 'all'}${sessionsNextCursor.value ? 'Loaded' : ''}`
   return t(`common:agentHistoryPanel.archiveCount.${variant}`, { count })
 })
 const searchStatus = computed(() => normalizedSearch.value
-  ? t(`common:agentHistoryPanel.archiveCount.${sessionsNextCursor.value ? 'matchingLoaded' : 'matching'}`, { count: directoryConversationCount.value })
+  ? t('common:agentHistoryPanel.archiveCount.matching', { count: matchingConversationCount.value })
   : '')
 const sessionDateLabel = (sessionId: string): string => historyPartition.value.sessionDateLabels.get(sessionId) ?? ''
 const message = (value: unknown, fallback: string): string => {
@@ -698,9 +683,7 @@ const clearProjectedFolder = (sessionId: string): void => {
 const sessionBusy = (sessionId: string): boolean =>
   loading.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || movingSessionIds.value.has(sessionId)
 const hasRenderedDropDestination = (session: AgentSessionSummary): boolean =>
-  (showRecent.value && session.folderId !== null) ||
-  (showFolders.value && visibleFolderGroups.value.some(group => group.folder.id !== session.folderId)) ||
-  (showFolders.value && folders.value.length === 0 && !normalizedSearch.value)
+  session.folderId !== null || visibleFolderGroups.value.length > 0 || !normalizedSearch.value
 const canDragSession = (session: AgentSessionSummary): boolean =>
   !networkBlocked.value && !sessionMutationBusy.value && !sessionBusy(session.id) && hasRenderedDropDestination(session)
 const dropTargetKey = (folderId: string | null): string => folderId ?? recentDropTarget
@@ -709,7 +692,6 @@ const isActiveDropTarget = (folderId: string | null): boolean =>
 const canDropTo = (folderId: string | null): boolean => {
   const session = draggedSession.value
   if (!session || networkBlocked.value || sessionMutationBusy.value || sessionBusy(session.id)) return false
-  if (folderId === null ? !showRecent.value : !showFolders.value) return false
   if (folderId !== null && folderId !== newFolderDropTarget && !folders.value.some(folder => folder.id === folderId)) return false
   return folderId === newFolderDropTarget || session.folderId !== folderId
 }
@@ -1413,7 +1395,6 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
   expandActiveFolder()
 })
 watch(folders, expandActiveFolder, { immediate: true })
-watch(directoryView, clearDragState)
 watch([normalizedSearch, visibleFolderGroups, currentOwnerId, currentOwnerGeneration, currentWorkspaceVersion], () => {
   if (searchFolderSnapshot && !isSearchSnapshotCurrent(searchFolderSnapshot)) {
     searchFolderSnapshot = null
@@ -1470,27 +1451,14 @@ onBeforeUnmount(() => {
 .agent-history {
   background: var(--wiki-surface-raised);
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  min-width: 0;
   overflow: hidden;
 }
-.agent-history__search { flex: 0 0 auto; padding: var(--wiki-space-3); position: relative; }
+.agent-history__search { flex: 0 0 auto; padding: 1rem 1.25rem .75rem; position: relative; }
 .agent-history__search :deep(.v-field) { border-radius: var(--wiki-control-radius); }
-.agent-history__loaded-scope { color: var(--wiki-text-muted); display: block; font-size: .8125rem; line-height: 1.45; margin-top: var(--wiki-space-2); }
-.agent-history__directory-tools { align-items: center; border-block-end: 1px solid var(--wiki-surface-border); display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: var(--wiki-space-2); justify-content: space-between; padding: 0 var(--wiki-space-3) var(--wiki-space-3); }
-.agent-history__directory-count { color: var(--wiki-text-muted); font-size: .8125rem; min-width: 0; overflow-wrap: anywhere; }
-.agent-history__dialog { background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); }
-.agent-history__dialog :deep(.v-card-title) { font-size: 1.125rem; white-space: normal; }
-.agent-history__dialog :deep(.v-card-text) { overflow-wrap: anywhere; }
-.agent-history__scope-controls { border-bottom: 1px solid var(--wiki-surface-border); display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: var(--wiki-space-1); padding: var(--wiki-space-2) var(--wiki-space-3); }
-.agent-history__scope-controls :deep(.v-btn) { border-radius: var(--wiki-control-radius); color: var(--wiki-text-muted); font-size: .8125rem; height: auto; letter-spacing: 0; max-width: 100%; min-height: 2.5rem; padding-block: var(--wiki-space-2); text-transform: none; }
-.agent-history__scope-controls :deep(.v-btn[aria-pressed='true']) { background: var(--wiki-surface-sunken); color: var(--wiki-primary-ink); }
-.agent-history__scope-controls :deep(.v-btn__content),
-.agent-history__new-folder :deep(.v-btn__content) { white-space: normal; }
 .agent-history__search-status {
   clip: rect(0, 0, 0, 0);
   height: 1px;
@@ -1511,7 +1479,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 1;
   flex-direction: column;
-  font-size: .875rem;
+  font-size: .78rem;
   gap: var(--wiki-space-3);
   justify-content: center;
   padding: var(--wiki-space-8);
@@ -1519,8 +1487,8 @@ onBeforeUnmount(() => {
 }
 
 
-.agent-history__folder-icon { color: var(--wiki-text-muted); }
-.agent-history__new-folder { color: var(--wiki-primary-ink); flex: 0 1 auto; height: auto; letter-spacing: 0; max-width: 100%; min-height: 2.5rem; padding-block: var(--wiki-space-2); text-transform: none; }
+.agent-history__folder-icon { color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
+.agent-history__new-folder { flex: 0 0 auto; color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
 .agent-history__folder-input :deep(.v-field__input) {
   display: flex;
   min-width: 0;
@@ -1538,13 +1506,11 @@ onBeforeUnmount(() => {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-4);
+  padding: 0 var(--wiki-space-3) var(--wiki-space-4);
   scrollbar-gutter: stable;
 }
 .agent-history__pagination {
-  border-top: 1px solid var(--wiki-surface-border);
-  flex: 0 0 auto;
-  padding: var(--wiki-space-3);
+  padding: var(--wiki-space-4) var(--wiki-space-1) 0;
 }
 .agent-history__pagination-status {
   align-items: center;
@@ -1555,8 +1521,14 @@ onBeforeUnmount(() => {
   justify-content: center;
   min-height: var(--wiki-control-height);
 }
-.agent-history__recent { border-bottom: 1px solid var(--wiki-surface-border); padding-bottom: var(--wiki-space-3); }
-.agent-history__folders { padding-top: var(--wiki-space-4); }
+.agent-history__recent {
+  border-bottom: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  padding-bottom: var(--wiki-space-3);
+}
+.agent-history__folders {
+  padding-top: var(--wiki-space-4);
+}
 .agent-history__section-heading {
   align-items: center;
   display: flex;
@@ -1570,44 +1542,50 @@ onBeforeUnmount(() => {
 .agent-history__section-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--wiki-space-1); }
 .agent-history__clear { letter-spacing: 0; text-transform: none; }
 .agent-history__clear[aria-disabled='true'] { opacity: .6; }
-.agent-history__section-title { font-size: .9375rem; font-weight: 650; line-height: 1.4; margin: 0; }
-.agent-history__section-copy { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.4; margin-top: var(--wiki-space-1); overflow-wrap: anywhere; }
-.agent-history__count {
-  background: var(--wiki-surface-sunken);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
+.agent-history__section-title { font-size: .78rem; font-weight: 750; letter-spacing: .035em; margin: 0; }
+.agent-history__section-copy { color: var(--wiki-text-muted); font-size: var(--wiki-type-micro, .75rem); margin-top: var(--wiki-space-1); }
+.agent-history__count,
+.agent-history__retained {
+  align-items: center;
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 20%, transparent);
+  border-radius: var(--wiki-radius-pill);
+  color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface)));
+  display: inline-flex;
+  font-size: var(--wiki-type-micro, .75rem);
+  font-weight: 700;
+  gap: var(--wiki-space-1);
+  line-height: 1;
   padding: var(--wiki-space-1) var(--wiki-space-2);
 }
 .agent-history__time-group + .agent-history__time-group { margin-top: var(--wiki-space-2); }
 .agent-history__time-label {
   color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  font-weight: 600;
-  padding: var(--wiki-space-2);
+  font-size: var(--wiki-type-micro, .75rem);
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  text-transform: uppercase;
 }
 .agent-history__list { background: transparent; padding: 0; }
 .agent-history__session {
-  border-bottom: 1px solid var(--wiki-surface-border);
-  margin: 0;
-  min-height: 4rem;
+  border: 1px solid transparent;
+  margin: var(--wiki-space-1) 0;
+  min-height: 3.25rem;
   position: relative;
   transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease), border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 .agent-history__session[draggable='true'] { cursor: grab; }
 .agent-history__session[draggable='true']:active { cursor: grabbing; }
 .agent-history__session--dragging {
-  background: var(--wiki-surface-sunken);
-  border-color: var(--wiki-primary-ink);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 38%, transparent);
   cursor: grabbing;
   opacity: .52;
 }
 .agent-history__session::before {
-  background: var(--wiki-primary-ink);
-  border-radius: 0;
+  background: rgb(var(--v-theme-primary));
+  border-radius: var(--wiki-radius-pill);
   content: '';
   inset-block: var(--wiki-space-2);
   inset-inline-start: 0;
@@ -1616,54 +1594,52 @@ onBeforeUnmount(() => {
   width: var(--wiki-space-1);
 }
 .agent-history__session.v-list-item--active {
-  background: var(--wiki-surface-sunken);
-  border-color: var(--wiki-surface-border);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent);
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 25%, transparent);
 }
 .agent-history__session.v-list-item--active::before { opacity: 1; }
-.agent-history__session :deep(.v-list-item__content) { min-width: 0; }
-.agent-history__session :deep(.v-list-item-title) { white-space: normal; font-size: .875rem; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
-.agent-history__session :deep(.v-list-item-subtitle) { color: var(--wiki-text-muted); font-size: .8125rem; opacity: 1; white-space: normal; }
+.agent-history__session :deep(.v-list-item-title) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; font-size: .82rem; font-weight: 550; line-height: 1.4; }
+.agent-history__session :deep(.v-list-item-subtitle) { font-size: .68rem; opacity: .75; }
 .agent-history__session :deep(.v-list-item__prepend) { margin-inline-end: .65rem; }
 .agent-history__session :deep(.v-list-item__prepend > .v-list-item__spacer) { width: 0; }
 .agent-history__session :deep(.v-list-item__append) { margin-inline-start: var(--wiki-space-1); }
 .agent-history__empty {
   align-items: center;
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px dashed var(--wiki-surface-border-strong);
   border-radius: var(--wiki-control-radius);
   color: var(--wiki-text-muted);
   display: flex;
-  font-size: .875rem;
+  font-size: .72rem;
   gap: var(--wiki-space-2);
   line-height: 1.4;
   padding: var(--wiki-space-3);
 }
 .agent-history__empty strong,
 .agent-history__empty span { display: block; }
-.agent-history__empty strong { color: rgb(var(--v-theme-on-surface)); font-size: .9375rem; margin-bottom: var(--wiki-space-1); }
+.agent-history__empty strong { color: rgb(var(--v-theme-on-surface)); font-size: .78rem; margin-bottom: var(--wiki-space-1); }
 .agent-history__empty--search { margin: var(--wiki-space-4) var(--wiki-space-1); padding: var(--wiki-space-4); }
 .agent-history__empty--folder { border: 0; padding: var(--wiki-space-2) var(--wiki-space-1) var(--wiki-space-3); }
 .agent-history__empty--folders { margin: var(--wiki-space-1); }
-.agent-history__folder-panels { gap: 0; }
+.agent-history__folder-panels { gap: var(--wiki-space-2); }
 .agent-history__folder-panels :deep(.v-expansion-panel) {
-  background: var(--wiki-surface-raised);
-  border: 0;
-  border-bottom: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+  border: 1px solid var(--wiki-surface-border);
   box-shadow: none;
 }
 .agent-history__folder-title {
-  font-size: .875rem;
-  min-height: 3.5rem !important;
-  padding: var(--wiki-space-2) calc(2.75rem + var(--wiki-space-3)) var(--wiki-space-2) var(--wiki-space-2) !important;
+  font-size: .78rem;
+  min-height: var(--wiki-control-height) !important;
+  padding: var(--wiki-space-2) calc(var(--wiki-control-height) + var(--wiki-space-3)) var(--wiki-space-2) var(--wiki-space-3) !important;
 }
 .agent-history__folder-title :deep(.v-expansion-panel-title__overlay) { opacity: 0; }
-.agent-history__folder-name { flex: 1; font-weight: 600; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.agent-history__folder-name { flex: 1; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-history__folder-count {
   align-items: center;
-  background: var(--wiki-surface-sunken);
-  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
+  border-radius: var(--wiki-radius-pill);
   display: inline-flex;
-  font-size: .8125rem;
-  height: 1.5rem;
+  font-size: .66rem;
+  height: 1.3rem;
   justify-content: center;
   margin-inline: var(--wiki-space-1);
   min-width: 1.3rem;
@@ -1672,7 +1648,7 @@ onBeforeUnmount(() => {
 .agent-history__folder-panels :deep(.v-expansion-panel-text__wrapper) { padding: 0 var(--wiki-space-2) var(--wiki-space-2); }
 .agent-history__list--folder { padding-inline: 0; }
 .agent-history__folder-actions {
-  inset-block-start: .5rem;
+  inset-block-start: 0;
   inset-inline-end: var(--wiki-space-1);
   position: absolute;
   z-index: 2;
@@ -1691,7 +1667,10 @@ onBeforeUnmount(() => {
 }
 
 @media (pointer: coarse) {
-  .agent-history__folder-actions { min-width: 44px !important; min-height: 44px !important; }
+  .agent-history__folder-actions {
+    min-width: var(--wiki-control-height) !important;
+    min-height: var(--wiki-control-height) !important;
+  }
 }
 @media (max-width: 1199.98px) {
   .agent-history {
@@ -1706,11 +1685,6 @@ onBeforeUnmount(() => {
   .agent-history__body { padding-inline: var(--wiki-space-2); }
   .agent-history__session { min-height: var(--wiki-control-height); }
   .agent-history__session :deep(.v-list-item__content) { min-width: 0; }
-  .agent-history__section-heading { align-items: flex-start; flex-wrap: wrap; }
-  .agent-history__refresh-error { align-items: flex-start; flex-direction: column; }
-  .agent-history__new-folder,
-  .agent-history__clear { min-height: 44px; }
-  .agent-history__scope-controls :deep(.v-btn) { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .agent-history__session { transition: none; }

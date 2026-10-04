@@ -4,9 +4,9 @@
     v-main.history-main
       header.history-toolbar
         .history-toolbar-copy
-          h1.history-toolbar-title {{ $t('history:pageHistory') }}
+          h1.history-toolbar-title {{ title }}
           .history-toolbar-meta
-            span {{ title }}
+            span {{ $t('history:pageHistory') }}
             span.history-path-fragment(dir='ltr') /{{ path }}
             span(v-if='trailLoaded') {{ $t('history:revisionCount', { count: total }) }}
         v-btn.history-live-action(
@@ -19,11 +19,6 @@
       v-container.history-shell(fluid)
         v-row.history-shell-row
           v-col.history-trail-column(cols='12')
-            header.history-trail-heading
-              h2 {{ $t('history:listLabel') }}
-              .history-trail-tools
-                span(v-if='trailLoaded') {{ trail.length }} / {{ total }}
-                v-btn(icon='mdi-refresh', size='small', variant='text', :aria-label='$t(`common:actions.refresh`)', :loading='trailLoading', :disabled='trailLoading || loadingMore', @click='loadHistory')
             .history-trail-panel(ref='trailContainer', tabindex='0', role='region', :aria-label='$t(`history:regionLabel`)', @scroll.passive='onTrailScroll')
               .history-refreshing(v-if='trailLoading && trail.length > 0', role='status', aria-live='polite')
                 v-progress-circular(indeterminate, size='16', width='2', color='primary', aria-hidden='true')
@@ -70,7 +65,6 @@
                       @keydown.space.prevent='selectVersion(row.index)'
                     )
                       .history-revision-heading
-                        strong.history-revision-identity {{ row.name }}
                         time.history-revision-date(v-if='row.time', :datetime='row.time.iso') {{ row.time.short }}
                           v-tooltip(activator='parent', location='top', :open-delay='400') {{ row.time.full }}
                         span.history-revision-badge.history-revision-badge--current(v-if='row.item.versionId === 0') {{ $t('history:current') }}
@@ -131,24 +125,13 @@
                 .history-comparison-heading-copy
                   h2#history-comparison-heading.history-comparison-heading(ref='comparisonHeading', tabindex='-1') {{ $t('history:comparison.heading') }}
                   .history-comparison-range(aria-live='polite')
-                    .history-comparison-range-item
+                    span.history-comparison-range-item
                       span.history-comparison-side {{ $t('history:older') }}
                       strong {{ sourceSelectionLabel }}
-                      .history-selection-actions(v-if='diffSource >= 0')
-                        v-btn(size='small', variant='text', prepend-icon='mdi-code-tags', @click='viewSource(diffSource)') {{ $t('history:menu.viewSource') }}
-                        v-btn(size='small', variant='text', prepend-icon='mdi-download-outline', @click='download(diffSource)') {{ $t('history:menu.download') }}
-                    .history-comparison-range-item
+                    v-icon(size='small', aria-hidden='true') mdi-arrow-right
+                    span.history-comparison-range-item
                       span.history-comparison-side {{ $t('history:newer') }}
                       strong {{ targetSelectionLabel }}
-                      .history-selection-actions
-                        v-btn(size='small', variant='text', prepend-icon='mdi-code-tags', @click='viewSource(diffTarget)') {{ $t('history:menu.viewSource') }}
-                        v-btn(size='small', variant='text', prepend-icon='mdi-download-outline', @click='download(diffTarget)') {{ $t('history:menu.download') }}
-                        v-menu(location='bottom end')
-                          template(v-slot:activator='{ props }')
-                            v-btn(v-bind='props', size='small', variant='text', icon='mdi-dots-horizontal', :aria-label='$t(`history:moreActions`, { revision: targetSelectionLabel })')
-                          v-list.history-promptmenu(density='compact')
-                            v-list-item(v-if='diffTarget !== 0 && targetReady && target.versionId === diffTarget', prepend-icon='mdi-history', :title='$t(`history:menu.restore`)', @click='restore(diffTarget, target.versionDate)')
-                            v-list-item(prepend-icon='mdi-source-branch', :title='$t(`history:menu.branch`)', @click='branchOff(diffTarget)')
                 .history-comparison-controls(role='group', :aria-label='$t(`history:comparison.formatLabel`)')
                   v-btn.history-view-choice(
                     size='small'
@@ -1146,12 +1129,14 @@ export default {
 }
 
 .history-toolbar-title {
+  overflow: hidden;
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
-  font-size: 1.25rem;
+  font-size: 1.125rem;
   font-weight: 650;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .history-path-fragment {
@@ -1198,13 +1183,13 @@ export default {
 .history-shell {
   width: min(100%, var(--wiki-content-max));
   margin: 0 auto;
-  padding: var(--wiki-space-4) var(--wiki-page-gutter) var(--wiki-space-10) !important;
+  padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-12) !important;
 }
 
 .history-shell-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--wiki-space-4);
+  gap: var(--wiki-space-6);
   margin: 0;
 
   > .history-trail-column,
@@ -1221,27 +1206,12 @@ export default {
   min-width: 0;
 }
 
-.history-trail-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--wiki-space-2);
-  padding: 0 var(--wiki-space-2) var(--wiki-space-2);
-  h2 { margin: 0; font-size: .9375rem; font-weight: 650; }
-}
-.history-trail-tools { display: flex; align-items: center; gap: var(--wiki-space-2); color: var(--wiki-text-muted); font-size: .8125rem; }
-.history-revision-identity { font-size: .8125rem; color: rgb(var(--v-theme-on-surface)); overflow-wrap: anywhere; }
-
 .history-trail-panel {
   min-width: 0;
   padding: var(--wiki-space-2);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  max-height: 28rem;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .history-trail-panel:focus-visible {
@@ -1290,7 +1260,7 @@ export default {
   min-width: 0;
   align-items: flex-start;
   gap: var(--wiki-space-1);
-  border-bottom: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
   // Rows far outside the viewport skip layout and paint on long histories.
   content-visibility: auto;
   contain-intrinsic-size: auto 4.5rem;
@@ -1367,7 +1337,7 @@ export default {
 .history-revision-badge {
   padding: 0 .4375rem;
   border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
+  border-radius: 999px;
   color: var(--wiki-text-muted);
   font-size: .6875rem;
   font-weight: 650;
@@ -1454,25 +1424,24 @@ export default {
 
 .history-comparison-surface {
   overflow: hidden;
-  padding: var(--wiki-space-4);
+  padding: var(--wiki-space-5);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-sm);
 }
 
 .history-comparison-header {
   display: flex;
-  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--wiki-space-3);
+  gap: var(--wiki-space-5);
   padding-bottom: var(--wiki-space-4);
   border-bottom: 1px solid var(--wiki-surface-border);
 }
 
 .history-comparison-heading-copy {
   min-width: 0;
-  flex: 1 1 100%;
 }
 
 .history-comparison-heading {
@@ -1488,8 +1457,9 @@ export default {
 }
 
 .history-comparison-range {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--wiki-space-2);
   margin-top: var(--wiki-space-1);
   color: var(--wiki-text-muted);
@@ -1497,15 +1467,10 @@ export default {
 }
 
 .history-comparison-range-item {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
   gap: var(--wiki-space-1);
-  padding: var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
-  overflow-wrap: anywhere;
 
   strong {
     color: rgb(var(--v-theme-on-surface));
@@ -1516,8 +1481,6 @@ export default {
 .history-comparison-side {
   color: var(--wiki-text-muted);
 }
-
-.history-selection-actions { display: flex; flex-wrap: wrap; gap: var(--wiki-space-1); margin-top: var(--wiki-space-1); }
 
 .history-comparison-controls {
   display: inline-flex;
@@ -1663,8 +1626,8 @@ export default {
 
   .history-trail-panel {
     position: sticky;
-    top: calc(var(--v-layout-top, var(--wiki-chrome-height)) + var(--wiki-space-4));
-    max-height: calc(100dvh - var(--v-layout-top, var(--wiki-chrome-height)) - var(--v-layout-bottom, 0px) - var(--wiki-space-6) - var(--wiki-space-6));
+    top: calc(var(--v-layout-top, var(--wiki-grid-size, 64px)) + var(--wiki-space-4));
+    max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size, 64px)) - var(--v-layout-bottom, 0px) - var(--wiki-space-6) - var(--wiki-space-6));
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
@@ -1681,11 +1644,12 @@ export default {
     padding: var(--wiki-space-4) var(--wiki-space-3) var(--wiki-space-10) !important;
   }
 
+  .history-trail-panel {
+    overflow: visible;
+  }
 }
 
 @media (max-width: 599px) {
-  .history .v-btn { min-height: 44px; min-width: 44px; }
-  .history-comparison-range { grid-template-columns: minmax(0, 1fr); }
   .history-toolbar {
     align-items: flex-start;
     flex-direction: column;

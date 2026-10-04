@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-media(flat, :class='[`is-editor-${editorKey}`, { "is-editor-embedded": embedded, "is-page-branding": isBranding }]', :role='embedded ? undefined : `dialog`', :aria-modal='embedded ? undefined : `true`', aria-labelledby='editor-media-title', tabindex='-1')
+  v-card.editor-modal-media(flat, rounded='xl', :class='[`is-editor-${editorKey}`, { "is-editor-embedded": embedded, "is-page-branding": isBranding }]', :role='embedded ? undefined : `dialog`', :aria-modal='embedded ? undefined : `true`', aria-labelledby='editor-media-title', tabindex='-1')
     .editor-media-layout
       section.editor-media-browser(aria-labelledby='editor-media-title')
         v-card.editor-media-panel.radius-7
@@ -60,18 +60,9 @@
                 span {{mediaLoadError}}
                 v-spacer
                 v-btn(variant='text', size='small', @click='refresh') {{ $t(`editor:editorModalMedia.retry`) }}
-            v-text-field.editor-media-filter(
-              v-model='assetFilter'
-              :label='$t(`editor:media.filterLoadedAssets`)'
-              prepend-inner-icon='mdi-magnify'
-              variant='outlined'
-              density='compact'
-              clearable
-              hide-details
-            )
             v-data-table.editor-media-table(
               :headers='headers'
-              :items='filteredAssets'
+              :items='displayedAssets'
               v-model:page='pagination'
               :items-per-page='15'
               :loading='loading'
@@ -124,6 +115,27 @@
                         v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='lg', size="small", :disabled='!isAssetActionable(props.item.id)', :aria-label='$t(`editor:editorModalMedia.assetActions`, { filename: props.item.filename, interpolation: { escapeValue: false } })', :data-editor-media-asset-actions='props.item.id')
                           v-icon mdi-dots-horizontal
                       v-list(nav)
+                        //- v-list-item(@click='', disabled)
+                        //-   template(v-slot:prepend)
+                        //-     v-avatar(size='24')
+                        //-       v-icon(color='teal') mdi-text-short
+                        //-   v-list-item-title {{$t('common:actions.properties')}}
+                        //- template(v-if='props.item.kind === `IMAGE`')
+                        //-   v-list-item(@click='previewDialog = true', disabled)
+                        //-     template(v-slot:prepend)
+                        //-       v-avatar(size='24')
+                        //-         v-icon(color='green') mdi-image-search-outline
+                        //-     v-list-item-title {{$t('common:actions.preview')}}
+                        //-   v-list-item(@click='', disabled)
+                        //-     template(v-slot:prepend)
+                        //-       v-avatar(size='24')
+                        //-         v-icon(color='indigo') mdi-crop-rotate
+                        //-     v-list-item-title {{$t('common:actions.edit')}}
+                        //-   v-list-item(@click='', disabled)
+                        //-     template(v-slot:prepend)
+                        //-       v-avatar(size='24')
+                        //-         v-icon(color='purple') mdi-lightning-bolt-circle
+                        //-     v-list-item-title {{$t('common:actions.optimize')}}
                         v-list-item(
                           v-if='!isBranding && isResizableAsset(props.item)'
                           :disabled='!isAssetActionable(props.item.id)'
@@ -144,7 +156,7 @@
                               v-icon(color='red') mdi-file-hidden
                           v-list-item-title {{$t('common:actions.delete')}}
               template(v-slot:no-data)
-                v-alert.mt-3(v-if='!mediaLoadError && !loading', icon='mdi-folder-open-outline', :model-value='true', variant="outlined") {{ assetFilter ? $t('editor:media.noLoadedMatches') : $t('editor:assets.folderEmpty') }}
+                v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined") {{$t('editor:assets.folderEmpty')}}
             v-alert.mt-3(v-if='isBranding && currentFileId !== null && brandingLoading', type='info', variant='tonal', density='compact')
               .text-body-small {{ $t(`editor:editorModalMedia.validatingSelectedImage`) }}
             v-alert.mt-3(v-else-if='isBranding && brandingLoadError', type='warning', variant='tonal', density='compact', role='alert')
@@ -152,9 +164,7 @@
             .text-center.py-2(v-if='pageTotal > 1')
               v-pagination(v-model='pagination', :length='pageTotal', color='primary')
             footer.editor-media-footer
-              .editor-media-count.text-body-medium.text-medium-emphasis
-                div {{ $t('editor:media.loadedAssetCount', { count: filteredAssets.length, total: displayedAssets.length }) }}
-                .editor-media-selection(v-if='currentAsset') {{ assetUrl(currentAsset) }}
+              .editor-media-count.text-body-medium.text-medium-emphasis {{$t('editor:assets.fileCount', { count: displayedAssets.length })}}
               .editor-media-actions
                 v-btn.radius-7(variant="outlined", @click='cancel')
                   v-icon(start) mdi-close
@@ -647,7 +657,6 @@ export default defineComponent({
       folders: markRaw([] as AssetFolder[]),
       files: [] as FilePondFile[],
       assets: markRaw([] as Asset[]),
-      assetFilter: '',
       pagination: 1,
       imageAlignments: IMAGE_ALIGNMENTS.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.alignment_${item.value || 'none'}`) })),
       mediaSortBy: MEDIA_SORT_BY,
@@ -739,11 +748,6 @@ export default defineComponent({
     displayedAssets(): Asset[] {
       return this.isBranding ? this.assets.filter(isPageBrandingAsset) : this.assets
     },
-    filteredAssets(): Asset[] {
-      const query = (this.assetFilter || '').trim().toLocaleLowerCase()
-      if (!query) return this.displayedAssets
-      return this.displayedAssets.filter(asset => `${asset.filename} ${asset.description || ''} ${asset.ext}`.toLocaleLowerCase().includes(query))
-    },
     canConfirmSelection(): boolean {
       return this.currentFileId !== null &&
         this.isAssetActionable(this.currentFileId) &&
@@ -751,7 +755,11 @@ export default defineComponent({
         this.brandingView?.assetId === this.currentFileId
     },
     pageTotal () {
-      return Math.ceil(this.filteredAssets.length / 15)
+      if (!this.displayedAssets) {
+        return 0
+      }
+
+      return Math.ceil(this.displayedAssets.length / 15)
     },
     headers(): AssetTableHeader[] {
       const headers: AssetTableHeader[] = []
@@ -891,9 +899,6 @@ export default defineComponent({
     }
   },
   watch: {
-    assetFilter() {
-      this.pagination = 1
-    },
     purpose(newValue: MediaPickerPurpose, oldValue: MediaPickerPurpose) {
       if (newValue === oldValue) return
       this.invalidateBrandingSelection()
@@ -936,8 +941,6 @@ export default defineComponent({
       })
     },
     currentFolderId () {
-      this.assetFilter = ''
-      this.pagination = 1
       this.actionMenuAssetId = null
       void this.loadMedia()
     }
@@ -1574,17 +1577,70 @@ export default defineComponent({
 <style lang='scss'>
 .editor-modal-media {
   --editor-media-bottom-clearance: calc(var(--v-layout-bottom, 0px) + 24px + env(safe-area-inset-bottom));
-  background: var(--wiki-surface-raised) !important;
-  color: rgb(var(--v-theme-on-surface));
+  background: rgb(var(--v-theme-background)) !important;
+  color: rgb(var(--v-theme-on-background));
   padding-bottom: env(safe-area-inset-bottom);
-  height: calc(100dvh - var(--v-layout-top, var(--wiki-chrome-height)) - var(--editor-media-bottom-clearance));
-  left: 0;
+  height: calc(100dvh - 112px - var(--editor-media-bottom-clearance));
+  left: 64px;
   overflow: auto;
   position: fixed !important;
-  top: var(--v-layout-top, var(--wiki-chrome-height));
-  width: 100%;
+  top: 112px;
+  width: calc(100vw - 64px);
   z-index: 10;
 
+  @include until($tablet) {
+    left: 0;
+    width: 100vw;
+  }
+
+  &.is-editor-visual-markdown {
+    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
+    left: 0;
+    top: 64px;
+    width: 100vw;
+
+    @include until($tablet) {
+      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
+      top: 56px;
+    }
+  }
+  &.is-editor-ckeditor {
+    top: 64px;
+    left: 0;
+    width: 100%;
+    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance) - 2px);
+
+    @include until($tablet) {
+      top: 56px;
+      left: 0;
+      width: 100%;
+      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
+    }
+  }
+
+  &.is-editor-code {
+    top: 64px;
+    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
+
+    @include until($tablet) {
+      top: 56px;
+      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
+    }
+  }
+
+  &.is-editor-common {
+    top: 64px;
+    left: 0;
+    width: 100%;
+    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
+
+    @include until($tablet) {
+      top: 56px;
+      left: 0;
+      width: 100%;
+      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
+    }
+  }
 
   .editor-media-layout {
     display: grid;
@@ -1614,19 +1670,6 @@ export default defineComponent({
   .editor-media-panel,
   .editor-media-panel-content {
     min-width: 0;
-  }
-  .editor-media-panel {
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius);
-    box-shadow: none;
-  }
-  .editor-media-filter {
-    margin-bottom: var(--wiki-space-3);
-  }
-  .editor-media-selection {
-    color: rgb(var(--v-theme-on-surface));
-    font-size: .8125rem;
-    overflow-wrap: anywhere;
   }
 
   .editor-media-sidebar {
@@ -1682,8 +1725,6 @@ export default defineComponent({
     flex-wrap: wrap;
     gap: var(--wiki-space-2);
     padding-bottom: var(--wiki-space-4);
-    max-height: 12rem;
-    overflow-y: auto;
   }
 
   .editor-media-layout .v-btn {
@@ -1782,10 +1823,6 @@ export default defineComponent({
 
   tr.is-clickable {
     cursor: pointer;
-    &[aria-current='true'] {
-      background: var(--wiki-surface-sunken);
-      box-shadow: inset 3px 0 0 var(--wiki-primary-ink);
-    }
 
     &:focus-visible {
       outline: 2px solid rgba(var(--v-theme-primary), .7);

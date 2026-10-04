@@ -562,22 +562,22 @@ onBeforeUnmount(() => {
 .agent-markdown :deep(h5),
 .agent-markdown :deep(h6) {
   color: rgb(var(--v-theme-on-surface));
-  font-family: inherit;
-  font-weight: 700;
-  letter-spacing: normal;
+  font-family: var(--wiki-font-heading);
+  font-weight: 720;
+  letter-spacing: -.018em;
   line-height: var(--wiki-leading-heading);
-  overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .agent-markdown :deep(h1) {
   font-size: 1.45rem;
-  margin-block: var(--wiki-space-6) var(--wiki-space-3);
+  margin-block: var(--wiki-space-8) var(--wiki-space-3);
 }
 
 .agent-markdown :deep(h2) {
   border-block-end: 1px solid var(--wiki-surface-border);
   font-size: 1.25rem;
-  margin-block: var(--wiki-space-6) var(--wiki-space-3);
+  margin-block: var(--wiki-space-8) var(--wiki-space-3);
   padding-block-end: var(--wiki-space-2);
 }
 
@@ -616,20 +616,23 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(li::marker) {
-  color: var(--wiki-primary-ink);
+  color: color-mix(in srgb, var(--wiki-primary-ink) 72%, rgb(var(--v-theme-on-surface)));
   font-weight: 700;
 }
 
 .agent-markdown :deep(blockquote) {
   background: var(--wiki-surface-sunken);
   border: 1px solid var(--wiki-surface-border);
-  border-inline-start: 3px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
-  color: rgb(var(--v-theme-on-surface));
+  border-inline-start: var(--wiki-space-1) solid var(--wiki-accent-warm);
+  border-radius: 0 var(--wiki-control-radius) var(--wiki-control-radius) 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 82%, transparent);
   margin: var(--wiki-space-5) 0;
   padding: var(--wiki-space-3) var(--wiki-space-4);
 }
 
+[dir='rtl'] .agent-markdown :deep(blockquote) {
+  border-radius: var(--wiki-control-radius) 0 0 var(--wiki-control-radius);
+}
 
 .agent-markdown :deep(blockquote > :last-child) {
   margin-block-end: 0;
@@ -642,7 +645,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(a) {
-  color: var(--wiki-primary-ink);
+  color: var(--wiki-accent-ink);
   font-weight: 560;
   overflow-wrap: anywhere;
   text-decoration-thickness: .08em;
@@ -707,6 +710,7 @@ onBeforeUnmount(() => {
   background: var(--wiki-surface-sunken);
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-control-radius);
+  box-shadow: var(--wiki-shadow-inset);
   margin-block: var(--wiki-space-5);
   max-width: 100%;
   min-width: 0;
@@ -715,7 +719,7 @@ onBeforeUnmount(() => {
 
 .agent-markdown :deep(.agent-markdown__code-toolbar) {
   align-items: center;
-  background: var(--wiki-surface-raised);
+  background: color-mix(in srgb, var(--wiki-surface-raised) 86%, var(--wiki-surface-sunken));
   border-block-end: 1px solid var(--wiki-surface-border);
   color: var(--wiki-text-muted);
   display: flex;
@@ -723,24 +727,24 @@ onBeforeUnmount(() => {
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   justify-content: space-between;
-  letter-spacing: normal;
-  min-height: 44px;
+  letter-spacing: .06em;
+  min-height: var(--wiki-space-8);
   padding-inline: var(--wiki-space-3) var(--wiki-space-2);
-  text-transform: none;
+  text-transform: uppercase;
 }
 
 .agent-markdown :deep(.agent-markdown__copy) {
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: var(--wiki-control-radius);
+  border-radius: var(--wiki-radius-xs);
   color: rgb(var(--v-theme-on-surface));
   cursor: pointer;
   display: inline-flex;
   font: inherit;
   justify-content: center;
-  letter-spacing: normal;
-  min-height: 44px;
+  letter-spacing: .04em;
+  min-height: var(--wiki-space-8);
   padding-inline: var(--wiki-space-2);
   text-transform: none;
   transition:
@@ -749,7 +753,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(.agent-markdown__copy:hover) {
-  background: var(--wiki-surface-sunken);
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, transparent);
   color: var(--wiki-primary-ink);
 }
 
@@ -814,9 +818,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
-  display: flex;
-  align-items: center;
-  min-height: 44px;
   padding: var(--wiki-space-2) var(--wiki-space-3);
 }
 
@@ -863,22 +864,22 @@ onBeforeUnmount(() => {
 .agent-markdown :deep(th) {
   background: var(--wiki-surface-sunken);
   color: rgb(var(--v-theme-on-surface));
-  font-size: .85rem;
-  font-weight: 700;
-  letter-spacing: normal;
-  text-transform: none;
+  font-size: var(--wiki-label-size);
+  font-weight: 720;
+  letter-spacing: .05em;
+  text-transform: uppercase;
 }
 
 .agent-markdown :deep(tbody tr:nth-child(even)) {
-  background: var(--wiki-surface-sunken);
+  background: color-mix(in srgb, var(--wiki-surface-sunken) 58%, transparent);
 }
 .agent-markdown :deep(a[data-agent-citation='true']),
 .agent-markdown :deep(strong[data-agent-citation='true']) {
   align-items: center;
-  background: var(--wiki-surface-sunken);
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
-  color: var(--wiki-primary-ink);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 20%, var(--wiki-surface-border));
+  border-radius: var(--wiki-radius-pill);
+  color: rgb(var(--v-theme-on-surface));
   display: inline-flex;
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
@@ -895,8 +896,8 @@ onBeforeUnmount(() => {
 
 .agent-markdown :deep(a[data-agent-citation='true']:hover),
 .agent-markdown :deep(strong[data-agent-citation='true']:hover) {
-  background: var(--wiki-surface-raised);
-  border-color: var(--wiki-primary-ink);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 17%, var(--wiki-surface-raised));
+  border-color: color-mix(in srgb, var(--wiki-accent-warm) 42%, var(--wiki-surface-border));
 }
 
 @media (max-width: 599.98px) {
@@ -910,7 +911,7 @@ onBeforeUnmount(() => {
 
   .agent-markdown :deep(.agent-markdown__code-shell),
   .agent-markdown :deep(.agent-markdown__table-shell) {
-    border-radius: var(--wiki-control-radius);
+    border-radius: var(--wiki-radius-xs);
   }
 
   .agent-markdown :deep(pre) {
@@ -931,8 +932,8 @@ onBeforeUnmount(() => {
 
   .agent-markdown :deep(a[data-agent-citation='true']),
   .agent-markdown :deep(strong[data-agent-citation='true']) {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 28px;
+    min-height: 28px;
     margin-inline: var(--wiki-space-2);
   }
 }

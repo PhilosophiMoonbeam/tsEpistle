@@ -2,6 +2,8 @@
   <v-card
     :id="dialogId"
     class="agent-composer-skill-menu__card"
+    min-width="300"
+    max-width="420"
     role="dialog"
     :aria-labelledby="headingId"
     :aria-describedby="descriptionId"
@@ -69,7 +71,7 @@
     <v-card-text v-if="items.some(skill => isLimited(skill.versionId))" :id="limitReasonId" role="status" class="pt-0 text-body-small text-medium-emphasis">{{ skillLimitReason }}</v-card-text>
     <v-divider />
     <v-card-actions>
-      <v-btn prepend-icon="mdi-file-document-edit-outline" variant="text" :disabled="disabled || sendInProgress" @click="manageSkills">{{ $t('common:agentComposerSkillMenu.manageMySkills') }}</v-btn>
+      <v-btn prepend-icon="mdi-file-document-edit-outline" variant="text" :disabled="sendInProgress" @click="manageSkills">{{ $t('common:agentComposerSkillMenu.manageMySkills') }}</v-btn>
     </v-card-actions>
   </v-card>
 </template>
@@ -81,8 +83,9 @@ import { useTranslate } from '../../helpers/use-translate.ts'
 const t = useTranslate()
 
 /**
- * Presentational skill picker for the composer's explicit Skills control.
- * Selection state stays with the parent composer; this component only renders
+ * Presentational skill picker card shared by the composer's inline Skills
+ * trigger menu and the compact Skills entry folded into the More menu. All
+ * selection state stays with the parent composer; this component only renders
  * it and reports the user's intent.
  */
 interface AgentComposerSkillMenuItem {
@@ -161,75 +164,41 @@ const retrySkills = (): void => {
 </script>
 
 <style scoped>
-.agent-composer-skill-menu__card {
-  width: min(420px, calc(100vw - 32px));
-  min-width: 0;
-  max-height: min(640px, 75dvh);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.agent-composer-skill-menu__card :deep(.v-card-title) {
-  padding: var(--wiki-space-3) var(--wiki-space-4) var(--wiki-space-1);
-  font-size: 1rem;
-  font-weight: 650;
-  white-space: normal;
-}
-
-.agent-composer-skill-menu__card :deep(.v-card-subtitle) {
-  flex: 0 0 auto;
-  padding-block-end: var(--wiki-space-3);
-  color: var(--wiki-text-muted);
-  opacity: 1;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.agent-composer-skill-menu__card :deep(.v-list) {
-  min-height: 0;
-  flex: 1 1 auto;
-  max-height: min(320px, 44dvh) !important;
-  border-block-start: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
-  overscroll-behavior: contain;
-}
-
-.agent-composer-skill-menu__card :deep(.v-list-item) { min-height: 64px; padding-inline: var(--wiki-space-2); }
-.agent-composer-skill-menu__card :deep(.v-list-item__prepend > .v-list-item__spacer) { width: var(--wiki-space-1); }
-.agent-composer-skill-menu__card :deep(.v-list-item__append > .v-list-item__spacer) { width: var(--wiki-space-1); }
-.agent-composer-skill-menu__card :deep(.v-list-item-title),
-.agent-composer-skill-menu__card :deep(.v-list-item-subtitle) { white-space: normal; overflow-wrap: anywhere; }
-.agent-composer-skill-menu__card :deep(.v-list-item-subtitle) { color: var(--wiki-text-muted); opacity: 1; line-height: 1.5; }
-.agent-composer-skill-menu__card :deep(.v-card-actions) { flex: 0 0 auto; flex-wrap: wrap; padding: var(--wiki-space-2); }
-.agent-composer-skill-menu__card :deep(.v-card-actions .v-btn) { min-height: 44px; max-width: 100%; border-radius: var(--wiki-control-radius); }
-.agent-composer-skill-menu__card :deep(.v-btn__content) { white-space: normal; }
-.agent-composer-skill-menu__card :deep(.v-btn:focus-visible) { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
-
 .agent-composer-skill-menu__pin {
   min-width: max(44px, var(--wiki-control-height));
   min-height: max(44px, var(--wiki-control-height));
-  border-radius: var(--wiki-control-radius);
+}
+
+.agent-composer-skill-menu__pin--active {
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .agent-composer-skill-menu__load-state {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--wiki-space-2);
   margin: var(--wiki-space-3);
   padding: var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 28%, var(--wiki-surface-border));
   border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, var(--wiki-surface-raised));
 }
 
-.agent-composer-skill-menu__load-state > .v-btn { grid-column: 2; justify-self: start; min-height: 44px; }
-.agent-composer-skill-menu__load-state--error { border-color: var(--wiki-error-ink); }
-.agent-composer-skill-menu__load-state > div { display: grid; min-width: 0; gap: var(--wiki-space-1); }
-.agent-composer-skill-menu__load-state strong { font-size: .875rem; overflow-wrap: anywhere; }
-.agent-composer-skill-menu__load-state span { color: var(--wiki-text-muted); font-size: var(--wiki-label-size); overflow-wrap: anywhere; }
+.agent-composer-skill-menu__load-state--error {
+  border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 32%, var(--wiki-surface-border));
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 8%, var(--wiki-surface-raised));
+  color: rgb(var(--v-theme-error));
+}
+
+.agent-composer-skill-menu__load-state > div {
+  display: grid;
+  gap: 2px;
+}
+
+.agent-composer-skill-menu__load-state span {
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  overflow-wrap: anywhere;
+}
 </style>

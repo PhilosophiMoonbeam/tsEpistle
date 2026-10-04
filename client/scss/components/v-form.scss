@@ -7,9 +7,9 @@
 }
 
 .v-field {
-  border-radius: var(--wiki-control-radius);
-  background-color: var(--wiki-surface-raised);
-  box-shadow: none;
+  border-radius: var(--wiki-control-radius, .75rem);
+  background-color: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
+  box-shadow: var(--wiki-shadow-inset, inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, transparent));
   transition:
     background-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
     box-shadow var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
@@ -42,14 +42,18 @@
   .v-messages {
     color: var(--wiki-text-muted);
     opacity: 1;
-    font-size: var(--wiki-type-label);
+    font-size: var(--wiki-label-size, .6875rem);
     line-height: 1.35;
   }
 
   &:not(.v-input--error).v-input--focused .v-field {
-    outline: .125rem solid var(--wiki-focus-color);
-    outline-offset: .125rem;
-    box-shadow: var(--wiki-focus-ring);
+    outline: none;
+    box-shadow:
+      var(
+        --wiki-focus-ring,
+        0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-focus)) 44%, transparent)
+      ),
+      var(--wiki-shadow-inset, inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent));
   }
 
   // Focused labels use the palette's readable primary ink: a light primary
@@ -66,13 +70,14 @@
 
   &.v-input--error:not(.v-input--disabled) {
     .v-field {
-      box-shadow: 0 0 0 1px var(--wiki-error-ink);
+      box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-error)) 58%, transparent);
     }
 
     &.v-input--focused .v-field {
-      outline: .125rem solid var(--wiki-focus-color);
-      outline-offset: .125rem;
-      box-shadow: 0 0 0 1px var(--wiki-error-ink);
+      outline: none;
+      box-shadow:
+        0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-error)) 30%, transparent),
+        0 0 0 1px rgb(var(--v-theme-error));
     }
 
     :is(.v-field__outline, .v-field-label, .v-messages) {
@@ -83,13 +88,14 @@
 
   &.is-success:not(.v-input--error, .v-input--disabled) {
     .v-field {
-      box-shadow: 0 0 0 1px var(--wiki-success-ink);
+      box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-success)) 52%, transparent);
     }
 
     &.v-input--focused .v-field {
-      outline: .125rem solid var(--wiki-focus-color);
-      outline-offset: .125rem;
-      box-shadow: 0 0 0 1px var(--wiki-success-ink);
+      outline: none;
+      box-shadow:
+        0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-success)) 28%, transparent),
+        0 0 0 1px rgb(var(--v-theme-success));
     }
 
     :is(.v-field__outline, .v-field-label, .v-messages) {
@@ -155,12 +161,12 @@
   }
 
   &.v-input--error:not(.v-input--disabled) .v-field--variant-outlined .v-field__outline {
-    color: var(--wiki-error-ink);
+    color: rgb(var(--v-theme-error));
     --v-field-border-opacity: 1;
   }
 
   &.is-success:not(.v-input--error, .v-input--disabled) .v-field--variant-outlined .v-field__outline {
-    color: var(--wiki-success-ink);
+    color: rgb(var(--v-theme-success));
     --v-field-border-opacity: 1;
   }
 }
@@ -174,7 +180,7 @@
 }
 
 .v-field--loading .v-field__loader {
-  color: var(--wiki-primary-ink);
+  color: var(--wiki-accent-spectral, rgb(var(--v-theme-primary)));
 }
 
 @media (pointer: coarse) {

@@ -1,9 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { compileScript, parse } from '@vue/compiler-sfc'
-import { createPinia } from 'pinia'
-import { browserWindow, resetBody } from '../../test/browser-dom.mts'
-import { useAgentsStore } from '../../store/agents.ts'
 
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
@@ -13,29 +9,6 @@ import type { AgentRefreshResult } from '../../store/agents.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 globalThis.useTranslate = () => translateEnglish
-resetBody()
-// Vue and Vuetify capture the browser at module load, after the test DOM exists.
-const Vue = await import('vue')
-const { createVuetify } = await import('vuetify')
-const vuetifyComponents = await import('vuetify/components')
-const vuetifyDirectives = await import('vuetify/directives')
-Bun.plugin({
-  name: 'agent-history-selection-real-sfc',
-  setup(builder) {
-    builder.onLoad({ filter: /\.vue$/ }, async ({ path: filename }) => {
-      const parsed = parse(await Bun.file(filename).text(), { filename })
-      if (parsed.errors.length) throw parsed.errors[0]
-      const script = compileScript(parsed.descriptor, {
-        id: `history-selection-${path.basename(filename, '.vue')}`,
-        genDefaultAs: '__component',
-        inlineTemplate: true
-      })
-      return { loader: 'ts', contents: `${script.content}\nexport default __component;` }
-    })
-  }
-})
-// The loader must be installed before importing the actual panel and children.
-const AgentHistoryPanel = (await import('./agent-history-panel.vue')).default
 interface Ref<T> {
   value: T
 }
@@ -96,6 +69,7 @@ interface PanelHarness {
   searchQuery: Ref<string | null>
   sessions: Ref<AgentSessionSummary[]>
   sessionsNextCursor: Ref<string | null>
+  showLoadedHistorySearchScope: Ref<boolean>
   sessionEditorOpen: Ref<boolean>
   sessionRenameTitle: Ref<string>
   removingFolder: Ref<AgentConversationFolderView | null>
@@ -291,6 +265,7 @@ const loadPanel = (
       searchQuery,
       sessions,
       sessionsNextCursor,
+      showLoadedHistorySearchScope,
       sessionEditorOpen,
       sessionRenameTitle,
       removingFolder,
@@ -538,55 +513,17 @@ describe('Agent history session selection', () => {
     expect(panel.openFolderIds.value).toEqual([])
   })
 
-  it('discloses loaded-only history scope while an older cursor exists and filters the loaded conversations', async () => {
-    const pinia = createPinia()
-    const store = useAgentsStore(pinia)
-    store.$patch({
-      loading: false,
-      sessions: [
-        makeSession({ title: 'Release planning' }),
-        makeSession({ id: '00000000-0000-4000-8000-000000000003', title: 'Support triage' })
-      ],
-      sessionsNextCursor: 'next-page',
-      folders: []
+  it('offers older-history search guidance only while searching with an unexhausted cursor', () => {
+    const panel = loadPanel({
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn()
     })
-    const host = document.createElement('div')
-    document.body.append(host)
-    // Local search stays usable offline; blocking the network also ensures this
-    // scope test cannot silently obtain a global archive from a live service.
-    const app = Vue.createApp(AgentHistoryPanel, {
-      headingId: 'history-heading',
-      descriptionId: 'history-description',
-      networkBlocked: true
-    })
-    app.use(pinia)
-    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-    app.config.globalProperties.$t = translateEnglish
-    try {
-      app.mount(host)
-      await Vue.nextTick()
-      const scope = host.querySelector<HTMLElement>('.agent-history__loaded-scope')
-      expect(scope?.getAttribute('role')).toBe('status')
-      expect(scope?.textContent).toBe(translateEnglish('common:agentHistoryPanel.loadedHistorySearchScope'))
-      expect(host.querySelectorAll('.agent-history__session')).toHaveLength(2)
-      const input = host.querySelector<HTMLInputElement>('.agent-history__search input')
-      if (!input) throw new Error('Native history search field did not render')
-      input.value = 'Release'
-      input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
-      await Vue.nextTick()
-      const matches = host.querySelectorAll('.agent-history__session')
-      expect(matches).toHaveLength(1)
-      expect(matches[0]?.textContent).toContain('Release planning')
-      expect(host.querySelector('.agent-history__loaded-scope')).not.toBeNull()
-      store.sessionsNextCursor = null
-      await Vue.nextTick()
-      expect(host.querySelector('.agent-history__loaded-scope')).toBeNull()
-      expect(host.querySelectorAll('.agent-history__session')).toHaveLength(1)
-    } finally {
-      app.unmount()
-      host.remove()
-      store.$dispose()
-    }
+    panel.sessionsNextCursor.value = 'next-page'
+    expect(panel.showLoadedHistorySearchScope.value).toBe(false)
+    panel.searchQuery.value = 'Release'
+    expect(panel.showLoadedHistorySearchScope.value).toBe(true)
+    panel.sessionsNextCursor.value = null
+    expect(panel.showLoadedHistorySearchScope.value).toBe(false)
   })
 
   it('does nothing when choosing the displayed session', async () => {

@@ -1,31 +1,20 @@
 <template lang='pug'>
-v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks(flat)
+v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks(flat, rounded='xl')
   v-toolbar.editor-modal-blocks-toolbar(flat)
     v-icon.mr-3(color="secondary") {{activeStatus?.icon || 'mdi-shape-outline'}}
     v-toolbar-title#content-extension-title {{ $t(`editor:editorModalBlocks.insertContentExtension`) }}
     v-spacer
     v-btn(icon, :aria-label='$t(`editor:editorModalBlocks.closeContentExtensionDialog`)', @click='close')
       v-icon mdi-close
-  v-container.editor-modal-blocks-body.py-4(fluid)
-    v-row.editor-blocks-workspace
-      v-col.editor-blocks-navigation(v-if='!isLoading && !loadError', cols='12', md='3')
-        nav(:aria-label='$t(`editor:editorModalBlocks.extensionType`)')
-          .text-title-small.mb-3 {{ $t(`editor:editorModalBlocks.extensionType`) }}
-          v-list(density='comfortable', nav, bg-color='transparent')
-            v-list-item(
-              v-for='option in extensionOptions'
-              :key='option.value'
-              :title='option.title'
-              :active='selectedKey === option.value'
-              @click='selectedKey = option.value'
-            )
-      v-col.editor-blocks-content(cols='12', md='9')
+  v-container.editor-modal-blocks-body.py-6(fluid)
+    v-row.justify-center
+      v-col(cols='12', md='9', lg='7', xl='6')
         v-skeleton-loader(v-if='isLoading', type='heading, paragraph, paragraph, actions')
         template(v-else-if='loadError')
           v-alert.mb-4(type='error', variant='tonal') {{loadError}}
           v-btn(color='primary', @click='loadExtensions') {{ $t(`editor:editorModalBlocks.retry`) }}
         template(v-else)
-          v-select.d-md-none.mb-5(
+          v-select.mb-5(
             v-model='selectedKey'
             :items='extensionOptions'
             :label='$t(`editor:editorModalBlocks.extensionType`)'
@@ -974,7 +963,7 @@ export default defineComponent({
   width: 100%;
   height: 100dvh;
   min-height: 0;
-  background-color: var(--wiki-surface-raised) !important;
+  background-color: rgb(var(--v-theme-background)) !important;
 
   > .v-toolbar {
     background: var(--wiki-surface-raised);
@@ -987,42 +976,6 @@ export default defineComponent({
     min-height: 0;
     overflow-y: auto;
   }
-  .editor-blocks-workspace {
-    max-width: 1280px;
-    margin-inline: auto;
-    align-items: start;
-  }
-  .editor-blocks-navigation {
-    position: sticky;
-    top: 0;
-    max-height: 100%;
-    min-width: 0;
-    border-inline-end: 1px solid var(--wiki-surface-border);
-    background: var(--wiki-surface-sunken);
-    border-radius: var(--wiki-panel-radius);
-  }
-  .editor-blocks-content {
-    min-width: 0;
-  }
-  .v-card-title,
-  .v-card-subtitle,
-  .v-list-item-title {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-  .v-card {
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius);
-    box-shadow: none;
-  }
-  .v-btn {
-    min-height: 44px;
-  }
-  @media (max-width: 839px) {
-    .editor-blocks-navigation {
-      display: none;
-    }
-  }
 
   &-actions {
     position: sticky;
@@ -1032,7 +985,7 @@ export default defineComponent({
     gap: 12px;
     padding: 12px 0;
     margin-top: 24px;
-    background: var(--wiki-surface-raised);
+    background: rgb(var(--v-theme-background));
   }
 
   .source-textarea textarea {

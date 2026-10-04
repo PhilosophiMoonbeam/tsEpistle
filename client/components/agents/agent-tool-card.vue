@@ -24,9 +24,19 @@
       >{{ locallyExpired ? $t('common:agentToolCard.expired') : $t('common:agentToolCard.awaitingApproval') }}</v-chip>
     </header>
 
-    <div class="agent-operation__request">
     <p class="agent-operation__summary text-body-medium">{{ proposal.summary }}</p>
 
+    <div :id="`agent-approval-risk-${proposal.id}`" class="agent-operation__risk">
+      <v-icon
+        :icon="proposal.risk === 'destructive-write' ? 'mdi-alert-octagon-outline' : 'mdi-shield-check-outline'"
+        size="19"
+        aria-hidden="true"
+      />
+      <span>
+        <strong>{{ riskLabel }}</strong>
+        <small>{{ riskDescription }}</small>
+      </span>
+    </div>
 
     <dl class="operation-facts">
       <dt>{{ $t('common:agentToolCard.command') }}</dt>
@@ -46,10 +56,6 @@
         <span class="operation-facts__secondary"> · {{ expiryLabel }}</span>
       </dd>
     </dl>
-    </div>
-
-    <section class="agent-operation__evidence" :aria-labelledby="`agent-approval-evidence-${proposal.id}`">
-      <h4 :id="`agent-approval-evidence-${proposal.id}`">{{ $t('common:agentToolCard.verificationRecord') }}</h4>
 
     <details class="operation-disclosure">
       <summary>
@@ -89,19 +95,7 @@
         </v-btn>
       </div>
     </details>
-    </section>
 
-    <div :id="`agent-approval-risk-${proposal.id}`" class="agent-operation__risk">
-      <v-icon
-        :icon="proposal.risk === 'destructive-write' ? 'mdi-alert-octagon-outline' : 'mdi-shield-check-outline'"
-        size="19"
-        aria-hidden="true"
-      />
-      <span>
-        <strong>{{ riskLabel }}</strong>
-        <small>{{ riskDescription }}</small>
-      </span>
-    </div>
     <p v-if="networkBlocked" class="agent-operation__network-note" role="status">{{ $t('common:agentToolCard.connectionRequiredApproveDeny') }}</p>
     <div v-if="!locallyExpired && proposal.risk === 'destructive-write'" class="agent-operation__confirmation">
       <p><strong>{{ $t('common:agentToolCard.deletionConfirmation') }}</strong> {{ $t('common:agentToolCard.cannotUndoneAgentConversation') }}</p>
@@ -116,8 +110,6 @@
         autocapitalize="none"
         autocorrect="off"
         :disabled="!canDecide"
-        variant="outlined"
-        class="agent-operation__path"
       />
     </div>
 
@@ -517,116 +509,446 @@ const decide = (decision: 'approved' | 'denied'): void => {
 .agent-operation,
 .agent-operation-receipt {
   --operation-accent: rgb(var(--v-theme-warning));
-  background: var(--wiki-surface-raised);
-  border: 1px solid var(--wiki-surface-border);
-  border-inline-start: 3px solid var(--operation-accent);
-  border-radius: var(--wiki-panel-radius);
-  color: rgb(var(--v-theme-on-surface));
-  margin: 0 0 var(--wiki-space-4);
-  max-width: 54rem;
-  min-width: 0;
   width: 100%;
+  max-width: 54rem;
+  margin: 0 0 var(--wiki-space-4);
+  border: 1px solid color-mix(in srgb, var(--operation-accent) 44%, var(--wiki-surface-border));
+  border-inline-start-width: var(--wiki-space-1);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  color: rgb(var(--v-theme-on-surface));
 }
-.agent-operation { padding: var(--wiki-space-4); }
-.agent-operation--destructive { --operation-accent: rgb(var(--v-theme-error)); }
-.agent-operation--expired { --operation-accent: rgb(var(--v-theme-warning)); }
+
+.agent-operation {
+  padding: var(--wiki-space-4);
+}
+
+.agent-operation--destructive {
+  --operation-accent: rgb(var(--v-theme-error));
+}
+
+.agent-operation--expired {
+  --operation-accent: rgb(var(--v-theme-warning));
+}
+
 .agent-operation:focus-visible,
-.agent-operation-receipt summary:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.agent-operation-receipt summary:focus-visible {
+  outline: none;
+  box-shadow: var(--wiki-focus-ring);
+}
+
 .operation-disclosure summary:focus-visible,
-.proposal-diff pre:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
-.agent-operation__header { align-items: start; display: grid; gap: var(--wiki-space-3); grid-template-columns: auto minmax(0, 1fr) auto; }
+.proposal-diff pre:focus-visible {
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: calc(-1 * var(--wiki-focus-offset));
+}
+
+.agent-operation__header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--wiki-space-3);
+  align-items: start;
+}
+
 .agent-operation__state-mark,
-.agent-operation-receipt__mark { align-items: center; color: var(--wiki-text-muted); display: inline-flex; flex: 0 0 auto; justify-content: center; }
-.agent-operation__state-mark { height: 2rem; width: 2rem; }
-.agent-operation__heading { min-width: 0; }
-.agent-operation__heading h3 { font-size: 1rem !important; font-weight: 650; line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
-.agent-operation__request { margin-top: var(--wiki-space-3); }
-.agent-operation__summary { font-size: .9375rem !important; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
-.agent-operation__evidence { border-top: 1px solid var(--wiki-surface-border); margin-top: var(--wiki-space-4); padding-top: var(--wiki-space-3); }
-.agent-operation__evidence h4 { font-size: .875rem; font-weight: 650; margin: 0; }
+.agent-operation-receipt__mark {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--operation-accent) 36%, transparent);
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--operation-accent) 12%, transparent);
+  color: var(--operation-accent);
+}
+
+.agent-operation__state-mark {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
+
+.agent-operation__heading {
+  min-width: 0;
+}
+
+.agent-operation__heading h3,
+.agent-operation__summary {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-operation__summary {
+  margin-top: var(--wiki-space-4);
+  line-height: var(--wiki-leading-body);
+}
+
 .agent-operation__risk,
 .agent-operation__decision-error,
-.agent-operation__expired { align-items: flex-start; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); display: flex; gap: var(--wiki-space-2); margin: var(--wiki-space-4) 0 0; padding: var(--wiki-space-3); }
-.agent-operation__risk { background: var(--wiki-surface-sunken); border-inline-start: 3px solid var(--operation-accent); }
-.agent-operation__risk > span { display: grid; gap: var(--wiki-space-1); min-width: 0; overflow-wrap: anywhere; }
-.agent-operation__risk strong,
-.agent-operation__decision-copy strong { font-size: .875rem; font-weight: 650; }
+.agent-operation__expired {
+  display: flex;
+  gap: var(--wiki-space-2);
+  align-items: flex-start;
+  margin: var(--wiki-space-4) 0 0;
+  padding: var(--wiki-space-3);
+  border-radius: var(--wiki-control-radius);
+}
+
+.agent-operation__risk {
+  border: 1px solid color-mix(in srgb, var(--operation-accent) 32%, transparent);
+  background: color-mix(in srgb, var(--operation-accent) 9%, transparent);
+  color: color-mix(in srgb, var(--operation-accent) 80%, rgb(var(--v-theme-on-surface)));
+}
+
+.agent-operation__risk > span {
+  display: grid;
+  gap: var(--wiki-space-1);
+  min-width: 0;
+}
+
 .agent-operation__risk small,
-.agent-operation__decision-copy small { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.5; }
-.agent-operation__decision-error span { min-width: 0; overflow-wrap: anywhere; }
-.operation-facts { display: grid; font-size: .875rem; gap: var(--wiki-space-2) var(--wiki-space-4); grid-template-columns: minmax(6rem, auto) minmax(0, 1fr); margin: var(--wiki-space-3) 0 0; }
-.operation-facts dt { color: var(--wiki-text-muted); font-size: .8125rem; font-weight: 550; }
-.operation-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.agent-operation__decision-copy small {
+  color: var(--wiki-text-muted);
+  line-height: 1.45;
+}
+
+.agent-operation__decision-error span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.operation-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--wiki-space-2) var(--wiki-space-4);
+  margin: var(--wiki-space-4) 0 0;
+}
+
+.operation-facts dt {
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.operation-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .operation-facts code,
-.proposal-diff pre,
-.agent-operation__path :deep(input) { direction: ltr; font-family: var(--wiki-font-mono); text-align: start; unicode-bidi: plaintext; }
-.operation-facts code { background: var(--wiki-surface-sunken); font-size: .875em; overflow-wrap: anywhere; padding-inline: var(--wiki-space-1); }
-.operation-facts__secondary { color: var(--wiki-text-muted); font-size: .8125rem; }
-.operation-facts--technical { background: var(--wiki-surface-sunken); padding: var(--wiki-space-3); }
-.operation-disclosure { background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); margin-top: var(--wiki-space-3); overflow: hidden; }
+.proposal-diff pre {
+  direction: ltr;
+  font-family: var(--wiki-font-mono);
+  text-align: start;
+  unicode-bidi: plaintext;
+}
+
+.operation-facts code {
+  padding: 0 var(--wiki-space-1);
+  border-radius: var(--wiki-radius-xs);
+  background: var(--wiki-surface-sunken);
+  font-size: .82em;
+  word-break: break-all;
+}
+
+.operation-facts__secondary {
+  color: var(--wiki-text-muted);
+  font-size: .82em;
+}
+
+.operation-facts--technical {
+  margin-top: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+}
+
+.operation-disclosure {
+  margin-top: var(--wiki-space-4);
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: rgb(var(--v-theme-surface));
+}
+
 .operation-disclosure summary,
-.agent-operation-receipt > summary { align-items: center; cursor: pointer; display: flex; gap: var(--wiki-space-2); list-style: none; min-height: 44px; padding: var(--wiki-space-2) var(--wiki-space-3); }
+.agent-operation-receipt > summary {
+  display: flex;
+  gap: var(--wiki-space-2);
+  align-items: center;
+  min-height: var(--wiki-control-height);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  cursor: pointer;
+  list-style: none;
+}
+
 .operation-disclosure summary::-webkit-details-marker,
-.agent-operation-receipt > summary::-webkit-details-marker { display: none; }
-.operation-disclosure summary > span { align-items: center; display: flex; font-size: .875rem; font-weight: 550; gap: var(--wiki-space-2); min-width: 0; overflow-wrap: anywhere; }
-.operation-disclosure summary small { color: var(--wiki-text-muted); font-size: .8125rem; margin-inline-start: auto; min-width: 0; overflow-wrap: anywhere; text-align: end; }
+.agent-operation-receipt > summary::-webkit-details-marker {
+  display: none;
+}
+
+.operation-disclosure summary > span {
+  display: flex;
+  gap: var(--wiki-space-2);
+  align-items: center;
+  min-width: 0;
+  font-weight: 650;
+}
+
+.operation-disclosure summary small {
+  margin-inline-start: auto;
+  color: var(--wiki-text-muted);
+  text-align: end;
+}
+
+.operation-disclosure summary small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .operation-disclosure summary::after,
-.agent-operation-receipt > summary::after { content: '›'; flex: 0 0 auto; font-size: 1.25rem; transform: rotate(90deg); }
+.agent-operation-receipt > summary::after {
+  content: '›';
+  flex: 0 0 auto;
+  font-size: 1.25rem;
+  transform: rotate(90deg);
+  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
 .operation-disclosure[open] summary::after,
-.agent-operation-receipt[open] > summary::after { transform: rotate(270deg); }
-.operation-disclosure > .operation-facts { border-top: 1px solid var(--wiki-surface-border); margin: 0; }
-.proposal-diff { background: var(--wiki-surface-sunken); border-top: 1px solid var(--wiki-surface-border); min-width: 0; overflow: hidden; }
-.proposal-diff pre { font-size: .8125rem; line-height: 1.55; margin: 0; max-height: min(24rem, 45dvh); overflow: auto; overscroll-behavior: contain; padding: var(--wiki-space-3); scrollbar-gutter: stable; white-space: pre; }
+.agent-operation-receipt[open] > summary::after {
+  transform: rotate(270deg);
+}
+
+.operation-disclosure > .operation-facts {
+  margin: 0;
+}
+
+.proposal-diff {
+  overflow: hidden;
+  border-block-start: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+}
+
+.proposal-diff pre {
+  max-height: 30rem;
+  margin: 0;
+  padding: var(--wiki-space-3);
+  overflow: auto;
+  font-size: .78rem;
+  line-height: 1.55;
+  overscroll-behavior: contain;
+  white-space: pre;
+}
+
 .proposal-diff ins,
 .proposal-diff del,
-.proposal-diff span { display: inline; text-decoration: none; }
-.proposal-diff ins { background: color-mix(in srgb, rgb(var(--v-theme-success)) 16%, var(--wiki-surface-sunken)); }
-.proposal-diff del { background: color-mix(in srgb, rgb(var(--v-theme-error)) 14%, var(--wiki-surface-sunken)); text-decoration: line-through; }
-.agent-operation__diff-toggle { margin: var(--wiki-space-2); }
-.agent-operation__confirmation { background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-inline-start: 3px solid rgb(var(--v-theme-error)); border-radius: var(--wiki-control-radius); font-size: .875rem; margin-top: var(--wiki-space-3); padding: var(--wiki-space-3); }
-.agent-operation__confirmation p { line-height: 1.5; margin: 0 0 var(--wiki-space-2); }
-.agent-operation__confirmation :deep(.v-messages__message) { overflow-wrap: anywhere; }
-.agent-operation__network-note { color: var(--wiki-text-muted); font-size: .875rem; margin-top: var(--wiki-space-3); }
-.agent-operation__decision-error { background: var(--wiki-surface-sunken); border-inline-start: 3px solid rgb(var(--v-theme-error)); }
-.agent-operation__decision { align-items: end; border-top: 1px solid var(--wiki-surface-border); display: flex; flex-wrap: wrap; gap: var(--wiki-space-3); justify-content: space-between; margin-top: var(--wiki-space-4); padding-top: var(--wiki-space-3); }
-.agent-operation__decision-copy { display: grid; flex: 1 1 18rem; gap: var(--wiki-space-1); max-width: 34rem; min-width: 0; overflow-wrap: anywhere; }
-.agent-operation__actions { display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); }
-.agent-operation__expired { background: var(--wiki-surface-sunken); border-inline-start: 3px solid rgb(var(--v-theme-warning)); font-size: .875rem; }
-.agent-operation-receipt--running { --operation-accent: rgb(var(--v-theme-primary)); }
-.agent-operation-receipt--success { --operation-accent: rgb(var(--v-theme-success)); }
-.agent-operation-receipt--omitted { --operation-accent: rgb(var(--v-theme-info)); }
-.agent-operation-receipt--not_executed,
-.agent-operation-receipt--cancelled { --operation-accent: var(--wiki-text-muted); }
-.agent-operation-receipt--failed,
-.agent-operation-receipt--denied { --operation-accent: rgb(var(--v-theme-error)); }
-.agent-operation-receipt--expired { --operation-accent: rgb(var(--v-theme-warning)); }
-.agent-operation-receipt > summary { flex-wrap: wrap; padding: var(--wiki-space-3) var(--wiki-space-4); }
-.agent-operation-receipt__mark { height: 2rem; width: 2rem; }
-.agent-operation-receipt__heading { display: grid; flex: 1; min-width: 0; }
-.agent-operation-receipt__heading strong { font-size: .875rem; font-weight: 650; overflow-wrap: anywhere; }
-.agent-operation-receipt__heading small,
-.agent-operation-receipt > summary time { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.45; overflow-wrap: anywhere; }
-.agent-operation-receipt > summary time { font-variant-numeric: tabular-nums; }
-.agent-operation-receipt__details { border-top: 1px solid var(--wiki-surface-border); padding: var(--wiki-space-4); }
-.agent-operation-receipt__note { font-size: .875rem; line-height: 1.5; margin: 0; }
-.sr-only { border: 0; clip: rect(0, 0, 0, 0); height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
-@media (max-width: 599.98px) {
-  .agent-operation { padding: var(--wiki-space-3); }
-  .agent-operation__header { grid-template-columns: auto minmax(0, 1fr); }
-  .agent-operation__header :deep(.v-chip) { grid-column: 1 / -1; justify-self: start; }
-  .operation-facts { gap: var(--wiki-space-1); grid-template-columns: minmax(0, 1fr); }
-  .operation-facts dd + dt { margin-top: var(--wiki-space-2); }
-  .agent-operation__decision { align-items: stretch; flex-direction: column; }
-  .agent-operation__decision-copy { flex-basis: auto; }
-  .agent-operation__actions { flex-direction: column; }
-  .agent-operation__actions :deep(.v-btn) { height: auto; min-height: 44px; padding-block: var(--wiki-space-2); width: 100%; }
-  .agent-operation__actions :deep(.v-btn__content) { white-space: normal; }
-  .agent-operation__diff-toggle { min-height: 44px; }
-  .operation-disclosure summary { flex-wrap: wrap; }
-  .operation-disclosure summary > span { flex: 1 1 10rem; }
-  .operation-disclosure summary small { text-align: start; }
-  .agent-operation-receipt > summary time { flex-basis: 100%; padding-inline-start: 2.5rem; }
+.proposal-diff span {
+  display: inline;
+  text-decoration: none;
 }
+
+.proposal-diff ins {
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 20%, transparent);
+}
+
+.proposal-diff del {
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 18%, transparent);
+  text-decoration: line-through;
+}
+
+.agent-operation__confirmation {
+  margin-top: var(--wiki-space-4);
+  padding: var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 36%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 7%, var(--wiki-surface-raised));
+}
+
+.agent-operation__confirmation p {
+  margin: 0 0 var(--wiki-space-2);
+}
+
+.agent-operation__confirmation :deep(.v-messages__message) {
+  overflow-wrap: anywhere;
+}
+
+.agent-operation__decision-error {
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 34%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 9%, transparent);
+  color: rgb(var(--v-theme-error));
+}
+
+.agent-operation__decision {
+  display: flex;
+  gap: var(--wiki-space-4);
+  align-items: end;
+  justify-content: space-between;
+  margin-top: var(--wiki-space-5);
+  padding-top: var(--wiki-space-4);
+  border-block-start: 1px solid var(--wiki-surface-border);
+}
+
+.agent-operation__decision-copy {
+  display: grid;
+  gap: var(--wiki-space-1);
+  max-width: 34rem;
+}
+
+.agent-operation__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--wiki-space-2);
+}
+
+.agent-operation__expired {
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 34%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 9%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-warning)) 74%, rgb(var(--v-theme-on-surface)));
+}
+
+.agent-operation-receipt--running {
+  --operation-accent: rgb(var(--v-theme-primary));
+}
+
+.agent-operation-receipt--success {
+  --operation-accent: rgb(var(--v-theme-success));
+}
+.agent-operation-receipt--omitted {
+  --operation-accent: rgb(var(--v-theme-info));
+}
+
+.agent-operation-receipt--not_executed {
+  --operation-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+}
+
+.agent-operation-receipt--failed,
+.agent-operation-receipt--denied {
+  --operation-accent: rgb(var(--v-theme-error));
+}
+
+.agent-operation-receipt--cancelled {
+  --operation-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+}
+
+.agent-operation-receipt--expired {
+  --operation-accent: rgb(var(--v-theme-warning));
+}
+
+.agent-operation-receipt > summary {
+  padding: var(--wiki-space-3) var(--wiki-space-4);
+}
+
+.agent-operation-receipt__mark {
+  width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+}
+
+.agent-operation-receipt__heading {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-operation-receipt__heading strong {
+  color: var(--operation-accent);
+}
+
+.agent-operation-receipt__heading small,
+.agent-operation-receipt > summary time {
+  overflow-wrap: anywhere;
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+}
+
+.agent-operation-receipt > summary time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-operation-receipt__details {
+  padding: var(--wiki-space-4);
+  border-block-start: 1px solid var(--wiki-surface-border);
+}
+
+.agent-operation-receipt__note {
+  margin: 0;
+  color: var(--wiki-text-muted);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+@media (pointer: coarse) {
+  .agent-operation__diff-toggle {
+    min-width: var(--wiki-control-height);
+    min-height: var(--wiki-control-height);
+  }
+}
+
+@media (max-width: 599.98px) {
+  .agent-operation {
+    padding: var(--wiki-space-3);
+  }
+
+  .agent-operation__header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .agent-operation__header :deep(.v-chip) {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .operation-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--wiki-space-1);
+  }
+
+  .operation-facts dd + dt {
+    margin-top: var(--wiki-space-2);
+  }
+
+  .agent-operation__decision {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-operation__actions {
+    flex-direction: column;
+  }
+
+  .agent-operation__actions :deep(.v-btn) {
+    width: 100%;
+    min-height: var(--wiki-control-height);
+  }
+
+  .operation-disclosure summary {
+    align-items: flex-start;
+  }
+
+  .operation-disclosure summary small,
+  .agent-operation-receipt > summary time {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operation-disclosure summary::after,
+  .agent-operation-receipt > summary::after {
+    transition: none;
+  }
+}
+
 @media (forced-colors: active) {
   .agent-operation,
   .agent-operation-receipt,
@@ -634,12 +956,24 @@ const decide = (decision: 'approved' | 'denied'): void => {
   .agent-operation__risk,
   .agent-operation__confirmation,
   .agent-operation__decision-error,
-  .agent-operation__expired { border-color: CanvasText; }
-  .proposal-diff ins { border-inline-start: 3px solid CanvasText; }
-  .proposal-diff del { border-inline-start: 3px double CanvasText; }
+  .agent-operation__expired {
+    border-color: CanvasText;
+  }
+
+  .proposal-diff ins {
+    border-inline-start: var(--wiki-space-1) solid CanvasText;
+  }
+
+  .proposal-diff del {
+    border-inline-start: var(--wiki-space-1) double CanvasText;
+  }
+
   .agent-operation:focus-visible,
   .agent-operation-receipt summary:focus-visible,
   .operation-disclosure summary:focus-visible,
-  .proposal-diff pre:focus-visible { outline-color: Highlight; }
+  .proposal-diff pre:focus-visible {
+    outline: var(--wiki-space-1) solid Highlight;
+    outline-offset: calc(-1 * var(--wiki-focus-offset));
+  }
 }
 </style>

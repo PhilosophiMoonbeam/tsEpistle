@@ -7,7 +7,7 @@
           .tags-intro-copy
             .tags-eyebrow
               v-icon(size='18' aria-hidden='true') mdi-tag-outline
-              span {{$t('tags:workbenchEyebrow', { defaultValue: 'Knowledge vocabulary' })}}
+              span {{$t('tags:libraryEyebrow', { defaultValue: 'Editorial library' })}}
             h1#tags-library-title {{$t('common:header.browseTags')}}
             p {{$t('tags:libraryDescription', { defaultValue: 'Tags group related pages into a shared library. Select one or more tags to find pages that match every choice.' })}}
 
@@ -18,7 +18,7 @@
           .tags-selection-heading
             div
               h2 {{$t('tags:currentSelection', { defaultValue: 'Selected tags' })}}
-              p {{$t('tags:andSelection', { defaultValue: 'AND filter · Pages must match every selected tag.' })}}
+              p {{$t('tags:allSelectedTagsMatch', { defaultValue: 'Pages must match every selected tag.' })}}
             v-btn.tags-clear-selection(
               variant='text'
               color='primary'
@@ -59,7 +59,7 @@
                 h2#tags-index-title {{$t('tags:indexTitle', { defaultValue: 'Tag index' })}}
               v-text-field.tags-index-search(
                 v-model='tagSearch'
-                :label='$t(`tags:filterLoadedTags`, { defaultValue: `Filter loaded tags` })'
+                :label='$t(`tags:searchTags`, { defaultValue: `Search tags` })'
                 variant='outlined'
                 hide-details
                 clearable
@@ -122,7 +122,7 @@
                 v-else
                 :aria-label='$t(`tags:indexTitle`, { defaultValue: `Tag index` })'
               )
-                section.tags-index-group(v-for='group of pagedTagGroups' :key='`tag-group-` + group.name')
+                section.tags-index-group(v-for='group of tagsGrouped' :key='`tag-group-` + group.name')
                   h3 {{group.name}}
                   ul.tags-index-list
                     li.tags-index-row(v-for='tag of group.tags' :key='`tag-` + tag.tag')
@@ -160,8 +160,6 @@
                           :data-tag-color='tagColor(tag.tag)'
                         ) {{isFollowed(tag.tag) ? 'mdi-cloud-check' : 'mdi-cloud-download-outline'}}
                         span {{ followTagVisibleLabel(tag.tag) }}
-              .tags-pagination(v-if='tagIndexPageCount > 1 && !tagsError')
-                v-pagination(v-model='tagIndexPage' :length='tagIndexPageCount' :total-visible='5' :aria-label='$t(`tags:indexPagination`, { defaultValue: `Tag index pagination` })')
 
           section.tags-results(
             v-if='hasSelection'
@@ -185,7 +183,7 @@
             .tags-results-toolbar
               v-text-field.tags-results-search(
                 v-model='innerSearch'
-                :label='$t(`tags:filterLoadedPages`, { defaultValue: `Filter loaded matching pages` })'
+                :label='$t(`tags:searchWithinResultsPlaceholder`, { defaultValue: `Search these pages` })'
                 variant='outlined'
                 hide-details
                 clearable
@@ -242,7 +240,7 @@
                 p.tags-results-status(role='status')
                   span(v-if='isLoading') {{$t('tags:retrievingResultsLoading', { defaultValue: 'Loading matching pages…' })}}
                   span(v-else-if='pagesError') {{offlineBrowseUnavailable ? $t('tags:reconnectToViewPages') : $t('tags:resultsError', { defaultValue: 'Matching pages could not be loaded.' })}}
-                  span(v-else) {{$t('tags:loadedMatchingPagesCount', { defaultValue: props.itemsCount + ' matching loaded pages', count: props.itemsCount })}}
+                  span(v-else) {{$t('tags:matchingPagesCount', { count: props.itemsCount })}}
               template(v-slot:loader)
                 //- The header status line already announces loading.
                 async-state(
@@ -372,8 +370,6 @@ export default {
       tags: [] as PageTagRow[],
       selection: [] as string[],
       tagSearch: '',
-      tagIndexPage: 1,
-      tagIndexPageSize: 100,
       indexExpanded: true,
       innerSearch: '',
       locale: 'any',
@@ -450,24 +446,6 @@ export default {
         })
         .map(([name, tags]) => ({ name, tags }))
     },
-    tagIndexPageCount (): number {
-      return Math.max(1, Math.ceil(this.filteredTags.length / this.tagIndexPageSize))
-    },
-    pagedTagGroups (): TagGroup[] {
-      const start = (this.tagIndexPage - 1) * this.tagIndexPageSize
-      const end = start + this.tagIndexPageSize
-      let offset = 0
-      const visible: TagGroup[] = []
-      for (const group of this.tagsGrouped) {
-        const groupEnd = offset + group.tags.length
-        if (groupEnd > start && offset < end) {
-          visible.push({ name: group.name, tags: group.tags.slice(Math.max(0, start - offset), Math.min(group.tags.length, end - offset)) })
-        }
-        offset = groupEnd
-        if (offset >= end) break
-      }
-      return visible
-    },
     tagsSelected (): SelectedTag[] {
       return this.selection.map((tag: string) => {
         const known = this.tags.find((entry: PageTagRow) => entry.tag === tag)
@@ -489,7 +467,7 @@ export default {
       if (this.tagsError) return this.$t('tags:loadError', { defaultValue: 'Tags could not be loaded' })
       if (this.tags.length === 0) return this.$t('tags:empty', { defaultValue: 'No tags available' })
       if (typeof this.tagSearch === 'string' && this.tagSearch.trim() && this.filteredTags.length === 0) return this.$t('tags:noMatchingTags', { defaultValue: 'No matching tags' })
-      return this.$t('tags:loadedIndexStatus', { defaultValue: '{{shown}} of {{loaded}} loaded tags · Index page {{page}} of {{pages}}', shown: this.filteredTags.length, loaded: this.tags.length, page: this.tagIndexPage, pages: this.tagIndexPageCount })
+      return this.$t('tags:indexStatus', { defaultValue: 'Browse the alphabetical tag index' })
     },
     orderByItems () {
       return [
@@ -502,12 +480,6 @@ export default {
     }
   },
   watch: {
-    tagSearch () {
-      this.tagIndexPage = 1
-    },
-    tagIndexPageCount (count: number) {
-      this.tagIndexPage = Math.min(this.tagIndexPage, count)
-    },
     locale () {
       if (this.routeSyncReady) this.rebuildURL()
     },
@@ -954,10 +926,11 @@ export default {
 .tags-intro h1 {
   margin: var(--wiki-space-2) 0 var(--wiki-space-3);
   color: rgb(var(--v-theme-on-surface));
-  font-family: var(--wiki-font-heading);
-  font-size: clamp(1.5rem, 3vw, 2rem);
-  font-weight: 700;
-  line-height: 1.35;
+  font-family: var(--wiki-font-display);
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 750;
+  letter-spacing: -.045em;
+  line-height: 1.12;
 }
 
 .tags-intro p {
@@ -1076,13 +1049,13 @@ export default {
 .tags-workspace {
   display: block;
   min-width: 0;
-  margin-top: var(--wiki-space-4);
+  margin-top: var(--wiki-space-6);
 }
 
 .tags-workspace--selected {
   display: grid;
-  grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr);
-  gap: var(--wiki-space-4);
+  grid-template-columns: 336px minmax(0, 1fr);
+  gap: var(--wiki-space-6);
   align-items: start;
 }
 
@@ -1100,7 +1073,7 @@ export default {
 .tags-follow-help,
 .tags-follow-status {
   margin: var(--wiki-space-3) var(--wiki-space-5) 0;
-  color: var(--wiki-text-muted);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, var(--wiki-surface-raised));
   font-size: .8125rem;
   line-height: 1.5;
 }
@@ -1163,13 +1136,8 @@ export default {
 .tags-index-tree {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--wiki-space-4);
+  gap: var(--wiki-space-6) var(--wiki-space-5);
   min-width: 0;
-  max-height: 65dvh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  padding: var(--wiki-space-1);
 }
 
 .tags-index-group {
@@ -1213,7 +1181,7 @@ export default {
   border: 1px solid transparent;
   border-radius: var(--wiki-control-radius);
   background: transparent;
-  color: var(--wiki-text-muted);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, var(--wiki-surface-raised));
   cursor: pointer;
   font-size: .8125rem;
   font-weight: 650;
@@ -1255,6 +1223,7 @@ export default {
 
 .tags-follow-item-icon {
   flex: 0 0 auto;
+  transform-origin: 50% 25%;
 }
 
 .tags-follow-item-icon.wiki-tag-color[data-tag-color] {
@@ -1264,6 +1233,16 @@ export default {
   opacity: 1;
 }
 
+.tags-follow-item--animate .tags-follow-item-icon {
+  animation: tags-follow-toggle 360ms ease-out;
+}
+
+@keyframes tags-follow-toggle {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(-12deg) scale(1.1); }
+  55% { transform: rotate(8deg) scale(1.05); }
+  80% { transform: rotate(-3deg) scale(1); }
+}
 
 .tags-index-item {
   display: flex;
@@ -1350,10 +1329,6 @@ export default {
 
 .tags-results {
   min-width: 0;
-  padding: var(--wiki-space-5);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
 }
 
 .tags-results-header {
@@ -1385,7 +1360,7 @@ export default {
 
 .tags-results-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
   gap: var(--wiki-space-3);
   min-width: 0;
   margin-bottom: var(--wiki-space-4);
@@ -1438,7 +1413,7 @@ export default {
 .tags-result-link {
   display: block;
   min-width: 0;
-  padding: var(--wiki-space-4) var(--wiki-space-2);
+  padding: var(--wiki-space-5) var(--wiki-space-2);
   color: inherit;
   text-decoration: none;
   transition:
@@ -1452,7 +1427,7 @@ export default {
 
 .tags-result-link h3 {
   margin: var(--wiki-space-2) 0 var(--wiki-space-1);
-  color: rgb(var(--v-theme-on-surface));
+  color: var(--wiki-accent-ink);
   font-family: var(--wiki-font-heading);
   font-size: 1.125rem;
   font-weight: 700;
@@ -1485,7 +1460,7 @@ export default {
 }
 
 .tags-result-path {
-  color: var(--wiki-text-muted);
+  color: var(--wiki-accent-ink);
   font-family: var(--wiki-font-mono);
   overflow-wrap: anywhere;
 }
@@ -1526,13 +1501,13 @@ export default {
   }
 }
 
-@media (min-width: 840px) {
+@media (min-width: 960px) {
   .tags-workspace--selected .tags-index-tree {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-@media (max-width: 839.98px) {
+@media (max-width: 959.98px) {
   .tags-shell {
     padding: var(--wiki-space-6) var(--wiki-space-4) var(--wiki-space-8) !important;
   }
@@ -1560,7 +1535,7 @@ export default {
   }
 
   .tags-intro h1 {
-    font-size: 1.5rem;
+    font-size: clamp(2rem, 11vw, 2.5rem);
   }
   .tags-selection,
   .tags-index-heading,
@@ -1631,6 +1606,9 @@ export default {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .tags-follow-item--animate .tags-follow-item-icon {
+    animation: none;
+  }
   .tags * {
     transition-duration: .01ms !important;
     animation-duration: .01ms !important;

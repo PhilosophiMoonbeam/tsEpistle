@@ -1,206 +1,371 @@
 .extensions-workspace {
+  --extensions-line: rgba(var(--v-theme-on-surface), 0.14);
+  --extensions-wash: rgba(var(--v-theme-primary), 0.055);
+  --extensions-muted: var(--wiki-text-muted);
   max-width: 1540px;
-  min-width: 0;
-  padding-bottom: 2rem;
-  color: rgb(var(--v-theme-on-surface));
-  overflow-wrap: anywhere;
+  padding-bottom: 2.5rem !important;
 }
 
-.extensions-summary {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: .75rem 2rem;
-  padding-block: .75rem;
-  border-bottom: 1px solid var(--wiki-surface-border);
-  margin-bottom: 1rem;
+.extensions-kicker {
+  display: block;
+  color: var(--wiki-accent-ink);
+  font-size: var(--wiki-label-size);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.extensions-detail h2,
+.extensions-library-heading h2 {
+  font-family: var(--font-family-serif, Georgia, serif);
+  font-weight: 500;
+  letter-spacing: -0.035em;
 }
 
 .extensions-heading-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .75rem 1.5rem;
-  margin: 0;
-  > div { display: flex; align-items: baseline; gap: .5rem; }
-  dt { color: var(--wiki-text-muted); font-size: .75rem; }
-  dd { margin: 0; font-size: .875rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  display: grid;
+  max-width: 32rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin: 0.85rem 0 0.75rem;
+}
+
+.extensions-heading-facts dt,
+.extensions-installation dt {
+  color: var(--extensions-muted);
+  font-size: var(--wiki-label-size);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.extensions-heading-facts dd,
+.extensions-installation dd {
+  margin: 0.22rem 0 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.extensions-heading-facts .extensions-stat {
+  font-family: var(--font-family-serif, Georgia, serif);
+  font-size: 1.25rem;
+  line-height: 1;
 }
 
 .extensions-boundary {
   display: flex;
-  align-items: flex-start;
-  gap: .5rem;
-  flex: 1 1 280px;
+  align-items: start;
+  gap: 0.4rem;
   min-width: 0;
   margin: 0;
-  color: var(--wiki-text-muted);
-  font-size: .75rem;
-  line-height: 1.6;
-  .v-icon { flex-shrink: 0; margin-top: .15rem; }
+  padding-left: 0.65rem;
+  color: var(--extensions-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  border-left: 2px solid var(--wiki-accent-ink);
+}
+
+.extensions-boundary .v-icon {
+  flex: 0 0 auto;
+  margin-top: 0.08rem;
+  color: var(--wiki-accent-ink);
 }
 
 .extensions-library {
   display: grid;
-  grid-template-columns: minmax(250px,330px) minmax(0,1fr);
-  gap: 1rem;
-  align-items: start;
+  grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 2.28fr);
+  gap: 0;
+  margin-top: 1rem;
+  border: 1px solid var(--extensions-line);
+  border-radius: 0.8rem;
+  overflow: hidden;
 }
 
 .extensions-library-nav {
   display: flex;
   flex-direction: column;
-  gap: .75rem;
-  min-width: 0;
+  gap: 0.65rem;
   padding: 1rem;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  > .v-input { flex: 0 0 auto; }
+  background: var(--extensions-wash);
+  border-right: 1px solid var(--extensions-line);
+}
+
+.extensions-library-nav > .v-input {
+  flex: 0 0 auto;
 }
 
 .extensions-library-heading {
   display: flex;
-  align-items: center;
+  align-items: end;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: .5rem;
-  h2 { margin: 0; font-size: 1rem; font-weight: 650; line-height: 1.4; font-family: var(--wiki-font-heading); }
-  > span { font-size: .75rem; color: var(--wiki-text-muted); }
+  gap: 0.75rem;
 }
 
-.extensions-filter-note, .extensions-recovery-note {
+.extensions-library-heading h2 {
+  margin: 0.25rem 0 0;
+  font-size: 1.4rem;
+  line-height: 1.1;
+}
+
+.extensions-library-heading > span,
+.extensions-filter-note,
+.extensions-recovery-note {
+  color: var(--extensions-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.extensions-filter-note {
   margin: 0;
-  color: var(--wiki-text-muted);
-  font-size: .75rem;
-  line-height: 1.6;
 }
 
 .extensions-library-list {
   display: grid;
-  max-height: 600px;
-  overflow-y: auto;
-  margin: 0;
-  padding: 2px;
+  gap: 0.25rem;
+  margin: 0.15rem 0 0;
+  padding: 0;
   list-style: none;
 }
 
 .extensions-library-row {
   display: grid;
-  grid-template-columns: auto minmax(0,1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   width: 100%;
-  min-height: 44px;
-  gap: .65rem;
-  padding: .75rem .5rem;
+  gap: 0.65rem;
+  padding: 0.65rem;
   color: inherit;
-  text-align: start;
+  text-align: left;
   background: transparent;
   border: 1px solid transparent;
-  border-bottom-color: var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
+  border-radius: 0.5rem;
   cursor: pointer;
-  &:hover { background: var(--wiki-surface-sunken); }
-  &.is-selected { background: var(--wiki-surface-sunken); border-color: var(--wiki-primary-ink); }
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.extensions-library-row:hover {
+  background: rgba(var(--v-theme-surface), 0.72);
+  border-color: var(--extensions-line);
+}
+
+.extensions-library-row.is-selected {
+  background: rgb(var(--v-theme-surface));
+  border-color: var(--wiki-accent-ink);
+  box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.06);
 }
 
 .extensions-library-row:focus-visible,
-.extensions-detail :is(a,button):focus-visible {
-  outline: 2px solid var(--wiki-focus-color);
-  outline-offset: -2px;
+.extensions-detail :is(a, button):focus-visible {
+  outline: 2px solid var(--wiki-accent-ink);
+  outline-offset: 3px;
 }
 
 .extensions-library-copy {
   display: grid;
   min-width: 0;
-  gap: .2rem;
-  strong { font-size: .8125rem; font-weight: 650; }
-  small { color: var(--wiki-text-muted); font-size: .75rem; }
+  gap: 0.12rem;
+}
+
+.extensions-library-copy strong,
+.extensions-fact-list strong {
+  overflow-wrap: anywhere;
+}
+
+.extensions-library-copy small {
+  color: var(--extensions-muted);
+  font-size: 0.7rem;
 }
 
 .extensions-detail {
   min-width: 0;
-  padding: 1rem;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  h2 { font-family: var(--wiki-font-heading); margin: .35rem 0; font-size: 1.125rem; font-weight: 650; line-height: 1.4; }
-  h3 { margin: 0 0 .5rem; font-size: .875rem; font-weight: 650; }
-  p { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.6; }
+  padding: clamp(1rem, 2.25vw, 2rem);
 }
-
-.extensions-kicker { display: block; color: var(--wiki-text-muted); font-size: .75rem; font-weight: 600; }
 
 .extensions-detail-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: .75rem;
-  padding-bottom: .75rem;
-  border-bottom: 1px solid var(--wiki-surface-border);
-  > div:first-child { flex: 1 1 240px; min-width: 0; }
-  p { margin: 0; }
+  align-items: start;
+  gap: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--extensions-line);
+}
+
+.extensions-detail h2 {
+  margin: 0.3rem 0 0.45rem;
+  font-size: clamp(1.75rem, 2.8vw, 2.65rem);
+  line-height: 1;
+}
+
+.extensions-detail-header p,
+.extensions-detail section > div > p,
+.extensions-fact-list p {
+  color: var(--extensions-muted);
+  line-height: 1.55;
+}
+
+.extensions-detail-header p {
+  max-width: 48rem;
+  margin: 0;
 }
 
 .extensions-state-chips {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
-  gap: .4rem;
-  max-width: 100%;
-  .v-chip { max-width: 100%; height: auto; min-height: 28px; }
-  .v-chip__content { white-space: normal; overflow-wrap: anywhere; padding-block: .2rem; }
+  justify-content: end;
+  gap: 0.4rem;
 }
 
 .extensions-evidence {
-  margin-block: 1rem;
-  padding: .75rem;
-  background: var(--wiki-surface-sunken);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  p { margin: 0 0 .35rem; }
-  time { color: var(--wiki-text-muted); font-size: .75rem; }
+  margin: 1rem 0;
+  padding: 0.75rem 0.9rem;
+  background: var(--extensions-wash);
+  border-left: 3px solid var(--wiki-accent-ink);
+}
+
+.extensions-evidence h3,
+.extensions-installation h3,
+.extensions-grid h3,
+.extensions-recovery h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.92rem;
+}
+
+.extensions-evidence p {
+  margin: 0.15rem 0 0.4rem;
+  line-height: 1.5;
+}
+
+.extensions-evidence time {
+  color: var(--extensions-muted);
+  font-size: 0.72rem;
+}
+
+.extensions-installation,
+.extensions-recovery {
+  display: grid;
+  grid-template-columns: 1.7rem minmax(0, 1fr);
+  gap: 0.65rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--extensions-line);
+}
+
+.extensions-installation {
+  border-top: 0;
+}
+
+.extensions-installation p,
+.extensions-recovery p {
+  max-width: 57rem;
+  margin: 0;
+  line-height: 1.55;
+}
+
+.extensions-installation dl {
+  margin: 0.75rem 0 0;
+}
+
+.extensions-section-number {
+  color: var(--wiki-accent-ink);
+  font-family: var(--font-family-serif, Georgia, serif);
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .extensions-grid {
   display: grid;
-  grid-template-columns: repeat(2,minmax(0,1fr));
-  gap: 1rem;
-  padding-block: .75rem;
-  > section { min-width: 0; }
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--extensions-line);
+}
+
+.extensions-grid > section {
+  min-width: 0;
+}
+
+.extensions-grid .extensions-section-number {
+  display: block;
+  margin-bottom: 0.55rem;
 }
 
 .extensions-fact-list {
   display: grid;
-  margin: 0;
+  gap: 0.7rem;
   padding: 0;
+  margin: 0;
   list-style: none;
-  li { padding-block: .75rem; border-bottom: 1px solid var(--wiki-surface-border); }
-  li:first-child { padding-top: 0; }
-  strong { font-size: .8125rem; font-weight: 650; }
-  p { margin: .25rem 0 0; }
-  .v-btn { margin-top: .35rem; max-width: 100%; height: auto; min-height: 44px; }
-  .v-btn__content { white-space: normal; text-align: start; padding-block: .5rem; }
 }
 
-.extensions-installation, .extensions-recovery {
-  padding-block: .75rem;
-  border-top: 1px solid var(--wiki-surface-border);
-  p { margin: 0; }
+.extensions-fact-list li {
+  padding: 0.75rem;
+  background: rgba(var(--v-theme-on-surface), 0.035);
+  border: 1px solid var(--extensions-line);
+  border-radius: 0.5rem;
 }
 
-.extensions-installation dl {
-  margin: .75rem 0 0;
-  dt { color: var(--wiki-text-muted); font-size: .75rem; }
-  dd { margin: .25rem 0 0; font-size: .8125rem; font-weight: 600; }
+.extensions-fact-list p {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
 }
 
-.extensions-recovery-note { margin-top: .5rem !important; }
-
-@media(max-width:840px) {
-  .extensions-library { grid-template-columns: 1fr; }
-  .extensions-library-list { max-height: 260px; }
+.extensions-fact-list .v-btn {
+  margin: 0.3rem -0.35rem -0.3rem;
 }
 
-@media(max-width:599px) {
-  .extensions-grid { grid-template-columns: 1fr; }
+.extensions-recovery {
+  border-bottom: 1px solid var(--extensions-line);
+}
+
+.extensions-recovery-note {
+  margin-top: 0.55rem !important;
+}
+
+@media (max-width: 840px) {
+  .extensions-library {
+    grid-template-columns: 1fr;
+  }
+
+  .extensions-library-nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--extensions-line);
+  }
+
+  .extensions-library-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .extensions-workspace {
+    padding-right: 0.65rem !important;
+    padding-left: 0.65rem !important;
+  }
+
+  .extensions-heading-facts,
+  .extensions-grid,
+  .extensions-library-list {
+    grid-template-columns: 1fr;
+  }
+
+  .extensions-heading-facts {
+    gap: 0.65rem;
+  }
+
+  .extensions-library-nav,
+  .extensions-detail {
+    padding: 0.9rem;
+  }
+
+  .extensions-detail-header {
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .extensions-state-chips {
+    justify-content: start;
+  }
 }

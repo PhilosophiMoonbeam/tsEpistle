@@ -367,7 +367,6 @@ describe('controllers/api pages endpoints', () => {
       getPage: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1],
       links: express.__router.get.mock.calls.find(([path]) => path === '/links')[1],
       listPages: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
-      directory: express.__router.get.mock.calls.find(([path]) => path === '/directory')[1],
       listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
       searchTags: express.__router.get.mock.calls.find(([path]) => path === '/tags/search')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
@@ -387,31 +386,6 @@ describe('controllers/api pages endpoints', () => {
       tree: express.__router.get.mock.calls.find(([path]) => path === '/tree')[1]
     }
   }
-
-
-  it.each([
-    { limit: '0' }, { limit: '101' }, { offset: '-1' }, { offset: '1.5' },
-    { offset: '9007199254740992' }, { search: 'x'.repeat(201) },
-    { creatorId: '0' }, { authorId: ['7', '8'] }, { visibility: 'hidden' },
-    { publication: 'future' }, { orderBy: 'CONTENT' }, { orderByDirection: 'sideways' },
-    { search: ['one', 'two'] }, { untagged: 'yes' }
-  ])('rejects invalid directory query without allocating a candidate list: %j', async query => {
-    const { directory } = await loadHandler()
-    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
-    const next = vi.fn()
-    await directory({ user: { id: 7, permissions: ['read:pages'] }, query }, res, next)
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(global.WIKI.models.pages.query).not.toHaveBeenCalled()
-    expect(next).not.toHaveBeenCalled()
-  })
-
-  it('preserves list admission for unauthenticated directory requests', async () => {
-    const { directory } = await loadHandler()
-    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
-    await directory({ user: { permissions: ['manage:api'] }, query: {} }, res, vi.fn())
-    expect(res.status).toHaveBeenCalledWith(403)
-    expect(global.WIKI.models.pages.query).not.toHaveBeenCalled()
-  })
 
   it('reports visibility path collisions as conflicts after validating the source revision', async () => {
     const collision = new Error('Destination page path already exists.')
@@ -1925,6 +1899,28 @@ describe('controllers/api pages endpoints', () => {
   })
 
 
+  it.each([
+    {
+      stored: { schemaVersion: 1, linksVisible: true, ratingsAllowed: false, lastEditorVisible: true },
+      expected: { schemaVersion: 1, linksVisible: true, ratingsAllowed: false, lastEditorVisible: true }
+    },
+    {
+      stored: { schemaVersion: 1, linksVisible: 'yes', ratingsAllowed: true, lastEditorVisible: true },
+      expected: { schemaVersion: 1, linksVisible: false, ratingsAllowed: false, lastEditorVisible: false }
+    }
+  ])('returns saved page-feature settings and fails closed on malformed metadata', async ({ stored, expected }) => {
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      extra: { pageFeatures: stored }
+    })
+    const { getPage } = await loadHandler()
+    const req = { user: { id: 3, permissions: ['read:pages', 'write:pages'] }, sessionID: 'session-write', params: { id: '7' } }
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
+
+    await getPage(req, res, vi.fn())
+
+    expect(res.json.mock.calls[0][0].pageFeatures).toEqual(expected)
+  })
 
   it('omits field-restricted page metadata from reader detail responses', async () => {
     const { getPage } = await loadHandler()
@@ -1933,14 +1929,11 @@ describe('controllers/api pages endpoints', () => {
 
     await getPage(req, res, vi.fn())
 
-    const response = res.json.mock.calls[0][0]
-    for (const restrictedField of [
-      'isPublished', 'publishStartDate', 'publishEndDate', 'editor',
-      'authorId', 'authorName', 'authorEmail', 'creatorId', 'creatorName', 'creatorEmail'
-    ]) {
-      expect(response).not.toHaveProperty(restrictedField)
+    const details = res.json.mock.calls[0][0]
+    expect(details.capabilities.viewStewardContacts).toBe(false)
+    for (const field of ['isPublished', 'publishStartDate', 'publishEndDate', 'editor', 'authorId', 'authorName', 'authorEmail', 'creatorId', 'creatorName', 'creatorEmail', 'brandingAssignment']) {
+      expect(details).not.toHaveProperty(field)
     }
-    expect(response.capabilities.viewStewardContacts).toBe(false)
   })
 
   it('returns complete valid authority and a revision-matched current projection to field-restricted readers', async () => {

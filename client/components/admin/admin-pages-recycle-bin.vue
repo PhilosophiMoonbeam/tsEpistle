@@ -146,7 +146,6 @@
             <li v-else>{{ $t('admin:pagesRecycleBin.recordedVisibilityOwnershipRetained') }}</li>
           </ul>
           <v-alert v-if="inspected.ownerResolutionRequired" type="info" variant="tonal" density="compact">{{ $t('admin:pagesRecycleBin.recoveryOwnerAccountWill', { value: ownerIdInput || '—', interpolation: { escapeValue: false } }) }}</v-alert>
-          <v-alert v-if="errorMessage" type="error" variant="tonal" class="mt-3" role="alert">{{ errorMessage }}</v-alert>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -367,6 +366,9 @@ export default defineComponent({
         this.restoredPageId = parsed.data.pageId
       } catch (error) {
         this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot2')
+        this.confirmOpen = false
+        await this.loadFirstPage()
+        this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot2')
       } finally {
         this.restoring = false
       }
@@ -379,65 +381,59 @@ export default defineComponent({
 </script>
 
 <style scoped lang="scss">
-.recovery-workspace { max-width: 1600px; min-width: 0; padding-bottom: 2rem !important; }
-.recovery-intro { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(16rem, .8fr); align-items: start; gap: 1rem; padding: 1rem 0; }
-.recovery-kicker { display: block; color: var(--wiki-text-muted); font-size: .75rem; font-weight: 600; line-height: 1.4; }
-.recovery-intro h2 { margin: .375rem 0 .5rem; font: 650 1.125rem/1.35 var(--wiki-font-heading); }
-.recovery-intro > div > p { max-width: 48rem; color: var(--wiki-text-muted); font-size: .875rem; line-height: 1.55; }
-.recovery-limit { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: .75rem; padding: .875rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); }
+.recovery-workspace { max-width: 1680px; padding-bottom: 4rem !important; }
+.recovery-intro { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(18rem, .75fr); align-items: end; gap: 2.5rem; padding: 2.5rem .5rem 2rem; }
+.recovery-kicker { display: block; color: rgb(var(--v-theme-on-surface-variant)); font-size: .68rem; font-weight: 700; letter-spacing: .16em; line-height: 1.4; text-transform: uppercase; }
+.recovery-intro h2 { margin: .65rem 0 .8rem; font: 500 clamp(1.8rem, 3vw, 2.8rem)/1.08 var(--font-family-serif, Georgia, serif); letter-spacing: -.035em; }
+.recovery-intro > div > p { max-width: 48rem; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.65; }
+.recovery-limit { display: grid; grid-template-columns: 2rem 1fr; gap: .75rem; align-items: start; padding: 1.05rem 1.2rem; border-inline-start: 3px solid rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), .06); }
 .recovery-limit .v-icon { color: var(--wiki-primary-ink); }
-.recovery-limit p { margin: 0; font-size: .8125rem; line-height: 1.55; }
+.recovery-limit p { margin: 0; font-size: .88rem; line-height: 1.55; }
 .recovery-limit strong { display: inline-block; margin-bottom: .25rem; }
-.recovery-grid { display: grid; grid-template-columns: minmax(18rem, .8fr) minmax(0, 1.4fr); gap: 1rem; align-items: start; }
-.recovery-ledger, .recovery-inspector { min-width: 0; overflow: hidden; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
-.recovery-panel-heading { display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: .5rem; padding: 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
-.recovery-panel-heading h3 { margin: .25rem 0 0; font-size: 1rem; font-weight: 650; }
-.recovery-count, .snapshot-index { color: var(--wiki-text-muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
-.recovery-records { max-height: 70dvh; overflow: auto; }
-.recovery-record { display: grid; width: 100%; min-height: 44px; grid-template-columns: 2rem minmax(0, 1fr); gap: .5rem; align-items: start; padding: .75rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-raised); color: inherit; text-align: start; cursor: pointer; }
-.recovery-record:hover { background: var(--wiki-surface-sunken); }
-.recovery-record:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -3px; }
-.recovery-record.is-selected { box-shadow: inset 3px 0 var(--wiki-primary-ink); background: var(--wiki-surface-sunken); }
-.record-mark { display: grid; width: 2rem; height: 2rem; place-items: center; color: var(--wiki-primary-ink); }
-.record-copy { display: grid; min-width: 0; gap: .25rem; }
-.record-copy strong { overflow-wrap: anywhere; font-size: .875rem; }
-.record-location, .record-meta { overflow-wrap: anywhere; color: var(--wiki-text-muted); font-size: .75rem; }
-.record-status { grid-column: 2; justify-self: start; color: var(--wiki-text-muted); font-size: .75rem; font-weight: 600; }
-.record-status.is-caution { color: var(--wiki-warning-ink); }
-.recovery-more { width: 100%; min-height: 44px; }
-.recovery-empty { display: flex; min-height: 10rem; flex-direction: column; justify-content: center; align-items: center; gap: .5rem; padding: 1.5rem; color: var(--wiki-text-muted); text-align: center; }
+.recovery-grid { display: grid; grid-template-columns: minmax(19rem, .78fr) minmax(0, 1.4fr); gap: 1.1rem; align-items: start; }
+.recovery-ledger, .recovery-inspector { min-width: 0; overflow: hidden; border: 1px solid rgba(var(--v-border-color), .22); border-radius: 14px; background: rgb(var(--v-theme-surface)); }
+.recovery-panel-heading { display: flex; justify-content: space-between; align-items: end; gap: 1rem; padding: 1.25rem 1.35rem 1rem; border-bottom: 1px solid rgba(var(--v-border-color), .14); }
+.recovery-panel-heading h3 { margin: .35rem 0 0; font-size: 1.15rem; font-weight: 600; }
+.recovery-count, .snapshot-index { color: rgb(var(--v-theme-on-surface-variant)); font-size: .78rem; font-variant-numeric: tabular-nums; }
+.recovery-records { padding: .45rem; }
+.recovery-record { display: grid; width: 100%; grid-template-columns: 2.2rem minmax(0, 1fr); gap: .7rem; align-items: start; padding: .95rem .9rem; border: 1px solid transparent; border-bottom-color: rgba(var(--v-border-color), .11); border-radius: 10px; background: transparent; color: inherit; text-align: start; cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
+.recovery-record:hover { background: rgba(var(--v-theme-primary), .035); }
+.recovery-record:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 1px; }
+.recovery-record.is-selected { border-color: rgba(var(--v-theme-primary), .36); background: rgba(var(--v-theme-primary), .075); }
+.record-mark { display: grid; width: 2rem; height: 2rem; place-items: center; border-radius: 7px; background: rgba(var(--v-theme-primary), .09); color: var(--wiki-primary-ink); }
+.record-copy { display: grid; min-width: 0; gap: .27rem; }
+.record-copy strong { overflow: hidden; font-size: .93rem; text-overflow: ellipsis; white-space: nowrap; }
+.record-location, .record-meta { overflow-wrap: anywhere; color: rgb(var(--v-theme-on-surface-variant)); font-size: .75rem; }
+.record-status { grid-column: 2; justify-self: start; padding: .2rem .48rem; border-radius: 999px; background: rgba(var(--v-theme-success), .1); color: rgb(var(--v-theme-success)); font-size: .68rem; font-weight: 700; letter-spacing: .03em; }
+.record-status.is-caution { background: rgba(var(--v-theme-warning), .12); color: rgb(var(--v-theme-on-surface)); }
+.recovery-more { width: 100%; margin-top: .35rem; }
+.recovery-empty { display: flex; min-height: 11rem; flex-direction: column; justify-content: center; align-items: center; gap: .7rem; padding: 2rem; color: rgb(var(--v-theme-on-surface-variant)); text-align: center; }
 .recovery-empty strong { color: rgb(var(--v-theme-on-surface)); }
-.recovery-empty span { max-width: 25rem; font-size: .8125rem; line-height: 1.55; }
-.recovery-empty--selection { min-height: 16rem; }
-.recovery-empty--selection .v-icon { color: var(--wiki-primary-ink); }
-.recovery-footnote { margin: 0; padding: .75rem 1rem; border-top: 1px solid var(--wiki-surface-border); color: var(--wiki-text-muted); font-size: .75rem; line-height: 1.5; }
+.recovery-empty span { max-width: 25rem; font-size: .86rem; line-height: 1.55; }
+.recovery-empty--selection { min-height: 19rem; }
+.recovery-empty--selection .v-icon { margin-bottom: .3rem; color: var(--wiki-primary-ink); }
+.recovery-footnote { margin: 0; padding: .9rem 1.15rem 1.05rem; color: rgb(var(--v-theme-on-surface-variant)); font-size: .74rem; line-height: 1.5; }
 .recovery-inspector { padding-bottom: 1rem; }
-.recovery-warning { margin: 1rem 1rem 0; }
-.recovery-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem 1rem; margin: 1rem; }
+.recovery-warning { margin: 1rem 1.2rem 0; }
+.recovery-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem 1.6rem; margin: 1.25rem 1.35rem; }
 .recovery-facts > div { min-width: 0; }
-.recovery-facts dt { margin-bottom: .25rem; color: var(--wiki-text-muted); font-size: .75rem; font-weight: 600; }
-.recovery-facts dd { margin: 0; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.5; }
-.source-inspection { margin: 0 1rem 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); }
-.source-inspection summary { display: flex; min-height: 44px; flex-wrap: wrap; justify-content: space-between; gap: .5rem; padding: .75rem; cursor: pointer; font-size: .8125rem; font-weight: 600; }
-.source-inspection summary:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
-.source-inspection summary span { color: var(--wiki-text-muted); font-size: .75rem; font-weight: 400; }
-.source-inspection pre { max-height: 30rem; overflow: auto; margin: 0; padding: .875rem; border-top: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-sunken); color: rgb(var(--v-theme-on-surface)); font: .8125rem/1.6 var(--wiki-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.recovery-plan { margin: 0 1rem; padding: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); }
-.plan-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; align-items: center; margin-bottom: .75rem; }
-.plan-heading strong { font-size: .875rem; font-weight: 650; }
-.plan-fields { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(8rem, .65fr); gap: .75rem; }
+.recovery-facts dt { margin-bottom: .25rem; color: rgb(var(--v-theme-on-surface-variant)); font-size: .68rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.recovery-facts dd { margin: 0; overflow-wrap: anywhere; font-size: .86rem; line-height: 1.5; }
+.source-inspection { margin: 0 1.25rem 1.1rem; border: 1px solid rgba(var(--v-border-color), .19); border-radius: 9px; }
+.source-inspection summary { display: flex; justify-content: space-between; gap: 1rem; padding: .8rem 1rem; cursor: pointer; font-size: .83rem; font-weight: 600; }
+.source-inspection summary span { color: rgb(var(--v-theme-on-surface-variant)); font-size: .73rem; font-weight: 400; }
+.source-inspection pre { max-height: 30rem; overflow: auto; margin: 0; padding: 1rem; border-top: 1px solid rgba(var(--v-border-color), .16); background: rgba(var(--v-theme-on-surface), .035); color: rgb(var(--v-theme-on-surface)); font: .8rem/1.6 var(--font-family-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.recovery-plan { margin: 0 1.25rem; padding: 1.1rem 1.15rem; border-radius: 11px; background: rgba(var(--v-theme-on-surface), .035); }
+.plan-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+.plan-heading strong { font-size: .86rem; font-weight: 600; }
+.plan-fields { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(8rem, .65fr); gap: .8rem; }
 .plan-fields > :last-child:nth-child(3) { grid-column: 1 / -1; }
-.recovery-draft-note { display: flex; gap: .5rem; align-items: center; margin: .75rem 0; color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.5; }
+.recovery-draft-note { display: flex; gap: .5rem; align-items: center; margin: 1rem 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: .8rem; line-height: 1.5; }
 .recovery-draft-note .v-icon { flex: 0 0 auto; color: var(--wiki-primary-ink); }
 .recovery-confirm ul { margin: 1rem 0 0; padding-inline-start: 1.25rem; line-height: 1.65; }
-.recovery-confirm li + li { margin-top: .25rem; }
-.recovery-result-link { display: inline-block; margin-inline-start: .75rem; color: inherit; font-weight: 650; }
-@media (max-width: 980px) {
-  .recovery-grid, .recovery-intro { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 600px) {
-  .recovery-facts, .plan-fields { grid-template-columns: minmax(0, 1fr); }
-  .plan-fields > :last-child:nth-child(3) { grid-column: auto; }
-  .plan-heading { align-items: start; flex-direction: column; }
-}
+.recovery-confirm li + li { margin-top: .35rem; }
+.recovery-result-link { display: inline-block; margin-inline-start: .75rem; color: inherit; font-weight: 700; }
+@media (prefers-reduced-motion: reduce) { .recovery-record { transition: none; } }
+@media (max-width: 980px) { .recovery-grid { grid-template-columns: minmax(0, 1fr); } .recovery-intro { grid-template-columns: 1fr; gap: 1rem; } }
+@media (max-width: 600px) { .recovery-intro { padding: 1.5rem .25rem; } .recovery-facts { grid-template-columns: 1fr; margin-inline: 1rem; } .plan-fields { grid-template-columns: 1fr; } .plan-fields > :last-child:nth-child(3) { grid-column: auto; } .plan-heading { align-items: start; flex-direction: column; } .recovery-warning, .source-inspection, .recovery-plan { margin-inline: .8rem; } }
 </style>

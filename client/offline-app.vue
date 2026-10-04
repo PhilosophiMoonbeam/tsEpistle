@@ -245,8 +245,8 @@ onBeforeUnmount(() => {
 .offline-application { font-family: var(--wiki-font-body); }
 .offline-skip { position: fixed; top: -10rem; z-index: 9999; background: var(--wiki-surface-raised); padding: 1rem; }
 .offline-skip:focus { top: .5rem; }
-.offline-connection { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .75rem 1.5rem; border-bottom: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-raised); font-size: .875rem; }
-.offline-connection span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.offline-reading-surface { max-width: var(--wiki-content-max); margin: 1.5rem auto; padding: 1.5rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); box-shadow: none; }
-@media (max-width: 600px) { .offline-connection { padding: .75rem; gap: .5rem; } .offline-reading-surface { margin: .75rem; padding: 1rem; } }
+.offline-connection { display: flex; align-items: center; gap: .75rem; padding: .6rem 1.5rem; border-bottom: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-raised); font-size: .875rem; }
+.offline-connection span { flex: 1; }
+.offline-reading-surface { margin: clamp(1rem, 3vw, 2.5rem); padding: clamp(1rem, 3vw, 2.5rem); border: 1px solid var(--wiki-surface-border); border-radius: 12px; background: var(--wiki-surface-raised); box-shadow: var(--wiki-shadow-sm); }
+@media (max-width: 600px) { .offline-connection { padding: .5rem .75rem; gap: .4rem; } .offline-reading-surface { margin: .75rem; padding: 1rem; } }
 </style>

@@ -2,7 +2,7 @@
   <section
     ref="inlineAgentRoot"
     class="inline-agent"
-    :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen }"
+    :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen, 'inline-agent--contextual': contextualGlass && !approvalId }"
     :data-panel-mode="panelMode"
     :aria-labelledby="workspaceTitleId"
     :aria-busy="loading || Boolean(creatingRetention) || connectionRetrying || sessionMutationBusy"
@@ -38,7 +38,7 @@
     </div>
 
     <v-card class="inline-agent__card" elevation="0">
-      <v-toolbar class="inline-agent__toolbar" color="transparent" :height="64" tag="header">
+      <v-toolbar class="inline-agent__toolbar" color="transparent" density="compact" tag="header">
         <div class="inline-agent__toolbar-main">
           <div class="inline-agent__mobile-navigation">
             <v-tooltip location="bottom" :text="historyToggleBlocked ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.history')">
@@ -47,14 +47,14 @@
                   v-bind="tooltipProps"
                   ref="historyTrigger"
                   class="inline-agent__history-toggle"
-                  prepend-icon="mdi-history"
+                  icon="mdi-history"
                   variant="text"
                   :aria-label="$t('common:agentWorkspace.history')"
                   :aria-expanded="historyOpen"
                   aria-controls="agent-history-panel"
                   :aria-disabled="historyToggleBlocked ? 'true' : undefined"
                   @click="toggleHistory"
-                >{{ $t('common:agentWorkspace.history') }}</v-btn>
+                />
               </template>
             </v-tooltip>
             <v-tooltip location="bottom" :text="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.memory')">
@@ -63,14 +63,14 @@
                   v-bind="tooltipProps"
                   ref="memoryTrigger"
                   class="inline-agent__memory-toggle"
-                  prepend-icon="mdi-brain"
+                  icon="mdi-brain"
                   variant="text"
                   :aria-label="$t('common:agentWorkspace.memory')"
                   :aria-expanded="memoryOpen"
                   aria-controls="agent-memory-panel"
                   :aria-disabled="memoryMutationBusy ? 'true' : undefined"
                   @click="toggleMemory"
-                >{{ $t('common:agentWorkspace.memory') }}</v-btn>
+                />
               </template>
             </v-tooltip>
           </div>
@@ -101,7 +101,6 @@
                       :aria-expanded="providerMenuOpen"
                     >
                       <span class="inline-agent__provider-identity" :title="providerIdentity">{{ providerIdentity }}</span>
-                      <span class="inline-agent__model-label">{{ $t('common:inlineAgentChat.modelLabel', { defaultValue: 'Model' }) }}</span>
                       <v-icon icon="mdi-chevron-down" size="14" aria-hidden="true" />
                     </v-btn>
                   </template>
@@ -146,11 +145,11 @@
               <v-btn
                 v-bind="tooltipProps"
                 class="inline-agent__search-action"
-                prepend-icon="mdi-magnify"
+                icon="mdi-magnify"
                 variant="text"
                 :aria-label="$t('common:agentWorkspace.search')"
                 @click="emit('return-search')"
-              >{{ $t('common:agentWorkspace.search') }}</v-btn>
+              />
             </template>
           </v-tooltip>
           <v-menu v-model="panelMenuOpen" ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
@@ -187,6 +186,10 @@
                 :disabled="!canPinCurrentChat"
                 @click="setCurrentChatPinned(!isCurrentChatPinned)"
               />
+              <!-- Temporary retention lives in the menu so the chat name can stand
+                   alone in the header; the click switches temporary mode directly
+                   (begun conversations are kept in history; unstarted ones save
+                   after the first message). -->
               <v-list-item
                 class="inline-agent__panel-menu-item"
                 link
@@ -202,13 +205,13 @@
               <v-btn
                 v-bind="tooltipProps"
                 class="inline-agent__session-action inline-agent__new-session"
-                prepend-icon="mdi-plus-circle-outline"
+                icon="mdi-plus-circle-outline"
                 variant="text"
                 :loading="creatingRetention === 'saved'"
                 :aria-label="$t('common:agentWorkspace.newChat')"
                 :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
                 @click="newSession"
-              >{{ $t('common:agentWorkspace.newChat') }}</v-btn>
+              />
             </template>
           </v-tooltip>
           <div class="inline-agent__actions-divider" aria-hidden="true" />
@@ -216,43 +219,17 @@
             <template #activator="{ props: tooltipProps }">
               <v-btn
                 v-bind="tooltipProps"
-                class="inline-agent__close-action"
-                prepend-icon="mdi-close"
+                class="inline-agent__close-action wiki-close-control"
+                icon="mdi-close"
                 variant="text"
                 :aria-label="$t('common:agentWorkspace.close')"
                 :aria-disabled="memoryMutationBusy ? 'true' : undefined"
                 @click="requestClose"
-              >{{ $t('common:agentWorkspace.close') }}</v-btn>
+              />
             </template>
           </v-tooltip>
         </div>
       </v-toolbar>
-
-      <div class="inline-agent__commandbar">
-        <p class="inline-agent__execution-state" role="status" aria-live="polite">
-          <v-icon :icon="admissionBlocked ? 'mdi-lock-outline' : connectionTone === 'error' ? 'mdi-cloud-alert-outline' : connectionTone === 'busy' ? 'mdi-progress-clock' : 'mdi-check-circle-outline'" size="18" aria-hidden="true" />
-          <span>{{ admissionBlocked ? admissionRequiredMessage : connectionLabel }}</span>
-          <span v-if="thread && (thread.historyWindow.hasOlderMessages || thread.historyWindow.hasOlderRuns)" class="inline-agent__history-scope">{{ $t('common:agentThread.historyWindowSummary', { defaultValue: 'Older history is not included in this view.' }) }}</span>
-        </p>
-        <div class="inline-agent__session-controls" role="group" :aria-label="$t('common:agentWorkspace.actionsLabel')">
-          <v-btn
-            variant="text"
-            size="small"
-            :prepend-icon="isCurrentChatPinned ? 'mdi-pin' : 'mdi-pin-outline'"
-            :aria-pressed="isCurrentChatPinned"
-            :disabled="!canPinCurrentChat"
-            @click="setCurrentChatPinned(!isCurrentChatPinned)"
-          >{{ isCurrentChatPinned ? $t('common:agentWorkspace.unpin') : $t('common:agentWorkspace.pin') }}</v-btn>
-          <v-btn
-            variant="text"
-            size="small"
-            :prepend-icon="isTemporary ? 'mdi-content-save-outline' : 'mdi-timer-sand-empty'"
-            :loading="keepingConversation || creatingRetention === 'temporary'"
-            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
-            @click="isTemporary ? keepConversation() : startTemporaryChat()"
-          >{{ isTemporary ? $t('common:agentWorkspace.keepConversation') : $t('common:agentWorkspace.temporaryChat') }}</v-btn>
-        </div>
-      </div>
 
 
       <v-progress-linear
@@ -263,6 +240,9 @@
         :aria-label="$t('common:inlineAgentChat.openingConversation')"
       />
 
+      <!-- An approval review has no conversation body, so its connection
+           notice sits above it; the conversation shows it inside the body
+           glass so the page behind is never visible unblurred. -->
       <v-alert
         v-if="connectionBlocked && approvalId"
         class="inline-agent__alert inline-agent__connection-alert"
@@ -386,7 +366,7 @@
                   :aria-busy="promptSubmissionPending"
                 >
                   <v-btn
-                    v-for="starter in starters"
+                    v-for="(starter, starterIndex) in starters"
                     :key="starter.prompt"
                     class="inline-agent__starter"
                     color="primary"
@@ -398,6 +378,7 @@
                       <v-icon
                         :icon="starter.icon"
                         size="20"
+                        :class="`inline-agent__starter-icon--${starterIndex}`"
                         aria-hidden="true"
                       />
                       <strong>{{ $t(starter.label) }}</strong>
@@ -466,6 +447,7 @@
                     @click="scrollToLatest"
                   >
                     <span class="inline-agent__follow-jump-frame">
+                      <span class="inline-agent__follow-jump-halo" aria-hidden="true" />
                       <span class="inline-agent__follow-jump-face">
                         <v-icon icon="mdi-arrow-down" size="16" aria-hidden="true" />
                         <span>{{ $t('common:agentWorkspace.latest') }}</span>
@@ -1066,13 +1048,13 @@ const connectionTone = computed<'ready' | 'error' | 'busy'>(() => connectionBloc
     ? 'busy'
     : 'ready')
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
-const currentPageIncluded = computed(() => Boolean(currentPage.value && activeDraft.value.includeCurrentPage))
+const contextualGlass = computed(() => Boolean(currentPage.value && activeDraft.value.includeCurrentPage))
 /* Labels and descriptions are locale keys; prompts are model input and stay as written. */
 const starters = computed(() => [
-  ...(currentPageIncluded.value
+  ...(contextualGlass.value
     ? [{ label: 'common:agentWorkspace.starterPage', description: 'common:agentWorkspace.starterPageHint', prompt: t('common:inlineAgentChat.summarizeCurrentWikiPage'), icon: 'mdi-text-box-search-outline' }]
     : [{ label: 'common:agentWorkspace.starterExplore', description: 'common:agentWorkspace.starterExploreHint', prompt: t('common:inlineAgentChat.giveMeOverviewMain'), icon: 'mdi-compass-outline' }]),
-  { label: 'common:agentWorkspace.starterConnect', description: 'common:agentWorkspace.starterConnectHint', prompt: currentPageIncluded.value ? t('common:inlineAgentChat.findWikiPagesRelated') : t('common:inlineAgentChat.helpMeExploreConnections'), icon: 'mdi-vector-link' },
+  { label: 'common:agentWorkspace.starterConnect', description: 'common:agentWorkspace.starterConnectHint', prompt: contextualGlass.value ? t('common:inlineAgentChat.findWikiPagesRelated') : t('common:inlineAgentChat.helpMeExploreConnections'), icon: 'mdi-vector-link' },
   { label: 'common:agentWorkspace.starterCatchUp', description: 'common:agentWorkspace.starterCatchUpHint', prompt: t('common:inlineAgentChat.summarize10MostRecently'), icon: 'mdi-history' }
 ])
 
@@ -1929,163 +1911,1394 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 <style scoped lang="scss">
 .inline-agent {
-  --agent-conversation-width: 56rem;
+  --agent-conversation-width: 49rem;
+  --inline-agent-workspace-base: color-mix(in srgb, var(--wiki-surface-raised) 76%, rgb(var(--v-theme-background)));
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
-  margin-inline: auto;
+  max-width: var(--wiki-shell-max);
+  margin: 0 auto;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: center;
+  gap: 0;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-body);
-  background: var(--wiki-surface-raised);
+  background: transparent;
   isolation: isolate;
   text-align: start;
 }
-.inline-agent:dir(rtl), .inline-agent:lang(ar) { font-family: 'Tajawal', var(--wiki-font-body); }
-.inline-agent :deep(.v-btn), .inline-agent :deep(.v-list), .inline-agent :deep(.v-card), .inline-agent :deep(.v-toolbar), .inline-agent :deep(.v-input) { font-family: inherit; }
-.inline-agent :deep(.v-btn) { border-radius: var(--wiki-control-radius); text-transform: none; letter-spacing: normal; }
-.inline-agent__card, .inline-agent__side { height: 100%; min-height: 0; min-width: 0; }
+
+.inline-agent:dir(rtl),
+.inline-agent:lang(ar) {
+  font-family: 'Tajawal', var(--wiki-font-body);
+}
+
+.inline-agent :deep(.v-alert),
+.inline-agent :deep(.v-btn),
+.inline-agent :deep(.v-card),
+.inline-agent :deep(.v-chip),
+.inline-agent :deep(.v-field),
+.inline-agent :deep(.v-input),
+.inline-agent :deep(.v-list),
+.inline-agent :deep(.v-toolbar) {
+  font-family: inherit;
+}
+
+.inline-agent__card,
+.inline-agent__side {
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+}
+
 .inline-agent__card {
   container: agent-workspace / inline-size;
   position: relative;
   display: flex;
+  min-width: 0;
   grid-column: 1;
-  grid-row: 1;
   flex-direction: column;
   overflow: hidden;
+  border: 0;
   border-radius: 0 !important;
-  background: var(--wiki-surface-raised);
+  background: rgb(var(--v-theme-background));
   box-shadow: none;
+  text-align: start;
+  transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
+.inline-agent--contextual {
+  background: transparent;
+}
+.inline-agent--contextual .inline-agent__card {
+  background: transparent;
+}
+
 .inline-agent__toolbar {
+  display: flex;
+  /* Matches the main wiki header height (shared chrome-height token). */
+  min-height: var(--wiki-chrome-height, 3.25rem);
   flex: 0 0 auto;
-  min-height: var(--wiki-chrome-height, 4rem);
+  flex-wrap: wrap;
+  align-content: center;
+  align-items: center;
+  gap: 0;
+  padding-block-start: 0;
   padding-inline: var(--wiki-space-4);
   border-bottom: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised) !important;
+  background: rgb(var(--v-theme-background)) !important;
+  box-shadow: none;
+  -webkit-backdrop-filter: var(--wiki-chrome-blur);
+  backdrop-filter: var(--wiki-chrome-blur);
+  transition:
+    background-color var(--wiki-motion-slow) var(--wiki-motion-ease),
+    padding-inline-start var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
-.inline-agent__toolbar :deep(.v-toolbar__content) { height: auto !important; min-height: inherit; flex-wrap: wrap; gap: var(--wiki-space-2); padding-block: var(--wiki-space-2); }
-.inline-agent__toolbar-main { display: flex; align-items: center; gap: var(--wiki-space-4); flex: 1 1 24rem; min-width: 0; }
-.inline-agent__mobile-navigation { display: flex; flex: 0 0 auto; gap: var(--wiki-space-1); }
-.inline-agent__toolbar :deep(.v-btn) { min-height: 44px; }
-.inline-agent__history-toggle[aria-expanded='true'], .inline-agent__memory-toggle[aria-expanded='true'] { background: var(--wiki-surface-sunken); color: var(--wiki-primary-ink); }
-.inline-agent__history-toggle[aria-disabled='true'], .inline-agent__memory-toggle[aria-disabled='true'], .inline-agent__close-action[aria-disabled='true'] { opacity: .6; }
-.inline-agent__identity, .inline-agent__heading { min-width: 0; }
-.inline-agent__heading h2 { margin: 0; font: 700 .9rem/1.4 var(--wiki-font-body); }
-.inline-agent__session-line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-2); min-width: 0; }
-.inline-agent__session-title { max-width: 24rem; min-width: 0; font-size: .85rem; color: var(--wiki-text-muted); overflow-wrap: anywhere; }
-.inline-agent__pin-indicator { color: var(--wiki-primary-ink); }
-.inline-agent__provider-trigger { max-width: 100%; min-width: 0; height: auto !important; color: rgb(var(--v-theme-on-surface)); padding-inline: var(--wiki-space-2); }
-.inline-agent__provider-trigger :deep(.v-btn__content) { min-width: 0; gap: var(--wiki-space-2); }
-.inline-agent__provider-identity { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; }
-.inline-agent__model-label { order: -1; color: var(--wiki-text-muted); font-size: .75rem; }
-.inline-agent__provider-help { margin: 0; max-width: 28rem; padding: var(--wiki-space-3); color: var(--wiki-text-muted); font-size: .8rem; }
-.inline-agent__panel-actions { display: flex; align-items: center; gap: var(--wiki-space-1); margin-inline-start: auto; flex-wrap: wrap; }
-.inline-agent__actions-divider { width: 1px; height: 24px; margin-inline: var(--wiki-space-1); background: var(--wiki-surface-border); }
-.inline-agent__panel-menu-item { min-height: 44px; }
-.inline-agent__commandbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--wiki-space-2); padding: var(--wiki-space-2) var(--wiki-space-4); border-bottom: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-sunken); }
-.inline-agent__history-scope { color: var(--wiki-text-muted); padding-inline-start: var(--wiki-space-2); border-inline-start: 1px solid var(--wiki-surface-border-strong); }
-.inline-agent__execution-state { display: flex; align-items: center; gap: var(--wiki-space-2); min-width: 0; margin: 0; font-size: .8rem; overflow-wrap: anywhere; }
-.inline-agent__session-controls { display: flex; flex-wrap: wrap; gap: var(--wiki-space-1); margin-inline-start: auto; }
-.inline-agent__session-controls :deep(.v-btn) { min-height: 36px; }
-.inline-agent__progress { flex: 0 0 auto; }
-.inline-agent__retention { display: flex; align-items: start; gap: var(--wiki-space-3); padding: var(--wiki-space-3) var(--wiki-space-4); border-bottom: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-sunken); }
-.inline-agent__retention-copy { min-width: 0; }
-.inline-agent__retention strong { font-size: .85rem; }
-.inline-agent__retention p { margin: var(--wiki-space-1) 0 0; font-size: .8rem; color: var(--wiki-text-muted); line-height: 1.5; }
-.inline-agent__session-notice { margin: 0; padding: var(--wiki-space-3) var(--wiki-space-4); background: var(--wiki-surface-sunken); color: var(--wiki-primary-ink); font-size: .85rem; }
-.inline-agent__body { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; overflow: hidden; background: var(--wiki-surface-raised); }
-.inline-agent__alert { flex: 0 0 auto; margin: var(--wiki-space-3) var(--wiki-space-4) 0; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); }
-.inline-agent__initialization-error-content { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--wiki-space-2); }
-.inline-agent__transcript-wrap { position: relative; display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; overflow: hidden; container-type: size; }
+/* Included page: the header blurs much harder than the conversation glass so
+   the page's navigation and text underneath are not readable through it. */
+.inline-agent--contextual .inline-agent__toolbar {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 64%, transparent) !important;
+  -webkit-backdrop-filter: blur(36px) saturate(160%);
+  backdrop-filter: blur(36px) saturate(160%);
+}
+/* Conversations panel open: the identity block slides flush against the panel. */
+.inline-agent--history .inline-agent__toolbar {
+  padding-inline-start: 0;
+}
+.inline-agent__toolbar :deep(.v-toolbar__content) {
+  flex-wrap: inherit;
+  align-content: inherit;
+  align-items: inherit;
+  min-height: inherit;
+}
+
+.inline-agent__toolbar-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+}
+
+.inline-agent__identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--wiki-space-3);
+}
+
+
+.inline-agent__heading {
+  min-width: 0;
+}
+
+.inline-agent__provider-identity,
+.inline-agent__session-title {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+/* The brand name remains the workspace's accessible label; the header shows
+   the conversation title beside its resolved provider. */
+.inline-agent__heading h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  border: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.inline-agent__session-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 28rem;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
+  font-size: 1rem;
+  font-weight: 720;
+  letter-spacing: -.015em;
+  line-height: 1.2;
+}
+
+.inline-agent__provider-identity {
+  min-width: 0;
+  max-width: 24rem;
+  flex: 0 1 auto;
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  line-height: 1.4;
+}
+
+.inline-agent__provider-trigger {
+  min-width: 0;
+  max-width: 24rem;
+  height: auto !important;
+  flex: 0 1 auto;
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  color: var(--wiki-text-muted);
+  text-transform: none;
+  letter-spacing: normal;
+}
+.inline-agent__provider-trigger :deep(.v-btn__content) {
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--wiki-space-1);
+}
+.inline-agent__provider-help {
+  max-width: 24rem;
+  margin: 0;
+  padding: var(--wiki-space-2) var(--wiki-space-4);
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  line-height: 1.4;
+}
+
+.inline-agent__panel-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--wiki-space-1);
+}
+
+/* Toolbar buttons ride the control height so the chrome bar can stay at the
+   shared --wiki-chrome-height without the default 48px icon buttons forcing
+   it taller than the main Wiki header. */
+.inline-agent__toolbar :deep(.v-btn) {
+  height: var(--wiki-control-height, 2.75rem);
+}
+
+/* Vertical divider matching the left side's History/name separator. */
+.inline-agent__actions-divider {
+  order: 3;
+  align-self: stretch;
+  width: 1px;
+  margin-inline: var(--wiki-space-2);
+  background: var(--wiki-surface-border);
+}
+
+/* History replaces the old Wiki Search shortcut in the upper-left corner and
+   keeps the same icon-only footprint on every layout. */
+/* Memory sits beside History so the two side panels open from one place. */
+.inline-agent__history-toggle,
+.inline-agent__memory-toggle {
+  flex: 0 0 auto;
+  min-width: var(--wiki-control-height);
+  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  /* Palette-aware hover tint: the theme secondary color, mixed toward the text color for contrast. */
+  --agent-history-hover-tint: color-mix(in srgb, rgb(var(--v-theme-secondary)) 78%, rgb(var(--v-theme-on-surface)));
+  --agent-history-hover-surface: color-mix(in srgb, rgb(var(--v-theme-secondary)) 14%, transparent);
+}
+
+.inline-agent__history-toggle[aria-disabled='true'],
+.inline-agent__memory-toggle[aria-disabled='true'],
+.inline-agent__close-action[aria-disabled='true'] {
+  opacity: .6;
+}
+
+/* Phones keep Memory in the More chat actions menu; wider layouts show the toggle. */
+@media (max-width: 639.98px) {
+  .inline-agent__memory-toggle { display: none !important; }
+}
+@media (min-width: 640px) {
+  .inline-agent__panel-menu-item--compact { display: none !important; }
+}
+
+.inline-agent__mobile-navigation {
+  display: flex;
+  margin-inline-end: var(--wiki-space-3);
+  padding-inline-end: var(--wiki-space-3);
+  border-inline-end: 1px solid var(--wiki-surface-border);
+  transition:
+    margin-inline-end var(--wiki-motion-fast) var(--wiki-motion-ease),
+    padding-inline-end var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-inline-end-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+/* With the Conversations panel open the History toggle collapses so the
+   avatar and conversation name slide left against the panel; closing the
+   panel lets the toggle slide back in. The button stays mounted so focus
+   restoration keeps working (visibility, not display, hides it). */
+.inline-agent--history .inline-agent__mobile-navigation {
+  margin-inline-end: var(--wiki-space-3);
+  padding-inline-end: 0;
+}
+
+.inline-agent--history .inline-agent__history-toggle {
+  width: 0;
+  min-width: 0 !important;
+  padding-inline: 0 !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.inline-agent__history-toggle {
+  transition:
+    width var(--wiki-motion-fast) var(--wiki-motion-ease),
+    min-width var(--wiki-motion-fast) var(--wiki-motion-ease),
+    padding-inline var(--wiki-motion-fast) var(--wiki-motion-ease),
+    opacity var(--wiki-motion-fast) var(--wiki-motion-ease),
+    visibility 0s linear 0s;
+}
+
+.inline-agent--history .inline-agent__history-toggle {
+  transition:
+    width var(--wiki-motion-fast) var(--wiki-motion-ease),
+    min-width var(--wiki-motion-fast) var(--wiki-motion-ease),
+    padding-inline var(--wiki-motion-fast) var(--wiki-motion-ease),
+    opacity var(--wiki-motion-fast) var(--wiki-motion-ease),
+    visibility 0s linear var(--wiki-motion-fast);
+}
+
+.inline-agent__panel-menu-item {
+  min-block-size: 44px;
+  justify-content: flex-start;
+  text-transform: none;
+}
+
+.inline-agent__session-action {
+  min-width: var(--wiki-control-height);
+  min-height: var(--wiki-control-height);
+  padding-inline: var(--wiki-space-3);
+  text-transform: none;
+}
+
+/* New chat mirrors the History toggle: an icon-only text-variant button with
+   a native tooltip, so the two share the same footprint and treatment. */
+.inline-agent__new-session {
+  flex: 0 0 auto;
+  min-width: var(--wiki-control-height);
+  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+}
+
+/* Icon-only hover tints: only the icon color changes; the button background
+   stays untouched. Green for New chat, purple for History. The tint token
+   switches to a brighter green on dark surfaces for contrast. */
+.inline-agent__panel-actions {
+  --agent-new-hover-tint: color-mix(in srgb, rgb(var(--v-theme-success)) 78%, rgb(var(--v-theme-on-surface)));
+  --agent-close-hover-tint: rgb(var(--v-theme-error));
+}
+
+/* Hover tints are guarded so a touch tap can't latch :hover (mobile
+   browsers keep the hover state until the user taps elsewhere, which made
+   the green New chat tint linger after the tap). Touch feedback comes from
+   the button's own :active/ripple instead. */
+@media (hover: hover) {
+  .inline-agent__new-session:not(.v-btn--disabled):hover,
+  .inline-agent__new-session:not(.v-btn--disabled):hover :deep(.v-icon) {
+    color: var(--agent-new-hover-tint) !important;
+  }
+
+  .inline-agent__history-toggle:not([aria-disabled='true']):hover,
+  .inline-agent__memory-toggle:not([aria-disabled='true']):hover {
+    color: var(--agent-history-hover-tint) !important;
+    background-color: var(--agent-history-hover-surface) !important;
+  }
+
+  .inline-agent__history-toggle:not([aria-disabled='true']):hover :deep(.v-icon),
+  .inline-agent__memory-toggle:not([aria-disabled='true']):hover :deep(.v-icon) {
+    color: var(--agent-history-hover-tint) !important;
+  }
+}
+.inline-agent__session-line {
+  display: flex;
+  min-width: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--wiki-space-2);
+}
+
+.inline-agent__pin-indicator {
+  flex: 0 0 auto;
+  color: var(--wiki-primary-ink);
+}
+
+.inline-agent__more-menu {
+  order: 3;
+  min-width: var(--wiki-control-height);
+  min-height: var(--wiki-control-height);
+}
+
+.inline-agent__panel-actions > .inline-agent__new-session {
+  order: 2;
+}
+
+.inline-agent__panel-actions > .inline-agent__close-action {
+  order: 4;
+}
+
+/* No extra inline-start margin: the divider's own margins keep the same
+   spacing rhythm as the other header controls on both mobile and desktop. */
+.inline-agent__close-action {
+  /* Match the square icon-only controls in this header (Vuetify's icon
+     button radius); the shared wiki-close-control class stays circular
+     for its other usages. */
+  border-radius: 8px;
+  /* Hover glows red around the icon instead of filling the button. */
+  background-color: transparent;
+}
+
+/* :active stays unguarded so a touch tap flashes red once; :hover is
+   guarded so the tint can't latch on touch devices. */
+.inline-agent__close-action:active {
+  color: var(--agent-close-hover-tint, #dc2626);
+  background-color: transparent;
+  transform: none;
+  box-shadow: none;
+}
+@media (hover: hover) {
+  .inline-agent__close-action:hover {
+    color: var(--agent-close-hover-tint, #dc2626);
+  }
+}
+.inline-agent__progress {
+  position: absolute;
+  z-index: 3;
+  inset-block-start: calc(var(--wiki-chrome-height, 3.25rem) + var(--wiki-space-1));
+  inset-inline: 0;
+  pointer-events: none;
+}
+
+.inline-agent__retention {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: .75rem;
+  padding: .8rem clamp(1rem, 3vw, 2rem);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+}
+.inline-agent__retention-copy { flex: 1; min-width: 0; }
+.inline-agent__retention strong { font-size: .8rem; font-weight: 650; }
+.inline-agent__retention p { margin: .2rem 0 0; font-size: .75rem; line-height: 1.5; color: color-mix(in srgb, currentColor 70%, transparent); }
+.inline-agent__session-notice {
+  margin: 0;
+  padding: .65rem clamp(1rem, 3vw, 2rem);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+  font-size: .8rem;
+  color: var(--wiki-accent-ink);
+}
+@media (max-width: 639.98px) {
+  .inline-agent__retention { flex-wrap: wrap; gap: .5rem; }
+  .inline-agent__retention-copy { flex-basis: calc(100% - 2rem); }
+}
+
+.inline-agent__body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) var(--wiki-space-2);
+  background: rgb(var(--v-theme-background));
+  -webkit-backdrop-filter: var(--wiki-chrome-blur);
+  backdrop-filter: var(--wiki-chrome-blur);
+  transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
+}
+
+/* Included page: the conversation is a lighter glass than the header, so the
+   page it is about stays visible underneath. Messages, the composer and the
+   side panels keep their own opaque surfaces for readability. */
+.inline-agent--contextual .inline-agent__body {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 36%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  backdrop-filter: blur(10px) saturate(150%);
+}
+
+@supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+  .inline-agent .inline-agent__toolbar,
+  .inline-agent .inline-agent__body {
+    background: rgb(var(--v-theme-background)) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+.inline-agent__transcript-wrap {
+  position: relative;
+  display: flex;
+  container-name: inline-agent-transcript;
+  container-type: size;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+
+.inline-agent__alert {
+  flex: 0 0 auto;
+  margin-bottom: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+}
+
+
+/* A column so the composer dock can claim the leftover space above it: it
+   stays at the bottom whether the transcript is empty, blocked or full. */
 .inline-agent__transcript {
   display: flex;
-  flex: 1 1 auto;
   min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
-  padding: var(--wiki-space-5) clamp(var(--wiki-space-3), 3vw, var(--wiki-space-8)) 0;
+  /* The sticky dock already reserves its own height in this column. Extra
+     padding after it raises the composer and can cover welcome actions. */
+  padding: var(--wiki-space-3) var(--wiki-space-1);
   overflow-y: auto;
+  outline: none;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
+  scroll-behavior: auto;
   scroll-padding-block: var(--wiki-space-4);
   scroll-padding-block-end: calc(var(--agent-dock-height, 0px) + var(--wiki-space-4));
 }
-.inline-agent__transcript--following { overflow-anchor: none; }
-.inline-agent__transcript:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
-.inline-agent__transcript :deep(.agent-thread) { flex: 0 0 auto; width: 100%; max-width: var(--agent-conversation-width); margin-inline: auto; }
-.inline-agent__conversation-dock { position: sticky; z-index: 3; inset-block-end: 0; display: flex; width: 100%; flex: 0 0 auto; flex-direction: column; margin: auto auto 0; padding-block-start: var(--wiki-space-3); pointer-events: none; }
-.inline-agent__goal-dock, .inline-agent__composer { pointer-events: auto; background: var(--wiki-surface-raised); }
-.inline-agent__goal-dock { width: min(100%, var(--agent-conversation-width)); margin-inline: auto; padding-block: var(--wiki-space-2); }
-.inline-agent__composer { padding: var(--wiki-space-3) 0 max(var(--wiki-space-4), env(safe-area-inset-bottom)); border-top: 1px solid var(--wiki-surface-border); max-height: min(32rem, 70cqh); overflow-y: auto; overscroll-behavior: contain; }
-.inline-agent__composer-inner { width: min(100%, var(--agent-conversation-width)); margin-inline: auto; }
-.inline-agent__composer-lock, .inline-agent__pin-storage-warning { display: flex; align-items: start; gap: var(--wiki-space-2); margin: 0 0 var(--wiki-space-2); color: var(--wiki-text-muted); font-size: .8rem; line-height: 1.5; }
-.inline-agent__composer-lock { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); padding: var(--wiki-space-2) var(--wiki-space-3); background: var(--wiki-surface-sunken); color: rgb(var(--v-theme-on-surface)); }
-.inline-agent__jump-dock { position: absolute; inset-block-end: 100%; inset-inline-end: 0; display: flex; justify-content: end; max-width: 100%; padding: var(--wiki-space-2); pointer-events: none; }
-.inline-agent__jump-dock > .v-btn { pointer-events: auto; min-height: 44px; border: 1px solid var(--wiki-surface-border-strong); background: var(--wiki-surface-raised) !important; color: rgb(var(--v-theme-on-surface)) !important; box-shadow: var(--wiki-shadow-xs); }
-.inline-agent__follow-jump-frame, .inline-agent__follow-jump-face { display: inline-flex; align-items: center; gap: var(--wiki-space-2); }
-.inline-agent__loading { display: flex; align-items: center; gap: var(--wiki-space-3); margin: var(--wiki-space-6) auto; color: var(--wiki-text-muted); }
-.inline-agent__loading span:last-child { display: grid; }
-.inline-agent__loading strong { color: rgb(var(--v-theme-on-surface)); font-size: .9rem; }
-.inline-agent__loading small { font-size: .8rem; }
-.inline-agent__loading-mark { width: 12px; height: 12px; border: 2px solid var(--wiki-surface-border-strong); border-top-color: var(--wiki-primary-ink); border-radius: 50%; }
-.inline-agent__welcome { width: min(100%, var(--agent-conversation-width)); box-sizing: border-box; margin: auto; padding-block: var(--wiki-space-6); }
-.inline-agent__welcome-title { margin: 0; color: rgb(var(--v-theme-on-surface)); font: 700 clamp(1.25rem, 2vw, 1.75rem)/1.35 var(--wiki-font-body); }
-.inline-agent__welcome-line { display: block; }
-.inline-agent__welcome-title em { font-style: normal; font-weight: 500; }
-.inline-agent__welcome-subtitle { max-width: 42rem; margin: var(--wiki-space-3) 0 var(--wiki-space-5); color: var(--wiki-text-muted); font-size: .9rem; line-height: 1.6; }
-.inline-agent__starters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--wiki-space-3); }
-.inline-agent__starter { min-width: 0; height: auto !important; min-height: 88px; padding: var(--wiki-space-3); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); color: rgb(var(--v-theme-on-surface)) !important; text-align: start; white-space: normal; }
-.inline-agent__starter :deep(.v-btn__content) { display: grid; min-width: 0; width: 100%; justify-items: start; gap: var(--wiki-space-2); }
-.inline-agent__starter-heading { display: flex; align-items: center; gap: var(--wiki-space-2); min-width: 0; font-size: .85rem; }
-.inline-agent__starter-heading :deep(.v-icon) { color: var(--wiki-primary-ink); flex: 0 0 auto; }
-.inline-agent__starter-copy small { display: block; color: var(--wiki-text-muted); font-size: .8rem; line-height: 1.5; overflow-wrap: anywhere; }
-.inline-agent__starter[aria-disabled='true'] { border-style: dashed; cursor: not-allowed; }
-.inline-agent__starter:not([aria-disabled='true']):hover { border-color: var(--wiki-surface-border-strong); }
-.inline-agent__starter-reason { grid-column: 1 / -1; margin: 0; color: var(--wiki-text-muted); font-size: .8rem; }
-.inline-agent__side { position: relative; overflow: hidden; background: var(--wiki-surface-raised); outline: none; }
-.inline-agent__side:focus-visible { box-shadow: inset var(--wiki-focus-ring); }
-.inline-agent__scrim { display: none; }
-.inline-agent[data-panel-mode='docked'].inline-agent--history, .inline-agent[data-panel-mode='wide'].inline-agent--history { grid-template-columns: 20rem minmax(0, 1fr); }
-.inline-agent[data-panel-mode='docked'].inline-agent--memory, .inline-agent[data-panel-mode='wide'].inline-agent--memory { grid-template-columns: minmax(0, 1fr) 22rem; }
-.inline-agent[data-panel-mode='wide'].inline-agent--history.inline-agent--memory { grid-template-columns: 20rem minmax(0, 1fr) 22rem; }
-.inline-agent[data-panel-mode='docked'].inline-agent--history .inline-agent__card, .inline-agent[data-panel-mode='wide'].inline-agent--history .inline-agent__card { grid-column: 2; }
-.inline-agent__side--history { grid-column: 1; grid-row: 1; border-inline-end: 1px solid var(--wiki-surface-border); }
-.inline-agent__side--memory { grid-column: 2; grid-row: 1; border-inline-start: 1px solid var(--wiki-surface-border); }
-.inline-agent[data-panel-mode='wide'].inline-agent--history .inline-agent__side--memory { grid-column: 3; }
-.inline-agent__side :deep(.agent-history), .inline-agent__side :deep(.agent-memory) { border: 0; border-radius: 0 !important; box-shadow: none; }
-.inline-agent[data-panel-mode='modal'] .inline-agent__side { position: absolute; z-index: 5; inset-block: 0; width: min(24rem, calc(100% - 2rem)); grid-column: 1; box-shadow: var(--wiki-shadow-md); }
-.inline-agent[data-panel-mode='modal'] .inline-agent__side--history { inset-inline-start: 0; }
-.inline-agent[data-panel-mode='modal'] .inline-agent__side--memory { inset-inline-end: 0; }
-.inline-agent[data-panel-mode='modal'] .inline-agent__scrim { position: absolute; z-index: 4; display: block; inset: 0; border: 0; background: rgba(var(--v-theme-on-surface), .35); }
+.inline-agent__transcript--following {
+  /* Automatic follow owns the scroll position while streaming. When reading
+     earlier messages, browser anchoring keeps delayed media from shifting them. */
+  overflow-anchor: none;
+}
+.inline-agent__conversation-dock {
+  position: sticky;
+  z-index: 3;
+  inset-block-end: 0;
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  flex: 0 0 auto;
+  margin: auto auto 0;
+  padding-block-start: var(--wiki-space-3);
+  pointer-events: none;
+}
+.inline-agent__conversation-dock > .inline-agent__goal-dock,
+.inline-agent__conversation-dock > .inline-agent__composer {
+  pointer-events: auto;
+}
+
+.inline-agent__goal-dock {
+  position: sticky;
+  z-index: 2;
+  inset-block-end: 0;
+  width: min(100%, var(--agent-conversation-width));
+  margin: calc(var(--wiki-space-3) / 2) auto 0;
+  padding-block: var(--wiki-space-1) calc(var(--wiki-space-3) / 2);
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--inline-agent-workspace-base) 94%, transparent) var(--wiki-space-2)
+  );
+}
+
+.inline-agent__goal-dock :deep(.agent-goal) {
+  box-shadow: var(--wiki-shadow-md);
+}
+
+
+.inline-agent__transcript:focus-visible {
+  border-radius: var(--wiki-control-radius);
+  box-shadow: inset var(--wiki-focus-ring);
+}
+.inline-agent__transcript :deep(.agent-thread) {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: var(--agent-conversation-width);
+  margin-inline: auto;
+}
+
+
+
+.inline-agent__loading {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-3);
+  margin: var(--wiki-space-6) auto;
+  color: var(--wiki-text-muted);
+}
+
+.inline-agent__loading-mark {
+  width: var(--wiki-space-3);
+  height: var(--wiki-space-3);
+  border: 1px solid var(--wiki-accent-warm);
+  border-radius: var(--wiki-radius-pill);
+  background: var(--wiki-accent-warm);
+  animation: agentPulse 1.8s var(--wiki-motion-ease) infinite;
+}
+
+.inline-agent__loading span:last-child {
+  display: grid;
+}
+
+.inline-agent__loading strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .875rem;
+}
+
+.inline-agent__loading small {
+  font-size: var(--wiki-label-size);
+}
+
+.inline-agent__jump-dock {
+  position: absolute;
+  inset-block-end: 100%;
+  inset-inline-end: max(0px, calc((100% - var(--agent-conversation-width)) / 2));
+  display: flex;
+  align-items: center;
+  width: min(100%, var(--agent-conversation-width));
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-inline: auto;
+  padding: var(--wiki-space-4);
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.inline-agent__jump-dock > .v-btn {
+  pointer-events: auto;
+}
+
+.inline-agent__approval-jump {
+  box-shadow: var(--wiki-shadow-md);
+}
+
+@keyframes agentFollowJumpIn {
+  from { opacity: 0; }
+}
+
+.inline-agent__follow-jump {
+  animation: agentFollowJumpIn var(--wiki-motion-fast) var(--wiki-motion-ease);
+  box-sizing: border-box;
+  min-width: 36px;
+  min-height: 36px;
+  height: auto;
+  padding: 0;
+  border-radius: var(--wiki-control-radius);
+  background: transparent !important;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inline-agent__follow-jump { animation: none; }
+}
+
+.inline-agent__follow-jump :deep(.v-btn__content) {
+  min-height: 36px;
+  padding: 0;
+}
+
+.inline-agent__follow-jump-frame {
+  position: relative;
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+}
+
+.inline-agent__follow-jump-halo {
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--wiki-control-radius);
+  background: linear-gradient(
+    90deg,
+    var(--wiki-accent-warm),
+    var(--wiki-ambient-accent),
+    var(--wiki-accent-spectral)
+  );
+  filter: blur(4px);
+  opacity: .42;
+  pointer-events: none;
+}
+
+.inline-agent__follow-jump-face {
+  position: relative;
+  display: inline-flex;
+  min-height: 36px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--wiki-space-1);
+  padding-inline: var(--wiki-space-2);
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 38%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .75rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.inline-agent__follow-jump-face :deep(.v-icon) {
+  flex: 0 0 auto;
+  font-size: 16px;
+}
+
+@media (pointer: coarse) {
+  .inline-agent__follow-jump {
+    min-height: 44px;
+    padding: 4px;
+  }
+}
+
+.inline-agent__welcome {
+  position: relative;
+  display: grid;
+  width: min(100%, var(--agent-conversation-width));
+  min-height: 0;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  /* Starters sit at the middle of the space between the greeting and the
+     composer, raised by a small bias toward the greeting. Their gap above
+     matches the bottom padding minus the bias; the extra top padding
+     (half the gap change) keeps the greeting exactly where an even layout
+     with the original gap placed it. */
+  --agent-welcome-pad-start: clamp(1.5rem, 4vh, 3.5rem);
+  --agent-welcome-pad-end: clamp(2rem, 8vh, 5rem);
+  --agent-starters-original-gap: clamp(1.25rem, 5vh, 3rem);
+  --agent-starters-bias: .75rem;
+  --agent-starters-gap: calc(var(--agent-welcome-pad-end) - var(--agent-starters-bias));
+  grid-template-rows: 1fr auto 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0 auto;
+  padding:
+    calc(var(--agent-welcome-pad-start) + (var(--agent-starters-gap) - var(--agent-starters-original-gap)) / 2)
+    0
+    var(--agent-welcome-pad-end);
+  text-align: center;
+  transform: translateY(-2vh);
+}
+
+/* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
+
+.inline-agent__welcome-intro {
+  grid-row: 2;
+}
+
+.inline-agent__welcome-title {
+  position: relative;
+  isolation: isolate;
+  margin: 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-display);
+  font-size: clamp(2.4rem, 4vw, 4.25rem);
+  font-weight: 450;
+  letter-spacing: -.045em;
+  line-height: 1.04;
+  text-wrap: balance;
+}
+
+.inline-agent__welcome-title::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: -.9em -1em;
+  border-radius: 50%;
+  background: radial-gradient(ellipse closest-side,
+    rgb(var(--v-theme-background)) 0% 64%,
+    rgba(var(--v-theme-background), .92) 72%,
+    rgba(var(--v-theme-background), .45) 86%,
+    rgba(var(--v-theme-background), 0) 100%);
+  filter: blur(12px);
+  opacity: 0;
+  transition: opacity var(--wiki-motion-slow) var(--wiki-motion-ease);
+  pointer-events: none;
+}
+
+@supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+  @media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
+    .inline-agent--contextual .inline-agent__welcome-title::before {
+      opacity: 1;
+    }
+  }
+}
+
+.inline-agent__welcome-line {
+  position: relative;
+  z-index: 1;
+  display: block;
+}
+
+@container inline-agent-transcript (max-width: 900px) {
+  .inline-agent__welcome-title::before { inset-inline: 0; }
+}
+
+.inline-agent__welcome-title em {
+  font-style: italic;
+  font-weight: inherit;
+  color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+}
+
+.inline-agent__welcome-subtitle {
+  position: relative;
+  max-width: 34rem;
+  margin: var(--wiki-space-3) auto 0;
+  color: var(--wiki-text-muted);
+  font-size: .875rem;
+  line-height: 1.5;
+  text-wrap: balance;
+}
+
+.inline-agent__starters {
+  grid-row: 4;
+  display: grid;
+  width: min(84%, calc(var(--agent-conversation-width) - var(--wiki-space-8)));
+  margin: var(--agent-starters-gap) auto 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .65rem;
+  justify-content: center;
+}
+
+.inline-agent__starter-reason {
+  grid-column: 1 / -1;
+  margin: var(--wiki-space-1) 0 0;
+  color: var(--wiki-text-muted);
+  font-size: .8rem;
+  text-align: center;
+}
+
+.inline-agent__starter {
+  height: auto !important;
+  min-height: 4.05rem;
+  padding: .6rem;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  color: rgb(var(--v-theme-on-surface)) !important;
+  text-align: center;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  transition: border-color .18s, background .18s;
+}
+
+.inline-agent__starter:not([aria-disabled='true']):hover {
+  border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+  background: var(--wiki-surface-sunken);
+}
+
+/* Unavailable starters stay opaque and readable (text keeps its normal
+   contrast); a dashed border, muted icons and the visible reason below the
+   group mark the state. Opacity would also let the page show through. */
+.inline-agent__starter[aria-disabled='true'] {
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.inline-agent__starter[aria-disabled='true'] .inline-agent__starter-heading > :deep(.v-icon) {
+  color: var(--wiki-text-muted);
+}
+
+.inline-agent__starter[aria-disabled='true'] :deep(.v-btn__overlay) {
+  opacity: 0;
+}
+
+.inline-agent__starter :deep(.v-btn__content) {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-items: stretch;
+  gap: .25rem;
+}
+
+.inline-agent__starter-heading {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  justify-items: center;
+  gap: .3rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding-inline: 1.25rem;
+}
+
+/* Palette-aware icon tints: each starter mixes a theme color toward the text color for contrast. */
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--0) { color: color-mix(in srgb, rgb(var(--v-theme-success)) 70%, rgb(var(--v-theme-on-surface))); }
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--1) { color: color-mix(in srgb, rgb(var(--v-theme-warning)) 70%, rgb(var(--v-theme-on-surface))); }
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--2) { color: color-mix(in srgb, var(--wiki-primary-ink) 70%, rgb(var(--v-theme-on-surface))); }
+
+.inline-agent__starter-heading strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  text-align: center;
+  font-size: .83rem;
+  font-weight: 700;
+}
+
+.inline-agent__starter-copy {
+  display: block;
+  min-width: 0;
+  grid-column: 1;
+  grid-row: 2;
+  padding-inline: 1.25rem;
+  text-align: center;
+}
+
+.inline-agent__starter-copy small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--wiki-text-muted);
+  font-size: .8rem;
+  font-weight: 400;
+}
+
+.inline-agent__composer {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) max(var(--wiki-space-4), env(safe-area-inset-bottom));
+  border-top: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
+  border-color: var(--wiki-surface-border-strong);
+  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
+}
+.inline-agent__composer-inner {
+  width: min(100%, var(--agent-conversation-width));
+  margin-inline: auto;
+}
+
+.inline-agent__composer-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  margin: 0 0 var(--wiki-space-3);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 36%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 10%, var(--wiki-surface-raised));
+  color: rgb(var(--v-theme-on-surface));
+  font-size: var(--wiki-label-size);
+  font-weight: 500;
+  line-height: 1.4;
+}
+.inline-agent__pin-storage-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wiki-space-2);
+  margin: 0 0 var(--wiki-space-3);
+  color: color-mix(in srgb, rgb(var(--v-theme-warning)) 88%, rgb(var(--v-theme-on-surface)));
+  font-size: var(--wiki-label-size);
+  line-height: 1.4;
+}
+
+
+.inline-agent__side {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--wiki-panel-radius);
+  outline: none;
+  background: var(--wiki-surface-raised);
+}
+
+.inline-agent__side:focus-visible {
+  border-radius: var(--wiki-panel-radius);
+  box-shadow: var(--wiki-focus-ring);
+}
+
+.inline-agent__side--history {
+  width: min(19rem, 100%);
+  justify-self: end;
+}
+
+.inline-agent__side--memory {
+  width: min(21rem, 100%);
+  justify-self: start;
+}
+
+.inline-agent__scrim {
+  display: none;
+}
+
+@keyframes agentPulse {
+  50% {
+    opacity: .42;
+    transform: scale(.82);
+  }
+}
+
+/* Panel geometry follows the mode computed at the fixed 1024px and 1760px fit thresholds. */
+.inline-agent[data-panel-mode="docked"],
+.inline-agent[data-panel-mode="wide"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.inline-agent[data-panel-mode="docked"].inline-agent--history {
+  grid-template-columns: 20rem minmax(0, 1fr);
+}
+
+.inline-agent[data-panel-mode="docked"].inline-agent--memory {
+  grid-template-columns: minmax(0, 1fr) 22rem;
+}
+
+.inline-agent[data-panel-mode="wide"].inline-agent--history {
+  grid-template-columns: 20rem minmax(0, 1fr);
+}
+
+.inline-agent[data-panel-mode="wide"].inline-agent--memory {
+  grid-template-columns: minmax(0, 1fr) 22rem;
+}
+
+.inline-agent[data-panel-mode="wide"].inline-agent--history.inline-agent--memory {
+  grid-template-columns: 20rem minmax(0, 1fr) 22rem;
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__card,
+.inline-agent[data-panel-mode="wide"] .inline-agent__card {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.inline-agent[data-panel-mode="docked"].inline-agent--history .inline-agent__card,
+.inline-agent[data-panel-mode="wide"].inline-agent--history .inline-agent__card {
+  grid-column: 2;
+}
+
+.inline-agent[data-panel-mode="wide"].inline-agent--history .inline-agent__side--memory {
+  grid-column: 3;
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__side,
+.inline-agent[data-panel-mode="wide"] .inline-agent__side {
+  position: relative;
+  z-index: auto;
+  width: 100%;
+  max-width: none;
+  grid-row: 1;
+  justify-self: stretch;
+  border-radius: 0;
+  filter: none;
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__side--history,
+.inline-agent[data-panel-mode="wide"] .inline-agent__side--history {
+  grid-column: 1;
+  border-inline-end: 1px solid var(--wiki-surface-border);
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__side--memory,
+.inline-agent[data-panel-mode="wide"] .inline-agent__side--memory {
+  grid-column: 2;
+  border-inline-start: 1px solid var(--wiki-surface-border);
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__side :deep(.agent-history),
+.inline-agent[data-panel-mode="docked"] .inline-agent__side :deep(.agent-memory),
+.inline-agent[data-panel-mode="wide"] .inline-agent__side :deep(.agent-history),
+.inline-agent[data-panel-mode="wide"] .inline-agent__side :deep(.agent-memory) {
+  border: 0;
+  border-radius: 0 !important;
+  box-shadow: none;
+}
+
+.inline-agent[data-panel-mode="modal"] {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__card {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__side {
+  position: absolute;
+  z-index: 5;
+  inset-block: 0;
+  width: 22rem;
+  max-width: calc(100% - var(--wiki-space-10));
+  grid-column: 1 / -1;
+  grid-row: 1;
+  box-sizing: border-box;
+  filter: drop-shadow(var(--wiki-shadow-md));
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__side--history {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+  justify-self: start;
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__side--memory {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  justify-self: end;
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__scrim {
+  position: absolute;
+  z-index: 4;
+  display: block;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 40%, transparent);
+}
+
+@media (max-width: 900px) {
+  .inline-agent__starters { width: 100%; grid-template-columns: 1fr; }
+  .inline-agent__starter { min-height: 3.6rem; padding: .675rem; }
+  .inline-agent__welcome {
+    max-width: 40rem;
+  }
+}
+
+/* Compact phones: the starters stay a static, centered column. */
+@media (max-width: 639.98px) {
+  .inline-agent__starters {
+    width: 100%;
+    gap: var(--wiki-space-2);
+    padding-inline: var(--wiki-space-3);
+    box-sizing: border-box;
+  }
+  .inline-agent__starter {
+    min-height: 3.25rem;
+  }
+  .inline-agent__starter-heading { padding-inline: .75rem; }
+  .inline-agent__starter-copy { padding-inline: .75rem; }
+}
+
+/* A docked panel can make a desktop conversation as narrow as a tablet. */
 @container agent-workspace (max-width: 780px) {
-  .inline-agent__starters { grid-template-columns: minmax(0, 1fr); }
-  .inline-agent__starter { min-height: 64px; }
-  .inline-agent__toolbar-main { flex-basis: 100%; flex-wrap: wrap; gap: var(--wiki-space-2); }
-  .inline-agent__identity { flex: 1 1 12rem; }
-  .inline-agent__panel-actions { margin-inline-start: 0; }
+  .inline-agent__panel-actions > .inline-agent__new-session { order: 1; }
+  .inline-agent__panel-actions > .inline-agent__more-menu { order: 2; }
+  .inline-agent__session-action { min-width: var(--wiki-control-height); padding-inline: var(--wiki-space-2); }
+  .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
+  .inline-agent__starters { width: 100%; grid-template-columns: 1fr; }
+  .inline-agent__starter { min-height: 3.25rem; padding: .6rem; }
+}
+
+@media (min-width: 640px) and (max-width: 1023.98px) {
+  .inline-agent__toolbar {
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-5));
+    padding-inline: var(--wiki-space-3);
+  }
+
+
+  .inline-agent__panel-actions {
+    gap: var(--wiki-space-1);
+  }
+}
+@media (max-width: 1023.98px) {
+  .inline-agent__session-action {
+    min-width: var(--wiki-control-height);
+    padding-inline: var(--wiki-space-2);
+  }
+
+  .inline-agent__session-action :deep(.v-btn__prepend) {
+    margin: 0;
+  }
 }
 @media (max-width: 639.98px) {
-  .inline-agent__toolbar { padding-inline: var(--wiki-space-3); }
-  .inline-agent__toolbar-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; flex-basis: 100%; gap: var(--wiki-space-2); }
-  .inline-agent__mobile-navigation { grid-column: 2; grid-row: 1; align-self: start; }
-  .inline-agent__identity { grid-column: 1; grid-row: 1; }
-  .inline-agent__provider-identity { flex: 1; min-width: 0; }
-  .inline-agent__model-label { display: none; }
-  .inline-agent__session-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .inline-agent__panel-actions { width: 100%; justify-content: flex-end; }
-  :is(.inline-agent__history-toggle, .inline-agent__memory-toggle, .inline-agent__search-action, .inline-agent__new-session, .inline-agent__close-action) { width: 44px; min-width: 44px; padding: 0; }
-  :is(.inline-agent__history-toggle, .inline-agent__memory-toggle, .inline-agent__search-action, .inline-agent__new-session, .inline-agent__close-action) :deep(.v-btn__content) { display: none; }
-  :is(.inline-agent__history-toggle, .inline-agent__memory-toggle, .inline-agent__search-action, .inline-agent__new-session, .inline-agent__close-action) :deep(.v-btn__prepend) { margin-inline: 0; }
-  .inline-agent__commandbar { padding-inline: var(--wiki-space-3); }
-  .inline-agent__session-controls { margin-inline-start: 0; }
-  .inline-agent__session-controls :deep(.v-btn) { min-height: 44px; }
-  .inline-agent__welcome { padding-block: var(--wiki-space-4); }
-  .inline-agent__starters { grid-template-columns: minmax(0, 1fr); }
+  .inline-agent {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .inline-agent__card {
+    max-height: none;
+    grid-column: 1;
+    border: 0;
+    border-radius: 0 !important;
+    box-shadow: none;
+  }
+
+  .inline-agent__side {
+    position: absolute;
+    width: min(22rem, calc(100% - var(--wiki-space-8)));
+  }
+  .inline-agent__scrim {
+    position: absolute;
+  }
+
+  .inline-agent__mobile-navigation {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    /* Keep the History divider on mobile; spacing shrinks to the mobile rhythm. */
+    margin-inline-end: var(--wiki-space-2);
+    padding-inline-end: var(--wiki-space-2);
+    border-inline-end: 1px solid var(--wiki-surface-border);
+  }
+
+  .inline-agent__history-toggle,
+  .inline-agent__close-action {
+    width: 2.25rem !important;
+    min-width: 2.25rem !important;
+    min-height: var(--wiki-control-height) !important;
+  }
+
+  .inline-agent__history-toggle {
+    padding-inline: 0 !important;
+  }
+
+  .inline-agent__actions-divider {
+    margin-inline: var(--wiki-space-1);
+  }
+
+  .inline-agent__toolbar {
+    flex-wrap: nowrap;
+    min-height: calc(var(--wiki-control-height) + env(safe-area-inset-top));
+    padding-block-start: max(0px, env(safe-area-inset-top));
+    padding-inline: var(--wiki-space-1);
+  }
+  .inline-agent__toolbar :deep(.v-toolbar__content) {
+    flex-wrap: nowrap;
+    align-content: center;
+    align-items: center;
+    min-height: inherit;
+  }
+  .inline-agent__toolbar-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--wiki-control-height);
+  }
+  .inline-agent__progress {
+    inset-block-start: calc(var(--wiki-control-height) + env(safe-area-inset-top) - var(--wiki-space-1));
+  }
+
+  .inline-agent__identity {
+    overflow: hidden;
+    gap: .25rem;
+  }
+  .inline-agent__session-line {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+  }
+  .inline-agent__session-title,
+  .inline-agent__provider-identity,
+  .inline-agent__provider-trigger {
+    max-width: 100%;
+  }
+  .inline-agent__provider-trigger {
+    padding: 0;
+  }
+
+  .inline-agent__panel-actions {
+    flex: 0 0 auto;
+    min-height: var(--wiki-control-height);
+    justify-content: flex-end;
+    gap: var(--wiki-space-1);
+  }
+
+  .inline-agent__toolbar :deep(.v-btn) {
+    min-width: 2.25rem;
+    min-height: var(--wiki-control-height);
+    padding-inline: var(--wiki-space-1) !important;
+  }
+  .inline-agent__panel-actions :deep(.v-btn) {
+    width: 2.25rem !important;
+    padding-inline: 0 !important;
+  }
+
+  .inline-agent__body {
+    padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-2);
+  }
+
+  .inline-agent__transcript {
+    padding-inline: 0;
+  }
+
+
+  .inline-agent__welcome {
+    --agent-welcome-pad-start: var(--wiki-space-6);
+    --agent-welcome-pad-end: var(--wiki-space-5);
+    --agent-starters-original-gap: var(--wiki-space-5);
+    --agent-starters-bias: .5rem;
+    padding-inline: var(--wiki-space-2);
+  }
+
+
+  .inline-agent__welcome-title { font-size: clamp(2rem, 8vw, 3rem); }
+
+
+  .inline-agent__composer {
+    padding: var(--wiki-space-2) var(--wiki-space-3) max(var(--wiki-space-2), env(safe-area-inset-bottom));
+  }
+
+
 }
+
+
+@media (max-height: 500px) {
+  .inline-agent__card {
+    min-height: 0;
+    max-height: none;
+  }
+
+  .inline-agent__toolbar {
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+  }
+
+
+  .inline-agent__progress {
+    inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-2) - var(--wiki-space-1));
+  }
+
+  .inline-agent__body {
+    padding-block-start: var(--wiki-space-1);
+  }
+
+  .inline-agent__composer {
+    padding-block-start: var(--wiki-space-1);
+    padding-block-end: max(var(--wiki-space-1), env(safe-area-inset-bottom));
+  }
+
+
+
+  .inline-agent__welcome {
+    min-height: auto;
+    grid-template-rows: 0 auto 0 auto 0;
+    padding-block: var(--wiki-space-5);
+    transform: none;
+  }
+
+  .inline-agent__starters {
+    margin-top: var(--wiki-space-5);
+  }
+}
+
+@media (max-width: 639.98px) and (max-height: 500px) {
+  .inline-agent__starters {
+    padding-block: var(--wiki-space-1) var(--wiki-space-2);
+  }
+}
+
+@media (max-width: 639.98px) and (max-height: 500px) {
+  .inline-agent__toolbar {
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2) + env(safe-area-inset-top));
+  }
+
+  .inline-agent__progress {
+    inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-2) + env(safe-area-inset-top) - var(--wiki-space-1));
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .inline-agent .inline-agent__toolbar,
+  .inline-agent .inline-agent__body {
+    background: rgb(var(--v-theme-background)) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    transition: none;
+  }
+}
+
 @media (forced-colors: active) {
-  .inline-agent, .inline-agent__card, .inline-agent__toolbar, .inline-agent__body, .inline-agent__composer, .inline-agent__side { background: Canvas !important; color: CanvasText; }
-  .inline-agent__scrim { background: Canvas; opacity: .7; }
+  .inline-agent__welcome-title::before {
+    display: none;
+  }
+  .inline-agent__card,
+  .inline-agent__side {
+    border: 1px solid CanvasText;
+  }
+  .inline-agent .inline-agent__toolbar,
+  .inline-agent .inline-agent__body {
+    background: Canvas !important;
+    color: CanvasText;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .inline-agent__scrim {
+    background: Canvas;
+    opacity: .72;
+  }
+
+  .inline-agent__loading-mark {
+    background: Highlight;
+  }
+  .inline-agent__follow-jump-halo,
+  .inline-agent__follow-jump :deep(.v-btn__underlay),
+  .inline-agent__follow-jump :deep(.v-btn__overlay) {
+    display: none;
+  }
+
+  .inline-agent__follow-jump-face,
+  .inline-agent__composer--scrolled:not(.inline-agent__composer--focused),
+  .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
+    border-color: ButtonText;
+    background: Canvas;
+    box-shadow: none;
+    color: ButtonText;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inline-agent__transcript {
+    scroll-behavior: auto;
+  }
+
+  .inline-agent__loading-mark {
+    animation: none;
+  }
+  .inline-agent__starter,
+  .inline-agent__composer,
+  .inline-agent__follow-jump,
+  .inline-agent__card,
+  .inline-agent__toolbar,
+  .inline-agent__body {
+    transition: none;
+  }
 }
 </style>

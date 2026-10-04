@@ -7,7 +7,6 @@
       :eyebrow='siteTitle'
     )
       template(#actions)
-        v-btn(variant='outlined' prepend-icon='mdi-refresh' :loading='summaryLoading' @click='refreshSummary') {{ $t(`common:actions.refresh`) }}
         v-btn(href='/' variant='flat' color='primary' prepend-icon='mdi-home-outline') {{ $t(`admin:dashboard.openWiki`) }}
 
     .dashboard-inventory(v-if='dashboardStats.length' :aria-label='$t(`admin:dashboard.inventory`)' :aria-busy='summaryLoading')
@@ -26,31 +25,26 @@
 
     section.dashboard-connections(v-if='connections.length' aria-labelledby='dashboard-connections-title')
       .dashboard-section-heading
-        h2#dashboard-connections-title {{ $t(`admin:dashboard.connectionsTitle`) }}
+        div
+          .dashboard-section-heading__eyebrow {{ $t(`admin:dashboard.connectionsEyebrow`) }}
+          h2#dashboard-connections-title {{ $t(`admin:dashboard.connectionsTitle`) }}
+        .dashboard-section-heading__rule
       .dashboard-connections__grid
         router-link.dashboard-connection(v-for='item in connections' :key='item.key' :to='item.to')
-          v-icon(size='22' aria-hidden='true') {{ item.icon }}
-          .dashboard-connection__copy
-            h3 {{ item.title }}
-            p {{ item.description }}
+          .dashboard-connection__top
+            v-icon(size='24') {{ item.icon }}
+            span.dashboard-connection__kind {{ item.kind }}
+            v-icon(size='18' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
+          h3 {{ item.title }}
+          p {{ item.description }}
           span.dashboard-connection__link {{ item.action }}
-            v-icon(size='16' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
-
-    section.dashboard-settings(v-if='taskGroups.length')
-      .dashboard-section-heading
-        h2 {{ $t(`admin:shell.settings`) }}
-      .dashboard-settings__groups
-        section.dashboard-settings__group(v-for='group in taskGroups' :key='group.key')
-          h3
-            v-icon(size='18' aria-hidden='true') {{ group.icon }}
-            span {{ group.label }}
-          v-list(bg-color='transparent' density='compact')
-            v-list-item(v-for='item in group.items' :key='item.key' :to='item.to' :href='item.href' :prepend-icon='item.icon' :title='item.label')
-              template(#append v-if='item.count !== undefined')
-                v-chip(size='x-small' variant='tonal') {{ item.count }}
+            v-icon(size='16') {{ $vuetify.locale.isRtl ? 'mdi-arrow-left' : 'mdi-arrow-right' }}
 
     .dashboard-section-heading(v-if='canViewRecentPages || canViewLastLogins')
-      h2 {{ $t(`admin:dashboard.activityTitle`) }}
+      div
+        .dashboard-section-heading__eyebrow {{ $t(`admin:dashboard.activityEyebrow`) }}
+        h2 {{ $t(`admin:dashboard.activityTitle`) }}
+      .dashboard-section-heading__rule
     v-row.dashboard-activity-grid(v-if='canViewRecentPages || canViewLastLogins')
       v-col(cols='12' :lg='canViewLastLogins ? 7 : 12' v-if='canViewRecentPages')
         v-card.dashboard-panel.dashboard-activity.fill-height
@@ -121,7 +115,6 @@
 <script lang="ts">
 import { markRaw, inject } from 'vue'
 import { adminSummaryKey } from '../../helpers/admin-summary'
-import { buildAdminNavigation } from '../../helpers/admin-navigation'
 import AsyncState from '@/components/common/async-state.vue'
 import AnimatedNumber from '@/components/common/animated-number.vue'
 import { wikiStore } from '@/store/index.ts'
@@ -186,9 +179,6 @@ export default {
     },
     permissions() {
       return wikiStore.user.permissions
-    },
-    taskGroups() {
-      return buildAdminNavigation(key => this.$t(key), this.permissions, this.info)
     },
     dashboardStats() {
       return [
@@ -380,94 +370,378 @@ export default {
 <style lang="scss">
 .admin-dashboard {
   container-type: inline-size;
-  .v-list-item-subtitle { opacity: 1; color: var(--wiki-text-muted); }
-  .dashboard-mobile-list .admin-record-link { display: block; white-space: normal; overflow-wrap: anywhere; }
+  .v-list-item-subtitle {
+    opacity: 1;
+    color: var(--admin-muted);
+  }
+  .dashboard-mobile-list .admin-record-link {
+    display: block;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .admin-hero {
+    padding-block: 0.25rem 1rem;
+    margin-bottom: 0;
+    border-bottom: 0;
+  }
 }
 .dashboard-inventory {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  overflow: hidden;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
+  border-block: 1px solid var(--wiki-surface-border);
 }
 .admin-stat {
+  position: relative;
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: .35rem;
-  padding: 1rem;
+  padding: 1rem 1.5rem;
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
-  + .admin-stat { border-inline-start: 1px solid var(--wiki-surface-border); }
-  &:hover { background: var(--wiki-surface-sunken); }
-  &:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -3px; }
-  &__top { display: flex; align-items: center; gap: .5rem; font-size: .875rem; }
-  &__arrow { margin-inline-start: auto; }
-  &__value { font-size: 1.75rem; font-weight: 650; line-height: 1.25; font-variant-numeric: tabular-nums; }
-  &__hint { font-size: .75rem; color: var(--wiki-text-muted); overflow-wrap: anywhere; }
+  border: 1px solid transparent;
+  border-radius: var(--admin-radius);
+  background: var(--wiki-surface-raised);
+  transition:
+    background var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+  + .admin-stat {
+    border-inline-start-color: var(--wiki-surface-border);
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+      115deg,
+      color-mix(in srgb, var(--wiki-accent-ink) 16%, transparent),
+      transparent 58%
+    );
+    opacity: 0;
+    transition: opacity var(--wiki-motion-normal) var(--wiki-motion-ease);
+  }
+
+  &:is(:hover, :focus-visible) {
+    border-color: var(--wiki-surface-border-strong);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 6%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-xs);
+
+    &::before {
+      opacity: 1;
+    }
+
+    .admin-stat__top > .v-icon:first-child {
+      transform: scale(1.05);
+    }
+    .admin-stat__arrow {
+      transform: translate(3px, -3px);
+    }
+  }
+
+  &:active {
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-inset);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color);
+    outline-offset: var(--wiki-focus-offset);
+  }
+
+  &__top {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--admin-muted);
+    font-size: 0.8rem;
+    > .v-icon:first-child {
+      transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease);
+    }
+  }
+  &__arrow {
+    position: relative;
+    z-index: 1;
+    margin-inline-start: auto;
+    transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease);
+  }
+  &__value {
+    position: relative;
+    z-index: 1;
+    margin-top: 0.8rem;
+    font-size: 2.5rem;
+    font-weight: 550;
+    letter-spacing: -0.06em;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  &__hint {
+    position: relative;
+    z-index: 1;
+    margin-top: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--admin-muted);
+  }
+}
+@media (forced-colors: active) {
+  .admin-stat:focus-visible,
+  .dashboard-connection:focus-visible {
+    outline-color: Highlight;
+  }
 }
 .dashboard-section-heading {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-block: 1.5rem .75rem;
-  h2 { font-size: 1rem; font-weight: 650; line-height: 1.4; }
+  gap: 1.5rem;
+  margin-block: 1.5rem 0.8rem;
+  h2 {
+    margin-top: 0.3rem;
+    font-size: 1.4rem;
+    font-weight: 560;
+    letter-spacing: -0.025em;
+    line-height: 1.25;
+  }
+  &__eyebrow {
+    color: var(--wiki-accent-ink);
+    font-size: 0.65rem;
+    font-weight: 650;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+  }
+  &__rule {
+    height: 1px;
+    flex: 1;
+    background: var(--wiki-surface-border);
+  }
 }
 .dashboard-connections__grid {
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  overflow: hidden;
-  background: var(--wiki-surface-raised);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
 }
 .dashboard-connection {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 1rem;
+  flex-direction: column;
   min-width: 0;
-  padding: .875rem 1rem;
+  padding: 1.15rem;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--admin-radius);
+  background: var(--wiki-surface-raised);
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
-  + .dashboard-connection { border-top: 1px solid var(--wiki-surface-border); }
-  &:hover { background: var(--wiki-surface-sunken); }
-  &:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -3px; }
-  &__copy { min-width: 0; flex: 1; }
-  h3 { font-size: .9375rem; font-weight: 650; overflow-wrap: anywhere; }
-  p { margin: .2rem 0 0; color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
-  &__link { display: flex; align-items: center; gap: .5rem; color: var(--wiki-accent-ink); font-size: .8125rem; font-weight: 600; }
-}
-.dashboard-settings__groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
-.dashboard-settings__group {
-  min-width: 0;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  overflow: hidden;
-  h3 { display: flex; align-items: center; gap: .5rem; padding: .875rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); font-size: .875rem; font-weight: 650; }
-  .v-list { padding: .25rem; }
-  .v-list-item { min-height: 44px; }
-  .v-list-item-title { white-space: normal; overflow-wrap: anywhere; font-size: .8125rem; }
+  transition:
+    background var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+      115deg,
+      color-mix(in srgb, var(--wiki-accent-ink) 16%, transparent),
+      transparent 58%
+    );
+    opacity: 0;
+    transition: opacity var(--wiki-motion-normal) var(--wiki-motion-ease);
+  }
+
+  &:is(:hover, :focus-visible) {
+    border-color: var(--wiki-accent-ink);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-xs);
+
+    &::before {
+      opacity: 1;
+    }
+
+    .dashboard-connection__top > .v-icon:first-child {
+      transform: scale(1.05);
+    }
+    .dashboard-connection__top > .v-icon:last-child {
+      transform: translate(3px, -3px);
+    }
+  }
+
+  &:active {
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-inset);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color);
+    outline-offset: var(--wiki-focus-offset);
+  }
+
+  &__top {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    color: var(--wiki-accent-ink);
+    > .v-icon:first-child {
+      transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease);
+    }
+    > .v-icon:last-child {
+      margin-inline-start: auto;
+      transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease);
+    }
+  }
+  &__kind {
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.065em;
+    text-transform: uppercase;
+  }
+  h3 {
+    position: relative;
+    z-index: 1;
+    margin-block: 1rem 0.5rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.3;
+  }
+  p {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    margin: 0 0 1rem;
+    color: var(--admin-muted);
+    font-size: 0.82rem;
+    line-height: 1.55;
+  }
+  &__link {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    font-weight: 650;
+    color: var(--wiki-accent-ink);
+  }
 }
 .dashboard-panel {
   overflow: hidden;
-  &__header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
-  &__heading { display: flex; align-items: center; gap: .75rem; min-width: 0; h2 { font-size: .9375rem; font-weight: 650; } p { font-size: .75rem; color: var(--wiki-text-muted); margin: .2rem 0 0; } }
-  &__icon { color: var(--wiki-text-muted); }
-  .v-table { background: transparent; }
-  td { font-size: .8125rem; max-width: 18rem; overflow-wrap: anywhere; }
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid var(--wiki-surface-border);
+  }
+  &__heading {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+    h2 {
+      font-size: 0.95rem;
+      font-weight: 620;
+    }
+    p {
+      font-size: 0.75rem;
+      color: var(--admin-muted);
+      margin: 0.2rem 0 0;
+    }
+  }
+  &__icon {
+    color: var(--admin-muted);
+  }
+  .v-table {
+    background: transparent;
+  }
+  td {
+    font-size: 0.8rem;
+  }
+  .v-table__wrapper {
+    padding-inline: 0.5rem;
+  }
+  .dashboard-data-table td {
+    max-width: 18rem;
+    overflow-wrap: anywhere;
+  }
 }
-.dashboard-footnote { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--wiki-surface-border); color: var(--wiki-text-muted); font-size: .75rem; }
-@container (max-width: 900px) { .dashboard-settings__groups { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@container (max-width: 550px) {
-  .dashboard-settings__groups { grid-template-columns: 1fr; }
-  .dashboard-connection { flex-wrap: wrap; gap: .75rem; }
-  .dashboard-connection__link { flex: 1 1 100%; padding-inline-start: 2.125rem; min-height: 2.75rem; }
+.dashboard-footnote {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--wiki-surface-border);
+  color: var(--admin-muted);
+  font-size: 0.72rem;
 }
 @media (max-width: 699px) {
-  .dashboard-inventory { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .admin-stat:nth-child(3) { border-inline-start: 0; }
-  .admin-stat:nth-child(n + 3) { border-top: 1px solid var(--wiki-surface-border); }
-  .dashboard-panel__header { flex-wrap: wrap; }
-  .dashboard-panel__header .v-btn { min-height: 44px; }
+  .dashboard-inventory {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .admin-stat {
+    padding: 1rem;
+    &:nth-child(3) {
+      border-inline-start: 0;
+    }
+    &:nth-child(n + 3) {
+      border-top: 1px solid var(--wiki-surface-border);
+    }
+  }
+  .dashboard-connections__grid {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-connection {
+    padding: 1.1rem;
+    h3 {
+      margin-top: 0.8rem;
+    }
+    p {
+      margin-bottom: 1rem;
+    }
+  }
+  .dashboard-section-heading {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .dashboard-panel__header {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-stat,
+  .dashboard-connection {
+    transition: none !important;
+    &::before {
+      transition: none !important;
+    }
+  }
+  .admin-stat:hover .admin-stat__top > .v-icon:first-child,
+  .admin-stat:focus-visible .admin-stat__top > .v-icon:first-child,
+  .admin-stat:hover .admin-stat__arrow,
+  .admin-stat:focus-visible .admin-stat__arrow,
+  .dashboard-connection:hover .dashboard-connection__top > .v-icon:first-child,
+  .dashboard-connection:focus-visible .dashboard-connection__top > .v-icon:first-child,
+  .dashboard-connection:hover .dashboard-connection__top > .v-icon:last-child,
+  .dashboard-connection:focus-visible .dashboard-connection__top > .v-icon:last-child {
+    transform: none !important;
+    transition: none !important;
+  }
+}
+@container (max-width: 760px) {
+  .dashboard-connections__grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

@@ -23,15 +23,9 @@ Browser self-service profile mutations require `X-TsEpistle-Profile-Account`, co
 
 Missing or malformed draft identities are rejected before account lookup or persistence (`400` in REST). A valid identity that differs from the current cookie principal is rejected with REST `409`; GraphQL returns its ordinary failure envelope with the `STALE_PROFILE` slug. Clients must reload the new account's profile rather than retargeting an old draft. Profile reads do not require this header. The internal browser and GraphQL contracts are outside the `/api/v1` compatibility promise below.
 
-## Internal browser page directory
+## Browser page-feature readback
 
-The Knowledge Workbench inventories use `GET /_api/pages/directory`, not the external v1 API. It accepts bounded `limit` (1–100, default 25) and `offset`. The remaining filters cover search, locale, visibility, publication, creator/editor, tags, and untagged pages, with `orderBy` and `orderByDirection` controlling sort order. Creator/editor filtering is an OR for account-scoped inventories. Search applies all terms to supported metadata fields; tag matching resolves canonical identities and historical aliases.
-
-Responses contain `items`, `nextOffset`, and `scanned`. Filtering applies before window progression. A result window scans at most 1,000 authorized candidates and can legitimately contain no visible items with a non-null `nextOffset`; clients must continue rather than call that an exhausted corpus. An empty terminal window also describes only that window, not the corpus: prior windows remain reachable without promising an unavailable Next action. Unreadable pages do not advance the reported offset or scan count. Publication filters respect field projection, including readers who cannot see publication metadata. Loaded-window counts are not corpus totals. Filtered JSON inventory export follows every continuation instead of exporting only the loaded UI window.
-
-Unrestricted read authority has a direct query path. Restricted page policies require a content-free authorization pass over all matching candidates before pagination, so the window bound is **not** a bound on total authorization work. Offsets are not snapshots: concurrent inserts, removals, or sort-key changes can shift later windows. This endpoint remains outside the `/api/v1` compatibility promise.
-
-Account inventories wait for a positive signed-in account ID and discard stale responses after account changes; they never request identity `0` or fall back to an unscoped inventory. Internal page-detail and route reads return normalized `pageFeatures`, so saved Links, Ratings, and Last Editor settings remain consistent when reopening the editor or reading the page. Existing page and field authorization still applies.
+Internal page-detail and route reads return normalized `pageFeatures`, keeping saved Links, Ratings, and Last Editor settings consistent when reopening the editor or reading a page. Missing metadata retains legacy defaults; malformed explicit metadata disables the features. Page and field authorization are unchanged. This readback correction is retained while the interface is restored to the appearance of `8bdd48b3ee41a385999913687a069e8d749f0ea0`.
 
 ## Compatibility policy
 

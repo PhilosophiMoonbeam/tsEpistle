@@ -64,13 +64,12 @@
         class="mt-5"
         >{{ notice }}</v-alert
       >
-      <div class="identity-status" role="status">
+      <div class="identity-status">
         <span>{{
           dirty ? $t('admin:auth.unsavedPolicyDraft') : $t('admin:auth.showingSavedSignPolicy')
         }}</span
         ><span>{{ $t('admin:auth.enabledAccounts', { enabledCount, accountCount, interpolation: { escapeValue: false } }) }}</span>
       </div>
-      <div class="identity-shell">
       <nav
         v-if="!selected"
         class="identity-tabs"
@@ -87,10 +86,10 @@
           {{ item.title }}
         </button>
       </nav>
-      <div v-if="!selected" class="identity-content">
       <template v-if="!selected && section === 'providers'">
         <div class="identity-heading">
           <div>
+            <span class="identity-kicker">{{ $t('admin:auth.identityAccess') }}</span>
             <h2>{{ $t('admin:auth.signMethods') }}</h2>
             <p>
               {{ $t('admin:auth.keepEverydayAccessSimple') }}
@@ -190,6 +189,7 @@
       <template v-else-if="!selected && section === 'order'">
         <div class="identity-heading">
           <div>
+            <span class="identity-kicker">{{ $t('admin:auth.arrivalExperience') }}</span>
             <h2>{{ $t('admin:auth.loginOrder') }}</h2>
             <p>
               {{ $t('admin:auth.putMethodMostPeople') }}
@@ -252,6 +252,7 @@
       <template v-else-if="!selected && section === 'activity'">
         <div class="identity-heading">
           <div>
+            <span class="identity-kicker">{{ $t('admin:auth.administrativeRecord') }}</span>
             <h2>{{ $t('admin:auth.policyActivity') }}</h2>
             <p>
               {{ $t('admin:auth.latest50ReviewedChanges') }}
@@ -295,8 +296,7 @@
           </li>
         </ol>
       </template>
-      </div>
-      <template v-if="selected">
+      <template v-else-if="selected">
         <nav class="identity-tabs" :aria-label="$t('admin:auth.providerSettings')">
           <button
             v-for="item in providerSections"
@@ -309,7 +309,6 @@
             {{ item.title }}
           </button>
         </nav>
-        <div class="identity-content">
         <div class="identity-provider-layout">
           <section class="identity-editor">
             <template v-if="providerSection === 'connection'">
@@ -615,9 +614,7 @@
             </div>
           </aside>
         </div>
-        </div>
       </template>
-      </div>
     </template>
     <v-dialog
       v-model="catalog"

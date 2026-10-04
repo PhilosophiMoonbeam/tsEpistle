@@ -1,7 +1,6 @@
 {
   "common": {
     "page": {
-      "privatePage": "Private page",
       "id": "ID {{id}}",
       "toc": "Page Contents",
       "onThisPage": "On this page",
@@ -397,8 +396,6 @@
       "currentStateRefreshed": "The current page state was refreshed."
     },
     "header": {
-      "searchKnowledge": "Search knowledge",
-      "convert": "Convert",
       "edit": "Edit",
       "home": "Home",
       "move": "Move / Rename",
@@ -688,13 +685,7 @@
     "agentMemory": {
       "clearAll": "Clear all memory"
     },
-    "search": {
-      "noResults": "No matching saved pages."
-    },
     "actions": {
-      "previous": "Previous",
-      "next": "Next",
-      "retry": "Retry",
       "ok": "OK",
       "add": "Add",
       "copy": "Copy",
@@ -748,12 +739,6 @@
       "destination": "Page destination:"
     },
     "sidebar": {
-      "library": "Library",
-      "filterDirectory": "Filter loaded directory",
-      "filterMenu": "Filter main menu",
-      "noFilterMatches": "No matching menu items",
-      "noDirectoryMatches": "No matches in this loaded directory",
-      "filterCount": "{{count}} of {{total}} loaded items",
       "root": "(root)",
       "browse": "Browse",
       "mainMenu": "Main Menu",
@@ -775,9 +760,6 @@
       "createhome": "Create Home Page"
     },
     "pageLinks": {
-      "filterLoadedPages": "Filter loaded linked pages",
-      "loaded": "loaded",
-      "noLoadedMatches": "No matches in loaded linked pages.",
       "title": "Links",
       "current": "Current page links",
       "direction": "Page link direction",
@@ -805,8 +787,6 @@
       "changedWhileLoading": "The link list changed while it was loading. Refresh to see the current view."
     },
     "pageRatings": {
-      "helpful": "Helpful",
-      "notHelpful": "Not helpful",
       "title": "Page rating",
       "signInToRate": "Sign in with a personal account to rate.",
       "loading": "Loading page rating…",
@@ -844,10 +824,6 @@
       "removeError": "Your rating could not be removed."
     },
     "comments": {
-      "loadedDiscussion": "Loaded discussion",
-      "loadedDiscussionBatches": "Loaded discussion batches",
-      "previousComments": "Previous comments",
-      "nextComments": "Next comments",
       "none": "No comments yet.",
       "closed": "This discussion is closed to new comments.",
       "unavailable": "Discussions are not available right now.",
@@ -941,7 +917,6 @@
       "withZone": "{{time}} ({{zone}})"
     },
     "pageConvert": {
-      "currentEditor": "Current editor",
       "newEditor": "New editor",
       "editorMarkdown": "Markdown",
       "editorVisualMarkdown": "Visual Markdown",
@@ -949,17 +924,6 @@
       "editorRawHtml": "Raw HTML"
     },
     "pageSelector": {
-      "duplicateTitle": "Duplicate page",
-      "destination": "Destination",
-      "filterLoadedFolder": "Filter loaded folder pages",
-      "filterLoadedFolderHint": "Matches titles and paths in this folder only.",
-      "sourcePage": "Source page",
-      "moveDestinationHint": "Choose a destination. Review supported incoming links before committing the move.",
-      "duplicateDestinationHint": "Choose a new location for the copy. The original page remains unchanged.",
-      "createDestinationHint": "Choose a folder and path for the page.",
-      "selectDestinationHint": "Browse a folder and select the page you need.",
-      "continueToEditor": "Continue to editor",
-      "useLocation": "Use this location",
       "pages": "Pages",
       "moveTitle": "Move / Rename Page Location",
       "createTitle": "Select New Page Location",
@@ -1067,7 +1031,6 @@
       "returnHome": "Return home"
     },
     "pageSource": {
-      "lineCountLabel": "lines",
       "backToPage": "Back to page",
       "wrapLines": "Wrap lines",
       "copied": "Source copied to the clipboard.",
@@ -1354,7 +1317,6 @@
       "statusUnavailable": "Status unavailable"
     },
     "wikiSourcePreview": {
-      "workbenchLabel": "Source preview",
       "sourceUnavailable": "Source unavailable.",
       "readLittleCloser": "Read a little closer",
       "passageMatchingSearch": "Passage matching your search",
@@ -1573,7 +1535,6 @@
       "pageHasNotBeen": "This page has not been saved on this device. You can open another saved page below or reconnect to continue."
     },
     "inlineAgentChat": {
-      "modelLabel": "Model",
       "providerIdentity": "{{name}} · {{model}}",
       "chooseProvider": "Conversation provider",
       "chooseProviderLabel": "Choose conversation provider. Current provider: {{identity}}",
@@ -1833,8 +1794,6 @@
       "typeExactPagePath": "Type the exact page path to enable deletion"
     },
     "agentPersonalSkills": {
-      "previousLoadedSkills": "Previous loaded skills",
-      "nextLoadedSkills": "Next loaded skills",
       "removeTargetNoLongerAvailable": "This personal skill was already removed elsewhere. There is nothing left to remove.",
       "reloadBeforeRetry": "Reload personal skills before retrying.",
       "reloadSkills": "Reload skills",
@@ -2095,8 +2054,6 @@
       "downloadedSearchCorpusUnavailable": "Downloaded search corpus is unavailable."
     },
     "agentContextPicker": {
-      "excerptTruncated": "excerpt truncated",
-      "contextCapacity": "24 KiB context",
       "searchScopeHelp": "Scope limits the Wiki pages the Agent can search for your next message; it does not filter Add sources.",
       "attachSourcesFirst": "Use Sources to attach pages first.",
       "selectedPages": "Selected pages",
@@ -2332,10 +2289,6 @@
       "researchOperationProgress": "Research operation progress"
     },
     "agentThread": {
-      "historyWindowSummary": "Older history is not included in this view.",
-      "historyWindowTitle": "Recent conversation window",
-      "historyWindowMessages": "Showing the latest {{limit}} messages. Older messages are not included in this view.",
-      "historyWindowRuns": "Showing activity for the latest {{limit}} runs. Older run activity is not included in this view.",
       "activityCount_one": "{{count}} activity",
       "activityCount_other": "{{count}} activities",
       "activityTitle": "{{title}}",
@@ -2460,9 +2413,6 @@
       "openNavigation": "Open navigation"
     },
     "agentMemoryManager": {
-      "characterCapacity": "{{count}} / {{limit}} characters",
-      "previousLoadedMemories": "Previous loaded memories",
-      "nextLoadedMemories": "Next loaded memories",
       "connectionRequiredChangeAgent": "Connection required to change Agent memory. Retry connection in the Agent workspace before saving.",
       "saved_one": "{{count}} saved record",
       "saved_other": "{{count}} saved records",
@@ -2820,7 +2770,6 @@
       "modules": "Modules"
     },
     "ssl": {
-      "operationRegister": "Operation register",
       "ports": "Ports",
       "title": "SSL",
       "domain": "Domain",
@@ -3457,13 +3406,6 @@
       "sendOneTestEmail": "Send one test email to this address"
     },
     "tags": {
-      "loadedNames": "{{count}} names loaded",
-      "filterLoadedNames": "Search and views filter the loaded tag register.",
-      "registerRange": "{{start}}–{{end}} of {{count}} matching names",
-      "pagesLabel": "pages",
-      "namesPerPage": "Names per page",
-      "locateSelected": "Show selected in register",
-      "activeState": "Active",
       "tag": "Tag",
       "date": "Created {{created}} and last updated {{updated}}.",
       "edit": "Edit Tag",
@@ -3642,17 +3584,6 @@
       "iUnderstandTheseTag": "I understand that these tag-based access rules will match different pages."
     },
     "pages": {
-      "directoryContext": "Search and filter the whole accessible corpus. Results load in bounded windows; no corpus totals are inferred.",
-      "creatorAccountId": "Creator account ID",
-      "authorAccountId": "Last editor account ID",
-      "authorshipUnion": "Matching pages were created by the creator account or last edited by the editor account.",
-      "windowCount": "Pages in this window",
-      "outsideCurrentWindow": "outside this window",
-      "staleWindow": "Showing the previous window while the current request is unresolved. These rows do not represent the current filters.",
-      "emptyWindow": "No visible pages in this window",
-      "emptyWindowHint": "This window has no visible matches. Review the filters or navigate another window.",
-      "windowNumber": "Window",
-      "candidatesScanned": "candidates scanned",
       "title": "Pages",
       "publicationStates": {
         "draft": "Draft",
@@ -3905,7 +3836,6 @@
       "n31000Characters": "3–1,000 characters. Recorded with this publication."
     },
     "users": {
-      "directoryDescription": "Accounts, memberships and sign-in status.",
       "id": "ID {{id}}",
       "tfa": "Two Factor Authentication (2FA)",
       "edit": "Edit User",
@@ -3991,8 +3921,6 @@
       "tryAgain": "Try again"
     },
     "editor": {
-      "searchEditors": "Search editors",
-      "noMatchingEditors": "No editors match this search.",
       "title": "Editor",
       "existingPagesCount_one": "{{count}} existing page",
       "existingPagesCount_other": "{{count}} existing pages",
@@ -4107,8 +4035,6 @@
       "previewPolicy": "Preview policy"
     },
     "groups": {
-      "directoryDescription": "Memberships, permissions and shared access policies.",
-      "records": "Group records",
       "title": "Groups",
       "pageRulesCount_one": "{{count}} page rule",
       "pageRulesCount_other": "{{count}} page rules",
@@ -4151,8 +4077,6 @@
       "systemGroup": "System group"
     },
     "locale": {
-      "packageLibraryPages": "Language package pages",
-      "clearPackageFilters": "Clear filters",
       "rtl": "RTL",
       "base": {
         "hint": "All UI text elements will be displayed in selected language.",
@@ -4919,7 +4843,6 @@
       "administrativeReason": "Administrative reason"
     },
     "logging": {
-      "loadedDestinationResults": "{{visible}} of {{loaded}} loaded destinations shown; legacy visibility applies",
       "title": "Logging",
       "destinations": "Destinations",
       "console": "Console",
@@ -5030,9 +4953,6 @@
       "reasonChange": "Reason for this change"
     },
     "storage": {
-      "storageTargetsHeading": "Storage targets",
-      "operationsHeading": "Operations and receipts",
-      "recoveryHeading": "Recovery planning",
       "title": "Storage",
       "status": "Status",
       "actions": "Actions",
@@ -5653,10 +5573,6 @@
       "administrativeReason": "Administrative reason"
     },
     "webhooks": {
-      "loadedEndpointMatches": "{{matches}} matching · {{loaded}} loaded endpoints",
-      "endpointPages": "Endpoint pages",
-      "loadedDeliveryMatches": "{{matches}} matching · {{loaded}} loaded deliveries (latest 100 only)",
-      "deliveryPages": "Delivery pages",
       "title": "Webhooks",
       "subtitle": "Manage webhooks to external services",
       "subscriptionsCount_one": "{{count}} subscription",
@@ -5784,7 +5700,6 @@
     },
     "adminArea": "Administration Area",
     "analytics": {
-      "loadedProviderResults": "{{visible}} of {{loaded}} loaded providers shown",
       "title": "Analytics",
       "subtitle": "Add analytics and tracking tools to your wiki",
       "providers": "Providers",
@@ -6194,8 +6109,6 @@
       "iHaveReviewedThese": "I have reviewed these configuration effects."
     },
     "utilities": {
-      "filterLoadedReceipts": "Filter loaded operation receipts",
-      "noMatchingReceipts": "No loaded receipts match this filter.",
       "title": "Utilities",
       "tools": "Tools",
       "subtitle": "Maintenance and miscellaneous tools",
@@ -6746,7 +6659,6 @@
       "colorPicker": "{{label}} color picker"
     },
     "usersEdit": {
-      "reloadRequired": "Reload required before further changes",
       "permissionCount_one": "{{count}} permission",
       "permissionCount_other": "{{count}} permissions",
       "fieldsChanged_one": "{{count}} field changed",
@@ -7575,7 +7487,6 @@
       "runningProviderWorkCannot": "Running provider work cannot be forcibly cancelled from this page."
     },
     "apiCreate": {
-      "oneTimeKeyDisclosure": "This key is shown only now. Save it in your client’s secret storage before closing; it cannot be recovered from the credential register.",
       "fieldRequired": "This field is required.",
       "choosePermissionScope": "Choose a permission scope.",
       "replacement": "{{name}} replacement",
@@ -7763,10 +7674,6 @@
       "iReviewedPolicyWant": "I reviewed this policy and want to promote and reconcile this process now."
     },
     "loggingConsole": {
-      "retainedFilterResults": "{{visible}} of {{retained}} retained records shown; level filters apply only to this browser buffer",
-      "noMatchingRecords": "No retained records match these levels",
-      "changeLevelFilters": "Choose another level to inspect the retained browser records.",
-      "followNewest": "Follow newest",
       "kib": "{{round}} KiB",
       "connecting": "Connecting",
       "paused": "Paused",
@@ -8071,7 +7978,6 @@
       "findPageLinkedPath": "Find a page or linked path"
     },
     "agentAdmin": {
-      "loadedProviderFilterScope": "Filters apply to the loaded provider inventory.",
       "discardAccessChanges": "Discard access changes?",
       "unsavedAccessChanges": "Your unsaved provider access changes will be lost.",
       "completeRequiredFieldsNamedStep": "Complete the required fields in {{step}} before continuing.",
@@ -8564,7 +8470,6 @@
       "agentUtility2": "Agent: {{agentReasoningEffort}} · Utility: {{utilityReasoningEffort}}"
     },
     "agentAdminTools": {
-      "loadedToolFilterScope": "Filters apply to the loaded tool inventory.",
       "eitherInterface": "Either interface",
       "wikiAgent": "Wiki Agent",
       "mcpClients": "MCP clients",
@@ -8612,7 +8517,6 @@
       "deploymentState": "Deployment state"
     },
     "skillAdmin": {
-      "loadedSkillFilterScope": "Filters apply to the loaded organization skills.",
       "clearSourcePage": "Clear source page selection",
       "clearSearch": "Clear search",
       "sourcePagesCouldNot": "Source pages could not be loaded.",
@@ -8740,11 +8644,6 @@
     }
   },
   "editor": {
-    "media": {
-      "filterLoadedAssets": "Filter loaded assets in this folder",
-      "loadedAssetCount": "{{count}} / {{total}} loaded assets in this folder",
-      "noLoadedMatches": "No loaded assets match this filter."
-    },
     "page": "Page",
     "save": {
       "error": "An error occurred while creating the page",
@@ -9729,17 +9628,6 @@
       "success": "Profile saved successfully."
     },
     "pages": {
-      "pageId": "Page ID",
-      "descending": "Descending",
-      "ascending": "Ascending",
-      "sort": "Sort by",
-      "direction": "Order",
-      "directoryNoMatches": "Try another title, path, description, language, page ID or tag, or turn off Private only.",
-      "previousResults": "Showing previous results. Reload to apply the current filters.",
-      "emptyBatch": "No readable pages in this batch",
-      "batchRecoveryHint": "Review the filters or return to another batch of your contributions.",
-      "loadedCount": "{{count}} pages in this batch",
-      "batch": "Batch {{number}}",
       "title": "Pages",
       "subtitle": "List of pages I created or last modified",
       "emptyList": "No pages to display.",
@@ -9757,7 +9645,6 @@
       "loadError": "Pages could not be loaded",
       "private": "Private",
       "loading": "Loading pages",
-      "accountLoading": "Loading your account",
       "loadingMessage": "Fetching your contributions.",
       "noContributions": "Pages you create or contribute to will appear here.",
       "noMatches": "No matching pages",

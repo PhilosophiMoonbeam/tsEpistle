@@ -1,14 +1,6 @@
 <template>
   <section class="agent-thread" :aria-label="$t('common:agentThread.agentConversation')">
     <div :key="liveSummaryRevision" class="sr-status" aria-live="polite" aria-atomic="true">{{ liveSummary }}</div>
-    <aside v-if="thread.historyWindow.hasOlderMessages || thread.historyWindow.hasOlderRuns" class="agent-history-window" role="note">
-      <v-icon icon="mdi-history" size="20" aria-hidden="true" />
-      <div>
-        <strong>{{ $t('common:agentThread.historyWindowTitle', { defaultValue: 'Recent conversation window' }) }}</strong>
-        <p v-if="thread.historyWindow.hasOlderMessages">{{ $t('common:agentThread.historyWindowMessages', { limit: thread.historyWindow.messageLimit, defaultValue: `Showing the latest ${thread.historyWindow.messageLimit} messages. Older messages are not included in this view.` }) }}</p>
-        <p v-if="thread.historyWindow.hasOlderRuns">{{ $t('common:agentThread.historyWindowRuns', { limit: thread.historyWindow.runLimit, defaultValue: `Showing activity for the latest ${thread.historyWindow.runLimit} runs. Older run activity is not included in this view.` }) }}</p>
-      </div>
-    </aside>
     <template v-for="entry in threadProjection.orderedMessages" :key="entry.message.id">
       <article
         class="agent-message"
@@ -17,8 +9,9 @@
         :aria-label="entry.ariaLabel"
       >
         <div v-if="entry.message.role === 'assistant'" class="agent-message__identity" aria-hidden="true">
-          <span class="agent-message__assistant-mark">
-            <v-icon icon="mdi-robot-outline" size="18" aria-hidden="true" />
+          <span class="agent-message__assistant-mark" :class="{ 'agent-message__assistant-mark--working': entry.message.status === 'pending' || entry.message.status === 'streaming' }">
+            <v-icon class="agent-message__assistant-spark" icon="mdi-creation-outline" size="18" aria-hidden="true" />
+            <ControlBorderBeam :enabled="entry.message.status === 'pending' || entry.message.status === 'streaming'" :phase-offset-ms="0" />
           </span>
         </div>
         <header v-else class="agent-message__identity agent-message__identity--user">
@@ -338,6 +331,7 @@ import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import i18next from 'i18next'
 import type { UserPicture } from '../../helpers/user-picture.ts'
+import ControlBorderBeam from '../common/control-border-beam.vue'
 import StatusIndicator from '../common/status-indicator.vue'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentAnswerActions from './agent-answer-actions.vue'
@@ -719,97 +713,786 @@ watch(
 </script>
 
 <style scoped>
-.agent-thread { color: rgb(var(--v-theme-on-surface)); font-family: var(--wiki-font-body); margin-inline: auto; width: 100%; min-width: 0; }
-.agent-history-window { display: flex; align-items: start; gap: var(--wiki-space-3); margin-block-end: var(--wiki-space-5); padding: var(--wiki-space-3) var(--wiki-space-4); background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border-strong); border-radius: var(--wiki-control-radius); font-size: .85rem; line-height: 1.5; }
-.agent-history-window p { margin: var(--wiki-space-1) 0 0; color: var(--wiki-text-muted); }
-.agent-message { margin-block-end: var(--wiki-space-5); max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
-.agent-message--assistant { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: start; gap: var(--wiki-space-3); }
-.agent-message__content, .agent-message__identity { min-width: 0; }
-.agent-message__meta, .agent-message__user-details { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-2); min-height: 28px; color: var(--wiki-text-muted); font-size: .8rem; }
-.agent-message__meta { margin-block-end: var(--wiki-space-2); }
-.agent-message__role { color: rgb(var(--v-theme-on-surface)); font-weight: 700; font-size: .85rem; }
-.agent-message__time { color: var(--wiki-text-muted); font-size: .75rem; }
-.agent-message__status { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-1); font-size: .75rem; color: var(--wiki-text-muted); }
-.agent-message__status--failed { color: rgb(var(--v-theme-error)); }
-.agent-message__assistant-mark { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; box-sizing: border-box; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); color: var(--wiki-primary-ink); }
-.agent-message__surface { min-width: 0; font-size: .96rem; line-height: var(--wiki-leading-body); }
-.agent-message--assistant .agent-message__surface { padding: var(--wiki-space-4); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
-.agent-message--assistant.agent-message--pending .agent-message__surface, .agent-message--assistant.agent-message--streaming .agent-message__surface { border-inline-start: 3px solid var(--wiki-primary-ink); }
-.agent-message--failed .agent-message__surface { border-inline-start: 3px solid rgb(var(--v-theme-error)); }
-.agent-message--cancelled .agent-message__surface { border-inline-start: 3px solid var(--wiki-surface-border-strong); }
-.agent-message--user { display: grid; grid-template-columns: minmax(0, 1fr); margin-inline-start: 44px; }
-.agent-message__identity--user { display: flex; align-items: center; gap: var(--wiki-space-2); margin-block-end: var(--wiki-space-2); }
-.agent-message__user-avatar { order: -1; flex: 0 0 28px; border: 1px solid var(--wiki-surface-border); }
-.agent-message__user-initials { font-size: .75rem; font-weight: 700; }
-.agent-message--user .agent-message__surface { padding: var(--wiki-space-3) var(--wiki-space-4); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-sunken); }
-.agent-message__terminal-copy { color: var(--wiki-text-muted); margin: 0; }
-.agent-message__waiting { display: inline-flex; align-items: center; gap: var(--wiki-space-2); color: var(--wiki-text-muted); min-height: 28px; font-size: .85rem; }
-.agent-message__waiting-dots { display: inline-flex; align-items: center; gap: 3px; }
-.agent-message__waiting-dots > span { width: 4px; height: 4px; border-radius: 50%; background: var(--wiki-primary-ink); }
-.agent-message__media { display: grid; gap: var(--wiki-space-3); margin-block-start: var(--wiki-space-3); }
+.agent-message__media { display: grid; gap: 12px; margin-top: 8px; }
 .agent-message__media figure { margin: 0; min-width: 0; }
-.agent-message__media img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: var(--wiki-control-radius); }
-.agent-message__media video { display: block; width: 100%; max-height: 480px; border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); }
+.agent-message__media img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 12px; }
+.agent-message__media video { display: block; width: 100%; max-height: 480px; border-radius: 12px; background: #000; }
 .agent-message__media audio { display: block; width: min(100%, 440px); }
-.agent-message__media figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-2); margin-block-start: var(--wiki-space-2); font-size: .8rem; overflow-wrap: anywhere; }
+.agent-message__media figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: .8rem; overflow-wrap: anywhere; }
 .agent-message__media figcaption a { color: var(--wiki-primary-ink); }
-.agent-message__media-detached { display: inline-flex; align-items: center; gap: var(--wiki-space-1); color: var(--wiki-text-muted); }
-.agent-message__media-confirm { color: var(--wiki-text-muted); }
-.agent-message__recovery { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: var(--wiki-space-3); margin-block-start: var(--wiki-space-4); padding-block-start: var(--wiki-space-3); border-top: 1px solid var(--wiki-surface-border); }
-.agent-message__recovery > .v-icon { color: rgb(var(--v-theme-error)); }
-.agent-message--cancelled .agent-message__recovery > .v-icon { color: var(--wiki-text-muted); }
-.agent-message__recovery strong, .agent-message__recovery span { display: block; font-size: .85rem; }
-.agent-message__recovery span { color: var(--wiki-text-muted); margin-block-start: var(--wiki-space-1); }
-.agent-message__source-context { display: flex; flex-wrap: wrap; align-items: start; gap: var(--wiki-space-2); margin-block-start: var(--wiki-space-3); padding-block-start: var(--wiki-space-3); border-top: 1px solid var(--wiki-surface-border); color: var(--wiki-text-muted); font-size: .8rem; }
-.agent-message__source-context > span { flex-basis: 100%; }
-.agent-message__source-context .v-btn { max-width: 100%; height: auto; min-height: 36px; color: var(--wiki-primary-ink); }
-.agent-message__source-context :deep(.v-btn__content) { white-space: normal; overflow-wrap: anywhere; text-align: start; }
-.agent-sources, .agent-activity { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); margin-block-start: var(--wiki-space-4) !important; background: var(--wiki-surface-sunken); overflow: hidden; }
-.agent-sources__heading, .agent-activity summary { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-2); min-height: 44px; padding: var(--wiki-space-2) var(--wiki-space-3); list-style: none; cursor: pointer; color: rgb(var(--v-theme-on-surface)); font-size: .85rem; }
-.agent-sources[open] > summary, .agent-activity[open] > summary { border-bottom: 1px solid var(--wiki-surface-border); }
-.agent-sources__heading::-webkit-details-marker, .agent-activity summary::-webkit-details-marker { display: none; }
-.agent-sources__heading::after, .agent-activity summary::after { content: '›'; margin-inline-start: auto; font-size: 1.25rem; transform: rotate(90deg); }
-.agent-sources[open] > summary::after, .agent-activity[open] > summary::after { transform: rotate(270deg); }
-.agent-sources__heading > .v-icon { color: var(--wiki-primary-ink); }
-.agent-sources__origin { color: var(--wiki-text-muted); font-size: .75rem; }
-.agent-sources__count { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; padding-inline: var(--wiki-space-1); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-raised); font-size: .75rem; }
-.agent-sources__groups, .agent-sources__sections, .agent-web-sources__list, .agent-activity__list { list-style: none; margin: 0; padding: 0; }
-.agent-sources__group + .agent-sources__group { border-top: 1px solid var(--wiki-surface-border); }
-.agent-sources__page, .agent-sources__sections > li > :is(a, span) { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--wiki-space-2); min-height: 44px; padding: var(--wiki-space-2) var(--wiki-space-3); color: inherit; text-decoration: none; line-height: 1.5; }
-.agent-sources__page strong, .agent-sources__label { min-width: 0; overflow-wrap: anywhere; font-size: .85rem; }
-.agent-sources__sections { border-top: 1px solid var(--wiki-surface-border); padding-inline-start: var(--wiki-space-4); }
-.agent-sources__number { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); color: rgb(var(--v-theme-on-surface)); background: var(--wiki-surface-raised); font-family: var(--wiki-font-mono); font-size: .75rem; }
-.agent-sources__preview { margin-inline: var(--wiki-space-3); }
-.agent-sources a:hover, .agent-page-links a:hover { background: var(--wiki-surface-raised); color: var(--wiki-primary-ink); }
-.agent-web-sources__list { padding: var(--wiki-space-3); display: grid; gap: var(--wiki-space-3); }
-.agent-web-sources__list > li { min-width: 0; }
-.agent-web-sources__list a, .agent-web-sources__list li > span { display: flex; align-items: center; gap: var(--wiki-space-2); color: inherit; text-decoration: none; min-height: 44px; }
-.agent-web-sources__list strong { min-width: 0; overflow-wrap: anywhere; }
-.agent-web-sources__list a:hover strong { text-decoration: underline; }
-.agent-web-sources__list blockquote { margin: var(--wiki-space-2) 0 0; padding-inline-start: var(--wiki-space-3); border-inline-start: 2px solid var(--wiki-surface-border-strong); color: var(--wiki-text-muted); font-size: .85rem; line-height: 1.6; white-space: pre-wrap; }
-.agent-page-links { display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); margin-block-start: var(--wiki-space-4) !important; padding-block-start: var(--wiki-space-3); border-top: 1px solid var(--wiki-surface-border); }
-.agent-page-links > :is(a, span) { display: inline-flex; align-items: center; gap: var(--wiki-space-2); min-height: 44px; padding: var(--wiki-space-2) var(--wiki-space-3); max-width: 100%; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); color: var(--wiki-primary-ink); text-decoration: none; overflow-wrap: anywhere; }
-.agent-page-links > span { color: rgb(var(--v-theme-on-surface)); }
-.agent-page-links > :is(a, span) > span { min-width: 0; }
-.agent-activity__list { display: grid; padding: var(--wiki-space-3); gap: var(--wiki-space-3); }
-.agent-activity__list li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--wiki-space-2); font-size: .85rem; }
-.agent-activity__list small { display: block; color: var(--wiki-text-muted); line-height: 1.5; }
-.agent-sources__heading:focus-visible, .agent-sources a:focus-visible, .agent-page-links a:focus-visible, .agent-activity summary:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
-.agent-sources__new-window, .sr-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.agent-suggestions { display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); margin-block-start: var(--wiki-space-4); }
-.agent-suggestions :deep(.v-btn) { max-width: 100%; height: auto; min-height: 44px; padding-block: var(--wiki-space-2); border-radius: var(--wiki-control-radius); font-weight: 500; letter-spacing: normal; text-transform: none; }
-.agent-suggestions :deep(.v-btn__content) { white-space: normal; overflow-wrap: anywhere; }
+.agent-message__media figcaption .agent-message__media-detached { align-items: center; color: var(--wiki-text-muted); display: inline-flex; gap: 4px; }
+.agent-message__media figcaption .agent-message__media-confirm { color: var(--wiki-text-muted); }
+
+.agent-thread {
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-body);
+  margin-inline: auto;
+  min-height: calc(var(--wiki-space-12) * 4);
+  width: 100%;
+}
+
+
+.agent-message {
+  color: rgb(var(--v-theme-on-surface));
+  margin-block-end: var(--wiki-space-8);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.agent-message__content {
+  min-width: 0;
+}
+
+.agent-message__meta {
+  align-items: center;
+  color: var(--wiki-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  margin-block-end: var(--wiki-space-2);
+  min-height: var(--wiki-space-6);
+}
+
+.agent-message__role {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .78rem;
+  font-weight: 720;
+  letter-spacing: .025em;
+  line-height: 1.35;
+}
+
+.agent-message__time {
+  color: var(--wiki-text-muted);
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
+  line-height: 1.35;
+}
+
+.agent-message__time::before {
+  content: '·';
+  margin-inline-end: var(--wiki-space-2);
+}
+
+.agent-message__status {
+  align-items: center;
+  color: var(--wiki-text-muted);
+  display: inline-flex;
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  gap: var(--wiki-space-1);
+  letter-spacing: .025em;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+
+
+.agent-message__status--failed {
+  color: rgb(var(--v-theme-error));
+}
+
+@keyframes agent-message-spark-shimmer {
+  0%, 84%, 100% {
+    filter: none;
+    opacity: 1;
+  }
+  88% {
+    filter: brightness(1.35) drop-shadow(0 0 7px color-mix(in srgb, var(--agent-mark-color) 70%, transparent));
+    opacity: 1;
+  }
+  91% {
+    opacity: .6;
+  }
+  95% {
+    filter: brightness(1.15) drop-shadow(0 0 3px color-mix(in srgb, var(--agent-mark-color) 45%, transparent));
+    opacity: 1;
+  }
+}
+
+
+
+.agent-message--assistant {
+  align-items: start;
+  display: grid;
+  gap: var(--wiki-space-3);
+  grid-template-columns: var(--wiki-space-8) minmax(0, 1fr);
+}
+
+.agent-message--assistant .agent-message__content {
+  max-width: calc(var(--wiki-space-12) * 16);
+}
+
+.agent-message__identity {
+  align-self: start;
+  min-width: 0;
+}
+
+.agent-message__assistant-mark {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
+  --wiki-control-radius: 50%;
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
+  /* Palette-aware agent identity: the theme info color, nudged toward the text color for contrast. */
+  --agent-mark-color: color-mix(in srgb, rgb(var(--v-theme-info)) 85%, rgb(var(--v-theme-on-surface)));
+  --wiki-beam-violet: var(--agent-mark-color);
+  --wiki-beam-cool: color-mix(in srgb, var(--agent-mark-color) 62%, rgb(var(--v-theme-surface)));
+}
+
+.agent-message__assistant-spark {
+  position: relative;
+  z-index: 1;
+  color: var(--agent-mark-color);
+}
+
+.agent-message__assistant-mark--working .agent-message__assistant-spark {
+  animation: agent-message-spark-shimmer 7s ease-in-out infinite;
+}
+
+.agent-message__user-avatar {
+  flex: 0 0 28px;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, var(--wiki-surface-border));
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+}
+
+.agent-message__user-initials {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+.agent-message__surface {
+  font-size: .96rem;
+  line-height: var(--wiki-leading-body);
+  min-width: 0;
+}
+
+.agent-message--assistant .agent-message__surface {
+  background: var(--wiki-surface-raised);
+  border: 1px solid var(--wiki-surface-border);
+  border-inline-start: 2px solid transparent;
+  border-radius: var(--wiki-control-radius);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  padding: var(--wiki-space-3) var(--wiki-space-4);
+}
+
+.agent-message--assistant.agent-message--pending .agent-message__surface,
+.agent-message--assistant.agent-message--streaming .agent-message__surface {
+  border-inline-start-color: var(--wiki-accent-warm);
+}
+
+.agent-message--assistant.agent-message--failed .agent-message__surface {
+  border-inline-start-color: rgb(var(--v-theme-error));
+}
+
+.agent-message--assistant.agent-message--cancelled .agent-message__surface {
+  border-inline-start-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, var(--wiki-surface-border));
+}
+
+.agent-message--user {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--wiki-space-2);
+  justify-content: flex-end;
+  margin-inline-start: auto;
+  width: 100%;
+}
+
+.agent-message--user .agent-message__content {
+  max-width: min(calc(var(--wiki-space-12) * 12), 76%);
+  order: 2;
+  width: fit-content;
+}
+
+.agent-message--user .agent-message__surface {
+  background: color-mix(in srgb, var(--wiki-surface-sunken) 94%, var(--wiki-accent-warm) 6%);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  border-end-start-radius: var(--wiki-radius-xs);
+  box-shadow: var(--wiki-shadow-inset);
+  padding: var(--wiki-space-3) var(--wiki-space-4);
+}
+
+.agent-message--user.agent-message--failed .agent-message__surface {
+  border-inline-end: 2px solid rgb(var(--v-theme-error));
+}
+
+.agent-message--user.agent-message--cancelled .agent-message__surface {
+  border-inline-end: 2px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, var(--wiki-surface-border));
+}
+
+.agent-message__identity--user {
+  align-items: flex-start;
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--wiki-space-2);
+  order: 1;
+  padding-block-start: var(--wiki-space-3);
+  text-align: end;
+}
+
+.agent-message__user-details {
+  display: grid;
+  gap: var(--wiki-space-1);
+  justify-items: end;
+}
+
+.agent-message__identity--user .agent-message__time::before {
+  content: none;
+}
+
+.agent-message__identity--user .agent-message__status {
+  justify-content: flex-end;
+}
+
+.agent-message__terminal-copy {
+  color: var(--wiki-text-muted);
+  margin: 0;
+}
+
+.agent-message__waiting {
+  align-items: center;
+  color: var(--wiki-text-muted);
+  display: inline-flex;
+  font-size: .86rem;
+  gap: var(--wiki-space-2);
+  min-height: var(--wiki-space-6);
+}
+
+.agent-message__waiting-dots {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--wiki-space-1);
+}
+
+.agent-message__waiting-dots > span {
+  animation: agentWaitingDot 1.25s var(--wiki-motion-ease) infinite;
+  background: var(--wiki-accent-warm);
+  border-radius: var(--wiki-radius-pill);
+  height: var(--wiki-space-1);
+  width: var(--wiki-space-1);
+}
+
+.agent-message__waiting-dots > span:nth-child(2) {
+  animation-delay: var(--wiki-motion-fast);
+}
+
+.agent-message__waiting-dots > span:nth-child(3) {
+  animation-delay: calc(var(--wiki-motion-fast) * 2);
+}
+
+.agent-message__recovery {
+  align-items: center;
+  border-block-start: 1px solid var(--wiki-surface-border);
+  color: var(--wiki-text-muted);
+  display: grid;
+  gap: var(--wiki-space-3);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin-block-start: var(--wiki-space-4);
+  padding-block-start: var(--wiki-space-3);
+}
+
+.agent-message__recovery > .v-icon {
+  color: rgb(var(--v-theme-error));
+}
+
+.agent-message--cancelled .agent-message__recovery > .v-icon {
+  color: var(--wiki-text-muted);
+}
+
+.agent-message__recovery strong,
+.agent-message__recovery span {
+  display: block;
+}
+
+.agent-message__recovery strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .82rem;
+  line-height: 1.4;
+}
+
+.agent-message__recovery span {
+  font-size: .76rem;
+  line-height: 1.45;
+  margin-block-start: var(--wiki-space-1);
+}
+
+.agent-sources {
+  background: var(--wiki-surface-sunken);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  margin-block-start: var(--wiki-space-4) !important;
+  overflow: hidden;
+}
+
+.agent-sources__heading {
+  align-items: center;
+  background: color-mix(in srgb, var(--wiki-surface-raised) 84%, var(--wiki-surface-sunken));
+  border-block-end: 1px solid var(--wiki-surface-border);
+  color: var(--wiki-text-muted);
+  cursor: pointer;
+  display: flex;
+  font-size: .78rem;
+  gap: var(--wiki-space-2);
+  list-style: none;
+  min-height: var(--wiki-space-10);
+  padding-inline: var(--wiki-space-3);
+}
+
+.agent-sources__heading::-webkit-details-marker {
+  display: none;
+}
+
+.agent-sources__heading::after {
+  content: '›';
+  flex: 0 0 auto;
+  font-size: 1.25rem;
+  transform: rotate(90deg);
+  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+}
+
+.agent-sources[open] > .agent-sources__heading::after {
+  transform: rotate(270deg);
+}
+
+.agent-sources__heading > .v-icon {
+  color: var(--wiki-primary-ink);
+}
+
+.agent-sources__heading strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: 700;
+}
+
+.agent-sources__origin {
+  margin-inline-start: auto;
+  font-size: .7rem;
+  font-weight: 500;
+}
+
+.agent-web-sources__list {
+  display: grid;
+  gap: var(--wiki-space-3);
+  margin: 0;
+  padding: var(--wiki-space-3);
+  list-style: none;
+}
+
+.agent-web-sources__list > li {
+  min-width: 0;
+}
+
+.agent-web-sources__list a,
+.agent-web-sources__list li > span {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  color: inherit;
+  text-decoration: none;
+}
+
+.agent-web-sources__list a:hover strong {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.agent-web-sources__list blockquote {
+  margin: var(--wiki-space-2) 0 0 calc(var(--wiki-space-6) + var(--wiki-space-1));
+  color: var(--wiki-text-muted);
+  font-size: .76rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.agent-sources__count {
+  align-items: center;
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
+  border-radius: var(--wiki-radius-pill);
+  display: inline-flex;
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
+  justify-content: center;
+  margin-inline-start: auto;
+  min-height: var(--wiki-space-5);
+  min-width: var(--wiki-space-5);
+  padding-inline: var(--wiki-space-1);
+}
+
+.agent-web-sources .agent-sources__count {
+  margin-inline-start: var(--wiki-space-1);
+}
+
+.agent-sources__groups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-sources__group + .agent-sources__group {
+  border-block-start: 1px solid var(--wiki-surface-border);
+}
+
+.agent-sources__page,
+.agent-sources__sections > li > a,
+.agent-sources__sections > li > span {
+  align-items: center;
+  color: inherit;
+  display: grid;
+  gap: var(--wiki-space-2);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  line-height: 1.45;
+  min-height: var(--wiki-space-10);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  text-decoration: none;
+}
+
+.agent-sources__page strong {
+  font-size: .84rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-sources a.agent-sources__page:hover,
+.agent-sources__sections a:hover {
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
+}
+
+.agent-sources__heading:focus-visible,
+.agent-sources__page:focus-visible,
+.agent-sources__sections a:focus-visible,
+.agent-page-links a:focus-visible,
+.agent-activity summary:focus-visible {
+  border-radius: var(--wiki-radius-xs);
+  box-shadow: var(--wiki-focus-ring);
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: var(--wiki-focus-offset);
+}
+
+.agent-sources__sections {
+  border-block-start: 1px solid var(--wiki-surface-border);
+  list-style: none;
+  margin: 0;
+  padding: var(--wiki-space-1) 0 var(--wiki-space-2) var(--wiki-space-5);
+}
+
+[dir='rtl'] .agent-sources__sections {
+  padding: var(--wiki-space-1) var(--wiki-space-5) var(--wiki-space-2) 0;
+}
+
+.agent-sources__sections li {
+  position: relative;
+}
+
+.agent-sources__sections li::before {
+  background: var(--wiki-surface-border-strong);
+  content: '';
+  height: 100%;
+  inset-block-start: -50%;
+  inset-inline-start: calc(var(--wiki-space-3) * -1);
+  position: absolute;
+  width: 1px;
+}
+
+.agent-sources__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-sources__number {
+  align-items: center;
+  background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
+  block-size: var(--wiki-space-6);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-border));
+  border-radius: var(--wiki-radius-pill);
+  box-sizing: border-box;
+  color: rgb(var(--v-theme-on-surface));
+  display: inline-grid;
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
+  font-weight: 720;
+  inline-size: var(--wiki-space-6);
+  justify-items: center;
+  justify-self: start;
+  line-height: 1;
+}
+
+.agent-page-links {
+  border-block-start: 1px solid var(--wiki-surface-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  margin-block-start: var(--wiki-space-4) !important;
+  padding-block-start: var(--wiki-space-3);
+}
+
+.agent-page-links > :is(a, span) {
+  align-items: center;
+  background: var(--wiki-surface-sunken);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  color: var(--wiki-primary-ink);
+  display: inline-flex;
+  gap: var(--wiki-space-2);
+  line-height: 1.35;
+  min-height: var(--wiki-control-height);
+  overflow-wrap: anywhere;
+  padding-inline: var(--wiki-space-3);
+  text-decoration: none;
+  transition:
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.agent-page-links > span {
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.agent-page-links a:hover {
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, var(--wiki-surface-sunken));
+  border-color: var(--wiki-surface-border-strong);
+}
+
+.agent-activity {
+  border-block-start: 1px solid var(--wiki-surface-border);
+  margin-block-start: var(--wiki-space-4) !important;
+  padding-block-start: var(--wiki-space-2);
+}
+
+.agent-activity summary {
+  align-items: center;
+  border-radius: var(--wiki-radius-xs);
+  color: var(--wiki-text-muted);
+  cursor: pointer;
+  display: flex;
+  font-size: .82rem;
+  font-weight: 650;
+  gap: var(--wiki-space-2);
+  list-style: none;
+  min-height: var(--wiki-control-height);
+}
+
+.agent-activity summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-activity summary::after {
+  content: '›';
+  font-size: 1.25rem;
+  margin-inline-start: auto;
+  transform: rotate(90deg);
+  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+}
+
+.agent-activity[open] summary::after {
+  transform: rotate(270deg);
+}
+
+.agent-activity__list {
+  display: grid;
+  gap: var(--wiki-space-3);
+  list-style: none;
+  margin-block: var(--wiki-space-3) 0;
+  padding: 0;
+}
+
+.agent-activity__list li {
+  align-items: start;
+  display: grid;
+  gap: var(--wiki-space-2);
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.agent-activity__list small {
+  color: var(--wiki-text-muted);
+  display: block;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.agent-sources__new-window,
+.sr-status {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+
+.agent-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  margin-block-start: var(--wiki-space-5);
+}
+
+.agent-suggestions :deep(.v-btn) {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+
+@keyframes agentWaitingDot {
+  0%,
+  60%,
+  100% {
+    opacity: .35;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(calc(var(--wiki-space-1) * -.5));
+  }
+}
+
 @media (max-width: 599.98px) {
-  .agent-message--assistant { grid-template-columns: minmax(0, 1fr); gap: var(--wiki-space-2); }
-  .agent-message--assistant > .agent-message__identity { display: none; }
-  .agent-message--user { margin-inline-start: 0; }
-  .agent-message--assistant .agent-message__surface, .agent-message--user .agent-message__surface { padding: var(--wiki-space-3); }
-  .agent-message__source-context .v-btn, .agent-message__media :deep(.v-btn) { min-height: 44px; }
-  .agent-message__recovery { grid-template-columns: auto minmax(0, 1fr); }
-  .agent-message__recovery :deep(.v-btn) { grid-column: 2; justify-self: start; min-height: 44px; }
+  .agent-message {
+    margin-block-end: var(--wiki-space-6);
+  }
+
+  .agent-message--assistant {
+    gap: var(--wiki-space-2);
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .agent-message--assistant .agent-message__surface {
+    border-inline-start-width: var(--wiki-space-1);
+    padding: var(--wiki-space-3);
+  }
+
+  .agent-message--user {
+    display: grid;
+    gap: var(--wiki-space-1);
+    justify-items: end;
+  }
+
+  .agent-message--user .agent-message__content {
+    max-width: calc(100% - var(--wiki-space-8));
+    order: 2;
+  }
+
+  .agent-message__identity--user {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    order: 1;
+    padding-block-start: 0;
+  }
+
+  .agent-message__user-details {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wiki-space-2);
+  }
+
+  .agent-message__identity--user .agent-message__time::before {
+    content: '·';
+    margin-inline-end: var(--wiki-space-2);
+  }
+
+  .agent-message--user .agent-message__surface {
+    padding: var(--wiki-space-2) var(--wiki-space-3);
+  }
+
+  .agent-message__surface {
+    font-size: .94rem;
+  }
+
+  .agent-message__recovery {
+    align-items: start;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .agent-message__recovery :deep(.v-btn) {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .agent-sources__sections {
+    padding-inline-start: var(--wiki-space-4);
+  }
+
+  [dir='rtl'] .agent-sources__sections {
+    padding-inline-end: var(--wiki-space-4);
+    padding-inline-start: 0;
+  }
+
+  .agent-sources__sections li::before {
+    inset-inline-start: calc(var(--wiki-space-2) * -1);
+  }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-sources__heading::after,
+  .agent-activity summary::after,
+  .agent-page-links a {
+    transition: none;
+  }
+
+  .agent-message__waiting-dots > span {
+    animation: none !important;
+  }
+  .agent-message__assistant-spark {
+    animation: none !important;
+    filter: none !important;
+  }
+}
+
 @media (forced-colors: active) {
-  .agent-history-window, .agent-message__assistant-mark, .agent-message__surface, .agent-sources, .agent-activity, .agent-page-links > :is(a, span) { background: Canvas; border-color: CanvasText; color: CanvasText; }
-  .agent-sources__heading:focus-visible, .agent-sources a:focus-visible, .agent-page-links a:focus-visible, .agent-activity summary:focus-visible { outline-color: Highlight; }
+  .agent-message__user-avatar,
+  .agent-message__assistant-mark,
+  .agent-message__surface,
+  .agent-message__recovery,
+  .agent-sources,
+  .agent-page-links a {
+    background: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+  .agent-message__assistant-spark {
+    animation: none !important;
+    filter: none !important;
+    color: CanvasText !important;
+  }
+
+  .agent-message--user .agent-message__surface {
+    border-width: 2px;
+  }
+
+  .agent-message__waiting-dots > span,
+  .agent-sources__number {
+    background: CanvasText;
+    color: Canvas;
+  }
+
+  .agent-sources__heading:focus-visible,
+  .agent-sources__page:focus-visible,
+  .agent-sources__sections a:focus-visible,
+  .agent-page-links a:focus-visible,
+  .agent-activity summary:focus-visible {
+    outline-color: Highlight;
+  }
 }
+</style>
+
+<style scoped>
+.agent-message__source-context { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin-top: .75rem; font-size: .68rem; opacity: .75; }
+.agent-message__source-context .v-btn { max-width: 100%; }
+.agent-message__source-context :deep(.v-btn__content) { overflow: hidden; text-overflow: ellipsis; }
 </style>

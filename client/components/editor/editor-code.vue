@@ -4,18 +4,17 @@
       .editor-code-sidebar
         v-tooltip(location="right")
           template(v-slot:activator='{ props }')
-            v-btn.editor-tool(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:editorCode.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
+            v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorCode.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `primary` : undefined') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right")
             template(v-slot:activator='{ props }')
-              v-btn.editor-tool(icon, rounded='md', variant='text', v-bind='props', :aria-label='$t(`editor:editorCode.toggleDistractionFreeMode`)', @click='toggleFullscreen').mx-0
+              v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorCode.toggleDistractionFreeMode`)', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-code-editor
-        .editor-pane-label {{ $t('editor:editor.source') }} · {{ $t('editor:editorCode.code') }}
         div(ref='cm', role='region', :aria-label='$t(`editor:editorCode.codeEditor`)')
     v-system-bar.editor-status-bar.editor-code-sysbar(absolute)
       .text-body-small.editor-code-sysbar-locale {{locale.toUpperCase()}}
@@ -239,6 +238,8 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+$editor-height: calc(100dvh - 64px - 24px);
+$editor-height-mobile: calc(100dvh - 56px - 16px);
 
 .editor-code {
   &-main {
@@ -250,33 +251,52 @@ export default defineComponent({
 
   &-editor {
     background-color: rgb(var(--v-theme-background));
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
+    flex: 1 1 50%;
+    display: block;
+    height: $editor-height;
     min-width: 0;
     min-height: 0;
     position: relative;
 
-    > div:not(.editor-pane-label) {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow: hidden;
-      .cm-editor { height: 100%; }
+    > div {
+      height: 100%;
+    }
+
+    &-title {
+      background-color: var(--wiki-surface-raised);
+      border-bottom-left-radius: 5px;
+      display: inline-flex;
+      height: 30px;
+      justify-content: center;
+      align-items: center;
+      padding: 0 1rem;
+      color: var(--wiki-text-muted);
+      position: absolute;
+      top: 0;
+      right: 0;
+      z-index: 7;
+      text-transform: uppercase;
+      font-size: .7rem;
+      cursor: pointer;
+
+      @include until($tablet) {
+        display: none;
+      }
+    }
+    @include until($tablet) {
+      height: $editor-height-mobile;
     }
   }
 
   &-sidebar {
     background-color: var(--wiki-surface-sunken);
     border-inline-end: 1px solid var(--wiki-surface-border);
-    width: 56px;
-    flex: 0 0 56px;
+    width: 64px;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
     align-items: center;
-    padding: var(--wiki-space-2) 0;
-
-    .v-btn { width: 44px; height: 44px; }
+    padding: 24px 0;
 
     @include until($tablet) {
       width: 48px;
@@ -285,9 +305,6 @@ export default defineComponent({
   }
 
   &-sysbar {
-    position: static !important;
-    flex: 0 0 24px;
-    min-height: 24px;
     padding-left: 0;
     background: var(--wiki-surface-raised) !important;
     border-top: 1px solid var(--wiki-surface-border);

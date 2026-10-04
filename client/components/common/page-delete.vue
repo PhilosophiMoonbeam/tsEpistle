@@ -4,29 +4,30 @@
     max-width='550'
     scrollable
     :persistent='loading'
-    scrim='surface'
+    scrim='red-darken-4'
+    :opacity='0.7'
     aria-labelledby='page-delete-dialog-title'
     aria-describedby='page-delete-dialog-description'
     @after-enter='focusCancel'
     @after-leave='restoreFocus'
     )
-    v-card.page-delete
-      .dialog-header
-        v-icon.me-2(color='error', aria-hidden='true') mdi-file-document-remove-outline
-        h2#page-delete-dialog-title {{$t('common:page.delete')}}
-      v-card-text#page-delete-dialog-description
-        .page-delete__identity
-          strong {{ pageTitle }}
-          span.page-delete__path /{{ pageLocale }}/{{ pagePath }}
-          span.page-delete__path(v-if='pageVisibility === `private`') {{ $t('common:page.privatePage', { defaultValue: 'Private page' }) }}
-        .page-delete__consequences
-          i18next.text-body-large(path='common:page.deleteTitle', tag='p')
-            strong(place='title') {{pageTitle}}
-          p {{$t('common:page.deleteSubtitle')}}
+    v-card
+      .dialog-header.is-short.is-red
+        v-icon.me-2(color='white') mdi-file-document-remove-outline
+        span#page-delete-dialog-title {{$t('common:page.delete')}}
+      v-card-text#page-delete-dialog-description.pt-5
+        i18next.text-body-large(path='common:page.deleteTitle', tag='div')
+          span.text-red-darken-2(place='title') {{pageTitle}}
+        .text-body-small {{$t('common:page.deleteSubtitle')}}
+        .page-delete__metadata
+          v-chip.page-delete__locale(label, color="red-lighten-4", size="small")
+            .text-body-small.text-red-darken-2 {{pageLocale.toUpperCase()}}
+          v-chip.page-delete__path(label, color="red-lighten-5", size="small", :title='`/${pagePath}`', :aria-label='`/${pagePath}`')
+            span.text-red-darken-2 /{{pagePath}}
       v-card-chin(ref='dialogActions')
         v-spacer
         v-btn(variant="text", @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='error', variant='flat', @click='deletePage', :loading='loading', :disabled='loading') {{$t('common:actions.delete')}}
+        v-btn.px-4(color="red-darken-2", @click='deletePage', :loading='loading', :disabled='loading').text-white {{$t('common:actions.delete')}}
 </template>
 
 <script lang='ts'>
@@ -46,6 +47,9 @@ export default defineComponent({
   data() {
     return {
       loading: false,
+      retainPendingClass: false,
+      deleteTransitionTimer: undefined as number | undefined,
+      redirectTimer: undefined as number | undefined,
       deleteRequestId: 0,
       deleteAbortController: null as AbortController | null,
       returnFocusTarget: null as HTMLElement | null
@@ -60,14 +64,21 @@ export default defineComponent({
     pagePath(): string { return wikiStore.page.path },
     pageLocale(): string { return wikiStore.page.locale },
     pageId(): number { return wikiStore.page.id },
-    pageVisibility(): string { return wikiStore.page.visibility },
     pageSourceRevision(): string { return wikiStore.page.sourceRevision }
+  },
+  mounted() {
+    if (this.isShown) {
+      document.body.classList.add('page-deleted-pending')
+    }
   },
   beforeUnmount() {
     this.deleteRequestId += 1
     this.deleteAbortController?.abort()
     this.deleteAbortController = null
     this.returnFocusTarget = null
+    window.clearTimeout(this.deleteTransitionTimer)
+    window.clearTimeout(this.redirectTimer)
+    document.body.classList.remove('page-deleted-pending', 'page-deleted')
   },
   watch: {
     isShown(newValue: boolean) {
@@ -86,6 +97,10 @@ export default defineComponent({
           }
         }
         this.returnFocusTarget = overlayActivator ?? (activeElement instanceof HTMLElement ? activeElement : null)
+        this.retainPendingClass = false
+        document.body.classList.add('page-deleted-pending')
+      } else if (!this.retainPendingClass) {
+        document.body.classList.remove('page-deleted-pending')
       }
     }
   },
@@ -102,7 +117,7 @@ export default defineComponent({
       }
     },
     discard(): void {
-      if (this.loading) return
+      document.body.classList.remove('page-deleted-pending')
       this.isShown = false
     },
     async deletePage(): Promise<void> {
@@ -128,9 +143,22 @@ export default defineComponent({
         if (requestId !== this.deleteRequestId) {
           return
         }
+        this.retainPendingClass = true
         this.returnFocusTarget = null
         this.isShown = false
-        window.location.assign('/')
+        this.deleteTransitionTimer = window.setTimeout(() => {
+          this.deleteTransitionTimer = undefined
+          if (requestId !== this.deleteRequestId) {
+            return
+          }
+          document.body.classList.add('page-deleted')
+          this.redirectTimer = window.setTimeout(() => {
+            this.redirectTimer = undefined
+            if (requestId === this.deleteRequestId) {
+              window.location.assign('/')
+            }
+          }, 1200)
+        }, 400)
       } catch (err) {
         if (requestId === this.deleteRequestId && !controller.signal.aborted) {
           wikiStore.showError(err)
@@ -154,34 +182,78 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-.page-delete {
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  color: rgb(var(--v-theme-on-surface));
-  .dialog-header h2 { margin: 0; font-size: 1rem; }
-  .v-card-text { padding: 1.25rem; }
-  .v-card-chin { border-block-start: 1px solid var(--wiki-surface-border); gap: .5rem; padding: .75rem 1.25rem; background: var(--wiki-surface-raised); }
-  .v-btn { min-height: 44px; }
-}
-.page-delete__identity {
-  display: grid;
-  gap: .375rem;
-  padding: 1rem;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
-  overflow-wrap: anywhere;
-}
-.page-delete__path { color: var(--wiki-text-muted); font-size: .8125rem; overflow-wrap: anywhere; }
-.page-delete__consequences {
-  margin-block-start: 1rem;
-  padding-inline-start: 1rem;
-  border-inline-start: 3px solid rgb(var(--v-theme-error));
-  p { margin-block: .5rem; line-height: 1.5; }
-}
-@media (max-width: 599.98px) {
-  .page-delete .v-card-chin { flex-wrap: wrap; }
-  .page-delete .v-card-chin .v-btn { flex: 1 1 auto; }
-}
+  body.page-deleted-pending {
+    perspective: 50vw;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+
+    .v-application {
+      background-color: rgb(var(--v-theme-background));
+    }
+    .v-application__wrap {
+      transform-style: preserve-3d;
+      transform: translateZ(-5vw) rotateX(2deg);
+      border-radius: var(--wiki-panel-radius);
+      overflow: hidden;
+    }
+  }
+  body.page-deleted {
+    perspective: 50vw;
+
+    .v-application__wrap {
+      transform-style: preserve-3d;
+      transform: translateZ(-1000vw) rotateX(60deg);
+      opacity: 0;
+    }
+  }
+
+  .page-delete__metadata {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-2);
+    margin-block-start: var(--wiki-space-3);
+  }
+
+  .page-delete__locale,
+  .page-delete__path {
+    margin: 0;
+  }
+
+  .page-delete__path {
+    min-width: 0;
+    max-width: 100%;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 399.98px) {
+    .page-delete__path {
+      flex-basis: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    body.page-deleted-pending {
+      perspective: none;
+
+      .v-application__wrap {
+        transform: none;
+        transition: none;
+      }
+    }
+
+    body.page-deleted {
+      perspective: none;
+
+      .v-application__wrap {
+        transform: none;
+        transition: none;
+        opacity: 0;
+      }
+    }
+  }
 </style>

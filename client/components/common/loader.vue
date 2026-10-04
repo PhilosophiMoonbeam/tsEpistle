@@ -3,22 +3,23 @@
     :model-value='modelValue'
     :persistent='mode === `loading`'
     max-width='380'
+    :scrim='color'
+    style='--v-overlay-opacity: .68'
     :aria-labelledby='titleId'
     :aria-describedby='subtitleId'
     @update:model-value='updateModelValue'
   )
-    v-card.loader-dialog
+    v-card.loader-dialog(:color='color')
       v-card-text.text-center
         .loader-dialog-illustration(v-if='$slots.illustration')
           slot(name='illustration')
-        v-progress-circular.loader-dialog-progress(
+        atom-spinner.is-inline(
           v-else-if='mode === `loading`'
-          indeterminate
-          :size='32'
-          :width='3'
-          :color='color'
+          :animation-duration='1000'
+          :size='52'
+          color='currentColor'
           aria-hidden='true'
-        )
+          )
         img(v-else-if='mode === `icon`', :src='`/_assets/svg/icon-` + icon + `.svg`', alt='', aria-hidden='true')
         .loader-dialog-message(
           role='status'
@@ -36,11 +37,15 @@
 
 <script lang='ts'>
 import { defineComponent, useId, type PropType } from 'vue'
+import { AtomSpinner } from 'epic-spinners'
 import { translate } from '../../modules/localization.ts'
 
 type LoaderMode = 'loading' | 'icon'
 
 export default defineComponent({
+  components: {
+    AtomSpinner
+  },
   emits: {
     'update:modelValue': (value: boolean) => typeof value === 'boolean'
   },
@@ -91,17 +96,59 @@ export default defineComponent({
 
 <style lang='scss'>
 .loader-dialog {
-  border: 1px solid var(--wiki-surface-border);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
   border-radius: var(--wiki-panel-radius) !important;
-  background: var(--wiki-surface-raised);
-  color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-sm);
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
+  transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease), opacity var(--wiki-motion-normal) var(--wiki-motion-ease);
+
+  .v-card-text {
+    padding: var(--wiki-space-8) var(--wiki-space-6) var(--wiki-space-6) !important;
+  }
+  .loader-dialog-illustration {
+    display: inline-flex;
+    width: 72px;
+    height: 72px;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+
+
+  .atom-spinner.is-inline {
+    display: inline-block;
+    margin-bottom: 10px;
+  }
+
+  img {
+    width: 72px;
+    margin-bottom: 10px;
+  }
 }
-.loader-dialog .v-card-text { padding: var(--wiki-space-6) !important; }
-.loader-dialog-illustration { display: flex; justify-content: center; margin-block-end: var(--wiki-space-3); }
-.loader-dialog-progress, .loader-dialog img { width: 32px; height: 32px; margin-block-end: var(--wiki-space-3); }
-.loader-dialog-title { font-size: 1rem; line-height: 1.5; overflow-wrap: anywhere; }
-.loader-dialog-subtitle { margin-block-start: var(--wiki-space-2); color: var(--wiki-text-muted); font-size: .875rem; line-height: 1.5; overflow-wrap: anywhere; }
-.loader-dialog-close { margin-block-start: var(--wiki-space-4); }
-@media (max-width: 600px) { .loader-dialog-close { min-height: 44px; } }
+
+.loader-dialog-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -.015em;
+}
+
+.loader-dialog-subtitle {
+  margin-top: 3px;
+  color: currentColor;
+  font-size: .82rem;
+}
+
+.loader-dialog-close {
+  margin-top: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader-dialog {
+    transition: none;
+  }
+
+  .loader-dialog .atom-spinner .spinner-line {
+    animation: none !important;
+  }
+}
 </style>

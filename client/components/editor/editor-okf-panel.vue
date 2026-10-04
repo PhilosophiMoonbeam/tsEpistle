@@ -1,10 +1,5 @@
 <template lang='pug'>
   .editor-okf-panel(:aria-busy='okfLoading')
-    nav.editor-okf-navigation(:aria-label='$t(`editor:props.knowledge`)')
-      a(href='#editor-okf-authority', @click.prevent='navigateKnowledge("editor-okf-authority")') {{ $t(`editor:editorOkfPanel.authority`) }}
-      a(href='#editor-okf-metadata', @click.prevent='navigateKnowledge("editor-okf-metadata")') {{ $t(`editor:editorOkfPanel.editableMetadata`) }}
-      a(href='#editor-okf-projection', @click.prevent='navigateKnowledge("editor-okf-projection")') {{ $t(`editor:editorOkfPanel.knowledgeProjection`) }}
-      a(href='#editor-okf-provenance', @click.prevent='navigateKnowledge("editor-okf-provenance")') {{ $t(`editor:editorOkfPanel.provenance`) }}
     v-progress-linear(v-if='okfLoading', indeterminate, color='primary', :aria-label='$t(`editor:editorOkfPanel.loadingKnowledgeOkfData`)')
     v-alert.mb-4(v-if='okfError', type='error', variant='tonal', role='alert')
       .d-flex.align-center.flex-wrap.ga-2
@@ -27,7 +22,7 @@
         span {{ isInvalid ? $t(`editor:editorOkfPanel.knowledgeOkfAuthorityRecord`) : $t(`editor:editorOkfPanel.noKnowledgeOkfAuthority`) }}
         v-btn.ml-auto(size='small', color='primary', variant='outlined', @click='resetInvalid') {{ $t(`editor:editorOkfPanel.resetStableReference`) }}
 
-    v-card.mb-4#editor-okf-authority(variant='outlined', tabindex='-1')
+    v-card.mb-4(variant='outlined')
       v-card-title.text-body-large(ref='authorityHeading', tabindex='-1') {{ $t(`editor:editorOkfPanel.authority`) }}
       v-card-text
         v-row(density='compact')
@@ -65,7 +60,7 @@
             .text-label-small.text-medium-emphasis {{ $t(`editor:editorOkfPanel.verified`) }}
             .text-body-small.mt-1 {{ trust?.verifiedAt || '—' }}
 
-    v-card.mb-4#editor-okf-metadata(variant='outlined', tabindex='-1')
+    v-card.mb-4(variant='outlined')
       v-card-title.text-body-large {{ $t(`editor:editorOkfPanel.editableMetadata`) }}
       v-card-text
         v-row
@@ -91,22 +86,20 @@
             v-icon(start) mdi-plus
             span {{ $t(`editor:editorOkfPanel.addSource`) }}
         .text-body-small.text-medium-emphasis.mb-2(v-if='sources.length === 0') {{ $t(`editor:editorOkfPanel.noSourcesRecorded`) }}
-        v-row.editor-okf-source.align-center(
+        v-row.align-center(
           v-for='(source, index) of sources'
           :key='sourceKeys[index]'
           density='compact'
           role='group'
           :aria-label='$t(`editor:editorOkfPanel.source`, { value: index + 1, interpolation: { escapeValue: false } })'
         )
-          v-col(cols='12')
-            .text-label-large {{ $t(`editor:editorOkfPanel.source`, { value: index + 1, interpolation: { escapeValue: false } }) }}
-          v-col(cols='12')
+          v-col(cols='12', md='4')
             v-text-field(:model-value='source.resource', :label='$t(`editor:editorOkfPanel.sourceResource`)', variant='outlined', density='compact', :disabled='!hasMetadata', @update:model-value='updateSource(index, { resource: $event })')
-          v-col(cols='12', sm='6')
+          v-col(cols='12', sm='6', md='3')
             v-text-field(:model-value='source.id', :label='$t(`editor:editorOkfPanel.sourceId`)', variant='outlined', density='compact', :disabled='!hasMetadata', @update:model-value='updateSource(index, { id: $event })')
-          v-col(cols='12', sm='6')
+          v-col(cols='12', sm='6', md='4')
             v-text-field(:model-value='source.title', :label='$t(`editor:editorOkfPanel.sourceTitle`)', variant='outlined', density='compact', :disabled='!hasMetadata', @update:model-value='updateSource(index, { title: $event })')
-          v-col(cols='12').d-flex.justify-end
+          v-col(cols='12', md='1').d-flex.justify-end
             v-btn(
               icon='mdi-delete-outline'
               variant='text'
@@ -123,7 +116,7 @@
         v-alert.mb-2(v-if='extensionError', type='error', variant='tonal', density='compact', role='alert') {{ extensionError }}
         v-btn(color='primary', variant='tonal', :disabled='!hasMetadata', @click='applyExtensions') {{ $t(`editor:editorOkfPanel.applyExtensions`) }}
 
-    v-card.mb-4#editor-okf-projection(variant='outlined', tabindex='-1')
+    v-card.mb-4(variant='outlined')
       v-card-title.text-body-large {{ $t(`editor:editorOkfPanel.knowledgeProjection`) }}
       v-card-text
         v-alert.mb-3(v-if='!projection', type='info', variant='tonal') {{ $t(`editor:editorOkfPanel.projectionPendingNoCurrent`) }}
@@ -159,7 +152,7 @@
                 v-list-item(v-for='question of projection.openQuestions', :key='question', :title='question')
               .text-body-small(v-else) —
 
-    v-card#editor-okf-provenance(variant='outlined', tabindex='-1')
+    v-card(variant='outlined')
       v-card-title.text-body-large {{ $t(`editor:editorOkfPanel.provenance`) }}
       v-card-text
         v-row(density='compact')
@@ -353,11 +346,6 @@ export default defineComponent({
     }
   },
   methods: {
-    navigateKnowledge (id: string) {
-      const section = this.$el.querySelector(`#${id}`) as HTMLElement | null
-      section?.scrollIntoView({ block: 'start' })
-      section?.focus({ preventScroll: true })
-    },
     replaceMetadata (metadata: OkfMetadata) {
       const current = this.okfStore.page.okf
       this.okfStore.page.okf = {
@@ -446,56 +434,6 @@ export default defineComponent({
 .editor-okf-panel {
   min-height: 0;
   padding: 20px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-
-  .editor-okf-navigation {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--wiki-space-2);
-    margin-bottom: var(--wiki-space-4);
-    a {
-      display: inline-flex;
-      align-items: center;
-      min-height: 44px;
-      padding: .5rem .75rem;
-      border: 1px solid var(--wiki-surface-border);
-      border-radius: var(--wiki-control-radius);
-      color: var(--wiki-primary-ink);
-      text-decoration: none;
-      &:focus-visible {
-        outline: 2px solid var(--wiki-primary-ink);
-        outline-offset: 2px;
-      }
-    }
-  }
-  .v-card {
-    border-color: var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius);
-    background: var(--wiki-surface-raised);
-    scroll-margin-top: var(--wiki-space-4);
-  }
-  .editor-okf-source {
-    margin-block: var(--wiki-space-3);
-    padding: var(--wiki-space-3);
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-control-radius);
-    background: var(--wiki-surface-sunken);
-  }
-  :deep(.v-list-item-title),
-  :deep(.v-list-item-subtitle) {
-    overflow: visible;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    -webkit-line-clamp: unset;
-  }
-  .v-list {
-    max-height: 24rem;
-    overflow-y: auto;
-  }
-  .v-btn {
-    min-height: 44px;
-  }
 
   .v-card-title {
     color: rgb(var(--v-theme-on-surface));

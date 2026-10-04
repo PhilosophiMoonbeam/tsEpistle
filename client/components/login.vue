@@ -2,11 +2,11 @@
   v-app
     auth-shell.login(
       :title='siteTitle'
-      :form-title='entryTitle'
       heading-id='login-site-title'
+      :eyebrow='eyebrow'
       :logo-url='logoUrl'
       :background-url='backgroundUrl'
-      :busy='isLoading || strategiesLoading'
+      :busy='isLoading'
       :footer-sentence='showRegisterLink ? $t(`auth:switchToRegister.text`, { link: `{{link}}` }) : ``'
       :footer-link-label='showRegisterLink ? $t(`auth:switchToRegister.link`) : ``'
       footer-href='/register'
@@ -15,24 +15,19 @@
       v-alert.mb-0(
         v-model='errorShown'
         color="error"
+        rounded='lg'
         variant='tonal'
         icon='mdi-alert'
         role='alert'
         )
         .text-body-medium {{errorMessage}}
-      .login-info(v-if='screen === `login` && strategiesLoading', role='status', aria-live='polite') {{ $t('auth:pleaseWait') }}
-      v-btn.login-link.mb-3(
-        v-if='screen === `login` && errorShown && filteredStrategies.length === 0'
-        variant='outlined'
-        :loading='strategiesLoading'
-        :disabled='strategiesLoading || isLoading'
-        @click='loadStrategies'
-      ) {{ $t('common:actions.retry') }}
       template(v-if='screen === `login` && filteredStrategies.length > 1')
         .login-subtitle
           h2#login-provider-title(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:selectAuthProvider')}}
         .login-list
           v-list(
+            elevation='1'
+            rounded='lg'
             v-model:selected='selectedStrategyKeys'
             select-strategy='single-independent'
             selectable
@@ -57,7 +52,6 @@
         form.login-form(@submit.prevent='login', :aria-busy='isLoading')
           v-text-field(
             variant="outlined"
-            active
             prepend-inner-icon='mdi-email-outline'
             bg-color='surface'
             color="primary"
@@ -73,7 +67,6 @@
             )
           v-text-field.mt-2(
             variant="outlined"
-            active
             prepend-inner-icon='mdi-lock-outline'
             bg-color='surface'
             color="primary"
@@ -101,6 +94,7 @@
             v-btn.login-link.text-none(
               type='button'
               variant="text"
+              rounded
               :disabled='isLoading'
               @click='forgotPassword'
               ) {{ $t('auth:forgotPasswordLink') }}
@@ -111,7 +105,6 @@
         form.login-form(@submit.prevent='forgotPasswordSubmit', :aria-busy='isLoading')
           v-text-field(
             variant="outlined"
-            active
             prepend-inner-icon='mdi-email-outline'
             bg-color='surface'
             color="primary"
@@ -137,6 +130,7 @@
             v-btn.login-link.text-none(
               type='button'
               variant="text"
+              rounded
               :disabled='isLoading'
               @click='screen = `login`'
               ) {{ $t('auth:forgotPasswordCancel') }}
@@ -159,7 +153,6 @@
         form.login-form(@submit.prevent='resetPassword', :aria-busy='isLoading')
           v-text-field.mt-2(
             variant='outlined'
-            active
             prepend-inner-icon='mdi-lock-outline'
             bg-color='surface'
             color='primary'
@@ -181,7 +174,6 @@
               password-strength(:model-value='newPassword')
           v-text-field.mt-2(
             variant='outlined'
-            active
             prepend-inner-icon='mdi-lock-check-outline'
             bg-color='surface'
             color='primary'
@@ -211,7 +203,6 @@
         form.login-form(@submit.prevent='changePassword', :aria-busy='isLoading')
           v-text-field.mt-2(
             variant='outlined'
-            active
             prepend-inner-icon='mdi-lock-outline'
             bg-color='surface'
             color='primary'
@@ -233,7 +224,6 @@
               password-strength(:model-value='newPassword')
           v-text-field.mt-2(
             variant='outlined'
-            active
             prepend-inner-icon='mdi-lock-check-outline'
             bg-color='surface'
             color='primary'
@@ -261,6 +251,7 @@
             v-btn.login-link.text-none(
               type='button'
               variant='text'
+              rounded
               :disabled='isLoading'
               @click='cancelContinuation'
               ) {{ $t('auth:tfaRecovery.cancel') }}
@@ -283,8 +274,8 @@
           h2#login-tfa-title.text-label-large {{$t('auth:tfaFormTitle')}}
           img(src='_assets/svg/icon-pin-pad.svg', alt='')
           v-text-field.login-tfa-field.mt-2(
-            variant="outlined"
-            active
+            variant="solo"
+            flat
             bg-color='surface'
             color="primary"
             ref='iptTFA'
@@ -317,7 +308,7 @@
     v-dialog(v-model='isTFASetupShown', max-width='600', persistent, aria-labelledby='login-tfa-setup-title', @keydown.esc='cancelContinuation')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
         form.login-tfa.text-center.pa-5(novalidate, @submit.prevent='verifySecurityCode(true)')
-          h2#login-tfa-setup-title.text-body-large {{$t('auth:tfaSetupTitle')}}
+          h2#login-tfa-setup-title.text-body-large.text-primary {{$t('auth:tfaSetupTitle')}}
           v-divider.my-5
           .text-label-large {{$t('auth:tfaSetupInstrFirst')}}
           .login-tfa-help {{ $t('auth:tfaRecovery.setupApps') }}
@@ -338,8 +329,8 @@
           .text-body-small.mt-1(role='status', aria-live='polite') {{tfaCopyStatus}}
           .text-label-large.mt-5 {{$t('auth:tfaSetupInstrSecond')}}
           v-text-field.login-tfa-field.mt-2(
-            variant="outlined"
-            active
+            variant="solo"
+            flat
             bg-color='surface'
             color="primary"
             ref='iptTFASetup'
@@ -369,6 +360,8 @@
             @click='cancelContinuation'
             ) {{ $t('auth:tfaRecovery.cancel') }}
     loader(v-model='isLoading', :color='loaderColor', :title='loaderTitle', :subtitle='$t(`auth:pleaseWait`)')
+      template(v-slot:illustration)
+        login-success-animation
     notify.login-notify
 </template>
 
@@ -378,8 +371,9 @@ import { passwordPolicyMixin } from '../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
 /* global siteConfig */
 
+// <span>Photo by <a href="https://unsplash.com/@isaacquesada?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Isaac Quesada</a> on <a href="/t/textures-patterns?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Unsplash</a></span>
 
-import { defineComponent } from 'vue'
+import { defineAsyncComponent, defineComponent } from 'vue'
 import Cookies from 'js-cookie'
 import { wikiStore, resolvePendingOfflineLogoutAfterExplicitSignIn } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
@@ -390,6 +384,7 @@ import PasswordStrength from './common/password-strength.vue'
 import PasswordVisibilityToggle from './common/password-visibility-toggle.vue'
 import LoginParticleLogo from './login-logo/LoginParticleLogo.vue'
 import { isLogoEffectDescriptor, type LogoEffectDescriptor } from './login-logo/particle-logo'
+const LoginSuccessAnimation = defineAsyncComponent(() => import('./login-success-animation.vue'))
 
 type LoginScreen = 'login' | 'forgot' | 'verifyEmail' | 'resetPwd' | 'changePwd' | 'success'
 
@@ -413,6 +408,7 @@ export default defineComponent({
   components: {
     AuthShell,
     LoginParticleLogo,
+    LoginSuccessAnimation,
     PasswordStrength,
     PasswordVisibilityToggle
   },
@@ -453,7 +449,6 @@ export default defineComponent({
       securityCodeError: '',
       continuationToken: '',
       isLoading: false,
-      strategiesLoading: false,
       loaderColor: 'surface',
       loaderTitle: 'Working...',
       newPassword: '',
@@ -467,6 +462,7 @@ export default defineComponent({
       redirectTimer: null as number | null,
       errorShown: false,
       errorMessage: '',
+      failedLogoUrl: null as string | null,
       successMessage: '',
       fieldErrors: {
         username: '',
@@ -494,6 +490,13 @@ export default defineComponent({
       return siteConfig.title
     },
     logoUrl () { return siteConfig.logoUrl },
+    logoImageFailed (): boolean {
+      return this.failedLogoUrl === this.logoUrl
+    },
+    logoFallback (): string {
+      const title = this.siteTitle.trim()
+      return title ? title.charAt(0).toUpperCase() : '?'
+    },
     logoEffect (): LogoEffectDescriptor | null {
       const candidate = (siteConfig as { logoEffect?: unknown }).logoEffect
       return isLogoEffectDescriptor(candidate) && candidate.logoUrl === siteConfig.logoUrl ? candidate : null
@@ -504,16 +507,6 @@ export default defineComponent({
     },
     eyebrow (): string {
       return this.wasRedirected ? this.$t('auth:loginRequired') : this.$t('auth:signIn')
-    },
-    entryTitle (): string {
-      switch (this.screen) {
-        case 'forgot': return this.$t('auth:forgotPasswordTitle')
-        case 'verifyEmail': return this.$t('auth:verifyEmail.title')
-        case 'resetPwd': return this.$t('auth:resetPwd.title')
-        case 'changePwd': return this.$t('auth:changePwd.subtitle')
-        case 'success': return this.successMessage
-        default: return this.eyebrow
-      }
     },
     showRegisterLink (): boolean {
       return this.screen === 'login' && this.selectedStrategyKey === 'local' && this.selectedStrategy.selfRegistration
@@ -573,6 +566,20 @@ export default defineComponent({
     if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
   },
   methods: {
+    handleLogoError (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      this.failedLogoUrl = source
+    },
+    handleLogoLoad (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      if (this.failedLogoUrl === source) this.failedLogoUrl = null
+    },
     showError (error: unknown) {
       this.errorMessage = typeof error === 'string' ? error : getErrorMessage(error)
       this.errorShown = true
@@ -611,9 +618,6 @@ export default defineComponent({
       }
     },
     async loadStrategies () {
-      if (this.strategiesLoading) return
-      this.strategiesLoading = true
-      this.clearError()
       wikiStore.startLoading('login-strategies-refresh')
       try {
         this.strategies = await fetchAuthStrategies(window.fetch.bind(window), this.$t('auth:genericError'))
@@ -629,7 +633,6 @@ export default defineComponent({
         this.showError(err)
       } finally {
         wikiStore.stopLoading('login-strategies-refresh')
-        this.strategiesLoading = false
       }
     },
     /**
@@ -929,7 +932,7 @@ export default defineComponent({
 <style lang="scss">
 .login {
   &-subtitle {
-    padding: var(--wiki-space-4) 0 var(--wiki-space-3);
+    padding: var(--wiki-space-4) var(--wiki-space-1) var(--wiki-space-2);
     color: rgb(var(--v-theme-on-surface));
     text-align: start;
 
@@ -945,11 +948,12 @@ export default defineComponent({
     margin-block: var(--wiki-space-1) var(--wiki-space-3);
     padding: var(--wiki-space-3) var(--wiki-space-4);
     border: 1px solid var(--wiki-surface-border);
+    border-inline-start: var(--wiki-space-1) solid var(--wiki-accent-spectral);
     border-radius: var(--wiki-control-radius);
-    background: var(--wiki-surface-sunken);
+    background: color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised));
     color: var(--wiki-text-muted);
-    font-size: .9375rem;
-    line-height: 1.6;
+    font-size: .8125rem;
+    line-height: 1.55;
     text-align: start;
   }
 
@@ -959,6 +963,7 @@ export default defineComponent({
 
     &-icon {
       font-size: 4rem;
+      filter: drop-shadow(0 var(--wiki-space-1) var(--wiki-space-3) color-mix(in srgb, rgb(var(--v-theme-success)) 18%, transparent));
     }
   }
 
@@ -968,8 +973,6 @@ export default defineComponent({
   }
 
   &-list {
-    max-height: 20rem;
-    overflow-y: auto;
     .v-list {
       padding: var(--wiki-space-2);
       border: 1px solid var(--wiki-surface-border);
@@ -980,8 +983,6 @@ export default defineComponent({
 
     .v-list-item {
       min-height: var(--wiki-control-height);
-      white-space: normal;
-      overflow-wrap: anywhere;
       margin-block: var(--wiki-space-1);
       border-radius: var(--wiki-control-radius);
       transition:
@@ -989,7 +990,7 @@ export default defineComponent({
         color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
       &--active {
-        background: var(--wiki-surface-raised);
+        background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent);
         font-weight: 650;
       }
     }
@@ -1086,7 +1087,7 @@ export default defineComponent({
   color: rgb(var(--v-theme-on-surface)) !important;
 
   > img {
-    width: 3rem;
+    width: 5.5rem;
     margin-bottom: var(--wiki-space-3);
   }
 
@@ -1097,8 +1098,8 @@ export default defineComponent({
   &-help {
     margin: var(--wiki-space-1) 0 0;
     color: var(--wiki-text-muted);
-    font-size: .9375rem;
-    line-height: 1.6;
+    font-size: .8125rem;
+    line-height: 1.5;
   }
 
   &-secret-row {
@@ -1110,7 +1111,6 @@ export default defineComponent({
 
   &-secret {
     display: block;
-    min-width: 0;
     padding: var(--wiki-space-2);
     overflow-wrap: anywhere;
     border: 1px solid var(--wiki-surface-border);
@@ -1130,8 +1130,6 @@ export default defineComponent({
     background: #fff;
 
     svg {
-      width: 100%;
-      height: 100%;
       fill: #000;
     }
   }
@@ -1155,6 +1153,9 @@ export default defineComponent({
         padding-block: var(--wiki-space-2);
       }
 
+      .v-input:not(.v-input--error) .v-input__details {
+        display: none;
+      }
     }
 
     &-links {

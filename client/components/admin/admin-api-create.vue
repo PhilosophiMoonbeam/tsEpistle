@@ -1,10 +1,10 @@
 <template>
   <div>
-    <v-dialog v-model="isShown" max-width="760" :fullscreen="$vuetify.display.smAndDown" persistent aria-labelledby="api-key-create-title">
+    <v-dialog v-model="isShown" max-width="760" persistent aria-labelledby="api-key-create-title">
       <v-form ref="createForm" @submit.prevent="generate">
         <v-card class="api-key-dialog">
           <header class="key-dialog-heading"><span class="key-kicker">{{ seed ? $t('admin:apiCreate.credentialReplacement') : $t('admin:apiCreate.newIntegrationIdentity') }}</span><h2 id="api-key-create-title">{{ step === 1 ? $t('admin:apiCreate.nameConnection') : step === 2 ? $t('admin:apiCreate.defineAuthority') : $t('admin:apiCreate.reviewBeforeIssuing') }}</h2><p>{{ seed ? $t('admin:apiCreate.existingKeyStaysValid') : $t('admin:apiCreate.createDedicatedCredentialAccess') }}</p></header>
-          <ol class="key-progress" :aria-label="$t('admin:apiCreate.keyCreationSteps')"><li v-for="(label, index) in [$t('admin:apiCreate.integration'), $t('admin:apiCreate.authority'), $t('admin:apiCreate.credentialReview')]" :key="label" :aria-current="step === index + 1 ? 'step' : undefined" :class="{ current: step === index + 1 }"><span>{{ index + 1 }}</span>{{ label }}</li></ol>
+          <ol class="key-progress" :aria-label="$t('admin:apiCreate.keyCreationSteps')"><li v-for="(label, index) in ['Identity', 'Access', 'Review']" :key="label" :aria-current="step === index + 1 ? 'step' : undefined" :class="{ current: step === index + 1 }"><span>{{ index + 1 }}</span>{{ label }}</li></ol>
           <v-card-text class="key-dialog-body">
             <v-alert v-if="formError" type="error" variant="tonal" class="mb-4">{{ formError }}</v-alert>
             <section v-show="step === 1" :aria-label="$t('admin:apiCreate.credentialIdentity')"><v-text-field ref="keyNameInput" v-model="name" :label="$t('admin:apiCreate.integrationName')" :hint="$t('admin:apiCreate.useNameIdentifiesApplication')" persistent-hint variant="outlined" :rules="nameRules" :disabled="loading" maxlength="255" autocomplete="off" /><v-select ref="expirationInput" v-model="expiration" :items="expirations" :label="$t('admin:apiCreate.keyLifetime')" :hint="$t('admin:apiCreate.planReplaceKeyBefore')" persistent-hint variant="outlined" :rules="[requiredRule]" :disabled="loading" class="mt-4" /></section>
@@ -22,18 +22,7 @@
         </v-card>
       </v-form>
     </v-dialog>
-    <v-dialog v-model="isCopyKeyDialogShown" max-width="760" :fullscreen="$vuetify.display.smAndDown" persistent aria-labelledby="api-key-copy-title">
-      <v-card class="api-key-dialog">
-        <header class="key-dialog-heading"><span class="key-kicker">{{ $t('admin:apiCreate.credentialIssued') }}</span><h2 id="api-key-copy-title">{{ $t('admin:apiCreate.saveNewKey') }}</h2><p>{{ $t('admin:apiCreate.copyClientsSecretStorage') }}</p></header>
-        <v-card-text class="key-dialog-body">
-          <v-alert type="warning" variant="tonal" class="mb-4">{{ $t('admin:apiCreate.oneTimeKeyDisclosure', { defaultValue: 'This key is shown only now. Save it in your client’s secret storage before closing; it cannot be recovered from the credential register.' }) }}</v-alert>
-          <v-textarea ref="keyContentsIpt" readonly no-resize :label="$t('admin:apiCreate.generatedApiKey')" :model-value="key" :rows="5" variant="outlined" hide-details class="api-key-value" autocomplete="off" spellcheck="false" />
-          <div class="key-copy-actions"><v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyKey">{{ copied ? $t('admin:apiCreate.copied') : $t('admin:apiCreate.copyKey') }}</v-btn><span v-if="copied" role="status">{{ $t('admin:apiCreate.keyCopied') }}</span></div>
-          <v-alert v-if="seed" type="info" variant="tonal" class="mt-4">{{ $t('admin:apiCreate.configureVerifyReplacementThen', { name: seed.name, interpolation: { escapeValue: false } }) }}</v-alert>
-        </v-card-text>
-        <v-card-actions class="key-dialog-actions"><v-spacer /><v-btn color="primary" variant="flat" :disabled="loading" @click="finishCopyKey">{{ $t('admin:apiCreate.iveSavedKey') }}</v-btn></v-card-actions>
-      </v-card>
-    </v-dialog>
+    <v-dialog v-model="isCopyKeyDialogShown" max-width="760" persistent aria-labelledby="api-key-copy-title"><v-card class="api-key-dialog"><header class="key-dialog-heading"><span class="key-kicker">{{ $t('admin:apiCreate.credentialIssued') }}</span><h2 id="api-key-copy-title">{{ $t('admin:apiCreate.saveNewKey') }}</h2><p>{{ $t('admin:apiCreate.copyClientsSecretStorage') }}</p></header><v-card-text><v-textarea ref="keyContentsIpt" readonly no-resize :label="$t('admin:apiCreate.generatedApiKey')" :model-value="key" :rows="5" variant="outlined" hide-details class="api-key-value" /><div class="key-copy-actions"><v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyKey">{{ copied ? $t('admin:apiCreate.copied') : $t('admin:apiCreate.copyKey') }}</v-btn><span v-if="copied" role="status">{{ $t('admin:apiCreate.keyCopied') }}</span></div><v-alert v-if="seed" type="info" variant="tonal" class="mt-4">{{ $t('admin:apiCreate.configureVerifyReplacementThen', { name: seed.name, interpolation: { escapeValue: false } }) }}</v-alert></v-card-text><v-card-actions><v-spacer /><v-btn color="primary" variant="flat" :disabled="loading" @click="finishCopyKey">{{ $t('admin:apiCreate.iveSavedKey') }}</v-btn></v-card-actions></v-card></v-dialog>
   </div>
 </template>
 
@@ -157,10 +146,8 @@ export default {
         await navigator.clipboard.writeText(this.key)
         this.copied = true
       } catch {
-        const control = this.$refs.keyContentsIpt as { $el?: HTMLElement } | undefined
-        const input = control?.$el?.querySelector<HTMLTextAreaElement>('textarea')
-        input?.focus()
-        input?.select()
+        const input = this.$refs.keyContentsIpt as { select?: () => void } | undefined
+        input?.select?.()
         wikiStore.showNotification({ style: 'red', message: this.$t('admin:apiCreate.copyFailedSelectKey'), icon: 'alert' })
       }
     },
@@ -247,25 +234,11 @@ export default {
 }
 </script>
 <style scoped>
-.api-key-dialog { max-height: calc(100dvh - 3rem); display: flex; flex-direction: column; min-width: 0; background: var(--wiki-surface-raised); }
-.key-dialog-heading { padding: 1.25rem 1.25rem .5rem; flex-shrink: 0; }
-.key-kicker { font-size: .75rem; font-weight: 600; color: var(--wiki-text-muted); }
-.key-dialog-heading h2 { font: 600 1.3rem/1.35 var(--wiki-font-display); margin-block: .35rem .5rem; overflow-wrap: anywhere; }
-p { font-size: .875rem; line-height: 1.6; margin-bottom: .75rem; }
-.key-progress { display: flex; flex-wrap: wrap; list-style: none; gap: .5rem 1rem; padding: .75rem 1.25rem; border-bottom: 1px solid var(--wiki-surface-border); flex-shrink: 0; }
-.key-progress li { display: flex; align-items: center; gap: .5rem; font-size: .8rem; min-width: 0; }
-.key-progress span { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); font-size: .75rem; flex-shrink: 0; }
-.key-progress .current { color: var(--wiki-accent-ink); font-weight: 600; }
-.key-progress .current span { border-color: currentColor; }
-.key-dialog-body { overflow-y: auto; min-height: 0; padding: 1.25rem; }
-.key-dialog-actions { flex-shrink: 0; flex-wrap: wrap; gap: .5rem; padding: .75rem 1.25rem; border-top: 1px solid var(--wiki-surface-border); }
-.grant-preview { padding: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); }
-.grant-preview strong { font-size: .9rem; }.grant-preview p { margin-block: .4rem; }
-.grant-permissions { display: flex; flex-wrap: wrap; gap: .4rem; }.grant-permissions code { border: 1px solid var(--wiki-surface-border); padding: .25rem .4rem; border-radius: var(--wiki-control-radius); font-size: .75rem; overflow-wrap: anywhere; }
-.grant-rules { margin-top: .75rem; }.grant-rules summary { cursor: pointer; font-size: .875rem; padding-block: .5rem; }.grant-rules ul { list-style: none; padding: 0; max-height: 18rem; overflow: auto; }.grant-rules li { display: grid; gap: .3rem; padding-block: .75rem; border-bottom: 1px solid var(--wiki-surface-border); font-size: .8rem; }.grant-rules code { overflow-wrap: anywhere; }.grant-rules small { font-size: .75rem; }
-.key-note { font-size: .8rem; color: var(--wiki-text-muted); }.mcp-key-choice { margin-top: 1rem; padding-top: .5rem; border-top: 1px solid var(--wiki-surface-border); }.mcp-key-choice > code { display: block; font-size: .8rem; overflow-wrap: anywhere; }
-.key-review { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; margin-bottom: 1rem; }.key-review dt { font-size: .75rem; color: var(--wiki-text-muted); }.key-review dd { font-size: .875rem; margin: .35rem 0 0; overflow-wrap: anywhere; }
-.key-copy-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: 1rem; font-size: .875rem; }
-.grant-rules summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 2px; }
-@media(max-width: 600px) { .api-key-dialog { height: 100dvh; max-height: 100dvh; border-radius: 0; }.key-dialog-heading, .key-dialog-body { padding: 1rem; }.key-dialog-heading { padding-bottom: .5rem; }.key-progress { padding-inline: 1rem; }.key-review { grid-template-columns: 1fr; }.key-dialog-actions { padding: .75rem 1rem; }.key-dialog-actions .v-btn, .key-copy-actions .v-btn { min-height: 44px; white-space: normal; height: auto; }.key-dialog-actions .v-spacer { display: none; } }
+.api-key-dialog { max-height: min(850px, calc(100dvh - 3rem)); display: flex; flex-direction: column; }
+.key-dialog-heading { padding: 1.75rem 1.75rem .5rem; }.key-kicker { font-size: .7rem; letter-spacing: .09em; text-transform: uppercase; color: var(--wiki-accent-ink); }.key-dialog-heading h2 { font: 500 clamp(1.6rem, 4vw, 2rem) var(--wiki-font-display); margin-block: .6rem .75rem; }p { font-size: .85rem; line-height: 1.7; margin-bottom: 1rem; }
+.key-progress { display: flex; list-style: none; gap: 1.5rem; padding: .75rem 1.75rem 1.25rem; border-bottom: 1px solid var(--wiki-surface-border); }.key-progress li { display: flex; align-items: center; gap: .5rem; font-size: .8rem; }.key-progress span { display: grid; place-items: center; width: 1.6rem; height: 1.6rem; border: 1px solid var(--wiki-surface-border); border-radius: 50%; font-size: .7rem; }.key-progress .current { color: var(--wiki-accent-ink); }.key-progress .current span { border-color: currentColor; }
+.key-dialog-body { overflow-y: auto; padding: 1.5rem 1.75rem; }.key-dialog-actions { flex-shrink: 0; padding: 1rem 1.25rem; border-top: 1px solid var(--wiki-surface-border); }.grant-preview { padding: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); }.grant-preview strong { font-size: .9rem; }.grant-preview p { margin-block: .4rem; }.grant-permissions { display: flex; flex-wrap: wrap; gap: .4rem; }.grant-permissions code { border: 1px solid var(--wiki-surface-border); padding: .25rem .4rem; border-radius: .3rem; font-size: .72rem; overflow-wrap: anywhere; }.grant-rules { margin-top: 1rem; }.grant-rules summary { cursor: pointer; font-size: .8rem; }.grant-rules ul { list-style: none; padding: 0; }.grant-rules li { display: grid; gap: .3rem; padding-block: .75rem; border-bottom: 1px solid var(--wiki-surface-border); font-size: .75rem; }.grant-rules code { overflow-wrap: anywhere; }.grant-rules small { font-size: .7rem; }
+.key-note { font-size: .75rem; }.mcp-key-choice { margin-top: 1.5rem; padding-top: .5rem; border-top: 1px solid var(--wiki-surface-border); }.mcp-key-choice > code { display: block; font-size: .8rem; overflow-wrap: anywhere; }
+.key-review { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }.key-review dt { font-size: .7rem; }.key-review dd { font-size: .9rem; margin: .5rem 0 0; overflow-wrap: anywhere; }.key-copy-actions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; font-size: .8rem; }
+@media(max-width: 600px) { .key-dialog-heading { padding: 1.25rem 1rem .5rem; }.key-dialog-body { padding: 1rem; }.key-progress { padding-inline: 1rem; gap: 1rem; }.key-review { grid-template-columns: 1fr; } }
 </style>
