@@ -14,6 +14,7 @@
     :output-color-space="LinearSRGBColorSpace"
     :renderer="rendererFactory"
     render-mode="on-demand"
+    :shadow-map-type="PCFShadowMap"
     :stencil="false"
     :tone-mapping="NoToneMapping"
     @error="handleRendererError"
@@ -42,6 +43,7 @@ import {
   Mesh,
   NoToneMapping,
   OrthographicCamera,
+  PCFShadowMap,
   Vector2,
   Vector4
 } from 'three/webgpu'
@@ -576,6 +578,8 @@ export const disposeParticleSceneResources = (resources: ParticleSceneResources)
   }
   resources.mesh.removeFromParent()
   resources.camera.removeFromParent()
+  resources.mesh.dispose()
+  resources.camera.dispose()
   resources.geometry.dispose()
   resources.material.dispose()
 }
@@ -899,7 +903,7 @@ const ParticleSceneContents = defineComponent({
       const callbackStartedAt = benchmark ? performance.now() : 0
       let shouldRecord = false
       try {
-        if (!props.active || callbackFailed) return
+        if (!props.active || !props.loopControl.ready || callbackFailed) return
         const typedRenderer = renderer as unknown as LogoParticleRenderer
         frame.elapsed = elapsed
         const elapsedSecondsOverride = frameCapture?.consumeElapsedSecondsOverride()
@@ -929,8 +933,8 @@ const ParticleSceneContents = defineComponent({
       const callbackStartedAt = benchmark ? performance.now() : 0
       let shouldRecord = false
       try {
+        if (!props.active || !props.loopControl.ready || callbackFailed) return
         frameCapture?.afterRender(renderer.domElement)
-        if (!props.active || callbackFailed) return
         const typedRenderer = renderer as unknown as LogoParticleRenderer
         props.fence.rendered(typedRenderer, true)
         const submittedAt = props.fence.lastRenderSubmissionAt ?? performance.now()
@@ -1036,6 +1040,8 @@ export default defineComponent({
     let tornDown = false
     let backendLease: ParticleBackendLease | null = null
     let backendCanvas: HTMLCanvasElement | null = null
+    let backendRetirement: Promise<void> = Promise.resolve()
+    let teardownPromise: Promise<void> | null = null
     let rendererTimingCleanup: (() => void) | null = null
     let backendGeneration = 0
     let activeResume: ParticlePerformanceResume | null = null
@@ -1067,17 +1073,26 @@ export default defineComponent({
       start: null,
       stop: null
     })
-    const retireBackend = (): void => {
+    const retireBackend = (): Promise<void> => {
       const lease = backendLease
       rendererTimingCleanup?.()
       rendererTimingCleanup = null
       loopControl.ready = false
-      if (lease && lease.status !== 'lost') {
-        lease.retire()
-        recordFailure('retired', 'Particle backend was retired')
+      if (lease) {
+        const wasLost = lease.status === 'lost'
+        backendRetirement = Promise.allSettled([backendRetirement, lease.retire()]).then(results => {
+          for (const result of results) {
+            if (result.status === 'rejected') throw result.reason
+          }
+        })
+        void backendRetirement.catch(error => {
+          if (!tornDown) fenceForScene.fail(error)
+        })
+        if (!wasLost) recordFailure('retired', 'Particle backend was retired')
       }
       backendLease = null
       backendCanvas = null
+      return backendRetirement
     }
     const publishDiagnostic = (owner: ParticleBackendLease, diagnostic: ParticleBackendDiagnostics): void => {
       if (owner !== backendLease) return
@@ -1108,7 +1123,7 @@ export default defineComponent({
       ) {
         return backendLease.renderer
       }
-      retireBackend()
+      void retireBackend()
       backendCanvas = resolvedCanvas
       if (startup && startup.initStartedAt === undefined) startup.initStartedAt = performance.now()
       const lease = createParticleBackendLease({
@@ -1119,7 +1134,9 @@ export default defineComponent({
         requestedBackend: selectedBackend
       })
       backendLease = lease
-      void lease.init().catch(error => fenceForScene.fail(error))
+      void lease.init().catch(error => {
+        if (!tornDown && backendLease === lease) fenceForScene.fail(error)
+      })
       return lease.renderer
     }
 
@@ -1159,7 +1176,7 @@ export default defineComponent({
         loopControl.disposeFrameCapture?.(error)
         disposeInteraction()
         canvasMounted.value = false
-        retireBackend()
+        void retireBackend()
         emit('error', error)
       },
       contextLost: event => {
@@ -1168,22 +1185,25 @@ export default defineComponent({
         loopControl.disposeFrameCapture?.(new Error('Particle backend device was lost'))
         disposeInteraction()
         canvasMounted.value = false
-        retireBackend()
+        void retireBackend()
         emit('context-lost', event)
       }
     })
-    const teardown = (): void => {
-      if (tornDown) return
+    const teardown = (): Promise<void> => {
+      if (teardownPromise) return teardownPromise
       tornDown = true
       disableRendering()
       loopControl.ready = false
       loopControl.disposeFrameCapture?.(new Error('Particle frame capture is unavailable'))
       disposeInteraction()
       canvasMounted.value = false
-      retireBackend()
-      fenceForScene.dispose()
-      if (resources.value) disposeParticleSceneResources(resources.value)
+      const retiringResources = resources.value
       resources.value = null
+      fenceForScene.dispose()
+      teardownPromise = retireBackend().finally(() => {
+        if (retiringResources) disposeParticleSceneResources(retiringResources)
+      })
+      return teardownPromise
     }
     expose({ teardown })
 
@@ -1210,7 +1230,7 @@ export default defineComponent({
         if (tornDown || resources.value === null || fenceForScene.hasFailed) {
           disableRendering()
           canvasMounted.value = false
-          retireBackend()
+          void retireBackend()
           return
         }
         if (!active) {
@@ -1223,15 +1243,20 @@ export default defineComponent({
           loopControl.ready = false
           canvasMounted.value = true
         }
-        if (tresContext && !tresContext.renderer.loop.isActive.value) tresContext.renderer.loop.start()
         renderEnabled.value = true
+        if (loopControl.ready && tresContext) {
+          tresContext.renderer.loop.start()
+          tresContext.renderer.invalidate()
+        }
       },
       { flush: 'sync' }
     )
 
     const handleRendererReady = async (context: TresContext): Promise<void> => {
+      // Tres starts its root loop before emitting ready; prewarm must own the first draw.
+      context.renderer.loop.stop()
       tresContext = context
-      if (!renderEnabled.value && context.renderer.loop.isActive.value) context.renderer.loop.stop()
+      loopControl.ready = false
       if (tornDown || fenceForScene.hasFailed) return
       const lease = backendLease
       if (!lease || context.renderer.instance !== lease.renderer || lease.status !== 'ready') {
@@ -1249,19 +1274,21 @@ export default defineComponent({
           tornDown ||
           fenceForScene.hasFailed ||
           backendLease !== lease ||
+          tresContext !== context ||
           lease.status !== 'ready' ||
-          !renderEnabled.value ||
           !canvasMounted.value
         ) return
         rendererTimingCleanup = installRendererTimingHook(renderer, benchmark)
         loopControl.ready = true
-        if (renderEnabled.value) loopControl.start?.()
-        else loopControl.stop?.()
+        if (renderEnabled.value) {
+          context.renderer.loop.start()
+          context.renderer.invalidate()
+        }
         const wrapper = renderer.domElement.closest('.login-particle-logo')
         pointerTarget.value = wrapper instanceof HTMLElement ? wrapper : null
         pointerCoordinateTarget.value = renderer.domElement
       } catch (error) {
-        fenceForScene.fail(error)
+        if (!tornDown && backendLease === lease && tresContext === context) fenceForScene.fail(error)
       }
     }
 
@@ -1285,6 +1312,7 @@ export default defineComponent({
       handleRendererReady,
       handleRendererRender,
       NoToneMapping,
+      PCFShadowMap,
       pointerController,
       rendererFactory,
       renderEnabled,

@@ -104,9 +104,9 @@ if (!rootWorkspace) throw new Error('bun.lock does not define the root workspace
 // this reviewed allowlist exact rather than traversing all development tooling.
 const reviewedRendererRootDevDependencies = {
   '@graphql-yoga/graphiql': '4.4.4',
-  '@tresjs/core': '5.8.3',
-  '@types/three': '0.185.4',
-  three: '0.185.1'
+  '@tresjs/core': '5.9.2',
+  '@types/three': '0.186.0',
+  three: '0.186.1'
 } as const
 
 // Yoga 4.4.4 ships a prebuilt IDE with these peer ranges out of step with
@@ -264,9 +264,9 @@ const publishedPlatformMetadata: Record<string, PackageMetadata & { source: stri
 // These installed manifests omit usable license declarations. Their published
 // metadata or license files were reviewed at the exact locked versions.
 const licenseMetadataOverrides: Record<string, { license: string; source: string }> = {
-  '@pmndrs/pointer-events@6.6.30': {
+  '@pmndrs/pointer-events@6.6.31': {
     license: 'MIT',
-    source: 'https://github.com/pmndrs/xr/blob/main/packages/pointer-events/LICENSE'
+    source: 'https://registry.npmjs.org/@pmndrs/pointer-events/-/pointer-events-6.6.31.tgz'
   },
   'notp@2.0.3': {
     license: 'MIT',

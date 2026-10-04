@@ -69,9 +69,9 @@ if (invalid.length > 0) {
 
 const requiredDirectDependencies: ReadonlyArray<readonly [DependencySection, string, string]> = [
   ['dependencies', 'sharp', '0.35.4'],
-  ['devDependencies', '@tresjs/core', '5.8.3'],
-  ['devDependencies', '@types/three', '0.185.4'],
-  ['devDependencies', 'three', '0.185.1']
+  ['devDependencies', '@tresjs/core', '5.9.2'],
+  ['devDependencies', '@types/three', '0.186.0'],
+  ['devDependencies', 'three', '0.186.1']
 ]
 for (const [section, name, version] of requiredDirectDependencies) {
   if (manifest[section]?.[name] !== version) {
@@ -104,9 +104,9 @@ const lockedPackage = (name: string, version: string): LockPackageMetadata => {
   return matches[0]?.[2] ?? {}
 }
 
-lockedPackage('@tresjs/core', '5.8.3')
-lockedPackage('@types/three', '0.185.4')
-lockedPackage('three', '0.185.1')
+lockedPackage('@tresjs/core', '5.9.2')
+lockedPackage('@types/three', '0.186.0')
+lockedPackage('three', '0.186.1')
 const sharpMetadata = lockedPackage('sharp', '0.35.4')
 
 const requiredSharpOptionals = [
@@ -144,9 +144,9 @@ const requiredLicenseRecords = [
   ['@img/sharp-linuxmusl-arm64', '0.35.4', 'Apache-2.0'],
   ['@img/sharp-libvips-linuxmusl-x64', '1.3.3', 'LGPL-3.0-or-later'],
   ['@img/sharp-libvips-linuxmusl-arm64', '1.3.3', 'LGPL-3.0-or-later'],
-  ['@tresjs/core', '5.8.3', 'MIT'],
-  ['three', '0.185.1', 'MIT'],
-  ['@types/three', '0.185.4', 'MIT']
+  ['@tresjs/core', '5.9.2', 'MIT'],
+  ['three', '0.186.1', 'MIT'],
+  ['@types/three', '0.186.0', 'MIT']
 ] as const
 for (const [name, version, license] of requiredLicenseRecords) {
   const matches = (inventory.packages ?? []).filter(pkg => pkg.name === name && Array.isArray(pkg.versions) && pkg.versions.includes(version))

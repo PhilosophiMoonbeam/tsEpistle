@@ -24,11 +24,30 @@ type InitPlan = {
 const initPlans: InitPlan[] = []
 const createdRenderers: FakeWebGPURenderer[] = []
 const testCanvas = {} as HTMLCanvasElement
+const scheduledFrames = new Set<() => void>()
+const advanceFrame = (): void => {
+  const callbacks = [...scheduledFrames]
+  scheduledFrames.clear()
+  for (const callback of callbacks) callback()
+}
+const testScene = {} as Parameters<LogoParticleRendererType['compileAsync']>[0]
+const testCamera = {} as Parameters<LogoParticleRendererType['compileAsync']>[1]
 
 class FakeWebGPURenderer {
   readonly options: FakeRendererOptions
   readonly disposeCalls = { count: 0 }
   readonly initCalls = { count: 0 }
+  readonly compileCalls = { count: 0 }
+  readonly disposalStarted = deferred<void>()
+  disposalGate: Promise<void> | undefined
+  disposalError: Error | undefined
+  compileGate: Promise<void> | undefined
+  compileError: Error | undefined
+  resourcesReleased = false
+  backendDisposed = false
+  compilationCompleted = false
+  private animationLoop: (() => void) | null = null
+  private pendingFrame: (() => void) | null = null
   coordinateSystem: number
   initialized = false
   onDeviceLost: (info: unknown) => void = () => {}
@@ -50,11 +69,40 @@ class FakeWebGPURenderer {
     if (plan.error !== undefined) throw plan.error
     this.coordinateSystem = plan.coordinateSystem
     this.initialized = true
+    const frame = (): void => {
+      scheduledFrames.add(frame)
+      this.animationLoop?.()
+    }
+    this.pendingFrame = frame
+    scheduledFrames.add(frame)
     return this
   }
 
-  dispose(): void {
+  async compileAsync(): Promise<void> {
+    this.compileCalls.count += 1
+    if (!this.initialized) await this.init()
+    if (this.compileGate !== undefined) await this.compileGate
+    if (this.resourcesReleased) throw new Error('Renderer resources were released during prewarm')
+    if (this.compileError !== undefined) throw this.compileError
+    this.compilationCompleted = true
+  }
+
+  async setAnimationLoop(callback: (() => void) | null): Promise<void> {
+    if (!this.initialized) await this.init()
+    this.animationLoop = callback
+  }
+
+  async dispose(): Promise<void> {
     this.disposeCalls.count += 1
+    if (this.initialized) {
+      this.resourcesReleased = true
+      if (this.pendingFrame !== null) scheduledFrames.delete(this.pendingFrame)
+      this.disposalStarted.resolve()
+      if (this.disposalGate !== undefined) await this.disposalGate
+      if (this.disposalError !== undefined) throw this.disposalError
+      this.backendDisposed = true
+    }
+    void this.setAnimationLoop(null)
   }
 }
 
@@ -120,6 +168,7 @@ beforeEach(() => {
     value: { requestAdapter: async () => ({}) }
   })
   createdRenderers.length = 0
+  scheduledFrames.clear()
 })
 
 describe('LogoParticleRenderer', () => {
@@ -132,15 +181,43 @@ describe('LogoParticleRenderer', () => {
     expect(buffered.outputColorSpace).toBe(SRGBColorSpace)
   })
 
-  it('provides an idempotent public disposal boundary after initialization', async () => {
+  it('stops frames promptly and shares completion until asynchronous backend cleanup finishes', async () => {
     queuePlans(planFor('webgpu'))
     const renderer = new LogoParticleRenderer()
-
+    const backendCleanup = deferred<void>()
+    const record = rendererRecord(renderer)
+    record.disposalGate = backendCleanup.promise
+    let renderedFrames = 0
     await renderer.init()
-    renderer.dispose()
-    renderer.dispose()
+    await renderer.setAnimationLoop(() => {
+      renderedFrames += 1
+    })
+    advanceFrame()
+    expect(renderedFrames).toBe(1)
 
-    expect(rendererRecord(renderer).disposeCalls.count).toBe(1)
+    const first = renderer.dispose()
+    const second = renderer.dispose()
+    let finished = false
+    void first.then(() => {
+      finished = true
+    })
+
+    expect(second).toBe(first)
+    expect(record.disposeCalls.count).toBe(1)
+    expect(record.resourcesReleased).toBe(true)
+    expect(scheduledFrames.size).toBe(0)
+    advanceFrame()
+    expect(renderedFrames).toBe(1)
+    await Promise.resolve()
+    expect(finished).toBe(false)
+    expect(record.backendDisposed).toBe(false)
+
+    backendCleanup.resolve()
+    await first
+    expect(finished).toBe(true)
+    expect(record.backendDisposed).toBe(true)
+    expect(renderer.dispose()).toBe(first)
+    expect(record.disposeCalls.count).toBe(1)
   })
 
   it('coalesces concurrent public initialization calls', async () => {
@@ -156,6 +233,94 @@ describe('LogoParticleRenderer', () => {
     await expect(first).resolves.toBe(renderer)
     await expect(second).resolves.toBe(renderer)
     expect(rendererRecord(renderer).initCalls.count).toBe(1)
+    await renderer.dispose()
+  })
+
+  it('does not start initialization when disposed before first use', async () => {
+    const renderer = new LogoParticleRenderer()
+    const completion = renderer.dispose()
+
+    expect(renderer.dispose()).toBe(completion)
+    await completion
+    await expect(renderer.init()).rejects.toThrow('lease was retired')
+    await expect(renderer.compileAsync(testScene, testCamera)).rejects.toThrow('lease was retired')
+    expect(rendererRecord(renderer).initCalls.count).toBe(0)
+    expect(rendererRecord(renderer).disposeCalls.count).toBe(0)
+    expect(scheduledFrames.size).toBe(0)
+  })
+
+  it('preserves a pending initialization failure when retirement is requested', async () => {
+    const gate = deferred<void>()
+    const failure = new Error('adapter initialization failed')
+    queuePlans({ ...planFor('webgpu'), gate: gate.promise, error: failure })
+    const renderer = new LogoParticleRenderer()
+    const initialization = renderer.init().catch(error => error)
+    const completion = renderer.dispose()
+
+    gate.resolve()
+    await expect(initialization).resolves.toBe(failure)
+    await completion
+    expect(rendererRecord(renderer).disposeCalls.count).toBe(0)
+    expect(scheduledFrames.size).toBe(0)
+    await expect(renderer.init()).rejects.toThrow('lease was retired')
+  })
+
+  it('keeps prewarm resources alive, fences frames, and waits for backend cleanup before retiring', async () => {
+    queuePlans(planFor('webgpu'))
+    const renderer = new LogoParticleRenderer()
+    await renderer.init()
+    const record = rendererRecord(renderer)
+    const prewarm = deferred<void>()
+    const backendCleanup = deferred<void>()
+    record.compileGate = prewarm.promise
+    record.disposalGate = backendCleanup.promise
+    let renderedFrames = 0
+    await renderer.setAnimationLoop(() => {
+      renderedFrames += 1
+    })
+
+    const compilation = renderer.compileAsync(testScene, testCamera)
+    const completion = renderer.dispose()
+    expect(renderer.dispose()).toBe(completion)
+    advanceFrame()
+    expect(renderedFrames).toBe(0)
+    expect(record.resourcesReleased).toBe(false)
+    expect(record.disposeCalls.count).toBe(0)
+    await expect(renderer.compileAsync(testScene, testCamera)).rejects.toThrow('lease was retired')
+
+    prewarm.resolve()
+    await compilation
+    await record.disposalStarted.promise
+    expect(record.compilationCompleted).toBe(true)
+    expect(record.resourcesReleased).toBe(true)
+    expect(record.backendDisposed).toBe(false)
+    expect(scheduledFrames.size).toBe(0)
+    backendCleanup.resolve()
+    await completion
+    expect(record.backendDisposed).toBe(true)
+    expect(record.disposeCalls.count).toBe(1)
+  })
+
+  it('preserves prewarm failure and exposes a separate asynchronous cleanup failure', async () => {
+    queuePlans(planFor('webgpu'))
+    const renderer = new LogoParticleRenderer()
+    await renderer.init()
+    const record = rendererRecord(renderer)
+    const gate = deferred<void>()
+    const prewarmFailure = new Error('pipeline compilation failed')
+    const cleanupFailure = new Error('backend cleanup failed')
+    record.compileGate = gate.promise
+    record.compileError = prewarmFailure
+    record.disposalError = cleanupFailure
+    const compilation = renderer.compileAsync(testScene, testCamera).catch(error => error)
+    const completion = renderer.dispose()
+
+    gate.resolve()
+    await expect(compilation).resolves.toBe(prewarmFailure)
+    await expect(completion).rejects.toBe(cleanupFailure)
+    expect(renderer.dispose()).toBe(completion)
+    expect(record.disposeCalls.count).toBe(1)
+    expect(scheduledFrames.size).toBe(0)
   })
 })
 
@@ -166,7 +331,7 @@ describe('particle backend leases', () => {
     const lease = createParticleBackendLease({ canvas: testCanvas, requestedBackend: 'auto' })
 
     expect(rendererRecord(lease.renderer).options.forceWebGL).toBe(true)
-    lease.retire()
+    void lease.retire()
   })
   it('validates backend requests before constructing a renderer and exposes stable initial getters', () => {
     expect(() => createParticleBackendLease({ canvas: testCanvas, requestedBackend: 'native' as ParticleBackendRequest })).toThrow('Invalid particle backend request')
@@ -194,7 +359,7 @@ describe('particle backend leases', () => {
       reason: 'created'
     })
     assertBoundedDiagnostics(lease.diagnostics)
-    lease.retire()
+    void lease.retire()
   })
 
   it('proves backend identity from the renderer coordinate system', async () => {
@@ -206,7 +371,7 @@ describe('particle backend leases', () => {
       expect(lease.effectiveBackend).toBe(kind)
       expect(lease.diagnostics.effectiveBackend).toBe(kind)
       expect(lease.status).toBe('ready')
-      lease.retire()
+      await lease.retire()
     }
   })
 
@@ -225,6 +390,8 @@ describe('particle backend leases', () => {
     queuePlans(planFor('webgl2'))
     const lease = createParticleBackendLease({ canvas: testCanvas, requestedBackend: 'webgpu' })
     const nativeAttempt = lease.renderer
+    const cleanupFailure = new Error('backend cleanup failed')
+    rendererRecord(nativeAttempt).disposalError = cleanupFailure
 
     await expect(lease.init()).rejects.toThrow('Native WebGPU backend was not selected')
 
@@ -235,6 +402,8 @@ describe('particle backend leases', () => {
     expect(lease.status).toBe('failed')
     expect(lease.diagnostics.fallback).toBe(false)
     expect(lease.diagnostics.reason).toBe('strict-native-required')
+    await expect(lease.retire()).rejects.toBe(cleanupFailure)
+    expect(rendererRecord(nativeAttempt).disposeCalls.count).toBe(1)
   })
 
   it('strictly rejects a WebGPU initialization error without creating a fallback renderer', async () => {
@@ -281,7 +450,7 @@ describe('particle backend leases', () => {
       fallback: true,
       reason: 'ready'
     })
-    lease.retire()
+    await lease.retire()
   })
 
   it('treats an auto-mode native initialization error as terminal without retrying', async () => {
@@ -336,6 +505,8 @@ describe('particle backend leases', () => {
     const lease = createParticleBackendLease({ canvas: testCanvas, requestedBackend: 'webgl2' })
     await lease.init()
     const renderer = lease.renderer
+    const backendCleanup = deferred<void>()
+    rendererRecord(renderer).disposalGate = backendCleanup.promise
 
     triggerDeviceLost(renderer, { api: 'WebGL', message: 'context lost' })
     expect(lease.status).toBe('lost')
@@ -346,31 +517,47 @@ describe('particle backend leases', () => {
     expect(rendererRecord(renderer).disposeCalls.count).toBe(1)
     await expect(lease.init()).rejects.toThrow('device was lost')
 
-    lease.retire()
-    lease.retire()
+    const completion = lease.retire()
+    expect(lease.retire()).toBe(completion)
     expect(lease.status).toBe('retired')
     expect(rendererRecord(renderer).disposeCalls.count).toBe(1)
     await expect(lease.init()).rejects.toThrow('lease was retired')
+    expect(rendererRecord(renderer).backendDisposed).toBe(false)
+    expect(scheduledFrames.size).toBe(0)
+    backendCleanup.resolve()
+    await completion
+    expect(rendererRecord(renderer).backendDisposed).toBe(true)
   })
 
-  it('retires a pending initialization and fences its late completion', async () => {
+  it('invalidates a pending lease synchronously and waits for late init plus asynchronous disposal', async () => {
     const gate = deferred<void>()
     queuePlans({ coordinateSystem: WebGPUCoordinateSystem, gate: gate.promise })
     const lease = createParticleBackendLease({ canvas: testCanvas, requestedBackend: 'webgpu' })
     const pending = lease.init()
     const renderer = lease.renderer
+    const record = rendererRecord(renderer)
+    const backendCleanup = deferred<void>()
+    record.disposalGate = backendCleanup.promise
 
     expect(lease.status).toBe('initializing')
-    lease.retire()
-    lease.retire()
+    const completion = lease.retire()
+    expect(lease.retire()).toBe(completion)
+    expect(renderer.dispose()).toBe(completion)
     expect(lease.status).toBe('retired')
     expect(rendererRecord(renderer).disposeCalls.count).toBe(0)
 
     gate.resolve()
     await expect(pending).rejects.toThrow('lease was retired')
+    await record.disposalStarted.promise
     expect(lease.status).toBe('retired')
     expect(lease.diagnostics.reason).toBe('retired')
     expect(rendererRecord(renderer).disposeCalls.count).toBe(1)
+    expect(scheduledFrames.size).toBe(0)
+    expect(record.backendDisposed).toBe(false)
+    backendCleanup.resolve()
+    await completion
+    expect(record.backendDisposed).toBe(true)
+    expect(lease.retire()).toBe(completion)
     await expect(lease.init()).rejects.toThrow('lease was retired')
   })
 })

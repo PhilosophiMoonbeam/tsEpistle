@@ -182,7 +182,7 @@ const createVertexState = (uniforms: ParticleNodeUniforms) => {
   })()
   const motionCss = mix(idleCss.add(cursorCss), cloudMotion, logoParameters.w).toVar('motionCss')
   const displacement = motionCss.add(explosionCss).toVar('displacement')
-  const position = basePosition.add(displacement.mul(2).div(safeViewport)).toVar('position')
+  const position = basePosition.add(displacement.mul(2).div(safeViewport)).toVar('particlePosition')
   const ndcPosition = position.abs()
   const lifecycle = float(1)
     .sub(smoothstep(0.94, 1.02, ndcPosition.x.max(ndcPosition.y)))
@@ -227,7 +227,7 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms): Sp
     const r2 = uv.dot(uv).toVar('particleR2')
     r2.greaterThan(1).discard()
     const coverage = float(1).sub(smoothstep(float(1).sub(float(3).mul(halfPixel)), 1, r2))
-    const color = particleColor.rgb.toVar('particleColor')
+    const color = particleColor.rgb.toVar('particleRgb')
 
     If(bead.greaterThan(0), () => {
       const z = float(1).sub(r2).max(0).sqrt()

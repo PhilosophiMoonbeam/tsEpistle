@@ -1,12 +1,15 @@
 import path from 'node:path'
+import { setImmediate } from 'node:timers/promises'
 
 import { compileScript, parse } from '@vue/compiler-sfc'
+import type { TresContext, TresRendererSetupContext } from '@tresjs/core'
 import type { WebGPURenderer } from 'three/webgpu'
 import { beforeEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 import type { Component } from 'vue'
 import type { ParticleSceneEventFence as ParticleSceneEventFenceClass, ParticleSceneFrame, ParticleSceneResources } from './LogoParticleScene.vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles, ParticleContentRect } from './particle-logo.ts'
+import type { LogoParticleRenderer, ParticleBackendLease } from './particle-renderer.ts'
 import type { LogoPointerState } from './useLogoPointer.ts'
 
 resetBody()
@@ -42,6 +45,7 @@ interface LoopContext {
 type LoopCallback = (context: LoopContext) => void
 const loopHarness = {
   beforeRender: null as LoopCallback | null,
+  isActive: Vue.ref(false),
   invalidations: 0,
   render: null as LoopCallback | null,
   starts: 0,
@@ -51,6 +55,7 @@ const resetLoopHarness = (): void => {
   loopHarness.beforeRender = null
   loopHarness.invalidations = 0
   loopHarness.render = null
+  loopHarness.isActive.value = false
   loopHarness.starts = 0
   loopHarness.stops = 0
 }
@@ -74,9 +79,12 @@ const tresTestModule = {
       }
     },
     start: () => {
+      if (loopHarness.isActive.value) return
+      loopHarness.isActive.value = true
       loopHarness.starts += 1
     },
     stop: () => {
+      loopHarness.isActive.value = false
       loopHarness.stops += 1
     }
   }),
@@ -85,6 +93,13 @@ const tresTestModule = {
       loopHarness.invalidations += 1
     }
   })
+}
+let sceneBackendLease: ParticleBackendLease | null = null
+const particleRendererTestModule = {
+  createParticleBackendLease: (): ParticleBackendLease => {
+    if (!sceneBackendLease) throw new Error('Scene backend lease was not configured')
+    return sceneBackendLease
+  }
 }
 const bundle = await Bun.build({
   entrypoints: ['virtual:LogoParticleScene.vue'],
@@ -95,6 +110,10 @@ const bundle = await Bun.build({
       name: 'logo-particle-scene-tsl-test-sfc',
       setup(build) {
         build.onResolve({ filter: /^virtual:LogoParticleScene\.vue$/ }, () => ({ path: componentPath }))
+        build.onResolve({ filter: /\/particle-renderer$/ }, () => ({
+          path: 'particle-renderer-test-boundary',
+          external: true
+        }))
         build.onLoad({ filter: /LogoParticleScene\.vue$/, namespace: 'file' }, () => ({
           contents: compiledComponent,
           loader: 'ts',
@@ -127,6 +146,7 @@ moduleFactory(
   specifier => {
     if (specifier === 'vue') return Vue
     if (specifier === '@tresjs/core') return tresTestModule
+    if (specifier === 'particle-renderer-test-boundary') return particleRendererTestModule
     if (specifier === 'three') return Three
     if (specifier === 'three/webgpu') return ThreeWebgpu
     if (specifier === 'three/tsl') return ThreeTsl
@@ -265,8 +285,182 @@ const makeFrameContext = (renderer: WebGPURenderer, elapsed = 1): LoopContext =>
   contentRect
 })
 
+interface PrewarmingBackend extends FakeRenderer {
+  readonly compileLoopStates: boolean[]
+  readonly draws: number
+  readonly lease: ParticleBackendLease
+  readonly rejectCompilation: (error: Error) => void
+  readonly resolveCompilation: () => void
+}
+
+const makePrewarmingBackend = (generation = 1): PrewarmingBackend => {
+  const { canvas, renderer } = makeRenderer()
+  let status: 'ready' | 'retired' = 'ready'
+  let resolveCompilation!: () => void
+  let rejectCompilation!: (error: Error) => void
+  const compilation = new Promise<void>((resolve, reject) => {
+    resolveCompilation = resolve
+    rejectCompilation = reject
+  })
+  const compileLoopStates: boolean[] = []
+  let draws = 0
+  renderer.compileAsync = () => {
+    compileLoopStates.push(loopHarness.isActive.value)
+    return compilation
+  }
+  renderer.render = () => {
+    draws += 1
+    renderer.info.render.drawCalls = 1
+    renderer.info.render.triangles = effect.count * 2
+  }
+  const lease: ParticleBackendLease = {
+    generation,
+    requestedBackend: 'webgpu',
+    effectiveBackend: 'webgpu',
+    renderer: renderer as LogoParticleRenderer,
+    get status() {
+      return status
+    },
+    diagnostics: {
+      generation,
+      requestedBackend: 'webgpu',
+      effectiveBackend: 'webgpu',
+      phase: 'ready',
+      attempt: 1,
+      fallback: false,
+      reason: 'ready'
+    },
+    init: async () => 'webgpu',
+    retire: () => {
+      status = 'retired'
+      return compilation.then(() => {}, () => {})
+    }
+  }
+  return {
+    canvas,
+    compileLoopStates,
+    get draws() {
+      return draws
+    },
+    lease,
+    rejectCompilation,
+    renderer,
+    resolveCompilation
+  }
+}
+
+interface ReadySceneState {
+  canvasMounted: boolean
+  contentRect: ParticleContentRect
+  fence: ParticleSceneEventFenceClass
+  handleRendererReady: (context: TresContext) => Promise<void>
+  loopControl: { ready: boolean; start: (() => void) | null; stop: (() => void) | null }
+  pointerController: unknown
+  renderEnabled: boolean
+  rendererFactory: (context: TresRendererSetupContext) => unknown
+  resources: ParticleSceneResources | null
+}
+
+const mountPrewarmingScene = () => {
+  const active = Vue.ref(true)
+  const particles = makeParticles()
+  const errors: unknown[] = []
+  const events: string[] = []
+  const instance = Vue.shallowRef<{ teardown: () => Promise<void> } | null>(null)
+  let state!: ReadySceneState
+  const sceneComponent = {
+    ...LogoParticleScene,
+    render(this: ReadySceneState) {
+      state = this
+      return this.resources && this.canvasMounted
+        ? Vue.h(ParticleSceneContents, {
+            active: this.renderEnabled,
+            contentRect: this.contentRect,
+            fence: this.fence,
+            loopControl: this.loopControl,
+            pointerController: this.pointerController,
+            resources: this.resources
+          })
+        : null
+    }
+  }
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = Vue.createApp({
+    setup: () => () => Vue.h(sceneComponent, {
+      active: active.value,
+      contentRect,
+      effect,
+      particles,
+      ref: instance,
+      onError: (error: Error) => errors.push(error),
+      onFirstFrame: () => events.push('first-frame'),
+      onFramePending: () => events.push('frame-pending')
+    })
+  })
+  app.config.errorHandler = error => errors.push(error)
+  app.mount(host)
+  const resources = state.resources
+  const teardown = instance.value?.teardown
+  const beforeRender = loopHarness.beforeRender
+  const afterRender = loopHarness.render
+  if (!resources || !teardown || !beforeRender || !afterRender || !state.loopControl.start || !state.loopControl.stop) {
+    throw new Error('Scene readiness harness did not mount')
+  }
+  const scene = new Three.Scene()
+  scene.add(resources.mesh, resources.camera)
+
+  return {
+    active,
+    errors,
+    events,
+    resources,
+    state,
+    teardown,
+    ready: (backend: PrewarmingBackend): Promise<void> => {
+      sceneBackendLease = backend.lease
+      state.rendererFactory({ canvas: Vue.shallowRef(backend.canvas) } as TresRendererSetupContext)
+      // Tres starts the root loop synchronously before mounting contents and emitting ready.
+      loopHarness.isActive.value = true
+      return state.handleRendererReady({
+        camera: { activeCamera: Vue.shallowRef(resources.camera) },
+        renderer: {
+          instance: backend.renderer,
+          invalidate: tresTestModule.useTres().invalidate,
+          loop: {
+            isActive: loopHarness.isActive,
+            start: state.loopControl.start,
+            stop: state.loopControl.stop
+          }
+        },
+        scene: Vue.shallowRef(scene)
+      } as unknown as TresContext)
+    },
+    callbacks: (backend: PrewarmingBackend, elapsed = 1): void => {
+      const context = makeFrameContext(backend.renderer, elapsed)
+      beforeRender(context)
+      afterRender(context)
+    },
+    draw: (backend: PrewarmingBackend, elapsed = 1): void => {
+      if (!loopHarness.isActive.value) return
+      const context = makeFrameContext(backend.renderer, elapsed)
+      backend.renderer.info.render.drawCalls = 0
+      backend.renderer.info.render.triangles = 0
+      beforeRender(context)
+      backend.renderer.render(scene, resources.camera)
+      afterRender(context)
+    },
+    close: async (): Promise<void> => {
+      await teardown()
+      app.unmount()
+      host.remove()
+    }
+  }
+}
+
 beforeEach(() => {
   resetLoopHarness()
+  sceneBackendLease = null
   Reflect.deleteProperty(window, '__logoParticlePerformance')
   document.body.replaceChildren()
 })
@@ -345,7 +539,7 @@ describe('LogoParticleScene resource path', () => {
     }
   })
 
-  it('disposes the mesh resources idempotently without mutating parser-owned bytes', () => {
+  it('notifies retired objects and disposes their owned resources once without mutating parser-owned bytes', () => {
     const particles = makeParticles()
     const resources = createParticleSceneResources(particles, effect)
     const before = new Uint8Array(particles.buffer).slice()
@@ -353,6 +547,15 @@ describe('LogoParticleScene resource path', () => {
     scene.add(resources.mesh, resources.camera)
     expect(resources.mesh.parent).toBe(scene)
     expect(resources.camera.parent).toBe(scene)
+    const retiredObjects: string[] = []
+    resources.mesh.addEventListener('dispose', () => {
+      expect(resources.mesh.parent).toBeNull()
+      retiredObjects.push('mesh')
+    })
+    resources.camera.addEventListener('dispose', () => {
+      expect(resources.camera.parent).toBeNull()
+      retiredObjects.push('camera')
+    })
     let geometryDisposals = 0
     let materialDisposals = 0
     const disposeGeometry = resources.geometry.dispose.bind(resources.geometry)
@@ -372,9 +575,156 @@ describe('LogoParticleScene resource path', () => {
     disposeParticleSceneResources(resources)
     expect(geometryDisposals).toBe(1)
     expect(materialDisposals).toBe(1)
+    expect(retiredObjects).toEqual(['mesh', 'camera'])
     expect(resources.mesh.parent).toBeNull()
     expect(new Uint8Array(particles.buffer)).toEqual(before)
   })
+})
+
+describe('LogoParticleScene asynchronous teardown', () => {
+  for (const { rejectCleanup, rejectPriorCleanup } of [
+    { rejectCleanup: false, rejectPriorCleanup: false },
+    { rejectCleanup: true, rejectPriorCleanup: false },
+    { rejectCleanup: false, rejectPriorCleanup: true },
+    { rejectCleanup: true, rejectPriorCleanup: true }
+  ]) {
+    it(`invalidates immediately and waits for backend cleanup to ${rejectCleanup ? 'reject' : 'complete'}${rejectPriorCleanup ? ' despite a prior retirement failure' : ''}`, async () => {
+      const harness = makeRenderer()
+      const cleanupError = new Error('Backend cleanup failed')
+      const priorCleanupError = new Error('Prior backend cleanup failed')
+      const unmountErrors: unknown[] = []
+      let status: 'ready' | 'retired' = 'ready'
+      let retireRequests = 0
+      let resolveCleanup!: () => void
+      let rejectBackendCleanup!: (error: Error) => void
+      const cleanup = new Promise<void>((resolve, reject) => {
+        resolveCleanup = resolve
+        rejectBackendCleanup = reject
+      })
+      let rejectPriorBackendCleanup!: (error: Error) => void
+      const priorCleanup = rejectPriorCleanup
+        ? new Promise<void>((_, reject) => {
+            rejectPriorBackendCleanup = reject
+          })
+        : Promise.resolve()
+      sceneBackendLease = {
+        generation: 1,
+        requestedBackend: 'webgl2',
+        effectiveBackend: 'webgl2',
+        renderer: harness.renderer as LogoParticleRenderer,
+        get status() {
+          return status
+        },
+        diagnostics: {
+          generation: 1,
+          requestedBackend: 'webgl2',
+          effectiveBackend: 'webgl2',
+          phase: 'ready',
+          attempt: 1,
+          fallback: false,
+          reason: 'ready'
+        },
+        init: async () => 'webgl2',
+        retire: () => {
+          retireRequests += 1
+          status = 'retired'
+          return cleanup
+        }
+      }
+      interface SceneState {
+        canvasMounted: boolean
+        loopControl: { ready: boolean; stop: (() => void) | null }
+        renderEnabled: boolean
+        rendererFactory: (context: TresRendererSetupContext) => unknown
+        resources: ParticleSceneResources | null
+      }
+      let sceneState!: SceneState
+      const host = document.createElement('div')
+      document.body.append(host)
+      const app = Vue.createApp(
+        {
+          ...LogoParticleScene,
+          render(this: SceneState) {
+            sceneState = this
+            return null
+          }
+        },
+        { active: true, contentRect, effect, particles: makeParticles() }
+      )
+      app.config.errorHandler = error => {
+        unmountErrors.push(error)
+      }
+      const instance = app.mount(host) as unknown as { teardown: () => Promise<void> }
+      const resources = sceneState.resources
+      if (!resources) throw new Error('Scene resources were not created')
+      let loopStops = 0
+      sceneState.loopControl.stop = () => {
+        loopStops += 1
+      }
+      sceneState.loopControl.ready = true
+      if (rejectPriorCleanup) {
+        const currentLease = sceneBackendLease
+        sceneBackendLease = {
+          ...currentLease,
+          generation: 0,
+          retire: () => priorCleanup
+        }
+        sceneState.rendererFactory({ canvas: Vue.shallowRef(document.createElement('canvas')) } as TresRendererSetupContext)
+        sceneBackendLease = currentLease
+      }
+      sceneState.rendererFactory({ canvas: Vue.shallowRef(harness.canvas) } as TresRendererSetupContext)
+      let completed = false
+      const teardown = instance.teardown()
+      void teardown.then(
+        () => {
+          completed = true
+        },
+        () => {
+          completed = true
+        }
+      )
+
+      try {
+        expect(instance.teardown()).toBe(teardown)
+        expect(status).toBe('retired')
+        expect(retireRequests).toBe(1)
+        expect(loopStops).toBeGreaterThan(0)
+        expect(sceneState.renderEnabled).toBe(false)
+        expect(sceneState.canvasMounted).toBe(false)
+        expect(sceneState.loopControl.ready).toBe(false)
+        expect(sceneState.resources).toBeNull()
+        await Promise.resolve()
+        expect(completed).toBe(false)
+        if (rejectPriorCleanup) {
+          rejectPriorBackendCleanup(priorCleanupError)
+          // Let the rejection chain drain without resolving the fresh backend cleanup.
+          await setImmediate()
+          expect(completed).toBe(false)
+          expect(resources.disposed).toBe(false)
+        }
+        expect(resources.disposed).toBe(false)
+
+        if (rejectCleanup) rejectBackendCleanup(cleanupError)
+        else resolveCleanup()
+        if (rejectCleanup || rejectPriorCleanup) {
+          await expect(teardown).rejects.toBe(rejectPriorCleanup ? priorCleanupError : cleanupError)
+        } else {
+          await teardown
+        }
+        expect(completed).toBe(true)
+        expect(resources.disposed).toBe(true)
+        expect(instance.teardown()).toBe(teardown)
+      } finally {
+        resolveCleanup()
+        if (rejectPriorCleanup) rejectPriorBackendCleanup(priorCleanupError)
+        await teardown.catch(() => {})
+        app.unmount()
+        host.remove()
+      }
+      await Vue.nextTick()
+      expect(unmountErrors).toEqual(rejectCleanup || rejectPriorCleanup ? [rejectPriorCleanup ? priorCleanupError : cleanupError] : [])
+    })
+  }
 })
 
 describe('LogoParticleScene frame fence and loop', () => {
@@ -441,7 +791,7 @@ describe('LogoParticleScene frame fence and loop', () => {
     }
   })
 
-  it('records active frames while staying callback-free after deactivation', async () => {
+  it('pauses callbacks and resumes motion with the existing resources', async () => {
     const benchmark = makeBenchmark()
     const resources = createParticleSceneResources(makeParticles(), effect)
     const renderer = makeRenderer()
@@ -505,6 +855,8 @@ describe('LogoParticleScene frame fence and loop', () => {
       const afterRenderCallbacks = benchmark.counters.afterRenderCallbacks
       const invalidations = loopHarness.invalidations
       const motionVersion = resources.cloudMotion.version
+      const motionStorage = resources.cloudMotion.array
+      const pausedElapsed = resources.uniforms.elapsedSeconds.value
       active.value = false
       await Vue.nextTick()
       loopHarness.beforeRender(context)
@@ -517,6 +869,24 @@ describe('LogoParticleScene frame fence and loop', () => {
       expect(loopHarness.invalidations).toBe(invalidations)
       expect(resources.cloudMotion.version).toBe(motionVersion)
       expect(loopHarness.stops).toBeGreaterThan(0)
+      expect(resources.uniforms.elapsedSeconds.value).toBe(pausedElapsed)
+
+      const starts = loopHarness.starts
+      active.value = true
+      await Vue.nextTick()
+      expect(loopHarness.starts).toBe(starts + 1)
+      expect(loopHarness.invalidations).toBe(invalidations + 1)
+      const resumedContext = makeFrameContext(renderer.renderer, 2)
+      renderer.renderer.info.render.drawCalls = 0
+      renderer.renderer.info.render.triangles = 0
+      loopHarness.beforeRender(resumedContext)
+      renderer.renderer.info.render.drawCalls = 1
+      renderer.renderer.info.render.triangles = effect.count * 2
+      loopHarness.render(resumedContext)
+      expect(pointerUpdates).toHaveLength(2)
+      expect(benchmark.frames).toHaveLength(2)
+      expect(resources.uniforms.elapsedSeconds.value).toBe(2)
+      expect(resources.cloudMotion.array).toBe(motionStorage)
     } finally {
       app.unmount()
       host.remove()
@@ -545,4 +915,199 @@ describe('LogoParticleScene frame fence and loop', () => {
     fence.dispose()
     disposeParticleSceneResources(resources)
   })
+})
+
+describe('LogoParticleScene shader prewarm readiness', () => {
+  it('stops the root before compile, blocks visibility bypass and callbacks, then draws the compiled active lease', async () => {
+    const benchmark = makeBenchmark()
+    const backend = makePrewarmingBackend()
+    const scene = mountPrewarmingScene()
+    const motionVersion = scene.resources.cloudMotion.version
+    const readiness = scene.ready(backend)
+
+    try {
+      expect(backend.compileLoopStates).toEqual([false])
+      expect(loopHarness.isActive.value).toBe(false)
+      expect(scene.state.loopControl.ready).toBe(false)
+      scene.draw(backend)
+      scene.callbacks(backend)
+      expect(backend.draws).toBe(0)
+      expect(scene.resources.cloudMotion.version).toBe(motionVersion)
+      expect(benchmark.counters.updateCallbacks).toBe(0)
+      expect(benchmark.counters.renderInvocations).toBe(0)
+      expect(scene.events).toEqual([])
+
+      scene.active.value = false
+      await Vue.nextTick()
+      scene.active.value = true
+      await Vue.nextTick()
+      scene.draw(backend)
+      scene.callbacks(backend)
+      expect(loopHarness.isActive.value).toBe(false)
+      expect(loopHarness.starts).toBe(0)
+      expect(loopHarness.invalidations).toBe(0)
+      expect(backend.draws).toBe(0)
+      expect(scene.resources.cloudMotion.version).toBe(motionVersion)
+      expect(benchmark.counters.updateCallbacks).toBe(0)
+      expect(benchmark.counters.renderInvocations).toBe(0)
+
+      backend.resolveCompilation()
+      await readiness
+      expect(scene.state.loopControl.ready).toBe(true)
+      expect(loopHarness.isActive.value).toBe(true)
+      expect(loopHarness.starts).toBe(1)
+      expect(loopHarness.invalidations).toBe(1)
+      expect(backend.compileLoopStates).toEqual([false])
+      scene.draw(backend, 2)
+      expect(backend.draws).toBe(1)
+      expect(scene.resources.cloudMotion.version).toBeGreaterThan(motionVersion)
+      expect(benchmark.counters.updateCallbacks).toBe(1)
+      expect(benchmark.counters.renderInvocations).toBe(1)
+      expect(scene.events).toEqual(['first-frame'])
+      expect(scene.errors).toEqual([])
+
+      scene.active.value = false
+      await Vue.nextTick()
+      scene.draw(backend, 3)
+      expect(loopHarness.isActive.value).toBe(false)
+      expect(backend.draws).toBe(1)
+      scene.active.value = true
+      await Vue.nextTick()
+      expect(loopHarness.starts).toBe(2)
+      scene.draw(backend, 3)
+      expect(backend.draws).toBe(2)
+      expect(scene.events).toEqual(['first-frame', 'frame-pending', 'first-frame'])
+      expect(backend.compileLoopStates).toEqual([false])
+    } finally {
+      backend.resolveCompilation()
+      await readiness
+      await scene.close()
+    }
+  })
+
+  it('commits successful prewarm while inactive without starting until visibility resumes', async () => {
+    const backend = makePrewarmingBackend()
+    const scene = mountPrewarmingScene()
+    const readiness = scene.ready(backend)
+
+    try {
+      scene.active.value = false
+      await Vue.nextTick()
+      backend.resolveCompilation()
+      await readiness
+      expect(scene.state.loopControl.ready).toBe(true)
+      expect(loopHarness.isActive.value).toBe(false)
+      expect(loopHarness.starts).toBe(0)
+      expect(loopHarness.invalidations).toBe(0)
+      scene.draw(backend)
+      expect(backend.draws).toBe(0)
+
+      scene.active.value = true
+      await Vue.nextTick()
+      expect(loopHarness.isActive.value).toBe(true)
+      expect(loopHarness.starts).toBe(1)
+      expect(loopHarness.invalidations).toBeGreaterThan(0)
+      scene.draw(backend)
+      expect(backend.draws).toBe(1)
+      expect(scene.events).toEqual(['first-frame'])
+      expect(scene.errors).toEqual([])
+      expect(backend.compileLoopStates).toEqual([false])
+    } finally {
+      backend.resolveCompilation()
+      await readiness
+      await scene.close()
+    }
+  })
+
+  for (const rejectStale of [false, true]) {
+    it(`ignores ${rejectStale ? 'rejection' : 'success'} from a replaced prewarm lease and starts only its compiled successor`, async () => {
+      const staleBackend = makePrewarmingBackend(1)
+      const currentBackend = makePrewarmingBackend(2)
+      const scene = mountPrewarmingScene()
+      const staleReadiness = scene.ready(staleBackend)
+      const currentReadiness = scene.ready(currentBackend)
+
+      try {
+        if (rejectStale) staleBackend.rejectCompilation(new Error('Stale compilation failed'))
+        else staleBackend.resolveCompilation()
+        await staleReadiness
+        expect(staleBackend.lease.status).toBe('retired')
+        expect(scene.state.loopControl.ready).toBe(false)
+        expect(loopHarness.isActive.value).toBe(false)
+        expect(loopHarness.starts).toBe(0)
+        expect(loopHarness.invalidations).toBe(0)
+        expect(scene.errors).toEqual([])
+        scene.draw(currentBackend)
+        expect(currentBackend.draws).toBe(0)
+
+        currentBackend.resolveCompilation()
+        await currentReadiness
+        expect(scene.state.loopControl.ready).toBe(true)
+        expect(loopHarness.isActive.value).toBe(true)
+        expect(loopHarness.starts).toBe(1)
+        expect(loopHarness.invalidations).toBe(1)
+        scene.draw(currentBackend)
+        expect(staleBackend.draws).toBe(0)
+        expect(currentBackend.draws).toBe(1)
+        expect(scene.events).toEqual(['first-frame'])
+        expect(scene.errors).toEqual([])
+        expect(staleBackend.compileLoopStates).toEqual([false])
+        expect(currentBackend.compileLoopStates).toEqual([false])
+      } finally {
+        staleBackend.resolveCompilation()
+        currentBackend.resolveCompilation()
+        await Promise.all([staleReadiness, currentReadiness])
+        await scene.close()
+      }
+    })
+  }
+
+  for (const retirePending of [false, true]) {
+    it(`keeps the root stopped after ${retirePending ? 'teardown during prewarm' : 'compilation rejection'}`, async () => {
+      const backend = makePrewarmingBackend()
+      const scene = mountPrewarmingScene()
+      const readiness = scene.ready(backend)
+      const compilationError = new Error('Native pipeline compilation failed')
+
+      try {
+        if (retirePending) {
+          const retirement = scene.teardown()
+          expect(backend.lease.status).toBe('retired')
+          expect(scene.resources.disposed).toBe(false)
+          expect(loopHarness.isActive.value).toBe(false)
+          backend.resolveCompilation()
+          await readiness
+          await retirement
+          expect(scene.resources.disposed).toBe(true)
+        } else {
+          backend.rejectCompilation(compilationError)
+          await readiness
+          expect(scene.errors).toEqual([compilationError])
+        }
+        await Vue.nextTick()
+        expect(scene.state.loopControl.ready).toBe(false)
+        expect(scene.state.canvasMounted).toBe(false)
+        expect(scene.state.renderEnabled).toBe(false)
+        expect(loopHarness.isActive.value).toBe(false)
+        expect(loopHarness.starts).toBe(0)
+        expect(loopHarness.invalidations).toBe(0)
+        scene.active.value = false
+        await Vue.nextTick()
+        scene.active.value = true
+        await Vue.nextTick()
+        scene.draw(backend)
+        scene.callbacks(backend)
+        expect(loopHarness.isActive.value).toBe(false)
+        expect(loopHarness.starts).toBe(0)
+        expect(loopHarness.invalidations).toBe(0)
+        expect(backend.draws).toBe(0)
+        expect(scene.events).toEqual([])
+        expect(scene.errors).toEqual(retirePending ? [] : [compilationError])
+      } finally {
+        backend.resolveCompilation()
+        await readiness
+        await scene.close()
+      }
+    })
+  }
 })

@@ -26,9 +26,13 @@ The static effect remains transparent and source-faithful. The login field adds 
 
 Pointer input uses one continuous brush with a 65 ms follow and 180 ms release, a 42 CSS-pixel travel cap, and a radius bounded at 72 CSS pixels. Accepted clicks use one scale in `0.90–1.45`, multiplying the `100–240` CSS-pixel base blast radius (a bounded `90–348` CSS-pixel range) and bead impulse strength. Six impulse slots and six explosion slots are retained. The analytic explosion envelope is zero at age 0, reaches its hold peak at 0.35 s, returns exactly to baseline at 2.75 s, and the slot expires at 2.8 s; it never requires a fade-out to restore the baseline.
 
-During temporary hidden or offscreen visibility pauses, the committed canvas, backend lease, scene resources, and lifecycle remain mounted while application update/render callbacks, pointer work, draws, and motion transfers stop; the committed static coverage remains until a resumed frame. Terminal failure or device/context loss, descriptor replacement, reduced motion, and unmount retire and dispose the renderer lease and scene resources, remove the canvas, and leave authentication on its ordinary/static fallback.
+During temporary hidden or offscreen visibility pauses, the committed canvas, backend lease, scene resources, and lifecycle remain mounted while application update/render callbacks, pointer work, draws, and motion transfers stop; the committed static coverage remains until a resumed frame. Terminal failure or device/context loss, descriptor replacement, reduced motion, and unmount invalidate the renderer lease synchronously, remove the canvas, and leave authentication on its ordinary/static fallback. Teardown completion waits for pending initialization/prewarm and every retired backend, then disposes the owned scene resources; cleanup errors remain observable without delaying static fallback.
 
 ## Renderer and backend policy
+
+The graphics stack is pinned to Three.js `0.186.1`, `@types/three` `0.186.0`, and TresJS core `5.9.2`. TresJS requires VueUse `15.0.0`; the application's Vue version is unchanged. The revision-matched TresJS patch preserves idempotent loop start/stop, pauses before stopping its timer, and stops the loop before awaiting renderer disposal on unmount.
+
+Renderer-ready stops the TresJS root loop before shader prewarm. Updates, draw submissions, and visibility resume remain gated until compilation succeeds for the current live lease; completion while inactive retains readiness without starting the loop. Retired, replaced, or failed prewarm cannot restart rendering. The canvas uses revision-supported `PCFShadowMap` state, and explicit TSL variable labels remain distinct from geometry attributes and reserved shader identifiers.
 
 The shared scene path is `WebGPURenderer` plus TSL `SpriteNodeMaterial`, an indexed instanced quad, and source-order attributes. Native WebGPU is primary. A deliberate `webgl2` request uses `forceWebGL` and requires strict WebGL2; `auto` accepts native WebGPU or only a successful built-in WebGL2 fallback from `WebGPURenderer`. The requested backend, effective backend, generation, phase, fallback flag, and diagnostic reason are committed before the first visible particle frame.
 
@@ -63,7 +67,7 @@ The historical audit retained a single contiguous motion transfer and bounded ph
 Focused unit coverage:
 
 ```sh
-bun run test client/components/login-logo/particle-colors.test.ts client/components/login-logo/particle-cloud.test.ts client/components/login-logo/particle-explosion.test.ts client/components/login-logo/LogoParticleScene.test.ts client/components/login-logo/LoginParticleLogo.test.ts client/components/login-logo/useLogoPointer.test.ts client/components/login-logo/particle-logo.test.ts client/components/login-logo/login-layout.test.ts
+bun run test client/components/login-logo/particle-renderer.test.ts client/components/login-logo/particle-colors.test.ts client/components/login-logo/particle-cloud.test.ts client/components/login-logo/particle-explosion.test.ts client/components/login-logo/LogoParticleScene.test.ts client/components/login-logo/LoginParticleLogo.test.ts client/components/login-logo/useLogoPointer.test.ts client/components/login-logo/particle-logo.test.ts client/components/login-logo/login-layout.test.ts
 ```
 
 With an initialized local test server, the browser checks are:

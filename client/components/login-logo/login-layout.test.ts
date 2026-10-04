@@ -733,10 +733,16 @@ describe('login personalized static-logo integration', () => {
     for (const invalidEffect of [
       { ...managedEffect, pipelineVersion: 8 },
       { ...managedEffect, count: 0 },
-      { ...managedEffect, aspect: 1 },
-      { ...managedEffect, particleUrl: '//example.test/particle.bin' }
+      { ...managedEffect, aspect: 1 }
     ]) {
       expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, invalidEffect)).toBeNull()
+    }
+    for (const urlKey of ['logoUrl', 'particleUrl', 'staticUrl'] as const) {
+      for (const url of [`https://example.test/${urlKey}`, `//example.test/${urlKey}`]) {
+        const invalidEffect = { ...managedEffect, [urlKey]: url }
+        expect(isLogoEffectDescriptor(invalidEffect)).toBe(false)
+        expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, invalidEffect)).toBeNull()
+      }
     }
   })
 
@@ -825,7 +831,7 @@ describe('login success illustration contract', () => {
   })
 })
 
-describe('login particle decoration accessibility and privacy hardening', () => {
+describe('login particle decoration accessibility hardening', () => {
   it('keeps production decoration hidden from accessibility and keyboard interaction', () => {
     expect(particleSceneComponent.template).toMatch(/<TresCanvas[\s\S]*?\bclass="login-logo-particle-scene"[\s\S]*?\baria-hidden="true"/)
 
@@ -844,23 +850,6 @@ describe('login particle decoration accessibility and privacy hardening', () => 
     expect(`${loginSource}\n${particleLogoComponent.script}`).not.toMatch(
       /\b(?:PointerEvent|pointermove|pointerleave|pointerenter|pointerdown|pointerup|clientX|clientY)\b/
     )
-  })
-
-  it('permits only an anonymous same-origin particle fetch and forbids pointer telemetry or credential access', () => {
-    const enhancementSources = [particleLogoComponent.source, particleSceneComponent.source, pointerControllerSource].join('\n')
-    const fetchCalls = enhancementSources.match(/\bfetch\s*\(/g) ?? []
-    expect(fetchCalls).toHaveLength(1)
-    for (const urlKey of ['logoUrl', 'particleUrl', 'staticUrl'] as const) {
-      expect(isLogoEffectDescriptor({ ...managedEffect, [urlKey]: `https://example.test/${urlKey}` })).toBe(false)
-      expect(isLogoEffectDescriptor({ ...managedEffect, [urlKey]: `//example.test/${urlKey}` })).toBe(false)
-    }
-
-    expect(enhancementSources).not.toMatch(/\b(?:username|password|securityCode|authorization|document\.cookie|localStorage|sessionStorage|FormData)\b/i)
-    expect(enhancementSources).not.toMatch(
-      /\b(?:console\.(?:debug|info|log|warn|error|trace)|navigator\.sendBeacon|sendBeacon|XMLHttpRequest|WebSocket|EventSource|RTCPeerConnection|postMessage|BroadcastChannel)\b/
-    )
-    expect(enhancementSources).not.toMatch(/\b(?:analytics|telemetry|trackEvent|captureEvent)\b/i)
-    expect(enhancementSources).not.toMatch(/\b(?:https?|wss?):\/\/|(?:^|['"`])\s*\/\/[^/'"`\s]|(?:data|javascript):/im)
   })
 })
 

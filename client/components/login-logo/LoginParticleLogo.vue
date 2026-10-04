@@ -77,7 +77,7 @@ interface SceneMount {
 }
 
 interface ParticleSceneInstance {
-  readonly teardown: () => void
+  readonly teardown: () => Promise<void>
 }
 
 interface ParticlePerformanceStartup {
@@ -485,7 +485,9 @@ export default defineComponent({
       reducedMotionLatched = true
       sceneCommitted.value = false
       setSceneReady(false)
-      sceneInstance.value?.teardown()
+      void sceneInstance.value?.teardown().catch(error => {
+        console.error('[LoginParticleLogo] Particle scene teardown failed', error)
+      })
       reducedMotion.value = true
       instance?.update()
     }

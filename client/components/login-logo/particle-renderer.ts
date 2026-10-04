@@ -67,7 +67,8 @@ export interface ParticleBackendLease {
   readonly status: ParticleBackendPhase
   readonly diagnostics: ParticleBackendDiagnostics
   init(): Promise<ParticleBackendKind>
-  retire(): void
+  /** Invalidates the lease synchronously; resolves after renderer cleanup completes. */
+  retire(): Promise<void>
 }
 
 const VALID_REQUESTS: readonly ParticleBackendRequest[] = ['auto', 'webgpu', 'webgl2']
@@ -98,15 +99,15 @@ const webGpuApiAvailable = (): boolean =>
   typeof navigator.gpu?.requestAdapter === 'function'
 
 /**
- * r185's common renderer owns an internal RAF once initialized. This subclass
- * gives it a public, idempotent disposal boundary without reaching into that
- * private animation object. A pending init observes the disposal request and
- * disposes immediately after the common renderer starts its RAF.
+ * Pending init and prewarm settle while their resources remain alive; cleanup then
+ * stops the internal RAF before awaiting r186 backend disposal. Init and prewarm
+ * never await disposal, so their completion promises cannot cycle.
  */
 export class LogoParticleRenderer extends WebGPURenderer {
   private disposeRequested = false
-  private disposed = false
+  private disposalPromise: Promise<void> | null = null
   private initializationPromise: Promise<this> | null = null
+  private readonly compilationPromises = new Set<Promise<void>>()
   constructor(options: LogoParticleRendererOptions = {}) {
     const rendererParameters = {
       alpha: true,
@@ -130,28 +131,54 @@ export class LogoParticleRenderer extends WebGPURenderer {
     if (this.disposeRequested) return Promise.reject(retiredError())
     if (this.initializationPromise !== null) return this.initializationPromise
 
-    this.initializationPromise = (async () => {
-      try {
-        const renderer = await super.init()
-        if (this.disposeRequested) {
-          this.dispose()
-          throw retiredError()
-        }
-        return renderer
-      } catch (error) {
-        if (this.disposeRequested && this.initialized) this.dispose()
-        throw error
-      }
-    })()
+    this.initializationPromise = super.init().then(renderer => {
+      if (this.disposeRequested) throw retiredError()
+      return renderer
+    })
     return this.initializationPromise
   }
 
-  override dispose(): void {
-    this.disposeRequested = true
-    if (this.disposed || this.initialized === false) return
+  override compileAsync(...parameters: Parameters<WebGPURenderer['compileAsync']>): Promise<void> {
+    if (this.disposeRequested) return Promise.reject(retiredError())
 
-    this.disposed = true
-    super.dispose()
+    const compilation = super.compileAsync(...parameters)
+    this.compilationPromises.add(compilation)
+    void compilation.then(
+      () => this.compilationPromises.delete(compilation),
+      () => this.compilationPromises.delete(compilation)
+    )
+    return compilation
+  }
+
+  override dispose(): Promise<void> {
+    this.disposeRequested = true
+    if (this.disposalPromise !== null) return this.disposalPromise
+
+    this.disposalPromise = (async () => {
+      if (this.initialized === false && this.initializationPromise !== null) {
+        try {
+          await this.initializationPromise
+        } catch {
+          // Initialization owns its failure; disposal still cleans a ready backend.
+        }
+      }
+      if (this.initialized && this.compilationPromises.size > 0) {
+        await super.setAnimationLoop(null)
+        for (const compilation of this.compilationPromises) {
+          try {
+            await compilation
+          } catch {
+            // Preserve the caller's prewarm failure, but still finish retirement.
+          }
+        }
+      }
+      // Base disposal before init would call setAnimationLoop(null), starting init.
+      if (this.initialized) await super.dispose()
+    })()
+    // Vue lifecycle hooks and device-loss callbacks cannot await every request.
+    // Observe rejection without changing the completion returned to explicit callers.
+    void this.disposalPromise.catch(() => {})
+    return this.disposalPromise
   }
 }
 
@@ -235,9 +262,9 @@ export function createParticleBackendLease(options: ParticleBackendLeaseOptions)
     hooks.delete(renderer)
   }
 
-  const disposeRenderer = (renderer: LogoParticleRenderer): void => {
+  const disposeRenderer = (renderer: LogoParticleRenderer): Promise<void> => {
     restoreHooks(renderer)
-    renderer.dispose()
+    return renderer.dispose()
   }
 
   const handleDeviceLost = (renderer: LogoParticleRenderer): void => {
@@ -245,7 +272,7 @@ export function createParticleBackendLease(options: ParticleBackendLeaseOptions)
 
     phase = 'lost'
     publish({ phase: 'lost', reason: 'device-lost' })
-    disposeRenderer(renderer)
+    void disposeRenderer(renderer)
   }
 
   const installHooks = (renderer: LogoParticleRenderer): void => {
@@ -302,7 +329,7 @@ export function createParticleBackendLease(options: ParticleBackendLeaseOptions)
       return selected
     } catch (error) {
       if (expected === 'webgpu' && !retired && phase !== 'lost') publish({ reason: 'strict-native-required' })
-      disposeRenderer(renderer)
+      void disposeRenderer(renderer)
       throw error
     }
   }
@@ -355,12 +382,13 @@ export function createParticleBackendLease(options: ParticleBackendLeaseOptions)
     return initPromise
   }
 
-  const retire = (): void => {
-    if (retired) return
-    retired = true
-    phase = 'retired'
-    publish({ phase: 'retired', reason: 'retired' })
-    disposeRenderer(currentRenderer)
+  const retire = (): Promise<void> => {
+    if (!retired) {
+      retired = true
+      phase = 'retired'
+      publish({ phase: 'retired', reason: 'retired' })
+    }
+    return disposeRenderer(currentRenderer)
   }
 
   return {
