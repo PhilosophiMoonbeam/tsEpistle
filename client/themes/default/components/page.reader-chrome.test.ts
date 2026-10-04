@@ -487,6 +487,30 @@ describe('page reader chrome rules', () => {
   })
 })
 
+describe('responsive navigation focus', () => {
+  beforeEach(() => resetBody())
+  afterEach(() => resetBody())
+
+  it('focuses temporary navigation without stealing content focus when the permanent drawer appears', async () => {
+    browserDocument.body.innerHTML = '<input id="search"><nav id="page-navigation-drawer"><div class="nav-sidebar"><button>Home</button></div></nav>'
+    const search = browserDocument.querySelector<HTMLInputElement>('#search')!
+    const home = browserDocument.querySelector<HTMLButtonElement>('.nav-sidebar button')!
+    for (const width of [1279, 1280]) {
+      search.focus()
+      page.methods.navigationVisibilityChanged!.call(
+        {
+          readerFocus: false,
+          $vuetify: { display: { width } },
+          $nextTick: Vue.nextTick
+        },
+        true
+      )
+      await Vue.nextTick()
+      expect(browserDocument.activeElement).toBe(width < 1280 ? home : search)
+    }
+  })
+})
+
 describe('focus reading section navigation', () => {
   const sections = [
     { anchor: '#opening', title: 'Opening', depth: 0 },

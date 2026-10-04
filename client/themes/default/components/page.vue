@@ -4067,7 +4067,7 @@ export default defineComponent({
       this.$nextTick(() => this.focusPageTitle())
     },
     navigationVisibilityChanged (shown: boolean) {
-      if (this.readerFocus) return
+      if (this.readerFocus || (shown && this.$vuetify.display.width >= 1280)) return
       if (shown) {
         this.$nextTick(() => {
           document.querySelector<HTMLElement>('#page-navigation-drawer .nav-sidebar button, #page-navigation-drawer .nav-sidebar a')?.focus()
