@@ -19,6 +19,12 @@
       "skillPath": "skills/peccable/SKILL.md",
       "computedHash": "3187431ff32636dca2d6c04479d57d5a9dc1e0e41176eed33422d62f25434ea1"
     },
+    "threejs": {
+      "source": "PhilosophiMoonbeam/threejs-skills",
+      "sourceType": "github",
+      "skillPath": "skills/threejs/SKILL.md",
+      "computedHash": "d3d76ee7a219554b8065296de7492ee18894969aa4902be7dff92ad08ee82e96"
+    },
     "tiptap": {
       "source": "ueberdosis/tiptap",
       "sourceType": "github",
@@ -29,7 +35,7 @@
       "source": "skilld-dev/vue-ecosystem-skills",
       "sourceType": "github",
       "skillPath": "skills/tresjs-core-skilld/SKILL.md",
-      "computedHash": "9e1df8101e9fbe5413b06e4b1f3a72b4472b21883de5356baef583637ce733b6"
+      "computedHash": "caf1add558f0669ce51dcad6ee900173c6d786eba61c5d674de8c5496ad38513"
     },
     "vue": {
       "source": "antfu/skills",
