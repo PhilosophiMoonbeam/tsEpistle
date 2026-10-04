@@ -318,9 +318,7 @@ export const buildAgentThreadPresentation = (
     run.tasks.push(task)
   }
 
-  let retryPrompt = ''
   for (const message of messages) {
-    if (message.role === 'user' && message.content.trim()) retryPrompt = message.content
     if (message.runId && !mutableRuns.has(message.runId)) {
       mutableRuns.set(message.runId, emptyMutableRunPresentation())
     }
@@ -352,7 +350,7 @@ export const buildAgentThreadPresentation = (
   }
 
   const orderedMessages: AgentMessagePresentation[] = []
-  retryPrompt = ''
+  let retryPrompt = ''
   for (const message of messages) {
     if (message.role === 'user' && message.content.trim()) retryPrompt = message.content
     const cached = previous?.messages.get(message.id)
@@ -441,29 +439,30 @@ export const agentLiveAnnouncement = (
   }
 }
 
-const approvalTitles: Partial<Record<AgentActionName, string>> = {
-  'pages.prepareCreate': 'Wiki Agent wants to create a page',
-  'pages.preparePatch': 'Wiki Agent wants to edit a page',
-  'pages.prepareMove': 'Wiki Agent wants to move a page',
-  'pages.prepareRestore': 'Wiki Agent wants to restore a page',
-  'pages.prepareDelete': 'Wiki Agent wants to delete a page'
+const approvalTitles: Partial<Record<AgentActionName, AgentLocalizedText>> = {
+  'pages.prepareCreate': { key: 'common:agentToolCard.approvalCreateTitle' },
+  'pages.preparePatch': { key: 'common:agentToolCard.approvalEditTitle' },
+  'pages.prepareMove': { key: 'common:agentToolCard.approvalMoveTitle' },
+  'pages.prepareRestore': { key: 'common:agentToolCard.approvalRestoreTitle' },
+  'pages.prepareDelete': { key: 'common:agentToolCard.approvalDeleteTitle' }
 }
 
-export const agentApprovalTitle = (actionName: AgentActionName): string => approvalTitles[actionName] ?? 'Wiki Agent needs your approval'
+export const agentApprovalTitle = (actionName: AgentActionName): AgentLocalizedText =>
+  approvalTitles[actionName] ?? { key: 'common:agentToolCard.approvalReviewTitle' }
 
-const receiptLabels: Record<AgentProposalStatus, string> = {
-  pending: 'Approval required',
-  approved: 'Approved · Waiting to apply',
-  denied: 'Change denied',
-  expired: 'Approval expired',
-  applying: 'Approved · Applying change',
-  applied: 'Approved and applied',
-  failed: 'Approved change failed',
-  cancelled: 'Change cancelled',
-  recovery_required: 'Recovery required'
+const receiptLabels: Record<AgentProposalStatus, AgentLocalizedText> = {
+  pending: { key: 'common:agentToolCard.approvalRequired' },
+  approved: { key: 'common:agentToolCard.approvedWaitingApply' },
+  denied: { key: 'common:agentToolCard.changeDenied' },
+  expired: { key: 'common:agentToolCard.approvalExpired' },
+  applying: { key: 'common:agentToolCard.approvedApplyingChange' },
+  applied: { key: 'common:agentToolCard.approvedAndApplied' },
+  failed: { key: 'common:agentToolCard.approvedChangeFailed' },
+  cancelled: { key: 'common:agentToolCard.changeCancelled' },
+  recovery_required: { key: 'common:agentToolCard.recoveryRequired' }
 }
 
-export const agentProposalReceiptLabel = (status: AgentProposalStatus): string => receiptLabels[status]
+export const agentProposalReceiptLabel = (status: AgentProposalStatus): AgentLocalizedText => receiptLabels[status]
 
 export interface AgentVerticalBounds {
   readonly top: number

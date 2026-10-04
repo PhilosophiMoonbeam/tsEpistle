@@ -16,13 +16,14 @@
           decoding="async"
           fetchpriority="low"
         >
+        <span class="artifact-card__new-window"> {{ $t('common:agentThread.opensNewTab') }}</span>
       </a>
       <div v-else class="artifact-card__unavailable">
         <v-icon icon="mdi-image-off-outline" size="32" aria-hidden="true" />
         <strong>{{ $t('common:agentArtifactGrid.browserScreenshotExpired') }}</strong>
       </div>
-      <figcaption class="text-body-small text-medium-emphasis">
-        {{ artifact.available ? $t('common:agentArtifactGrid.browserScreenshot3', { width: artifact.width, height: artifact.height, interpolation: { escapeValue: false } }) : $t('common:agentArtifactGrid.browserScreenshotExpired') }}
+      <figcaption v-if="artifact.available" class="text-body-small text-medium-emphasis">
+        {{ $t('common:agentArtifactGrid.browserScreenshot3', { width: artifact.width, height: artifact.height, interpolation: { escapeValue: false } }) }}
       </figcaption>
     </figure>
   </section>
@@ -50,6 +51,17 @@ const capturedLabel = (artifact: AgentArtifactView): string => props.formatTime(
 
 .artifact-card {
   margin: 0;
+}
+.artifact-card__new-window {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .artifact-card__unavailable {

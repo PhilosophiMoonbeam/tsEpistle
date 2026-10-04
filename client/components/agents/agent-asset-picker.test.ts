@@ -14,7 +14,7 @@ if (!script) throw new Error('Asset picker script missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
 const evaluate = new Function(
   'dependencies',
-  `const { computed, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, useTranslate, fetchAssets, fetchAssetFolders, validateAgentAttachment, window } = dependencies; ${executable}; return { trail, assets, folders, visibleAssets, query, loading, error, openFolder, navigate, select, close, load, unavailable, mimeType, formatSize }`
+  `const { computed, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, useTranslate, fetchAssets, fetchAssetFolders, validateAgentAttachment, window } = dependencies; ${executable}; return { trail, assets, folders, visibleAssets, query, loading, error, openFolder, navigate, select, close, load, unavailable, assetLabel, mimeType, formatSize }`
 )
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 const asset = (id: number, ext = '.png', size = 40) => ({
@@ -132,6 +132,12 @@ describe('Agent Wiki asset picker', () => {
       expect(rows[1]?.querySelector('small')?.textContent).toBe(messages.emptyFile)
       expect(rows[0]?.disabled).toBe(true)
       expect(rows[1]?.disabled).toBe(true)
+      for (const [index, reason] of [messages.imageTooLarge, messages.emptyFile].entries()) {
+        const accessibleName = rows[index]?.getAttribute('aria-label')
+        expect(accessibleName).toContain(listed[index]!.filename)
+        expect(accessibleName).toContain(reason)
+        expect(accessibleName).not.toBe(translate('common:agentAssetPicker.attach', { filename: listed[index]!.filename }))
+      }
       rows[0]?.click()
       rows[1]?.click()
       expect(harness.events).toEqual([])

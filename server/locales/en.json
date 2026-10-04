@@ -520,6 +520,8 @@
       "matchKnowledge": "knowledge hints"
     },
     "agentWorkspace": {
+      "admissionRequiredMessage": "Wiki Agent could not open this workspace. Check that your account has access permission and that you are using the wiki’s configured address, then try opening it again.",
+      "authenticationRequiredMessage": "Your Wiki session expired. Sign in again, then try opening this workspace.",
       "actionsLabel": "Wiki Agent actions",
       "history": "History",
       "memory": "Memory",
@@ -564,6 +566,11 @@
       "starterCatchUp": "Catch up",
       "starterCatchUpHint": "See what changed recently"
     },
+    "agentSearchSuggestions": {
+      "related": "Related searches",
+      "fromGoogle": "from Google",
+      "googleSuggestions": "Google Search suggestions"
+    },
     "agentComposer": {
       "attachmentsUnsupported": "This provider does not support file attachments.",
       "attachmentsOffline": "Reconnect before attaching files or changing goal mode.",
@@ -574,7 +581,7 @@
       "goalRemoveAttachments": "Remove attached files before turning on goal mode.",
       "keyboardHelpDesktop": "Enter to send · Shift+Enter for a new line · Ctrl/⌘+Enter to send",
       "keyboardHelpBusy": "Enter for a new line while the reply is running. Send is available when it finishes.",
-      "keyboardHelpTouch": "Enter for a new line · Use Send to submit · Ctrl/⌘+Enter to send",
+      "keyboardHelpTouch": "Enter for a new line · Use Send to submit",
       "skillSelectionLimit": "You can select up to {{limit}} skills for this message. Remove a selected skill to choose another.",
       "webTooltip": "Use Google Search for replies in this conversation.",
       "webUnavailable": "Google Search is not available for this model.",
@@ -1196,6 +1203,7 @@
       "browserScreenshotExpired": "Browser screenshot expired"
     },
     "agentAssetPicker": {
+      "unavailableAsset": "{{filename}} — unavailable: {{reason}}",
       "imagesOnlyImageMode": "Images only in image mode",
       "fileUnavailable": "This file is unavailable",
       "kb": "{{sizeKb}} KB",
@@ -1539,7 +1547,6 @@
       "connectionRequiredServerUnavailable": "Connection required. The server is unavailable right now.",
       "connectionRequiredYouAppear": "Connection required. You appear to be offline.",
       "connectionRequiredReconnectContinue": "Connection required. Reconnect to continue this conversation.",
-      "connectionRequiredOpenMessage": "Connection required to open or message Wiki Agent.",
       "noEnabledProviderProfile": "No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.",
       "agentInferenceCurrentlyDisabled": "Agent inference is currently disabled. An administrator can configure it in Administration → Agents.",
       "resumeCancelCurrentGoal": "Resume or cancel the current goal before sending a message",
@@ -1636,8 +1643,8 @@
       "continuationBudget": "continuation budget",
       "toolCallBudget": "tool-call budget",
       "used": "{{value}} is {{value2}}% used",
-      "completedRun_one": "Completed in {{count}} run.",
-      "completedRun_other": "Completed in {{count}} runs.",
+      "completedRun_one": "Completed in {{count, number}} run.",
+      "completedRun_other": "Completed in {{count, number}} runs.",
       "tokenBudgetStoppedRun": "The token budget stopped this run. Confirm another allowance cycle below to continue once.",
       "stoppedFurtherWorkLimit": "{{value}} stopped further work. This limit cannot be renewed from this goal.",
       "noFurtherWorkWill": "No further work will run for this goal.",
@@ -1684,6 +1691,19 @@
       "goalActions": "Goal actions"
     },
     "agentToolCard": {
+      "approvalCreateTitle": "Wiki Agent wants to create a page",
+      "approvalEditTitle": "Wiki Agent wants to edit a page",
+      "approvalMoveTitle": "Wiki Agent wants to move a page",
+      "approvalRestoreTitle": "Wiki Agent wants to restore a page",
+      "approvalDeleteTitle": "Wiki Agent wants to delete a page",
+      "approvalReviewTitle": "Wiki Agent needs your approval",
+      "reviewAction": "Review this action",
+      "approvalRequired": "Approval required",
+      "approvedWaitingApply": "Approved · Waiting to apply",
+      "approvedApplyingChange": "Approved · Applying change",
+      "approvedAndApplied": "Approved and applied",
+      "approvedChangeFailed": "Approved change failed",
+      "recoveryRequired": "Recovery required",
       "diffLinesCount_one": "{{count}} diff line",
       "diffLinesCount_other": "{{count}} diff lines",
       "secondsCount_one": "{{count}} second",
@@ -1772,6 +1792,7 @@
       "typeExactPagePath": "Type the exact page path to enable deletion"
     },
     "agentPersonalSkills": {
+      "removeTargetNoLongerAvailable": "This personal skill was already removed elsewhere. There is nothing left to remove.",
       "reloadBeforeRetry": "Reload personal skills before retrying.",
       "reloadSkills": "Reload skills",
       "sCount_one": "",
@@ -1908,6 +1929,8 @@
       "unknown": "Unknown"
     },
     "agentMarkdown": {
+      "scrollableCode": "Scrollable {{language}} code block",
+      "scrollableTable": "Scrollable table",
       "copyCodeClipboard": "Copy code to clipboard",
       "previewSource": "{{getAttribute}} (preview source)",
       "citation": "Citation",
@@ -2207,8 +2230,8 @@
       "exactPagePath": "Exact page path"
     },
     "agentTaskProgress": {
-      "sourcesCount_one": "{{count}} source",
-      "sourcesCount_other": "{{count}} sources",
+      "sourcesCount_one": "{{count, number}} source",
+      "sourcesCount_other": "{{count, number}} sources",
       "researchPlanResolved": "Research plan resolved",
       "researchPlan": "Research plan",
       "noTasksRecorded": "No tasks recorded",
@@ -2235,9 +2258,8 @@
       "attemptRetried": "Attempt {{attempt}} · retried {{attempt2}}",
       "collectingEvidence": "Collecting evidence · {{task}}",
       "noOutputYet": "No output yet · {{task}}",
-      "onlyRequiredFound": "Only {{evidenceCount}} of {{requiredEvidenceCount}} required {{requiredEvidenceCount2}} found.",
-      "sourceWas": "source was",
-      "sourcesWere": "sources were",
+      "onlyRequiredFound_one": "Only {{evidenceCount}} of {{requiredEvidenceCount}} required source was found.",
+      "onlyRequiredFound_other": "Only {{evidenceCount}} of {{requiredEvidenceCount}} required sources were found.",
       "researchDeadlineWasReached": "The research deadline was reached. A later run may retry this operation.",
       "researchBudgetWasReached": "The research budget was reached before the evidence requirement.",
       "specialistResearchWasDisabled": "Specialist research was disabled before this task ran.",
@@ -2262,8 +2284,6 @@
       "finished": "Finished",
       "errorCode": "Error code",
       "errorDetail": "Error detail",
-      "noResearchOperations": "No research operations",
-      "tasksWillAppearHere": "Tasks will appear here when the Agent creates a research plan.",
       "researchOperationProgress": "Research operation progress"
     },
     "agentThread": {
@@ -2305,7 +2325,6 @@
       "connectionInterruptedReconnecting": "Connection interrupted. Reconnecting.",
       "open": "Open {{filename}}",
       "imageCreatedWikiAgent": "Image created by Wiki Agent",
-      "previewSelectedRevision": "Preview {{title}}, selected revision {{sourceRevision}}",
       "preview": "Preview {{pageLabel}}",
       "citation": "Citation {{number}}: {{label}}{{value}}",
       "previewSource": "(preview source)",
@@ -7957,6 +7976,17 @@
       "findPageLinkedPath": "Find a page or linked path"
     },
     "agentAdmin": {
+      "discardAccessChanges": "Discard access changes?",
+      "unsavedAccessChanges": "Your unsaved provider access changes will be lost.",
+      "completeRequiredFieldsNamedStep": "Complete the required fields in {{step}} before continuing.",
+      "protocolDescription": {
+        "openai-responses": "OpenAI's item-based POST /v1/responses API, with tools and semantic streaming.",
+        "openresponses": "Vendor-neutral POST /v1/responses contract with strict request, event, sequence, and terminal-marker validation.",
+        "openai-chat": "Message-based POST /v1/chat/completions API with native or prompt-emulated tool calling verified during conformance.",
+        "legacy-completions": "Prompt-in/text-out POST /v1/completions API with strict prompt-emulated, single-action tool turns.",
+        "anthropic-messages": "Native Anthropic POST /v1/messages API with message content blocks and tools.",
+        "gemini-api": "Native POST /v1beta/interactions API with stateless streaming, structured outputs, parallel function calls, and exact thought-step continuation."
+      },
       "providerDataUnavailable": "Provider profiles unavailable",
       "browserDataUnavailable": "Browser destinations unavailable",
       "noWikiGroupsYet": "No Wiki groups yet — create one before restricting access.",
@@ -8485,6 +8515,8 @@
       "deploymentState": "Deployment state"
     },
     "skillAdmin": {
+      "clearSourcePage": "Clear source page selection",
+      "clearSearch": "Clear search",
       "sourcePagesCouldNot": "Source pages could not be loaded.",
       "everyoneDefault": "Everyone (default)",
       "selectedWikiGroups": "Selected Wiki groups",
@@ -8513,7 +8545,6 @@
       "noUnmappedSourcesFound": "No unmapped sources found",
       "approvedSkillLibrary": "Approved skill library",
       "organizationSkillGovernance": "Organization skill governance",
-      "reviewsApproves": "reviews and approves",
       "enabledPolicy": "Enabled by policy",
       "disabledPolicy": "Disabled by policy",
       "sourceDriftDetected": "Source drift detected",
@@ -8531,7 +8562,8 @@
       "enabled2": "{{enabledSkillCount}} enabled",
       "mapOrganizationSkill": "Map organization skill",
       "organizationSkillsProvideApproved": "Organization skills provide approved instructions and tool guidance. They never bypass page, write, browser, approval, or deployment permissions.",
-      "builtWikiAuthoringSkill": "The built-in wiki-authoring skill is installed but unavailable until an administrator {{currentVersionId}} it.",
+      "builtWikiAuthoringSkillEnable": "The built-in wiki-authoring skill is installed but unavailable until an administrator enables it.",
+      "builtWikiAuthoringSkillApprove": "The built-in wiki-authoring skill is installed but unavailable until an administrator reviews and approves it.",
       "enableSkill": "Enable skill",
       "reviewSource": "Review source",
       "retry": "Retry",
@@ -8554,7 +8586,7 @@
       "showingFirst20Matches": "Showing the first 20 matches. Refine your search to find another page.",
       "retrySourceSearch": "Retry source search",
       "sourceReferencesOptionalAssets": "Source references & optional assets",
-      "sourceReferencesFilledSelection": "Source references are filled from your selection. An asset folder can include additional resources in the bundle.",
+      "sourceReferencesFilledSelection": "The selected page sets the root page ID and path. Clear the page selection to edit those references manually. You can add an optional asset folder in either mode.",
       "audiencePolicy": "Audience policy",
       "skillsComplementNeverReplace": "Skills complement—never replace—each user’s Wiki permissions.",
       "mapSkill": "Map skill",

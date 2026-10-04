@@ -12,22 +12,23 @@
       <span
         :id="goalStatusId"
         class="agent-goal__status-label"
+        :class="{ 'agent-goal__status-label--hidden': expanded }"
         role="status"
         aria-live="polite"
         aria-atomic="true"
       >{{ statusLabel }}</span>
       <span :id="goalCollapsedObjectiveId" class="agent-goal__collapsed-objective">{{ goal.objective }}</span>
-      <span class="agent-goal__collapsed-meta" :aria-label="$t('common:agentGoalStatus.goalRunPeakResource')">
-        <span>{{ $t('common:agentGoalStatus.run', { continuationCount: goal.continuationCount + 1, interpolation: { escapeValue: false } }) }}</span>
+      <span class="agent-goal__collapsed-meta">
+        <span>{{ $t('common:agentGoalStatus.run', { continuationCount: formatBudgetValue(goal.continuationCount + 1), interpolation: { escapeValue: false } }) }}</span>
         <span aria-hidden="true">·</span>
-        <span>{{ $t('common:agentGoalStatus.peak', { budgetPercent: Math.round(budgetPercent), interpolation: { escapeValue: false } }) }}</span>
+        <span>{{ $t('common:agentGoalStatus.peak', { budgetPercent: formatBudgetValue(Math.round(budgetPercent)), interpolation: { escapeValue: false } }) }}</span>
       </span>
       <button
         :id="goalToggleId"
         class="agent-goal__toggle"
         type="button"
         :aria-expanded="expanded"
-        :aria-controls="goalDetailsId"
+        :aria-controls="expanded ? goalDetailsId : undefined"
         :aria-label="toggleAriaLabel"
         :style="goalToggleTargetStyle"
         @click="toggleExpanded"
@@ -55,14 +56,14 @@
         </header>
 
         <div class="agent-goal__continuity" role="group" :aria-label="$t('common:agentGoalStatus.goalContinuity')">
-          <span><v-icon icon="mdi-source-branch" size="15" /> {{ $t('common:agentGoalStatus.run2', { continuationCount: goal.continuationCount + 1, maxContinuations: goal.maxContinuations + 1, interpolation: { escapeValue: false } }) }}</span>
+          <span><v-icon icon="mdi-source-branch" size="15" /> {{ $t('common:agentGoalStatus.run2', { continuationCount: formatBudgetValue(goal.continuationCount + 1), maxContinuations: formatBudgetValue(goal.maxContinuations + 1), interpolation: { escapeValue: false } }) }}</span>
           <span><v-icon icon="mdi-calendar-clock-outline" size="15" /> {{ timelinePrefix }} <time :datetime="timelineAt">{{ timelineLabel }}</time></span>
         </div>
 
         <div class="agent-goal__progress">
           <div class="agent-goal__progress-heading">
             <span>{{ $t('common:agentGoalStatus.resourceUse') }}</span>
-            <strong>{{ $t('common:agentGoalStatus.peak', { budgetPercent: Math.round(budgetPercent), interpolation: { escapeValue: false } }) }}</strong>
+            <strong>{{ $t('common:agentGoalStatus.peak', { budgetPercent: formatBudgetValue(Math.round(budgetPercent)), interpolation: { escapeValue: false } }) }}</strong>
           </div>
           <div
             class="agent-goal__meter"
@@ -119,7 +120,7 @@
             </div>
             <div>
               <dt>{{ $t('common:agentGoalStatus.budgetCycle') }}</dt>
-              <dd>{{ goal.budgetCycle }}</dd>
+              <dd>{{ formatBudgetValue(goal.budgetCycle) }}</dd>
             </div>
             <div>
               <dt>{{ $t('common:agentGoalStatus.limitingReason') }}</dt>
@@ -231,11 +232,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import i18next from 'i18next'
 import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const localeRevision = ref(0)
+const refreshLocale = (): void => { localeRevision.value += 1 }
+i18next.on('languageChanged', refreshLocale)
+i18next.on('loaded', refreshLocale)
+onUnmounted(() => {
+  i18next.off('languageChanged', refreshLocale)
+  i18next.off('loaded', refreshLocale)
+})
+const locale = computed(() => {
+  void localeRevision.value
+  return i18next.resolvedLanguage || i18next.language || undefined
+})
+const numberFormatter = computed(() => new Intl.NumberFormat(locale.value))
 
 const { goal, busy, runActive, networkBlocked } = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean; networkBlocked?: boolean }>()
 const expanded = defineModel<boolean>('expanded', { required: true })
@@ -250,7 +265,10 @@ const goalDetailsId = computed(() => `agent-goal-${goal.id}-details`)
 const goalBlockersTitleId = computed(() => `agent-goal-${goal.id}-blockers-title`)
 const cancelGoalTitleId = computed(() => `agent-goal-${goal.id}-cancel-title`)
 const goalBudgetTitleId = computed(() => `agent-goal-${goal.id}-budget-title`)
-const toggleAriaLabel = computed(() => t('common:agentGoalStatus.durableGoalDetails', { expanded: expanded.value ? t('common:agentGoalStatus.hide') : t('common:agentGoalStatus.show'), objective: goal.objective, interpolation: { escapeValue: false } }))
+const toggleAriaLabel = computed(() => {
+  void localeRevision.value
+  return t('common:agentGoalStatus.durableGoalDetails', { expanded: expanded.value ? t('common:agentGoalStatus.hide') : t('common:agentGoalStatus.show'), objective: goal.objective, interpolation: { escapeValue: false } })
+})
 const goalToggleTargetStyle = {
   minHeight: 'max(44px, var(--wiki-control-height, 44px))',
   minWidth: 'max(44px, var(--wiki-control-height, 44px))'
@@ -282,17 +300,20 @@ const renewBudget = (): void => {
   emit('renew-budget')
 }
 
-const statusPresentation = {
-  active: { label: t('common:agentGoalStatus.progress'), icon: 'mdi-bullseye-arrow', color: 'success' },
-  paused: { label: t('common:agentGoalStatus.paused'), icon: 'mdi-pause-circle-outline', color: 'warning' },
-  blocked: { label: t('common:agentGoalStatus.needsAttention'), icon: 'mdi-alert-circle-outline', color: 'warning' },
-  budget_limited: { label: t('common:agentGoalStatus.limitReached'), icon: 'mdi-speedometer-slow', color: 'warning' },
-  completed: { label: t('common:agentGoalStatus.completed'), icon: 'mdi-check-decagram-outline', color: 'success' },
-  cancelled: { label: t('common:agentGoalStatus.cancelled'), icon: 'mdi-close-circle-outline', color: 'default' },
-  failed: { label: t('common:agentGoalStatus.failed'), icon: 'mdi-alert-octagon-outline', color: 'error' }
-} as const
+const statusPresentation = computed(() => {
+  void localeRevision.value
+  return {
+    active: { label: t('common:agentGoalStatus.progress'), icon: 'mdi-bullseye-arrow', color: 'success' },
+    paused: { label: t('common:agentGoalStatus.paused'), icon: 'mdi-pause-circle-outline', color: 'warning' },
+    blocked: { label: t('common:agentGoalStatus.needsAttention'), icon: 'mdi-alert-circle-outline', color: 'warning' },
+    budget_limited: { label: t('common:agentGoalStatus.limitReached'), icon: 'mdi-speedometer-slow', color: 'warning' },
+    completed: { label: t('common:agentGoalStatus.completed'), icon: 'mdi-check-decagram-outline', color: 'success' },
+    cancelled: { label: t('common:agentGoalStatus.cancelled'), icon: 'mdi-close-circle-outline', color: 'default' },
+    failed: { label: t('common:agentGoalStatus.failed'), icon: 'mdi-alert-octagon-outline', color: 'error' }
+  } as const
+})
 
-const presentation = computed(() => statusPresentation[goal.status])
+const presentation = computed(() => statusPresentation.value[goal.status])
 const statusLabel = computed(() => presentation.value.label)
 const statusIcon = computed(() => presentation.value.icon)
 const statusColor = computed(() => presentation.value.color)
@@ -316,11 +337,21 @@ const tokenPercent = computed(() => currentCycleTokenLimit.value > 0 ? (currentC
 const toolPercent = computed(() => goal.maxToolCalls > 0 ? (goal.consumedToolCalls / goal.maxToolCalls) * 100 : 0)
 const continuationPercent = computed(() => goal.maxContinuations > 0 ? (goal.continuationCount / goal.maxContinuations) * 100 : 0)
 const budgetPercent = computed(() => Math.min(100, Math.max(0, Math.max(tokenPercent.value, toolPercent.value, continuationPercent.value))))
-const formatBudgetValue = (value: number): string => value.toLocaleString()
-const tokenTierLabel = computed(() => goal.tokenTier === 'small' ? t('common:agentGoalStatus.small') : goal.tokenTier === 'standard' ? t('common:agentGoalStatus.standard') : goal.tokenTier === 'extended' ? t('common:agentGoalStatus.extended') : t('common:agentGoalStatus.unavailable'))
-const renewalAllowanceLabel = computed(() => goal.tokenAllowance === null ? t('common:agentGoalStatus.unavailable') : formatBudgetValue(goal.tokenAllowance))
-const renewalAllowanceDescription = computed(() => goal.tokenAllowance === null ? t('common:agentGoalStatus.unavailable') : t('common:agentGoalStatus.exactlyTokens', { value: renewalAllowanceLabel.value, interpolation: { escapeValue: false } }))
+const formatBudgetValue = (value: number): string => numberFormatter.value.format(value)
+const tokenTierLabel = computed(() => {
+  void localeRevision.value
+  return goal.tokenTier === 'small' ? t('common:agentGoalStatus.small') : goal.tokenTier === 'standard' ? t('common:agentGoalStatus.standard') : goal.tokenTier === 'extended' ? t('common:agentGoalStatus.extended') : t('common:agentGoalStatus.unavailable')
+})
+const renewalAllowanceLabel = computed(() => {
+  void localeRevision.value
+  return goal.tokenAllowance === null ? t('common:agentGoalStatus.unavailable') : formatBudgetValue(goal.tokenAllowance)
+})
+const renewalAllowanceDescription = computed(() => {
+  void localeRevision.value
+  return goal.tokenAllowance === null ? t('common:agentGoalStatus.unavailable') : t('common:agentGoalStatus.exactlyTokens', { value: renewalAllowanceLabel.value, interpolation: { escapeValue: false } })
+})
 const budgetLimitReasonLabel = computed(() => {
+  void localeRevision.value
   if (goal.budgetLimitReason === 'tokens') return t('common:agentGoalStatus.tokenBudgetExhausted')
   if (goal.budgetLimitReason === 'tool_calls') return t('common:agentGoalStatus.toolCallLimitExhausted')
   if (goal.budgetLimitReason === 'duration') return t('common:agentGoalStatus.timeLimitExhausted')
@@ -330,27 +361,31 @@ const budgetLimitReasonLabel = computed(() => {
   if (goal.budgetLimitReason === 'authority') return t('common:agentGoalStatus.providerAuthorityChanged')
   return t('common:agentGoalStatus.noLimitingReasonRecorded')
 })
-const budgetMetrics = computed(() => [
-  {
-    label: goal.budgetPolicyVersion === 2 ? t('common:agentGoalStatus.currentCycleTokens') : t('common:agentGoalStatus.lifetimeTokens'),
-    value: formatBudgetValue(currentCycleTokens.value),
-    limit: formatBudgetValue(currentCycleTokenLimit.value),
-    percent: Math.min(100, Math.max(0, tokenPercent.value))
-  },
-  {
-    label: t('common:agentGoalStatus.toolCalls'),
-    value: formatBudgetValue(goal.consumedToolCalls),
-    limit: formatBudgetValue(goal.maxToolCalls),
-    percent: Math.min(100, Math.max(0, toolPercent.value))
-  },
-  {
-    label: t('common:agentGoalStatus.continuations'),
-    value: formatBudgetValue(goal.continuationCount),
-    limit: formatBudgetValue(goal.maxContinuations),
-    percent: Math.min(100, Math.max(0, continuationPercent.value))
-  }
-])
+const budgetMetrics = computed(() => {
+  void localeRevision.value
+  return [
+    {
+      label: goal.budgetPolicyVersion === 2 ? t('common:agentGoalStatus.currentCycleTokens') : t('common:agentGoalStatus.lifetimeTokens'),
+      value: formatBudgetValue(currentCycleTokens.value),
+      limit: formatBudgetValue(currentCycleTokenLimit.value),
+      percent: Math.min(100, Math.max(0, tokenPercent.value))
+    },
+    {
+      label: t('common:agentGoalStatus.toolCalls'),
+      value: formatBudgetValue(goal.consumedToolCalls),
+      limit: formatBudgetValue(goal.maxToolCalls),
+      percent: Math.min(100, Math.max(0, toolPercent.value))
+    },
+    {
+      label: t('common:agentGoalStatus.continuations'),
+      value: formatBudgetValue(goal.continuationCount),
+      limit: formatBudgetValue(goal.maxContinuations),
+      percent: Math.min(100, Math.max(0, continuationPercent.value))
+    }
+  ]
+})
 const blockerMessages = computed(() => {
+  void localeRevision.value
   const issues = [...(goal.completion?.issues ?? [])]
   const errorMessage = goal.errorMessage
   if (errorMessage && !issues.some(issue => issue.message === errorMessage)) {
@@ -378,27 +413,35 @@ const blockerEntries = computed(() => {
     return { issue, key: `${fingerprint}:${occurrence}` }
   })
 })
-const currentYear = new Date().getFullYear()
-const timelineFormatter = new Intl.DateTimeFormat(undefined, {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit'
-})
-const datedTimelineFormatter = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit'
-})
+const timelineFormatters = computed(() => ({
+  currentYear: new Intl.DateTimeFormat(locale.value, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }),
+  dated: new Intl.DateTimeFormat(locale.value, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  })
+}))
 const timelineAt = computed(() => goal.completedAt ?? goal.deadlineAt)
-const timelinePrefix = computed(() => goal.completedAt ? t('common:agentGoalStatus.finished') : t('common:agentGoalStatus.due'))
+const timelinePrefix = computed(() => {
+  void localeRevision.value
+  return goal.completedAt ? t('common:agentGoalStatus.finished') : t('common:agentGoalStatus.due')
+})
 const timelineLabel = computed(() => {
-  const date = new Date(timelineAt.value)
-  return (date.getFullYear() === currentYear ? timelineFormatter : datedTimelineFormatter).format(date)
+  // Refresh the year on goal updates, even when the deadline itself is unchanged.
+  void goal.version
+  const date = new Date(goal.completedAt ?? goal.deadlineAt)
+  const formats = timelineFormatters.value
+  return (date.getFullYear() === new Date().getFullYear() ? formats.currentYear : formats.dated).format(date)
 })
 const pendingActionLabel = computed(() => {
+  void localeRevision.value
   if (pendingAction.value === 'pause') return t('common:agentGoalStatus.pausingGoal')
   if (pendingAction.value === 'resume') return t('common:agentGoalStatus.resumingGoal')
   if (pendingAction.value === 'cancel') return t('common:agentGoalStatus.cancellingGoal')
@@ -406,6 +449,7 @@ const pendingActionLabel = computed(() => {
   return t('common:agentGoalStatus.updatingGoal')
 })
 const budgetLabel = computed(() => {
+  void localeRevision.value
   const budgets = [
     { label: t('common:agentGoalStatus.tokenBudget'), percent: tokenPercent.value },
     { label: t('common:agentGoalStatus.toolCallBudget'), percent: toolPercent.value },
@@ -413,8 +457,12 @@ const budgetLabel = computed(() => {
   ]
   return budgets.reduce((highest, budget) => budget.percent > highest.percent ? budget : highest).label
 })
-const budgetAriaLabel = computed(() => t('common:agentGoalStatus.used', { value: budgetLabel.value, value2: Math.round(budgetPercent.value), interpolation: { escapeValue: false } }))
+const budgetAriaLabel = computed(() => {
+  void localeRevision.value
+  return t('common:agentGoalStatus.used', { value: budgetLabel.value, value2: formatBudgetValue(Math.round(budgetPercent.value)), interpolation: { escapeValue: false } })
+})
 const progressLabel = computed(() => {
+  void localeRevision.value
   if (goal.status === 'completed') return t('common:agentGoalStatus.completedRun', { count: goal.continuationCount + 1, interpolation: { escapeValue: false } })
   if (goal.status === 'budget_limited') {
     return canRenewTokenBudget.value
@@ -475,6 +523,9 @@ const progressLabel = computed(() => {
   min-height: 2.5rem;
   padding: var(--wiki-space-1) var(--wiki-space-2);
 }
+.agent-goal--expanded .agent-goal__summary-row {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
 .agent-goal__mark {
   align-items: center;
   background: color-mix(in srgb, var(--goal-accent) 16%, transparent);
@@ -492,6 +543,15 @@ const progressLabel = computed(() => {
   font-weight: 750;
   line-height: 1.2;
   white-space: nowrap;
+}
+.agent-goal__status-label--hidden {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
 }
 .agent-goal__collapsed-objective {
   color: rgb(var(--v-theme-on-surface));
@@ -753,6 +813,10 @@ const progressLabel = computed(() => {
     grid-row: 1 / 3;
     padding: 0 var(--wiki-space-1);
   }
+  .agent-goal--expanded .agent-goal__summary-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .agent-goal--expanded .agent-goal__collapsed-objective { grid-column: 2; }
+  .agent-goal--expanded .agent-goal__collapsed-meta { grid-column: 2; }
+  .agent-goal--expanded .agent-goal__toggle { grid-column: 3; }
   .agent-goal__toggle-label {
     clip: rect(0 0 0 0);
     clip-path: inset(50%);

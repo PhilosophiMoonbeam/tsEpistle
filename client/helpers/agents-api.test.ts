@@ -354,20 +354,6 @@ describe('agents client boundary', () => {
     )
   })
 
-  it('turns an empty 403 response into an actionable chat error', async () => {
-    const fetcher = vi.fn(async () => new Response(null, { status: 403 })) as unknown as typeof fetch
-    await expect(
-      Promise.resolve(
-        submitAgentMessage(fetcher, 'csrf', '00000000-0000-4000-8000-000000000001', {
-          clientRequestId: '00000000-0000-4000-8000-000000000002',
-          expectedSessionVersion: 1,
-          profileResolutionToken: 'token',
-          content: 'Create a page'
-        })
-      )
-    ).rejects.toThrow('Refresh the page')
-  })
-
   it('trims empty error strings and exposes bounded status and retryability metadata', async () => {
     const forbidden = vi.fn(async () => Response.json({ message: '   ' }, { status: 403 })) as unknown as typeof fetch
     const unavailable = vi.fn(async () => Response.json({ error: 'x'.repeat(1_000) }, { status: 503 })) as unknown as typeof fetch
@@ -377,7 +363,6 @@ describe('agents client boundary', () => {
 
     expect(forbiddenError).toBeInstanceOf(AgentApiError)
     expect(forbiddenError).toMatchObject({ status: 403, retryable: false })
-    expect((forbiddenError as Error).message).toContain('Refresh the page')
     expect(unavailableError).toMatchObject({ status: 503, retryable: true })
     expect((unavailableError as Error).message).toHaveLength(512)
   })
@@ -855,7 +840,6 @@ describe('agents client boundary', () => {
       })
     )
   })
-
 })
 
 describe('Wiki asset attachment client boundary', () => {

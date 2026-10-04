@@ -251,6 +251,8 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
         )
       )
   })
+  // Vue IDs are unique within an app; these test apps share one document.
+  app.config.idPrefix = testUseId()
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
   // Register cleanup before mounting so failed mounts restore the HTTP platform.
@@ -285,19 +287,33 @@ const selectRealFiles = async (root: HTMLElement, files: readonly File[]): Promi
 }
 const realAttachmentNames = (root: HTMLElement): string[] =>
   Array.from(root.querySelectorAll('.agent-composer__media-attachments li > span')).map(item => item.textContent?.trim() ?? '')
+const activeOwnedMenu = (trigger: HTMLElement, selector: string): HTMLElement | null => {
+  const overlayId = trigger.getAttribute('aria-controls')
+  const overlay = overlayId ? document.getElementById(overlayId) : null
+  return overlay?.classList.contains('v-overlay--active') ? overlay.querySelector<HTMLElement>(selector) : null
+}
+const openOwnedMenu = async (trigger: HTMLElement, selector: string, description: string, keyboard = false): Promise<HTMLElement> => {
+  if (keyboard) {
+    trigger.focus()
+    trigger.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+  } else {
+    trigger.click()
+  }
+  await waitForRealSurface(() => activeOwnedMenu(trigger, selector) !== null, description)
+  const menu = activeOwnedMenu(trigger, selector)
+  if (!menu) throw new Error(`Real ${description} did not open`)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  return menu
+}
+const closeOwnedMenu = async (menu: HTMLElement): Promise<void> => {
+  menu.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  await waitForRealSurface(() => !menu.isConnected || !menu.closest('.v-overlay--active'), 'composer menu dismissed')
+}
 const openRealAttachmentMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
   const attach = root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
   if (!attach) throw new Error('Real Attach action did not render')
-  if (keyboard) {
-    attach.focus()
-    attach.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
-  } else {
-    attach.click()
-  }
-  await waitForRealSurface(() => Boolean(document.querySelector('.v-overlay--active [aria-label="Attachment source"]')), 'attachment source menu')
-  const menu = document.querySelector<HTMLElement>('.v-overlay--active [aria-label="Attachment source"]')
-  if (!menu) throw new Error('Real attachment source menu did not open')
-  return menu
+  expect(attach.disabled).toBe(false)
+  return openOwnedMenu(attach, '[aria-label="Attachment source"]', 'attachment source menu', keyboard)
 }
 const chooseRealAttachmentSource = async (menu: HTMLElement, title: string): Promise<void> => {
   const item = Array.from(menu.querySelectorAll<HTMLElement>('.v-list-item')).find(
@@ -307,15 +323,17 @@ const chooseRealAttachmentSource = async (menu: HTMLElement, title: string): Pro
   item.click()
   await waitForRealSurface(() => !menu.isConnected, 'attachment source selection closed')
 }
-const openRealCreationMenu = async (root: HTMLElement): Promise<HTMLElement> => {
+const openRealCreationMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
   const create = root.querySelector<HTMLButtonElement>('.agent-composer__create')
   if (!create) throw new Error('Real Create action did not render')
   expect(create.disabled).toBe(false)
-  create.click()
-  await waitForRealSurface(() => Boolean(document.querySelector('.v-overlay--active .agent-composer__tool-menu')), 'creation tools menu')
-  const menu = document.querySelector<HTMLElement>('.v-overlay--active .agent-composer__tool-menu')
-  if (!menu) throw new Error('Real creation tools menu did not open')
-  return menu
+  return openOwnedMenu(create, '.agent-composer__tool-menu', 'creation tools menu', keyboard)
+}
+const openRealMoreMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
+  const more = root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
+  if (!more) throw new Error('Real More action did not render')
+  expect(more.disabled).toBe(false)
+  return openOwnedMenu(more, '.agent-composer__more-menu', 'folded composer menu', keyboard)
 }
 
 const makeSkill = (name: string, versionId = `${name}-version`): TestSkill => ({
@@ -424,6 +442,7 @@ interface MountedComposer {
   readonly sent: Array<{ content: string; invokedSkillVersionIds: readonly string[]; mode: 'message' | 'goal' }>
   readonly googleSearchUpdates: boolean[]
   readonly unmount: () => void
+  readonly updateProps: (patch: Partial<MountedComposerOptions>) => void
 }
 
 interface MountedComposerOptions {
@@ -470,7 +489,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
   const host = document.createElement('div')
   document.body.append(host)
   const publicRef = Vue.ref<RealComposerPublic | null>(null)
-  const componentProps = {
+  const componentProps = Vue.reactive({
     disabled: options.disabled ?? false,
     sending: options.sending ?? false,
     canStop: options.canStop ?? false,
@@ -495,7 +514,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     networkBlocked: options.networkBlocked ?? false,
     mediaCapabilities: options.mediaCapabilities,
     mediaSession: options.mediaSession
-  }
+  })
   const composerComponent = Vue.defineComponent({
     __scopeId: composerScopeAttribute,
     name: 'AgentComposerInteractionHarness',
@@ -595,6 +614,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
   app.component('AgentComposerMedia', mediaHarness)
   app.component('AgentDictationWaveform', { template: '<canvas class="agent-dictation-waveform" />' })
   app.component('AgentComposerSkillMenu', RealAgentComposerSkillMenu)
+  app.config.idPrefix = testUseId()
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
   app.mount(host)
@@ -605,7 +625,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     host.remove()
   }
   mountedComposers.push(unmount)
-  return { root, publicRef, sent: sentMessages, googleSearchUpdates, unmount }
+  return { root, publicRef, sent: sentMessages, googleSearchUpdates, unmount, updateProps: patch => Object.assign(componentProps, patch) }
 }
 
 const press = (composer: ComposerHarness, key: string, options?: KeyOptions): KeyboardEvent & { wasPrevented: () => boolean } => {
@@ -631,6 +651,71 @@ const settleAsync = async (): Promise<void> => {
     await Promise.resolve()
     await Vue.nextTick()
   }
+}
+
+interface ControlResizeObservation {
+  readonly observers: readonly { readonly observed: ReadonlySet<Element>; resize(target: Element): void }[]
+  readonly resize: (target: Element) => void
+  readonly restore: () => void
+}
+const observeControlResizes = (): ControlResizeObservation => {
+  const previousObserver = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver')
+  const observers: ControlsResizeObserver[] = []
+  class ControlsResizeObserver {
+    readonly observed = new Set<Element>()
+    constructor(readonly callback: ResizeObserverCallback) {
+      observers.push(this)
+    }
+    observe(target: Element): void {
+      this.observed.add(target)
+    }
+    unobserve(target: Element): void {
+      this.observed.delete(target)
+    }
+    disconnect(): void {
+      this.observed.clear()
+    }
+    resize(target: Element): void {
+      if (this.observed.has(target)) this.callback([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver)
+    }
+  }
+  Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, writable: true, value: ControlsResizeObserver })
+  return {
+    observers,
+    resize(target: Element): void {
+      const observer = observers.find(candidate => candidate.observed.has(target))
+      if (!observer) throw new Error('Composer controls are not observed')
+      observer.resize(target)
+    },
+    restore(): void {
+      if (previousObserver) Object.defineProperty(globalThis, 'ResizeObserver', previousObserver)
+      else Reflect.deleteProperty(globalThis, 'ResizeObserver')
+    }
+  }
+}
+const measureControlRow = (root: HTMLElement, observation: ControlResizeObservation, initialWidth: number) => {
+  const group = root.querySelector<HTMLElement>('.agent-composer__context-controls')
+  if (!group) throw new Error('Composer controls did not render')
+  let availableWidth = initialWidth
+  // JSDOM has no layout: supply browser measurements, not a folded-state result.
+  // Each rendered control needs 100px, including More when it enters the row.
+  Object.defineProperties(group, {
+    clientWidth: { configurable: true, get: () => availableWidth },
+    scrollWidth: {
+      configurable: true,
+      get: () =>
+        100 *
+        group.querySelectorAll(
+          '.agent-composer__attach, .agent-composer__create, .agent-composer__web-search-toggle, .agent-composer__goal-toggle, .agent-composer__more-button'
+        ).length
+    }
+  })
+  const resize = (width: number): void => {
+    availableWidth = width
+    observation.resize(group)
+  }
+  resize(initialWidth)
+  return resize
 }
 
 describe('Agent composer submit loading presentation', () => {
@@ -836,6 +921,13 @@ describe('Agent composer slash-command keyboard gates', () => {
 })
 
 describe('Agent composer send admission', () => {
+  it('sends an explicit empty generation selection before any media interaction', () => {
+    const composer = loadComposer()
+    composer.draft.value = 'A normal question'
+    composer.submit()
+    expect(composer.sent[0]?.media).toEqual({ attachmentIds: [], generationTools: [] })
+  })
+
   it('sends an attachment-only message with its selected generation tools', () => {
     const composer = loadComposer()
     composer.mediaSubmission.value = { attachmentIds: ['owned-image'], generationTools: ['image', 'video'] }
@@ -951,6 +1043,30 @@ describe('Agent composer instance accessibility', () => {
     expect(optionIds[0]).not.toBe(optionIds[1])
     expect(new Set(descriptionIds).size).toBe(descriptionIds.length)
   })
+
+  it('keeps touch keyboard guidance described without taking visible editor space', async () => {
+    const mounted = mountComposer({ initialDraft: 'next question' })
+    const bindings = lastBindings as unknown as { coarseInput: Ref<boolean> }
+    bindings.coarseInput.value = true
+    await Vue.nextTick()
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+    const help = mounted.root.querySelector<HTMLElement>('.agent-composer__keyboard-help')
+    if (!textarea || !help) throw new Error('Composer input guidance did not render')
+    expect(textarea.getAttribute('aria-describedby')?.split(/\s+/)).toContain(help.id)
+    expect(help.textContent).toBe(translateEnglish('common:agentComposer.keyboardHelpTouch'))
+    const enter = new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    textarea.dispatchEvent(enter)
+    expect(enter.defaultPrevented).toBe(false)
+    expect(mounted.sent).toEqual([])
+    expect(browserWindow.getComputedStyle(help).position).toBe('absolute')
+    expect(browserWindow.getComputedStyle(help).height).toBe('1px')
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
+    await Vue.nextTick()
+    expect(mounted.sent.map(message => message.content)).toEqual(['next question'])
+    bindings.coarseInput.value = false
+    await Vue.nextTick()
+    expect(browserWindow.getComputedStyle(help).position).not.toBe('absolute')
+  })
 })
 
 describe('Agent composer three-section layout', () => {
@@ -1001,7 +1117,6 @@ describe('Agent composer three-section layout', () => {
     const create = root.querySelector<HTMLButtonElement>('.agent-composer__create')
     if (!create) throw new Error('Create control did not render')
     expect(create.textContent?.trim()).toBe('Create')
-    expect(create.getAttribute('data-state')).toBe('selected')
     expect(mounted.publicRefs[0].value?.hasUnsentMedia()).toBe(false)
     expect(mounted.publicRefs[0].value?.isMediaBusy()).toBe(false)
     const menu = await openRealAttachmentMenu(root)
@@ -1060,10 +1175,19 @@ describe('Agent composer three-section layout', () => {
     ])
     for (const option of options) {
       expect(option.getAttribute('aria-disabled')).not.toBe('true')
-      expect(option.getAttribute('aria-checked')).toBe('true')
+      expect(option.getAttribute('aria-checked')).toBe('false')
     }
-    options[1].click()
-    await waitForRealSurface(() => !menu.isConnected, 'generation preference menu closed')
+    options[0].click()
+    await waitForRealSurface(() => !menu.isConnected, 'image generation preference selected')
+    // Vuetify briefly guards click reopening after selection; keyboard opening remains available.
+    const musicMenu = await openRealCreationMenu(root, true)
+    expect(musicMenu.querySelector('[role="menuitemcheckbox"]')?.getAttribute('aria-checked')).toBe('true')
+    const musicOption = Array.from(musicMenu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')).find(
+      option => option.querySelector('.v-list-item-title')?.textContent?.trim() === translateEnglish('common:agentComposerMedia.music')
+    )
+    if (!musicOption) throw new Error('Music generation option did not render')
+    musicOption.click()
+    await waitForRealSurface(() => !musicMenu.isConnected, 'music generation preference selected')
     const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
     if (!textarea) throw new Error('Real composer textbox did not render')
     textarea.value = 'Create an image with accompanying music'
@@ -1111,10 +1235,9 @@ describe('Agent composer three-section layout', () => {
     const imageOption = creationMenu.querySelector<HTMLElement>('[role="menuitemcheckbox"]')
     if (!imageOption) throw new Error('Image generation option did not render at attachment capacity')
     expect(imageOption.getAttribute('aria-disabled')).not.toBe('true')
-    expect(imageOption.getAttribute('aria-checked')).toBe('true')
     imageOption.click()
     await waitForRealSurface(() => !creationMenu.isConnected, 'full-capacity generation preference selection')
-    expect(root.querySelector('.agent-composer__create')?.getAttribute('data-state')).toBeNull()
+    expect(root.querySelector('.agent-composer__create')?.getAttribute('data-state')).toBe('selected')
     expect(mounted.uploads).toHaveLength(4)
     await selectRealFiles(root, [new File(['%PDF-1.4\nfifth\n%%EOF\n'], 'five.pdf', { type: 'application/pdf' })])
     await waitForRealSurface(
@@ -1136,6 +1259,33 @@ describe('Agent composer three-section layout', () => {
     expect(attach?.disabled).toBe(false)
     expect(input?.disabled).toBe(false)
     expect(root.querySelector('.agent-composer__attachment-count')?.textContent?.trim()).toBe('3/4')
+  })
+
+  it('closes the attachment chooser when access becomes blocked or attachment support is revoked', async () => {
+    for (const patch of [{ networkBlocked: true }, { disabled: true }, { mediaCapabilities: { attachments: false, transcription: true } }]) {
+      const mounted = mountComposer({ mediaCapabilities: { attachments: true, transcription: true }, mediaSession: { id: 'session-1' } })
+      await Vue.nextTick()
+      const menu = await openRealAttachmentMenu(mounted.root)
+      mounted.updateProps(patch)
+      await waitForRealSurface(() => !menu.isConnected || !menu.closest('.v-overlay--active'), 'blocked attachment chooser dismissed')
+      const blockedAttach = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
+      if ('mediaCapabilities' in patch) {
+        expect(blockedAttach).toBeNull()
+      } else {
+        expect(blockedAttach?.disabled).toBe(true)
+        expect(blockedAttach?.getAttribute('aria-expanded')).toBe('false')
+      }
+      mounted.updateProps({ networkBlocked: false, disabled: false, mediaCapabilities: { attachments: true, transcription: true } })
+      await Vue.nextTick()
+      const attach = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
+      expect(attach?.disabled).toBe(false)
+      expect(attach?.getAttribute('aria-expanded')).toBe('false')
+      if (!attach) throw new Error('Restored attachment trigger did not render')
+      expect(activeOwnedMenu(attach, '[aria-label="Attachment source"]')).toBeNull()
+      const reopened = await openRealAttachmentMenu(mounted.root, true)
+      await closeOwnedMenu(reopened)
+      expect(attach.getAttribute('aria-expanded')).toBe('false')
+    }
   })
 
   it('preserves native text paste and blocks unavailable file navigation with a reason', async () => {
@@ -1283,65 +1433,60 @@ describe('Agent composer three-section layout', () => {
   })
 
   it('blocks offline inline and folded Web changes but allows connected changes', async () => {
-    for (const enabled of [false, true]) {
-      const mounted = mountComposer({ googleSearchAvailable: true, googleSearchEnabled: enabled, networkBlocked: true })
-      const input = mounted.root.querySelector<HTMLInputElement>('.agent-composer__web-search-toggle input')
-      if (!input) throw new Error('Offline Web checkbox did not render')
-      expect(input.disabled).toBe(true)
-      input.checked = !enabled
+    const observation = observeControlResizes()
+    try {
+      for (const enabled of [false, true]) {
+        const mounted = mountComposer({ googleSearchAvailable: true, googleSearchEnabled: enabled, networkBlocked: true })
+        const input = mounted.root.querySelector<HTMLInputElement>('.agent-composer__web-search-toggle input')
+        if (!input) throw new Error('Offline Web checkbox did not render')
+        expect(input.disabled).toBe(true)
+        input.checked = !enabled
+        input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+        await Vue.nextTick()
+        expect(mounted.googleSearchUpdates).toEqual([])
+        expect(input.checked).toBe(enabled)
+        expect(input.getAttribute('aria-checked')).toBe(String(enabled))
+        await settleAsync()
+        measureControlRow(mounted.root, observation, 200)
+        await waitForRealSurface(() => mounted.root.querySelector('.agent-composer__web-search-toggle') === null, 'offline Web folded')
+        const menu = await openRealMoreMenu(mounted.root)
+        const webItem = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')).find(
+          item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web'
+        )
+        if (!webItem) throw new Error('Offline folded Web action did not render')
+        expect(webItem.getAttribute('aria-disabled')).toBe('true')
+        webItem.click()
+        await Vue.nextTick()
+        expect(mounted.googleSearchUpdates).toEqual([])
+        expect(webItem.getAttribute('aria-checked')).toBe(String(enabled))
+        await closeOwnedMenu(menu)
+      }
+      const connected = mountComposer({ googleSearchAvailable: true })
+      const input = connected.root.querySelector<HTMLInputElement>('.agent-composer__web-search-toggle input')
+      if (!input) throw new Error('Connected Web checkbox did not render')
+      expect(input.disabled).toBe(false)
+      input.checked = true
       input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
       await Vue.nextTick()
-      expect(mounted.googleSearchUpdates).toEqual([])
-      expect(input.checked).toBe(enabled)
-      expect(input.getAttribute('aria-checked')).toBe(String(enabled))
-      const bindings = lastBindings as unknown as {
-        foldedControls: { value: string[] }
-        moreMenuOpen: { value: boolean }
-      }
-      bindings.foldedControls.value = ['web']
-      bindings.moreMenuOpen.value = true
-      await Vue.nextTick()
-      await Vue.nextTick()
-      const menu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
-      const webItem = Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]') ?? []).find(
+      expect(connected.googleSearchUpdates).toEqual([true])
+      connected.updateProps({ googleSearchEnabled: true })
+      await settleAsync()
+      measureControlRow(connected.root, observation, 200)
+      await waitForRealSurface(() => connected.root.querySelector('.agent-composer__web-search-toggle') === null, 'connected Web folded')
+      const menu = await openRealMoreMenu(connected.root)
+      const webItem = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')).find(
         item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web'
       )
-      if (!webItem) throw new Error('Offline folded Web action did not render')
-      expect(webItem.getAttribute('aria-disabled')).toBe('true')
+      if (!webItem) throw new Error('Connected folded Web action did not render')
+      expect(webItem.getAttribute('aria-disabled')).not.toBe('true')
+      expect(webItem.getAttribute('aria-checked')).toBe('true')
       webItem.click()
       await Vue.nextTick()
-      expect(mounted.googleSearchUpdates).toEqual([])
-      expect(webItem.getAttribute('aria-checked')).toBe(String(enabled))
-      bindings.moreMenuOpen.value = false
-      await Vue.nextTick()
+      expect(connected.googleSearchUpdates).toEqual([true, false])
+      await waitForRealSurface(() => !menu.isConnected || !menu.closest('.v-overlay--active'), 'connected Web selection closed')
+    } finally {
+      observation.restore()
     }
-    const connected = mountComposer({ googleSearchAvailable: true })
-    const input = connected.root.querySelector<HTMLInputElement>('.agent-composer__web-search-toggle input')
-    if (!input) throw new Error('Connected Web checkbox did not render')
-    expect(input.disabled).toBe(false)
-    input.checked = true
-    input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
-    await Vue.nextTick()
-    expect(connected.googleSearchUpdates).toEqual([true])
-    const bindings = lastBindings as unknown as {
-      foldedControls: { value: string[] }
-      moreMenuOpen: { value: boolean }
-    }
-    bindings.foldedControls.value = ['web']
-    bindings.moreMenuOpen.value = true
-    await Vue.nextTick()
-    await Vue.nextTick()
-    const menu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
-    const webItem = Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]') ?? []).find(
-      item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web'
-    )
-    if (!webItem) throw new Error('Connected folded Web action did not render')
-    expect(webItem.getAttribute('aria-disabled')).not.toBe('true')
-    webItem.click()
-    await Vue.nextTick()
-    expect(connected.googleSearchUpdates).toEqual([true, true])
-    bindings.moreMenuOpen.value = false
-    await Vue.nextTick()
   })
 
   it('keeps the message field editable while a reply streams but does not submit', async () => {
@@ -1427,61 +1572,94 @@ describe('Agent composer fit-based folding', () => {
     expect(fold.foldedControls.value).toEqual([])
   })
 
-  it('shows folded controls as More menu entries and restores the inline controls on unfold', async () => {
-    const mounted = mountComposer({
-      initialDraft: '',
-      skillsEnabled: true,
-      mediaCapabilities: { attachments: true, transcription: true },
-      mediaSession: { id: 'session-1' }
-    })
-    const bindings = lastBindings as unknown as {
-      foldedControls: { value: string[] }
-      moreMenuOpen: { value: boolean }
+  it('keeps folding responsive to the restored controls after a recording swap and cleans up observation', async () => {
+    const observation = observeControlResizes()
+    let mounted: MountedComposer | null = null
+    try {
+      mounted = mountComposer({
+        initialDraft: 'typed words',
+        mediaCapabilities: { attachments: true, transcription: true },
+        mediaSession: { id: 'session-1' }
+      })
+      await settleAsync()
+      const root = mounted.root
+      const original = root.querySelector<HTMLElement>('.agent-composer__context-controls')
+      if (!original) throw new Error('Message controls did not render')
+      const observer = observation.observers.find(candidate => candidate.observed.has(original))
+      if (!observer) throw new Error('Message controls are not observed')
+      root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
+      await Vue.nextTick()
+      root.querySelector<HTMLButtonElement>('.agent-composer__dictation-review')?.click()
+      await settleAsync()
+      const restored = root.querySelector<HTMLElement>('.agent-composer__context-controls')
+      if (!restored) throw new Error('Message controls did not return after recording')
+      expect(observer.observed.has(original)).toBe(false)
+      Object.defineProperties(restored, {
+        clientWidth: { configurable: true, value: 100 },
+        scrollWidth: { configurable: true, get: () => (root.querySelector('.agent-composer__web-search-toggle') ? 200 : 100) }
+      })
+      observer.resize(restored)
+      await settleAsync()
+      expect(root.querySelector('.agent-composer__web-search-toggle')).toBeNull()
+      expect(root.querySelector('.agent-composer__attach')).not.toBeNull()
+      expect(root.querySelector('.agent-composer__mic')).not.toBeNull()
+      expect(root.querySelector('.agent-composer__submit')).not.toBeNull()
+      mounted.unmount()
+      mountedComposers.splice(mountedComposers.indexOf(mounted.unmount), 1)
+      mounted = null
+      expect(observer.observed.size).toBe(0)
+    } finally {
+      if (mounted) {
+        mounted.unmount()
+        mountedComposers.splice(mountedComposers.indexOf(mounted.unmount), 1)
+      }
+      observation.restore()
     }
-    await Vue.nextTick()
-    bindings.foldedControls.value = ['create', 'web']
-    await Vue.nextTick()
-    // The folded inline controls are removed from the action bar.
-    expect(mounted.root.querySelector('.agent-composer__web-search-toggle')).toBeNull()
-    expect(mounted.root.querySelector('.agent-composer__create')).toBeNull()
-    expect(mounted.root.querySelector('.agent-composer__attach')).not.toBeNull()
+  })
 
-    bindings.moreMenuOpen.value = true
-    await Vue.nextTick()
-    await Vue.nextTick()
-    const moreMenu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
-    if (!moreMenu) throw new Error('More menu did not render')
-    const titles = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())
-    const webItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(
-      item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web'
-    )
-    if (!webItem) throw new Error('Folded Web menu item did not render')
-    expect(webItem.getAttribute('role')).toBe('menuitemcheckbox')
-    expect(webItem.getAttribute('aria-checked')).toBe('false')
-    expect(webItem.classList.contains('v-list-item--disabled')).toBe(true)
-    const createTitles = titles.filter(title => title === 'Images' || title === 'Video')
-    expect(createTitles).toEqual(['Images', 'Video'])
-    // Skills always live inside the More menu, folded or not.
-    const skillsItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.getAttribute('aria-haspopup') === 'dialog')
-    if (!skillsItem) throw new Error('Folded Skills submenu item did not render')
-    expect(skillsItem.querySelector('.v-list-item-title')?.textContent?.trim()).toBe('Skills')
+  it('shows folded controls as More menu entries and restores the inline controls on unfold', async () => {
+    const observation = observeControlResizes()
+    try {
+      const mounted = mountRealComposers([{ media: true, imageGeneration: true, videoGeneration: true, skills: [] }])
+      const root = mounted.roots[0]
+      await settleAsync()
+      const resize = measureControlRow(root, observation, 300)
+      await waitForRealSurface(
+        () => root.querySelector('.agent-composer__web-search-toggle') === null && root.querySelector('.agent-composer__create') === null,
+        'Create and Web folded'
+      )
+      expect(root.querySelector('.agent-composer__attach')).not.toBeNull()
+      expect(root.querySelector('.agent-composer__goal-toggle')).not.toBeNull()
+      expect(root.querySelector('.agent-composer__submit')).not.toBeNull()
 
-    // Unfolding restores the inline controls and empties the folded menu entries.
-    bindings.moreMenuOpen.value = false
-    await Vue.nextTick()
-    bindings.foldedControls.value = []
-    await Vue.nextTick()
-    expect(mounted.root.querySelector('.agent-composer__web-search-toggle')).not.toBeNull()
-    expect(mounted.root.querySelector('.agent-composer__create')).not.toBeNull()
-    bindings.moreMenuOpen.value = true
-    await Vue.nextTick()
-    await Vue.nextTick()
-    const reopened = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
-    if (!reopened) throw new Error('Reopened More menu did not render')
-    const reopenedTitles = Array.from(reopened.querySelectorAll<HTMLElement>('.v-list-item')).map(item =>
-      item.querySelector('.v-list-item-title')?.textContent?.trim()
-    )
-    expect(reopenedTitles).toEqual(['Skills'])
+      const moreMenu = await openRealMoreMenu(root)
+      const options = Array.from(moreMenu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'))
+      const webItem = options.find(item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web')
+      if (!webItem) throw new Error('Folded Web menu item did not render')
+      expect(webItem.getAttribute('aria-checked')).toBe('false')
+      expect(webItem.getAttribute('aria-disabled')).toBe('true')
+      const creationItems = options.filter(item => item !== webItem)
+      expect(creationItems.map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())).toEqual(['Images', 'Video'])
+      for (const item of creationItems) {
+        expect(item.getAttribute('aria-checked')).toBe('false')
+        expect(item.getAttribute('aria-disabled')).not.toBe('true')
+      }
+      // Skills always live inside More, folded or not.
+      expect(moreMenu.querySelector('[aria-haspopup="dialog"]')).not.toBeNull()
+
+      await closeOwnedMenu(moreMenu)
+      resize(1000)
+      await waitForRealSurface(
+        () => root.querySelector('.agent-composer__web-search-toggle') !== null && root.querySelector('.agent-composer__create') !== null,
+        'Create and Web restored'
+      )
+      const reopened = await openRealMoreMenu(root, true)
+      expect(reopened.querySelector('[role="menuitemcheckbox"]')).toBeNull()
+      expect(reopened.querySelector('[aria-haspopup="dialog"]')).not.toBeNull()
+      await closeOwnedMenu(reopened)
+    } finally {
+      observation.restore()
+    }
   })
 })
 
@@ -1496,28 +1674,23 @@ describe('Agent composer goal placement', () => {
   })
 
   it('moves Goal into the More menu only when the fold logic folds it', async () => {
-    const mounted = mountComposer({ initialDraft: '', initialMode: 'message' })
-    await Vue.nextTick()
-    const bindings = lastBindings as unknown as { foldedControls: { value: string[] }; moreMenuOpen: { value: boolean } }
-    bindings.foldedControls.value = ['goal']
-    await Vue.nextTick()
-    await Vue.nextTick()
-    expect(mounted.root.querySelector('.agent-composer__goal-toggle')).toBeNull()
-    const more = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
-    if (!more) throw new Error('More options button did not render')
-    bindings.moreMenuOpen.value = true
-    await Vue.nextTick()
-    await Vue.nextTick()
-    await Vue.nextTick()
-    const moreMenu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
-    if (!moreMenu) throw new Error('More menu did not render')
-    const goalItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(
-      item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Goal'
-    )
-    if (!goalItem) throw new Error('Folded Goal menu item did not render')
-    goalItem.click()
-    await Vue.nextTick()
-    expect(mounted.root.querySelector('.agent-composer__goal-chip')).not.toBeNull()
+    const observation = observeControlResizes()
+    try {
+      const mounted = mountComposer({ initialDraft: '', initialMode: 'message' })
+      await settleAsync()
+      measureControlRow(mounted.root, observation, 100)
+      await waitForRealSurface(() => mounted.root.querySelector('.agent-composer__goal-toggle') === null, 'Goal folded')
+      const moreMenu = await openRealMoreMenu(mounted.root)
+      const goalItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(
+        item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Goal'
+      )
+      if (!goalItem) throw new Error('Folded Goal menu item did not render')
+      goalItem.click()
+      await Vue.nextTick()
+      expect(mounted.root.querySelector('.agent-composer__goal-chip')).not.toBeNull()
+    } finally {
+      observation.restore()
+    }
   })
 
   it('shows an editable Goal context chip when goal mode is on and restores the inline control', async () => {
@@ -1641,16 +1814,31 @@ describe('Agent composer dictation controls', () => {
     expect((mounted.root.querySelector('.agent-composer__input textarea') as HTMLTextAreaElement | null)?.value ?? '').not.toContain('typed words')
   })
 
-  it('notifies without submitting when a send-during-recording finds no speech', async () => {
-    setDictationTranscriptHook(async () => null)
-    const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
+  it('preserves edits made while a send-during-recording transcription waits and fails', async () => {
+    const transcript = Promise.withResolvers<string | null>()
+    setDictationTranscriptHook(() => {
+      transcribing.value = true
+      return transcript.promise
+    })
+    const mounted = mountComposer({ initialDraft: 'typed words', draftEditable: true, mediaCapabilities: { transcription: true } })
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
     await Vue.nextTick()
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
+    await Vue.nextTick()
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+    if (!textarea) throw new Error('Composer input did not remain available while transcribing')
+    expect(textarea.disabled).toBe(false)
+    textarea.value = 'typed words and a newer thought'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    const bindings = lastBindings as unknown as { receiveDictationFailure: (message: string) => void }
+    bindings.receiveDictationFailure('Transcription failed. Try recording again.')
+    transcribing.value = false
+    transcript.resolve(null)
     await settleAsync()
     expect(sentRecorder).toHaveLength(0)
-    expect(mounted.root.querySelector('.agent-composer__notice')?.textContent).toContain('No speech was found')
-    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('typed words')
+    expect(mounted.root.querySelector('.agent-composer__notice')?.textContent).toContain('Transcription failed')
+    expect(textarea.value).toBe('typed words and a newer thought')
   })
 
   it('preserves the typed draft when a recording is discarded', async () => {

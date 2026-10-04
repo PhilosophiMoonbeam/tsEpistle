@@ -50,6 +50,8 @@ const loadManager = (view, overrides = {}) => {
   const getAgentMemories = overrides.getAgentMemories ?? vi.fn().mockResolvedValue(view)
   const clearAgentMemories = overrides.clearAgentMemories ?? vi.fn()
   const removeAgentMemory = overrides.removeAgentMemory ?? vi.fn()
+  const createAgentMemory = overrides.createAgentMemory ?? vi.fn()
+  const updateAgentMemory = overrides.updateAgentMemory ?? vi.fn()
   const createModalFocusScope = overrides.createModalFocusScope ?? vi.fn(() => ({ deactivate: vi.fn() }))
   const emittedBusy = []
   const emit = (event, busy) => {
@@ -109,7 +111,7 @@ const loadManager = (view, overrides = {}) => {
     'createModalFocusScope',
     'window',
     'HTMLElement',
-    `${executableScript}\nreturn { loaded, memories, sections, searchQuery, visibleSections, memorySearchStatus, memoryCount, memoryCountLabel, canAddTo, clearMemoryDisabledReason, open, actionBusy, removing, clearing, clearReviewCount, clearError, draftTarget, draftContent, editing, draftConflict, beginAdd, beginEdit, beginRemove, beginClear, cancelClear, cancelEditOnEscape, keepDraftAfterRefresh, load, remove, clear, requestClose }`
+    `${executableScript}\nreturn { loaded, memories, sections, searchQuery, visibleSections, memorySearchStatus, memoryCount, memoryCountLabel, canAddTo, clearMemoryDisabledReason, open, actionBusy, removing, clearing, clearReviewCount, clearError, draftTarget, draftContent, editing, draftConflict, error, beginAdd, beginEdit, beginRemove, beginClear, cancelClear, cancelEditOnEscape, keepDraftAfterRefresh, load, remove, clear, requestClose, saveShortcut }`
   )
   const manager = evaluate(
     getter => ({
@@ -117,7 +119,7 @@ const loadManager = (view, overrides = {}) => {
         return getter()
       }
     }),
-    () => translateEnglish,
+    () => overrides.translate ?? translateEnglish,
     () => Promise.resolve(),
     callback => beforeUnmount.push(callback),
     onWatcherCleanup,
@@ -130,21 +132,23 @@ const loadManager = (view, overrides = {}) => {
     () => props,
     () => model,
     clearAgentMemories,
-    vi.fn(),
+    createAgentMemory,
     getAgentMemories,
     removeAgentMemory,
-    vi.fn(),
+    updateAgentMemory,
     createModalFocusScope,
     { fetch: vi.fn() },
     TestHTMLElement
   )
   return {
     clearAgentMemories,
+    createAgentMemory,
     createModalFocusScope,
     emittedBusy,
     getAgentMemories,
     manager,
     removeAgentMemory,
+    updateAgentMemory,
     dispose: () => {
       for (const callback of beforeUnmount) callback()
       mounted = false
@@ -221,6 +225,73 @@ describe('Agent memory manager initial loading', () => {
 
     manager.beginAdd('user')
     expect(manager.draftTarget.value).toBe('user')
+  })
+})
+
+describe('Agent memory draft retention and input methods', () => {
+  it('keeps a draft and its conflict when the manager hides and reopens', async () => {
+    const view = populatedView()
+    const refreshedView = {
+      ...view,
+      user: { ...view.user, entries: [{ ...memoryEntry, content: 'Updated elsewhere', version: 4 }] }
+    }
+    const getAgentMemories = vi.fn().mockResolvedValueOnce(view).mockResolvedValue(refreshedView)
+    const { manager } = loadManager(view, { getAgentMemories })
+    await Promise.resolve()
+    await Promise.resolve()
+    manager.beginEdit(memoryEntry)
+    manager.draftContent.value = 'My unsaved revision'
+    await manager.load()
+    manager.requestClose()
+    expect(manager.open.value).toBe(false)
+    expect(manager.draftContent.value).toBe('My unsaved revision')
+    expect(manager.draftConflict.value?.latest?.version).toBe(4)
+
+    manager.open.value = true
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(manager.editing.value).toEqual({ id: memoryEntry.id, version: memoryEntry.version })
+    expect(manager.draftContent.value).toBe('My unsaved revision')
+    expect(manager.draftConflict.value?.kind).toBe('changed')
+  })
+
+  it.each(['ctrlKey', 'metaKey'])('does not save or intercept %s+Enter while an input method is composing', async modifier => {
+    const { manager, createAgentMemory, updateAgentMemory } = loadManager(populatedView())
+    await Promise.resolve()
+    await Promise.resolve()
+    manager.beginAdd('agent')
+    manager.draftContent.value = '入力中のメモ'
+    const preventDefault = vi.fn()
+    const event = { ctrlKey: false, metaKey: false, [modifier]: true, isComposing: true, preventDefault }
+    manager.saveShortcut(event)
+    await Promise.resolve()
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(createAgentMemory).not.toHaveBeenCalled()
+    expect(updateAgentMemory).not.toHaveBeenCalled()
+    expect(manager.draftContent.value).toBe('入力中のメモ')
+
+    manager.saveShortcut({ ...event, isComposing: false })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(createAgentMemory).toHaveBeenCalledTimes(1)
+    expect(manager.editing.value).toBeNull()
+  })
+})
+
+describe('Agent memory committed refresh feedback', () => {
+  it('localizes the committed-action prefix when refreshing saved memory fails', async () => {
+    const translate = (key, options) => {
+      if (key === 'common:agentMemoryManager.butMemoryCouldNot') return `${options.committedMessage}, mais la mémoire n’a pas pu être actualisée.`
+      if (key === 'common:agentMemoryManager.showingLastLoadedMemory') return `${options.prefix}Dernière mémoire chargée. ${options.reason}`
+      return translateEnglish(key, options)
+    }
+    const getAgentMemories = vi.fn().mockResolvedValueOnce(populatedView()).mockRejectedValue(new Error('Réessayez.'))
+    const { manager } = loadManager(populatedView(), { getAgentMemories, translate })
+    await Promise.resolve()
+    await Promise.resolve()
+    await manager.load('Mémoire enregistrée')
+    expect(manager.error.value).toBe('Mémoire enregistrée, mais la mémoire n’a pas pu être actualisée. Dernière mémoire chargée. Réessayez.')
   })
 })
 

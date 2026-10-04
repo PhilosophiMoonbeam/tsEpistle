@@ -20,7 +20,7 @@
         {{ $t('admin:skillAdmin.organizationSkillsProvideApproved') }}
       </v-alert>
       <v-alert v-if="bundledSkill && bundledSkill.status !== 'enabled'" type="warning" variant="tonal" density="compact" icon="mdi-book-check-outline">
-        {{ $t('admin:skillAdmin.builtWikiAuthoringSkill', { currentVersionId: bundledSkill.currentVersionId ? 'enables' : $t('admin:skillAdmin.reviewsApproves'), interpolation: { escapeValue: false } }) }}
+        {{ bundledSkill.currentVersionId ? $t('admin:skillAdmin.builtWikiAuthoringSkillEnable') : $t('admin:skillAdmin.builtWikiAuthoringSkillApprove') }}
         <template #append>
           <v-btn v-if="bundledSkill.currentVersionId" variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="setEnabled(bundledSkill.id, true)">{{ $t('admin:skillAdmin.enableSkill') }}</v-btn>
           <v-btn v-else variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="openPreview(bundledSkill.id)">{{ $t('admin:skillAdmin.reviewSource') }}</v-btn>
@@ -44,7 +44,9 @@
           clearable
           hide-details
           density="comfortable"
-        />
+        >
+          <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('admin:skillAdmin.clearSearch')" /></template>
+        </v-text-field>
         <v-select
           v-model="stateFilter"
           class="skill-inventory-toolbar__filter"
@@ -156,6 +158,7 @@
             <v-autocomplete v-model="selectedSource" v-model:search="sourceQuery" :items="sourcePages" item-title="title" item-value="id" return-object no-filter clearable :label="$t('admin:skillAdmin.rootPage')" :loading="sourcesLoading" :error-messages="sourcesError" :hint="sourceNamespace ? $t('admin:skillAdmin.createSourcePagesInside', { sourceNamespace, interpolation: { escapeValue: false } }) : $t('admin:skillAdmin.selectPageFillName')" persistent-hint @update:model-value="selectSource">
               <template #item="{ props: itemProps, internalItem }"><v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="`${internalItem.raw.locale}/${internalItem.raw.path}`" /></template>
               <template #no-data><v-list-item :title="sourcesLoading ? $t('admin:skillAdmin.findingSourcePages') : $t('admin:skillAdmin.noUnmappedSourcesFound')" :subtitle="$t('admin:skillAdmin.createMarkdownPageSkill')" /></template>
+              <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('admin:skillAdmin.clearSourcePage')" /></template>
             </v-autocomplete>
             <p v-if="sourcesHaveMore" class="skill-source-note">{{ $t('admin:skillAdmin.showingFirst20Matches') }}</p>
             <v-btn v-if="sourcesError" variant="text" size="small" @click="loadSources">{{ $t('admin:skillAdmin.retrySourceSearch') }}</v-btn>
@@ -163,9 +166,9 @@
           </section>
           <section class="skill-form-section">
             <details class="skill-source-references"><summary>{{ $t('admin:skillAdmin.sourceReferencesOptionalAssets') }}</summary><p>{{ $t('admin:skillAdmin.sourceReferencesFilledSelection') }}</p><div class="skill-form-grid">
-              <v-text-field v-model.number="create.rootPageId" :label="$t('admin:skillAdmin.rootPageId')" type="number" min="1" :rules="createRootPageRules" required />
+              <v-text-field v-model.number="create.rootPageId" :label="$t('admin:skillAdmin.rootPageId')" type="number" min="1" :rules="createRootPageRules" :readonly="Boolean(selectedSource)" required />
               <v-text-field v-model="create.assetFolderId" :label="$t('admin:skillAdmin.assetFolderIdOptional')" type="number" min="1" :rules="createAssetFolderRules" />
-              <v-text-field v-model="create.rootPath" class="skill-form-grid__wide" :label="$t('admin:skillAdmin.rootPagePath')" :placeholder="$t('admin:skillAdmin.handbookResearch')" :hint="$t('admin:skillAdmin.pathMustIdentifySelected')" persistent-hint required />
+              <v-text-field v-model="create.rootPath" class="skill-form-grid__wide" :label="$t('admin:skillAdmin.rootPagePath')" :placeholder="$t('admin:skillAdmin.handbookResearch')" :hint="$t('admin:skillAdmin.pathMustIdentifySelected')" persistent-hint :readonly="Boolean(selectedSource)" required />
             </div></details>
           </section>
           <section class="skill-form-section">
@@ -187,9 +190,9 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-preview-title" :persistent="actionBusyId === 'approve' || actionBusyId === 'reject'" @after-leave="onPreviewAfterLeave">
+  <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-preview-title" :persistent="actionBusyId === 'approve' || actionBusyId === 'reject'" @after-enter="focusReviewHeading" @after-leave="onPreviewAfterLeave">
     <v-card v-if="preview" class="skill-dialog skill-review">
-      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-eyebrow">{{ $t('admin:skillAdmin.immutableOrganizationSource') }}</div><h2 id="skill-preview-title">{{ $t('admin:skillAdmin.review', { name: preview.name, interpolation: { escapeValue: false } }) }}</h2><p>{{ $t('admin:skillAdmin.approveOnlyExactCandidate') }}</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" :aria-label="$t('admin:skillAdmin.closeSkillReview')" :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false" /></div>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-eyebrow">{{ $t('admin:skillAdmin.immutableOrganizationSource') }}</div><h2 id="skill-preview-title" ref="reviewHeading" class="skill-review__title" tabindex="-1" aria-describedby="skill-preview-description">{{ $t('admin:skillAdmin.review', { name: preview.name, interpolation: { escapeValue: false } }) }}</h2><p id="skill-preview-description">{{ $t('admin:skillAdmin.approveOnlyExactCandidate') }}</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" :aria-label="$t('admin:skillAdmin.closeSkillReview')" :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false" /></div>
       <v-card-text class="skill-dialog__body">
         <v-alert v-if="previewError" class="skill-error" type="error" variant="tonal" density="compact">{{ previewError }}</v-alert>
         <v-alert v-if="preview.previousSkillMarkdown === null" class="skill-boundary" type="info" variant="tonal">{{ $t('admin:skillAdmin.firstCandidateRevisionNo') }}</v-alert>
@@ -222,7 +225,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, useTemplateRef, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { z } from 'zod'
 import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
@@ -245,9 +248,10 @@ const sourcesHaveMore = ref(false)
 let sourceController: AbortController | null = null
 let sourceTimer: ReturnType<typeof setTimeout> | undefined
 const selectSource = (source: SkillSource | null) => {
-  create.rootPageId = source?.id ?? 0
-  create.rootPath = source?.path ?? ''
-  create.name = source?.path.split('/').at(-1) ?? ''
+  if (!source) return
+  create.rootPageId = source.id
+  create.rootPath = source.path
+  create.name = source.path.split('/').at(-1) ?? ''
 }
 const loadSources = async () => {
   if (disposed) return
@@ -329,6 +333,10 @@ const previewError = ref('')
 const createOpen = ref(false)
 const accessOpen = ref(false)
 const previewOpen = ref(false)
+const reviewHeading = useTemplateRef<HTMLHeadingElement>('reviewHeading')
+const focusReviewHeading = (): void => {
+  if (previewOpen.value) reviewHeading.value?.focus({ preventScroll: true })
+}
 const policySkill = shallowRef<Skill | null>(null)
 const policy = reactive({
   exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups',
@@ -945,6 +953,12 @@ onBeforeUnmount(() => {
   letter-spacing: -.025em;
 }
 
+.skill-review__title:focus-visible {
+  outline: none;
+  border-radius: var(--wiki-control-radius);
+  box-shadow: var(--wiki-focus-ring);
+}
+
 .skill-dialog__body {
   padding: var(--wiki-space-5) !important;
 }
@@ -1241,6 +1255,7 @@ code {
   }
 
   .skill-record__review:focus-visible,
+  .skill-review__title:focus-visible,
   .source-view:focus-visible {
     outline: 2px solid Highlight;
     outline-offset: 2px;

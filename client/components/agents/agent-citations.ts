@@ -1,33 +1,13 @@
 import type { AgentCitation } from '../../../shared/agents/contracts.ts'
-import type { SafeMarkdownCitation, SafeMarkdownCitationResolver } from '../../helpers/safe-markdown.ts'
+import { safeCitationHref, type SafeMarkdownCitation, type SafeMarkdownCitationResolver } from '../../helpers/safe-markdown.ts'
 
 export interface AgentCitationResolution extends SafeMarkdownCitation {
   readonly evidenceId: string
   readonly kind: AgentCitation['kind']
-  readonly previewable: boolean
 }
 
 const citationMarker = /^\[\[cite:([^\]\s]{1,128})\]\]/
 const incompleteCitationMarker = /^\[\[cite:[^\]\s]{0,128}\]?$/
-
-const containsUnsafeCitationHrefCharacter = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (code <= 0x1f || code === 0x7f || code === 0x22 || code === 0x27) return true
-  }
-  return false
-}
-
-const safeCitationHref = (href: string | null): string | null => {
-  if (!href || containsUnsafeCitationHrefCharacter(href) || href.startsWith('//')) return null
-  try {
-    const url = new URL(href, 'https://wiki.invalid')
-    if (!['http:', 'https:'].includes(url.protocol)) return null
-    return href
-  } catch {
-    return null
-  }
-}
 
 const markdownHref = (href: string): string | null => {
   const safeHref = safeCitationHref(href)
@@ -117,22 +97,13 @@ export const createAgentCitationResolver = (citations: readonly AgentCitation[])
   for (const [index, citation] of citations.entries()) {
     if (citationById.has(citation.evidenceId)) continue
     const href = safeCitationHref(citation.href)
-    let previewable = false
-    if (href) {
-      try {
-        previewable = citation.kind === 'page' && !new URL(href, 'https://wiki.invalid').hash
-      } catch {
-        previewable = false
-      }
-    }
     numbersById.set(citation.evidenceId, index + 1)
     citationById.set(citation.evidenceId, {
       evidenceId: citation.evidenceId,
       number: index + 1,
       kind: citation.kind,
       label: citation.label,
-      href,
-      previewable
+      href
     })
   }
   return (evidenceId: string): AgentCitationResolution | null => {

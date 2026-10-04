@@ -15,7 +15,7 @@
         <strong>{{ planTitle }}</strong>
         <small>{{ progressLabel }}</small>
       </span>
-      <span v-if="tasks.length" class="agent-tasks__count" aria-hidden="true">{{ terminalCount }}/{{ tasks.length }}</span>
+      <span v-if="tasks.length" class="agent-tasks__count" aria-hidden="true">{{ formatNumber(terminalCount) }}/{{ formatNumber(tasks.length) }}</span>
     </summary>
 
     <div
@@ -122,22 +122,29 @@
       </li>
     </ol>
 
-    <div v-else class="agent-tasks__empty">
-      <v-icon icon="mdi-clipboard-text-outline" size="21" aria-hidden="true" />
-      <span>
-        <strong>{{ $t('common:agentTaskProgress.noResearchOperations') }}</strong>
-        <small>{{ $t('common:agentTaskProgress.tasksWillAppearHere') }}</small>
-      </span>
-    </div>
   </details>
 </template>
 
 <script setup lang="ts">
-import { computed, onWatcherCleanup, ref, watchEffect } from 'vue'
+import { computed, onUnmounted, onWatcherCleanup, ref, watchEffect } from 'vue'
+import i18next from 'i18next'
 import type { AgentTaskKind, AgentTaskView } from '../../../shared/agents/contracts.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const localeRevision = ref(0)
+const refreshLocale = (): void => { localeRevision.value += 1 }
+i18next.on('languageChanged', refreshLocale)
+i18next.on('loaded', refreshLocale)
+onUnmounted(() => {
+  i18next.off('languageChanged', refreshLocale)
+  i18next.off('loaded', refreshLocale)
+})
+const numberFormatter = computed(() => {
+  void localeRevision.value
+  return new Intl.NumberFormat(i18next.resolvedLanguage || i18next.language || undefined)
+})
+const formatNumber = (value: number): string => numberFormatter.value.format(value)
 
 const { tasks = [] } = defineProps<{ tasks: readonly AgentTaskView[] }>()
 type DisplayTaskStatus = AgentTaskView['status'] | 'partial'
@@ -198,31 +205,42 @@ const planState = computed<PlanState>(() => {
   return attentionCount.value ? 'attention' : 'success'
 })
 const planIcon = computed(() => planIcons[planState.value])
-const planTitle = computed(() => allTerminal.value ? t('common:agentTaskProgress.researchPlanResolved') : t('common:agentTaskProgress.researchPlan'))
+const planTitle = computed(() => {
+  void localeRevision.value
+  return allTerminal.value ? t('common:agentTaskProgress.researchPlanResolved') : t('common:agentTaskProgress.researchPlan')
+})
+// Keep the live summary dependent on plan counts, never the visual duration clock.
 const progressLabel = computed(() => {
+  void localeRevision.value
   if (!tasks.length) return t('common:agentTaskProgress.noTasksRecorded')
   if (allTerminal.value) {
-    return t('common:agentTaskProgress.successful', { value: successfulCount.value, attentionCount: attentionCount.value ? ` ${t('common:agentTaskProgress.needAttention', { value: attentionCount.value })}` : '', interpolation: { escapeValue: false } })
+    return t('common:agentTaskProgress.successful', { value: formatNumber(successfulCount.value), attentionCount: attentionCount.value ? ` ${t('common:agentTaskProgress.needAttention', { value: formatNumber(attentionCount.value) })}` : '', interpolation: { escapeValue: false } })
   }
   const parts = []
-  if (runningCount.value) parts.push(t('common:agentTaskProgress.running', { value: runningCount.value, interpolation: { escapeValue: false } }))
-  if (queuedCount.value) parts.push(t('common:agentTaskProgress.queued', { value: queuedCount.value, interpolation: { escapeValue: false } }))
-  if (terminalCount.value) parts.push(t('common:agentTaskProgress.resolved', { value: terminalCount.value, interpolation: { escapeValue: false } }))
+  if (runningCount.value) parts.push(t('common:agentTaskProgress.running', { value: formatNumber(runningCount.value), interpolation: { escapeValue: false } }))
+  if (queuedCount.value) parts.push(t('common:agentTaskProgress.queued', { value: formatNumber(queuedCount.value), interpolation: { escapeValue: false } }))
+  if (terminalCount.value) parts.push(t('common:agentTaskProgress.resolved', { value: formatNumber(terminalCount.value), interpolation: { escapeValue: false } }))
   return parts.join(' · ')
 })
-const liveSummary = computed(() => attentionCount.value
-  ? t('common:agentTaskProgress.someResearchOperationsNeed', { value: progressLabel.value, interpolation: { escapeValue: false } })
-  : progressLabel.value)
+const liveSummary = computed(() => {
+  void localeRevision.value
+  return attentionCount.value
+    ? t('common:agentTaskProgress.someResearchOperationsNeed', { value: progressLabel.value, interpolation: { escapeValue: false } })
+    : progressLabel.value
+})
 
-const statusLabels: Readonly<Record<DisplayTaskStatus, string>> = {
-  pending: t('common:agentTaskProgress.pending'),
-  running: t('common:agentTaskProgress.running2'),
-  blocked: t('common:agentTaskProgress.blocked'),
-  completed: t('common:agentTaskProgress.successful2'),
-  partial: t('common:agentTaskProgress.partial'),
-  failed: t('common:agentTaskProgress.failed'),
-  cancelled: t('common:agentTaskProgress.cancelled')
-}
+const statusLabels = computed<Readonly<Record<DisplayTaskStatus, string>>>(() => {
+  void localeRevision.value
+  return {
+    pending: t('common:agentTaskProgress.pending'),
+    running: t('common:agentTaskProgress.running2'),
+    blocked: t('common:agentTaskProgress.blocked'),
+    completed: t('common:agentTaskProgress.successful2'),
+    partial: t('common:agentTaskProgress.partial'),
+    failed: t('common:agentTaskProgress.failed'),
+    cancelled: t('common:agentTaskProgress.cancelled')
+  }
+})
 const statusIcons: Readonly<Record<DisplayTaskStatus, string>> = {
   pending: 'mdi-clock-outline',
   running: 'mdi-progress-clock',
@@ -232,29 +250,35 @@ const statusIcons: Readonly<Record<DisplayTaskStatus, string>> = {
   failed: 'mdi-alert-octagon-outline',
   cancelled: 'mdi-stop-circle-outline'
 }
-const kindLabels: Readonly<Record<AgentTaskKind, string>> = {
-  source_scout: t('common:agentTaskProgress.sourceReview'),
-  fact_check: t('common:agentTaskProgress.factCheck'),
-  conflict_check: t('common:agentTaskProgress.conflictCheck')
-}
-const outcomeLabels: Readonly<Record<NonNullable<AgentTaskView['outcome']>, string>> = {
-  completed: t('common:agentTaskProgress.evidenceRequirementSatisfied'),
-  blocked: t('common:agentTaskProgress.insufficientEvidence'),
-  partial: t('common:agentTaskProgress.partialEvidenceReturned'),
-  failed: t('common:agentTaskProgress.noReliableOutput')
-}
-const statusLabel = (status: DisplayTaskStatus): string => statusLabels[status]
+const kindLabels = computed<Readonly<Record<AgentTaskKind, string>>>(() => {
+  void localeRevision.value
+  return {
+    source_scout: t('common:agentTaskProgress.sourceReview'),
+    fact_check: t('common:agentTaskProgress.factCheck'),
+    conflict_check: t('common:agentTaskProgress.conflictCheck')
+  }
+})
+const outcomeLabels = computed<Readonly<Record<NonNullable<AgentTaskView['outcome']>, string>>>(() => {
+  void localeRevision.value
+  return {
+    completed: t('common:agentTaskProgress.evidenceRequirementSatisfied'),
+    blocked: t('common:agentTaskProgress.insufficientEvidence'),
+    partial: t('common:agentTaskProgress.partialEvidenceReturned'),
+    failed: t('common:agentTaskProgress.noReliableOutput')
+  }
+})
+const statusLabel = (status: DisplayTaskStatus): string => statusLabels.value[status]
 const statusIcon = (status: DisplayTaskStatus): string => statusIcons[status]
-const kindLabel = (kind: AgentTaskKind): string => kindLabels[kind]
-const evidenceLabel = (task: AgentTaskView): string => `${task.evidenceCount}/${t('common:agentTaskProgress.sourcesCount', { count: task.requiredEvidenceCount })}`
-const attemptLabel = (task: AgentTaskView): string => t('common:agentTaskProgress.attemptRetried', { attempt: task.attempt, attempt2: task.attempt - 1, interpolation: { escapeValue: false } })
+const kindLabel = (kind: AgentTaskKind): string => kindLabels.value[kind]
+const evidenceLabel = (task: AgentTaskView): string => `${formatNumber(task.evidenceCount)}/${t('common:agentTaskProgress.sourcesCount', { count: task.requiredEvidenceCount })}`
+const attemptLabel = (task: AgentTaskView): string => t('common:agentTaskProgress.attemptRetried', { attempt: formatNumber(task.attempt), attempt2: formatNumber(task.attempt - 1), interpolation: { escapeValue: false } })
 const outputLabel = (task: AgentTaskView): string => task.outcome
-  ? `${outcomeLabels[task.outcome]} · ${evidenceLabel(task)}`
+  ? `${outcomeLabels.value[task.outcome]} · ${evidenceLabel(task)}`
   : task.status === 'running'
     ? t('common:agentTaskProgress.collectingEvidence', { task: evidenceLabel(task), interpolation: { escapeValue: false } })
     : t('common:agentTaskProgress.noOutputYet', { task: evidenceLabel(task), interpolation: { escapeValue: false } })
 const terminalNote = (task: AgentTaskView): string => {
-  if (statusFor(task) === 'partial') return t('common:agentTaskProgress.onlyRequiredFound', { evidenceCount: task.evidenceCount, requiredEvidenceCount: task.requiredEvidenceCount, requiredEvidenceCount2: task.requiredEvidenceCount === 1 ? t('common:agentTaskProgress.sourceWas') : t('common:agentTaskProgress.sourcesWere'), interpolation: { escapeValue: false } })
+  if (statusFor(task) === 'partial') return t('common:agentTaskProgress.onlyRequiredFound', { count: task.requiredEvidenceCount, evidenceCount: formatNumber(task.evidenceCount), requiredEvidenceCount: formatNumber(task.requiredEvidenceCount), interpolation: { escapeValue: false } })
   if (task.errorCode === 'SUBAGENT_TIMEOUT') return t('common:agentTaskProgress.researchDeadlineWasReached')
   if (task.errorCode === 'AGENT_CHILD_BUDGET_EXCEEDED') return t('common:agentTaskProgress.researchBudgetWasReached')
   if (task.errorCode === 'ORCHESTRATION_DISABLED') return t('common:agentTaskProgress.specialistResearchWasDisabled')
@@ -262,19 +286,22 @@ const terminalNote = (task: AgentTaskView): string => {
   if (task.status === 'cancelled') return t('common:agentTaskProgress.researchStoppedParentResponse')
   return t('common:agentTaskProgress.researchOperationCouldNot')
 }
-const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-const formatTimestamp = (value: string): string => dateFormatter.format(new Date(value))
+const dateFormatter = computed(() => {
+  void localeRevision.value
+  return new Intl.DateTimeFormat(i18next.resolvedLanguage || i18next.language || undefined, { dateStyle: 'medium', timeStyle: 'short' })
+})
+const formatTimestamp = (value: string): string => dateFormatter.value.format(new Date(value))
 const formatDuration = (start: string, end: string | null): string => {
   void tick.value
   const milliseconds = Math.max(0, (end ? new Date(end).valueOf() : Date.now()) - new Date(start).valueOf())
   const seconds = Math.floor(milliseconds / 1000)
   if (seconds < 1) return t('common:agentTaskProgress.under1Sec')
-  if (seconds < 60) return t('common:agentTaskProgress.sec', { seconds, interpolation: { escapeValue: false } })
+  if (seconds < 60) return t('common:agentTaskProgress.sec', { seconds: formatNumber(seconds), interpolation: { escapeValue: false } })
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return t('common:agentTaskProgress.min', { minutes, interpolation: { escapeValue: false } })
+  if (minutes < 60) return t('common:agentTaskProgress.min', { minutes: formatNumber(minutes), interpolation: { escapeValue: false } })
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  return t('common:agentTaskProgress.hr', { hours, value: remainingMinutes ? ` ${t('common:agentTaskProgress.min', { minutes: remainingMinutes })}` : '', interpolation: { escapeValue: false } })
+  return t('common:agentTaskProgress.hr', { hours: formatNumber(hours), value: remainingMinutes ? ` ${t('common:agentTaskProgress.min', { minutes: formatNumber(remainingMinutes) })}` : '', interpolation: { escapeValue: false } })
 }
 const durationLabel = (task: AgentTaskView): string => {
   if (task.status === 'pending') return t('common:agentTaskProgress.queued2', { null: formatDuration(task.createdAt, null), interpolation: { escapeValue: false } })
@@ -625,20 +652,6 @@ watchEffect(() => {
   border-radius: var(--wiki-radius-pill);
   background: rgb(var(--v-theme-surface));
   font-size: var(--wiki-label-size);
-}
-
-.agent-tasks__empty {
-  display: flex;
-  gap: var(--wiki-space-3);
-  align-items: center;
-  padding: var(--wiki-space-4);
-  border-block-start: 1px solid var(--wiki-surface-border);
-  color: var(--wiki-text-muted);
-}
-
-.agent-tasks__empty > span {
-  display: grid;
-  min-width: 0;
 }
 
 .agent-tasks__live,

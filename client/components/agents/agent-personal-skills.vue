@@ -43,7 +43,9 @@
               clearable
               hide-details
               density="comfortable"
-            />
+            >
+              <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('common:agentPersonalSkills.clearSearch')" /></template>
+            </v-text-field>
 
             <v-alert v-if="refreshError && !loaded" class="personal-inventory__error" type="error" variant="tonal" density="compact">
               {{ refreshError }}
@@ -56,8 +58,8 @@
 
             <template v-else-if="loaded">
               <v-alert v-if="refreshError || (!readAccepted && !saving && !loading)" class="personal-inventory__error" type="warning" variant="tonal" density="compact">
-                {{ refreshError || $t('common:agentPersonalSkills.reloadBeforeRetry', { defaultValue: 'Reload personal skills before retrying.' }) }}
-                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || saving || networkBlocked" @click="load()">{{ $t('common:agentPersonalSkills.reloadSkills', { defaultValue: 'Reload skills' }) }}</v-btn></template>
+                {{ refreshError || $t('common:agentPersonalSkills.reloadBeforeRetry') }}
+                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || saving || networkBlocked" @click="load()">{{ $t('common:agentPersonalSkills.reloadSkills') }}</v-btn></template>
               </v-alert>
               <div class="personal-inventory__summary" aria-live="polite">{{ $t('common:agentPersonalSkills.shown', { filteredSkillsCount: filteredSkills.length, skillsCount: skills.length, interpolation: { escapeValue: false } }) }}</div>
               <v-list v-if="filteredSkills.length" class="personal-inventory__list" density="compact" nav :aria-label="$t('common:agentPersonalSkills.personalSkills')">
@@ -69,6 +71,7 @@
                   :aria-current="editingId === skill.id ? 'true' : undefined"
                   :aria-label="$t('common:agentPersonalSkills.editPersonalSkill', { name: skill.name, interpolation: { escapeValue: false } })"
                   :disabled="saving || loading || networkBlocked"
+                  :aria-disabled="saving || loading || networkBlocked"
                   rounded="lg"
                   @click="requestEdit(skill)"
                 >
@@ -120,6 +123,7 @@
 
             <v-alert v-if="error" class="personal-editor__error" type="error" variant="tonal" closable @click:close="error = ''">{{ error }}</v-alert>
             <v-alert v-if="editedSkillMissing" class="personal-editor__error" type="warning" variant="tonal" role="status">{{ $t('common:agentPersonalSkills.editedSkillRemoved') }}</v-alert>
+            <v-alert v-if="removalNotice && !editedSkillMissing" class="personal-editor__error" type="info" variant="tonal" role="status" closable @click:close="removalNotice = ''">{{ removalNotice }}</v-alert>
             <v-progress-linear v-if="loading" indeterminate :aria-label="$t('common:agentPersonalSkills.refreshingPersonalSkills')" />
 
             <v-form id="personal-skill-form" class="personal-editor__form" @submit.prevent="save">
@@ -172,7 +176,7 @@
         <v-alert class="mb-4" type="warning" variant="tonal" icon="mdi-history">{{ $t('common:agentPersonalSkills.existingRunHistoryRemains') }}</v-alert>
         <v-alert v-if="removeError" class="mb-4" type="error" variant="tonal">
           {{ removeError }}
-          <template #append><v-btn v-if="!readAccepted" variant="text" size="small" :loading="loading" :disabled="loading || saving || networkBlocked" @click="load()">{{ $t('common:agentPersonalSkills.reloadSkills', { defaultValue: 'Reload skills' }) }}</v-btn></template>
+          <template #append><v-btn v-if="!readAccepted" variant="text" size="small" :loading="loading" :disabled="loading || saving || networkBlocked" @click="load()">{{ $t('common:agentPersonalSkills.reloadSkills') }}</v-btn></template>
         </v-alert>
         <p><strong>{{ removing?.name }}</strong> {{ $t('common:agentPersonalSkills.willRemovedPersonalLibrary') }}</p>
       </v-card-text>
@@ -229,6 +233,7 @@ const pendingNavigation = ref<(() => void) | null>(null)
 const baseline = shallowRef({ name: 'my-skill', skillMarkdown: '', isAgentDiscoverable: true })
 const refreshError = ref('')
 const removeError = ref('')
+const removalNotice = ref('')
 type ComponentRoot = { $el?: unknown }
 const editorRoot = useTemplateRef<HTMLElement>('editorRoot')
 const nameInput = useTemplateRef<ComponentRoot | HTMLElement>('nameInput')
@@ -279,10 +284,10 @@ const templateFor = (skillName: string): string => `${t('common:agentPersonalSki
 
 const setBaseline = (): void => { baseline.value = { name: name.value, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value } }
 const applyNew = (): void => {
-  editingId.value = null; name.value = 'my-skill'; skillMarkdown.value = templateFor(name.value); isAgentDiscoverable.value = true; error.value = ''; setBaseline()
+  editingId.value = null; name.value = 'my-skill'; skillMarkdown.value = templateFor(name.value); isAgentDiscoverable.value = true; error.value = ''; removalNotice.value = ''; setBaseline()
 }
 const applyEdit = (skill: PersonalAgentSkill): void => {
-  editingId.value = skill.id; name.value = skill.name; skillMarkdown.value = skill.skillMarkdown; isAgentDiscoverable.value = skill.isAgentDiscoverable; error.value = ''; setBaseline()
+  editingId.value = skill.id; name.value = skill.name; skillMarkdown.value = skill.skillMarkdown; isAgentDiscoverable.value = skill.isAgentDiscoverable; error.value = ''; removalNotice.value = ''; setBaseline()
 }
 const requestNavigation = (action: () => void): void => {
   if (saving.value) return
@@ -337,11 +342,18 @@ const load = async (selectedId?: string, committedMessage?: string): Promise<boo
     skills.value = nextSkills
     loaded.value = true
     readAccepted.value = true
-    if (removing.value) removing.value = nextSkills.find(skill => skill.id === removing.value?.id) ?? null
+    const pendingRemoval = removing.value
+    const latestRemoval = pendingRemoval ? nextSkills.find(skill => skill.id === pendingRemoval.id) ?? null : null
+    if (pendingRemoval) removing.value = latestRemoval
     const selected = skills.value.find(skill => skill.id === selectedId) ?? skills.value.find(skill => skill.id === editingId.value)
     if (!preserveEditor && !isDirty.value) {
       if (selected) applyEdit(selected)
       else applyNew()
+    }
+    if (pendingRemoval && !latestRemoval) {
+      removeError.value = ''
+      removalNotice.value = t('common:agentPersonalSkills.removeTargetNoLongerAvailable')
+      destructiveRestoreTarget.value = editorRoot.value
     }
     return true
   } catch (caught) {
@@ -389,6 +401,7 @@ const save = async (): Promise<void> => {
 const beginRemove = (skill: PersonalAgentSkill | null, event: MouseEvent): void => {
   if (!skill || disposed || networkBlocked.value || !readAccepted.value || saving.value || loading.value) return
   removeError.value = ''
+  removalNotice.value = ''
   destructiveRestoreTarget.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   removing.value = skill
 }
@@ -467,7 +480,12 @@ watch(discardOpen, async isOpen => {
 })
 watch(name, (next, previous) => {
   if (editingId.value || next === previous) return
-  skillMarkdown.value = skillMarkdown.value.replace(/^name:\s*.*$/m, `name: ${next}`)
+  const frontmatter = skillMarkdown.value.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)
+  if (!frontmatter) return
+  const sourceName = frontmatter[1].match(/^name:[ \t]*([^\r\n]*)/m)
+  if (!sourceName || sourceName[1].trim() !== previous) return
+  const updatedFrontmatter = frontmatter[0].replace(/^name:[^\r\n]*/m, `name: ${next}`)
+  skillMarkdown.value = updatedFrontmatter + skillMarkdown.value.slice(frontmatter[0].length)
 })
 watch(networkBlocked, (blocked, wasBlocked) => {
   if (blocked) {

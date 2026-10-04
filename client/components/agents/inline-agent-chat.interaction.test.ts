@@ -190,6 +190,8 @@ interface LockState {
   clearUnfiledHistory: () => Promise<void>
   recoverClearUnfiledHistory: () => Promise<void>
   ensureInitialized: () => Promise<boolean>
+  retryInitialization: () => Promise<void>
+  connectionProbe: () => Promise<boolean>
   clearUnfiledHistoryOpen: ValueRef<boolean>
   newSession: () => Promise<void>
   newTemporarySession: () => Promise<void>
@@ -341,6 +343,7 @@ const loadGoalLockState = (
     goalBusy: ref(false),
     googleSearchPending: ref(null),
     googleSearchSuggestions: ref(null),
+    initializationAdmissionFailure: ref<'access' | 'authentication' | null>(null),
     loading: ref(false),
     pinnedSessionId: ref<string | null>(null),
     pinStorageAvailable: ref(true),
@@ -406,6 +409,7 @@ const loadGoalLockState = (
   const mountedCallbacks: Array<() => void> = []
   const unmountedCallbacks: Array<() => void> = []
   const scope = Vue.effectScope()
+  const connectionProbe = vi.fn(async () => true)
   const bindingNames = Array.from(setupScript.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
   const emitted: unknown[][] = []
   const pendingStartersFrames: Array<{ callback: (now: number) => void }> = []
@@ -452,7 +456,7 @@ const loadGoalLockState = (
       isAgentApprovalOutsideViewport,
       shouldFollowGoalExpansion,
       pwaState: testPwaState,
-      retryServerConnection: async () => true,
+      retryServerConnection: connectionProbe,
       wikiStore: { user: { id: 2, name: 'Test User', pictureUrl: '' } },
       resolveUserPicture,
       emptyAgentDraft
@@ -471,6 +475,7 @@ const loadGoalLockState = (
     ...state,
     agentCalls: realStore ? (realStore as unknown as LockState['agentCalls']) : agentCalls,
     componentProps: props,
+    connectionProbe,
     emitted,
     advanceTime,
     pendingStartersFrames,
@@ -828,7 +833,6 @@ const mountInlineAgent = (
   if (options.approvalJumpVisible !== undefined) (lockState.approvalJumpVisible as ValueRef<boolean>).value = options.approvalJumpVisible
   if (options.followJumpVisible !== undefined) {
     context.followJumpVisible = Vue.computed(() => options.followJumpVisible && !(lockState.approvalJumpVisible as ValueRef<boolean>).value)
-    context.transcriptReadingProgress = Vue.computed(() => (options.followJumpVisible ? 1 : 0))
   }
   const componentStub = Vue.defineComponent({
     inheritAttrs: false,
@@ -1327,7 +1331,7 @@ describe('Inline Agent workspace actions', () => {
     })
   }
 
-  it('starts a pristine chat without prompting even when generation tools are enabled by default', async () => {
+  it('starts a pristine chat without prompting when generation capabilities are available', async () => {
     const workspace = realWorkspace()
     workspace.store.profiles = [
       {
@@ -1338,7 +1342,6 @@ describe('Inline Agent workspace actions', () => {
     const state = workspace.state()
     const mounted = mountInlineAgent(state)
     await settle()
-    expect(mounted.root.querySelector('.agent-composer__create')?.getAttribute('data-state')).toBe('selected')
     const next = threadFixture('00000000-0000-4000-8000-000000000004')
     workspace.creations.push({ retention: 'saved', thread: next })
     mounted.root.querySelector<HTMLButtonElement>('[aria-label="New chat"]')?.click()
@@ -2414,6 +2417,94 @@ describe('Inline Agent conversation starters', () => {
   })
 })
 
+describe('Inline Agent initialization admission', () => {
+  for (const rawError of ['A same-origin request is required.', 'Agent permission denied.']) {
+    it(`keeps a 403 admission failure separate from connectivity and retries only a fresh read (${rawError})`, async () => {
+      const workspace = realWorkspace()
+      workspace.authorization.pending = Promise.resolve(Response.json({ error: rawError }, { status: 403 }))
+      workspace.store.initializedWorkspaceVersion = null
+      const state = workspace.state()
+      state.componentProps.resumeSessionId = sessionId
+      const mounted = mountInlineAgent(state)
+      await settle()
+
+      const alert = mounted.root.querySelector<HTMLElement>('.inline-agent__admission-alert')
+      expect(alert?.getAttribute('role')).toBe('alert')
+      expect(alert?.textContent).toContain('access permission')
+      expect(alert?.textContent).toContain('configured address')
+      expect(alert?.textContent).not.toContain(rawError)
+      expect(workspace.store.error).not.toContain(rawError)
+      expect(mounted.root.querySelector('.inline-agent__connection-alert')).toBeNull()
+      expect(workspace.store.initializationAdmissionFailure).toBe('access')
+      expect(workspace.store.isWorkspaceReady()).toBe(false)
+      expect(workspace.store.isWorkspaceMutationReady()).toBe(false)
+      expect(state.canSubmit.value).toBe(false)
+      expect(await state.sendPrompt('Do not send while admission is blocked')).toBe(false)
+      expect(await workspace.store.newSession('saved')).toBe(false)
+
+      const blockedRequests = workspace.requests.length
+      workspace.store.handleVisibilityChange()
+      testPwaState.connectionState = 'offline'
+      await settle()
+      testPwaState.connectionState = 'online'
+      await settle()
+      expect(workspace.requests).toHaveLength(blockedRequests)
+      expect(state.connectionProbe).not.toHaveBeenCalled()
+      expect(workspace.store.isWorkspaceMutationReady()).toBe(false)
+
+      workspace.authorization.pending = null
+      const retry = alert?.querySelector<HTMLButtonElement>('button')
+      expect(retry?.textContent).toContain('Retry opening conversation')
+      retry?.click()
+      await settle()
+      expect(state.connectionProbe).not.toHaveBeenCalled()
+      expect(workspace.requests.slice(blockedRequests).some(request => request.path === `/_api/agents/sessions/${sessionId}` && request.method === 'GET')).toBe(
+        true
+      )
+      expect(workspace.requests.every(request => request.method === 'GET')).toBe(true)
+      expect(workspace.store.initializationAdmissionFailure).toBeNull()
+      expect(workspace.store.isWorkspaceMutationReady()).toBe(true)
+      expect(state.canSubmit.value).toBe(true)
+      expect(mounted.root.querySelector('.inline-agent__admission-alert')).toBeNull()
+    })
+  }
+
+  it('preserves identity loss on 401 without misreporting an offline workspace', async () => {
+    const workspace = realWorkspace()
+    workspace.authorization.pending = Promise.resolve(Response.json({ error: 'Internal authentication detail' }, { status: 401 }))
+    workspace.store.initializedWorkspaceVersion = null
+    workspace.store.setDraft(sessionId, 'Private draft')
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state)
+    await settle()
+    const alert = mounted.root.querySelector<HTMLElement>('.inline-agent__admission-alert')
+    expect(alert?.textContent).toContain('Sign in again')
+    expect(alert?.textContent).not.toContain('Internal authentication detail')
+    expect(mounted.root.querySelector('.inline-agent__connection-alert')).toBeNull()
+    expect(workspace.store.thread).toBeNull()
+    expect(workspace.store.drafts).toEqual({})
+    expect(workspace.store.pinOwnerId).toBeNull()
+    expect(workspace.store.initializationAdmissionFailure).toBe('authentication')
+    expect(workspace.store.isWorkspaceReady()).toBe(false)
+    expect(workspace.store.isWorkspaceMutationReady()).toBe(false)
+    expect(state.connectionProbe).not.toHaveBeenCalled()
+  })
+
+  it('still offers connection recovery for transient service failures', async () => {
+    const workspace = realWorkspace()
+    workspace.authorization.pending = Promise.resolve(Response.json({ error: 'Service unavailable' }, { status: 503 }))
+    workspace.store.initializedWorkspaceVersion = null
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state)
+    await settle()
+    expect(workspace.store.initializationAdmissionFailure).toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__admission-alert')).toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__connection-alert')?.textContent).toContain('Retry connection')
+    expect(state.canSubmit.value).toBe(false)
+    expect(workspace.store.isWorkspaceMutationReady()).toBe(false)
+  })
+})
+
 describe('Inline Agent header actions', () => {
   it('opens Memory from its own toggle beside History', async () => {
     const lockState = loadGoalLockState(null)
@@ -2469,15 +2560,6 @@ describe('Inline Agent header actions', () => {
     expect(alerts()).toHaveLength(1)
     expect(alerts()[0]?.textContent).toContain('The conversation could not be opened.')
     expect(alerts()[0]?.textContent).toContain('Retry opening conversation')
-  })
-
-  it('keeps the composer readable while the reader scrolls back', () => {
-    const lockState = loadGoalLockState(null)
-    const mounted = mountInlineAgent(lockState, { followJumpVisible: true })
-    const composer = mounted.root.querySelector<HTMLElement>('.inline-agent__composer')
-    expect(Number(composer?.style.getPropertyValue('--agent-composer-opacity'))).toBeCloseTo(0.85, 5)
-    const latest = mounted.root.querySelector<HTMLElement>('.inline-agent__follow-jump')
-    expect(latest?.style.opacity ?? '').toBe('')
   })
 })
 

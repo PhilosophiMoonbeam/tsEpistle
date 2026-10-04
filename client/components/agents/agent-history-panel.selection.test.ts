@@ -210,6 +210,7 @@ const loadPanel = (
     'onWatcherCleanup',
     'ref',
     'shallowRef',
+    'useId',
     'useTemplateRef',
     'watch',
     'storeToRefs',
@@ -288,6 +289,7 @@ const loadPanel = (
     onWatcherCleanup,
     ref,
     ref,
+    () => 'history-harness',
     useTemplateRef,
     (source: unknown, callback: WatchCallback, options?: { immediate?: boolean }) => {
       const isArraySource = Array.isArray(source)
@@ -919,7 +921,7 @@ describe('Agent history session selection', () => {
     expect(panel.removingFolder.value).toBeNull()
   })
 
-  it('does not announce or project a folder delete when the store reports no commit', async () => {
+  it('reports a folder no-commit without closing confirmation or projecting deletion', async () => {
     const folder = makeFolder()
     const session = makeSession({ folderId: folder.id, retention: 'saved' })
     const deleteFolder = vi.fn().mockResolvedValue(false)
@@ -936,8 +938,69 @@ describe('Agent history session selection', () => {
 
     expect(deleteFolder).toHaveBeenCalledWith(folder.id, folder.version)
     expect(panel.removingFolder.value).toBe(folder)
+    expect(panel.dialogError.value).toMatch(/could not|failed|unable/i)
     expect(panel.dragStatus.value).toBe('')
     expect(panel.displaySessions.value.find(candidate => candidate.id === session.id)?.folderId).toBe(folder.id)
+  })
+
+  it('reports a conversation no-commit without closing confirmation or hiding the conversation', async () => {
+    const session = makeSession()
+    const removeSession = vi.fn().mockResolvedValue(false)
+    const reloadSessions = vi.fn()
+    const panel = loadPanel(
+      {
+        error: '',
+        openSession: vi.fn().mockResolvedValue(false),
+        cancelSessionReadTransition: vi.fn(),
+        removeSession,
+        reloadSessions
+      },
+      true,
+      [session]
+    )
+
+    panel.beginDeleteSession(session, null)
+    await panel.deleteSession()
+
+    expect(removeSession).toHaveBeenCalledWith(session.id)
+    expect(panel.deletingSession.value).toBe(session)
+    expect(panel.dialogError.value).toMatch(/could not|failed|unable/i)
+    expect(panel.displaySessions.value).toEqual([session])
+    expect(reloadSessions).not.toHaveBeenCalled()
+  })
+
+  it.each(['conversation', 'folder'] as const)('keeps a stale %s no-commit silent after workspace identity changes', async kind => {
+    const folder = makeFolder()
+    const session = makeSession({ folderId: folder.id, retention: 'saved' })
+    let resolveCommit!: (committed: boolean) => void
+    const mutation = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveCommit = resolve
+        })
+    )
+    const panel = loadPanel(
+      {
+        error: '',
+        openSession: vi.fn().mockResolvedValue(false),
+        cancelSessionReadTransition: vi.fn(),
+        removeSession: mutation,
+        deleteFolder: mutation
+      },
+      true,
+      [session],
+      [folder]
+    )
+
+    if (kind === 'conversation') panel.beginDeleteSession(session, null)
+    else panel.beginRemoveFolder(folder)
+    const operation = kind === 'conversation' ? panel.deleteSession() : panel.deleteFolder()
+    panel.ownerContext.value = { ...panel.ownerContext.value, workspaceVersion: 1 }
+    resolveCommit(false)
+    await operation
+
+    expect(panel.dialogError.value).toBe('')
+    expect(panel.displaySessions.value).toEqual([session])
   })
 
   it('restores focus to the conversation action trigger when rename is cancelled', async () => {

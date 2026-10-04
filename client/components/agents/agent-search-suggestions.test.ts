@@ -7,6 +7,7 @@ import { resetBody } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 
 resetBody()
 
@@ -34,6 +35,7 @@ const renderSuggestions = async (suggestions: readonly string[]): Promise<string
     render
   })
   const app = Vue.createSSRApp(component, { suggestions })
+  app.config.globalProperties.$t = translateEnglish
   app.component('v-icon', Vue.defineComponent({ render: () => null }))
   return renderToString(app)
 }

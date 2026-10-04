@@ -18,6 +18,7 @@ import { fetchWikiSource } from '../helpers/wiki-source.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
+import { translate } from '../modules/localization.ts'
 import type {
   AgentConversationFolderView,
   AgentCurrentPageHint,
@@ -207,6 +208,7 @@ export const useAgentsStore = defineStore('agents', {
     error: '',
     connection: 'idle' as 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed',
     networkPaused: false,
+    initializationAdmissionFailure: null as 'access' | 'authentication' | null,
     eventSequence: 0,
     source: null as EventSource | null,
     googleSearchSuggestions: null as {
@@ -256,6 +258,7 @@ export const useAgentsStore = defineStore('agents', {
       state.initializedWorkspaceVersion === state.workspaceVersion &&
       !state.loading &&
       !state.networkPaused &&
+      state.initializationAdmissionFailure === null &&
       state.sessionTransitionController === null &&
       state.sessionMutationToken === null &&
       state.thread !== null &&
@@ -316,6 +319,7 @@ export const useAgentsStore = defineStore('agents', {
       this.pinOwnerId = options.ownerId
       this.cancelSessionTransition()
       this.networkPaused = true
+      this.initializationAdmissionFailure = null
       this.profilesLoadGeneration += 1
       this.profilesLoadController?.abort()
       this.profilesLoadController = null
@@ -417,12 +421,24 @@ export const useAgentsStore = defineStore('agents', {
             clearAgentChatRecent()
           }
         }
-        if (initialized && isCurrent()) this.initializedWorkspaceVersion = workspaceVersion
+        if (initialized && isCurrent()) {
+          this.initializedWorkspaceVersion = workspaceVersion
+          this.initializationAdmissionFailure = null
+        }
         return initialized
       } catch (error) {
         if (isCurrent()) {
-          if (error instanceof AgentApiError && error.status === 401) this.destroyWorkspace()
-          else this.error = error instanceof Error ? error.message : 'Agent session failed to load.'
+          initialized = false
+          this.initializedWorkspaceVersion = null
+          this.networkPaused = true
+          if (error instanceof AgentApiError && error.status === 401) {
+            this.destroyWorkspace()
+            this.initializationAdmissionFailure = 'authentication'
+            this.error = translate('common:agentWorkspace.authenticationRequiredMessage')
+          } else if (error instanceof AgentApiError && error.status === 403) {
+            this.initializationAdmissionFailure = 'access'
+            this.error = translate('common:agentWorkspace.admissionRequiredMessage')
+          } else this.error = error instanceof Error ? error.message : 'Agent session failed to load.'
         }
         return false
       } finally {
@@ -551,7 +567,13 @@ export const useAgentsStore = defineStore('agents', {
       return this.isWorkspaceCurrent(workspaceVersion) && this.pinOwnerId === ownerId && this.ownerGeneration === ownerGeneration
     },
     isWorkspaceMutationReady(): boolean {
-      return !this.workspaceDisposed && !this.loading && !this.networkPaused && this.initializedWorkspaceVersion === this.workspaceVersion
+      return (
+        !this.workspaceDisposed &&
+        !this.loading &&
+        !this.networkPaused &&
+        this.initializationAdmissionFailure === null &&
+        this.initializedWorkspaceVersion === this.workspaceVersion
+      )
     },
     isWorkspaceReady(): boolean {
       return this.isWorkspaceMutationReady() && (this.connection === 'idle' || this.connection === 'connected')
@@ -637,6 +659,7 @@ export const useAgentsStore = defineStore('agents', {
       this.workspaceVersion += 1
       this.workspaceDisposed = true
       this.networkPaused = true
+      this.initializationAdmissionFailure = null
       this.profilesLoadGeneration += 1
       this.profilesLoadController?.abort()
       this.profilesLoadController = null
@@ -769,11 +792,13 @@ export const useAgentsStore = defineStore('agents', {
           : null
       // A successful create is an authoritative read for the new resource.
       this.initializedWorkspaceVersion = this.workspaceVersion
+      this.initializationAdmissionFailure = null
       this.networkPaused = false
       this.connectCurrentRun()
     },
     async openSession(sessionId: string, options: { readonly preservePin?: boolean } = {}): Promise<boolean> {
-      if (this.workspaceDisposed || !isAgentSessionId(sessionId) || this.sessionMutationToken !== null) return false
+      if (this.workspaceDisposed || this.initializationAdmissionFailure !== null || !isAgentSessionId(sessionId) || this.sessionMutationToken !== null)
+        return false
       const workspaceVersion = this.workspaceVersion
       const ownerId = this.pinOwnerId
       const ownerGeneration = this.ownerGeneration
@@ -795,6 +820,7 @@ export const useAgentsStore = defineStore('agents', {
         if (this.routeSync) window.history.replaceState(null, '', `/sessions/${sessionId}`)
         // The candidate was just authorized by a fresh thread read.
         this.initializedWorkspaceVersion = workspaceVersion
+        this.initializationAdmissionFailure = null
         this.networkPaused = false
         this.connectCurrentRun()
         return true
@@ -816,7 +842,8 @@ export const useAgentsStore = defineStore('agents', {
       const sessionId = this.thread?.session.id
       const ownerId = this.pinOwnerId
       const ownerGeneration = this.ownerGeneration
-      if (!sessionId || !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration)) return refreshResult(false, false)
+      if (!sessionId || this.initializationAdmissionFailure !== null || !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration))
+        return refreshResult(false, false)
       if (document.visibilityState === 'hidden') return refreshResult(false, true)
       const generation = this.refreshGeneration + 1
       this.refreshGeneration = generation
@@ -834,6 +861,7 @@ export const useAgentsStore = defineStore('agents', {
         if (!isCurrent()) return refreshResult(false, false)
         this.thread = markRaw(refreshed)
         this.initializedWorkspaceVersion = workspaceVersion
+        this.initializationAdmissionFailure = null
         this.networkPaused = false
         return refreshResult(true, true)
       } catch (error) {
@@ -2068,6 +2096,7 @@ export const useAgentsStore = defineStore('agents', {
       this.connection = this.thread?.session.currentRun?.canCancel ? 'idle' : 'closed'
     },
     handleVisibilityChange() {
+      if (this.initializationAdmissionFailure !== null) return
       if (document.visibilityState === 'hidden') {
         this.pauseNetwork()
         return

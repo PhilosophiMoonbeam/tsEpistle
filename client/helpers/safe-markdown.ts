@@ -43,8 +43,8 @@ const containsControlCharacter = (value: string): boolean => {
   return false
 }
 
-const safeCitationHref = (href: string | null | undefined): string | null => {
-  if (!href || containsControlCharacter(href) || href.startsWith('//')) return null
+export const safeCitationHref = (href: string | null | undefined): string | null => {
+  if (!href || containsControlCharacter(href) || href.includes('"') || href.includes("'") || href.startsWith('//')) return null
   try {
     const url = new URL(href, 'https://wiki.invalid')
     if (!['http:', 'https:'].includes(url.protocol)) return null

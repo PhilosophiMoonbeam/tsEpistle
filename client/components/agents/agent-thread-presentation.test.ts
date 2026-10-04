@@ -6,6 +6,8 @@ import { createAgentCitationResolver, formatAgentCitationMarkers } from './agent
 import {
   agentActivityLabel,
   agentAppliedPageLinks,
+  agentApprovalTitle,
+  agentProposalReceiptLabel,
   agentLiveAnnouncement,
   buildAgentThreadPresentation,
   groupAgentCitations,
@@ -103,6 +105,25 @@ const task = (input: Partial<AgentTaskView> & Pick<AgentTaskView, 'id' | 'runId'
 })
 
 describe('Agent thread presentation', () => {
+  it('keeps approval and receipt copy translatable at the consumer boundary', () => {
+    const createTitle = agentApprovalTitle('pages.prepareCreate')
+    const deleteTitle = agentApprovalTitle('pages.prepareDelete')
+    const genericTitle = agentApprovalTitle('pages.search')
+    const pendingReceipt = agentProposalReceiptLabel('pending')
+    const appliedReceipt = agentProposalReceiptLabel('applied')
+    const recoveryReceipt = agentProposalReceiptLabel('recovery_required')
+
+    for (const descriptor of [createTitle, deleteTitle, genericTitle, pendingReceipt, appliedReceipt, recoveryReceipt]) {
+      expect(typeof descriptor.key).toBe('string')
+      expect(text(descriptor)).not.toBe(descriptor.key)
+      expect(text(descriptor).length).toBeGreaterThan(0)
+    }
+    expect(text(createTitle)).not.toBe(text(deleteTitle))
+    expect(text(genericTitle)).not.toBe(text(createTitle))
+    expect(text(pendingReceipt)).not.toBe(text(appliedReceipt))
+    expect(text(recoveryReceipt)).not.toBe(text(appliedReceipt))
+  })
+
   it('groups routine activity and approval proposals with their originating run', () => {
     const patch = proposal({ id: 'proposal-1' })
     const runs = groupAgentToolsByRun(

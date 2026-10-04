@@ -254,6 +254,25 @@ describe('Clearable skill inventory searches', () => {
   })
 })
 
+describe('Personal skill source ownership', () => {
+  it('updates an untouched frontmatter name but keeps manual source edits when the name field changes', async () => {
+    const dependencies = personalDependencies(() => [])
+    const mounted = mountInventory(personalInventory, dependencies)
+    await settle()
+    const name = field<HTMLInputElement>('.personal-editor input')
+    const source = field<HTMLTextAreaElement>('.personal-editor textarea')
+    await enterText(name, 'initial-name')
+    expect(source.value).toContain('\nname: initial-name\n')
+
+    const manualSource = source.value.replace(/^name:[^\r\n]*/m, 'name: manually-edited-name')
+    await enterText(source, manualSource)
+    await enterText(name, 'different-field-name')
+    expect(source.value).toBe(manualSource)
+    expect(dependencies.createPersonalAgentSkill).not.toHaveBeenCalled()
+    expect(mounted.errors).toEqual([])
+  })
+})
+
 describe('Personal skill refresh reconciliation', () => {
   it('resets a clean deleted editor instead of keeping the removed skill as an implicit create draft', async () => {
     const removed = personalSkill('removed-skill')
@@ -263,14 +282,18 @@ describe('Personal skill refresh reconciliation', () => {
     await settle()
     field<HTMLElement>('.personal-skill-item').click()
     await settle()
+    buttonNamed(document.body, translateEnglish('common:agentPersonalSkills.removeSkill')).click()
+    await settle()
     expect(field<HTMLInputElement>('.personal-editor input').value).toBe('removed-skill')
     skills = []
     await refreshPersonal(mounted)
-    expect(field<HTMLInputElement>('.personal-editor input').value).toBe('my-skill')
+    expect(field<HTMLInputElement>('.personal-editor input').value).not.toBe('removed-skill')
     expect(field<HTMLTextAreaElement>('.personal-editor textarea').value).not.toContain('Original instructions')
     expect(buttonNamed(document.body, translateEnglish('common:agentPersonalSkills.createSkill')).disabled).toBe(false)
     expect(dependencies.createPersonalAgentSkill).not.toHaveBeenCalled()
     expect(dependencies.updatePersonalAgentSkill).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain(translateEnglish('common:agentPersonalSkills.removeTargetNoLongerAvailable'))
+    expect(dependencies.removePersonalAgentSkill).not.toHaveBeenCalled()
   })
 
   it('preserves a dirty removed draft, blocks recreation, and still requires an explicit discard choice', async () => {
@@ -281,6 +304,8 @@ describe('Personal skill refresh reconciliation', () => {
     field<HTMLElement>('.personal-skill-item').click()
     await settle()
     await enterText(field<HTMLTextAreaElement>('.personal-editor textarea'), 'My unsaved instructions')
+    buttonNamed(document.body, translateEnglish('common:agentPersonalSkills.removeSkill')).click()
+    await settle()
     skills = []
     await refreshPersonal(mounted)
     expect(field<HTMLTextAreaElement>('.personal-editor textarea').value).toBe('My unsaved instructions')
@@ -289,6 +314,8 @@ describe('Personal skill refresh reconciliation', () => {
     await settle()
     expect(dependencies.createPersonalAgentSkill).not.toHaveBeenCalled()
     expect(dependencies.updatePersonalAgentSkill).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain(translateEnglish('common:agentPersonalSkills.editedSkillRemoved'))
+    expect(dependencies.removePersonalAgentSkill).not.toHaveBeenCalled()
 
     buttonNamed(document.body, translateEnglish('common:agentPersonalSkills.newSkill')).click()
     await settle()
@@ -300,7 +327,7 @@ describe('Personal skill refresh reconciliation', () => {
     await settle()
     buttonNamed(document.body, translateEnglish('common:agentPersonalSkills.discardChanges2')).click()
     await settle()
-    expect(field<HTMLInputElement>('.personal-editor input').value).toBe('my-skill')
+    expect(field<HTMLInputElement>('.personal-editor input').disabled).toBe(false)
     expect(mounted.errors).toEqual([])
   })
 })
@@ -333,6 +360,53 @@ describe('Bundled organization skill identity', () => {
     expect(mounted.host.textContent).toContain(translateEnglish('admin:skillAdmin.sourcePagesCouldNot'))
     expect(mounted.host.textContent).not.toContain('Untrusted internal source error')
     expect(buttonNamed(mounted.host, translateEnglish('admin:skillAdmin.retrySourceSearch'))).toBeDefined()
+    expect(mounted.errors).toEqual([])
+  })
+})
+
+describe('Organization skill source selection', () => {
+  it('keeps selected references read-only and retains them for manual editing after clearing the page', async () => {
+    const sourcePage = { id: 42, title: 'Guidance source', path: '_skills/guidance', locale: 'en' }
+    const dependencies = {
+      sameOriginJsonFetch: vi.fn(async (_fetcher: unknown, url: string) => {
+        if (url.startsWith('/_api/agents/admin/skills/sources?')) {
+          return new Response(JSON.stringify({ namespace: '_skills', pages: [sourcePage], hasMore: false }))
+        }
+        return new Response(JSON.stringify(url === '/_api/groups' ? [] : { skills: [] }))
+      })
+    }
+    const mounted = mountInventory(organizationInventory, dependencies)
+    await settle()
+    buttonNamed(mounted.host, translateEnglish('admin:skillAdmin.mapOrganizationSkill')).click()
+    await settle()
+    const picker = field<HTMLInputElement>('#skill-create-form .v-autocomplete input')
+    picker.dispatchEvent(new browserWindow.MouseEvent('mousedown', { bubbles: true }))
+    await settle()
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('.v-list-item')).find(
+      item => item.querySelector('.v-list-item-title')?.textContent?.trim() === sourcePage.title
+    )
+    if (!option) throw new Error('The source page option did not render')
+    option.click()
+    await settle()
+
+    const rootPageId = field<HTMLInputElement>('.skill-source-references input[type="number"]')
+    const rootPath = field<HTMLInputElement>('.skill-form-grid__wide input')
+    expect(rootPageId.value).toBe(String(sourcePage.id))
+    expect(rootPath.value).toBe(sourcePage.path)
+    expect(rootPageId.readOnly).toBe(true)
+    expect(rootPath.readOnly).toBe(true)
+    field<HTMLElement>('#skill-create-form .v-autocomplete .v-field__clearable .v-icon').click()
+    await yieldEventLoop()
+    await settle()
+    expect(rootPageId.readOnly).toBe(false)
+    expect(rootPath.readOnly).toBe(false)
+    expect(rootPageId.value).toBe(String(sourcePage.id))
+    expect(rootPath.value).toBe(sourcePage.path)
+
+    await enterText(rootPageId, '84')
+    await enterText(rootPath, 'handbook/guidance')
+    expect(rootPageId.value).toBe('84')
+    expect(rootPath.value).toBe('handbook/guidance')
     expect(mounted.errors).toEqual([])
   })
 })

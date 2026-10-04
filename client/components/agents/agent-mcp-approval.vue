@@ -196,6 +196,7 @@
         <section
           v-if="proposal.approval.status === 'pending' && !locallyExpired && !acceptedDecisionForProposal"
           class="operation-section decision-zone"
+          ref="decisionZone"
           :aria-labelledby="decisionTitleId"
         >
           <div class="operation-section__heading">
@@ -288,11 +289,24 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
+import i18next from 'i18next'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 import type { AgentRefreshResult } from '../../store/agents.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
-const t = useTranslate()
+const translate = useTranslate()
+const localeRevision = ref(0)
+const refreshLocale = (): void => { localeRevision.value += 1 }
+i18next.on('languageChanged', refreshLocale)
+i18next.on('loaded', refreshLocale)
+onBeforeUnmount(() => {
+  i18next.off('languageChanged', refreshLocale)
+  i18next.off('loaded', refreshLocale)
+})
+const t: typeof translate = (key, options) => {
+  void localeRevision.value
+  return translate(key, options)
+}
 
 const props = defineProps<{ csrfToken: string; proposalId: string; networkBlocked?: boolean }>()
 const instanceId = useId()
@@ -323,6 +337,7 @@ const confirmationPath = ref('')
 const clockTick = ref(0)
 type ComponentRoot = { $el?: unknown }
 const settledReceipt = useTemplateRef<ComponentRoot | HTMLElement>('settledReceipt')
+const decisionZone = useTemplateRef<HTMLElement>('decisionZone')
 const errorAlert = useTemplateRef<ComponentRoot | HTMLElement>('errorAlert')
 const networkBlocked = computed(() => props.networkBlocked === true)
 const componentGeneration = ref(0)
@@ -362,14 +377,14 @@ const statusColors: Readonly<Record<ApprovalSurfaceStatus, string | undefined>> 
   expired: 'warning'
 }
 
-const actionLabels: Partial<Record<McpAgentProposal['actionName'], string>> = {
+const actionLabels = computed<Partial<Record<McpAgentProposal['actionName'], string>>>(() => ({
   'pages.prepareCreate': t('common:agentMcpApproval.createWikiPage'),
   'pages.preparePatch': t('common:agentMcpApproval.editWikiPage'),
   'pages.prepareMove': t('common:agentMcpApproval.moveWikiPage'),
   'pages.prepareRestore': t('common:agentMcpApproval.restoreWikiPage'),
   'pages.prepareDelete': t('common:agentMcpApproval.deleteWikiPage')
-}
-const proposalStatusLabels: Record<McpAgentProposal['status'], string> = {
+}))
+const proposalStatusLabels = computed<Record<McpAgentProposal['status'], string>>(() => ({
   pending: t('common:agentMcpApproval.awaitingDecision'),
   approved: t('common:agentMcpApproval.approvedWaitingApply'),
   denied: t('common:agentMcpApproval.denied'),
@@ -379,7 +394,7 @@ const proposalStatusLabels: Record<McpAgentProposal['status'], string> = {
   failed: t('common:agentMcpApproval.operationFailed'),
   cancelled: t('common:agentMcpApproval.cancelled'),
   recovery_required: t('common:agentMcpApproval.recoveryRequired')
-}
+}))
 const captureIdentity = (proposalId = props.proposalId): ApprovalIdentity => ({
   csrfToken: props.csrfToken,
   proposalId,
@@ -406,7 +421,7 @@ const acceptedDecisionForProposal = computed(() => {
   if (!decision || decision.proposalId !== props.proposalId || decision.csrfToken !== props.csrfToken) return null
   return decision
 })
-const actionLabel = computed(() => proposal.value ? actionLabels[proposal.value.actionName] ?? t('common:agentMcpApproval.reviewWikiOperation') : t('common:agentMcpApproval.reviewWikiOperation'))
+const actionLabel = computed(() => proposal.value ? actionLabels.value[proposal.value.actionName] ?? t('common:agentMcpApproval.reviewWikiOperation') : t('common:agentMcpApproval.reviewWikiOperation'))
 const approveLabel = computed(() => proposal.value?.risk === 'destructive-write' ? t('common:agentMcpApproval.approvePageDeletion') : t('common:agentMcpApproval.approveReviewedProposal'))
 const hasExpired = (expiresAt: string): boolean => new Date(expiresAt).valueOf() <= Date.now()
 const locallyExpired = computed(() => {
@@ -438,7 +453,7 @@ const statusLabel = computed(() => {
   if (acceptedDecisionForProposal.value?.decision === 'denied') return t('common:agentMcpApproval.denied')
   if (acceptedDecisionForProposal.value?.decision === 'approved' && proposal.value.status === 'pending') return t('common:agentMcpApproval.approved')
   if (proposal.value.approval.status === 'approved' && proposal.value.status === 'pending') return t('common:agentMcpApproval.approved')
-  return proposalStatusLabels[proposal.value.status]
+  return proposalStatusLabels.value[proposal.value.status]
 })
 const statusIcon = computed(() => statusIcons[statusKey.value])
 const statusColor = computed(() => statusColors[statusKey.value])
@@ -498,8 +513,11 @@ const decisionStageLabel = computed(() => statusKey.value === 'pending'
 const decisionReviewCopy = computed(() => reviewAdequate.value
   ? t('common:agentMcpApproval.approveAuthorizesOnlyEffect')
   : t('common:agentMcpApproval.approvalUnavailableBecauseNeither'))
-const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-const formatTimestamp = (value: string): string => dateFormatter.format(new Date(value))
+const dateFormatter = computed(() => {
+  void localeRevision.value
+  return new Intl.DateTimeFormat(i18next.resolvedLanguage || i18next.language || undefined, { dateStyle: 'medium', timeStyle: 'short' })
+})
+const formatTimestamp = (value: string): string => dateFormatter.value.format(new Date(value))
 const formatDuration = (start: string, end: string | null): string => {
   if (!end) void clockTick.value
   const milliseconds = Math.max(0, (end ? new Date(end).valueOf() : Date.now()) - new Date(start).valueOf())
@@ -760,6 +778,13 @@ watch(proposalReadStateKey, () => {
 }, { flush: 'sync' })
 watch(locallyExpired, expired => {
   if (!expired) return
+  const focusedControl = decisionZone.value?.contains(document.activeElement) ? document.activeElement : null
+  const identity = captureIdentity()
+  if (focusedControl) void nextTick(() => {
+    if (!isBaseIdentityCurrent(identity) || !locallyExpired.value) return
+    if (document.activeElement !== focusedControl && document.activeElement !== document.body) return
+    componentElement(settledReceipt.value)?.focus()
+  })
   invalidateDecisionReadiness()
   stopClockTimer()
   clearExpiryDeadline()

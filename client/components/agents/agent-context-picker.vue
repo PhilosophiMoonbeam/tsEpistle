@@ -57,7 +57,7 @@
         </button>
       </template>
     </v-tooltip>
-    <div v-if="draft.sources.length" class="agent-context__sources" :aria-label="$t('common:agentContextPicker.pagesAttachedNextMessage')">
+    <div v-if="draft.sources.length" class="agent-context__sources" role="region" tabindex="0" :aria-label="$t('common:agentContextPicker.pagesAttachedNextMessage')">
       <v-chip
         v-for="source in draft.sources"
         :key="source.id"
@@ -157,9 +157,9 @@
             {{ attachmentError }}
           </v-alert>
 
-          <section v-if="selectedRows.length" class="agent-context__pending" aria-labelledby="agent-sources-pending-title">
+          <section v-if="selectedRows.length" class="agent-context__pending" :aria-labelledby="`${sourceDialogId}-pending-title`">
             <div class="agent-context__pending-heading">
-              <h3 id="agent-sources-pending-title">{{ $t('common:agentContextPicker.pendingAdditions') }}</h3>
+              <h3 :id="`${sourceDialogId}-pending-title`">{{ $t('common:agentContextPicker.pendingAdditions') }}</h3>
               <span>{{ $t('common:agentContextPicker.n8', { selectedRowsCount: selectedRows.length, interpolation: { escapeValue: false } }) }}</span>
             </div>
             <div class="agent-context__pending-list">
@@ -680,14 +680,17 @@ onBeforeUnmount(() => {
   order: 1;
   min-width: 0;
   max-width: 100%;
-  max-height: 4rem;
+  max-height: 6rem;
   flex: 1 1 100%;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--wiki-space-1);
-  overflow-y: auto;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
   overscroll-behavior: contain;
 }
+.agent-context__sources:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
 .agent-context__sources .v-chip { max-width: 100%; border-radius: var(--wiki-radius-pill); }
 .agent-context__source-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-context__preview-icon { flex: 0 0 auto; margin-inline-start: var(--wiki-space-1); color: var(--wiki-text-muted); }
