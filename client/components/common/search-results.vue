@@ -39,7 +39,6 @@
         @ask='askSource'
       )
       .search-results-search(v-if='!isAgentOpen' @click.stop)
-        //- The header field is the visible input; the panel title stays for assistive technology only.
         h2#wiki-search-title.sr-only {{ $t('common:searchPanel.title') }}
         .search-results-instructions.sr-only#wiki-search-instructions {{ $t('common:searchPanel.instructions') }}
         .search-results-scope
@@ -54,20 +53,6 @@
               :aria-pressed='offlineSearchActive === scope.downloaded'
               @click='selectSearchScope(scope.id)'
             ) {{ $t(`common:searchPanel.${scope.label}`) }}
-            v-btn.search-results-scope-filter(
-              v-for='filter of searchScopeFilters'
-              :key='filter.key'
-              size='small'
-              :prepend-icon='filter.icon'
-              :variant='filter.pressed ? `tonal` : `text`'
-              :color='filter.pressed ? `primary` : undefined'
-              :aria-pressed='filter.pressed'
-              :aria-disabled='offlineSearchActive ? `true` : undefined'
-              :aria-label='filter.ariaLabel'
-              @click='filter.toggle'
-            )
-              | {{ filter.label }}
-              v-tooltip(activator='parent' location='bottom' :disabled='!offlineSearchActive' :text='$t(`common:searchPanel.scopeNeedsServer`)')
           v-btn.search-results-close(
             size='small'
             variant='text'
@@ -75,6 +60,26 @@
             @click='closeSearch'
             data-modal-focus-key='search-close'
           ) {{ $t('common:searchPanel.closeSearch') }}
+        .search-results-filters(v-if='searchScopeFilters.length')
+          .search-results-filter-context
+            span {{ $t('common:searchPanel.filterContext') }}
+            span.search-results-filter-path {{ currentPageLocale.toLocaleUpperCase() }}{{ currentPagePath ? ` / ${currentPagePath}` : '' }}
+          .search-results-filter-actions(role='group' :aria-label='$t(`common:searchPanel.filtersLabel`)')
+            v-btn.search-results-scope-filter(
+              v-for='filter of searchScopeFilters'
+              :key='filter.key'
+              size='small'
+              :prepend-icon='filter.icon'
+              :variant='!offlineSearchActive && filter.pressed ? `tonal` : `text`'
+              :color='!offlineSearchActive && filter.pressed ? `primary` : undefined'
+              :aria-pressed='!offlineSearchActive && filter.pressed'
+              :aria-disabled='offlineSearchActive ? `true` : undefined'
+              :aria-label='filter.ariaLabel'
+              :aria-describedby='offlineSearchActive ? `wiki-search-filter-reason` : undefined'
+              @click='filter.toggle'
+            ) {{ filter.label }}
+            v-btn(v-if='hasActiveSearchFilters' size='small' variant='text' prepend-icon='mdi-filter-remove-outline' @click='clearSearchScope') {{ $t('common:searchPanel.clearFilters') }}
+          p.search-results-reason#wiki-search-filter-reason(v-if='offlineSearchActive') {{ $t('common:searchPanel.scopeNeedsServer') }}
         .search-results-content
           .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
             .search-results-capability-note-title {{ serverUnavailable ? $t('common:searchPanel.serverUnavailableTitle') : $t('common:searchPanel.scopeDownloaded') }}
@@ -87,6 +92,9 @@
               :loading='serverRetryPending'
               @click='retrySearch'
             ) {{ $t('common:searchPanel.retryConnection') }}
+          .search-results-query-context(v-if='normalizedSearch.length >= 2')
+            h3 {{ $t('common:searchPanel.resultsFor', { query: normalizedSearch }) }}
+            p {{ searchContextLabel }}
           .search-results-help(v-if='normalizedSearch.length < 2')
             .search-results-help-mark(aria-hidden='true')
               v-icon(icon='mdi-text-search' size='34')
@@ -103,13 +111,13 @@
               span.search-results-syntax-tip
                 kbd or
                 | {{ $t('common:searchPanel.tipEither') }}
-          .search-results-loader(v-else-if='searchIsLoading')
+          .search-results-loader(v-else-if='searchIsLoading && !results.length && !suggestions.length')
             async-state(
               state='loading'
               :title='$t(`common:header.searchLoading`)'
               :message='searchLoadingMessage'
             )
-          .search-results-none(v-else-if='searchError')
+          .search-results-none(v-else-if='searchError && !results.length && !suggestions.length')
             async-state(
               state='error'
               :title='offlineSearchActive ? $t(`common:searchPanel.errorTitleDownloaded`) : $t(`common:searchPanel.errorTitle`)'
@@ -118,41 +126,49 @@
               @retry='retrySearch'
             )
           template(v-else)
-            .search-results-updating(v-if='resultsUpdating' role='status' aria-live='polite' aria-atomic='true') {{ $t('common:searchPanel.updatingResults') }}
+            .search-results-refresh-state(v-if='searchError' role='alert')
+              p {{ searchError }}
+              v-btn(size='small' variant='tonal' prepend-icon='mdi-refresh' @click='retrySearch') {{ $t('common:searchPanel.tryAgain') }}
+            .search-results-updating(v-else-if='resultsUpdating' role='status' aria-live='polite' aria-atomic='true') {{ $t('common:searchPanel.updatingResults') }}
+            .search-results-previous(v-if='!hasFreshResponse && (results.length || suggestions.length)') {{ responseQuery ? $t('common:searchPanel.previousResultsFor', { query: responseQuery }) : $t('common:searchPanel.previousResults') }}{{ responseScopeLabel ? ` · ${responseScopeLabel}` : '' }}
             .search-results-summary(v-if='hasFreshResponse')
               div(role='status' aria-live='polite' aria-atomic='true')
-                .search-results-eyebrow {{ offlineSearchActive ? $t('common:searchPanel.scopeDownloaded') : $t('common:searchPanel.resultsEyebrow') }}
                 .search-results-count(v-if='resultSummary')
                   span {{ resultSummary }}
                   span.search-results-window(v-if='resultSummaryHint')  · {{ resultSummaryHint }}
               v-btn.search-results-ask(
-                v-if='canAsk || serverUnavailable'
+                v-if='results.length > 0 && (canAsk || serverUnavailable)'
                 color='primary'
                 variant='tonal'
                 prepend-icon='mdi-creation-outline'
                 :aria-disabled='!canAsk ? `true` : undefined'
+                :aria-describedby='canAsk ? `wiki-search-draft-hint` : undefined'
                 @click='askCurrentQuery'
                 data-modal-focus-key='search-ask-query'
               )
                 | {{ $t('common:searchPanel.askAbout') }}
                 v-tooltip(activator='parent' location='bottom' :disabled='canAsk' :text='askUnavailableReason')
+            p.search-results-reason.search-results-draft-note#wiki-search-draft-hint(v-if='hasFreshResponse && results.length > 0 && canAsk') {{ $t('common:searchPanel.draftOnlyHint', { defaultValue: 'Ask prepares a draft. Nothing is sent.' }) }}
             .search-results-none(v-if='hasFreshResponse && results.length < 1')
               async-state(
                 state='empty'
                 :title='$t(`common:header.searchNoResult`)'
                 :message='emptyResultsMessage'
               )
-              .search-results-empty-actions(v-if='canAsk || serverUnavailable')
+              .search-results-empty-actions
+                v-btn(v-if='hasActiveSearchFilters' color='primary' variant='tonal' prepend-icon='mdi-filter-remove-outline' @click='clearSearchScope') {{ $t('common:searchPanel.clearFilters') }}
                 v-btn.search-results-empty-ask(
+                  v-if='canAsk || serverUnavailable'
                   color='primary'
                   variant='tonal'
                   prepend-icon='mdi-creation-outline'
                   :aria-disabled='!canAsk ? `true` : undefined'
-                  :aria-describedby='!canAsk ? `wiki-search-ask-reason` : undefined'
+                  :aria-describedby='canAsk ? `wiki-search-draft-hint` : `wiki-search-ask-reason`'
                   @click='askCurrentQuery'
                   data-modal-focus-key='search-ask-empty'
                 ) {{ $t('common:searchPanel.askWikiAbout', { query: normalizedSearch }) }}
-              p.search-results-reason#wiki-search-ask-reason(v-if='!canAsk') {{ askUnavailableReason }}
+              p.search-results-reason#wiki-search-draft-hint(v-if='canAsk') {{ $t('common:searchPanel.draftOnlyHint', { defaultValue: 'Ask prepares a draft. Nothing is sent.' }) }}
+              p.search-results-reason#wiki-search-ask-reason(v-if='!canAsk && serverUnavailable') {{ askUnavailableReason }}
             template(v-if='results.length > 0')
               v-list.search-results-items(
                 id='wiki-search-results'
@@ -166,11 +182,12 @@
                     .search-results-main-cell(role='gridcell' :id='resultOptionId(idx)' :aria-selected='idx === cursor')
                       v-list-item.search-results-item(
                         lines='three'
-                        :href='pageHref(item)'
+                        :href='hasFreshResponse ? pageHref(item) : undefined'
                         :data-no-wiki-navigation='isDownloadedResult(item) ? `true` : undefined'
                         :class='idx === cursor ? `highlighted` : ``'
                         :aria-disabled='!hasFreshResponse ? `true` : undefined'
                         @click='handleResultClick($event, item)'
+                        @auxclick='handleResultClick($event, item)'
                       )
                         template(v-slot:prepend)
                           .search-results-item-mark(aria-hidden='true')
@@ -218,15 +235,18 @@
                         type='button'
                         :aria-label='$t(`common:searchPanel.previewLabel`, { title: item.title })'
                         :aria-disabled='!previewAvailable ? `true` : undefined'
+                        :aria-describedby='!previewAvailable ? `wiki-search-preview-reason` : undefined'
                         @click='openPreview(item)'
                       )
                         v-icon(icon='mdi-text-box-search-outline' size='18' aria-hidden='true')
                         span {{ $t('common:searchPanel.preview') }}
                         v-tooltip(activator='parent' location='start' :disabled='previewAvailable' :text='previewUnavailableReason')
                   v-divider(v-if='idx < results.length - 1' aria-hidden='true')
-            .search-results-continuation(v-if='!offlineSearchActive && (response.nextCursor || moreError)')
+            p.search-results-reason#wiki-search-preview-reason(v-if='results.length && !previewAvailable') {{ previewUnavailableReason }}
+            .search-results-continuation(v-if='!offlineSearchActive && hasFreshResponse && (response.nextCursor || moreError)')
               v-btn(v-if='response.nextCursor' variant='tonal' :loading='loadingMore' prepend-icon='mdi-chevron-down' @click='loadMoreResults') {{ $t('common:searchPanel.moreResults') }}
               p(v-if='moreError' role='alert') {{ moreError }}
+              v-btn(v-if='moreError' size='small' variant='text' prepend-icon='mdi-refresh' @click='retrySearch') {{ $t('common:searchPanel.searchAgain', { defaultValue: 'Search again' }) }}
             .search-results-suggestion-block(v-if='suggestions.length')
               .search-results-eyebrow {{ $t('common:searchPanel.suggested') }}
               v-list.search-results-suggestions(
@@ -401,6 +421,7 @@ export default defineComponent({
     return {
       loadingMore: false,
       moreError: '',
+      moreAbortController: null as AbortController | null,
       previewSelector: null as WikiSourceSelector | null,
       searchScope: 'wiki' as SearchScope,
       offlineCorpusCount: null as number | null,
@@ -422,6 +443,8 @@ export default defineComponent({
       searchRequestId: 0,
       response: emptySearchResponse(),
       responseKey: '',
+      responseQuery: '',
+      responseScopeLabel: '',
       modalFocusScope: null as ModalFocusScope | null,
       searchModalFocusScope: null as ModalFocusScope | null,
       pendingAskRestoreTarget: null as HTMLElement | null,
@@ -460,6 +483,17 @@ export default defineComponent({
           toggle: this.togglePathScope
         }
       ].filter(filter => filter.visible)
+    },
+    hasActiveSearchFilters(): boolean {
+      return !this.offlineSearchActive && (this.searchRestrictLocale || this.searchRestrictPath)
+    },
+    searchContextLabel(): string {
+      if (this.offlineSearchActive) return this.$t('common:searchPanel.scopeDownloaded')
+      if (!this.searchRestrictLocale && !this.searchRestrictPath) return this.$t('common:searchPanel.scopeAllWiki', { defaultValue: 'All Wiki' })
+      const scopes = [this.$t('common:searchPanel.scopeWiki')]
+      if (this.searchRestrictLocale && this.currentPageLocale) scopes.push(this.currentPageLocale.toLocaleUpperCase())
+      if (this.searchRestrictPath && this.currentPagePath) scopes.push(this.$t('common:searchPanel.treeContext', { path: this.currentPagePath }))
+      return scopes.join(' · ')
     },
     search: {
       get(): string { return wikiStore.site.search ?? '' },
@@ -522,22 +556,23 @@ export default defineComponent({
     resultSummary(): string {
       if (!this.hasFreshResponse) return ''
       if (this.offlineSearchActive) {
-        const count = this.offlineCorpusCount
-        if (count === null) return ''
+        const shown = this.response.results.length
         return this.offlineResultsTruncated
-          ? this.$t('common:searchPanel.savedTop', { shown: this.response.results.length, count })
-          : this.$t('common:searchPanel.savedSearched', { count })
+          ? this.$t('common:searchPanel.savedMatchesAtLeast', { count: shown })
+          : this.$t('common:searchPanel.savedMatches', { count: shown })
       }
       const total = this.response.totalHits
       const shown = this.response.results.length
-      if (shown < 1) return ''
       if (this.response.windowTruncated) return this.$t('common:searchPanel.topOfAtLeast', { shown, total })
       if (shown < total) return this.$t('common:searchPanel.topOf', { shown, total })
       return this.$t('common:searchPanel.matches', { count: total })
     },
     resultSummaryHint(): string {
-      if (!this.hasFreshResponse || this.response.results.length < 1) return ''
-      if (this.offlineSearchActive) return this.offlineResultsTruncated ? this.$t('common:searchPanel.narrowQuery') : ''
+      if (!this.hasFreshResponse) return ''
+      if (this.offlineSearchActive) {
+        const searched = this.offlineCorpusCount === null ? '' : this.$t('common:searchPanel.savedSearched', { count: this.offlineCorpusCount })
+        return [searched, this.offlineResultsTruncated ? this.$t('common:searchPanel.narrowQuery') : ''].filter(Boolean).join(' · ')
+      }
       return this.response.windowTruncated ? this.$t('common:searchPanel.narrowScope') : ''
     },
     askUnavailableReason(): string {
@@ -652,6 +687,9 @@ export default defineComponent({
       }
       this.searchAbortController?.abort()
       this.searchAbortController = null
+      this.moreAbortController?.abort()
+      this.moreAbortController = null
+      this.loadingMore = false
       this.searchRequestId += 1
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
@@ -693,8 +731,16 @@ export default defineComponent({
       useAgentsStore().notePageNavigation(page, this.authAuthorityReady ? this.agentOwnerId : undefined)
       if (this.agentOpeningPageCaptured) this.agentOpeningPage = page
     },
-    results() {
-      this.cursor = -1
+    results(newResults: SearchResultRow[], oldResults: SearchResultRow[]) {
+      if (this.cursor >= 0 && oldResults) {
+        if (this.cursor < oldResults.length) {
+          const selectedKey = this.resultKey(oldResults[this.cursor])
+          this.cursor = newResults.findIndex(item => this.resultKey(item) === selectedKey)
+        } else {
+          const suggestionIndex = this.cursor - oldResults.length
+          this.cursor = suggestionIndex < this.suggestions.length ? newResults.length + suggestionIndex : -1
+        }
+      }
       void this.$nextTick(this.syncSearchInputA11y)
     },
     cursor() {
@@ -734,6 +780,9 @@ export default defineComponent({
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
     this.searchAbortController?.abort()
     this.searchAbortController = null
+    this.moreAbortController?.abort()
+    this.moreAbortController = null
+    this.loadingMore = false
     this.searchTimer = null
     this.serverRetryPending = false
     this.searchIsLoading = false
@@ -882,7 +931,8 @@ export default defineComponent({
       return this.findSearchControls().find(control => control.getClientRects().length > 0) ?? null
     },
     findSearchTrigger(): HTMLElement | null {
-      return document.querySelector<HTMLElement>('.nav-header-search-toggle[data-search-modal-action]')
+      return Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-toggle[data-search-modal-action], .nav-header-browse[data-search-modal-action]'))
+        .find(element => element.getClientRects().length > 0 && !element.matches(':disabled')) ?? null
     },
     syncSearchInputA11y(): HTMLElement[] {
       const controls = this.findSearchControls()
@@ -946,11 +996,16 @@ export default defineComponent({
       this.searchTimer = null
       this.searchAbortController?.abort()
       this.searchAbortController = null
+      this.moreAbortController?.abort()
+      this.moreAbortController = null
+      this.loadingMore = false
       this.searchIsLoading = false
       this.searchError = ''
       this.moreError = ''
       this.response = emptySearchResponse()
       this.responseKey = ''
+      this.responseQuery = ''
+      this.responseScopeLabel = ''
       this.cursor = -1
       this.offlineCorpusCount = null
       this.offlineResultsTruncated = false
@@ -988,18 +1043,25 @@ export default defineComponent({
       emitSearchFocus()
     },
     selectSearchScope(scope: SearchScope): void {
+      if (scope === this.searchScope) return
       this.searchScope = scope
-      this.searchRestrictLocale = false
-      this.searchRestrictPath = false
+      if (scope === 'downloaded') {
+        this.searchRestrictLocale = false
+        this.searchRestrictPath = false
+      }
       this.previewSelector = null
       if (scope === 'downloaded' && this.searchMode === 'ask') this.searchMode = 'search'
     },
     queueSearch(query: string | null | undefined): void {
-      this.cursor = -1
+      if (this.responseKey !== this.searchRequestKey) this.cursor = -1
       this.searchRequestId += 1
       const requestId = this.searchRequestId
       this.searchAbortController?.abort()
       this.searchAbortController = null
+      this.moreAbortController?.abort()
+      this.moreAbortController = null
+      this.loadingMore = false
+      this.moreError = ''
       const normalizedQuery = (query ?? '').trim()
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
@@ -1013,7 +1075,6 @@ export default defineComponent({
       }
       const requestKey = this.searchRequestKey
       if (this.responseKey === requestKey && !this.searchError) {
-        this.cursor = -1
         return
       }
       this.searchError = ''
@@ -1110,6 +1171,15 @@ export default defineComponent({
     },
     closeSearch(): void {
       const shouldCloseAgentWorkspace = this.isAgentOpen || Boolean(this.agentResumeSessionId)
+      this.searchRequestId += 1
+      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+      this.searchTimer = null
+      this.searchAbortController?.abort()
+      this.searchAbortController = null
+      this.moreAbortController?.abort()
+      this.moreAbortController = null
+      this.loadingMore = false
+      this.searchIsLoading = false
       this.previewSelector = null
       this.directPromptHandoffId += 1
       this.pendingAskRestoreTarget = null
@@ -1129,6 +1199,7 @@ export default defineComponent({
     clearSearchScope(): void {
       this.searchRestrictLocale = false
       this.searchRestrictPath = false
+      void this.$nextTick(() => this.findSearchControl()?.focus({ preventScroll: true }))
     },
     setSearchTerm(term: string | undefined): void {
       if (term === undefined) return
@@ -1185,14 +1256,14 @@ export default defineComponent({
     },
     handleResultClick(event: Event, item: SearchResultRow): void {
       if (event.defaultPrevented) return
+      if (!this.hasFreshResponse) {
+        event.preventDefault()
+        return
+      }
       if (event instanceof MouseEvent) {
         if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
         const anchor = event.currentTarget
         if (!isDownloadedSearchRow(item) && anchor instanceof HTMLAnchorElement && !isWikiNavigationClick(event, anchor)) return
-      }
-      if (!this.hasFreshResponse) {
-        event.preventDefault()
-        return
       }
       if (this.requestOfflineSavedResultOpen(item)) {
         event.preventDefault()
@@ -1225,34 +1296,63 @@ export default defineComponent({
         !this.response.nextCursor ||
         this.loadingMore
       ) return
+      const controller = new AbortController()
+      this.moreAbortController = controller
       this.loadingMore = true
       this.moreError = ''
       const requestKey = this.searchRequestKey
       const requestId = this.searchRequestId
       const cursor = this.response.nextCursor
+      const continuationHadFocus = typeof document !== 'undefined' &&
+        document.activeElement instanceof Element &&
+        Boolean(document.activeElement.closest('.search-results-continuation'))
       try {
-        const next = await searchPages(window.fetch.bind(window), this.normalizedSearch, {
-          locale: this.searchRestrictLocale ? wikiStore.page.locale : undefined,
-          path: this.searchRestrictPath ? wikiStore.page.path : undefined,
-          paginated: true, cursor
-        })
+        const next = await searchPages(
+          (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
+          this.normalizedSearch,
+          {
+            locale: this.searchRestrictLocale ? wikiStore.page.locale : undefined,
+            path: this.searchRestrictPath ? wikiStore.page.path : undefined,
+            paginated: true, cursor
+          }
+        )
         if (
+          controller.signal.aborted ||
+          this.moreAbortController !== controller ||
           requestKey !== this.searchRequestKey ||
           requestId !== this.searchRequestId ||
           !this.serverCapabilitiesAvailable ||
           !this.hasFreshResponse
         ) return
         const known = new Set(this.response.results.map(item => this.resultKey(item)))
-        const added = next.results.filter(item => !known.has(this.resultKey(item)))
+        const added = next.results.filter(item => {
+          const key = this.resultKey(item)
+          if (known.has(key)) return false
+          known.add(key)
+          return true
+        })
         this.response = { ...next, results: [...this.response.results, ...added] }
+        if (continuationHadFocus && !next.nextCursor) {
+          await this.$nextTick()
+          if (controller.signal.aborted || requestKey !== this.searchRequestKey || requestId !== this.searchRequestId) return
+          const firstAddedIndex = this.response.results.length - added.length
+          const root = this.$el as HTMLElement
+          const nextLink = root.querySelector<HTMLElement>(`#${this.resultOptionId(firstAddedIndex)} a[href]`)
+          ;(nextLink ?? this.findSearchControl())?.focus({ preventScroll: true })
+        }
       } catch (value) {
         if (
+          !controller.signal.aborted &&
+          this.moreAbortController === controller &&
           requestKey === this.searchRequestKey &&
           requestId === this.searchRequestId &&
           this.serverCapabilitiesAvailable
         ) this.moreError = getErrorMessage(value)
       } finally {
-        this.loadingMore = false
+        if (this.moreAbortController === controller) {
+          this.moreAbortController = null
+          this.loadingMore = false
+        }
       }
     },
     async retrySearch(): Promise<void> {
@@ -1264,11 +1364,12 @@ export default defineComponent({
       this.searchTimer = null
       this.searchAbortController?.abort()
       this.searchAbortController = null
+      this.moreAbortController?.abort()
+      this.moreAbortController = null
+      this.loadingMore = false
       this.searchError = ''
       this.moreError = ''
       this.responseKey = ''
-      this.response = emptySearchResponse()
-      this.cursor = -1
       this.serverRetryPending = serverWasUnavailable
       this.searchIsLoading = query.length >= 2
 
@@ -1336,6 +1437,8 @@ export default defineComponent({
         this.moreError = ''
         this.response = response
         this.responseKey = requestKey
+        this.responseQuery = query
+        this.responseScopeLabel = this.searchContextLabel
       } catch (err) {
         if (
           requestId !== this.searchRequestId ||
@@ -1344,7 +1447,6 @@ export default defineComponent({
         ) return
         this.searchError = getErrorMessage(err)
         this.responseKey = ''
-        this.response = emptySearchResponse()
       } finally {
         if (this.searchAbortController === controller) this.searchAbortController = null
         if (requestId === this.searchRequestId) this.searchIsLoading = false
@@ -1364,9 +1466,6 @@ export default defineComponent({
       const getReadingEpoch = typeof currentOfflineReadingEpoch === 'function' ? currentOfflineReadingEpoch : (() => 0)
       const readingHandle: OfflineReadingHandleV1 | null = getReadingHandle()
       const readingEpoch = getReadingEpoch()
-      const makeEmptyResponse = typeof emptySearchResponse === 'function'
-        ? emptySearchResponse
-        : (() => ({ results: [], suggestions: [], totalHits: 0 }))
       const documentIdentity = (document: Pick<OfflineSearchDocumentV1, 'siteId' | 'pageId' | 'locale'>): string =>
         `${document.siteId}\u0000${document.pageId}\u0000${document.locale}`
       let storage: Awaited<ReturnType<typeof openOfflineStorage>> | null = null
@@ -1497,6 +1596,8 @@ export default defineComponent({
           totalHits: 0
         }
         this.responseKey = requestKey
+        this.responseQuery = query
+        this.responseScopeLabel = this.searchContextLabel
       } catch (error) {
         if (
           requestId !== this.searchRequestId ||
@@ -1507,7 +1608,6 @@ export default defineComponent({
         ) return
         this.searchError = getErrorMessage(error)
         this.responseKey = ''
-        this.response = makeEmptyResponse()
       } finally {
         storage?.close()
         if (this.searchAbortController === controller) this.searchAbortController = null
@@ -1643,9 +1743,7 @@ export default defineComponent({
     padding: var(--wiki-space-3) var(--wiki-space-5);
     border-bottom: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-hero-radius) var(--wiki-hero-radius) 0 0;
-    background:
-      radial-gradient(circle at 100% 0, color-mix(in srgb, var(--wiki-ambient-accent) 14%, transparent), transparent 42%),
-      var(--wiki-surface-sunken);
+    background: var(--wiki-surface-sunken);
   }
 
   &-scope-actions {
@@ -1662,6 +1760,31 @@ export default defineComponent({
     flex: 0 0 auto;
     margin-inline-start: auto;
   }
+  &-filters {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-2) var(--wiki-space-4);
+    padding: var(--wiki-space-2) var(--wiki-space-5);
+    border-bottom: 1px solid var(--wiki-surface-border);
+  }
+  &-filter-context {
+    flex: 1 1 14rem;
+    min-width: 0;
+    color: var(--wiki-text-muted);
+    font-size: .75rem;
+    line-height: 1.4;
+  }
+  &-filter-path { display: block; overflow-wrap: anywhere; color: rgb(var(--v-theme-on-surface)); }
+  &-filter-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-1); }
+  &-filters > .search-results-reason { flex-basis: 100%; margin: 0; }
+  &-query-context { padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-3); }
+  &-query-context h3 { margin: 0; font-size: clamp(1.05rem, 2vw, 1.3rem); font-weight: 650; line-height: 1.4; letter-spacing: -.015em; overflow-wrap: anywhere; }
+  &-query-context p { margin: var(--wiki-space-1) 0 0; color: var(--wiki-text-muted); font-size: .78rem; overflow-wrap: anywhere; }
+  &-previous { margin-bottom: var(--wiki-space-3); color: var(--wiki-text-muted); font-size: .78rem; overflow-wrap: anywhere; }
+  &-refresh-state { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-3); margin-bottom: var(--wiki-space-3); padding: var(--wiki-space-3); border-inline-start: 3px solid rgb(var(--v-theme-error)); background: var(--wiki-surface-sunken); border-radius: var(--wiki-radius-xs); }
+  &-refresh-state p { flex: 1 1 15rem; margin: 0; overflow-wrap: anywhere; font-size: .85rem; }
 
   // Disabled-with-reason controls stay focusable so their tooltip can explain why.
   &-scope-filter[aria-disabled='true'],
@@ -1725,6 +1848,8 @@ export default defineComponent({
   &-ask { min-height: var(--wiki-control-height); flex: 0 0 auto; letter-spacing: 0; text-transform: none; }
   &-empty-actions {
     display: flex;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-3);
     justify-content: center;
     margin-top: var(--wiki-space-4);
     width: 100%;
@@ -1734,6 +1859,8 @@ export default defineComponent({
     max-width: min(100%, 36rem);
     min-height: var(--wiki-control-height);
     text-transform: none;
+    white-space: normal;
+    .v-btn__content { white-space: normal; overflow-wrap: anywhere; }
   }
 
   &-help,
@@ -1856,12 +1983,8 @@ export default defineComponent({
     overflow-wrap: anywhere;
     font-size: .98rem;
     font-weight: 650;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
     line-height: 1.4;
-    overflow: hidden;
+    overflow: visible;
     white-space: normal;
   }
   &-item .v-list-item-subtitle {
@@ -1963,13 +2086,16 @@ export default defineComponent({
   }
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
-    // The mobile search field occupies the app bar's 48px extension.
-    --search-overlay-top-offset: calc(var(--search-header-height, 52px) + 48px);
+    // Keep the results below the visible 52px mobile search extension.
+    --search-overlay-top-offset: calc(var(--search-header-height, 52px) + 52px);
     &-container { padding-inline: var(--wiki-space-2); }
     &-container--ask { padding: 0; }
-    &-scope { align-items: flex-start; flex-direction: column; gap: var(--wiki-space-3); }
-    &-scope-actions { justify-content: flex-start; }
-    &-scope-actions .v-btn { min-height: 2.75rem; }
+    &-scope { gap: var(--wiki-space-2); padding-inline: var(--wiki-space-3); }
+    &-scope-actions { flex: 1 1 12rem; justify-content: flex-start; }
+    &-scope-actions .v-btn,
+    &-filter-actions .v-btn,
+    &-close { min-height: 2.75rem; }
+    &-filters { padding-inline: var(--wiki-space-3); }
     &-content { padding: var(--wiki-space-3); }
   }
 
@@ -2057,14 +2183,20 @@ export default defineComponent({
 </style>
 
 <style scoped>
-.search-results-row { position: relative; }
-.search-results-row .search-results-item { padding-inline-end: 7rem; }
-.search-results-preview { position: absolute; inset-inline-end: 1rem; bottom: 1rem; display: flex; align-items: center; gap: .4rem; padding: .5rem .65rem; border-radius: .65rem; color: var(--wiki-accent-ink, rgb(var(--v-theme-on-surface))); font-size: .75rem; background: rgb(var(--v-theme-primary) / .08); }
+.search-results-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.search-results-draft-note { margin: 0 0 var(--wiki-space-3); text-align: end; }
+.search-results-main-cell { min-width: 0; }
+.search-results-preview-cell { padding: var(--wiki-space-2) var(--wiki-space-3); }
+.search-results-preview { display: flex; align-items: center; justify-content: center; gap: var(--wiki-space-1); min-height: var(--wiki-control-height); padding: var(--wiki-space-2) var(--wiki-space-3); border-radius: var(--wiki-radius-sm); color: var(--wiki-accent-ink, rgb(var(--v-theme-on-surface))); font-size: .75rem; background: rgb(var(--v-theme-primary) / .08); }
 .search-results-preview:hover { background: rgb(var(--v-theme-primary) / .17); }
 .search-results-preview:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .search-results-preview[aria-disabled='true'] { opacity: .6; cursor: default; }
 .search-results-preview[aria-disabled='true']:hover { background: rgb(var(--v-theme-primary) / .08); }
-@media (max-width: 480px) { .search-results-row .search-results-item { padding-inline-end: 3.5rem; } .search-results-preview { inset-inline-end: .5rem; } .search-results-preview span { display: none; } }
+@media (max-width: 599.98px) {
+  .search-results-row { grid-template-columns: minmax(0, 1fr); }
+  .search-results-preview-cell { display: flex; justify-content: flex-end; padding-block-start: 0; }
+  .search-results-preview { min-height: 2.75rem; }
+}
 </style>
 
 <style scoped>

@@ -68,10 +68,12 @@ const compileSnapshotAdapters = source => {
 
 const deferred = () => {
   let resolve
-  const promise = new Promise(done => {
+  let reject
+  const promise = new Promise((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 const useSearchScheduler = () => {
@@ -219,6 +221,165 @@ describe('inline Ask mode contract', () => {
     } finally {
       scheduler.restore()
     }
+  })
+
+  test.each(['resolve', 'reject'])('cancels continuation and ignores a late %s without finalizing a newer continuation', async outcome => {
+    const scheduler = useSearchScheduler()
+    try {
+      const requests = []
+      const methods = compileSearchMethods(search, ['queueSearch', 'loadMoreResults'], {
+        searchPages: (_fetcher, query, options) => {
+          const request = deferred()
+          requests.push({ ...request, query, options })
+          return request.promise
+        },
+        getErrorMessage: value => value.message,
+        wikiStore: { page: { locale: 'en', path: 'recipes' } }
+      })
+      const state = {
+        normalizedSearch: 'pizza',
+        searchRequestKey: 'pizza-key',
+        responseKey: 'pizza-key',
+        response: { results: [{ id: 1 }], suggestions: [], totalHits: 3, nextCursor: 'old-cursor' },
+        cursor: 0,
+        searchMode: 'search',
+        searchRequestId: 1,
+        searchTimer: null,
+        searchAbortController: null,
+        moreAbortController: null,
+        loadingMore: false,
+        searchIsLoading: false,
+        searchError: '',
+        moreError: '',
+        searchRestrictLocale: false,
+        searchRestrictPath: false,
+        offlineSearchActive: false,
+        serverCapabilitiesAvailable: true,
+        get hasFreshResponse() {
+          return this.responseKey === this.searchRequestKey
+        },
+        resultKey: item => String(item.id),
+        runSearch() {
+          this.response = { results: [{ id: 10 }], suggestions: [], totalHits: 4, nextCursor: 'new-cursor' }
+          this.responseKey = this.searchRequestKey
+          this.searchIsLoading = false
+        }
+      }
+      const oldMore = methods.loadMoreResults.call(state)
+      const oldController = state.moreAbortController
+      expect(state.loadingMore).toBe(true)
+      state.normalizedSearch = 'pasta'
+      state.searchRequestKey = 'pasta-key'
+      methods.queueSearch.call(state, 'pasta')
+      expect(oldController.signal.aborted).toBe(true)
+      expect(state.loadingMore).toBe(false)
+      scheduler.runNext()
+      const currentMore = methods.loadMoreResults.call(state)
+      const currentController = state.moreAbortController
+      if (outcome === 'resolve') requests[0].resolve({ results: [{ id: 999 }], suggestions: [], totalHits: 3 })
+      else requests[0].reject(new Error('Old continuation failed'))
+      await oldMore
+      expect(state.response.results.map(item => item.id)).toEqual([10])
+      expect(state.responseKey).toBe('pasta-key')
+      expect(state.moreError).toBe('')
+      expect(state.loadingMore).toBe(true)
+      expect(state.moreAbortController).toBe(currentController)
+      requests[1].resolve({ results: [{ id: 10 }, { id: 11 }, { id: 11 }, { id: 12 }], suggestions: [], totalHits: 4, nextCursor: 'next' })
+      await currentMore
+      expect(state.response.results.map(item => item.id)).toEqual([10, 11, 12])
+      expect(state.response.nextCursor).toBe('next')
+      expect(state.loadingMore).toBe(false)
+      expect(state.moreAbortController).toBeNull()
+    } finally {
+      scheduler.restore()
+    }
+  })
+
+  test('retains readable rows on a failed refresh and retries without clearing them', async () => {
+    const scheduler = useSearchScheduler()
+    try {
+      const request = deferred()
+      const methods = compileSearchMethods(search, ['runSearch', 'retrySearch'], {
+        searchPages: () => request.promise,
+        getErrorMessage: value => value.message,
+        wikiStore: { page: { locale: 'en', path: 'recipes' } }
+      })
+      const response = { results: [{ id: 1 }], suggestions: [], totalHits: 1 }
+      let retryCalls = 0
+      const state = {
+        normalizedSearch: 'pasta',
+        searchRequestKey: 'pasta-key',
+        responseKey: 'pizza-key',
+        response,
+        cursor: 0,
+        searchMode: 'search',
+        searchRequestId: 1,
+        searchRetryId: 0,
+        searchTimer: null,
+        searchAbortController: null,
+        moreAbortController: null,
+        searchRestrictLocale: false,
+        searchRestrictPath: false,
+        offlineSearchActive: false,
+        serverCapabilitiesAvailable: true,
+        serverUnavailable: false,
+        searchIsLoading: true,
+        searchError: '',
+        runSearch() {
+          retryCalls += 1
+        }
+      }
+      const refresh = methods.runSearch.call(state, 'pasta', 'pasta-key', 1)
+      request.reject(new Error('Search unavailable'))
+      await refresh
+      expect(state.response).toBe(response)
+      expect(state.responseKey).toBe('')
+      expect(state.searchError).toBe('Search unavailable')
+      expect(state.searchIsLoading).toBe(false)
+      await methods.retrySearch.call(state)
+      expect(state.response).toBe(response)
+      expect(state.cursor).toBe(0)
+      expect(state.searchError).toBe('')
+      expect(state.searchIsLoading).toBe(true)
+      expect(retryCalls).toBe(1)
+    } finally {
+      scheduler.restore()
+    }
+  })
+
+  test('Ask about a query prepares scoped editable context without submitting', async () => {
+    const prepared = []
+    const methods = compileSearchMethods(search, ['askCurrentQuery', 'agentSearchScope'], {})
+    const state = {
+      canAsk: true,
+      normalizedSearch: 'pizza',
+      directPromptHandoffPending: false,
+      currentPageLocale: 'en',
+      currentPagePath: 'recipes',
+      searchRestrictLocale: true,
+      searchRestrictPath: true,
+      searchMode: 'search',
+      latchAgentOpeningPage() {},
+      activeModalOpener: () => null,
+      $nextTick: () => Promise.resolve(),
+      $refs: {
+        inlineAgent: {
+          preparePrompt: async (...args) => {
+            prepared.push(args)
+          },
+          sendPrompt: () => {
+            throw new Error('A search handoff must not submit.')
+          }
+        }
+      },
+      agentSearchScope() {
+        return methods.agentSearchScope.call(this)
+      }
+    }
+    await methods.askCurrentQuery.call(state)
+    expect(state.searchMode).toBe('ask')
+    expect(state.normalizedSearch).toBe('pizza')
+    expect(prepared).toEqual([['pizza', undefined, { kind: 'section', locale: 'en', path: 'recipes' }]])
   })
   test('cancels a pending debounce before a retry starts its own query generation', async () => {
     const scheduler = useSearchScheduler()

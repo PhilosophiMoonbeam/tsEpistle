@@ -40,7 +40,10 @@ describe('clearable search recovery', () => {
     const methods = compileSearchMethods(source, ['queueSearch'], {
       window: {
         clearTimeout: timer => cancelled.push(timer),
-        setTimeout: callback => { scheduled.push(callback); return scheduled.length }
+        setTimeout: callback => {
+          scheduled.push(callback)
+          return scheduled.length
+        }
       },
       emptySearchResponse: () => ({ results: [], suggestions: [] })
     })
@@ -49,7 +52,11 @@ describe('clearable search recovery', () => {
     const state = {
       cursor: 2,
       searchRequestId: 1,
-      searchAbortController: { abort: () => { aborted = true } },
+      searchAbortController: {
+        abort: () => {
+          aborted = true
+        }
+      },
       searchTimer: 99,
       searchIsLoading: true,
       searchMode: 'search',
@@ -71,6 +78,31 @@ describe('clearable search recovery', () => {
     scheduled[0]()
     expect(requests).toEqual([['replacement query', 'replacement', 3]])
     expect(state.searchIsLoading).toBe(true)
+  })
+
+  test('keeps page filters when reselecting Wiki, and clears only filters on recovery', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
+    const methods = compileSearchMethods(source, ['selectSearchScope', 'clearSearchScope'])
+    const state = {
+      search: 'pizza',
+      searchScope: 'wiki',
+      searchMode: 'search',
+      searchRestrictLocale: true,
+      searchRestrictPath: true,
+      previewSelector: { id: 17 },
+      $nextTick: callback => {
+        callback()
+        return Promise.resolve()
+      },
+      findSearchControl: () => null
+    }
+    methods.selectSearchScope.call(state, 'wiki')
+    expect(state).toMatchObject({ search: 'pizza', searchRestrictLocale: true, searchRestrictPath: true, previewSelector: { id: 17 } })
+    methods.clearSearchScope.call(state)
+    expect(state).toMatchObject({ search: 'pizza', searchScope: 'wiki', searchRestrictLocale: false, searchRestrictPath: false })
+    state.searchRestrictLocale = true
+    methods.selectSearchScope.call(state, 'downloaded')
+    expect(state).toMatchObject({ search: 'pizza', searchScope: 'downloaded', searchRestrictLocale: false, searchRestrictPath: false, previewSelector: null })
   })
 })
 
@@ -307,15 +339,116 @@ describe('Ask modal accessibility contract', () => {
       fixtureWindow.close()
     }
   })
+
+  test('lets the header input tab through search actions without losing the query, and wraps only at the boundary', () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><button id="opener">Page</button><header><button class="nav-header-browse" data-search-modal-action>Browse</button><div class="nav-header-search-control"><input value="pizza"></div></header><section id="search"><button>Wiki</button><button>Close search</button><button>EN</button><a href="/en/pizza">Pizza</a><button>Preview</button><button>More results</button></section></body></html>',
+      { pretendToBeVisual: true }
+    )
+    const document = dom.window.document
+    const originalGlobals = Object.fromEntries(['document', 'HTMLElement'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
+    for (const [name, value] of Object.entries({ document, HTMLElement: dom.window.HTMLElement })) {
+      Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
+    }
+    for (const element of document.querySelectorAll('*')) {
+      Object.defineProperty(element, 'getClientRects', { value: () => [{ width: 100, height: 40 }] })
+    }
+    const methods = compileSearchMethods(search, ['activateSearchModal', 'searchModalAdditionalRoots'], { createModalFocusScope, activeOwnedOverlayRoots })
+    const input = document.querySelector('input')
+    const browse = document.querySelector('.nav-header-browse')
+    const root = document.querySelector('#search')
+    let closeCalls = 0
+    const state = {
+      $el: root,
+      search: 'pizza',
+      searchIsFocused: true,
+      searchModalFocusScope: null,
+      restoreTargetFor: target => () => target,
+      syncSearchInputA11y: () => [],
+      closeSearch: () => {
+        closeCalls += 1
+      }
+    }
+    // Vue binds Options API methods before passing them to the focus scope.
+    state.searchModalAdditionalRoots = methods.searchModalAdditionalRoots.bind(state)
+    try {
+      input.focus()
+      methods.activateSearchModal.call(state, document.querySelector('#opener'))
+      const tab = target => {
+        const event = new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+        target.dispatchEvent(event)
+        return event
+      }
+      expect(state.searchModalFocusScope.containsFocus()).toBe(true)
+      expect(tab(input).defaultPrevented).toBe(false)
+      // JSDOM does not perform the browser's default Tab navigation. Every
+      // intermediate control must remain in the same scope without interception.
+      const actions = Array.from(root.querySelectorAll('button, a'))
+      for (const action of actions.slice(0, -1)) {
+        action.focus()
+        expect(state.searchModalFocusScope.containsFocus()).toBe(true)
+        expect(tab(action).defaultPrevented).toBe(false)
+      }
+      actions.at(-1).focus()
+      expect(tab(actions.at(-1)).defaultPrevented).toBe(true)
+      expect(document.activeElement).toBe(browse)
+      const backwards = new dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
+      browse.dispatchEvent(backwards)
+      expect(backwards.defaultPrevented).toBe(true)
+      expect(document.activeElement).toBe(actions.at(-1))
+      expect(state.search).toBe('pizza')
+      expect(input.value).toBe('pizza')
+      expect(state.searchIsFocused).toBe(true)
+      expect(closeCalls).toBe(0)
+    } finally {
+      state.searchModalFocusScope?.deactivate({ restoreFocus: false })
+      for (const [name, descriptor] of Object.entries(originalGlobals)) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+        else delete globalThis[name]
+      }
+      dom.window.close()
+    }
+  })
+
+  test('preserves native modified result clicks only for fresh rows', () => {
+    const dom = new JSDOM('<!doctype html><html><body></body></html>')
+    const originalMouseEvent = Object.getOwnPropertyDescriptor(globalThis, 'MouseEvent')
+    Object.defineProperty(globalThis, 'MouseEvent', { configurable: true, writable: true, value: dom.window.MouseEvent })
+    const methods = compileSearchMethods(search, ['handleResultClick'])
+    let closeCalls = 0
+    const state = {
+      hasFreshResponse: true,
+      closeSearch: () => {
+        closeCalls += 1
+      }
+    }
+    try {
+      for (const options of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { button: 1 }]) {
+        const nativeClick = new dom.window.MouseEvent('click', { ...options, cancelable: true })
+        methods.handleResultClick.call(state, nativeClick, { id: 1 })
+        expect(nativeClick.defaultPrevented).toBe(false)
+        state.hasFreshResponse = false
+        const staleClick = new dom.window.MouseEvent('click', { ...options, cancelable: true })
+        methods.handleResultClick.call(state, staleClick, { id: 1 })
+        expect(staleClick.defaultPrevented).toBe(true)
+        state.hasFreshResponse = true
+      }
+      expect(closeCalls).toBe(0)
+    } finally {
+      if (originalMouseEvent) Object.defineProperty(globalThis, 'MouseEvent', originalMouseEvent)
+      else delete globalThis.MouseEvent
+      dom.window.close()
+    }
+  })
 })
 
-const compileSearchComputed = (source, names) => {
+const compileSearchOptions = (source, names, section = 'computed') => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
   if (!script) throw new Error('Search component script was not found.')
   const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   let computed
   const visit = node => {
-    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === 'computed' && ts.isObjectLiteralExpression(node.initializer)) {
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === section && ts.isObjectLiteralExpression(node.initializer)) {
       computed = node.initializer
     }
     ts.forEachChild(node, visit)
@@ -343,20 +476,40 @@ describe('Search panel layout and hand-off', () => {
   }
 
   test('folds truncation into one result summary', () => {
-    const computed = compileSearchComputed(search, ['resultSummary', 'resultSummaryHint'])
+    const computed = compileSearchOptions(search, ['resultSummary', 'resultSummaryHint'])
     const summarize = (response, extra = {}) => {
-      const state = { $t: translate, hasFreshResponse: true, offlineSearchActive: false, offlineCorpusCount: null, offlineResultsTruncated: false, response, ...extra }
+      const state = {
+        $t: translate,
+        hasFreshResponse: true,
+        offlineSearchActive: false,
+        offlineCorpusCount: null,
+        offlineResultsTruncated: false,
+        response,
+        ...extra
+      }
       return [computed.resultSummary.call(state), computed.resultSummaryHint.call(state)]
     }
     const rows = count => Array.from({ length: count }, (_, id) => ({ id }))
     expect(summarize({ results: rows(1), totalHits: 1 })).toEqual(['1 match', ''])
     expect(summarize({ results: rows(12), totalHits: 12 })).toEqual(['12 matches', ''])
     expect(summarize({ results: rows(10), totalHits: 37, nextCursor: 'next' })).toEqual(['Top 10 of 37 matches', ''])
-    expect(summarize({ results: rows(50), totalHits: 230, windowTruncated: true })).toEqual(['Top 50 of 230+ matches', 'Narrow the query or scope to find more'])
-    expect(summarize({ results: rows(5), totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 9 })).toEqual(['9 saved pages searched', ''])
-    expect(summarize({ results: rows(50), totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 80, offlineResultsTruncated: true }))
-      .toEqual(['Top 50 matches from 80 saved pages', 'Narrow the query to find more'])
-    expect(summarize({ results: [], totalHits: 0 })).toEqual(['', ''])
+    expect(summarize({ results: rows(50), totalHits: 230, windowTruncated: true })).toEqual([
+      'Top 50 of 230+ matches',
+      'Narrow the query or scope to find more'
+    ])
+    expect(summarize({ results: rows(5), totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 9 })).toEqual([
+      '5 saved-page matches',
+      '9 saved pages searched'
+    ])
+    expect(summarize({ results: rows(50), totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 80, offlineResultsTruncated: true })).toEqual([
+      '50+ saved-page matches',
+      '80 saved pages searched · Narrow the query to find more'
+    ])
+    expect(summarize({ results: [], totalHits: 0 })).toEqual(['0 matches', ''])
+    expect(summarize({ results: [], totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 9 })).toEqual([
+      '0 saved-page matches',
+      '9 saved pages searched'
+    ])
   })
 
   test('keeps live-only scope filters focusable offline but does not apply them', () => {
@@ -371,9 +524,61 @@ describe('Search panel layout and hand-off', () => {
     expect(state).toMatchObject({ searchRestrictLocale: true, searchRestrictPath: true })
   })
 
+  test('names the active tree and ignores unapplied filters in downloaded search context', () => {
+    const computed = compileSearchOptions(search, ['searchContextLabel', 'hasActiveSearchFilters'])
+    const state = {
+      $t: translate,
+      offlineSearchActive: false,
+      searchRestrictLocale: true,
+      searchRestrictPath: true,
+      currentPageLocale: 'en',
+      currentPagePath: 'recipes/pizza'
+    }
+    expect(computed.searchContextLabel.call(state)).toBe('Wiki · EN · Page tree: recipes/pizza')
+    expect(computed.hasActiveSearchFilters.call(state)).toBe(true)
+    state.offlineSearchActive = true
+    expect(computed.searchContextLabel.call(state)).toBe('Saved offline')
+    expect(computed.hasActiveSearchFilters.call(state)).toBe(false)
+    state.offlineSearchActive = false
+    state.searchRestrictLocale = false
+    state.searchRestrictPath = false
+    expect(computed.searchContextLabel.call(state)).toBe('All Wiki')
+    expect(computed.hasActiveSearchFilters.call(state)).toBe(false)
+  })
+
+  test('preserves the selected result identity and suggestion position across continuation', () => {
+    const watchers = compileSearchOptions(search, ['results'], 'watch')
+    const first = [{ id: 1 }, { id: 2 }]
+    const appended = [...first, { id: 3 }]
+    const state = {
+      cursor: 1,
+      suggestions: ['tomato'],
+      resultKey: item => String(item.id),
+      syncSearchInputA11y: () => [],
+      $nextTick: callback => {
+        callback()
+        return Promise.resolve()
+      }
+    }
+    watchers.results.call(state, appended, first)
+    expect(state.cursor).toBe(1)
+    state.cursor = 2
+    watchers.results.call(state, appended, first)
+    expect(state.cursor).toBe(3)
+    state.cursor = 1
+    watchers.results.call(state, [{ id: 2 }, { id: 1 }], first)
+    expect(state.cursor).toBe(0)
+    watchers.results.call(state, [{ id: 1 }], [{ id: 2 }, { id: 1 }])
+    expect(state.cursor).toBe(-1)
+  })
+
   test('Agent search button returns to the page search and focuses the header field', async () => {
     let focusRequests = 0
-    const methods = compileSearchMethods(search, ['returnToSearch'], { emitSearchFocus: () => { focusRequests += 1 } })
+    const methods = compileSearchMethods(search, ['returnToSearch'], {
+      emitSearchFocus: () => {
+        focusRequests += 1
+      }
+    })
     const deactivations = []
     const state = {
       searchMode: 'ask',
@@ -382,9 +587,15 @@ describe('Search panel layout and hand-off', () => {
       directPromptHandoffId: 3,
       pendingAskRestoreTarget: {},
       agentResumeSessionId: 'session',
-      get isAgentOpen() { return this.canAsk && this.searchMode === 'ask' },
-      captureAgentExcursion() { this.agentResumeSessionId = null },
-      deactivateAgentModal(restoreFocus) { deactivations.push(restoreFocus) },
+      get isAgentOpen() {
+        return this.canAsk && this.searchMode === 'ask'
+      },
+      captureAgentExcursion() {
+        this.agentResumeSessionId = null
+      },
+      deactivateAgentModal(restoreFocus) {
+        deactivations.push(restoreFocus)
+      },
       $nextTick: () => Promise.resolve()
     }
     await methods.returnToSearch.call(state)
@@ -395,8 +606,19 @@ describe('Search panel layout and hand-off', () => {
     expect(deactivations).toEqual([false, false])
     expect(focusRequests).toBe(1)
 
-    const superseded = { ...state, searchMode: 'ask', $nextTick() { this.directPromptHandoffId += 1; return Promise.resolve() } }
-    Object.defineProperty(superseded, 'isAgentOpen', { get() { return this.canAsk && this.searchMode === 'ask' } })
+    const superseded = {
+      ...state,
+      searchMode: 'ask',
+      $nextTick() {
+        this.directPromptHandoffId += 1
+        return Promise.resolve()
+      }
+    }
+    Object.defineProperty(superseded, 'isAgentOpen', {
+      get() {
+        return this.canAsk && this.searchMode === 'ask'
+      }
+    })
     await methods.returnToSearch.call(superseded)
     expect(focusRequests).toBe(1)
   })

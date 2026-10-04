@@ -1,7 +1,7 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :style='{ "--v-toolbar-height": dense ? "48px" : "52px", "backdrop-filter": "var(--wiki-chrome-blur)" }')
+  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :extension-height='52', :style='{ "--v-toolbar-height": dense ? "48px" : "52px", "backdrop-filter": "var(--wiki-chrome-blur)" }')
     template(v-slot:extension)
-      v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', flat, style='backdrop-filter: var(--wiki-chrome-blur);')
+      .nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search')
         v-text-field.nav-header-search-control(
           style='backdrop-filter: blur(12px) saturate(150%);'
           ref='searchFieldMobile'
@@ -17,12 +17,13 @@
           :loading='searchIsLoading'
           @keydown.enter='searchEnter($event)'
           @keydown.esc='searchEscape'
-          @keydown.tab='searchTab($event)'
           @focus='searchFocus'
-          @keydown.down.prevent='searchMove(`down`)'
-          @keydown.up.prevent='searchMove(`up`)'
+          @keydown.down='searchMove(`down`, $event)'
+          @keydown.up='searchMove(`up`, $event)'
           autocomplete='off'
           aria-keyshortcuts='Control+k Meta+k Alt+Enter'
+          @compositionstart='searchIsComposing = true'
+          @compositionend='searchIsComposing = false'
         )
     v-row.nav-header-layout(:gap='0')
       v-col.nav-header-brand-col(cols='5', md='4')
@@ -81,13 +82,14 @@
                 :prepend-inner-icon='searchInputIcon',
                 :loading='searchIsLoading',
                 @keydown.enter='searchEnter($event)'
-                @keydown.esc='searchClose'
-                @keydown.tab='searchTab($event)'
+                @keydown.esc='searchEscape'
                 @focus='searchFocus'
-                @keydown.down.prevent='searchMove(`down`)'
-                @keydown.up.prevent='searchMove(`up`)'
+                @keydown.down='searchMove(`down`, $event)'
+                @keydown.up='searchMove(`up`, $event)'
                 autocomplete='off'
                 aria-keyshortcuts='Control+k Meta+k Alt+Enter'
+                @compositionstart='searchIsComposing = true'
+                @compositionend='searchIsComposing = false'
               )
                 template(v-slot:append-inner)
                   kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
@@ -607,6 +609,7 @@ export default defineComponent({
       notificationIdentityRecoveryGeneration: 0,
       headerActionGeneration: 1,
       searchFocusGeneration: 0,
+      searchIsComposing: false,
       logoutPending: false,
       navHeaderTitleFitScale: 1 as number,
       navHeaderTitleResizeObserver: null as ResizeObserver | null,
@@ -1157,25 +1160,9 @@ export default defineComponent({
     searchFocus () {
       this.searchIsFocused = true
     },
-    async searchTab (event: KeyboardEvent): Promise<void> {
-      event.preventDefault()
-      emitSearchExit(false)
-      this.searchClose()
-      await this.$nextTick()
-      const desktop = this.$vuetify.display.mdAndUp
-      const previousTarget = document.querySelector<HTMLElement>(
-        desktop ? '.nav-header-browse' : this.$vuetify.display.xs ? '.nav-header-logo' : '.nav-header-agent'
-      ) ?? document.querySelector<HTMLElement>('.nav-header-logo')
-      const forwardTarget = document.querySelector<HTMLElement>(
-        desktop
-          ? '.nav-header-actions button:not(:disabled), .nav-header-actions a[href]'
-          : this.$vuetify.display.xs ? '.nav-header-mobile-actions' : '.nav-header-browse'
-      ) ?? document.querySelector<HTMLElement>('.nav-header-actions button:not(:disabled), .nav-header-actions a[href]')
-      const target = event.shiftKey ? previousTarget : forwardTarget
-      target?.focus({ preventScroll: true })
-    },
     searchClose () {
       this.searchFocusGeneration += 1
+      this.searchIsComposing = false
       this.searchIsFocused = false
       this.searchMode = 'search'
       this.search = ''
@@ -1208,7 +1195,8 @@ export default defineComponent({
         root.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true })
       }
     },
-    async searchEscape(): Promise<void> {
+    async searchEscape(event?: KeyboardEvent): Promise<void> {
+      if (event && (event.defaultPrevented || event.isComposing || event.keyCode === 229 || this.searchIsComposing)) return
       this.searchClose()
       if (!this.$vuetify.display.smAndDown) return
       await this.$nextTick()
@@ -1240,7 +1228,7 @@ export default defineComponent({
       void this.focusSearchField()
     },
     handleSearchShortcut(event: KeyboardEvent): void {
-      if (this.hideSearch || event.defaultPrevented || event.repeat || event.isComposing) return
+      if (this.hideSearch || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || this.searchIsComposing) return
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         this.searchMode = 'search'
@@ -1259,15 +1247,26 @@ export default defineComponent({
       this.searchMode = 'ask'
       void this.focusSearchField()
     },
-    searchEnter (event: KeyboardEvent) {
-      if (event.defaultPrevented || event.isComposing || event.altKey) return
-      if ((event.ctrlKey || event.metaKey) && this.canEnterAgent) {
-        event.preventDefault()
+    searchEnter (event: KeyboardEvent): void {
+      if (
+        event.defaultPrevented || event.isComposing || event.keyCode === 229 ||
+        this.searchIsComposing || event.altKey || event.shiftKey
+      ) return
+      if (event.ctrlKey || event.metaKey) {
+        if (!this.canEnterAgent) return
         this.searchMode = 'ask'
       }
+      event.preventDefault()
       emitSearchEnter()
     },
-    searchMove(dir: string): void {
+    searchMove(dir: 'up' | 'down', event: KeyboardEvent): void {
+      if (
+        !this.searchIsFocused || this.searchMode !== 'search' ||
+        event.defaultPrevented || event.isComposing || event.keyCode === 229 ||
+        this.searchIsComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+        this.search.trim().length < 2
+      ) return
+      event.preventDefault()
       emitSearchMove(dir)
     },
     pageNew () {
@@ -1631,7 +1630,7 @@ export default defineComponent({
     .v-field {
       min-height: var(--wiki-search-field-height, 2.25rem);
       overflow: hidden;
-      border: 1px solid var(--wiki-glass-border, var(--wiki-surface-border-strong));
+      border: 1px solid var(--wiki-surface-border-strong, var(--wiki-surface-border));
       border-radius: var(--wiki-control-radius);
       background-color: rgba(var(--v-theme-surface), .42) !important;
       background-image: none !important;
@@ -1686,7 +1685,7 @@ export default defineComponent({
     }
 
     .v-field--focused {
-      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 62%, transparent);
+      border-color: var(--wiki-focus-color);
       background-color: rgba(var(--v-theme-surface), .54) !important;
       box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
 
@@ -1701,7 +1700,11 @@ export default defineComponent({
   }
 
   .nav-header-mobile-search {
+    --wiki-search-field-height: 44px;
+    display: flex;
+    align-items: center;
     width: 100%;
+    height: 100%;
     background-color: var(--nav-header-surface) !important;
     background-image: var(--nav-header-tint) !important;
     -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
@@ -1709,6 +1712,11 @@ export default defineComponent({
 
     .nav-header-search-control {
       max-width: none;
+      width: 100%;
+
+      .v-field__input {
+        font-size: 1rem;
+      }
     }
   }
 
