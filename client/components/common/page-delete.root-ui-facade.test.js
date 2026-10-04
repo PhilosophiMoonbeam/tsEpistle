@@ -87,33 +87,11 @@ const createHarness = ({
   const loadingEvents = []
   const emitted = []
   const redirects = []
-  const timers = new Map()
-  const classes = new Set()
-  let nextTimerId = 0
-  const document = {
-    body: {
-      classList: {
-        add: (...names) => {
-          for (const name of names) classes.add(name)
-        },
-        remove: (...names) => {
-          for (const name of names) classes.delete(name)
-        },
-        contains: name => classes.has(name)
-      }
-    }
-  }
   const window = {
     fetch: (url, init) => {
       requests.push({ url, init })
       return fetch(url, init)
     },
-    setTimeout: callback => {
-      const id = ++nextTimerId
-      timers.set(id, callback)
-      return id
-    },
-    clearTimeout: id => timers.delete(id),
     location: { assign: url => redirects.push(url) }
   }
   const wikiStore = {
@@ -151,15 +129,7 @@ const createHarness = ({
     vm[name] = method.bind(vm)
   }
 
-  const runTimers = () => {
-    while (timers.size > 0) {
-      const [id, callback] = timers.entries().next().value
-      timers.delete(id)
-      callback()
-    }
-  }
-
-  return { component, document, emitted, errors, loadingEvents, redirects, requests, runTimers, timers, vm, wikiStore, window }
+  return { component, emitted, errors, loadingEvents, redirects, requests, vm, wikiStore, window }
 }
 
 const mountDeleteDialog = async (options = {}) => {
@@ -252,16 +222,13 @@ describe('page-delete component behavior', () => {
     expect(harness.vm.modelValue).toBe(true)
   })
 
-  test('closes after success and redirects after the dialog transition', async () => {
+  test('closes after success and returns to the home destination', async () => {
     const harness = createHarness()
 
     await harness.vm.deletePage()
 
     expect(harness.vm.modelValue).toBe(false)
     expect(harness.emitted).toEqual([['update:modelValue', false]])
-    expect(harness.redirects).toEqual([])
-
-    harness.runTimers()
 
     expect(harness.redirects).toEqual(['/'])
   })
@@ -282,31 +249,9 @@ describe('page-delete component behavior', () => {
     expect(harness.vm.modelValue).toBe(true)
     expect(harness.emitted).toEqual([])
     expect(harness.errors).toEqual([])
-    expect(harness.timers.size).toBe(0)
     expect(harness.redirects).toEqual([])
   })
 
-  test('cancels pending transition and redirect work when unmounted after deletion', async () => {
-    for (const transitionStarted of [false, true]) {
-      const harness = createHarness()
-      await harness.vm.deletePage()
-      harness.document.body.classList.add('page-deleted-pending')
-
-      if (transitionStarted) {
-        const [id, callback] = harness.timers.entries().next().value
-        harness.timers.delete(id)
-        callback()
-        expect(harness.document.body.classList.contains('page-deleted')).toBe(true)
-      }
-
-      harness.component.beforeUnmount.call(harness.vm)
-      expect(harness.timers.size).toBe(0)
-      harness.runTimers()
-      expect(harness.redirects).toEqual([])
-      expect(harness.document.body.classList.contains('page-deleted')).toBe(false)
-      expect(harness.document.body.classList.contains('page-deleted-pending')).toBe(false)
-    }
-  })
 
   test('does not report a rejected delete after unmount', async () => {
     const response = deferred()
@@ -324,7 +269,6 @@ describe('page-delete component behavior', () => {
 
   test('exposes current page metadata and lets the reader cancel', () => {
     const harness = createHarness()
-    harness.document.body.classList.add('page-deleted-pending')
 
     expect(harness.vm.pageTitle).toBe('A page')
     expect(harness.vm.pagePath).toBe('a-page')
@@ -334,7 +278,6 @@ describe('page-delete component behavior', () => {
 
     expect(harness.vm.modelValue).toBe(false)
     expect(harness.emitted).toEqual([['update:modelValue', false]])
-    expect(harness.document.body.classList.contains('page-deleted-pending')).toBe(false)
   })
 
   test('keeps the delete dialog name and description connected for assistive technology', async () => {

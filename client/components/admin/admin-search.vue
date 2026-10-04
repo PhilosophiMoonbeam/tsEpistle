@@ -1,22 +1,24 @@
 <template>
   <v-container class="admin-search" fluid>
-    <AdminHero :title="$t('admin:search.search')" :description="$t('admin:search.tuneDiscoveryReadersAgents')" :eyebrow="$t('admin:search.intelligenceConnections')" icon="mdi-text-search-variant">
+    <AdminHero :title="$t('admin:search.search')" :description="$t('admin:search.savedEngineServesReader')" icon="mdi-text-search-variant">
       <template #status><v-chip size="small" variant="tonal" :color="dirty ? 'warning' : undefined">{{ enginesLoading ? $t('admin:search.loadingConfiguration') : enginesLoadError ? $t('admin:search.configurationUnavailable') : dirty ? $t('admin:search.unsavedChanges') : $t('admin:search.configurationUpDate') }}</v-chip></template>
       <template #actions><v-btn :aria-disabled="dirty || undefined" variant="text" prepend-icon="mdi-refresh" :loading="enginesLoading" :disabled="saving || rebuilding" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ dirty ? $t('admin:search.saveResetSearchChanges') : $t('admin:search.reloadSavedSearchConfiguration') }}</v-tooltip></v-btn></template>
     </AdminHero>
-    <v-tabs v-model="tab" class="search-tabs" color="primary" show-arrows :aria-label="$t('admin:search.searchAdministrationSections')">
-      <v-tab id="search-tab-configure" aria-controls="search-panel-configure" value="configure" prepend-icon="mdi-tune-variant">{{ $t('admin:search.configuration') }}</v-tab>
-      <v-tab id="search-tab-evaluate" aria-controls="search-panel-evaluate" value="evaluate" prepend-icon="mdi-text-box-search-outline">{{ $t('admin:search.evaluateQueries') }}</v-tab>
-      <v-tab id="search-tab-index" aria-controls="search-panel-index" value="index" prepend-icon="mdi-database-sync-outline">{{ $t('admin:search.indexMaintenance') }}</v-tab>
-    </v-tabs>
     <v-alert v-if="enginesLoadError" type="error" variant="tonal" class="mb-5">{{ $t('admin:search.searchConfigurationCouldNot') }}<template #append><v-btn variant="text" @click="retryLoad">{{ $t('admin:search.retry') }}</v-btn></template></v-alert>
     <v-alert v-if="operationError" type="error" variant="tonal" class="mb-5" closable @click:close="operationError = ''">{{ operationError }}</v-alert>
+    <div class="search-shell">
+      <nav class="search-tabs" :aria-label="$t('admin:search.searchAdministrationSections')">
+        <button id="search-tab-configure" type="button" aria-controls="search-panel-configure" :aria-current="tab === 'configure' ? 'page' : undefined" @click="tab = 'configure'">{{ $t('admin:search.configuration') }}</button>
+        <button id="search-tab-evaluate" type="button" aria-controls="search-panel-evaluate" :aria-current="tab === 'evaluate' ? 'page' : undefined" @click="tab = 'evaluate'">{{ $t('admin:search.evaluateQueries') }}</button>
+        <button id="search-tab-index" type="button" aria-controls="search-panel-index" :aria-current="tab === 'index' ? 'page' : undefined" @click="tab = 'index'">{{ $t('admin:search.indexMaintenance') }}</button>
+      </nav>
+      <div class="search-content">
     <v-window v-model="tab">
-      <v-window-item id="search-panel-configure" role="tabpanel" aria-labelledby="search-tab-configure" value="configure">
+      <v-window-item id="search-panel-configure" role="region" aria-labelledby="search-tab-configure" value="configure">
         <v-skeleton-loader v-if="enginesLoading" type="article, article" />
         <div v-else-if="enginesLoaded" class="search-configuration">
           <section class="search-panel" aria-labelledby="search-engine-title">
-            <header><div class="search-kicker">{{ $t('admin:search.retrievalFoundation') }}</div><h2 id="search-engine-title">{{ $t('admin:search.searchEngine2') }}</h2><p>{{ $t('admin:search.savedEngineServesReader') }}</p></header>
+            <header><h2 id="search-engine-title">{{ $t('admin:search.searchEngine2') }}</h2><p>{{ $t('admin:search.savedEngineServesReader') }}</p></header>
             <v-radio-group v-model="selectedEngine" :label="$t('admin:search.chooseEngine')" :disabled="saving || rebuilding">
               <v-radio v-for="eng in engines" :key="eng.key" :value="eng.key" :disabled="saving || rebuilding || !eng.isAvailable" class="engine-choice">
                 <template #label><span><strong>{{ eng.title }}</strong><small>{{ eng.description }}{{ !eng.isAvailable ? ` ${$t('admin:search.unavailableDeployment')}` : '' }}</small><v-chip v-if="eng.isEnabled" size="x-small" variant="tonal" class="mt-1">{{ $t('admin:search.savedEngine') }}</v-chip></span></template>
@@ -28,24 +30,24 @@
               <p v-if="engine.key === 'postgres'">{{ $t('admin:search.dictionaryControlsStemmingStop') }}</p>
               <p v-if="!engine.config.length">{{ $t('admin:search.engineNeedsNoAdditional') }}</p>
               <div v-for="cfg in engine.config" :key="cfg.key" class="engine-setting">
-                <v-select v-if="cfg.value.type === 'string' && cfg.value.enum" :model-value="String(cfg.value.value ?? '')" @update:model-value="cfg.value.value = $event" :items="cfg.value.enum" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint :disabled="saving || rebuilding" />
+                <v-select v-if="cfg.value.type === 'string' && cfg.value.enum" variant="outlined" :model-value="String(cfg.value.value ?? '')" @update:model-value="cfg.value.value = $event" :items="cfg.value.enum" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint :disabled="saving || rebuilding" />
                 <v-switch v-else-if="cfg.value.type === 'boolean'" v-model="cfg.value.value" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint color="primary" inset :disabled="saving || rebuilding" />
-                <v-textarea v-else-if="cfg.value.multiline" :model-value="String(cfg.value.value ?? '')" @update:model-value="cfg.value.value = $event" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint :disabled="saving || rebuilding" />
-                <v-text-field v-else v-model="cfg.value.value" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint :disabled="saving || rebuilding" />
+                <v-textarea v-else-if="cfg.value.multiline" variant="outlined" :model-value="String(cfg.value.value ?? '')" @update:model-value="cfg.value.value = $event" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint :disabled="saving || rebuilding" />
+                <v-text-field v-else variant="outlined" v-model="cfg.value.value" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint :disabled="saving || rebuilding" />
               </div>
             </div>
           </section>
-          <aside class="search-principles">
-            <div class="search-kicker">{{ $t('admin:search.questionSource') }}</div><h2>{{ $t('admin:search.howDiscoveryWorks') }}</h2>
+          <details class="search-principles">
+            <summary>{{ $t('admin:search.howDiscoveryWorks') }}</summary>
             <ol><li><strong>{{ $t('admin:search.matchLanguage') }}</strong><p>{{ $t('admin:search.textSpellingMatchesHelp') }}</p></li><li><strong>{{ $t('admin:search.followConnections') }}</strong><p>{{ $t('admin:search.postgresqlEngineAlsoUses') }}</p></li><li><strong>{{ $t('admin:search.respectAccess') }}</strong><p>{{ $t('admin:search.searchResultsFilteredCurrent') }}</p></li></ol>
             <v-btn variant="tonal" append-icon="mdi-arrow-right" @click="tab = 'evaluate'">{{ $t('admin:search.evaluateQuery') }}</v-btn>
-          </aside>
+          </details>
         </div>
       </v-window-item>
-      <v-window-item id="search-panel-evaluate" role="tabpanel" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ $t('admin:search.theseResultsUseSaved') }}</v-alert><AdminSearchEvaluate /></v-window-item>
-      <v-window-item id="search-panel-index" role="tabpanel" aria-labelledby="search-tab-index" value="index">
+      <v-window-item id="search-panel-evaluate" role="region" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ $t('admin:search.theseResultsUseSaved') }}</v-alert><AdminSearchEvaluate /></v-window-item>
+      <v-window-item id="search-panel-index" role="region" aria-labelledby="search-tab-index" value="index">
         <section class="search-panel search-index" aria-labelledby="search-index-title">
-          <header class="index-heading"><div><div class="search-kicker">{{ $t('admin:search.maintenanceEvidence') }}</div><h2 id="search-index-title">{{ $t('admin:search.indexCoverage') }}</h2><p>{{ $t('admin:search.inspectSavedEnginesDerived') }}</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting" @click="inspect">{{ $t('admin:search.inspectIndex') }}</v-btn></header>
+          <header class="index-heading"><div><h2 id="search-index-title">{{ $t('admin:search.indexCoverage') }}</h2><p>{{ $t('admin:search.inspectSavedEnginesDerived') }}</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting" @click="inspect">{{ $t('admin:search.inspectIndex') }}</v-btn></header>
           <v-alert v-if="inspectionError" type="error" variant="tonal">{{ inspectionError }}</v-alert>
           <v-skeleton-loader v-if="inspecting && !inspection" type="list-item-three-line" />
           <template v-if="inspection">
@@ -64,6 +66,8 @@
           <span>{{ saving ? $t('admin:search.savingActivatingEngine') : dirty ? $t('admin:search.changesNotActiveYet') : $t('admin:search.configurationMatchesLastLoad') }}</span>
           <div><v-btn variant="text" prepend-icon="mdi-restore" :disabled="!dirty || saving || rebuilding" @click="resetDraft">{{ $t('admin:search.resetChanges') }}</v-btn><v-btn color="primary" prepend-icon="mdi-check" :disabled="!canSave" :loading="saving" @click="save">{{ $t('admin:search.saveConfiguration') }}</v-btn></div>
         </div>
+      </div>
+    </div>
 
     <v-dialog v-model="rebuildConfirm" max-width="32rem" :persistent="rebuilding" aria-labelledby="rebuild-confirm-title"><v-card><v-card-title id="rebuild-confirm-title">{{ $t('admin:search.rebuildSearchIndex') }}</v-card-title><v-card-text>{{ $t('admin:search.rebuildsSavedEnginesDerived') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="rebuilding" @click="rebuildConfirm = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="rebuilding" :disabled="saving || enginesLoading" @click="rebuild">{{ $t('admin:search.rebuildIndex2') }}</v-btn></v-card-actions></v-card></v-dialog>
     <v-dialog :model-value="Boolean(leaveResolve)" persistent max-width="30rem" aria-labelledby="search-discard-title"><v-card><v-card-title id="search-discard-title">{{ $t('admin:search.discardSearchChanges') }}</v-card-title><v-card-text>{{ $t('admin:search.configurationEditsHaveNot') }}</v-card-text><v-card-actions><v-spacer /><v-btn @click="finishLeave(false)">{{ $t('admin:search.keepEditing') }}</v-btn><v-btn color="warning" @click="finishLeave(true)">{{ $t('admin:search.discardChanges') }}</v-btn></v-card-actions></v-card></v-dialog>
@@ -345,38 +349,41 @@ export default {
 </script>
 
 <style scoped>
-.admin-search { padding-bottom: calc(var(--wiki-footer-height) + 2rem); }
-.search-tabs { margin-bottom: 1.75rem; border-bottom: 1px solid var(--wiki-surface-border); }
-.search-configuration { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 2rem; align-items: start; }
-.search-panel { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); padding: clamp(1rem, 2vw, 2rem); background: var(--wiki-surface-raised); }
-.search-kicker { font-size: .75rem; letter-spacing: .09em; text-transform: uppercase; color: var(--wiki-accent-ink); }
-h2 { font: 500 1.65rem var(--wiki-font-display); margin-block: .5rem .75rem; }
-h3 { font-size: 1rem; margin-bottom: .5rem; }
-p { font-size: .85rem; line-height: 1.7; margin-bottom: 1rem; }
-.engine-choice { margin-top: .75rem; padding-block: .5rem; }
-.engine-choice strong, .engine-choice small { display: block; }
-.engine-choice strong { font-size: .95rem; }
-.engine-choice small { font-size: .8rem; line-height: 1.6; }
-.engine-settings { margin-top: 1rem; padding-top: 1.5rem; border-top: 1px solid var(--wiki-surface-border); }
-.engine-setting { margin-top: 1rem; }
-.search-principles { padding-block: 1rem; }
-.search-principles ol { padding-inline-start: 1.2rem; margin-block: 1.5rem; }
-.search-principles li { padding-inline-start: .5rem; margin-bottom: 1rem; }
-.search-principles strong { font-size: .9rem; }
-.search-principles p { margin-block: .4rem; }
-.search-savebar { position: sticky; bottom: var(--wiki-footer-height); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; margin-top: 1.5rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-raised); z-index: 2; }
-.search-savebar > span { font-size: .85rem; }
+.admin-search { padding-bottom: calc(var(--wiki-footer-height) + 1.5rem); }
+.search-shell { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: 1rem; align-items: start; margin-top: 1rem; }
+.search-tabs { display: grid; gap: .25rem; position: sticky; top: calc(var(--wiki-chrome-height) + 1rem); padding: .5rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
+.search-tabs button { min-height: 44px; text-align: start; padding: .625rem .75rem; border-radius: var(--wiki-control-radius); color: var(--wiki-text-muted); font: inherit; font-size: .875rem; cursor: pointer; overflow-wrap: anywhere; }
+.search-tabs button[aria-current] { background: var(--wiki-surface-sunken); color: var(--wiki-primary-ink); font-weight: 650; }
+.search-tabs button:focus-visible, summary:focus-visible { outline: 2px solid var(--wiki-primary-ink); outline-offset: 2px; }
+.search-content, .search-configuration { min-width: 0; }
+.search-configuration { display: grid; gap: 1rem; }
+.search-panel, .search-principles { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); padding: 1rem; background: var(--wiki-surface-raised); }
+h2 { font: 650 1.125rem/1.4 var(--wiki-font-heading); margin-bottom: .5rem; overflow-wrap: anywhere; }
+h3 { font: 650 1rem/1.4 var(--wiki-font-heading); margin-bottom: .5rem; }
+p { color: var(--wiki-text-muted); font-size: .875rem; line-height: 1.6; margin-bottom: 1rem; }
+.engine-choice { margin-top: .5rem; padding-block: .5rem; border-bottom: 1px solid var(--wiki-surface-border); }
+.engine-choice strong, .engine-choice small { display: block; overflow-wrap: anywhere; }
+.engine-choice strong { font-size: .9375rem; }
+.engine-choice small { font-size: .8125rem; line-height: 1.6; }
+.engine-settings { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--wiki-surface-border); }
+.engine-setting { margin-top: .75rem; }
+.search-principles summary { cursor: pointer; font-weight: 600; min-height: 44px; display: list-item; align-content: center; }
+.search-principles ol { padding-inline-start: 1.25rem; margin-block: .75rem; }
+.search-principles li { margin-bottom: .75rem; }
+.search-principles p { margin-block: .25rem; }
+.search-savebar { position: sticky; bottom: var(--wiki-footer-height); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: .75rem 1rem; margin-top: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); z-index: 2; }
+.search-savebar > span { font-size: .8125rem; color: var(--wiki-text-muted); }
 .search-savebar > div { display: flex; gap: .5rem; flex-wrap: wrap; }
-.index-heading, .index-rebuild { display: flex; gap: 1.5rem; align-items: start; justify-content: space-between; }
-.index-heading > div, .index-rebuild > div { max-width: 65ch; }
-.index-verdict { display: flex; align-items: start; gap: .8rem; margin-top: 1.5rem; }
-.index-verdict p { font-size: .8rem; margin-block: .4rem; }
-.index-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin-block: 1.5rem; }
-.index-metrics dt { font-size: .8rem; }
-.index-metrics dd { font: 500 2rem var(--wiki-font-display); margin: .5rem 0 0; }
-.index-note, .index-empty { font-size: .8rem; line-height: 1.7; }
-.index-empty { padding-block: 1.5rem; }
-.index-rebuild { border-top: 1px solid var(--wiki-surface-border); padding-top: 1.5rem; margin-top: 1.5rem; }
-@media (max-width: 1100px) { .index-heading, .index-rebuild { flex-direction: column; } .index-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .search-configuration { grid-template-columns: 1fr; gap: 1rem; } .index-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .search-savebar { position: static; } }
+.index-heading, .index-rebuild { display: flex; flex-wrap: wrap; gap: 1rem; align-items: start; justify-content: space-between; }
+.index-heading > div, .index-rebuild > div { flex: 1 1 20rem; min-width: 0; max-width: 65ch; }
+.index-verdict { display: flex; align-items: start; gap: .75rem; margin-top: 1rem; }
+.index-verdict p { font-size: .8125rem; margin-block: .25rem; }
+.index-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .75rem; margin-block: 1rem; }
+.index-metrics > div { padding: .75rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); }
+.index-metrics dt { color: var(--wiki-text-muted); font-size: .8125rem; }
+.index-metrics dd { font: 650 1.5rem/1.4 var(--wiki-font-heading); margin: .25rem 0 0; overflow-wrap: anywhere; }
+.index-note, .index-empty { font-size: .8125rem; line-height: 1.6; overflow-wrap: anywhere; }
+.index-empty { padding-block: 1rem; }
+.index-rebuild { border-top: 1px solid var(--wiki-surface-border); padding-top: 1rem; margin-top: 1rem; }
+@media (max-width: 760px) { .search-shell { grid-template-columns: minmax(0, 1fr); } .search-tabs { position: static; display: flex; flex-wrap: wrap; } .search-tabs button { flex: 1 1 9rem; } .search-savebar { position: static; } .search-content :deep(.v-btn) { min-height: 44px; max-width: 100%; white-space: normal; } .search-content :deep(.v-btn__content) { white-space: normal; } }
 </style>

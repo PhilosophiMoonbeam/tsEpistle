@@ -3,7 +3,7 @@
     <admin-hero
       icon="mdi-tune-variant"
       :title="$t('admin:general.title')"
-      :description="$t('admin:general.giveWorkspaceIdentityVoice')"
+      :description="[$t('admin:general.identity'), $t('admin:general.fieldLabels.banner'), $t('admin:general.publishing'), $t('admin:general.accounts')].join(' · ')"
     >
       <template #actions>
         <v-btn
@@ -54,7 +54,7 @@
         class="mt-5"
         >{{ notice }}</v-alert
       >
-      <div class="general-status">
+      <div class="general-status" role="status">
         <span
           ><i :class="dirty ? 'is-draft' : ''" />{{
             dirty ? $t('admin:general.unsavedWorkspaceDraft') : $t('admin:general.showingSavedSettings')
@@ -65,6 +65,7 @@
             : $t('admin:general.runtimeConfigurationNeedsAttention')
         }}</span>
       </div>
+      <div class="general-shell">
       <nav class="general-tabs" :aria-label="$t('admin:general.generalSections')">
         <button
           v-for="tab in sections"
@@ -81,7 +82,6 @@
         <section class="general-editor">
           <template v-if="section === 'identity'">
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.placeKnow') }}</span>
               <h2>{{ $t('admin:general.workspaceIdentity') }}</h2>
               <p>
                 {{ $t('admin:general.nameAddressAttributionMake') }}
@@ -152,7 +152,6 @@
           </template>
           <template v-else-if="section === 'announcement'">
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.sharedNoticeboard') }}</span>
               <h2>{{ $t('admin:general.workspaceAnnouncement') }}</h2>
               <p>
                 {{ $t('admin:general.giveReadersTimelyContext') }}
@@ -253,7 +252,6 @@
           </template>
           <template v-else-if="section === 'publishing'">
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.readerAuthorConventions') }}</span>
               <h2>{{ $t('admin:general.publishingDefaults') }}</h2>
               <p>
                 {{ $t('admin:general.helpPeopleDiscoverPages') }}
@@ -401,7 +399,6 @@
           </template>
           <template v-else-if="section === 'accounts'">
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.consistentStartingPoint') }}</span>
               <h2>{{ $t('admin:general.newAccountPresentation') }}</h2>
               <p>
                 {{ $t('admin:general.theseDefaultsAppliedOnce') }}
@@ -437,7 +434,6 @@
           </template>
           <template v-else>
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.workspaceDecisions') }}</span>
               <h2>{{ $t('admin:general.changeHistory') }}</h2>
               <p>
                 {{ $t('admin:general.latest50SavedGeneral') }}
@@ -523,11 +519,13 @@
           </div>
         </aside>
       </div>
+      </div>
     </template>
     <v-dialog
       v-model="reviewing"
       max-width="760"
       :persistent="busy"
+      :fullscreen="$vuetify.display.smAndDown"
       aria-labelledby="general-review-title"
     >
       <v-card v-if="reviewed && saved" class="general-review"

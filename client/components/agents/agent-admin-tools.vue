@@ -25,6 +25,7 @@
     </div>
     <p class="tool-explanation">{{ $t('admin:agentAdminTools.deploymentEligibilityOnlyFirst') }}</p>
     <p class="tool-explanation">{{ $t('admin:agentAdminTools.eligibilityFilterScope') }}</p>
+    <p v-if="loaded" class="tool-explanation">{{ $t('admin:agentAdminTools.loadedToolFilterScope') }}</p>
     <v-skeleton-loader v-if="!loaded && loading" type="list-item-three-line, list-item-three-line" />
     <v-alert v-else-if="!loaded" type="info" variant="tonal">{{ $t('admin:agentAdminTools.toolPolicyCouldNot') }}</v-alert>
     <template v-else>
@@ -111,12 +112,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.tool-workspace { padding: clamp(1rem, 3vw, 2rem); background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); }
-.tool-eyebrow { color: var(--wiki-accent-ink); font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; }
-h2 { font: 500 1.7rem var(--wiki-font-display); margin-block: .35rem; }
-h3 { font-size: 1rem; }
-p { font-size: .9rem; line-height: 1.65; margin-block: .5rem 1rem; }
-.mcp-connection { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding: 1.5rem; margin-block: 1rem 1.5rem; border: 1px solid var(--wiki-purpose-info-edge); border-radius: var(--wiki-control-radius); background: var(--wiki-purpose-info-fill); color: var(--wiki-purpose-info-ink); }
+.tool-workspace { min-width: 0; padding: var(--wiki-space-4); background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); color: rgb(var(--v-theme-on-surface)); }
+.tool-eyebrow { color: var(--wiki-text-muted); font-size: .8rem; font-weight: 600; }
+h2 { font: 700 1.2rem/1.4 var(--wiki-font-heading); margin-block: .35rem; }
+h3 { font: 700 1rem/1.4 var(--wiki-font-heading); }
+p { font-size: .9rem; line-height: 1.6; margin-block: .5rem 1rem; }
+.mcp-connection { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--wiki-space-4); padding: var(--wiki-space-4); margin-block: 1rem 1.5rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); }
 .mcp-connection > div { min-width: 0; }
 .mcp-connection__endpoint { display: flex; flex-direction: column; gap: .6rem; font-size: .8rem; }
 .mcp-connection__url { display: flex; align-items: center; gap: .5rem; padding: .6rem; background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); }
@@ -126,7 +127,7 @@ a { color: var(--wiki-accent-ink); }
 .tool-explanation, .tool-count { font-size: .8rem; }
 .tool-directory { border-top: 1px solid var(--wiki-surface-border); }
 .tool-record { border-bottom: 1px solid var(--wiki-surface-border); }
-summary { display: flex; align-items: center; gap: .8rem; padding-block: 1rem; cursor: pointer; list-style: none; }
+summary { display: flex; align-items: center; gap: .8rem; min-height: 44px; padding-block: .75rem; cursor: pointer; list-style: none; }
 summary::-webkit-details-marker { display: none; }
 summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }
 .tool-record summary > .v-icon:last-child { transition: transform 150ms ease; }
@@ -141,9 +142,9 @@ dl { display: grid; gap: .75rem; font-size: .8rem; }
 dl > div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: 1rem; }
 dt { font-weight: 600; }
 dd { margin: 0; overflow-wrap: anywhere; }
-.tool-empty { text-align: center; padding: 2rem; }
+.tool-empty { text-align: start; padding: var(--wiki-space-5) 0; }
 @media (max-width: 1100px) { .mcp-connection, .tool-toolbar { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 600px) { summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .5rem; } .tool-record__states { grid-column: 2; grid-row: 2; justify-content: flex-start; max-width: none; } summary > .v-icon:last-child { grid-column: 3; grid-row: 1; } .tool-record__details { padding-inline: 0; } dl > div { grid-template-columns: 1fr; gap: .25rem; } }
+@media (max-width: 600px) { summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .5rem; } .tool-record__states { grid-column: 2; grid-row: 2; justify-content: flex-start; max-width: none; } summary > .v-icon:last-child { grid-column: 3; grid-row: 1; } .tool-record__details { padding-inline: 0; } dl > div { grid-template-columns: 1fr; gap: .25rem; } .tool-workspace :deep(.v-btn) { min-width: 44px; min-height: 44px; } }
 @media (forced-colors: active) { .mcp-connection, .tool-record__state { border-color: CanvasText; background: Canvas; color: CanvasText; } }
 @media (prefers-reduced-motion: reduce) { .tool-record summary > .v-icon:last-child { transition: none; } }
 </style>

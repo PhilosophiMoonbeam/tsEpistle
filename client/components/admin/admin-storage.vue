@@ -104,8 +104,8 @@
       <template v-if="section === 'overview'">
         <div class="storage-overview">
           <section>
-            <div class="storage-heading"><span class="storage-kicker">{{ $t('admin:storage.n01CopiesPurpose') }}</span>
-              <h2>{{ $t('admin:storage.knowledge') }}<br />{{ $t('admin:storage.beyondDatabase') }}</h2>
+            <div class="storage-heading">
+              <h2>{{ $t('admin:storage.configuredDestinations') }}</h2>
               <p>{{ $t('admin:storage.chooseWhereSharedPages') }}</p>
             </div>
             <div class="storage-metrics">
@@ -153,7 +153,7 @@
           </section>
           <aside class="storage-aside">
             <span class="storage-kicker">{{ $t('admin:storage.configurationRuntime') }}</span>
-            <h3>{{ $t('admin:storage.savedOneStep') }}<br />{{ $t('admin:storage.runningNext') }}</h3>
+            <h3>{{ $t('admin:storage.applySavedSettings') }}</h3>
             <p>{{ $t('admin:storage.reviewChangesChooseSave') }}</p>
             <p>{{ $t('admin:storage.initializationCanConnectServices') }}</p><v-btn
               block
@@ -162,7 +162,7 @@
               @click="reviewActivation"
             >{{ $t('admin:storage.applySavedSettings') }}</v-btn>
             <div class="storage-aside-rule" /><span class="storage-kicker">{{ $t('admin:storage.recoveryCoverage') }}</span>
-            <h3>{{ $t('admin:storage.contentCopyHasBoundaries') }}</h3>
+            <h3>{{ $t('admin:storage.recoveryCoverage') }}</h3>
             <p>{{ $t('admin:storage.storageExportsUsefulPortability') }}</p><v-btn
               variant="text"
               append-icon="mdi-arrow-right"
@@ -174,8 +174,8 @@
         </div>
       </template>
       <template v-else-if="section === 'targets'">
-        <div class="storage-heading"><span class="storage-kicker">{{ $t('admin:storage.n02DestinationCatalog') }}</span>
-          <h2>{{ $t('admin:storage.homeEachCopy') }}</h2>
+        <div class="storage-heading">
+          <h2>{{ $t('admin:storage.storageTargetsHeading', { defaultValue: 'Storage targets' }) }}</h2>
           <p>{{ $t('admin:storage.configureDestinationAccessDirection') }}</p>
         </div>
         <div class="storage-target-layout">
@@ -460,8 +460,8 @@
         </div>
       </template>
       <template v-else-if="section === 'operations'">
-        <div class="storage-heading"><span class="storage-kicker">{{ $t('admin:storage.n03RecordWork') }}</span>
-          <h2>{{ $t('admin:storage.everyOperationLeavesReceipt') }}</h2>
+        <div class="storage-heading">
+          <h2>{{ $t('admin:storage.operationsHeading', { defaultValue: 'Operations and receipts' }) }}</h2>
           <p>{{ $t('admin:storage.followQueuedWorkInspect') }}</p>
         </div>
         <div class="storage-section-head"><v-text-field
@@ -538,8 +538,8 @@
       <template v-else>
         <div class="storage-overview">
           <section>
-            <div class="storage-heading"><span class="storage-kicker">{{ $t('admin:storage.n04RecoveryConsidered') }}</span>
-              <h2>{{ $t('admin:storage.knowWhatCopyCan') }}</h2>
+            <div class="storage-heading">
+              <h2>{{ $t('admin:storage.recoveryHeading', { defaultValue: 'Recovery planning' }) }}</h2>
               <p>{{ $t('admin:storage.startFailureYouNeed') }}</p>
             </div>
             <div class="storage-coverage">
@@ -578,7 +578,7 @@
             </div>
           </section>
           <aside class="storage-aside"><span class="storage-kicker">{{ $t('admin:storage.recoveryRehearsal') }}</span>
-            <h3>{{ $t('admin:storage.copyBecomesUseful') }}<br />{{ $t('admin:storage.whenRestoreWorks') }}</h3>
+            <h3>{{ $t('admin:storage.recoveryRehearsal') }}</h3>
             <ol class="storage-checklist">
               <li>{{ $t('admin:storage.recordDeploymentVersionConfiguration') }}</li>
               <li>{{ $t('admin:storage.backUpDatabaseRequired') }}</li>

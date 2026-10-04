@@ -581,14 +581,19 @@ onBeforeUnmount(() => {
 <template>
   <v-container ref="settingsRoot" class="offline-settings" fluid>
     <header class="offline-settings__heading">
-      <v-avatar size="56" color="primary" variant="tonal"><v-icon size="30">mdi-cloud-check-outline</v-icon></v-avatar>
+      <v-icon size="28" aria-hidden="true">mdi-cloud-check-outline</v-icon>
       <div>
         <h1 class="text-headline-medium font-weight-bold">{{ $t('common:offlineSettings.offlineAccess') }}</h1>
         <p class="text-body-large text-medium-emphasis">{{ $t('common:offlineSettings.keepReadingWhenConnection') }}</p>
       </div>
     </header>
+    <nav class="offline-settings__sections" :aria-label="$t('common:offlineSettings.deviceSettings')">
+      <a href="#offline-saved-library">{{ $t('common:offlineLibrary.savedPages') }}</a>
+      <a href="#offline-private-reading-title">{{ $t('common:offlineSettings.privateOfflineReading') }}</a>
+      <a href="#offline-device-storage">{{ $t('common:offlineSettings.deviceStorage') }}</a>
+    </nav>
     <div class="offline-settings__layout">
-      <v-card class="offline-settings__library" variant="flat">
+      <v-card id="offline-saved-library" class="offline-settings__library" variant="flat">
         <OfflineLibrary
           :storage="offlineStorage"
           :storage-state="storageState"
@@ -662,7 +667,7 @@ onBeforeUnmount(() => {
         </v-card>
         <PwaStatus :show-links="false" />
         <v-card class="offline-settings__storage" variant="flat">
-          <h2 class="text-title-large">{{ $t('common:offlineSettings.deviceStorage') }}</h2>
+          <h2 id="offline-device-storage" class="text-title-large" tabindex="-1">{{ $t('common:offlineSettings.deviceStorage') }}</h2>
           <p>{{ storageDetail }}</p>
           <p v-if="storageEstimate?.persisted !== null && storageEstimate?.persisted !== undefined" class="text-medium-emphasis">
             {{ storageEstimate.persisted ? $t('common:offlineSettings.persistentStorageEnabled') : $t('common:offlineSettings.persistentStorageHasNot') }}
@@ -706,10 +711,10 @@ onBeforeUnmount(() => {
   --offline-paper-raised: var(--wiki-surface-raised);
   --offline-paper-sunken: var(--wiki-surface-sunken);
   --offline-ink: rgb(var(--v-theme-on-surface));
-  --offline-muted: rgba(var(--v-theme-on-surface), .72);
-  --offline-faint: rgba(var(--v-theme-on-surface), .65);
+  --offline-muted: var(--wiki-text-muted);
+  --offline-faint: var(--wiki-text-muted);
   --offline-accent: rgb(var(--v-theme-primary));
-  --offline-accent-strong: rgb(var(--v-theme-primary));
+  --offline-accent-strong: var(--wiki-accent-ink);
   --offline-warm: rgb(var(--v-theme-warning));
   --offline-border: var(--wiki-surface-border);
   --offline-border-strong: var(--wiki-surface-border);
@@ -721,17 +726,21 @@ onBeforeUnmount(() => {
   padding: clamp(1rem, 3vw, 2rem);
   color: rgb(var(--v-theme-on-surface));
 }
-.offline-settings__heading { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
+.offline-settings__heading { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
 .offline-settings__heading p { margin: .4rem 0 0; max-width: 70ch; }
+.offline-settings__sections { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+.offline-settings__sections a { display: inline-flex; align-items: center; min-height: 44px; padding: .5rem .75rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); color: var(--wiki-accent-ink); background: var(--wiki-surface-raised); text-decoration: none; font-size: .875rem; font-weight: 600; }
+.offline-settings__sections a:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.offline-settings :where(h2[id], .offline-settings__library) { scroll-margin-block-start: calc(var(--wiki-chrome-height) + 1rem); }
 .offline-settings__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 1.5rem; align-items: start; }
-.offline-settings__library, .offline-settings__storage, .offline-settings__reading { min-width: 0; padding: 1.25rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); }
+.offline-settings__library, .offline-settings__storage, .offline-settings__reading { min-width: 0; padding: 1.25rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); box-shadow: none; }
 .offline-settings__reading-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 .offline-settings__reading-heading h2 { margin: 0; }
 .offline-settings__secret { display: block; margin-top: .75rem; padding: .75rem; overflow-wrap: anywhere; user-select: all; font-family: var(--offline-mono); font-size: .9rem; letter-spacing: .04em; }
 .offline-settings__utilities { display: grid; gap: 1.25rem; min-width: 0; }
 .offline-settings__storage p, .offline-settings__dialog p { margin: .75rem 0; line-height: 1.6; overflow-wrap: anywhere; }
 .offline-settings__actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
-.offline-settings__actions :deep(.v-btn) { height: auto; min-height: 40px; padding-block: .65rem; }
+.offline-settings__actions :deep(.v-btn) { height: auto; min-height: 44px; padding-block: .65rem; }
 .offline-settings__actions :deep(.v-btn__content) { white-space: normal; }
 .offline-settings__notice { margin-top: 1rem; font-size: .875rem; }
 .offline-settings__backdrop { position: fixed; inset: 0; z-index: 2500; display: grid; place-items: center; padding: 1rem; background: rgba(0, 0, 0, .5); }

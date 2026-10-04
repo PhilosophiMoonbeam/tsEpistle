@@ -2,7 +2,7 @@
   <v-container fluid class="analytics-workspace">
     <admin-hero icon="mdi-chart-areaspline" :title="$t('admin:analytics.title')" :description="$t('admin:analytics.understandReadersDeliberateAbout')">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:analytics.reloadSavedAnalyticsSettings') }}</v-tooltip></v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:analytics.reloadSavedAnalyticsSettings') }}</v-tooltip></v-btn>
         <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset">{{ $t('admin:analytics.resetDraft') }}</v-btn>
         <v-btn color="primary" :disabled="locked || !dirty" @click="review">{{ $t('admin:analytics.reviewChanges') }}</v-btn>
       </template>
@@ -50,19 +50,18 @@
         <section class="analytics-main">
           <template v-if="section === 'overview'">
             <div class="analytics-heading">
-              <span class="analytics-kicker">{{ $t('admin:analytics.n01ReadingPulse') }}</span>
-              <h2>{{ $t('admin:analytics.knowledgeUse') }}</h2>
+              <h2>{{ $t('admin:analytics.overview') }}</h2>
               <p>{{ $t('admin:analytics.localEvidenceCompletedReader') }}</p>
             </div>
             <div class="analytics-metrics">
               <div>
                 <span>{{ $t('admin:analytics.recordedReaderResponses') }}</span>
-                <strong><animated-number :value="saved.insights.totalResponses" :duration="700" :format-value="number" /></strong>
+                <strong>{{ number(saved.insights.totalResponses) }}</strong>
                 <small>{{ $t('admin:analytics.utc', { from: saved.insights.from, through: saved.insights.through, interpolation: { escapeValue: false } }) }}</small>
               </div>
               <div>
                 <span>{{ $t('admin:analytics.sharedPagesReached') }}</span>
-                <strong><animated-number :value="saved.insights.pages" :duration="700" :format-value="number" /></strong>
+                <strong>{{ number(saved.insights.pages) }}</strong>
                 <small>{{ $t('admin:analytics.currentPublishedUnprotectedPages') }}</small>
               </div>
             </div>
@@ -103,16 +102,6 @@
                 @pointermove="handleChartPointer"
                 @pointerleave="clearChartPointer"
               >
-                <defs>
-                  <linearGradient :id="barGradId" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="rgb(var(--v-theme-primary))" stop-opacity="1" />
-                    <stop offset="50%" stop-color="color-mix(in srgb, rgb(var(--v-theme-primary)) 85%, white 15%)" stop-opacity="0.9" />
-                    <stop offset="100%" stop-color="rgb(var(--v-theme-primary))" stop-opacity="0.4" />
-                  </linearGradient>
-                  <filter :id="barGlowId" x="-20%" y="-20%" width="140%" height="140%">
-                    <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="rgb(var(--v-theme-primary))" flood-opacity="0.45" />
-                  </filter>
-                </defs>
                 <line x1="0" y1="169" x2="720" y2="169" class="chart-baseline" />
                 <rect
                   v-for="bar in bars"
@@ -125,8 +114,7 @@
                   :height="bar.height"
                   rx="3"
                   ry="3"
-                  :fill="`url(#${barGradId})`"
-                  :filter="`url(#${barGlowId})`"
+                  fill="var(--wiki-accent-ink)"
                 >
                   <title>{{ $t('admin:analytics.responses', { day: bar.day, responses: number(bar.responses), interpolation: { escapeValue: false } }) }}</title>
                 </rect>
@@ -199,8 +187,7 @@
           </template>
           <template v-else-if="section === 'collection'">
             <div class="analytics-heading">
-              <span class="analytics-kicker">{{ $t('admin:analytics.n02IntentionalMeasurement') }}</span>
-              <h2>{{ $t('admin:analytics.chooseWhatCounts') }}</h2>
+              <h2>{{ $t('admin:analytics.collection') }}</h2>
               <p>{{ $t('admin:analytics.onePolicyGovernsLocal') }}</p>
             </div>
             <div class="analytics-setting">
@@ -334,14 +321,14 @@
           </template>
           <template v-else-if="section === 'providers'">
             <div class="analytics-heading">
-              <span class="analytics-kicker">{{ $t('admin:analytics.n03DeliberateConnections') }}</span>
-              <h2>{{ $t('admin:analytics.giveEveryIntegrationPurpose') }}</h2>
+              <h2>{{ $t('admin:analytics.providers') }}</h2>
               <p>{{ $t('admin:analytics.configureProvidersIndependentlyExternal') }}</p>
             </div>
             <div class="analytics-provider-filter">
               <v-text-field v-model="search" :label="$t('admin:analytics.findProvider')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable />
               <v-select v-model="category" :items="categories" :label="$t('admin:analytics.providerCategory')" variant="outlined" hide-details />
             </div>
+            <p class="analytics-filter-context" role="status" v-text="$t('admin:analytics.loadedProviderResults', { defaultValue: '{{visible}} of {{loaded}} loaded providers shown', visible: filteredProviders.length, loaded: saved.providers.length })" />
             <div class="analytics-provider-layout">
               <nav :aria-label="$t('admin:analytics.analyticsProviders')" class="analytics-provider-list">
                 <button
@@ -442,8 +429,7 @@
           </template>
           <template v-else>
             <div class="analytics-heading">
-              <span class="analytics-kicker">{{ $t('admin:analytics.n04AccountableRecord') }}</span>
-              <h2>{{ $t('admin:analytics.decisionsContext') }}</h2>
+              <h2>{{ $t('admin:analytics.activity') }}</h2>
               <p>{{ $t('admin:analytics.latest50CollectionChanges') }}</p>
             </div>
             <div v-if="!saved.history.length" class="analytics-empty">
@@ -582,9 +568,8 @@
 </template>
 <script setup lang="ts">
 import { confirmDiscard } from '../common/confirm-dialog.ts'
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import AnimatedNumber from '@/components/common/animated-number.vue'
 import AsyncState from '@/components/common/async-state.vue'
 import {
   AnalyticsPolicySchema,
@@ -600,9 +585,6 @@ import './analytics-workspace.scss'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
-
-const barGradId = useId()
-const barGlowId = useId()
 
 interface BarDatum {
   day: string

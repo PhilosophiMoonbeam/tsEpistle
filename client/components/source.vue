@@ -2,7 +2,7 @@
   v-app.source
     nav-header
     v-main.source-main
-      v-toolbar.source-toolbar(color='surface', flat)
+      header.source-toolbar
         .source-toolbar-copy
           .source-eyebrow {{$t('common:header.viewSource')}}
           i18next#source-title.source-toolbar-title(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='h1')
@@ -10,42 +10,20 @@
             strong(place='path') /{{path}}
           i18next#source-title.source-toolbar-title(v-else, path='common:page.viewingSource', tag='h1')
             strong(place='path') /{{path}}
-          .source-toolbar-meta(v-if='$vuetify.display.mdAndUp')
+          .source-toolbar-meta
             span {{$t('common:page.id', { id: pageId })}}
             span(v-if='versionId > 0') {{$t('common:page.versionId', { id: versionId })}}
-        v-spacer
-        .source-toolbar-actions
-          v-btn(
-            v-if='versionId > 0'
-            variant='tonal'
-            color='primary'
-            size='small'
-            @click='goHistory'
-            :aria-label='$t(`common:header.history`)'
-          )
-            v-icon(:start='$vuetify.display.mdAndUp') mdi-history
-            span(v-if='$vuetify.display.mdAndUp') {{$t('common:header.history')}}
-          v-btn(variant='tonal', color='primary', size='small', @click='copySource', :aria-label='$t(`common:actions.copy`)')
-            v-icon(:start='$vuetify.display.mdAndUp') mdi-content-copy
-            span(v-if='$vuetify.display.mdAndUp') {{$t('common:actions.copy')}}
-          v-btn(variant='tonal', color='primary', size='small', @click='goDownload', :aria-label='$t(`common:actions.download`)')
-            v-icon(:start='$vuetify.display.mdAndUp') mdi-download
-            span(v-if='$vuetify.display.mdAndUp') {{$t('common:actions.download')}}
-          v-btn(
-            variant='tonal'
-            color='primary'
-            size='small'
-            :aria-pressed='wrapLines ? `true` : `false`'
-            :aria-label='$t(`common:pageSource.wrapLines`)'
-            @click='toggleWrap'
-          )
-            v-icon(:start='$vuetify.display.mdAndUp') mdi-wrap
-            span(v-if='$vuetify.display.mdAndUp') {{$t('common:pageSource.wrapLines')}}
-          v-btn(variant='flat', color='primary', size='small', @click='goLive', :aria-label='$t(`common:pageSource.backToPage`)')
-            v-icon(:start='$vuetify.display.mdAndUp') mdi-arrow-left
-            span(v-if='$vuetify.display.mdAndUp') {{$t('common:pageSource.backToPage')}}
+            span {{ sourceLines.length }} {{ $t('common:pageSource.lineCountLabel') }}
+        v-btn(variant='flat', color='primary', prepend-icon='mdi-arrow-left', :aria-label='$t(`common:pageSource.backToPage`)', @click='goLive') {{$t('common:pageSource.backToPage')}}
       v-container.source-shell(fluid)
         article.source-code-card
+          .source-document-toolbar(role='group', :aria-label='$t(`common:header.viewSource`)')
+            .source-document-path(dir='ltr') {{locale}}/{{path}}
+            .source-toolbar-actions
+              v-btn(variant='text', prepend-icon='mdi-history', :aria-label='$t(`common:header.history`)', @click='goHistory') {{$t('common:header.history')}}
+              v-btn(variant='text', prepend-icon='mdi-content-copy', :aria-label='$t(`common:actions.copy`)', @click='copySource') {{$t('common:actions.copy')}}
+              v-btn(variant='text', prepend-icon='mdi-download', :aria-label='$t(`common:actions.download`)', @click='goDownload') {{$t('common:actions.download')}}
+              v-btn(:variant='wrapLines ? `tonal` : `text`', prepend-icon='mdi-wrap', :aria-label='$t(`common:pageSource.wrapLines`)', :aria-pressed='wrapLines ? `true` : `false`', @click='toggleWrap') {{$t('common:pageSource.wrapLines')}}
           //- Line numbers are CSS counters, so copying the text never includes them.
           pre.source-code(
             tabindex='0'
@@ -183,138 +161,62 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-.source {
-  .v-application__wrap {
-    min-height: 100dvh;
-  }
-
-  .nav-footer {
-    flex: 0 0 auto;
-  }
-}
-
-.source-main {
-  min-height: 0;
-  background:
-    radial-gradient(circle at 88% 0%, rgba(var(--v-theme-primary), .07), transparent 30rem),
-    rgb(var(--v-theme-background));
-}
-
-/* Shared with the standard navigation header: keep source controls legible over a scrolling page. */
+.source .v-application__wrap { min-height: 100dvh; }
+.source-main { min-height: 0; background: rgb(var(--v-theme-background)); }
 .source-toolbar {
-  --source-toolbar-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
-  min-height: 86px !important;
-  padding-inline: var(--wiki-page-gutter);
-  border-bottom: 1px solid var(--wiki-surface-border) !important;
-  background-color: var(--wiki-chrome-surface) !important;
-  background-image: var(--source-toolbar-tint) !important;
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
-  backdrop-filter: var(--wiki-chrome-blur) !important;
-  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
-
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    border-bottom-color: var(--wiki-glass-border) !important;
-  }
-}
-
-.source-toolbar .v-toolbar__content {
-  background: transparent !important;
-}
-
-.source-toolbar-copy {
-  min-width: 0;
-  padding-block: 14px;
-}
-
-.source-eyebrow {
-  color: var(--wiki-primary-ink);
-  font-size: .66rem;
-  font-weight: 760;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-
-.source-toolbar-title {
-  overflow: hidden;
-  margin: 3px 0 0;
-  color: rgb(var(--v-theme-on-surface));
-  font-size: 1rem;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.source-toolbar-meta {
   display: flex;
-  gap: var(--wiki-space-3);
-  margin-top: 3px;
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-type-micro);
-}
-
-.source-toolbar-actions {
-  display: flex;
-  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
-  gap: var(--wiki-space-2);
-  min-width: 0;
-
-  .v-btn {
-    border-radius: var(--wiki-control-radius);
-  }
+  gap: var(--wiki-space-4);
+  padding: var(--wiki-space-5) var(--wiki-page-gutter);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-raised);
 }
-
-.source-shell {
-  width: min(100%, var(--wiki-content-max));
-  margin: 0 auto;
-  padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-12) !important;
+.source-toolbar-copy { min-width: 0; flex: 1 1 24rem; }
+.source-eyebrow { color: var(--wiki-text-muted); font-size: .8125rem; font-weight: 600; }
+.source-toolbar-title {
+  margin: var(--wiki-space-1) 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.125rem;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
-
+.source-toolbar-meta { display: flex; flex-wrap: wrap; gap: var(--wiki-space-3); color: var(--wiki-text-muted); font-size: .8125rem; }
+.source-shell { width: min(100%, var(--wiki-content-max)); margin: 0 auto; padding: var(--wiki-space-5) var(--wiki-page-gutter) var(--wiki-space-10) !important; }
 .source-code-card {
+  min-width: 0;
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-md);
-
-  pre {
-    overflow-x: auto;
-    overflow-y: visible;
-    margin: 0;
-    padding: clamp(18px, 3vw, 30px);
-    padding-inline-start: clamp(10px, 2vw, 18px);
-    white-space: pre;
-    counter-reset: source-line;
-  }
-
-  pre.is-wrapped {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-
-    > code {
-      min-width: 0;
-    }
-  }
-
-  .source-line {
-    display: block;
-    position: relative;
-    padding-inline-start: calc(var(--source-gutter, 4ch) + 1.25rem);
-
-    &::before {
-      position: absolute;
-      inset-inline-start: 0;
-      width: var(--source-gutter, 4ch);
-      color: var(--wiki-text-muted);
-      content: counter(source-line);
-      counter-increment: source-line;
-      font-variant-numeric: tabular-nums;
-      text-align: end;
-      user-select: none;
-    }
-  }
-
-  pre > code {
+}
+.source-document-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+}
+.source-document-path { min-width: 0; overflow-wrap: anywhere; font-family: var(--wiki-font-mono); font-size: .8125rem; color: var(--wiki-text-muted); }
+.source-toolbar-actions { display: flex; flex-wrap: wrap; gap: var(--wiki-space-1); }
+.source .v-btn { border-radius: var(--wiki-control-radius); text-transform: none; letter-spacing: normal; }
+.source-code {
+  overflow: auto;
+  max-height: 72dvh;
+  margin: 0;
+  padding: var(--wiki-space-4) var(--wiki-space-3);
+  white-space: pre;
+  counter-reset: source-line;
+  direction: ltr;
+  text-align: left;
+  &:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
+  &.is-wrapped { white-space: pre-wrap; overflow-wrap: anywhere; > code { min-width: 0; } }
+  > code {
     display: block;
     min-width: max-content;
     background: transparent;
@@ -323,72 +225,35 @@ export default defineComponent({
     font-family: var(--wiki-font-mono);
     font-size: .875rem;
     font-weight: 400;
-    line-height: 1.65;
+    line-height: 1.7;
     white-space: inherit;
-
-    &::before {
-      display: none;
-    }
+    &::before { display: none; }
   }
 }
-
+.source-line {
+  display: block;
+  position: relative;
+  padding-inline-start: calc(var(--source-gutter, 4ch) + 1.25rem);
+  &::before {
+    position: absolute;
+    inset-inline-start: 0;
+    width: var(--source-gutter, 4ch);
+    color: var(--wiki-text-muted);
+    content: counter(source-line);
+    counter-increment: source-line;
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+    user-select: none;
+  }
+}
 @media (max-width: 599px) {
-  .source-toolbar {
-    min-height: 76px !important;
-  }
-
-  .source-toolbar-copy {
-    max-width: calc(100vw - 168px);
-  }
-
-  .source-toolbar-actions {
-    gap: 4px;
-
-    .v-btn {
-      min-width: 44px;
-      min-height: 44px;
-      padding-inline: 6px;
-    }
-  }
-
-  .source-shell {
-    padding: 12px var(--wiki-page-gutter) 36px !important;
-  }
-
-  .source-code-card {
-    border-radius: var(--wiki-panel-radius);
-
-    pre {
-      padding: 16px;
-    }
-  }
+  .source-toolbar { padding: var(--wiki-space-4) var(--wiki-space-3); }
+  .source-shell { padding: var(--wiki-space-3) var(--wiki-space-2) var(--wiki-space-6) !important; }
+  .source .v-btn { min-height: 44px; min-width: 44px; }
+  .source-toolbar-actions { width: 100%; }
 }
-
-@media (max-width: 360px) {
-  .source-toolbar {
-    min-height: 0 !important;
-    padding-block: 8px;
-  }
-
-  .source-toolbar .v-toolbar__content {
-    height: auto !important;
-    min-height: 0;
-    flex-wrap: wrap;
-    row-gap: 8px;
-  }
-
-  .source-toolbar .v-spacer {
-    display: none;
-  }
-
-  .source-toolbar-copy,
-  .source-toolbar-actions {
-    flex: 1 1 100%;
-    max-width: none;
-  }
-
-  .source-toolbar-actions {
-    justify-content: flex-end;
-  }
+@media print {
+  .source-toolbar-actions { display: none; }
+  .source-code { max-height: none; overflow: visible; }
 }
 </style>

@@ -1,9 +1,8 @@
 <template>
   <v-container fluid class="locale-workspace">
-    <admin-hero icon="mdi-translate" :title="$t('admin:locale.title')" :description="$t('admin:locale.makeKnowledgeFeelHome')">
+    <admin-hero icon="mdi-translate" :title="$t('admin:locale.title')" :description="$t('admin:locale.chooseLanguageReadersMeet')">
       <template #actions>
         <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:locale.reloadSavedLanguageSettings') }}</v-tooltip></v-btn>
-        <v-btn color="primary" :disabled="locked || !dirty" @click="review">{{ $t('admin:locale.reviewChanges') }}</v-btn>
       </template>
     </admin-hero>
     <async-state
@@ -26,10 +25,17 @@
     >
     <v-alert v-if="notice" :type="attention ? 'warning' : 'success'" variant="tonal" class="mb-5">{{ notice }}</v-alert>
     <template v-if="saved && draft">
-      <div class="locale-status">
-        <span><i :class="{ 'is-draft': dirty }" />{{ dirty ? $t('admin:locale.unsavedLanguageDraft') : $t('admin:locale.showingSavedLanguages') }}</span
-        ><span>{{ saved.runtime.state === 'applied' ? $t('admin:locale.runtimeLanguageCurrent') : $t('admin:locale.runtimeActivationNeedsAttention2') }}</span>
+      <div class="locale-status" role="status">
+        <div class="locale-status-context">
+          <strong :class="{ 'is-draft': dirty }"><v-icon :icon="dirty ? 'mdi-pencil-outline' : 'mdi-check-circle-outline'" size="18" />{{ dirty ? $t('admin:locale.unsavedLanguageDraft') : $t('admin:locale.showingSavedLanguages') }}</strong>
+          <span :class="{ 'needs-attention': saved.runtime.state !== 'applied' }">{{ saved.runtime.state === 'applied' ? $t('admin:locale.runtimeLanguageCurrent') : $t('admin:locale.runtimeActivationNeedsAttention2') }}</span>
+        </div>
+        <div class="locale-status-actions">
+          <v-btn variant="text" :disabled="busy || !dirty" @click="reset">{{ $t('admin:locale.resetDraft') }}</v-btn>
+          <v-btn color="primary" variant="flat" :disabled="locked || !dirty" @click="review">{{ $t('admin:locale.reviewChanges') }}</v-btn>
+        </div>
       </div>
+      <div class="locale-layout">
       <nav class="locale-tabs" :aria-label="$t('admin:locale.localeSections')">
         <button
           v-for="tab in sections"
@@ -42,12 +48,10 @@
           {{ tab.title }}
         </button>
       </nav>
-      <div class="locale-layout">
-        <section class="locale-editor">
+        <section class="locale-editor" :aria-label="sections.find(tab => tab.key === section)?.title">
           <template v-if="section === 'languages'">
             <div class="locale-heading">
-              <span class="locale-kicker">{{ $t('admin:locale.n01MultilingualHome') }}</span>
-              <h2>{{ $t('admin:locale.welcomeEveryReader') }}</h2>
+              <h2>{{ $t('admin:locale.languages') }}</h2>
               <p>{{ $t('admin:locale.chooseLanguageReadersMeet') }}</p>
             </div>
             <div class="locale-default">
@@ -124,8 +128,7 @@
           </template>
           <template v-else-if="section === 'routing'">
             <div class="locale-heading">
-              <span class="locale-kicker">{{ $t('admin:locale.n02LanguageLocation') }}</span>
-              <h2>{{ $t('admin:locale.clearAddressEveryLanguage') }}</h2>
+              <h2>{{ $t('admin:locale.routing') }}</h2>
               <p>{{ $t('admin:locale.chooseHowReadersMove') }}</p>
             </div>
             <div class="locale-setting">
@@ -180,8 +183,7 @@
           </template>
           <template v-else-if="section === 'library'">
             <div class="locale-heading">
-              <span class="locale-kicker">{{ $t('admin:locale.n03InterfacePackages') }}</span>
-              <h2>{{ $t('admin:locale.libraryLanguages') }}</h2>
+              <h2>{{ $t('admin:locale.packageLibrary') }}</h2>
               <p>
                 {{ $t('admin:locale.installLanguageBeforeOffering') }}
               </p>
@@ -212,6 +214,45 @@
             <p class="locale-catalog-source">
               {{ $t('admin:locale.languages2', { filteredPackagesCount: filteredPackages.length, source: saved.catalog.source || $t('admin:locale.sourceUnavailable'), observedAt: saved.catalog.observedAt ? $t('admin:locale.catalogChecked', { observedAt: date(saved.catalog.observedAt), interpolation: { escapeValue: false } }) : $t('admin:locale.cachedCatalogRefreshTime'), interpolation: { escapeValue: false } }) }}
             </p>
+            <p v-if="dirty" class="locale-muted">{{ $t('admin:locale.saveResetLanguageDraft') }}</p>
+            <div v-if="filteredPackages.length" class="locale-package-list" :aria-label="$t('admin:locale.packageLibrary')">
+              <article v-for="locale in visiblePackages" :key="locale.code" class="locale-package-row">
+                <span class="locale-code" aria-hidden="true">{{ locale.code }}</span>
+                <div class="locale-package-name">
+                  <h3>{{ locale.nativeName }}</h3>
+                  <p>{{ locale.name }} · {{ locale.isRTL ? 'RTL' : 'LTR' }}</p>
+                  <span v-if="locale.isInstalled" class="locale-badge">{{
+                    updateAvailable(locale) ? $t('admin:locale.updateAvailable') : $t('admin:locale.installed')
+                  }}</span>
+                </div>
+                <div class="locale-coverage">
+                  <strong>{{ locale.availability }}<small>%</small></strong
+                  ><span>{{ $t('admin:locale.upstreamInterfaceCoverage') }}</span>
+                  <div class="locale-coverage-track" aria-hidden="true"><i :style="{ width: locale.availability + '%' }" /></div>
+                </div>
+                <v-btn
+                  :variant="locale.isInstalled ? 'text' : 'tonal'"
+                  :disabled="!canOperate || !locale.availableRemotely"
+                  :aria-label="$t('admin:locale.package', { isInstalled: locale.isInstalled ? 'Refresh' : 'Install', name: locale.name, interpolation: { escapeValue: false } })"
+                  @click="openOperation('install', locale)"
+                  >{{ locale.isInstalled ? $t('admin:locale.refreshPackage') : $t('admin:locale.install') }}</v-btn
+                >
+              </article>
+            </div>
+            <v-pagination v-if="packagePageCount > 1" v-model="packagePage" :length="packagePageCount" :total-visible="3" :aria-label="$t('admin:locale.packageLibraryPages', { defaultValue: 'Language package pages' })" />
+            <async-state
+              v-if="!filteredPackages.length"
+              state="empty"
+              :title="$t('admin:locale.noMatchingLanguages')"
+              :message="$t('admin:locale.tryAnotherNamePackage')"
+            />
+            <v-btn v-if="!filteredPackages.length" variant="text" @click="search = ''; packageFilter = 'all'">{{ $t('admin:locale.clearPackageFilters', { defaultValue: 'Clear filters' }) }}</v-btn>
+            <div class="locale-note">
+              <v-icon icon="mdi-translate" size="20" />
+              <p>
+                {{ $t('admin:locale.coverageReportedUpstreamTranslation') }}
+              </p>
+            </div>
             <section class="locale-local-import" aria-labelledby="locale-local-import-title">
               <div class="locale-local-import__heading">
                 <v-icon icon="mdi-file-upload-outline" size="23" />
@@ -307,48 +348,10 @@
                 </div>
               </div>
             </section>
-            <p v-if="dirty" class="locale-muted">{{ $t('admin:locale.saveResetLanguageDraft') }}</p>
-            <div v-if="filteredPackages.length" class="locale-package-list">
-              <article v-for="locale in filteredPackages" :key="locale.code" class="locale-package-row">
-                <span class="locale-code" aria-hidden="true">{{ locale.code }}</span>
-                <div class="locale-package-name">
-                  <h3>{{ locale.nativeName }}</h3>
-                  <p>{{ locale.name }} · {{ locale.isRTL ? 'RTL' : 'LTR' }}</p>
-                  <span v-if="locale.isInstalled" class="locale-badge">{{
-                    updateAvailable(locale) ? $t('admin:locale.updateAvailable') : $t('admin:locale.installed')
-                  }}</span>
-                </div>
-                <div class="locale-coverage">
-                  <strong>{{ locale.availability }}<small>%</small></strong
-                  ><span>{{ $t('admin:locale.upstreamInterfaceCoverage') }}</span>
-                  <div class="locale-coverage-track" aria-hidden="true"><i :style="{ width: locale.availability + '%' }" /></div>
-                </div>
-                <v-btn
-                  :variant="locale.isInstalled ? 'text' : 'tonal'"
-                  :disabled="!canOperate || !locale.availableRemotely"
-                  :aria-label="$t('admin:locale.package', { isInstalled: locale.isInstalled ? 'Refresh' : 'Install', name: locale.name, interpolation: { escapeValue: false } })"
-                  @click="openOperation('install', locale)"
-                  >{{ locale.isInstalled ? $t('admin:locale.refreshPackage') : $t('admin:locale.install') }}</v-btn
-                >
-              </article>
-            </div>
-            <async-state
-              v-else
-              state="empty"
-              :title="$t('admin:locale.noMatchingLanguages')"
-              :message="$t('admin:locale.tryAnotherNamePackage')"
-            />
-            <div class="locale-note">
-              <v-icon icon="mdi-translate" size="20" />
-              <p>
-                {{ $t('admin:locale.coverageReportedUpstreamTranslation') }}
-              </p>
-            </div>
           </template>
           <template v-else>
             <div class="locale-heading">
-              <span class="locale-kicker">{{ $t('admin:locale.n04ChangesOperations') }}</span>
-              <h2>{{ $t('admin:locale.traceableLanguageWorkspace') }}</h2>
+              <h2>{{ $t('admin:locale.activity') }}</h2>
               <p>{{ $t('admin:locale.followServerWorkReview') }}</p>
             </div>
             <h3 class="mb-4">{{ $t('admin:locale.packageOperations') }}</h3>
@@ -437,8 +440,7 @@
             <p>
               {{ $t('admin:locale.languageSettingsTakeEffect') }}
             </p>
-            <v-btn v-if="dirty" variant="outlined" :disabled="busy" @click="reset">{{ $t('admin:locale.resetDraft') }}</v-btn
-            ><v-btn v-if="saved.runtime.state !== 'applied'" variant="tonal" :disabled="locked || dirty" @click="initialize"
+            <v-btn v-if="saved.runtime.state !== 'applied'" variant="tonal" :disabled="locked || dirty" @click="initialize"
               >{{ $t('admin:locale.retryRuntimeActivation') }}</v-btn
             >
           </div>
@@ -543,7 +545,7 @@
 </template>
 <script setup lang="ts">
 import { confirmDiscard } from '../common/confirm-dialog.ts'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AsyncState from '@/components/common/async-state.vue'
 import {
@@ -683,6 +685,12 @@ const filteredPackages = computed(() =>
         (packageFilter.value === 'updates' && updateAvailable(locale))),
   ),
 )
+const packagePage = ref(1)
+const packagePageSize = 20
+const packagePageCount = computed(() => Math.ceil(filteredPackages.value.length / packagePageSize))
+const visiblePackages = computed(() => filteredPackages.value.slice((packagePage.value - 1) * packagePageSize, packagePage.value * packagePageSize))
+watch([search, packageFilter], () => { packagePage.value = 1 })
+watch(packagePageCount, count => { packagePage.value = Math.min(packagePage.value, Math.max(1, count)) })
 const changedFields = computed(() => (saved.value && reviewed.value ? localeChangedFields(saved.value.policy, reviewed.value) : []))
 const languageName = (code: string) => saved.value?.locales.find((locale) => locale.code === code)?.nativeName || code
 const enabled = (code: string) => code === draft.value?.locale || Boolean(draft.value?.namespacing && draft.value.namespaces.includes(code))
@@ -978,11 +986,11 @@ onBeforeUnmount(() => {
 <style src="./locale-workspace.scss" lang="scss"></style>
 <style scoped lang="scss">
 .locale-local-import {
-  margin-block: 24px 30px;
-  padding: 22px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.14);
-  border-radius: 16px;
-  background: rgba(var(--v-theme-surface), 0.62);
+  margin-block: 20px;
+  padding: 16px;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-sunken);
 }
 
 .locale-local-import__heading,
@@ -1021,8 +1029,11 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
   gap: 8px;
   padding: 14px 16px;
-  border: 1px dashed rgba(var(--v-theme-on-surface), 0.3);
-  border-radius: 10px;
+  border: 1px dashed var(--wiki-control-edge);
+  border-radius: var(--wiki-control-radius);
+  min-width: 0;
+  input { min-width: 0; max-width: 100%; min-height: 44px; }
+  small { overflow-wrap: anywhere; }
 
   span {
     font-weight: 600;
@@ -1045,7 +1056,7 @@ onBeforeUnmount(() => {
 .locale-local-import__review {
   margin-top: 20px;
   padding-top: 18px;
-  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.14);
+  border-top: 1px solid var(--wiki-surface-border);
 
   h4,
   p {
@@ -1064,6 +1075,7 @@ onBeforeUnmount(() => {
 
 .locale-local-import__identity {
   align-items: center;
+  > div { min-width: 0; overflow-wrap: anywhere; }
 }
 
 .locale-local-import__counts {
@@ -1074,14 +1086,14 @@ onBeforeUnmount(() => {
 
   span {
     padding: 6px 10px;
-    border: 1px solid rgba(var(--v-theme-on-surface), 0.13);
-    border-radius: 999px;
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius);
     color: var(--wiki-text-muted);
   }
 }
 
 .locale-local-import__change-list {
-  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  border-top: 1px solid var(--wiki-surface-border);
 
   summary {
     padding: 11px 2px;

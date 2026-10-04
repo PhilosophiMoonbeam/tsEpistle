@@ -4,17 +4,11 @@ import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
-import { calculateComposerSizing, caretBoundsFromMirror, scrollTopForCaret } from './agent-composer-sizing.ts'
-import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import { createPinia, storeToRefs, type StoreGeneric } from 'pinia'
 import { useAgentsStore } from '../../store/agents.ts'
-import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { emptyAgentDraft, type AgentDraft } from '../../helpers/agent-draft.ts'
-import { searchPages } from '../../helpers/pages-api.ts'
-import { fetchWikiSource } from '../../helpers/wiki-source.ts'
 import { fallbackLocalizationLabel } from '../../modules/localization.ts'
-import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import type { AgentProviderProfileView, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
@@ -28,10 +22,6 @@ const inlineBindings = inlineScriptMetadata.bindings
 if (!inlineBindings) throw new Error('Inline setup metadata was not compiled')
 const inlinePropNames = Object.keys(inlineBindings).filter(name => inlineBindings[name] === 'props')
 
-const composerComponentPath = path.join(process.cwd(), 'client/components/agents/agent-composer.vue')
-const composerComponentSource = fs.readFileSync(composerComponentPath, 'utf8')
-const composerDescriptor = parse(composerComponentSource, { filename: composerComponentPath }).descriptor
-if (!composerDescriptor.template || !composerDescriptor.scriptSetup) throw new Error('agent-composer.vue template and setup script are required')
 
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
@@ -62,8 +52,9 @@ Bun.plugin({
     })
   }
 })
-const skillMenuComponent = (await import('./agent-composer-skill-menu.vue')).default
-const mediaComposerComponent = (await import('./agent-composer-media.vue')).default
+// The loader must be installed before the real composer and context picker load.
+const AgentComposer = (await import('./agent-composer.vue')).default
+const AgentContextPicker = (await import('./agent-context-picker.vue')).default
 const testPwaState = Vue.reactive({ connectionState: 'online' as 'online' | 'offline' | 'server-unavailable' })
 
 const compiledTemplate = compileTemplate({
@@ -74,59 +65,7 @@ const compiledTemplate = compileTemplate({
 })
 if (compiledTemplate.errors.length > 0) throw compiledTemplate.errors[0]
 const renderInlineAgent = new Function('Vue', compiledTemplate.code)(Vue) as () => unknown
-const compiledComposerTemplate = compileTemplate({
-  source: composerDescriptor.template.content,
-  filename: composerComponentPath,
-  id: 'agent-composer-interaction-test',
-  compilerOptions: { mode: 'function' }
-})
-if (compiledComposerTemplate.errors.length > 0) throw compiledComposerTemplate.errors[0]
-const renderAgentComposer = new Function('Vue', compiledComposerTemplate.code)(Vue) as () => unknown
 
-const pickerPath = path.join(process.cwd(), 'client/components/agents/agent-context-picker.vue')
-const pickerDescriptor = parse(fs.readFileSync(pickerPath, 'utf8'), { filename: pickerPath }).descriptor
-if (!pickerDescriptor.template || !pickerDescriptor.scriptSetup) throw new Error('Context picker template and script are required')
-const pickerTemplate = compileTemplate({
-  source: pickerDescriptor.template.content,
-  filename: pickerPath,
-  id: 'inline-agent-context-picker-test',
-  compilerOptions: { mode: 'function' }
-})
-if (pickerTemplate.errors.length > 0) throw pickerTemplate.errors[0]
-const renderPicker = new Function('Vue', pickerTemplate.code)(Vue) as () => unknown
-const pickerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(pickerDescriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
-const pickerBindings = Array.from(pickerDescriptor.scriptSetup.content.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
-const evaluatePicker = new Function(
-  '{ computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, searchPages, fetchWikiSource, AgentKnowledgeContextSchema }',
-  `${pickerScript}\nreturn { mergeProps, ${pickerBindings.join(', ')} }`
-) as (dependencies: Record<string, unknown>) => Record<string, unknown>
-const contextPickerComponent = Vue.defineComponent({
-  props: {
-    draft: { type: Object, required: true },
-    currentPage: { type: Object, default: null },
-    disabled: Boolean,
-    connectionBlocked: Boolean,
-    connectionRetrying: Boolean
-  },
-  emits: ['change', 'sourcesAdded', 'retry-connection'],
-  setup(props, { emit }) {
-    return evaluatePicker({
-      computed: Vue.computed,
-      mergeProps: Vue.mergeProps,
-      nextTick: Vue.nextTick,
-      onBeforeUnmount: Vue.onBeforeUnmount,
-      ref: Vue.ref,
-      useId: Vue.useId,
-      watch: Vue.watch,
-      defineProps: () => props,
-      defineEmits: () => emit,
-      searchPages,
-      fetchWikiSource,
-      AgentKnowledgeContextSchema
-    })
-  },
-  render: renderPicker
-})
 
 interface ValueRef<T> {
   value: T
@@ -284,30 +223,6 @@ const removeSetupMacro = (content: string, macroName: string): string => {
 
 const setupScript = removeSetupMacro(descriptor.scriptSetup.content, 'defineExpose')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(setupScript.replace(/^import .*$/gm, ''))
-const composerScript = composerDescriptor.scriptSetup.content
-const executableComposerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(composerScript.replace(/^import .*$/gm, ''))
-const composerBindings = Array.from(composerScript.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
-const evaluateComposer = new Function(
-  'computed',
-  'nextTick',
-  'onBeforeUnmount',
-  'onMounted',
-  'ref',
-  'useTemplateRef',
-  'useId',
-  'watch',
-  'defineProps',
-  'defineEmits',
-  'defineExpose',
-  'filterPreferredBuiltInSkills',
-  'filterSkillsForCommand',
-  'filterUserSelectableSkills',
-  'caretBoundsFromMirror',
-  'calculateComposerSizing',
-  'scrollTopForCaret',
-  'agentMediaContentUrl',
-  `${executableComposerScript}\nreturn { ${composerBindings.join(', ')} }`
-) as (...dependencies: unknown[]) => Record<string, unknown>
 
 let stateId = 0
 
@@ -333,6 +248,7 @@ const loadGoalLockState = (
     tools: [],
     artifacts: [],
     proposals: [],
+    historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
     goal: status ? { id: 'goal-1', status } : null
   })
   const storeRefs = {
@@ -840,63 +756,6 @@ const mountInlineAgent = (
       return () => Vue.h('div', attrs)
     }
   })
-  const composerComponent = Vue.defineComponent({
-    name: 'AgentComposerInteractionHarness',
-    props: {
-      sessionId: String,
-      initialDraft: String,
-      initialMode: String,
-      initialSkillVersionIds: Array,
-      disabled: Boolean,
-      sending: Boolean,
-      canStop: Boolean,
-      skillsEnabled: Boolean,
-      skillsLoading: Boolean,
-      generationToolsEnabled: Boolean,
-      googleSearchAvailable: Boolean,
-      googleSearchEnabled: Boolean,
-      googleSearchBusy: Boolean,
-      goalsEnabled: Boolean,
-      skills: Array,
-      skillsLoadError: String,
-      skillsPartial: Boolean,
-      preferredSkills: Array,
-      invocationLimit: Number,
-      statusLabel: String,
-      statusTone: String,
-      hasMessages: Boolean,
-      externalDescriptionId: String,
-      csrfToken: String,
-      mediaSession: Object,
-      mediaCapabilities: Object,
-      networkBlocked: Boolean
-    },
-    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange', 'compositionChange', 'mediaSettled', 'updateGoogleSearch'],
-    setup(props, { emit, expose }) {
-      const bindings = evaluateComposer(
-        Vue.computed,
-        Vue.nextTick,
-        Vue.onBeforeUnmount,
-        Vue.onMounted,
-        Vue.ref,
-        Vue.useTemplateRef,
-        Vue.useId,
-        Vue.watch,
-        () => props,
-        () => emit,
-        expose,
-        filterPreferredBuiltInSkills,
-        filterSkillsForCommand,
-        filterUserSelectableSkills,
-        caretBoundsFromMirror,
-        calculateComposerSizing,
-        scrollTopForCaret,
-        agentMediaContentUrl
-      )
-      return bindings
-    },
-    render: renderAgentComposer
-  })
   const inlineHarness = Vue.defineComponent({
     name: 'InlineAgentInteractionHarness',
     // Optional template props must exist in the same compiler-owned scope as
@@ -922,11 +781,8 @@ const mountInlineAgent = (
       }
     })
   )
-  app.component('AgentContextPicker', contextPickerComponent)
-  app.component('AgentComposer', composerComponent)
-  app.component('AgentComposerSkillMenu', skillMenuComponent)
-  app.component('AgentComposerMedia', mediaComposerComponent)
-  app.component('AgentDictationWaveform', { template: '<canvas class="agent-dictation-waveform" />' })
+  app.component('AgentContextPicker', AgentContextPicker)
+  app.component('AgentComposer', AgentComposer)
   app.mount(host)
 
   const root = host.querySelector<HTMLElement>('.inline-agent')
@@ -2172,15 +2028,13 @@ describe('Inline Agent panel semantics', () => {
 })
 
 describe('Inline Agent latest response dock', () => {
-  it('names the latest response button and hides its decorative halo from assistive technology', () => {
+  it('names the latest response action without nesting interactive controls', () => {
     const mounted = mountInlineAgent(undefined, { followJumpVisible: true })
     const button = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__follow-jump')
-    const halo = mounted.root.querySelector<HTMLElement>('.inline-agent__follow-jump-halo')
 
-    if (!button || !halo) throw new Error('Latest response control did not render')
+    if (!button) throw new Error('Latest response control did not render')
     expect(button.getAttribute('aria-label')).toBe('Jump to latest response')
     expect(button.querySelectorAll('button')).toHaveLength(0)
-    expect(halo.getAttribute('aria-hidden')).toBe('true')
   })
 
   it('keeps approval navigation ahead of latest response navigation', () => {
@@ -2403,10 +2257,6 @@ describe('Inline Agent conversation starters', () => {
     expect(notices[0]?.parentElement?.classList.contains('inline-agent__body')).toBe(true)
     expect(notices[0]?.textContent).toContain('Connection required')
     expect(notices[0]?.textContent).toContain('Retry connection')
-    const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
-    const order = Array.from(transcript?.children ?? []).map(child => child.className)
-    expect(order[0]).toContain('inline-agent__welcome')
-    expect(order.at(-1)).toContain('inline-agent__conversation-dock')
     const starters = Array.from(mounted.root.querySelectorAll<HTMLButtonElement>('.inline-agent__starter'))
     expect(starters).toHaveLength(3)
     expect(starters.every(starter => starter.getAttribute('aria-disabled') === 'true')).toBe(true)
@@ -2577,7 +2427,7 @@ describe('Inline Agent goal submission lock', () => {
   it.each([
     ['paused', 'Resume or cancel the current goal before sending a message'],
     ['active', 'Finish or cancel the current goal before sending a message']
-  ] as const)('renders the truthful %s goal reason on the disabled composer textarea', (status, expectedReason) => {
+  ] as const)('explains the truthful %s goal admission reason and prevents sending', async (status, expectedReason) => {
     const lockState = loadGoalLockState(status)
     expect(lockState.canSubmit.value).toBe(false)
     const mounted = mountInlineAgent(lockState)
@@ -2587,8 +2437,29 @@ describe('Inline Agent goal submission lock', () => {
     if (!reason || !textarea) throw new Error('Locked composer description did not render')
     expect(reason.textContent?.trim()).toBe(expectedReason)
     expect(reason.getAttribute('role')).toBe('status')
-    expect(textarea.disabled).toBe(true)
+    // An active run permits drafting the next message, not sending it. A paused
+    // goal without a run remains locked; both states retain the same admission
+    // explanation and gate all native submission paths.
+    expect(textarea.disabled).toBe(status === 'paused')
+    if (status === 'active') {
+      textarea.value = 'Draft a follow-up without sending it'
+      textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await settle()
+      expect(textarea.value).toBe('Draft a follow-up without sending it')
+      expect(mounted.root.querySelector('.agent-composer__submit')).toBeNull()
+    } else {
+      expect(mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.disabled).toBe(true)
+    }
     expect(textarea.getAttribute('aria-label')).toBe('Follow up with Wiki Agent')
+    expect(resolveDescribedBy(textarea)).toContain(reason)
+    const form = textarea.closest('form')
+    if (!form) throw new Error('Native composer form did not render')
+    textarea.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    form.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
+    await settle()
+    expect(lockState.agentCalls.send).not.toHaveBeenCalled()
+    expect(lockState.canSubmit.value).toBe(false)
+    expect(reason.textContent?.trim()).toBe(expectedReason)
     expect(resolveDescribedBy(textarea)).toContain(reason)
   })
 

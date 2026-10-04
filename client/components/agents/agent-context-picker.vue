@@ -73,7 +73,7 @@
         @click.stop="previewSource(source.id)"
         @click:close.stop="removeSource(source.id)"
       >
-        <span class="agent-context__source-label">{{ source.title }}</span>
+        <span class="agent-context__source-label">{{ source.title }} · {{ source.locale }}/{{ source.path }} · {{ source.sourceRevision }}<span v-if="source.excerptTruncated"> · {{ $t('common:agentContextPicker.excerptTruncated') }}</span></span>
         <v-icon class="agent-context__preview-icon" icon="mdi-eye-outline" size="14" aria-hidden="true" />
       </v-chip>
     </div>
@@ -95,7 +95,7 @@
         <header class="agent-context__dialog-header">
           <span class="agent-context__dialog-mark" aria-hidden="true"><v-icon icon="mdi-file-multiple-outline" size="22" /></span>
           <div>
-            <h2 :id="`${sourceDialogId}-title`">{{ $t('common:agentContextPicker.addSources') }}</h2>
+            <h2 :id="`${sourceDialogId}-title`">{{ $t('common:agentContextPicker.sources') }} · {{ $t('common:agentContextPicker.addSources') }}</h2>
           </div>
           <div class="agent-context__dialog-corner">
             <v-tooltip location="bottom" content-class="agent-owned-overlay">
@@ -132,7 +132,7 @@
           </div>
         </header>
         <v-card-text class="agent-context__dialog-body">
-          <p :id="`${sourceDialogId}-description`" class="agent-context__dialog-guidance">{{ $t('common:agentContextPicker.selectUpEightPages') }}</p>
+          <p :id="`${sourceDialogId}-description`" class="agent-context__dialog-guidance">{{ $t('common:agentContextPicker.selectUpEightPages') }} · {{ draft.sources.length + selectedRows.length }}/8 · {{ $t('common:agentContextPicker.contextCapacity') }}</p>
           <v-alert v-if="connectionBlocked" class="agent-context__connection-alert" type="warning" variant="tonal" density="compact" role="status">
             <span>{{ $t('common:agentContextPicker.connectionRequiredSearchAttach') }}</span>
             <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" type="button" @click="emit('retry-connection')">{{ $t('common:agentContextPicker.retryConnection') }}</v-btn>
@@ -142,7 +142,7 @@
             v-model="sourceQuery"
             class="agent-context__search"
             variant="outlined"
-            :placeholder="$t('common:agentContextPicker.searchPagesSelectUp')"
+            :label="$t('common:agentContextPicker.searchPages')"
             :aria-label="$t('common:agentContextPicker.searchPages')"
             prepend-inner-icon="mdi-magnify"
             clearable
@@ -611,7 +611,7 @@ onBeforeUnmount(() => {
   height: var(--agent-context-control-face-height);
   min-height: var(--agent-context-control-face-height);
   padding-inline: calc(var(--wiki-space-3) * .9);
-  border-radius: var(--wiki-radius-pill) !important;
+  border-radius: var(--wiki-control-radius) !important;
   font-size: var(--v-btn-size, .875rem);
   font-weight: 500;
   letter-spacing: .01em;
@@ -639,8 +639,8 @@ onBeforeUnmount(() => {
   min-height: var(--agent-context-control-face-height);
   padding: 0 var(--wiki-space-2);
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-radius-pill);
-  background: color-mix(in srgb, var(--wiki-surface-raised) 72%, transparent);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
   color: rgb(var(--v-theme-on-surface));
   cursor: pointer;
   font: inherit;
@@ -691,8 +691,8 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
 }
 .agent-context__sources:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
-.agent-context__sources .v-chip { max-width: 100%; border-radius: var(--wiki-radius-pill); }
-.agent-context__source-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-context__sources .v-chip { max-width: 100%; height: auto; min-height: 2.75rem; border-radius: var(--wiki-control-radius); }
+.agent-context__source-label { overflow-wrap: anywhere; white-space: normal; padding-block: .35rem; }
 .agent-context__preview-icon { flex: 0 0 auto; margin-inline-start: var(--wiki-space-1); color: var(--wiki-text-muted); }
 .agent-context__sources .v-chip:not(.v-chip--disabled):is(:hover, :focus-within) {
   border-color: var(--wiki-surface-border-strong);
@@ -715,7 +715,7 @@ onBeforeUnmount(() => {
 .agent-context__dialog { overflow: hidden; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius) !important; background: var(--wiki-surface-raised); }
 .agent-context__dialog-header { display: flex; align-items: flex-start; gap: var(--wiki-space-3); padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); }
 .agent-context__dialog-mark { display: grid; flex: 0 0 auto; width: 2.25rem; height: 2.25rem; place-items: center; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); }
-.agent-context__dialog-header h2 { margin: 0; color: rgb(var(--v-theme-on-surface)); font-family: var(--wiki-font-display); font-size: 1.45rem; font-weight: 500; letter-spacing: -.025em; line-height: 1.15; }
+.agent-context__dialog-header h2 { margin: 0; color: rgb(var(--v-theme-on-surface)); font-family: var(--wiki-font-heading); font-size: 1.125rem; font-weight: 700; line-height: 1.35; }
 .agent-context__dialog-corner { display: flex; flex: 0 0 auto; margin-inline-start: auto; align-items: center; gap: .1rem; }
 .agent-context__dialog-corner .v-btn--icon { align-self: center; }
 .agent-context__dialog-corner .v-btn--loading { flex: 0 0 auto; }
@@ -729,14 +729,14 @@ onBeforeUnmount(() => {
 .agent-context__search-error { margin: 0; }
 .agent-context__search-error p { margin: 0 0 var(--wiki-space-2); }
 .agent-context__search-error .v-btn { min-height: 44px; }
-.agent-context__pending { margin: .6rem 0 .75rem; padding: .65rem .75rem; border: 1px solid color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 30%, var(--wiki-surface-border)); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 6%, var(--wiki-surface-raised)); }
+.agent-context__pending { margin: .6rem 0 .75rem; padding: .75rem; border: 1px solid var(--wiki-surface-border-strong); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); }
 .agent-context__pending-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: rgb(var(--v-theme-on-surface)); font-size: .76rem; }
 .agent-context__pending-heading h3 { margin: 0; font-size: inherit; font-weight: 700; }
-.agent-context__pending-heading span { color: color-mix(in srgb, currentColor 70%, transparent); font-size: .7rem; }
+.agent-context__pending-heading span { color: var(--wiki-text-muted); font-size: .8125rem; }
 .agent-context__pending-list { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .5rem; }
 .agent-context__pending-label { display: inline-flex; max-width: 16rem; flex-direction: column; min-width: 0; overflow: hidden; text-align: start; }
-.agent-context__pending-label small { overflow: hidden; color: color-mix(in srgb, currentColor 64%, transparent); font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
-.agent-context__results { --agent-context-results-rows: 6; min-height: 4.7rem; max-height: calc(var(--agent-context-results-rows) * 3.65rem + 1px); overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; overscroll-behavior-y: auto; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-surface-sunken) 42%, transparent); }
+.agent-context__pending-label small { color: var(--wiki-text-muted); font-size: .8125rem; overflow-wrap: anywhere; white-space: normal; }
+.agent-context__results { --agent-context-results-rows: 6; min-height: 4.7rem; max-height: calc(var(--agent-context-results-rows) * 4rem + 1px); overflow-y: auto; touch-action: pan-y; overscroll-behavior-y: contain; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); }
 .agent-context__results-state { display: flex; min-height: 4.7rem; align-items: center; justify-content: center; gap: .55rem; padding: 1rem; color: var(--wiki-text-muted); font-size: .8rem; text-align: center; }
 .agent-context__result-list { display: grid; margin: 0; padding: 0; list-style: none; }
 .agent-context__result + .agent-context__result { border-top: 1px solid var(--wiki-surface-border); }
@@ -748,8 +748,8 @@ onBeforeUnmount(() => {
 .agent-context__checkbox { display: grid; flex: 0 0 auto; width: 1.15rem; height: 1.15rem; place-items: center; border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 50%, var(--wiki-surface-border)); border-radius: .25rem; background: var(--wiki-surface-raised); }
 .agent-context__result-label input:checked + .agent-context__checkbox { border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); background: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); box-shadow: inset 0 0 0 3px var(--wiki-surface-raised); }
 .agent-context__result-copy { display: grid; min-width: 0; gap: .14rem; }
-.agent-context__result-copy strong { overflow: hidden; color: rgb(var(--v-theme-on-surface)); font-size: .8rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.agent-context__result-copy small { overflow: hidden; color: var(--wiki-text-muted); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+.agent-context__result-copy strong { color: rgb(var(--v-theme-on-surface)); font-size: .875rem; font-weight: 650; overflow-wrap: anywhere; }
+.agent-context__result-copy small { color: var(--wiki-text-muted); font-size: .8125rem; overflow-wrap: anywhere; }
 .agent-context__result-state-label { color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); font-size: .68rem; font-weight: 650; }
 .agent-context__window-note, .agent-context__more-error { margin: .5rem 0 0; font-size: .72rem; line-height: 1.4; }
 .agent-context__window-note { color: var(--wiki-text-muted); }

@@ -4,6 +4,7 @@ import {
   discardCollaborationDraft,
   fetchMoveLinkReview,
   fetchPage,
+  fetchPageDirectory,
   fetchPageHistory,
   fetchPageLinks,
   fetchPageList,
@@ -630,6 +631,35 @@ describe('pages api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system or read:pages is required' }, false))
 
     await expect(Promise.resolve(fetchPageList(fetchImpl, 'Bad page list payload'))).rejects.toThrow('manage:system or read:pages is required')
+  })
+
+  test('preserves empty directory continuations and accepts advancing from their scanned offset', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(createJsonResponse({ items: [], scanned: 1000, nextOffset: 1000 }))
+      .mockResolvedValueOnce(createJsonResponse({ items: [], scanned: 7, nextOffset: 1007 }))
+      .mockResolvedValueOnce(createJsonResponse({ items: [], scanned: 0, nextOffset: null }))
+    const first = await fetchPageDirectory(fetchImpl)
+    expect(first).toEqual({ items: [], scanned: 1000, nextOffset: 1000 })
+    const second = await fetchPageDirectory(fetchImpl, { offset: first.nextOffset })
+    expect(second).toEqual({ items: [], scanned: 7, nextOffset: 1007 })
+    await expect(fetchPageDirectory(fetchImpl, { offset: second.nextOffset })).resolves.toEqual({ items: [], scanned: 0, nextOffset: null })
+  })
+
+  test.each([
+    ['legacy list', []],
+    ['missing continuation', { items: [], scanned: 0 }],
+    ['non-array items', { items: {}, scanned: 0, nextOffset: null }],
+    ['negative scan', { items: [], scanned: -1, nextOffset: null }],
+    ['fractional scan', { items: [], scanned: 1.5, nextOffset: null }],
+    ['unbounded scan', { items: [], scanned: 1001, nextOffset: null }],
+    ['zero-progress continuation', { items: [], scanned: 0, nextOffset: 25 }],
+    ['repeated offset', { items: [], scanned: 10, nextOffset: 25 }],
+    ['incorrect advancement', { items: [], scanned: 10, nextOffset: 36 }],
+    ['non-integer continuation', { items: [], scanned: 10, nextOffset: '35' }],
+    ['malformed visible row', { items: [{ id: 1 }], scanned: 1, nextOffset: null }]
+  ])('rejects a malformed directory envelope: %s', async (_name, payload) => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+    await expect(fetchPageDirectory(fetchImpl, { offset: 25 }, 'Invalid directory window')).rejects.toThrow('Invalid directory window')
   })
 
   test('fetches and validates admin page tags payloads', async () => {

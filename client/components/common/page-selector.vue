@@ -12,7 +12,8 @@
     v-card.page-selector
       .dialog-header
         v-icon.mr-3(color='primary' aria-hidden='true') mdi-page-next-outline
-        h2.text-body-large(v-if='mode === `create`' :id='titleId' ref='dialogTitle' tabindex='-1') {{$t('common:pageSelector.createTitle')}}
+        h2.text-body-large(v-if='duplicate' :id='titleId' ref='dialogTitle' tabindex='-1') {{ $t('common:pageSelector.duplicateTitle', { defaultValue: 'Duplicate page' }) }}
+        h2.text-body-large(v-else-if='mode === `create`' :id='titleId' ref='dialogTitle' tabindex='-1') {{$t('common:pageSelector.createTitle')}}
         h2.text-body-large(v-else-if='mode === `move`' :id='titleId' ref='dialogTitle' tabindex='-1') {{$t('common:pageSelector.moveTitle')}}
         h2.text-body-large(v-else-if='mode === `select`' :id='titleId' ref='dialogTitle' tabindex='-1') {{$t('common:pageSelector.selectTitle')}}
         v-spacer
@@ -23,6 +24,38 @@
           :size='20'
           :width='2'
           aria-hidden='true'
+        )
+      .page-selector__operation
+        template(v-if='mode === `move` || duplicate')
+          span.page-selector__operation-label {{ $t('common:pageSelector.sourcePage', { defaultValue: 'Source page' }) }}
+          strong {{ sourcePageTitle }}
+          span.page-selector__page-path /{{ sourcePageLocale }}/{{ sourcePagePath }}
+        p.page-selector__operation-help(v-if='mode === `move`') {{ $t('common:pageSelector.moveDestinationHint', { defaultValue: 'Choose a destination. Review supported incoming links before committing the move.' }) }}
+        p.page-selector__operation-help(v-else-if='duplicate') {{ $t('common:pageSelector.duplicateDestinationHint', { defaultValue: 'Choose a new location for the copy. The original page remains unchanged.' }) }}
+        p.page-selector__operation-help(v-else-if='mode === `create`') {{ $t('common:pageSelector.createDestinationHint', { defaultValue: 'Choose a folder and path for the page.' }) }}
+        p.page-selector__operation-help(v-else) {{ $t('common:pageSelector.selectDestinationHint', { defaultValue: 'Browse a folder and select the page you need.' }) }}
+      section.page-selector__options(v-if='!mustExist || allowLocaleChange', :aria-label='$t(`common:pageSelector.destination`, { defaultValue: `Destination` })')
+        v-select(
+          v-model='currentLocale'
+          variant='outlined'
+          hide-details
+          single-line
+          :items='namespaces'
+          :label='$t(`common:pageSelector.localeLabel`)'
+          :aria-label='$t(`common:pageSelector.pageLocaleLabel`)'
+          :disabled='isSubmitting || moveReceipt !== null'
+        )
+        v-text-field(
+          ref='pathIpt'
+          v-model='currentPath'
+          variant='outlined'
+          hide-details
+          prefix='/'
+          :label='$t(`common:pageSelector.pagePathLabel`)'
+          :aria-label='$t(`common:pageSelector.pagePathLabel`)'
+          :readonly='mustExist'
+          clearable
+          :disabled='isSubmitting || moveReceipt !== null'
         )
       v-row.page-selector__panes(gap='0')
         v-col.page-selector__pane.page-selector__tree-pane(cols='12' md='5')
@@ -85,8 +118,8 @@
               v-model='pageFilter'
               variant='outlined'
               density='compact'
-              :label='$t(`common:pageSelector.filterPages`)'
-              :hint='$t(`common:pageSelector.filterHint`)'
+              :label='$t(`common:pageSelector.filterLoadedFolder`, { defaultValue: `Filter loaded folder pages` })'
+              :hint='$t(`common:pageSelector.filterLoadedFolderHint`, { defaultValue: `Matches titles and paths in this folder only.` })'
               persistent-hint
               clearable
               :disabled='isSubmitting || moveReceipt !== null'
@@ -274,32 +307,6 @@
         h3(:id='moveUncertainId' tabindex='-1') {{$t('common:pageSelector.moveOutcomeUncertain')}}
         p {{$t('common:pageSelector.moveOutcomeUncertainNote')}}
         v-btn(variant='outlined' @click='refreshCurrentPage') {{$t('common:pageSelector.refreshPage')}}
-      v-card-actions.page-selector__options.pa-2(v-if='!mustExist || allowLocaleChange')
-        v-select(
-          v-model='currentLocale'
-          variant='solo'
-          flat
-          bg-color='surface-variant'
-          hide-details
-          single-line
-          :items='namespaces'
-          :label='$t(`common:pageSelector.localeLabel`)'
-          :aria-label='$t(`common:pageSelector.pageLocaleLabel`)'
-          :disabled='isSubmitting || moveReceipt !== null'
-        )
-        v-text-field(
-          ref='pathIpt'
-          v-model='currentPath'
-          variant='solo'
-          hide-details
-          prefix='/'
-          :label='$t(`common:pageSelector.pagePathLabel`)'
-          :aria-label='$t(`common:pageSelector.pagePathLabel`)'
-          flat
-          :readonly='mustExist'
-          clearable
-          :disabled='isSubmitting || moveReceipt !== null'
-        )
       v-card-chin.page-selector__chin
         v-alert.page-selector__submission-error(v-if='submissionError' type='error' variant='tonal' density='compact' role='alert') {{ submissionError }}
         v-spacer
@@ -339,7 +346,7 @@
           :loading='isSubmitting || moveReviewLoading'
           @click='open'
           :disabled='!isValidPath || isSubmitting || moveReviewLoading || !canReviewIncomingLinks && mode === `move` && updateIncomingLinks'
-        ) {{mode === `move` && updateIncomingLinks ? $t('common:pageSelector.findIncomingLinks') : $t('common:actions.select')}}
+        ) {{ mode === `move` && updateIncomingLinks ? $t('common:pageSelector.findIncomingLinks') : mode === `move` ? $t('common:header.move') : duplicate ? $t('common:pageSelector.continueToEditor', { defaultValue: 'Continue to editor' }) : mode === `create` ? $t('common:pageSelector.useLocation', { defaultValue: 'Use this location' }) : $t('common:actions.select') }}
         v-btn(
           v-if='mode === `move` && updateIncomingLinks && moveReceipt === null && !moveOutcomeUncertain'
           variant='outlined'
@@ -351,6 +358,7 @@
 <script lang='ts'>
 import { translate } from '@/modules/localization.ts'
 import { defineComponent, markRaw, type PropType, useId } from 'vue'
+import { wikiStore } from '@/store/index.ts'
 import {
   fetchMoveLinkReview,
   fetchPageTree,
@@ -450,6 +458,7 @@ export default defineComponent({
     path: { type: String, default: 'new-page' },
     locale: { type: String, default: 'en' },
     mode: { type: String as PropType<PageSelectorMode>, default: 'create' },
+    duplicate: { type: Boolean, default: false },
     openHandler: { type: Function as PropType<OpenHandler>, default: () => undefined },
     mustExist: { type: Boolean, default: false },
     allowLocaleChange: { type: Boolean, default: false },
@@ -517,6 +526,9 @@ export default defineComponent({
       set(val: boolean) { this.$emit('update:modelValue', val) }
     },
     searchLoading(): boolean { return this.pendingRequests > 0 },
+    sourcePageTitle(): string { return wikiStore.page.title },
+    sourcePagePath(): string { return this.mode === 'move' ? this.path : wikiStore.page.path },
+    sourcePageLocale(): string { return this.mode === 'move' ? this.locale : wikiStore.page.locale },
     canReviewIncomingLinks(): boolean {
       return this.sourceVisibility === 'public' &&
         Number.isSafeInteger(this.sourcePageId) &&
@@ -1024,12 +1036,27 @@ export default defineComponent({
 .page-selector {
   --page-selector-row-height: 2.75rem;
 
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
   color: rgb(var(--v-theme-on-surface));
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+
+  &__operation {
+    display: grid;
+    gap: .25rem;
+    padding: 1rem 1.25rem;
+    border-block-end: 1px solid var(--wiki-surface-border);
+    background: var(--wiki-surface-sunken);
+    overflow-wrap: anywhere;
+  }
+  &__operation-label { color: var(--wiki-text-muted); font-size: .75rem; font-weight: 650; }
+  &__operation-help { margin: .25rem 0 0; color: var(--wiki-text-muted); font-size: .875rem; line-height: 1.5; }
 
   .v-treeview .v-list-item-title {
-    font-size: 13px;
+    font-size: .875rem;
   }
 
   .v-treeview .v-list-item {
@@ -1048,11 +1075,7 @@ export default defineComponent({
   }
 
   &__tree-pane {
-    background: color-mix(
-      in srgb,
-      var(--wiki-surface-sunken, rgb(var(--v-theme-background))) 34%,
-      var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
-    );
+    background: var(--wiki-surface-sunken);
   }
 
   &__pages-pane {
@@ -1256,7 +1279,12 @@ export default defineComponent({
   }
 
   &__options {
-    gap: var(--wiki-space-2);
+    display: flex;
+    align-items: center;
+    gap: var(--wiki-space-3);
+    padding: 1rem 1.25rem !important;
+    border-block-end: 1px solid var(--wiki-surface-border);
+    background: var(--wiki-surface-raised);
   }
 
   &__repair-option {
@@ -1266,7 +1294,7 @@ export default defineComponent({
 
   &__repair-toggle {
     display: flex;
-    min-height: 2.5rem;
+    min-height: 44px;
     align-items: center;
     gap: var(--wiki-space-2);
     font-weight: 650;
@@ -1291,7 +1319,7 @@ export default defineComponent({
   &__link-review {
     display: grid;
     gap: var(--wiki-space-2);
-    max-height: min(38dvh, 30rem);
+    max-height: min(46dvh, 34rem);
     overflow-y: auto;
     padding: var(--wiki-space-3);
     border-block-end: 1px solid var(--wiki-surface-border);
@@ -1322,7 +1350,7 @@ export default defineComponent({
     display: flex;
     min-width: 0;
     align-items: center;
-    gap: var(--wiki-space-2);
+    min-height: 44px;
     flex-wrap: wrap;
     cursor: pointer;
   }
@@ -1406,6 +1434,9 @@ export default defineComponent({
     align-items: center;
     gap: var(--wiki-space-2);
     flex-wrap: wrap;
+    padding: .75rem 1.25rem;
+    border-block-start: 1px solid var(--wiki-surface-border);
+    background: var(--wiki-surface-raised);
   }
 
   &__submission-error {
@@ -1415,7 +1446,7 @@ export default defineComponent({
   }
 }
 
-@media (max-width: 599.98px) {
+@media (max-width: 839.98px) {
   .page-selector__panes {
     display: block;
     overflow-y: auto;

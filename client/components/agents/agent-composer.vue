@@ -13,13 +13,28 @@
     @dragover="handleMediaDragOver"
     @drop="handleMediaDrop"
   >
+    <v-overlay
+      :model-value="skillCommandOpen"
+      activator="parent"
+      location-strategy="connected"
+      location="top start"
+      scroll-strategy="reposition"
+      width="min(600px, calc(100vw - 32px))"
+      content-class="agent-owned-overlay"
+      :offset="8"
+      :scrim="false"
+      :open-on-click="false"
+      :open-on-focus="false"
+      :transition="false"
+      persistent
+      no-click-animation
+    >
     <v-card
-      v-if="skillCommandOpen"
       :id="composerIds.commandMenu"
       class="agent-composer__command-menu"
       :aria-labelledby="composerIds.commandHeading"
       :aria-describedby="composerIds.commandDescription"
-      elevation="5"
+      elevation="0"
     >
       <v-card-title :id="composerIds.commandHeading" class="agent-composer__command-heading">
         <span>
@@ -71,6 +86,7 @@
         <v-btn prepend-icon="mdi-refresh" size="small" variant="text" :loading="skillsLoading" :disabled="skillsLoading || networkBlocked" @click="retrySkills">{{ $t('common:agentComposer.retryCatalog') }}</v-btn>
       </v-card-actions>
     </v-card>
+    </v-overlay>
     <span
       :id="composerIds.status"
       class="agent-composer__live-status sr-only"
@@ -79,7 +95,8 @@
       aria-atomic="true"
     >{{ liveStatusLabel }}</span>
 
-    <div class="agent-composer__context-row">
+    <div class="agent-composer__context-row" role="group" :aria-label="$t('common:agentComposer.attachedContext')">
+      <span v-if="$slots['context-controls']" class="agent-composer__section-label">{{ $t('common:agentComposer.attachedContext') }}</span>
       <slot name="context-controls" />
       <v-chip
         v-if="goalsEnabled && goalMode"
@@ -97,8 +114,8 @@
     </div>
 
     <div class="agent-composer__editor">
+      <span class="agent-composer__draft-label">{{ composerInputLabel }}</span>
       <v-textarea
-        v-if="!mediaRecording || draft.trim().length > 0"
         ref="messageInput"
         v-model="draft"
         class="agent-composer__input"
@@ -119,9 +136,8 @@
         @keydown="handleKeydown"
       />
 
-      <!-- Recording feedback lives in the input area: one coral dot for the
-           active microphone, a real-input waveform, and a reserved timer.
-           An existing typed draft stays visible above the feedback row. -->
+      <!-- Keep the editor mounted during capture so typed drafts and caret
+           state survive recording, review, and transcription failures. -->
       <div
         v-if="dictationAvailable && (mediaRecording || mediaTranscribing)"
         class="agent-composer__dictation"
@@ -185,8 +201,8 @@
 
     <div v-if="selectedSkills.length > 0" class="agent-composer__attachments" role="group" :aria-label="$t('common:agentComposer.skillsAttachedContextNext')">
       <span class="agent-composer__attachments-label">
-        <v-icon icon="mdi-paperclip" size="15" aria-hidden="true" />
-        {{ $t('common:agentComposer.attachedContext') }}
+        <v-icon icon="mdi-puzzle-outline" size="15" aria-hidden="true" />
+        {{ $t('common:agentComposer.skills') }}
       </span>
       <div class="agent-composer__skills">
         <v-chip
@@ -217,17 +233,55 @@
         <span v-if="mediaRequesting" class="agent-composer__dictation-requesting">{{ $t('common:agentComposer.microphoneAccess') }}</span>
         <v-btn
           class="agent-composer__dictation-discard"
-          icon="mdi-close"
+          prepend-icon="mdi-close"
           variant="text"
-          size="small"
-          rounded="pill"
           :aria-label="$t('common:agentComposer.discardRecordingKeepsTyped')"
           :title="$t('common:agentComposer.discardRecordingKeepsTyped')"
           :disabled="disabled || sendInProgress"
           @click="cancelDictation"
-        />
+        >{{ $t('common:actions.cancel') }}</v-btn>
       </div>
       <div v-else ref="controlsGroup" class="agent-composer__context-controls" role="group" :aria-label="$t('common:agentComposer.messageTools')">
+        <v-menu
+          v-if="skillsEnabled"
+          content-class="agent-owned-overlay agent-composer__skill-menu-content"
+          v-model="skillMenuOpen"
+          location="top start"
+          :close-on-content-click="false"
+        >
+          <template #activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="agent-composer__skills-trigger wiki-purpose-control"
+              :variant="selectedSkillIds.length ? 'tonal' : 'text'"
+              :color="selectedSkillIds.length ? 'primary' : undefined"
+              prepend-icon="mdi-puzzle-outline"
+              append-icon="mdi-chevron-down"
+              aria-haspopup="dialog"
+              :aria-expanded="skillMenuOpen"
+              :disabled="disabled || sendInProgress"
+              @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
+            >{{ $t('common:agentComposer.skills') }}<span v-if="selectedSkillIds.length" class="agent-composer__attachment-count">{{ selectedSkillIds.length }}</span></v-btn>
+          </template>
+          <AgentComposerSkillMenu
+            :items="skillMenuItems"
+            :skills-count="skills.length"
+            :skills-loading="skillsLoading"
+            :skills-load-error="skillsLoadError"
+            :skills-partial="skillsPartial"
+            :disabled="disabled"
+            :send-in-progress="sendInProgress"
+            :network-blocked="networkBlocked"
+            :invocation-limit="invocationLimit"
+            :selected-skill-version-ids="selectedSkillIds"
+            :preferred-version-ids="preferredMenuVersionIds"
+            @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
+            @toggle="toggleSkill"
+            @toggle-preference="togglePreference"
+            @manage-skills="manageSkills"
+            @retry-skills="retrySkills"
+          />
+        </v-menu>
         <v-menu v-if="attachmentsAvailable" content-class="agent-owned-overlay" location="top start" v-model="attachmentMenuOpen">
           <template #activator="{ props: activatorProps }">
             <v-tooltip location="top" :text="attachmentAdmissionReason || $t('common:agentComposer.attachFiles')">
@@ -237,7 +291,6 @@
                     v-bind="activatorProps"
                     class="agent-composer__attach wiki-purpose-control"
                     variant="text"
-                    rounded="pill"
                     prepend-icon="mdi-paperclip"
                     :aria-label="$t('common:agentComposer.attachFiles')"
                     :aria-describedby="attachDisabled ? composerIds.attachmentReason : undefined"
@@ -263,7 +316,6 @@
               :variant="selectedGenerationTools.length ? 'tonal' : 'text'"
               :color="selectedGenerationTools.length ? 'primary' : undefined"
               :data-state="selectedGenerationTools.length ? 'selected' : undefined"
-              rounded="pill"
               prepend-icon="mdi-creation-outline"
               append-icon="mdi-chevron-down"
               :aria-label="$t('common:agentComposer.chooseCreationTools')"
@@ -318,7 +370,6 @@
               <v-btn
                 class="agent-composer__goal-toggle wiki-purpose-control"
                 variant="text"
-                rounded="pill"
                 prepend-icon="mdi-target"
                 :aria-label="$t('common:agentComposer.goal')"
                 :title="goalDisabledReason || $t('common:agentComposer.defineDurableOutcomeMulti')"
@@ -341,7 +392,6 @@
               icon="mdi-dots-horizontal"
               variant="text"
               size="small"
-              rounded="pill"
               :aria-label="$t('common:agentComposer.moreOptions')"
               aria-haspopup="menu"
               :aria-expanded="moreMenuOpen"
@@ -365,44 +415,6 @@
             >
               <template #append><v-icon :icon="item.checked ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
             </v-list-item>
-            <v-menu
-              v-if="skillsEnabled"
-              content-class="agent-owned-overlay agent-composer__skill-menu-content"
-              v-model="foldedSkillMenuOpen"
-              location="end top"
-              :close-on-content-click="false"
-            >
-              <template #activator="{ props: submenuProps }">
-                <v-list-item
-                  v-bind="submenuProps"
-                  prepend-icon="mdi-puzzle-outline"
-                  :title="$t('common:agentComposer.skills')"
-                  append-icon="mdi-chevron-right"
-                  aria-haspopup="dialog"
-                  :aria-expanded="foldedSkillMenuOpen"
-                  :disabled="disabled || sendInProgress"
-                  @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
-                />
-              </template>
-              <AgentComposerSkillMenu
-                :items="skillMenuItems"
-                :skills-count="skills.length"
-                :skills-loading="skillsLoading"
-                :skills-load-error="skillsLoadError"
-                :skills-partial="skillsPartial"
-                :disabled="disabled"
-                :send-in-progress="sendInProgress"
-                :network-blocked="networkBlocked"
-                :invocation-limit="invocationLimit"
-                :selected-skill-version-ids="selectedSkillIds"
-                :preferred-version-ids="preferredMenuVersionIds"
-                @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
-                @toggle="toggleSkill"
-                @toggle-preference="togglePreference"
-                @manage-skills="manageSkills"
-                @retry-skills="retrySkills"
-              />
-            </v-menu>
           </v-list>
         </v-menu>
       </div>
@@ -436,15 +448,13 @@
             <v-btn
               v-if="!mediaTranscribing"
               class="agent-composer__mic"
-              icon="mdi-microphone-outline"
+              prepend-icon="mdi-microphone-outline"
               variant="text"
-              size="small"
-              rounded="pill"
               :aria-label="$t('common:agentComposer.startDictation')"
               :title="$t('common:agentComposer.startDictation')"
               :disabled="disabled || sendInProgress || networkBlocked || mediaBusy"
               @click="startDictation"
-            />
+            >{{ $t('common:agentComposer.startDictation') }}</v-btn>
           </template>
           <v-btn
             v-if="!canStop"
@@ -720,7 +730,7 @@ watch(() => props.initialDraft, (value, previous) => {
   if (draft.value === (previous ?? '')) draft.value = value ?? ''
 })
 const goalMode = ref(props.initialMode === 'goal')
-const foldedSkillMenuOpen = ref(false)
+const skillMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 const attachmentMenuOpen = ref(false)
 const creationMenuOpen = ref(false)
@@ -745,9 +755,8 @@ const submissionPending = ref(false)
 const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
 const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'create' | 'more' | 'skills'): Promise<void> => {
-  const open = menu === 'attach' ? attachmentMenuOpen : menu === 'create' ? creationMenuOpen : menu === 'more' ? moreMenuOpen : foldedSkillMenuOpen
+  const open = menu === 'attach' ? attachmentMenuOpen : menu === 'create' ? creationMenuOpen : menu === 'more' ? moreMenuOpen : skillMenuOpen
   if (event.key === 'Escape' && open.value) {
-    if (menu === 'more' && foldedSkillMenuOpen.value) return
     event.preventDefault()
     event.stopImmediatePropagation()
     const origin = event.currentTarget
@@ -755,7 +764,7 @@ const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'cr
     const trigger = origin instanceof HTMLElement && origin.hasAttribute('aria-controls')
       ? origin
       : overlayId ? document.querySelector<HTMLElement>(`[aria-controls="${overlayId}"]`) : null
-    // Nested content can unmount before VMenu's deferred focus restoration.
+    // Restore the owned trigger before VMenu's deferred focus restoration.
     trigger?.focus({ preventScroll: true })
     open.value = false
     return
@@ -894,13 +903,10 @@ const moreMenuItems = computed(() => {
 })
 
 /**
- * Fit-based folding of low-priority controls into the More menu. There is no
- * device detection: the left control group is measured, and whenever it
- * overflows its one row the lowest-priority inline control (Create, then Web)
- * moves into the More menu; when space returns the last folded control is
- * restored. Skills always live inside the More menu, and Goal replaces their
- * former inline slot. Attach, the microphone, and Send/Stop never fold, and
- * the action bar never wraps. The fold state is UI-only.
+ * Fit-based folding keeps low-priority controls reachable in More when an
+ * individual tool is wider than its group. Ordinary narrow layouts wrap tools
+ * onto their own row; Skills, Attach, dictation, and Send/Stop stay explicit.
+ * The fold state is UI-only.
  */
 type FoldableControl = 'create' | 'web' | 'goal'
 const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['create', 'web', 'goal']
@@ -917,9 +923,7 @@ const isControlFolded = (control: FoldableControl): boolean => foldedControls.va
 watch(() => generationDisabled.value || isControlFolded('create'), blocked => {
   if (blocked) creationMenuOpen.value = false
 }, { flush: 'sync' })
-const hasMoreMenuContent = computed(() =>
-  moreMenuItems.value.length > 0 || props.skillsEnabled
-)
+const hasMoreMenuContent = computed(() => moreMenuItems.value.length > 0)
 const measureControlsOverflow = (): boolean => {
   const override = foldMeasureOverride.value
   if (override) return override()
@@ -1313,7 +1317,7 @@ watch(
 )
 const manageSkills = (): void => {
   if (props.disabled || sendInProgress.value) return
-  foldedSkillMenuOpen.value = false
+  skillMenuOpen.value = false
   emit('manageSkills')
 }
 const retrySkills = (): void => {
@@ -1321,9 +1325,11 @@ const retrySkills = (): void => {
   emit('retrySkills')
 }
 const focusSkillsTrigger = async (): Promise<void> => {
-  // The inline Skills control no longer exists (Skills live in the More menu),
-  // so focus returns to the editor after the skill manager closes.
-  await focusInput()
+  await nextTick()
+  const root = composerRoot.value instanceof HTMLElement ? composerRoot.value : composerRoot.value?.$el
+  const trigger = root?.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
+  if (trigger && !trigger.disabled) trigger.focus()
+  else await focusInput()
 }
 const resetInput = (): void => {
   resizeInput()
@@ -1400,6 +1406,20 @@ const stopDictation = (): void => {
 const cancelDictation = (): void => {
   mediaComposer.value?.cancelDictation()
 }
+// Starting capture replaces its trigger, so explicitly move focus to Review.
+// Review, cancellation, and automatic endpointing return focus only when the
+// focused recording control disappeared; do not steal focus from a typed draft.
+watch(mediaRecording, async (recording, previous) => {
+  const active = document.activeElement
+  const restoreEditor = previous && active instanceof HTMLElement && Boolean(active.closest('.agent-composer__dictation-review, .agent-composer__dictation-discard'))
+  await nextTick()
+  if (recording) {
+    const root = composerRoot.value instanceof HTMLElement ? composerRoot.value : composerRoot.value?.$el
+    root?.querySelector<HTMLButtonElement>('.agent-composer__dictation-review')?.focus()
+  } else if (restoreEditor) {
+    await focusInput()
+  }
+})
 /** A failed review-path transcription returns to editing with a short notice. */
 const receiveDictationFailure = (message: string): void => {
   if (error.value) return
@@ -1481,25 +1501,124 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.agent-composer {
+  --agent-composer-control-face-height: max(44px, var(--wiki-control-height));
+  --agent-composer-control-gap: var(--wiki-space-2);
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-body);
+}
+
+.agent-composer:has(textarea:focus-visible) {
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: 2px;
+}
+
+
+.agent-composer--retry,
+.agent-composer--status-error {
+  border-color: rgb(var(--v-theme-error));
+}
+
+.agent-composer--disabled:not(.agent-composer--sending) {
+  background: var(--wiki-surface-sunken);
+}
+
+.agent-composer__context-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  padding-block-end: var(--wiki-space-2);
+  margin-block-end: var(--wiki-space-2);
+  border-block-end: 1px solid var(--wiki-surface-border);
+}
+
+.agent-composer__context-row:empty { display: none; }
+.agent-composer__context-row > * { max-width: 100%; }
+
+.agent-composer__section-label,
+.agent-composer__draft-label,
+.agent-composer__attachments-label {
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  line-height: 1.5;
+}
+
+.agent-composer__editor { min-width: 0; }
+.agent-composer__draft-label { display: block; margin-block-end: var(--wiki-space-1); }
+
+.agent-composer__input :deep(.v-field) {
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  box-shadow: none;
+}
+
+.agent-composer__input :deep(.v-field__input) {
+  min-height: calc(var(--wiki-leading-body) * 1rem + var(--wiki-space-3) * 2);
+  padding: var(--wiki-space-3);
+}
+
+.agent-composer__input :deep(textarea) {
+  -webkit-mask-image: none;
+  mask-image: none;
+  box-sizing: border-box;
+  min-height: calc(var(--wiki-leading-body) * 1rem);
+  max-height: min(calc(var(--wiki-leading-body) * 6rem), 25dvh);
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1rem;
+  line-height: var(--wiki-leading-body);
+  resize: none;
+}
+
+.agent-composer__input :deep(textarea::placeholder) { color: var(--wiki-text-subtle); opacity: 1; }
+.agent-composer__input :deep(textarea:focus-visible) { outline: none; }
+.agent-composer__input :deep(.v-field:has(:focus-visible)) { outline: none; box-shadow: none; }
+
+.agent-composer__keyboard-help,
+.agent-composer__uploading,
+.agent-composer__attachment-count,
+.agent-composer__command-limit {
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  line-height: 1.5;
+}
+
+.agent-composer__keyboard-help { margin: var(--wiki-space-1) 0; }
+.agent-composer__attachment-count { margin-inline-start: var(--wiki-space-1); font-variant-numeric: tabular-nums; }
+.agent-composer__command-limit { margin: var(--wiki-space-2) var(--wiki-space-3); }
+.agent-composer__attach-wrapper { display: inline-flex; }
+
 .agent-composer__media-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: var(--wiki-space-2);
-  margin: 0;
+  margin: var(--wiki-space-2) 0;
   padding: 0;
   list-style: none;
 }
 
 .agent-composer__media-attachments li {
   display: flex;
-  align-items: center;
-  gap: var(--wiki-space-2);
   min-width: 0;
   max-width: 100%;
-  padding: var(--wiki-space-1) var(--wiki-space-2);
+  align-items: center;
+  gap: var(--wiki-space-2);
+  padding-inline: var(--wiki-space-2);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-raised);
+  background: var(--wiki-surface-sunken);
 }
 
 .agent-composer__media-attachments img {
@@ -1513,149 +1632,29 @@ onBeforeUnmount(() => {
 .agent-composer__media-attachments li > span {
   min-width: 0;
   max-width: 18rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: var(--wiki-label-size);
 }
 
-.agent-composer__media-attachments :deep(.v-btn) { flex-shrink: 0; }
-.agent-composer__uploading,
-.agent-composer__attachment-count,
-.agent-composer__keyboard-help,
-.agent-composer__command-limit {
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-}
-.agent-composer__attachment-count { margin-inline-start: var(--wiki-space-1); }
-.agent-composer__keyboard-help { margin: var(--wiki-space-1) 0; }
-.agent-composer__command-limit { margin: var(--wiki-space-2) var(--wiki-space-3); }
-.agent-composer__attach-wrapper { display: inline-flex; }
-
-.agent-composer {
-  --agent-composer-control-face-height: clamp(34px, calc(var(--wiki-control-height) * .8), 36px);
-  --agent-composer-control-hit-height: max(44px, var(--wiki-control-height));
-  --agent-composer-control-hit-inset: calc((var(--agent-composer-control-hit-height) - var(--agent-composer-control-face-height)) / -2);
-  --agent-composer-control-gap: clamp(5px, calc(var(--wiki-space-2) * .8), 8px);
-  --agent-composer-control-padding-inline: calc(var(--wiki-space-3) * .9);
-  --agent-composer-control-font-size: var(--v-btn-size, .875rem);
-  --agent-composer-control-min-width: max(var(--agent-composer-control-hit-height), calc(var(--agent-composer-control-face-height) + var(--wiki-space-1)));
-  --agent-composer-padding: calc(var(--wiki-space-2) * .8);
-  position: relative;
-  display: flex;
-  max-height: min(calc(var(--wiki-space-12) * 7), 44dvh);
-  flex-direction: column;
-  overflow: visible;
-  min-width: 0;
-  padding: var(--agent-composer-padding);
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
-  font-family: var(--wiki-font-body);
-  transition:
-    border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
-    box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
-}
-
-.agent-composer:has(textarea:focus-visible) {
-  /* Semi-transparent focus outline: 40% of the neutral focus color. */
-  outline: 2px solid color-mix(in srgb, var(--wiki-focus-color) 40%, transparent);
-  outline-offset: 2px;
-}
-.agent-composer__input :deep(.v-field:has(:focus-visible)) {
-  outline: none;
-  box-shadow: none;
-}
-
-.agent-composer--sending {
-  border-color: color-mix(in srgb, var(--wiki-accent-warm) 42%, var(--wiki-surface-border));
-}
-
-.agent-composer--retry,
-.agent-composer--status-error {
-  border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 48%, var(--wiki-surface-border));
-}
-
-.agent-composer--disabled:not(.agent-composer--sending) {
-  opacity: 1;
-  background: var(--wiki-surface-sunken);
-  box-shadow: var(--wiki-shadow-inset);
-}
-
-.agent-composer--disabled:not(.agent-composer--sending) .agent-composer__submit.v-btn--disabled:not(.v-btn--loading),
-.agent-composer--disabled:not(.agent-composer--sending) .agent-composer__submit:disabled:not(.v-btn--loading) {
-  color: rgb(var(--v-theme-on-primary-disabled-sunken)) !important;
-}
-
-.agent-composer__editor {
-  min-width: 0;
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  padding: calc(var(--wiki-space-1) * .5) 0 0;
-}
-
-.agent-composer__input :deep(.v-field) {
-  background: transparent;
-  box-shadow: none;
-}
-
-.agent-composer__input :deep(.v-field__input) {
-  /* One text line + the field padding: the editor starts as a single line. */
-  min-height: calc(var(--wiki-leading-body) * 1rem + var(--wiki-space-1) * 1.9);
-  padding: calc(var(--wiki-space-1) * .9) var(--wiki-space-1);
-}
-
-.agent-composer__input :deep(textarea) {
-  /* This label-free editor needs no floating-label fade over its first line. */
-  -webkit-mask-image: none;
-  mask-image: none;
-  box-sizing: border-box;
-  min-height: calc(var(--wiki-leading-body) * 1rem);
-  max-height: min(calc(var(--wiki-leading-body) * 6rem), 30dvh);
-  overflow-y: hidden;
-  overscroll-behavior: contain;
-  color: rgb(var(--v-theme-on-surface));
-  font-size: 1rem;
-  line-height: var(--wiki-leading-body);
-  resize: none;
-}
-
-
-.agent-composer__input :deep(textarea::placeholder) {
-  color: var(--wiki-text-subtle);
-  opacity: 1;
-}
-
-.agent-composer__input :deep(textarea:focus-visible) {
-  outline: none;
+.agent-composer__media-attachments :deep(.v-btn) {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .agent-composer__attachments {
   display: flex;
   min-width: 0;
-  min-height: 0;
-  flex: 0 1 auto;
-  max-height: min(calc(var(--wiki-space-12) * 2), 24dvh);
   align-items: flex-start;
-  gap: var(--wiki-space-1);
-  margin: 0 var(--wiki-space-1) var(--wiki-space-1);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: var(--wiki-space-1);
-  border-block: 1px solid var(--wiki-surface-border);
+  gap: var(--wiki-space-2);
+  padding-block: var(--wiki-space-2);
 }
 
 .agent-composer__attachments-label {
   display: inline-flex;
-  min-height: calc(var(--wiki-control-height) - var(--wiki-space-3));
   align-items: center;
   gap: var(--wiki-space-1);
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  white-space: nowrap;
+  min-height: 32px;
 }
 
 .agent-composer__skills {
@@ -1663,158 +1662,81 @@ onBeforeUnmount(() => {
   min-width: 0;
   flex: 1;
   flex-wrap: wrap;
-  align-content: flex-start;
   gap: var(--wiki-space-1);
+  max-height: 18dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+
+.agent-composer__skills :deep(.v-chip) { max-width: 100%; height: auto; min-height: 32px; }
+.agent-composer__skills :deep(.v-chip__content) { white-space: normal; overflow-wrap: anywhere; }
+.agent-composer__skills :deep(.v-chip__close) { min-width: 32px; min-height: 32px; }
 
 .agent-composer__actions {
   display: grid;
   min-width: 0;
-  min-height: var(--agent-composer-control-face-height);
-  flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--agent-composer-control-gap);
-  padding: var(--agent-composer-control-gap) 0 0;
-  margin-top: var(--agent-composer-control-gap);
-  /* Subtle separation above the action toolbar instead of a hard divider. */
-  border-top: 1px solid color-mix(in srgb, var(--wiki-surface-border) 55%, transparent);
-}
-
-.agent-composer__context-row {
-  display: flex;
-  min-width: 0;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--agent-composer-control-gap);
-  margin: 0 0 var(--agent-composer-control-gap);
-}
-
-/* Collapses entirely when the context slot renders nothing and no goal chip is set. */
-.agent-composer__context-row:empty {
-  display: none;
+  align-items: end;
+  gap: var(--wiki-space-3);
+  padding-block-start: var(--wiki-space-2);
+  margin-block-start: var(--wiki-space-2);
+  border-block-start: 1px solid var(--wiki-surface-border);
 }
 
 .agent-composer__context-controls,
 .agent-composer__primary-actions {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--agent-composer-control-gap);
 }
 
-/* One action row at any width: overflow is handled by folding controls into
-   the More menu, never by wrapping. */
-.agent-composer__context-controls {
-  flex-wrap: nowrap;
-  overflow: visible;
-}
+.agent-composer__context-controls > * { flex: 0 0 auto; max-width: 100%; }
+.agent-composer__primary-actions { justify-content: flex-end; }
 
-.agent-composer__context-controls > * {
-  flex: 0 0 auto;
-}
-
-
-.agent-composer__primary-actions {
-  min-width: calc(var(--wiki-space-12) * 1.9);
-  justify-content: stretch;
-}
-
-.agent-composer__primary-actions > .agent-composer__submit,
-.agent-composer__primary-actions > .agent-composer__stop,
-.agent-composer__primary-actions > .agent-composer__dictation-review {
-  width: 100%;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-/* Compact action faces reserve the full 44px inline hit width in layout.
-   Only the block-axis target extends beyond the face, so neighboring pointer
-   targets cannot overlap across the control gap. */
-.agent-composer__attach,
-.agent-composer__create,
-.agent-composer__goal-toggle,
-.agent-composer__web-search-toggle,
-.agent-composer__mic,
-.agent-composer__dictation-discard,
-.agent-composer__dictation-review,
-.agent-composer__more-button,
-.agent-composer__submit,
-.agent-composer__stop {
-  position: relative;
-  box-sizing: border-box;
-  min-width: var(--agent-composer-control-min-width);
-  height: var(--agent-composer-control-face-height);
+.agent-composer__actions :deep(.v-btn),
+.agent-composer__web-search-toggle {
+  min-width: 44px;
   min-height: var(--agent-composer-control-face-height);
-  border-radius: var(--wiki-radius-pill);
+  height: auto;
+  border-radius: var(--wiki-control-radius);
   font-family: inherit;
-  font-size: var(--agent-composer-control-font-size);
+  font-size: .875rem;
   font-weight: 500;
   text-transform: none;
-  letter-spacing: .01em;
+  letter-spacing: normal;
 }
 
-.agent-composer__attach::before,
-.agent-composer__create::before,
-.agent-composer__goal-toggle::before,
-.agent-composer__web-search-toggle::before,
-.agent-composer__mic::before,
-.agent-composer__dictation-discard::before,
-.agent-composer__dictation-review::before,
-.agent-composer__more-button::before,
-.agent-composer__submit::before,
-.agent-composer__stop::before {
-  position: absolute;
-  inset-block: var(--agent-composer-control-hit-inset);
-  inset-inline-start: 50%;
-  width: 100%;
-  min-width: var(--agent-composer-control-hit-height);
-  min-height: var(--agent-composer-control-hit-height);
-  border-radius: inherit;
-  content: '';
-  pointer-events: auto;
-  transform: translateX(-50%);
-}
-
-.agent-composer__attach,
-.agent-composer__create,
-.agent-composer__goal-toggle {
-  max-width: 100%;
-  padding-inline: var(--agent-composer-control-padding-inline);
+.agent-composer__actions :deep(.v-btn__content) { white-space: normal; overflow-wrap: anywhere; }
+.agent-composer__actions :deep(.v-icon) { font-size: 18px; }
+.agent-composer__actions :deep(.v-btn:focus-visible) { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.agent-composer__submit { min-width: 96px !important; box-shadow: none; }
+.agent-composer__submit.v-btn--disabled:not(.v-btn--loading) {
+  opacity: 1;
+  background: var(--wiki-surface-sunken) !important;
+  color: var(--wiki-text-muted) !important;
+  border: 1px solid var(--wiki-surface-border);
 }
 
 .agent-composer__web-search-toggle {
   position: relative;
   display: inline-flex;
-  min-height: var(--agent-composer-control-face-height);
   align-items: center;
   gap: var(--wiki-space-2);
-  padding-inline: var(--agent-composer-control-padding-inline);
-  border-radius: var(--wiki-radius-pill);
+  padding-inline: var(--wiki-space-3);
   color: var(--wiki-text-muted);
   cursor: pointer;
-  font-size: var(--agent-composer-control-font-size);
-  font-weight: 500;
   user-select: none;
 }
 
-.agent-composer__web-search-toggle:has(input:checked),
-.agent-composer__web-search-toggle[data-state='selected'] {
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, transparent);
+.agent-composer__web-search-toggle:has(input:checked) {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, var(--wiki-surface-raised));
   color: var(--wiki-primary-ink);
 }
 
-.agent-composer__web-search-toggle:has(input:focus-visible) {
-  outline: 2px solid var(--wiki-focus-color);
-  outline-offset: 2px;
-}
-
-.agent-composer__web-search-toggle:has(input:disabled) {
-  cursor: default;
-  opacity: .45;
-}
-
+.agent-composer__web-search-toggle:has(input:focus-visible) { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.agent-composer__web-search-toggle:has(input:disabled) { cursor: default; color: var(--wiki-text-subtle); }
 .agent-composer__web-search-toggle input {
   position: absolute;
   inline-size: 1px;
@@ -1824,223 +1746,66 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__notice {
-  margin: 0 var(--wiki-space-1) var(--wiki-space-1);
-  color: rgb(var(--v-theme-error));
+  margin: var(--wiki-space-2) 0;
+  color: var(--wiki-error-ink);
   font-size: var(--wiki-label-size);
+  overflow-wrap: anywhere;
 }
 
 .agent-composer__web-notice {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--wiki-space-1);
-  margin: 0 var(--wiki-space-1) var(--wiki-space-1);
+  margin: var(--wiki-space-1) 0;
   color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
-  line-height: 1.4;
-}
-
-.agent-composer__web-notice--clipped {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-}
-
-.agent-composer__goal-chip {
-  max-width: 100%;
-}
-
-.agent-composer__tool-menu {
-  min-width: 264px;
-  max-width: min(320px, calc(100vw - 24px));
-}
-
-.agent-composer__tool-menu-note {
-  margin: 8px 16px 6px;
-  max-width: 250px;
-  font-size: .75rem;
   line-height: 1.5;
-  opacity: .7;
 }
 
-.agent-composer__more-menu {
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-lg);
-}
+.agent-composer__goal-chip { max-width: 100%; }
+.agent-composer__tool-menu { min-width: min(264px, calc(100vw - 32px)); max-width: min(320px, calc(100vw - 32px)); }
+.agent-composer__tool-menu-note { margin: var(--wiki-space-2) var(--wiki-space-4); color: var(--wiki-text-muted); font-size: var(--wiki-label-size); line-height: 1.5; }
+.agent-composer__more-menu { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-raised); }
 
-/* Recording feedback row inside the input area. Red is reserved for the
-   noninteractive status dot; actions stay neutral/amber. The row reserves its
-   height so the composer never resizes between states. */
 .agent-composer__dictation {
-  display: flex;
-  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--wiki-space-2);
-  min-height: 28px;
-  padding: 2px var(--wiki-space-1);
+  min-width: 0;
+  padding: var(--wiki-space-3);
+  margin-block-start: var(--wiki-space-2);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
 }
 
-.agent-composer__dictation-dot {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: color-mix(in srgb, rgb(var(--v-theme-error)) 72%, #fff);
-  animation: agent-composer-dictation-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes agent-composer-dictation-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .45; }
-}
-
-.agent-composer__dictation-label {
-  flex: 0 0 auto;
-  color: rgb(var(--v-theme-on-surface), .82);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  white-space: nowrap;
-}
-
-.agent-composer__dictation-wave {
-  flex: 1 1 auto;
-  min-width: 24px;
-}
-
-.agent-composer__dictation-timer {
-  flex: 0 0 auto;
-  color: rgb(var(--v-theme-on-surface), .72);
-  font-size: var(--wiki-label-size);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.agent-composer__dictation-timer--ending {
-  color: rgb(var(--v-theme-error));
-  font-weight: 600;
-}
-
-.agent-composer__dictation-requesting {
-  color: rgb(var(--v-theme-on-surface), .62);
-  font-size: var(--wiki-label-size);
-  white-space: nowrap;
-}
-
-.agent-composer__actions :deep(.v-icon) {
-  font-size: 18px;
-}
-
-.agent-composer__actions :deep(.v-btn__prepend),
-.agent-composer__actions :deep(.v-btn__append) {
-  margin-inline: calc(var(--wiki-space-1) * -.9) calc(var(--wiki-space-2) * .9);
-}
-
-
-
-.agent-composer__submit {
-  min-width: calc(var(--wiki-space-12) * 1.9);
-  box-shadow: var(--wiki-shadow-xs);
-  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease), box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
-}
-
-.agent-composer__submit.v-btn--disabled:not(.v-btn--loading),
-.agent-composer__submit:disabled:not(.v-btn--loading) {
-  opacity: 1;
-  background-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 80%, transparent) !important;
-  color: rgb(var(--v-theme-on-primary-disabled-raised)) !important;
-}
-
-.agent-composer__submit.v-btn--disabled:not(.v-btn--loading) :deep(.v-btn__content),
-.agent-composer__submit.v-btn--disabled:not(.v-btn--loading) :deep(.v-btn__prepend),
-.agent-composer__submit.v-btn--disabled:not(.v-btn--loading) :deep(.v-icon),
-.agent-composer__submit:disabled:not(.v-btn--loading) :deep(.v-btn__content),
-.agent-composer__submit:disabled:not(.v-btn--loading) :deep(.v-btn__prepend),
-.agent-composer__submit:disabled:not(.v-btn--loading) :deep(.v-icon) {
-  opacity: 1;
-}
-
-.agent-composer__submit.v-btn--loading :deep(.v-btn__content),
-.agent-composer__submit.v-btn--loading :deep(.v-btn__prepend) {
-  opacity: 0;
-}
-
-.agent-composer__submit.v-btn--disabled :deep(.v-btn__overlay),
-.agent-composer__submit:disabled :deep(.v-btn__overlay) {
-  opacity: 0;
-}
-
-.agent-composer__submit:hover:not(:disabled) {
-  box-shadow: var(--wiki-shadow-sm);
-  transform: translateY(-1px);
-}
-
-.agent-composer__submit:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.agent-composer__stop {
-  min-width: calc(var(--wiki-space-12) * 1.52);
-}
-
+.agent-composer__dictation-dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(var(--v-theme-error)); }
+.agent-composer__dictation-label { color: rgb(var(--v-theme-on-surface)); font-size: var(--wiki-label-size); font-weight: var(--wiki-label-weight); overflow-wrap: anywhere; }
+.agent-composer__dictation-wave { grid-column: 1 / -1; grid-row: 2; min-width: 0; width: 100%; }
+.agent-composer__dictation-timer { grid-column: 3; grid-row: 1; color: var(--wiki-text-muted); font-size: var(--wiki-label-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.agent-composer__dictation-timer--ending { color: var(--wiki-error-ink); font-weight: 600; }
+.agent-composer__dictation-requesting { color: var(--wiki-text-muted); font-size: var(--wiki-label-size); overflow-wrap: anywhere; }
 
 .agent-composer__command-menu {
-  position: absolute;
-  z-index: 10;
-  inset-block-end: calc(100% + var(--wiki-space-2));
-  inset-inline-start: 0;
-  width: min(calc(var(--wiki-space-12) * 12.5), 100%);
   max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-lg);
+  box-shadow: var(--wiki-shadow-sm);
 }
 
-:global(.agent-composer__skill-menu-content) {
-  border: 1px solid var(--wiki-surface-border-strong) !important;
-  border-radius: var(--wiki-panel-radius);
-  box-shadow: var(--wiki-shadow-lg);
-}
-.agent-composer__command-menu :deep(.v-list) {
-  max-height: min(20rem, 42dvh) !important;
-}
-.agent-composer__command-retry {
-  justify-content: space-between;
-  gap: var(--wiki-space-2);
-  border-top: 1px solid var(--wiki-surface-border);
-  color: rgb(var(--v-theme-error));
-  font-size: var(--wiki-label-size);
-}
+:global(.agent-composer__skill-menu-content) { max-width: calc(100vw - 32px); border: 1px solid var(--wiki-surface-border-strong); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
+.agent-composer__command-menu :deep(.v-list) { max-height: min(20rem, 42dvh) !important; background: var(--wiki-surface-raised); }
+.agent-composer__command-menu :deep(.v-list-item-title),
+.agent-composer__command-menu :deep(.v-list-item-subtitle) { white-space: normal; overflow-wrap: anywhere; }
+.agent-composer__command-heading { display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); font-size: .875rem; white-space: normal; }
+.agent-composer__command-heading > span { display: inline-flex; align-items: center; gap: var(--wiki-space-2); }
+.agent-composer__command-help { color: var(--wiki-text-muted); font-size: var(--wiki-label-size); }
+.agent-composer__command-retry { flex-wrap: wrap; gap: var(--wiki-space-2); border-block-start: 1px solid var(--wiki-surface-border); color: var(--wiki-text-muted); font-size: var(--wiki-label-size); }
 
-.agent-composer__command-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--wiki-space-3);
-  font-size: .875rem;
-}
-
-.agent-composer__command-heading > span {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wiki-space-2);
-}
-
-.agent-composer__command-help {
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  font-weight: 500;
-}
-
+.agent-composer__web-notice--clipped,
 .agent-composer__keyboard-help.sr-only,
 .agent-composer__live-status,
 .agent-composer__command-status {
@@ -2051,132 +1816,33 @@ onBeforeUnmount(() => {
   padding: 0;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   border: 0;
   white-space: nowrap;
 }
 
 @media (max-width: 740px) {
-  .agent-composer {
-    padding: var(--agent-composer-padding);
-    border-radius: var(--wiki-control-radius);
-  }
-
-  .agent-composer__actions {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: "context primary";
-    column-gap: var(--agent-composer-control-gap);
-    row-gap: 0;
-  }
-
-  .agent-composer__context-controls {
-    grid-area: context;
-    overflow: visible;
-    padding-block: var(--agent-composer-control-gap);
-    margin-block: calc(var(--agent-composer-control-gap) * -1);
-  }
-
-  .agent-composer__primary-actions {
-    grid-area: primary;
-  }
-
-  .agent-composer__attachments {
-    flex-direction: column;
-    max-height: min(calc(var(--wiki-space-12) * 2), 24dvh);
-  }
-}
-
-@media (max-width: 740px) and (max-height: 500px) {
-  .agent-composer__attachments {
-    flex-direction: row;
-    align-items: center;
-    max-height: calc(var(--wiki-control-height) + var(--wiki-space-3));
-    overflow: hidden;
-  }
-
-  .agent-composer__skills {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-inline: contain;
-    scrollbar-width: none;
-  }
-
-  .agent-composer__skills::-webkit-scrollbar {
-    display: none;
-  }
+  .agent-composer__actions { grid-template-columns: minmax(0, 1fr); gap: var(--wiki-space-2); }
+  .agent-composer__primary-actions { justify-content: space-between; border-block-start: 1px solid var(--wiki-surface-border); padding-block-start: var(--wiki-space-2); }
+  .agent-composer__submit { margin-inline-start: auto; }
+  .agent-composer__attachments { flex-direction: column; gap: var(--wiki-space-1); }
+  .agent-composer__section-label { flex-basis: 100%; }
 }
 
 @media (max-width: 599.98px), (pointer: coarse) {
-  .agent-composer {
-    /* Touch layout: control faces grow to meet the 44px touch target so the
-       desktop's compact faces never carry over unchanged. */
-    --agent-composer-control-face-height: max(44px, var(--wiki-control-height));
-    --agent-composer-control-hit-inset: 0px;
-  }
-
-  .agent-composer__attach,
-  .agent-composer__create,
-  .agent-composer__goal-toggle {
-    padding-inline: calc(var(--wiki-space-2) * .9);
-  }
-
-  .agent-composer__attach :deep(.v-btn__prepend),
-  .agent-composer__create :deep(.v-btn__prepend) {
-    margin: 0;
-  }
+  .agent-composer__skills :deep(.v-chip),
+  .agent-composer__skills :deep(.v-chip__close) { min-height: 44px; }
+  .agent-composer__skills :deep(.v-chip__close) { min-width: 44px; }
 }
 
 @media (max-width: 359.98px) {
-  .agent-composer {
-    --agent-composer-control-gap: 4px;
-  }
-
-  .agent-composer__attach,
-  .agent-composer__create,
-  .agent-composer__goal-toggle {
-    padding-inline: calc(var(--wiki-space-2) * .6);
-  }
+  .agent-composer { padding: var(--wiki-space-2); }
+  .agent-composer__actions :deep(.v-btn) { padding-inline: var(--wiki-space-2); }
 }
 
-@media (max-width: 430px) {
-  .agent-composer__primary-actions,
-  .agent-composer__submit {
-    min-width: calc(var(--wiki-space-12) * 1.425);
-  }
-
-  .agent-composer__submit {
-    padding-inline: calc(var(--wiki-space-3) * .9);
-  }
-
-  .agent-composer__submit :deep(.v-btn__prepend) {
-    display: none;
-  }
-}
-
-/* Landscape-only: an Android keyboard shrinks a portrait layout viewport below
-   500px, and clamping the input there would force two blank lines on mobile. */
-@media (max-height: 500px) and (orientation: landscape) {
-  .agent-composer__input :deep(.v-field__input),
-  .agent-composer__input :deep(textarea) {
-    min-height: calc(var(--wiki-space-12) * 1.25);
-    max-height: calc(var(--wiki-space-12) * 1.25);
-  }
-}
 @media (forced-colors: active) {
   .agent-composer,
-  .agent-composer__command-menu {
-    border: 1px solid CanvasText;
-  }
-
-}
-@media (prefers-reduced-motion: reduce) {
-  .agent-composer {
-    transition: none;
-    animation: none;
-  }
-
-  .agent-composer__dictation-dot {
-    animation: none;
-  }
+  .agent-composer__command-menu,
+  .agent-composer__dictation { border-color: CanvasText; }
 }
 </style>

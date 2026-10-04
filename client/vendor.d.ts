@@ -1,15 +1,3 @@
-declare module 'epic-spinners' {
-  type SpinnerComponent = import('vue').Component
-
-  export const AtomSpinner: SpinnerComponent
-  export const BreedingRhombusSpinner: SpinnerComponent
-  export const FingerprintSpinner: SpinnerComponent
-  export const LoopingRhombusesSpinner: SpinnerComponent
-  export const OrbitSpinner: SpinnerComponent
-  export const SelfBuildingSquareSpinner: SpinnerComponent
-  export const SemipolarSpinner: SpinnerComponent
-}
-
 
 
 declare module 'velocity-animate' {

@@ -39,7 +39,7 @@
             v-icon mdi-close
         nav.profile-nav(:aria-label='$t("profile:nav.label", { defaultValue: "Profile sections" })')
           v-list.profile-nav__list(density='compact' nav)
-            v-list-item.profile-nav__item(to='/profile' color='primary' rounded='lg')
+            v-list-item.profile-nav__item(to='/profile' color='primary' rounded='lg' exact)
               template(v-slot:prepend): v-icon mdi-card-account-details-outline
               v-list-item-title {{ $t('profile:title') }}
             v-list-item.profile-nav__item(to='/pages' color='primary' rounded='lg')
@@ -258,7 +258,7 @@ export default defineComponent({
   }
 
   &__item {
-    min-height: 2.5rem;
+    min-height: 2.75rem;
     margin: .125rem 0;
     color: rgb(var(--v-theme-on-surface));
 
@@ -306,7 +306,7 @@ export default defineComponent({
   .v-card:not(.v-card--flat, .v-card--variant-flat) {
     overflow: hidden;
     border: 1px solid var(--wiki-surface-border);
-    border-radius: .65rem;
+    border-radius: var(--wiki-panel-radius);
     background: var(--wiki-surface-raised);
     box-shadow: none;
   }
@@ -347,26 +347,6 @@ export default defineComponent({
   }
 }
 
-.profile-router {
-  &-enter-active {
-    transition:
-      opacity var(--wiki-motion-normal) var(--wiki-motion-ease),
-      transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
-  }
-
-  &-leave-active {
-    transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
-  }
-
-  &-enter-from {
-    opacity: 0;
-    transform: translateY(var(--wiki-space-1));
-  }
-
-  &-leave-to {
-    opacity: 0;
-  }
-}
 
 @media (max-width: 959px) {
   .profile-main > .v-container {
@@ -394,15 +374,4 @@ export default defineComponent({
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .profile-router-enter-active,
-  .profile-router-leave-active {
-    transition-duration: .01ms !important;
-    transition-delay: 0s !important;
-  }
-
-  .profile-router-enter-from {
-    transform: none;
-  }
-}
 </style>

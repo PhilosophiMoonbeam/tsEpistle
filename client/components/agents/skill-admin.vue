@@ -62,6 +62,7 @@
         <span class="skill-inventory-summary__legend"><v-icon size="16">mdi-check-decagram-outline</v-icon> {{ $t('admin:skillAdmin.exactApprovedRevisions') }}</span>
       </div>
 
+      <p v-if="loaded" class="skill-source-note">{{ $t('admin:skillAdmin.loadedSkillFilterScope') }}</p>
       <div v-if="loading && !loaded" class="skill-loading" :aria-label="$t('admin:skillAdmin.loadingOrganizationSkills')" aria-busy="true">
         <v-skeleton-loader v-for="index in 3" :key="index" type="list-item-avatar-three-line" />
       </div>
@@ -555,7 +556,6 @@ onBeforeUnmount(() => {
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
 }
 
 .skill-governance--standalone {
@@ -565,15 +565,13 @@ onBeforeUnmount(() => {
 
 .skill-governance__header {
   display: flex;
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-12));
+  min-height: var(--wiki-control-height);
   align-items: center;
   justify-content: space-between;
   gap: var(--wiki-space-5);
-  padding: var(--wiki-space-5) var(--wiki-space-6);
+  padding: var(--wiki-space-4);
   border-bottom: 1px solid var(--wiki-surface-border);
-  background:
-    linear-gradient(115deg, color-mix(in srgb, var(--wiki-accent-warm) 7%, transparent), transparent 48%),
-    var(--wiki-surface-raised);
+  background: var(--wiki-surface-raised);
 }
 
 .skill-governance__heading {
@@ -595,7 +593,6 @@ onBeforeUnmount(() => {
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 9%, var(--wiki-surface-raised));
   color: var(--wiki-accent-ink);
-  box-shadow: var(--wiki-shadow-inset);
 }
 
 .skill-governance__mark {
@@ -607,8 +604,7 @@ onBeforeUnmount(() => {
   color: var(--wiki-accent-ink);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
-  letter-spacing: .11em;
-  text-transform: uppercase;
+  letter-spacing: .02em;
 }
 
 .skill-governance__header h2 {
@@ -655,7 +651,6 @@ onBeforeUnmount(() => {
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
-  box-shadow: var(--wiki-shadow-inset);
 }
 
 .skill-inventory-toolbar :deep(.v-field) {
@@ -693,30 +688,23 @@ onBeforeUnmount(() => {
 
 .skill-inventory {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
-  gap: var(--wiki-space-3);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
 }
 .skill-record {
-  display: flex;
+  display: grid;
   min-width: 0;
-  overflow: hidden;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 22rem;
-  flex-direction: column;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border-block-end: 1px solid var(--wiki-surface-border);
   background: var(--wiki-surface-raised);
-  transition:
-    border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
-    box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
-    transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
 }
+.skill-record > .v-progress-linear { grid-column: 1 / -1; }
+.skill-record__top { grid-column: 1; }
+.skill-record__trust { grid-column: 2; }
 
 .skill-record:hover,
 .skill-record:focus-within {
-  border-color: var(--wiki-surface-border-strong);
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
-  transform: translateY(calc(var(--wiki-space-1) * -.25));
+  background: var(--wiki-surface-sunken);
 }
 
 .skill-record__top {
@@ -745,34 +733,29 @@ onBeforeUnmount(() => {
 }
 
 .skill-record__identity h3 {
-  overflow: hidden;
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-heading);
-  font-size: .95rem;
-  font-weight: 720;
-  letter-spacing: -.015em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 1rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .skill-record__identity > code {
   display: block;
-  overflow: hidden;
   max-width: 100%;
   margin-top: var(--wiki-space-1);
   color: var(--wiki-text-muted);
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .skill-record__trust {
   display: flex;
   align-items: flex-start;
   gap: var(--wiki-space-2);
-  margin-inline: var(--wiki-space-4);
+  margin: var(--wiki-space-4);
   padding: var(--wiki-space-3);
   border-inline-start: var(--wiki-space-1) solid rgb(var(--v-theme-success));
   border-radius: var(--wiki-radius-xs);
@@ -807,7 +790,8 @@ onBeforeUnmount(() => {
 .skill-record__metadata {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: var(--wiki-space-4) 0 0;
+  grid-column: 1 / -1;
+  margin: 0;
   border-block: 1px solid var(--wiki-surface-border);
   background: var(--wiki-surface-sunken);
 }
@@ -833,18 +817,17 @@ onBeforeUnmount(() => {
 
 .skill-record__metadata dd,
 .review-metadata dd {
-  overflow: hidden;
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
-  font-size: .72rem;
+  font-size: .8rem;
   font-weight: 620;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .skill-record__review {
   display: flex;
   width: 100%;
+  grid-column: 1 / -1;
   min-height: var(--wiki-control-height);
   align-items: center;
   justify-content: space-between;
@@ -871,8 +854,8 @@ onBeforeUnmount(() => {
 }
 
 .skill-record__review:focus-visible {
-  outline: none;
-  box-shadow: inset var(--wiki-focus-ring);
+  outline: 2px solid var(--wiki-accent-ink);
+  outline-offset: -2px;
 }
 
 .skill-record__review:disabled {
@@ -882,10 +865,10 @@ onBeforeUnmount(() => {
 
 .skill-empty {
   display: grid;
-  min-height: 20rem;
+  min-height: 12rem;
   place-items: center;
   align-content: center;
-  padding: var(--wiki-space-12) var(--wiki-space-6);
+  padding: var(--wiki-space-6);
   text-align: center;
 }
 
@@ -921,19 +904,17 @@ onBeforeUnmount(() => {
   border-radius: var(--wiki-panel-radius) !important;
   background: var(--wiki-surface-raised) !important;
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
+  box-shadow: var(--wiki-shadow-lg) !important;
 }
 
 .skill-dialog__header {
   display: flex;
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10));
+  min-height: var(--wiki-control-height);
   align-items: center;
   gap: var(--wiki-space-3);
   padding: var(--wiki-space-4) var(--wiki-space-5);
   border-bottom: 1px solid var(--wiki-surface-border);
-  background:
-    linear-gradient(110deg, color-mix(in srgb, var(--wiki-accent-warm) 7%, transparent), transparent 55%),
-    var(--wiki-surface-raised);
+  background: var(--wiki-surface-raised);
 }
 
 .skill-dialog__header > span {
@@ -1028,7 +1009,6 @@ onBeforeUnmount(() => {
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
-  box-shadow: var(--wiki-shadow-inset);
 }
 
 .review-diff {
@@ -1151,6 +1131,9 @@ code {
 }
 
 @media (max-width: 760px) {
+  .skill-record { grid-template-columns: minmax(0, 1fr); }
+  .skill-record__review, .skill-governance :deep(.v-btn) { min-height: 44px; }
+  .skill-record__top, .skill-record__trust { grid-column: 1; }
   .skill-governance__header {
     align-items: flex-start;
     flex-direction: column;

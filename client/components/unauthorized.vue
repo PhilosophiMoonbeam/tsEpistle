@@ -2,16 +2,15 @@
   v-app.unauthorized-app
     nav-header
     v-main
-      main.unauthorized(aria-labelledby='unauthorized-title')
-        .unauthorized-content
-          .newpage-mark(aria-hidden='true')
-            img(src='/_assets/svg/icon-delete-shield.svg', alt='')
-          header.newpage-copy
+      main.workbench-state(aria-labelledby='unauthorized-title')
+        .workbench-state-panel
+          header.workbench-state-context
+            v-icon(size='28', aria-hidden='true') mdi-shield-lock-outline
             h1#unauthorized-title.text-headline-medium.ma-0 {{$t('unauthorized.title')}}
-            p.text-body-large.mt-3 {{$t('unauthorized.action.' + action)}}
-          .newpage-actions(role='group', :aria-label='$t(`unauthorized.actions`)')
+            p.text-body-large {{$t('unauthorized.action.' + action)}}
+          .workbench-state-actions(role='group', :aria-label='$t(`unauthorized.actions`)')
             //- Signed-in people switch accounts from the account menu instead.
-            v-btn.newpage-action.newpage-action--create(
+            v-btn.workbench-state-action(
               v-if='showLogin'
               :href='loginHref'
               size='large'
@@ -19,15 +18,14 @@
               variant='flat'
               prepend-icon='mdi-login'
             ) {{$t('unauthorized.login')}}
-            v-btn.newpage-action(
-              :class='showLogin ? `newpage-action--back` : `newpage-action--create`'
+            v-btn.workbench-state-action(
               size='large'
               color='primary'
               :variant='showLogin ? `outlined` : `flat`'
               :prepend-icon='$vuetify.locale.isRtl ? "mdi-arrow-right" : "mdi-arrow-left"'
               @click='goBack'
             ) {{$t('unauthorized.goback')}}
-            v-btn.newpage-action.newpage-action--back(
+            v-btn.workbench-state-action(
               href='/'
               size='large'
               color='primary'

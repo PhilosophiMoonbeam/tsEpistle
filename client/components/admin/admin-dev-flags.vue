@@ -9,6 +9,8 @@
       >
         <template #actions>
           <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:devFlags.reloadDeveloperFlagObservations') }}</v-tooltip></v-btn>
+          <v-btn v-if="dirty" variant="text" :disabled="busy || loading" @click="resetDraft">{{ $t('admin:devFlags.reset') }}</v-btn>
+          <v-btn v-if="workspace" color="primary" :disabled="locked || !policyChanged || reason.trim().length < 3" @click="reviewSave">{{ $t('admin:devFlags.reviewChanges') }}</v-btn>
         </template>
       </admin-hero>
 
@@ -35,6 +37,7 @@
           <v-btn variant="text" :disabled="busy" @click="recover">{{ $t('admin:devFlags.readSavedState') }}</v-btn>
         </v-alert>
 
+        <p class="flags-draft-status" role="status">{{ dirty ? $t('admin:devFlags.unsavedDraft') : $t('admin:devFlags.noPendingChanges') }}</p>
         <div class="flags-strip">
           <div>
             <span>{{ $t('admin:devFlags.reviewedPolicy') }}</span>
@@ -66,8 +69,7 @@
         <section v-if="section === 'overview'" aria-labelledby="developer-flags-overview">
           <div class="flags-section-head">
             <div>
-              <p class="flags-kicker">{{ $t('admin:devFlags.n01OperatingBoundary') }}</p>
-              <h2 id="developer-flags-overview">{{ $t('admin:devFlags.turnDetailOnlyLong') }}</h2>
+              <h2 id="developer-flags-overview">{{ $t('admin:devFlags.overview') }}</h2>
               <p>{{ $t('admin:devFlags.bothFlagsChangeServer') }}</p>
             </div>
           </div>
@@ -124,8 +126,7 @@
         <section v-else-if="section === 'controls'" aria-labelledby="developer-flags-controls">
           <div class="flags-section-head">
             <div>
-              <p class="flags-kicker">{{ $t('admin:devFlags.n02ReviewedDiagnosticPolicy') }}</p>
-              <h2 id="developer-flags-controls">{{ $t('admin:devFlags.nameExposureBeforeYou') }}</h2>
+              <h2 id="developer-flags-controls">{{ $t('admin:devFlags.controls') }}</h2>
               <p>{{ $t('admin:devFlags.draftChangesDoNot') }}</p>
             </div>
           </div>
@@ -238,8 +239,7 @@
         <section v-else aria-labelledby="developer-flags-history">
           <div class="flags-section-head">
             <div>
-              <p class="flags-kicker">{{ $t('admin:devFlags.n03ChangeRegister') }}</p>
-              <h2 id="developer-flags-history">{{ $t('admin:devFlags.retainedRecordExplainsSaved') }}</h2>
+              <h2 id="developer-flags-history">{{ $t('admin:devFlags.history') }}</h2>
               <p>{{ $t('admin:devFlags.onlyPolicyChangesRecorded') }}</p>
             </div>
           </div>

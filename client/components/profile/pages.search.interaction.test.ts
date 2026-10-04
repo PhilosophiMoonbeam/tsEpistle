@@ -1,273 +1,255 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { compileTemplate, parse } from '@vue/compiler-sfc'
-import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
+import path from 'node:path'
+import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
+import { afterEach, beforeEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
-import type { ComponentOptions, PropType, RenderFunction } from 'vue'
+import { translateEnglish as t } from '../../test/english-translate.mts'
 import type { PageListRow } from '../../helpers/pages-api.ts'
-
-const filename = join(process.cwd(), 'client/components/profile/pages.vue')
-const { descriptor, errors } = parse(readFileSync(filename, 'utf8'), { filename })
-if (errors.length || !descriptor.template || !descriptor.script) throw new Error(`Cannot parse pages.vue: ${errors}`)
+import type { wikiStore as WikiStoreInstance } from '../../store/index.ts'
 
 resetBody()
-setLocation('/p/pages')
-browserWindow.fetch = globalThis.fetch
-
-// Compile the actual Pug and Vue expressions, including translated count interpolation.
+// DOM setup must precede Vue/Vuetify platform capture; the SFC import below
+// intentionally follows registration of its module-loading test boundary.
 const Vue = await import('vue')
-const compiled = compileTemplate({
-  filename,
-  id: 'profile-pages-search-test',
-  source: descriptor.template.content,
-  preprocessLang: descriptor.template.lang,
-  preprocessOptions: { doctype: 'html' },
-  compilerOptions: { mode: 'function' }
-})
-if (compiled.errors.length) throw new Error(`Cannot compile pages.vue: ${compiled.errors}`)
-const render = new Function('Vue', compiled.code)(Vue) as RenderFunction
-const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const evaluate = new Function('AsyncState', 'fetchPages', 'getErrorMessage', 'showNotification', 'setLoading', 'wikiStore', script)
+const { createVuetify } = await import('vuetify')
+const components = await import('vuetify/components')
+const directives = await import('vuetify/directives')
+// Static store import would initialize against window.siteConfig before the fixture exists.
+const importConfig = Object.getOwnPropertyDescriptor(browserWindow, 'siteConfig')
+Object.defineProperty(browserWindow, 'siteConfig', { configurable: true, value: {
+  company: '', contentLicense: '', footerOverride: '', banner: {}, darkMode: false,
+  tocPosition: 'left', title: 'Directory verification', logoUrl: '', product: { name: 'tsEpistle', version: 'test' }
+} })
+let wikiStore: typeof WikiStoreInstance
+try {
+  ;({ wikiStore } = await import('../../store/index.ts'))
+} finally {
+  if (importConfig) Object.defineProperty(browserWindow, 'siteConfig', importConfig)
+  else Reflect.deleteProperty(browserWindow, 'siteConfig')
+}
 
-const passthrough = (tag = 'div') =>
-  Vue.defineComponent({
-    setup(_props, { attrs, slots }) {
-      return () => Vue.h(tag, attrs, slots.default?.())
-    }
-  })
-const AsyncState = Vue.defineComponent({
-  props: ['title', 'message'],
-  setup(props) {
-    return () => Vue.h('div', { role: 'status' }, [props.title, props.message])
+// Compile whole modules, not extracted methods. Native Vuetify inputs, buttons,
+// empty/error states and the production HTTP normalizer remain in the path.
+Bun.plugin({
+  name: 'profile-page-directory-consumer',
+  setup(builder) {
+    builder.onResolve({ filter: /^@\// }, ({ path: filename }) => ({ path: path.join(process.cwd(), 'client', filename.slice(2)) }))
+    builder.onLoad({ filter: /\/(pages|async-state)\.vue$/ }, async ({ path: filename }) => {
+      const parsed = parse(await Bun.file(filename).text(), { filename })
+      if (parsed.errors.length) throw parsed.errors[0]
+      const id = `profile-directory-${path.basename(filename, '.vue')}`
+      const script = compileScript(parsed.descriptor, { id, genDefaultAs: '__component', inlineTemplate: true })
+      let template = ''
+      if (!parsed.descriptor.scriptSetup) {
+        const result = compileTemplate({ source: parsed.descriptor.template!.content, filename, id,
+          preprocessLang: parsed.descriptor.template!.lang, preprocessOptions: { doctype: 'html' } })
+        if (result.errors.length) throw result.errors[0]
+        template = `${result.code}\n__component.render = render;`
+      }
+      return { loader: 'ts', contents: `${script.content}\n${template}\nexport default __component;` }
+    })
   }
 })
-const TextField = Vue.defineComponent({
-  inheritAttrs: false,
-  props: ['modelValue', 'label', 'disabled'],
-  emits: ['update:modelValue'],
-  setup(props, { attrs, emit }) {
-    return () =>
-      Vue.h('div', [
-        Vue.h('input', {
-          ...attrs,
-          'aria-label': props.label,
-          disabled: props.disabled,
-          value: props.modelValue ?? '',
-          onInput: (event: Event) => emit('update:modelValue', (event.target as HTMLInputElement).value)
-        }),
-        Vue.h('button', { 'aria-label': 'Clear search', onClick: () => emit('update:modelValue', null) }, 'Clear')
-      ])
-  }
-})
-const DataTable = Vue.defineComponent({
-  props: {
-    items: { type: Array as PropType<PageListRow[]>, default: () => [] },
-    page: { type: Number, default: 1 },
-    itemsPerPage: { type: Number, default: 15 }
-  },
-  setup(props, { slots }) {
-    return () =>
-      Vue.h('table', { 'data-page': props.page }, [
-        Vue.h('caption', slots.caption?.()),
-        Vue.h(
-          'tbody',
-          props.items.length
-            ? props.items.slice((props.page - 1) * props.itemsPerPage, props.page * props.itemsPerPage).map(item => slots.item?.({ item }))
-            : Vue.h('tr', [Vue.h('td', slots['no-data']?.())])
-        )
-      ])
-  }
-})
-const Pagination = Vue.defineComponent({
-  props: ['length', 'modelValue'],
-  emits: ['update:modelValue'],
-  setup(props, { emit }) {
-    return () =>
-      Vue.h(
-        'nav',
-        Array.from({ length: props.length }, (_, index) =>
-          Vue.h(
-            'button',
-            {
-              'aria-label': `Page ${index + 1}`,
-              onClick: () => emit('update:modelValue', index + 1)
-            },
-            String(index + 1)
-          )
-        )
-      )
-  }
-})
-
-let app: ReturnType<typeof Vue.createApp> | undefined
+const Directory = (await import('./pages.vue')).default
+const cleanups: Array<() => void> = []
+beforeEach(() => vi.useFakeTimers())
 afterEach(() => {
-  app?.unmount()
-  app = undefined
-  document.body.replaceChildren()
+  for (const cleanup of cleanups.splice(0).reverse()) cleanup()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+  resetBody()
 })
 const settle = async () => {
-  await Promise.resolve()
-  await Vue.nextTick()
-  await Promise.resolve()
+  for (let turn = 0; turn < 8; turn++) { await Promise.resolve(); await Vue.nextTick() }
+  await vi.advanceTimersByTimeAsync(0)
   await Vue.nextTick()
 }
-const mount = async (rows: PageListRow[], mobile = false) => {
-  const fetchPages = vi.fn(async () => rows)
-  const options = evaluate(AsyncState, fetchPages, String, vi.fn(), vi.fn(), { user: { id: 7 }, showError: vi.fn() }) as ComponentOptions
-  app = Vue.createApp({ ...options, render })
-  for (const name of ['v-container', 'v-row', 'v-col', 'v-card', 'v-avatar', 'v-icon', 'v-spacer', 'v-chip']) app.component(name, passthrough())
-  app.component('v-btn', passthrough('button'))
-  app.component('admin-hero', Vue.defineComponent({
-    props: ['title', 'description', 'icon', 'headingId'],
-    setup: (props, { slots }) => () => Vue.h('header', [Vue.h('h1', { id: props.headingId }, props.title), slots.actions?.()])
-  }))
-  app.component('v-text-field', TextField)
-  app.component('v-data-table', DataTable)
-  app.component('v-pagination', Pagination)
-  app.config.globalProperties.$vuetify = { display: { smAndDown: mobile, mdAndUp: !mobile } }
-  app.config.globalProperties.$helpers = { formatMoment: (date: string) => date }
-  app.config.globalProperties.$t = (key: string, params: Record<string, unknown> = {}) =>
-    String(params.defaultValue ?? key).replace(/\{\{(\w+)\}\}/g, (_match, name) => String(params[name] ?? ''))
-  const host = document.createElement('div')
-  document.body.append(host)
-  app.mount(host)
-  await settle()
-  return { host, fetchPages }
+const until = async (ready: () => boolean) => {
+  for (let turn = 0; turn < 100; turn++) {
+    await settle()
+    if (ready()) return
+    await vi.advanceTimersByTimeAsync(300)
+  }
+  throw new Error('Profile directory consumer did not settle')
 }
-const makePage = (id: number, overrides: Partial<PageListRow> = {}): PageListRow => ({
-  id,
-  title: `Archive ${id}`,
-  description: null,
-  locale: 'en',
-  path: `records/${id}`,
-  visibility: 'public',
-  ownerId: null,
-  contentType: 'markdown',
-  tags: [],
-  createdAt: '2026-09-12T00:00:00Z',
-  updatedAt: '2026-09-12T00:00:00Z',
-  ...overrides
+const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+const batch = (items: PageListRow[], nextOffset: number | null = null, scanned = items.length) => response({ items, nextOffset, scanned })
+const row = (id: number, overrides: Partial<PageListRow> = {}): PageListRow => ({
+  id, title: `Record ${id}`, path: `records/${id}`, locale: 'en', description: null, tags: [],
+  visibility: 'public', ownerId: null, contentType: 'markdown',
+  createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z', ...overrides
 })
+const deferred = () => Promise.withResolvers<Response>()
+const button = (root: ParentNode, key: string): HTMLButtonElement => {
+  const control = [...root.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === t(key))
+  if (!control) throw new Error(`Missing profile action: ${key}`)
+  return control
+}
+const click = async (root: ParentNode, key: string) => { button(root, key).click(); await settle() }
+const links = (host: HTMLElement) => [...host.querySelectorAll('.profile-page-link')].map(link => link.getAttribute('href'))
+const loadingKeys = () => Object.keys(wikiStore.loadingCounts).filter(key => key.startsWith('profile-pages-refresh'))
+const mount = async (transport: typeof browserWindow.fetch, accountId = 7) => {
+  setLocation('/p/pages')
+  const saved = { user: wikiStore.user, loadingCounts: { ...wikiStore.loadingCounts }, notification: { ...wikiStore.notification } }
+  wikiStore.user = { ...wikiStore.user, id: accountId }
+  cleanups.push(() => { wikiStore.user = saved.user; wikiStore.loadingCounts = saved.loadingCounts; wikiStore.notification = saved.notification })
+  const fetch = vi.spyOn(browserWindow, 'fetch').mockImplementation(transport)
+  const notify = vi.spyOn(wikiStore, 'showNotification')
+  const host = document.createElement('div'); document.body.append(host)
+  const app = Vue.createApp(Directory)
+  app.config.globalProperties.$t = t
+  app.config.globalProperties.$helpers = { formatMoment: (date: string) => date }
+  app.use(createVuetify({ components, directives }))
+  app.component('admin-hero', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('header', slots.actions?.()) }))
+  const vm = app.mount(host)
+  let mounted = true
+  const unmount = () => { if (mounted) { app.unmount(); host.remove(); mounted = false } }
+  cleanups.push(unmount)
+  await settle()
+  return { host, vm, fetch, notify, unmount }
+}
 const search = async (host: HTMLElement, value: string) => {
-  const input = host.querySelector('input')!
-  input.value = value
-  input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
-  await settle()
-}
-const click = async (host: HTMLElement, label: string) => {
-  const button = [...host.querySelectorAll('button')].find(item => item.getAttribute('aria-label') === label)
-  expect(button).toBeDefined()
-  button!.click()
+  const input = host.querySelector<HTMLInputElement>('.profile-pages-search input')!
+  input.value = value; input.dispatchEvent(new browserWindow.Event('input', { bubbles: true })); await settle()
+  host.querySelector('form')!.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
   await settle()
 }
 
-describe('My Pages local search', () => {
-  test('compiles and renders the count, filters all four fields, and clears a nullable model', async () => {
-    const { host, fetchPages } = await mount([
-      makePage(1, { title: 'Nebula guide' }),
-      makePage(2, { description: 'Spectrometer setup' }),
-      makePage(3, { path: 'laboratory/optics' }),
-      makePage(4, { locale: 'fr' })
-    ])
-    expect(host.querySelector('input')?.getAttribute('aria-label')).toBe('Find your pages')
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('4 of 4 pages')
-    for (const [query, expectedPath] of [
-      [' NEBULA ', '/en/records/1'],
-      ['spectrometer', '/en/records/2'],
-      ['laboratory/optics', '/en/laboratory/optics'],
-      ['FR', '/fr/records/4']
-    ]) {
-      await search(host, query)
-      expect(host.querySelectorAll('.profile-page-link')).toHaveLength(1)
-      expect(host.querySelector('.profile-page-link')?.getAttribute('href')).toBe(expectedPath)
-      expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('1 of 4 pages')
-    }
-    await click(host, 'Clear search')
-    expect(host.querySelector('input')?.value).toBe('')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(4)
-    expect(fetchPages).toHaveBeenCalledTimes(1)
+describe('mounted My Pages directory', () => {
+  test('waits for authenticated identity and discards contributions from superseded accounts', async () => {
+    const former = deferred(), current = deferred()
+    const { host, fetch } = await mount(async url => {
+      const accountId = Number(new URL(String(url), browserWindow.location.href).searchParams.get('creatorId'))
+      if (accountId === 7) return former.promise
+      if (accountId === 8) return current.promise
+      return response({ error: 'Invalid contribution owner' }, 400)
+    }, 0)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(links(host)).toEqual([])
+    expect(host.querySelector('section')?.getAttribute('aria-busy')).toBe('true')
+    wikiStore.user.id = 7
+    await settle()
+    expect(loadingKeys().length).toBeGreaterThan(0)
+    wikiStore.user.id = 8
+    await settle()
+    current.resolve(batch([row(8)]))
+    await settle()
+    expect(links(host)).toEqual(['/en/records/8'])
+    former.resolve(batch([row(7, { visibility: 'private', ownerId: 7 })]))
+    await settle()
+    expect(links(host)).toEqual(['/en/records/8'])
+    expect(loadingKeys()).toEqual([])
+    wikiStore.user.id = 0
+    await settle()
+    expect(links(host)).toEqual([])
+    expect(host.querySelector('section')?.getAttribute('aria-busy')).toBe('true')
+    expect(loadingKeys()).toEqual([])
   })
-
-  test('filters private pages, composes with case-insensitive search, and resets without changing links', async () => {
-    const { host } = await mount([
-      makePage(1, { title: 'Roadmap notes' }),
-      makePage(2, { title: 'Private roadmap', visibility: 'private' }),
-      makePage(3, { title: 'Private archive', visibility: 'private' })
-    ])
-    expect(host.querySelector('button[aria-label="Show private pages only"]')?.getAttribute('aria-pressed')).toBe('false')
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('3 of 3 pages')
-
-    await click(host, 'Show private pages only')
-    expect(host.querySelector('button[aria-label="Show private pages only"]')?.getAttribute('aria-pressed')).toBe('true')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(2)
-    expect(host.querySelector('a[href="/_private/en/records/2"]')).toBeTruthy()
-    expect(host.querySelector('a[href="/_private/en/records/3"]')).toBeTruthy()
-    const privateRow = host.querySelector('a[href="/_private/en/records/2"]')?.closest('tr')
-    expect([...privateRow!.querySelectorAll('div')].some(node => node.textContent?.trim() === 'Private')).toBe(true)
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('2 of 3 pages')
-
-    await search(host, ' ROADMAP ')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(1)
-    expect(host.querySelector('.profile-page-link')?.getAttribute('href')).toBe('/_private/en/records/2')
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('1 of 3 pages')
-
-    await click(host, 'Show private pages only')
-    expect(host.querySelector('button[aria-label="Show private pages only"]')?.getAttribute('aria-pressed')).toBe('false')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(2)
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('2 of 3 pages')
-    await click(host, 'Clear search')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(3)
-  })
-
-  test('keeps an empty private view isolated and its reset available', async () => {
-    const { host } = await mount([makePage(1, { title: 'Roadmap notes' })])
-    await click(host, 'Show private pages only')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
-    expect(host.querySelector('table [role="status"]')).toBeTruthy()
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('0 of 1 pages')
-
+  test('includes created OR edited contributions, composes private filtering with server search and preserves public/private link identity', async () => {
+    // Independent contribution records: creator-only, editor-only, both and
+    // unrelated. This HTTP fixture enforces the documented OR contract; it does
+    // not echo requested values into the response or assert forwarding syntax.
+    const contributions = [
+      { page: row(1, { title: 'Created roadmap' }), creator: 7, editor: 90 },
+      { page: row(2, { title: 'Edited roadmap', visibility: 'private', ownerId: 7, locale: 'fr', path: 'plans/edited' }), creator: 90, editor: 7 },
+      { page: row(3, { title: 'Private archive', visibility: 'private', ownerId: 7 }), creator: 7, editor: 7 },
+      { page: row(4, { title: 'Unrelated roadmap' }), creator: 90, editor: 90 }
+    ]
+    const { host } = await mount(async url => {
+      const params = new URL(String(url), browserWindow.location.href).searchParams
+      const creator = Number(params.get('creatorId')), editor = Number(params.get('authorId'))
+      const visible = contributions.filter(item => item.creator === creator || item.editor === editor)
+        .filter(item => params.get('visibility') !== 'private' || item.page.visibility === 'private')
+        .filter(item => !params.get('search') || item.page.title!.toLowerCase().includes(params.get('search')!.toLowerCase()))
+      return batch(visible.map(item => item.page))
+    })
+    expect(links(host)).toEqual(['/en/records/1', '/_private/fr/plans/edited', '/_private/en/records/3'])
+    await click(host, 'profile:pages.privateOnly')
+    await until(() => links(host).length === 2)
+    expect(links(host)).toEqual(['/_private/fr/plans/edited', '/_private/en/records/3'])
     await search(host, 'ROADMAP')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
-    expect(host.querySelector('button[aria-label="Show private pages only"]')?.hasAttribute('disabled')).toBe(false)
-    await click(host, 'Show private pages only')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(1)
-    expect(host.querySelector('.profile-page-link')?.getAttribute('href')).toBe('/en/records/1')
+    expect(links(host)).toEqual(['/_private/fr/plans/edited'])
+    expect(button(host, 'profile:pages.privateOnly').getAttribute('aria-pressed')).toBe('true')
+    await click(host, 'profile:pages.privateOnly')
+    await until(() => links(host).length === 2)
+    expect(links(host)).toEqual(['/en/records/1', '/_private/fr/plans/edited'])
+    await search(host, '')
+    expect(links(host)).toHaveLength(3)
   })
 
-  test('keeps the private link and indicator in mobile rows', async () => {
-    const { host } = await mount([makePage(7, { title: 'Private mobile page', visibility: 'private' })], true)
-    expect(host.querySelector('.profile-pages-mobile-title')?.getAttribute('href')).toBe('/_private/en/records/7')
-    const mobileRow = host.querySelector('a[href="/_private/en/records/7"]')?.closest('tr')
-    expect([...mobileRow!.querySelectorAll('div')].some(node => node.textContent?.trim() === 'Private')).toBe(true)
+  test('continues a zero-readable batch, returns to its previous window and searches from the first window', async () => {
+    const { host } = await mount(async url => {
+      const params = new URL(String(url), browserWindow.location.href).searchParams
+      if (params.get('search')) return params.get('offset') === '0' ? batch([row(9)]) : response({ error: 'Search must start in the first window' }, 400)
+      return params.get('offset') === '1000' ? batch([row(50)], 1001, 1) : batch([], 1000, 1000)
+    })
+    expect(links(host)).toEqual([])
+    expect(button(host, 'common:actions.previous').disabled).toBe(true)
+    expect(button(host, 'common:actions.next').disabled).toBe(false)
+    await click(host, 'common:actions.next')
+    expect(links(host)).toEqual(['/en/records/50'])
+    await click(host, 'common:actions.previous')
+    expect(links(host)).toEqual([])
+    expect(button(host, 'common:actions.next').disabled).toBe(false)
+    await click(host, 'common:actions.next')
+    await search(host, 'outside the loaded window')
+    expect(links(host)).toEqual(['/en/records/9'])
+    expect(button(host, 'common:actions.previous').disabled).toBe(true)
+    expect(button(host, 'common:actions.next').disabled).toBe(true)
   })
 
-  test('distinguishes no matching results from an account with no contributions', async () => {
-    const { host, fetchPages } = await mount([makePage(1)])
-    await search(host, 'nonexistent')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('0 of 1 pages')
-    fetchPages.mockResolvedValue([])
-    await click(host, 'Reload pages')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(0)
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('0 of 0 pages')
+  test('keeps previous link identity but disables window navigation as soon as filters become stale', async () => {
+    const pending = deferred()
+    const { host, fetch } = await mount(vi.fn().mockResolvedValueOnce(batch([row(1, { visibility: 'private', ownerId: 7 })], 25, 25)).mockImplementation(() => pending.promise))
+    await click(host, 'profile:pages.privateOnly')
+    expect(links(host)).toEqual(['/_private/en/records/1'])
+    expect(button(host, 'common:actions.next').disabled).toBe(true)
+    await until(() => fetch.mock.calls.length === 2)
+    pending.resolve(response({ error: 'Private directory unavailable' }, 503)); await settle()
+    expect(host.textContent).toContain('Private directory unavailable')
+    expect(links(host)).toEqual(['/_private/en/records/1'])
+    expect(button(host, 'common:actions.next').disabled).toBe(true)
+    expect(loadingKeys()).toEqual([])
   })
 
-  test('resets a later page when filtering and clamps pagination when refresh removes matching pages', async () => {
-    const rows = Array.from({ length: 32 }, (_, index) => makePage(index + 1))
-    const { host, fetchPages } = await mount(rows)
-    await click(host, 'Page 3')
-    expect(host.querySelector('table')?.getAttribute('data-page')).toBe('3')
-    await search(host, 'records/1')
-    expect(host.querySelector('table')?.getAttribute('data-page')).toBe('1')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(11)
-    await click(host, 'Clear search')
-    await search(host, 'archive')
-    await click(host, 'Page 3')
-    // Total rows still need three pages, but only sixteen match the current filter.
-    fetchPages.mockResolvedValue([...rows.slice(0, 16), ...rows.slice(16).map(row => ({ ...row, title: 'Other' }))])
-    await click(host, 'Reload pages')
-    expect(host.querySelector('table')?.getAttribute('data-page')).toBe('2')
-    expect(host.querySelectorAll('.profile-page-link')).toHaveLength(1)
-    expect(host.querySelector('#profile-pages-result-count')?.textContent).toBe('16 of 32 pages')
+  test('keeps newest results and current loading while superseded requests resolve or fail', async () => {
+    const oldest = deferred(), middle = deferred(), newest = deferred()
+    const { host, vm, notify } = await mount(vi.fn().mockImplementationOnce(() => oldest.promise).mockImplementationOnce(() => middle.promise).mockImplementationOnce(() => newest.promise))
+    const middleLoad = vm.loadPages(), newestLoad = vm.loadPages()
+    middle.reject(new Error('Superseded failure'))
+    expect(await middleLoad).toBe(false); await settle()
+    expect(vm.loading).toBe(true)
+    expect(loadingKeys().length).toBeGreaterThan(0)
+    expect(host.textContent).not.toContain('Superseded failure')
+    newest.resolve(batch([row(3)]))
+    expect(await newestLoad).toBe(true); await settle()
+    oldest.resolve(batch([row(1)])); await settle()
+    expect(links(host)).toEqual(['/en/records/3'])
+    expect(vm.loading).toBe(false)
+    expect(loadingKeys()).toEqual([])
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('surfaces current refresh failures and retains links until successful retry', async () => {
+    const { host } = await mount(vi.fn().mockResolvedValueOnce(batch([row(1)]))
+      .mockResolvedValueOnce(response({ error: 'Page access denied' }, 403)).mockResolvedValueOnce(batch([row(2)])))
+    await click(host, 'profile:pages.reloadShort')
+    expect(host.textContent).toContain('Page access denied')
+    expect(links(host)).toEqual(['/en/records/1'])
+    expect(loadingKeys()).toEqual([])
+    await click(host, 'profile:pages.reloadShort')
+    expect(links(host)).toEqual(['/en/records/2'])
+    expect(host.textContent).not.toContain('Page access denied')
+    expect(loadingKeys()).toEqual([])
+  })
+
+  test('does not publish a pending refresh after unmount and releases actual loading state', async () => {
+    const pending = deferred()
+    const { vm, unmount, notify } = await mount(vi.fn().mockResolvedValueOnce(batch([row(1)])).mockImplementationOnce(() => pending.promise))
+    const refresh = vm.refresh()
+    unmount()
+    pending.resolve(batch([row(2)])); await refresh; await settle()
+    expect(vm.pages.map((page: PageListRow) => page.id)).toEqual([1])
+    expect(loadingKeys()).toEqual([])
+    expect(notify).not.toHaveBeenCalled()
   })
 })

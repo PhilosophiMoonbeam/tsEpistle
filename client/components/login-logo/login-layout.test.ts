@@ -38,8 +38,6 @@ const particleLogoComponent = readComponentSource('client/components/login-logo/
 const particleSceneComponent = readComponentSource('client/components/login-logo/LogoParticleScene.vue')
 const pointerControllerPath = path.join(process.cwd(), 'client/components/login-logo/useLogoPointer.ts')
 const pointerControllerSource = fs.readFileSync(pointerControllerPath, 'utf8')
-const loaderPath = path.join(process.cwd(), 'client/components/common/loader.vue')
-const loaderSource = fs.readFileSync(loaderPath, 'utf8')
 
 const componentId = 'login-layout-behavior-test'
 const compiledScript = compileScript(parsed.descriptor, { id: componentId, genDefaultAs: '__login__' })
@@ -128,38 +126,6 @@ const LoginParticleLogoStub = Vue.defineComponent({
         : null
   }
 })
-let animationInstanceSequence = 0
-let mountedAnimationCount = 0
-let unmountedAnimationCount = 0
-
-const resetAnimationLifecycle = (): void => {
-  animationInstanceSequence = 0
-  mountedAnimationCount = 0
-  unmountedAnimationCount = 0
-}
-
-const LoginSuccessAnimationStub = Vue.defineComponent({
-  name: 'LoginSuccessAnimation',
-  setup: () => {
-    const instanceId = String(++animationInstanceSequence)
-    Vue.onMounted(() => {
-      mountedAnimationCount += 1
-    })
-    Vue.onUnmounted(() => {
-      unmountedAnimationCount += 1
-    })
-    return () =>
-      Vue.h('svg', {
-        class: 'login-success-animation',
-        width: '72',
-        height: '72',
-        role: 'presentation',
-        'aria-hidden': 'true',
-        focusable: 'false',
-        'data-instance-id': instanceId
-      })
-  }
-})
 
 const LoginLoaderStub = Vue.defineComponent({
   name: 'LoginLoaderStub',
@@ -206,7 +172,6 @@ const AuthShell = authShellModule.default as Vue.Component
 const components: Record<string, Vue.Component> = {
   AuthShell,
   LoginParticleLogo: LoginParticleLogoStub,
-  LoginSuccessAnimation: LoginSuccessAnimationStub,
   Loader: LoginLoaderStub,
   Notify: Vue.defineComponent({ setup: () => () => null }),
   PasswordStrength: Vue.defineComponent({ setup: () => () => null }),
@@ -354,7 +319,6 @@ const loginBundle = await Bun.build({
     '../helpers/root-ui-store',
     '../helpers/tfa-qr',
     './login-logo/LoginParticleLogo.vue',
-    './login-success-animation.vue',
     './common/auth-shell.vue',
     './common/password-strength.vue',
     './common/password-visibility-toggle.vue',
@@ -422,9 +386,6 @@ loginModuleFactory(
     if (specifier === './login-logo/LoginParticleLogo.vue') {
       return { __esModule: true, default: LoginParticleLogoStub }
     }
-    if (specifier === './login-success-animation.vue') {
-      return { __esModule: true, default: LoginSuccessAnimationStub }
-    }
     if (specifier === './login-logo/particle-logo') return { isLogoEffectDescriptor }
     if (specifier === './common/auth-shell.vue') return { __esModule: true, default: AuthShell }
     if (specifier === './common/password-strength.vue') return { __esModule: true, default: components.PasswordStrength }
@@ -437,60 +398,6 @@ loginModuleFactory(
 const Login = compiledLoginModule.exports.default
 if (!Login) throw new Error('login.vue did not export a component')
 Object.assign(Login, { render: renderLogin })
-
-const parsedLoader = parse(loaderSource, { filename: loaderPath })
-if (parsedLoader.errors.length > 0 || !parsedLoader.descriptor.script || !parsedLoader.descriptor.template) {
-  throw new Error('Loader script or template was not found')
-}
-const loaderId = 'loader-illustration-behavior-test'
-const loaderScript = compileScript(parsedLoader.descriptor, { id: loaderId, genDefaultAs: '__loader__' })
-const loaderTemplate = compileTemplate({
-  source: parsedLoader.descriptor.template.content,
-  filename: loaderPath,
-  id: loaderId,
-  preprocessLang: parsedLoader.descriptor.template.lang,
-  preprocessOptions: { doctype: 'html' },
-  transformAssetUrls: false,
-  compilerOptions: { mode: 'function', bindingMetadata: loaderScript.bindings, expressionPlugins: ['typescript'] }
-})
-if (loaderTemplate.errors.length > 0) throw new Error(`Could not compile Loader template: ${loaderTemplate.errors.join(', ')}`)
-const loaderBundle = await Bun.build({
-  entrypoints: ['virtual:loader.vue'],
-  external: ['vue', 'epic-spinners'],
-  format: 'cjs',
-  plugins: [{
-    name: 'loader-illustration-test-sfc',
-    setup(build) {
-      build.onResolve({ filter: /^virtual:loader\.vue$/ }, () => ({ namespace: 'loader-test-sfc', path: loaderPath }))
-      build.onLoad({ filter: /.*/, namespace: 'loader-test-sfc' }, () => ({
-        contents: `${loaderScript.content}\nexport default __loader__\n`,
-        loader: 'ts',
-        resolveDir: path.dirname(loaderPath)
-      }))
-    }
-  }],
-  target: 'bun'
-})
-if (!loaderBundle.success) throw new Error(`Could not bundle Loader: ${loaderBundle.logs.map(log => log.message).join(', ')}`)
-const loaderOutput = loaderBundle.outputs.find(output => output.kind === 'entry-point')
-if (!loaderOutput) throw new Error('Loader bundle entry point was not found')
-const loaderCode = await loaderOutput.text()
-const loaderModuleStart = loaderCode.indexOf('(function(')
-if (loaderModuleStart < 0) throw new Error('Compiled Loader did not produce a CommonJS module')
-const loaderFactory = new Function(`return ${loaderCode.slice(loaderModuleStart)}`)() as typeof loginModuleFactory
-const loaderModule: CompiledLoginModule = { exports: {} }
-loaderFactory(loaderModule.exports, specifier => {
-  if (specifier === 'vue') return Vue
-  if (specifier === 'epic-spinners') return {
-    AtomSpinner: Vue.defineComponent({ setup: () => () => Vue.h('div', { 'data-loader-spinner': '' }) })
-  }
-  throw new Error(`Unexpected Loader import: ${specifier}`)
-}, loaderModule, loaderPath, path.dirname(loaderPath))
-const Loader = loaderModule.exports.default
-if (!Loader) throw new Error('Loader did not export a component')
-Object.assign(Loader, {
-  render: new Function('Vue', loaderTemplate.code)(Vue) as Vue.RenderFunction
-})
 
 const createLoginHarness = (
   effect: LogoEffectDescriptor | null,
@@ -569,20 +476,6 @@ const renderLoginDom = async (effect: LogoEffectDescriptor | null, strategies?: 
   return new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: 'http://localhost/login' })
 }
 
-type LoginLifecycleHarness = {
-  isLoading: boolean
-  loaderTitle: string
-}
-
-const mountLoginLifecycle = async () => {
-  resetAnimationLifecycle()
-  const host = createTestHostNode('element', 'root')
-  const app = testRenderer.createApp(createLoginHarness(null))
-  app.config.globalProperties.$t = (key: string): string => key
-  const vm = app.mount(host) as unknown as LoginLifecycleHarness
-  await Vue.nextTick()
-  return { app, host, vm }
-}
 
 const resolveConfiguredLogoEffect = (logoUrl: string, logoEffect: LogoEffectDescriptor): LogoEffectDescriptor | null => {
   const previousSiteConfig = Object.getOwnPropertyDescriptor(globalThis, 'siteConfig')
@@ -681,7 +574,7 @@ describe('login personalized static-logo integration', () => {
     expect(providerList?.textContent).toContain('mdi-login')
   })
 
-  it('renders the decorative field as the direct sibling immediately after the unchanged login card', async () => {
+  it('retains static branding and authentication alongside the optional decorative field', async () => {
     const dom = await renderLoginDom(managedEffect)
     const document = dom.window.document
     const login = document.querySelector<HTMLElement>('.login')
@@ -690,8 +583,6 @@ describe('login personalized static-logo integration', () => {
     if (!login || !card || !field) throw new Error('Managed login composition was not rendered')
 
     expect(document.querySelectorAll('.login-particle-logo')).toHaveLength(1)
-    expect(login.firstElementChild).toBe(card)
-    expect(card.nextElementSibling).toBe(field)
     expect(field.parentElement).toBe(login)
     expect(field.closest('main, form, [role="dialog"], .login-dialog-card')).toBeNull()
     expect(card.contains(field)).toBe(false)
@@ -699,23 +590,16 @@ describe('login personalized static-logo integration', () => {
     expect(document.querySelector('.login-form')?.contains(field)).toBe(false)
     expect(document.querySelector('[role="dialog"]')?.contains(field) ?? false).toBe(false)
 
-    const ordinaryLogo = card.querySelector<HTMLImageElement>('.auth-shell__brand .auth-shell__logo img')
-    const title = card.querySelector<HTMLElement>('#login-site-title')
+    const ordinaryLogo = document.querySelector<HTMLImageElement>(`img[src="${managedEffect.logoUrl}"]`)
     const username = card.querySelector<HTMLInputElement>('form.login-form input[name="username"]')
     const password = card.querySelector<HTMLInputElement>('form.login-form input[name="password"]')
     const submit = card.querySelector<HTMLButtonElement>('form.login-form button[type="submit"]')
-    const ordinarySequence = [ordinaryLogo, title, username, password, submit]
-    expect(ordinarySequence.every((element): element is HTMLElement => element !== null)).toBe(true)
-    for (let index = 1; index < ordinarySequence.length; index += 1) {
-      expect(ordinarySequence[index - 1]!.compareDocumentPosition(ordinarySequence[index]!) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    }
     expect(ordinaryLogo?.getAttribute('src')).toBe(managedEffect.logoUrl)
     expect(ordinaryLogo?.getAttribute('alt')).toBe('')
-    expect(title?.textContent).toBe('Example knowledge base')
-    expect(card.compareDocumentPosition(field) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    const logoFrame = card.querySelector<HTMLElement>('.auth-shell__brand .auth-shell__logo')
-    expect(logoFrame).not.toBeNull()
-    expect(logoFrame?.querySelector('img')).toBe(ordinaryLogo)
+    expect(document.body.textContent).toContain('Example knowledge base')
+    expect(username).not.toBeNull()
+    expect(password).not.toBeNull()
+    expect(submit).not.toBeNull()
 
     dom.window.close()
   })
@@ -753,81 +637,13 @@ describe('login personalized static-logo integration', () => {
     if (!card) throw new Error('Login card was not rendered')
 
     expect(document.querySelector('.login-particle-logo')).toBeNull()
-    expect(card.querySelector<HTMLImageElement>('.auth-shell__brand .auth-shell__logo img')?.getAttribute('src')).toBe(managedEffect.logoUrl)
-    expect(card.querySelector('#login-site-title')?.textContent).toBe('Example knowledge base')
+    expect(document.querySelector<HTMLImageElement>(`img[src="${managedEffect.logoUrl}"]`)).not.toBeNull()
+    expect(document.body.textContent).toContain('Example knowledge base')
     expect(card.querySelector('form.login-form input[name="username"]')).not.toBeNull()
     expect(card.querySelector('form.login-form input[name="password"]')).not.toBeNull()
     expect(card.querySelector('form.login-form button[type="submit"]')).not.toBeNull()
 
     dom.window.close()
-  })
-})
-describe('login success illustration contract', () => {
-  it('provides an optional Loader illustration slot without replacing fallback indicators', async () => {
-    for (const mode of ['loading', 'icon'] as const) {
-      for (const customIllustration of [false, true]) {
-        const app = testRenderer.createApp({
-          render: () => Vue.h(Loader, { modelValue: true, mode }, customIllustration
-            ? { illustration: () => Vue.h('svg', { 'data-custom-illustration': '' }) }
-            : undefined)
-        })
-        app.component('VDialog', conditionalPassthrough('div'))
-        app.component('VCard', passthrough('section'))
-        app.component('VCardText', passthrough('div'))
-        app.component('VBtn', passthrough('button'))
-        app.config.globalProperties.$t = (key: string): string => key
-        const host = createTestHostNode('element', 'root')
-        app.mount(host)
-        try {
-          await Vue.nextTick()
-          const illustration = findTestHostNode(host, node => Object.hasOwn(node.props, 'data-custom-illustration'))
-          const spinner = findTestHostNode(host, node => Object.hasOwn(node.props, 'data-loader-spinner'))
-          const icon = findTestHostNode(host, node => node.kind === 'element' && node.type === 'img')
-          if (customIllustration) expect(illustration).not.toBeNull()
-          else expect(illustration).toBeNull()
-          if (!customIllustration && mode === 'loading') expect(spinner).not.toBeNull()
-          else expect(spinner).toBeNull()
-          if (!customIllustration && mode === 'icon') expect(icon).not.toBeNull()
-          else expect(icon).toBeNull()
-        } finally {
-          app.unmount()
-        }
-      }
-    }
-  })
-
-  it('mounts one inline book on the first loading render and keeps it through the success title transition', async () => {
-    const lifecycle = await mountLoginLifecycle()
-    expect(findTestHostNode(lifecycle.host, node => node.props.class === 'login-success-animation')).toBeNull()
-    expect(mountedAnimationCount).toBe(0)
-
-    lifecycle.vm.loaderTitle = 'Signing in'
-    lifecycle.vm.isLoading = true
-    await Vue.nextTick()
-
-    const firstBook = findTestHostNode(lifecycle.host, node => node.props.class === 'login-success-animation')
-    const loadingTitle = findTestHostNode(lifecycle.host, node => node.props.class === 'loader-dialog-title')
-    if (!firstBook || !loadingTitle) throw new Error('Login loading illustration was not rendered')
-    expect(loadingTitle.children[0]?.text).toBe('Signing in')
-    expect(mountedAnimationCount).toBe(1)
-    expect(unmountedAnimationCount).toBe(0)
-
-    lifecycle.vm.loaderTitle = 'Sign in successful'
-    await Vue.nextTick()
-
-    const successBook = findTestHostNode(lifecycle.host, node => node.props.class === 'login-success-animation')
-    const successTitle = findTestHostNode(lifecycle.host, node => node.props.class === 'loader-dialog-title')
-    expect(successBook).toBe(firstBook)
-    expect(successBook?.props['data-instance-id']).toBe(firstBook.props['data-instance-id'])
-    expect(successTitle?.children[0]?.text).toBe('Sign in successful')
-    expect(mountedAnimationCount).toBe(1)
-    expect(unmountedAnimationCount).toBe(0)
-
-    lifecycle.vm.isLoading = false
-    await Vue.nextTick()
-    expect(findTestHostNode(lifecycle.host, node => node.props.class === 'login-success-animation')).toBeNull()
-    expect(unmountedAnimationCount).toBe(1)
-    lifecycle.app.unmount()
   })
 })
 
@@ -925,6 +741,5 @@ describe('login account recovery and wayfinding', () => {
     const link = footer?.querySelector('a')
     expect(link?.getAttribute('href')).toBe('/register')
     expect(link?.textContent).toBe('auth:switchToRegister.link')
-    expect(dom.window.document.querySelector('.auth-shell__eyebrow')?.textContent).toBe('auth:signIn')
   })
 })

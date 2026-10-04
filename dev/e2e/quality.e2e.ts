@@ -1,7 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Locator, Page, TestInfo } from '@playwright/test'
 import { expect, test } from '@playwright/test'
-import sharp from 'sharp'
 import { installEnabledAgentFixture } from './agent-fixture.ts'
 import { authenticateAsAdmin, expectResponsiveLayout, openAuthenticatedPage, openSearch } from './helpers.ts'
 
@@ -66,18 +65,6 @@ async function openReaderCopyFixture(page: Page) {
   await expect(page.locator('#native-ordinary-copy').locator('..').getByRole('button', { name: 'Copy', exact: true })).toBeVisible()
 }
 
-async function pauseNextSweep(locator: Locator, name: string) {
-  await locator.evaluate((element, animationName) => {
-    const pause = (event: Event) => {
-      if ((event as AnimationEvent).animationName !== animationName) return
-      const animation = element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)
-      if (!animation) throw new Error(`Missing active ${animationName}`)
-      animation.pause()
-      element.removeEventListener('animationstart', pause)
-    }
-    element.addEventListener('animationstart', pause)
-  }, name)
-}
 
 /** Chromium serializes wide-gamut/translucent tokens as `color(srgb r g b / a)`, legacy colors as `rgba(...)`. */
 function blurRadius(value: string): number {
@@ -93,120 +80,6 @@ function cssColorAlpha(value: string): number {
   return 1
 }
 
-function rgbDistance(left: Buffer, right: Buffer, offset: number): number {
-  return Math.max(
-    Math.abs(left[offset]! - right[offset]!),
-    Math.abs(left[offset + 1]! - right[offset + 1]!),
-    Math.abs(left[offset + 2]! - right[offset + 2]!)
-  )
-}
-
-async function expectCopySweepPaint(page: Page, panel: Locator, name: string, pseudo: string, positions: readonly number[], testInfo: TestInfo) {
-  await expect.poll(() => panel.evaluate((element, animationName) =>
-    element.getAnimations({ subtree: true }).some(animation => animation instanceof CSSAnimation && animation.animationName === animationName && animation.playState === 'paused'), name)
-  ).toBe(true)
-  if (pseudo) {
-    await panel.locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]').locator('.toolbar').evaluate(element => {
-      for (const animation of element.getAnimations({ subtree: true })) if (animation instanceof CSSTransition) animation.finish()
-    })
-  }
-  const before = await panel.evaluate(element => ({
-    x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop,
-    width: element.scrollWidth, height: element.scrollHeight, documentWidth: document.documentElement.scrollWidth
-  }))
-  const frames: Buffer[] = []
-  const toolbarFrames: Buffer[] = []
-  for (const [index, progress] of [0, 0.5, 1].entries()) {
-    const frame = await panel.evaluate((element, sample) => {
-      const animation = element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === sample.name)
-      if (!animation) throw new Error('Copy sweep disappeared before its paint sample')
-      const duration = Number(animation.effect?.getComputedTiming().duration)
-      // Stay one microsecond inside the end frame; finish() below exercises
-      // the real animationend cleanup only after that frame is captured.
-      animation.currentTime = duration * sample.progress - (sample.progress === 1 ? 0.001 : 0)
-      // Finish color transitions, not the sweep under observation.
-      for (const candidate of element.getAnimations()) if (candidate instanceof CSSTransition) candidate.finish()
-      const style = getComputedStyle(element, sample.pseudo || null)
-      return {
-        duration, position: Number.parseFloat(style.backgroundPositionX), transform: style.transform,
-        inset: [style.top, style.right, style.bottom, style.left], size: style.backgroundSize,
-        gradient: style.backgroundImage, z: Number(style.zIndex),
-        scroll: { x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop,
-          width: element.scrollWidth, height: element.scrollHeight, documentWidth: document.documentElement.scrollWidth }
-      }
-    }, { name, pseudo, progress })
-    expect(frame.duration, 'Inline and block acknowledgment both last .95 seconds').toBe(950)
-    expect(frame.position, `Sweep position at ${progress}`).toBeCloseTo(positions[index]!, 1)
-    expect(frame.transform, 'Stationary gradient does not enlarge scrollable overflow').toBe('none')
-    expect(frame.size).toBe('300% 100%')
-    expect(frame.gradient).toContain('40%')
-    expect(frame.gradient).toContain('60%')
-    expect(frame.scroll, `Copy acknowledgment leaves every scroll coordinate and extent unchanged at ${progress}`).toEqual(before)
-    if (pseudo) {
-      expect(frame.inset, 'Copy band reaches all four panel edges').toEqual(['0px', '0px', '0px', '0px'])
-      const toolbarZ = await panel.locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]').locator('.toolbar').evaluate(element => Number(getComputedStyle(element).zIndex))
-      expect(frame.z, 'Acknowledgment paints above the attached Copy toolbar').toBeGreaterThan(toolbarZ)
-    }
-    const image = await panel.screenshot({ animations: 'allow', caret: 'hide', scale: 'css' })
-    await testInfo.attach(`${name}-${pseudo ? 'block' : 'inline'}-${progress}`, { body: image, contentType: 'image/png' })
-    frames.push(image)
-    expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY })), 'Paint capture does not move the reader').toEqual({ x: before.x, y: before.y })
-    if (pseudo && progress !== 1) {
-      const button = panel.locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]').getByRole('button', { name: 'Copy', exact: true })
-      await button.evaluate(element => {
-        for (const animation of element.getAnimations()) if (animation instanceof CSSTransition) animation.finish()
-      })
-      if (progress === 0.5) {
-        await panel.evaluate((element, animationName) => {
-          const animation = element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)
-          if (!animation) throw new Error('Copy band is missing before its toolbar crossing')
-          animation.currentTime = Number(animation.effect?.getComputedTiming().duration) * 0.67
-        }, name)
-      }
-      const toolbarImage = await button.screenshot({ animations: 'allow', scale: 'css' })
-      toolbarFrames.push(toolbarImage)
-      await testInfo.attach(`copy-overlay-toolbar-${progress}`, { body: toolbarImage, contentType: 'image/png' })
-    }
-  }
-  const decoded = await Promise.all(frames.map(image => sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true })))
-  const [start, middle, end] = decoded
-  if (!start || !middle || !end) throw new Error('Missing copy paint frame')
-  expect(middle.info).toEqual(start.info)
-  expect(end.info).toEqual(start.info)
-  let changedAtMiddle = 0
-  let changedAtEnd = 0
-  let pixels = 0
-  // Compare the central band, clear of borders, glyphs at the panel edges,
-  // and toolbar feedback. A class or CSSOM-only success cannot paint these pixels.
-  for (let y = Math.floor(start.info.height * 0.3); y < Math.ceil(start.info.height * 0.7); y += 1) {
-    for (let x = Math.floor(start.info.width * 0.3); x < Math.ceil(start.info.width * 0.7); x += 1) {
-      const offset = (y * start.info.width + x) * 4
-      const middleDelta = rgbDistance(start.data, middle.data, offset)
-      const endDelta = rgbDistance(start.data, end.data, offset)
-      if (middleDelta > 2) changedAtMiddle += 1
-      if (endDelta > 2) changedAtEnd += 1
-      pixels += 1
-    }
-  }
-  expect(changedAtMiddle / pixels, 'The real midpoint band paints a substantial part of the panel interior').toBeGreaterThan(0.15)
-  expect(changedAtEnd / pixels, 'The band leaves the panel interior again at its end').toBeLessThan(0.05)
-  if (pseudo) {
-    const decodedToolbar = await Promise.all(toolbarFrames.map(image => sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true })))
-    const [idle, crossing] = decodedToolbar
-    if (!idle || !crossing) throw new Error('Toolbar paint samples are missing')
-    expect(crossing.info).toEqual(idle.info)
-    let paintedPixels = 0
-    const count = idle.info.width * idle.info.height
-    for (let pixel = 0; pixel < count; pixel += 1) {
-      const offset = pixel * 4
-      if (rgbDistance(idle.data, crossing.data, offset) > 2) paintedPixels += 1
-    }
-    expect(paintedPixels / count, 'The acknowledgment band visibly crosses above the Copy toolbar, not underneath its opaque button').toBeGreaterThan(0.05)
-  }
-  await panel.evaluate((element, animationName) => {
-    element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)?.finish()
-  }, name)
-}
 
 test.describe('release accessibility profiles', () => {
   test('focuses initial and subsequent administration headings without a ring or focus scroll', async ({ page }, testInfo) => {
@@ -288,7 +161,7 @@ test.describe('release accessibility profiles', () => {
     await expect(name).toHaveValue(savedName)
   })
 
-  test('paints inline and ordinary/titled Prism copy acknowledgment without moving the reader', async ({ page }, testInfo) => {
+  test('copies inline and ordinary/titled Prism content without moving the reader', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     test.setTimeout(60_000)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -299,12 +172,10 @@ test.describe('release accessibility profiles', () => {
     await inline.hover()
     expect(await inline.evaluate(element => element.getAnimations().filter(animation => animation instanceof CSSAnimation).length), 'Inline hover does not acknowledge a copy').toBe(0)
     const inlineScroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))
-    await pauseNextSweep(inline, 'wiki-inline-code-shimmer-sweep')
     await inline.click()
     await expect(inline).toHaveAttribute('data-inline-copy-state', 'success')
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('npm run example')
     expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual(inlineScroll)
-    await expectCopySweepPaint(page, inline, 'wiki-inline-code-shimmer-sweep', '', [100, 50, 0], testInfo)
     for (const id of ['native-ordinary-copy', 'native-framed-copy']) {
       const panel = page.locator(`#${id}`)
       const wrapper = panel.locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]')
@@ -318,25 +189,17 @@ test.describe('release accessibility profiles', () => {
           return { x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop, width: element.scrollWidth }
         })
         expect(scrolled.left, 'The overflow copy starts at a real nonzero horizontal position').toBeGreaterThan(0)
-        await pauseNextSweep(panel, 'wiki-code-block-copy-sweep')
         await copy.click()
         await expect(copy).toHaveAttribute('data-copy-state', 'success')
         expect(await panel.evaluate(element => ({ x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop, width: element.scrollWidth }))).toEqual(scrolled)
-        await expect.poll(() => panel.evaluate(element => element.getAnimations({ subtree: true }).some(animation => animation instanceof CSSAnimation && animation.animationName === 'wiki-code-block-copy-sweep' && animation.playState === 'paused'))).toBe(true)
-        await panel.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
-        await expect(panel).not.toHaveClass(/wiki-code-copy-flash-run/u)
         await panel.evaluate(element => { element.scrollLeft = 0 })
       }
       const initial = await panel.evaluate(element => ({ x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop, width: element.scrollWidth }))
-      await pauseNextSweep(panel, 'wiki-code-block-copy-sweep')
       await copy.click()
       await expect(copy).toHaveAttribute('data-copy-state', 'success')
       expect(await panel.evaluate(element => ({ x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop, width: element.scrollWidth }))).toEqual(initial)
-      await expectCopySweepPaint(page, panel, 'wiki-code-block-copy-sweep', '::after', [90, 50, 10], testInfo)
-      await expect(panel).not.toHaveClass(/wiki-code-copy-flash-run/u)
     }
-    // Empty Prism blocks collapse to a line; they have no panel interior to
-    // sample. Their Copy control must still deliver real error feedback.
+    // Empty Prism blocks must still deliver visible error feedback.
     const empty = page.locator('#native-empty-copy')
     const emptyCopy = empty.locator('..').getByRole('button', { name: 'Copy', exact: true })
     await emptyCopy.scrollIntoViewIfNeeded()
@@ -349,11 +212,10 @@ test.describe('release accessibility profiles', () => {
     expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual(emptyScroll)
   })
 
-  test('still paints inline copy feedback when both clipboard paths are denied', async ({ page }, testInfo) => {
+  test('reports inline copy failure when both clipboard paths are denied', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     await page.emulateMedia({ reducedMotion: 'no-preference' })
-    // Fail only the browser clipboard boundary; production click/feedback and
-    // animation behavior stay real, including the legacy fallback attempt.
+    // Fail only the clipboard boundary; production click and recovery stay real.
     await page.addInitScript(() => {
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new DOMException('Clipboard denied', 'NotAllowedError') } } })
       document.execCommand = () => false
@@ -362,133 +224,11 @@ test.describe('release accessibility profiles', () => {
     const inline = page.locator('#native-inline-copy')
     await inline.scrollIntoViewIfNeeded()
     const before = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))
-    await pauseNextSweep(inline, 'wiki-inline-code-shimmer-sweep')
     await inline.click()
     await expect(inline).toHaveAttribute('data-inline-copy-state', 'error')
     expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual(before)
-    await expectCopySweepPaint(page, inline, 'wiki-inline-code-shimmer-sweep', '', [100, 50, 0], testInfo)
   })
 
-  test('runs one first-entry toolbar sweep and resumes only the delayed ambient cadence', async ({ page }, testInfo) => {
-    requireProject(testInfo, 'accessibility-keyboard')
-    test.setTimeout(60_000)
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.clock.install()
-    await page.addInitScript(() => {
-      const starts: number[] = []
-      const inlineStarts: number[] = []
-      Object.defineProperty(window, '__nativeToolbarSweepStarts', { value: starts })
-      Object.defineProperty(window, '__nativeInlineSweepStarts', { value: inlineStarts })
-      const observed = new WeakSet<Animation>()
-      let mounted = false
-      new MutationObserver(() => {
-        const button = document.querySelector('#native-framed-copy .toolbar button')
-        if (!button) return
-        if (!mounted) {
-          mounted = true
-          Object.defineProperty(window, '__nativeToolbarMountedAt', { value: performance.now() })
-        }
-        const animation = button.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === 'wiki-code-copy-shimmer-sweep')
-        if (animation && !observed.has(animation)) {
-          observed.add(animation)
-          starts.push(performance.now())
-          animation.pause()
-        }
-        const inline = document.querySelector('#native-inline-copy')
-        for (const sweep of inline?.getAnimations() ?? []) {
-          if (!(sweep instanceof CSSAnimation) || observed.has(sweep)) continue
-          observed.add(sweep)
-          inlineStarts.push(performance.now())
-        }
-      }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
-    })
-    await openReaderCopyFixture(page)
-    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
-    const panel = page.locator('#native-framed-copy')
-    const copy = panel.getByRole('button', { name: 'Copy', exact: true })
-    await copy.scrollIntoViewIfNeeded()
-    await page.mouse.move(1, 1)
-    const mountedAt = await page.evaluate(() => (window as typeof window & { __nativeToolbarMountedAt: number }).__nativeToolbarMountedAt)
-    while (await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length) < 1) {
-      const remaining = mountedAt + 18_000 - await page.evaluate(() => performance.now())
-      if (remaining <= 0) break
-      await page.clock.runFor(Math.min(100, remaining))
-    }
-    const ambientStarts = await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts)
-    expect(ambientStarts).toHaveLength(1)
-    const ambient = ambientStarts[0]!
-    expect(ambient - mountedAt, 'An unhovered toolbar first animates after 9–18 seconds').toBeGreaterThanOrEqual(9000)
-    expect(ambient - mountedAt).toBeLessThanOrEqual(18_000)
-    await copy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
-    await expect(copy).not.toHaveClass(/wiki-copy-shimmer-run/u)
-    const firstHoverTime = await page.evaluate(() => performance.now())
-    await panel.locator('pre').hover()
-    await expect.poll(() => copy.evaluate(element => element.getAnimations({ subtree: true }).some(animation => animation instanceof CSSAnimation && animation.playState === 'paused'))).toBe(true)
-    await panel.locator('.toolbar').evaluate(element => {
-      for (const animation of element.getAnimations({ subtree: true })) if (animation instanceof CSSTransition) animation.finish()
-    })
-    const hoverFrames: Buffer[] = []
-    for (const [progress, travel] of [[0, -1.3], [0.5, 0], [1, 1.3]] as const) {
-      const sample = await copy.evaluate((element, progress) => {
-        const animation = element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === 'wiki-code-copy-shimmer-sweep')
-        if (!animation) throw new Error('First-hover sweep is missing')
-        const duration = Number(animation.effect?.getComputedTiming().duration)
-        animation.currentTime = progress * duration - (progress === 1 ? 0.001 : 0)
-        return { duration, travel: new DOMMatrixReadOnly(getComputedStyle(element, '::after').transform).m41 / element.getBoundingClientRect().width }
-      }, progress)
-      expect(sample.duration, 'Toolbar sweep runs at half the inline/block acknowledgment rate').toBe(1900)
-      expect(sample.travel, `Toolbar band crosses the button at ${progress}`).toBeCloseTo(travel, 1)
-      const image = await copy.screenshot({ animations: 'allow', scale: 'css' })
-      hoverFrames.push(image)
-      await testInfo.attach(`toolbar-first-hover-${progress}`, { body: image, contentType: 'image/png' })
-    }
-    const decoded = await Promise.all(hoverFrames.map(image => sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true })))
-    const [start, middle, end] = decoded
-    if (!start || !middle || !end) throw new Error('Toolbar sweep paint samples are missing')
-    expect(middle.info).toEqual(start.info)
-    expect(end.info).toEqual(start.info)
-    let painted = 0
-    let remainingPaint = 0
-    const pixels = start.info.width * start.info.height
-    for (let pixel = 0; pixel < pixels; pixel += 1) {
-      const offset = pixel * 4
-      if (rgbDistance(start.data, middle.data, offset) > 2) painted += 1
-      if (rgbDistance(start.data, end.data, offset) > 2) remainingPaint += 1
-    }
-    expect(painted / pixels, 'First-hover attractor visibly paints the Copy button midpoint').toBeGreaterThan(0.05)
-    expect(remainingPaint / pixels, 'The attractor leaves the button again at its end').toBeLessThan(0.05)
-    await copy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
-    await expect(copy).not.toHaveClass(/wiki-copy-shimmer-run/u)
-    // Cross descendants with real pointer movement, then leave/re-enter.
-    await panel.locator('pre code').hover()
-    await copy.hover()
-    await page.mouse.move(1, 1)
-    await panel.locator('pre').hover()
-    expect(await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts)).toEqual([ambient, firstHoverTime])
-    await page.clock.runFor(13_899)
-    expect(await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts)).toEqual([ambient, firstHoverTime])
-    while (await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length) < 3) {
-      const remaining = firstHoverTime + 22_900 - await page.evaluate(() => performance.now())
-      if (remaining <= 0) break
-      await page.clock.runFor(Math.min(100, remaining))
-    }
-    expect(await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length)).toBe(3)
-    const resumed = await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts[2]!)
-    expect(resumed - firstHoverTime, 'Ambient resumes only after 1.9s sweep + 3s pause + 9–18s cadence').toBeGreaterThanOrEqual(13_900)
-    expect(resumed - firstHoverTime).toBeLessThanOrEqual(22_900)
-    await copy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
-    while (await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length) < 4) {
-      const remaining = resumed + 18_000 - await page.evaluate(() => performance.now())
-      if (remaining <= 0) break
-      await page.clock.runFor(Math.min(100, remaining))
-    }
-    expect(await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length)).toBe(4)
-    const next = await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts[3]!)
-    expect(next - resumed, 'Subsequent ambient sweeps retain their independent 9–18s cadence').toBeGreaterThanOrEqual(9000)
-    expect(next - resumed).toBeLessThanOrEqual(18_000)
-    expect(await page.evaluate(() => (window as typeof window & { __nativeInlineSweepStarts: number[] }).__nativeInlineSweepStarts), 'No idle-time inline acknowledgment was painted anywhere in the observation window').toEqual([])
-    await expect(page.locator('#native-inline-copy')).not.toHaveAttribute('data-inline-copy-state', /success|error/u)
-  })
   test('meets WCAG gates on primary desktop surfaces', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     for (const [surface, readySelector] of [

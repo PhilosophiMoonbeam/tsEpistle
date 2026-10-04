@@ -46,6 +46,7 @@ import {
   scopePageQuery,
   type PageVisibility
 } from '../helpers/page-access.ts'
+import { projectPageFields } from '../helpers/page-field-projection.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
 import { pageTreeAccess, treeAncestorIds } from '../repositories/page-tree-access.ts'
 import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
@@ -1259,6 +1260,204 @@ const list = async (input: OperationInput) => {
     return accessiblePages.filter(page => _.every(args.tags, tag => _.includes(page.tags, tag)))
   }
   return accessiblePages
+}
+
+export interface PageDirectoryInput extends PageOperationInput {
+  limit?: number
+  offset?: number
+  search?: string
+  locale?: string
+  visibility?: 'all' | PageVisibility
+  publication?: 'all' | 'published' | 'unpublished' | 'Draft' | 'Published' | 'Scheduled' | 'Window ended' | 'Invalid schedule' | 'Unavailable' | 'Enabled'
+  orderBy?: 'ID' | 'PATH' | 'TITLE' | 'CREATED' | 'UPDATED'
+  orderByDirection?: 'ASC' | 'DESC'
+  creatorId?: number
+  authorId?: number
+  tag?: string
+  untagged?: boolean
+}
+
+export interface PageDirectoryRow {
+  id: number
+  locale: string
+  path: string
+  title: string | null
+  description: string | null
+  isPublished?: boolean
+  isSearchable: boolean
+  publishStartDate?: string | Date | null
+  publishEndDate?: string | Date | null
+  visibility: PageVisibility
+  ownerId: number | null
+  contentType: string
+  createdAt: string | Date
+  updatedAt: string | Date
+  tags: string[]
+}
+
+export interface PageDirectoryResult {
+  items: PageDirectoryRow[]
+  nextOffset: number | null
+  scanned: number
+}
+
+const directoryChoice = <T extends string>(value: unknown, choices: readonly T[], fallback: T, label: string): T => {
+  if (value === undefined) return fallback
+  if (typeof value !== 'string' || !choices.includes(value as T)) throw new ApplicationError(`${label} is invalid`, { code: 'INVALID_INPUT' })
+  return value as T
+}
+
+const directoryPublicationState = (page: PageDirectoryRow, now: number): NonNullable<PageDirectoryInput['publication']> => {
+  if (page.isPublished === undefined) return 'Unavailable'
+  if (!page.isPublished) return 'Draft'
+  if (page.publishStartDate === undefined || page.publishEndDate === undefined) return 'Enabled'
+  const start = page.publishStartDate ? (page.publishStartDate instanceof Date ? page.publishStartDate.valueOf() : Date.parse(page.publishStartDate)) : null
+  const end = page.publishEndDate ? (page.publishEndDate instanceof Date ? page.publishEndDate.valueOf() : Date.parse(page.publishEndDate)) : null
+  if ((start !== null && !Number.isFinite(start)) || (end !== null && !Number.isFinite(end)) || (start !== null && end !== null && end <= start)) return 'Invalid schedule'
+  if (end !== null && end < now) return 'Window ended'
+  if (start !== null && start > now) return 'Scheduled'
+  return 'Published'
+}
+
+/**
+ * Offset counts authorized SQL-filtered candidates, not returned rows. Continue
+ * until nextOffset is null, even after an empty publication-filtered batch.
+ * A content-free keyset authorization pass protects non-system administrators
+ * before metadata filtering. Each result window examines at most 1,000 authorized
+ * candidates in batches of 100 and returns at most 100 projected rows.
+ */
+export const directory = async (input: PageDirectoryInput): Promise<PageDirectoryResult> => {
+  const limit = input.limit === undefined ? 25 : positiveInteger(input.limit, 'limit')
+  if (limit > 100) throw new ApplicationError('limit must be between 1 and 100', { code: 'INVALID_INPUT' })
+  const offset = input.offset === undefined ? 0 : nonNegativeInteger(input.offset, 'offset')
+  const search = input.search === undefined ? '' : stringValue(input.search, 'search')
+  if (search.length > 200) throw new ApplicationError('search must contain at most 200 characters', { code: 'INVALID_INPUT' })
+  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const locale = input.locale === undefined ? undefined : stringValue(input.locale, 'locale')
+  const visibility = directoryChoice(input.visibility, ['all', 'public', 'private'] as const, 'all', 'visibility')
+  const publication = directoryChoice(input.publication, ['all', 'published', 'unpublished', 'Draft', 'Published', 'Scheduled', 'Window ended', 'Invalid schedule', 'Unavailable', 'Enabled'] as const, 'all', 'publication')
+  const orderBy = directoryChoice(input.orderBy, ['ID', 'PATH', 'TITLE', 'CREATED', 'UPDATED'] as const, 'ID', 'orderBy')
+  const direction = directoryChoice(input.orderByDirection, ['ASC', 'DESC'] as const, 'ASC', 'orderByDirection').toLowerCase()
+  const creatorId = input.creatorId === undefined ? undefined : positiveInteger(input.creatorId, 'creatorId')
+  const authorId = input.authorId === undefined ? undefined : positiveInteger(input.authorId, 'authorId')
+  const requestedTag = input.tag === undefined ? undefined : stringValue(input.tag, 'tag').trim().toLowerCase()
+  const untagged = optionalBoolean(input.untagged, 'untagged') ?? false
+  const now = Date.now()
+  const authority = await authorityFor(input)
+  const tag = requestedTag === undefined ? undefined : resolveTagName(authority.tagAliases, requestedTag)
+  if (tag === null) return { items: [], nextOffset: null, scanned: 0 }
+  const filterCandidates = (builder: QueryBuilder): void => {
+    scopePageQuery(builder, input.requester, { table: 'pages' })
+    applyAgentScope(builder, input.agentScope)
+    if (locale !== undefined) builder.where('pages.localeCode', locale)
+    if (visibility !== 'all') builder.where('pages.visibility', visibility)
+    if (tag !== undefined) {
+      builder.whereExists(tags => tags.select('pageTags.pageId').from('pageTags').join('tags', 'tags.id', 'pageTags.tagId')
+        .whereRaw('?? = ??', ['pageTags.pageId', 'pages.id']).where('tags.tag', tag))
+    }
+    if (untagged) builder.whereRaw('NOT EXISTS (SELECT 1 FROM "pageTags" WHERE "pageTags"."pageId" = ??)', ['pages.id'])
+    if (creatorId !== undefined && authorId !== undefined) {
+      builder.where(owners => owners.where('pages.creatorId', creatorId).orWhere('pages.authorId', authorId))
+    } else {
+      if (creatorId !== undefined) builder.where('pages.creatorId', creatorId)
+      if (authorId !== undefined) builder.where('pages.authorId', authorId)
+    }
+    for (const term of terms) {
+      const pattern = `%${escapeLikePattern(term)}%`
+      builder.where(fields => {
+        fields.whereRaw(`LOWER(COALESCE(??, '')) LIKE ? ESCAPE '\\'`, ['pages.title', pattern])
+          .orWhereRaw(`LOWER(COALESCE(??, '')) LIKE ? ESCAPE '\\'`, ['pages.path', pattern])
+          .orWhereRaw(`LOWER(COALESCE(??, '')) LIKE ? ESCAPE '\\'`, ['pages.description', pattern])
+          .orWhereRaw(`LOWER(COALESCE(??, '')) LIKE ? ESCAPE '\\'`, ['pages.localeCode', pattern])
+          .orWhereRaw(`CAST(?? AS TEXT) LIKE ? ESCAPE '\\'`, ['pages.id', pattern])
+          .orWhereRaw(`EXISTS (SELECT 1 FROM "pageTags" JOIN tags ON tags.id = "pageTags"."tagId" WHERE "pageTags"."pageId" = ?? AND LOWER(tags.tag) LIKE ? ESCAPE '\\')`, ['pages.id', pattern])
+      })
+    }
+  }
+  const readsEveryPublicPage = authority.permissions.includes('read:pages') &&
+    authority.groups.some(group => group.pageRules.some(rule =>
+      !rule.deny && rule.match === 'START' && rule.path === '' && rule.roles.includes('read:pages') && !rule.locales?.length)) &&
+    !authority.groups.some(group => group.pageRules.some(rule => rule.deny && rule.roles.includes('read:pages')))
+  let readableIds: number[] | null = null
+  if (!authority.permissions.includes('manage:system') && !readsEveryPublicPage) {
+    readableIds = []
+    let afterId = 0
+    while (true) {
+      const authorizationRows = await wiki.models.pages
+        .query()
+        .column(['pages.id', 'pages.path', { locale: 'pages.localeCode' }, 'pages.visibility', 'pages.ownerId'])
+        .withGraphFetched('tags')
+        .modifyGraph('tags', builder => builder.select('tag'))
+        .modify(builder => {
+          filterCandidates(builder)
+          builder.where('pages.id', '>', afterId).orderBy('pages.id', 'asc').limit(1_000)
+        })
+      for (const page of authorizationRows) {
+        if (pageMatchesAgentScope(page, input.agentScope) && canReadPage(input.requester, page, authority)) readableIds.push(page.id)
+      }
+      if (authorizationRows.length < 1_000) break
+      afterId = authorizationRows.at(-1)!.id
+    }
+    if (readableIds.length === 0) return { items: [], nextOffset: null, scanned: 0 }
+  }
+  const items: PageDirectoryRow[] = []
+  let scanned = 0
+  const orderColumn = { ID: 'pages.id', PATH: 'pages.path', TITLE: 'pages.title', CREATED: 'pages.createdAt', UPDATED: 'pages.updatedAt' }[orderBy]
+
+  while (scanned < 1_000) {
+    const batchStart = scanned
+    const batchLimit = Math.min(100, 1_000 - scanned)
+    const candidates = await wiki.models.pages
+      .query()
+      .column([
+        'pages.id', 'pages.path', { locale: 'pages.localeCode' }, 'pages.title', 'pages.description',
+        'pages.isPublished', 'pages.isSearchable', 'pages.publishStartDate', 'pages.publishEndDate',
+        'pages.visibility', 'pages.ownerId', 'pages.contentType', 'pages.createdAt', 'pages.updatedAt'
+      ])
+      .withGraphFetched('tags')
+      .modifyGraph('tags', builder => builder.select('tag'))
+      .modify(builder => {
+        filterCandidates(builder)
+        if (readableIds !== null) builder.whereRaw('?? = ANY (?::integer[])', ['pages.id', readableIds])
+        builder.orderBy(orderColumn, direction)
+        if (orderColumn !== 'pages.id') builder.orderBy('pages.id', 'asc')
+        builder.offset(offset + scanned).limit(batchLimit)
+      })
+
+    for (const rawPage of candidates) {
+      scanned += 1
+      const page = normalizePageBooleans(rawPage)
+      if (!pageMatchesAgentScope(page, input.agentScope) || !canReadPage(input.requester, page, authority)) continue
+      const value: PageDirectoryRow = {
+        id: page.id,
+        locale: page.locale ?? page.localeCode,
+        path: page.path,
+        title: page.title ?? null,
+        description: page.description ?? null,
+        isPublished: page.isPublished,
+        isSearchable: page.isSearchable,
+        publishStartDate: (page.publishStartDate as string | Date | null) ?? null,
+        publishEndDate: (page.publishEndDate as string | Date | null) ?? null,
+        visibility: page.visibility,
+        ownerId: page.ownerId,
+        contentType: page.contentType as string,
+        createdAt: page.createdAt as string | Date,
+        updatedAt: page.updatedAt,
+        tags: page.tags.map(tag => tag.tag)
+      }
+      const projected = projectPageFields({ requester: input.requester, page, authority, value })
+      if (publication === 'published' && projected.isPublished !== true) continue
+      if (publication === 'unpublished' && projected.isPublished !== false) continue
+      if (publication !== 'all' && publication !== 'published' && publication !== 'unpublished' && directoryPublicationState(projected, now) !== publication) continue
+      items.push(projected)
+      if (items.length === limit) {
+        const exhausted = candidates.length < batchLimit && scanned - batchStart === candidates.length
+        return { items, nextOffset: exhausted ? null : offset + scanned, scanned }
+      }
+    }
+    if (candidates.length < batchLimit) return { items, nextOffset: null, scanned }
+  }
+  return { items, nextOffset: offset + scanned, scanned }
 }
 
 export interface PageIndexItem {
@@ -2861,6 +3060,7 @@ const getByPath = async (input: OperationInput, suppliedAuthority?: PageRuleAuth
   const projectedPage = await projectReaderPage(input, page)
   return {
     ...projectedPage,
+    pageFeatures: projectedPage.extra.pageFeatures,
     locale: projectedPage.localeCode,
     editor: projectedPage.editorKey,
     scriptJs: projectedPage.extra.js,
@@ -3334,6 +3534,7 @@ export default {
   convert,
   create,
   discover,
+  directory,
   get,
   getOfflinePrivateSnapshot,
   getOfflineSnapshot,

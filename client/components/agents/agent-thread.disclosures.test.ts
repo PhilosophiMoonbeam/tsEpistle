@@ -1,37 +1,36 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { compileTemplate, parse } from '@vue/compiler-sfc'
+import { compileScript, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
 import { resetBody } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
-import { createSSRApp, defineComponent } from 'vue'
-import type { RenderFunction } from 'vue'
+import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import { renderToString } from '@vue/server-renderer'
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
-import type { AgentMessageView } from '../../../shared/agents/contracts.ts'
-import { buildAgentThreadPresentation } from './agent-thread-presentation.ts'
+import type { AgentMessageView, AgentThreadState } from '../../../shared/agents/contracts.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 globalThis.useTranslate = () => translateEnglish
 resetBody()
 
-const componentPath = join(process.cwd(), 'client/components/agents/agent-thread.vue')
-const source = readFileSync(componentPath, 'utf8')
-const { descriptor } = parse(source, { filename: componentPath })
-const template = descriptor.template?.content ?? ''
-
-const componentStyleId = 'agent-thread-disclosures'
-const componentScopeId = `data-v-${componentStyleId}`
-const compiledTemplate = compileTemplate({
-  source: template,
-  filename: componentPath,
-  id: componentStyleId,
-  compilerOptions: { mode: 'function' }
+// Vuetify snapshots browser capabilities, so it must load after resetBody.
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+Bun.plugin({
+  name: 'agent-thread-disclosures-real-sfc',
+  setup(builder) {
+    builder.onLoad({ filter: /\.vue$/ }, async ({ path: filename }) => {
+      const parsed = parse(await Bun.file(filename).text(), { filename })
+      if (parsed.errors.length) throw parsed.errors[0]
+      const script = compileScript(parsed.descriptor, {
+        id: 'agent-thread-disclosures',
+        genDefaultAs: '__component',
+        inlineTemplate: true
+      })
+      return { loader: 'ts', contents: `${script.content}\nexport default __component;` }
+    })
+  }
 })
-if (compiledTemplate.errors.length > 0) {
-  throw new Error(`Could not compile agent-thread.vue template: ${compiledTemplate.errors.join(', ')}`)
-}
-const renderThreadTemplate = new Function('Vue', compiledTemplate.code)(Vue) as RenderFunction
+// The loader must be installed before this real component and its children load.
+const AgentThread = (await import('./agent-thread.vue')).default
 
 const makeMessage = (id: string, ordinal: number, runId: string | null = null): AgentMessageView => ({
   id,
@@ -45,7 +44,7 @@ const makeMessage = (id: string, ordinal: number, runId: string | null = null): 
       evidenceId: 'page:shared source:section:repeat/1',
       kind: 'page',
       label: 'Citation › Referenced section',
-      href: null
+      href: 'https://sources.example/wiki#referenced-section'
     }
   ],
   createdAt: '2026-09-03T10:00:00.000Z',
@@ -54,71 +53,42 @@ const makeMessage = (id: string, ordinal: number, runId: string | null = null): 
 
 const renderDuplicateSources = async (): Promise<string> => {
   const messages = [makeMessage('message one/α', 1), makeMessage('message two/β', 2)]
-  const thread = { messages, artifacts: [], suggestions: [] }
-  const threadPresentation = buildAgentThreadPresentation(messages, [], [], [])
-  const threadProjection = {
-    orderedMessages: threadPresentation.orderedMessages.map(entry => ({
-      ...entry,
-      statusLabel: entry.statusLabel ? translateEnglish(entry.statusLabel.key, entry.statusLabel.params) : '',
-      ariaLabel: translateEnglish(entry.ariaLabel.key, { status: translateEnglish('common:agentThread.complete') }),
-      temporal: { time: '', timestamp: '' },
-      citationGroups: entry.citationGroups.map(group => ({
-        ...group,
-        safeHref: undefined,
-        previewSelector: null,
-        sections: group.sections.map(citationEntry => ({
-          ...citationEntry,
-          safeHref: undefined,
-          previewSelector: null
-        }))
-      })),
-      run: entry.run
-        ? {
-            ...entry.run,
-            activityLabel: entry.run.activityLabel.map(label => translateEnglish(label.key, label.params)).join(' · '),
-            pageLinks: entry.run.pageLinks.map(link => ({
-              ...link,
-              safeHref: undefined,
-              previewSelector: null
-            }))
-          }
-        : null
-    }))
+  const timestamp = '2026-09-03T10:00:00.000Z'
+  const thread: AgentThreadState = {
+    session: {
+      id: 'session-sources',
+      title: 'Source review',
+      retention: 'saved',
+      folderId: null,
+      status: 'active',
+      executionMode: 'agent',
+      version: 1,
+      providerProfileId: null,
+      profileResolutionToken: 'profile-token',
+      skills: [],
+      currentRun: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lastActivityAt: timestamp,
+      expiresAt: null
+    },
+    messages,
+    tools: [],
+    tasks: [],
+    proposals: [],
+    goal: null,
+    artifacts: [],
+    suggestions: [],
+    historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
   }
-  const component = Object.assign(
-    defineComponent({
-      setup: () => ({
-        thread,
-        threadPresentation,
-        threadProjection,
-        artifactPlacement: { byMessage: new Map(), unplaced: [] },
-        artifactTimeLabel: () => '',
-        decidingApprovalId: null,
-        canSubmit: true,
-        previewSelector: null,
-        forwardDecision: () => undefined,
-        emit: () => undefined
-      }),
-      render: renderThreadTemplate
-    }),
-    { __scopeId: componentScopeId }
-  )
-  const emptyStub = defineComponent({ render: () => null })
-  const app = createSSRApp(component)
+  const app = Vue.createSSRApp(AgentThread, {
+    thread,
+    connection: 'connected',
+    userPicture: resolveUserPicture({ id: 42, name: 'Ada Lovelace', pictureUrl: '' }),
+    canSubmit: true
+  })
+  app.use(createVuetify({ components: vuetifyComponents, ssr: true }))
   app.config.globalProperties.$t = translateEnglish
-  for (const name of [
-    'AgentAnswerActions',
-    'AgentArtifactGrid',
-    'WikiSourcePreview',
-    'AgentMarkdown',
-    'AgentTaskProgress',
-    'AgentToolCard',
-    'v-avatar',
-    'v-btn',
-    'v-icon'
-  ]) {
-    app.component(name, emptyStub)
-  }
   return renderToString(app)
 }
 
@@ -130,8 +100,18 @@ describe('Agent thread disclosures', () => {
     expect(disclosures.every(disclosure => !disclosure.open)).toBe(true)
     for (const disclosure of disclosures) {
       expect(disclosure.querySelector('.agent-sources__page .agent-sources__number')).toBeNull()
-      expect(disclosure.querySelector('.agent-sources__sections .agent-sources__number')?.textContent).toBe('1')
-      expect(disclosure.querySelector('.agent-sources__label')?.textContent).toBe('Referenced section')
+      const section = disclosure.querySelector<HTMLAnchorElement>('.agent-sources__sections a')
+      expect(section?.querySelector('.agent-sources__number')?.textContent).toBe('1')
+      expect(section?.querySelector('.agent-sources__label')?.textContent).toBe('Referenced section')
+      expect(section?.getAttribute('href')).toBe('https://sources.example/wiki#referenced-section')
+      expect(section?.getAttribute('target')).toBe('_blank')
+      expect(new Set(section?.rel.split(/\s+/))).toEqual(new Set(['noopener', 'noreferrer']))
     }
+    const firstSummary = disclosures[0]?.querySelector<HTMLElement>('summary')
+    if (!firstSummary) throw new Error('The first source disclosure has no native summary')
+    firstSummary.click()
+    expect(disclosures[0]?.open).toBe(true)
+    expect(disclosures[1]?.open).toBe(false)
+    dom.window.close()
   })
 })

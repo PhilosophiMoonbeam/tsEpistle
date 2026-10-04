@@ -193,8 +193,10 @@ onBeforeUnmount(() => {
   display: block;
   flex: 1 1 auto;
   min-width: 0;
-  height: 24px;
-  /* Neutral level bars; the theme decides light/dark automatically. */
-  color: rgb(var(--v-theme-on-surface), .5);
+  width: 100%;
+  height: 32px;
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  color: var(--wiki-text-muted);
 }
 </style>

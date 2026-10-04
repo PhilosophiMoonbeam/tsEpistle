@@ -170,6 +170,7 @@
           .editor-tiptap-glyph-footer
             span {{ $t(`editor:editor.of`, { filteredGlyphsCount: filteredGlyphs.length, glyphsCount: glyphs.length, interpolation: { escapeValue: false } }) }}
             span {{ $t(`editor:editor.fuzzySearch`) }}
+    .editor-pane-label {{ $t('editor:editor.tiptap', { label: definition.label, interpolation: { escapeValue: false } }) }}
     .editor-tiptap-page-canvas.editor-page-canvas
       editor-content.contents(:editor='editor ?? undefined')
     .v-system-bar.editor-status-bar.editor-tiptap-sysbar
@@ -796,9 +797,7 @@ export default defineComponent({
   --editor-primary: rgb(var(--v-theme-primary));
   --editor-border: var(--wiki-surface-border);
   --editor-muted: var(--wiki-text-muted);
-  background:
-    radial-gradient(circle at 50% -20%, rgba(var(--v-theme-primary), .12), transparent 44%),
-    color-mix(in srgb, rgb(var(--v-theme-background)) 92%, var(--editor-primary) 8%);
+  background: rgb(var(--v-theme-background));
   color: var(--editor-on-surface);
   display: flex;
   flex: 1 1 auto;
@@ -811,8 +810,8 @@ export default defineComponent({
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     border-bottom: 1px solid var(--editor-border);
-    background: color-mix(in srgb, var(--editor-surface) 94%, var(--editor-primary) 6%) !important;
-    box-shadow: var(--wiki-shadow-xs);
+    background: var(--wiki-surface-raised) !important;
+    box-shadow: none;
     scrollbar-color: rgba(var(--v-theme-on-surface), .18) transparent;
     scrollbar-width: thin;
     -webkit-overflow-scrolling: touch;
@@ -820,7 +819,7 @@ export default defineComponent({
     .v-toolbar__content {
       min-width: max-content;
       min-height: calc(var(--wiki-control-height) + var(--wiki-space-1));
-      justify-content: safe center;
+      justify-content: flex-start;
       padding: var(--wiki-space-1) var(--wiki-space-3);
 
       @include until($tablet) {
@@ -835,32 +834,31 @@ export default defineComponent({
     width: max-content;
     align-items: center;
     gap: var(--wiki-space-1);
-    margin-inline: auto;
+    margin-inline: 0;
   }
 
   &-toolbar-group {
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    padding: var(--wiki-space-1);
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-control-radius);
+    padding-inline: var(--wiki-space-1);
+    border-inline-end: 1px solid var(--wiki-surface-border);
     background: transparent;
   }
 
   &-tool,
   &-style-trigger {
-    height: calc(var(--wiki-control-height) - var(--wiki-space-3)) !important;
+    height: 44px !important;
     margin: 0;
-    border-radius: var(--wiki-radius-xs) !important;
+    border-radius: var(--wiki-control-radius) !important;
     letter-spacing: 0;
 
 
   }
 
   &-tool {
-    width: calc(var(--wiki-control-height) - var(--wiki-space-3));
-    min-width: calc(var(--wiki-control-height) - var(--wiki-space-3)) !important;
+    width: 44px;
+    min-width: 44px !important;
   }
 
   &-style-trigger {
@@ -878,14 +876,14 @@ export default defineComponent({
     display: flex;
     flex: 0 0 auto;
     align-items: center;
-    justify-content: safe center;
+    justify-content: flex-start;
     gap: var(--wiki-space-2);
     min-height: var(--wiki-control-height);
     padding: var(--wiki-space-1) var(--wiki-space-3);
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     border-bottom: 1px solid var(--editor-border);
-    background: color-mix(in srgb, var(--editor-surface) 97%, var(--editor-primary) 3%);
+    background: var(--wiki-surface-raised);
     scrollbar-color: rgba(var(--v-theme-on-surface), .18) transparent;
     scrollbar-width: thin;
     -webkit-overflow-scrolling: touch;
@@ -910,6 +908,7 @@ export default defineComponent({
 
   &-insert-button {
     flex: 0 0 auto;
+    min-height: 44px;
     border-radius: var(--wiki-control-radius) !important;
     letter-spacing: 0;
     text-transform: none;
@@ -920,7 +919,7 @@ export default defineComponent({
     align-items: center;
     display: flex;
     justify-content: flex-end;
-    background: color-mix(in srgb, var(--editor-surface) 90%, rgb(var(--v-theme-on-surface)) 10%) !important;
+    background: var(--wiki-surface-raised) !important;
     border-top: 1px solid var(--editor-border);
     color: var(--editor-muted);
     flex: 0 0 calc(24px + env(safe-area-inset-bottom));
@@ -930,7 +929,7 @@ export default defineComponent({
     &-locale {
       align-items: center;
       background: rgba(var(--v-theme-primary), .14);
-      color: var(--editor-primary);
+      color: var(--wiki-accent-ink);
       display: inline-flex;
       font-weight: 700;
       height: 24px;
@@ -951,41 +950,25 @@ export default defineComponent({
     position: relative;
     isolation: isolate;
     flex: 1 1 auto;
-    width: min(1000px, calc(100% - var(--wiki-space-8)));
+    width: 100%;
     min-height: 0;
-    margin: 0 auto var(--wiki-space-5);
-    padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
+    margin: 0;
+    padding: clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8));
     overflow-x: auto;
     overflow-y: auto;
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-hero-radius);
-    background: rgb(var(--v-theme-surface));
-    box-shadow:
-      var(--wiki-shadow-inset),
-      var(--wiki-shadow-sm);
-    transition:
-      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-      box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+    border: 0;
+    border-radius: 0;
+    background: var(--wiki-surface-raised);
+    box-shadow: none;
 
     &:focus-within {
-      border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 46%, var(--wiki-surface-border));
-      box-shadow:
-        var(--wiki-shadow-inset),
-        var(--wiki-shadow-md),
-        0 0 0 3px color-mix(in srgb, rgb(var(--v-theme-primary)) 9%, transparent);
+      outline: 2px solid var(--wiki-focus-color);
+      outline-offset: -2px;
     }
 
-    @include until($widescreen) {
-      width: calc(100% - 2rem);
-      margin-inline: 1rem;
-    }
 
     @include until($tablet) {
-      width: 100%;
-      margin: 0 0 var(--wiki-space-5);
-      padding: var(--wiki-space-5);
-      border-inline: 0;
-      border-radius: 0;
+      padding: var(--wiki-space-4);
     }
   }
 
@@ -993,7 +976,7 @@ export default defineComponent({
     max-width: 76ch;
     margin-inline: auto;
     min-height: 100%;
-    caret-color: var(--wiki-accent-warm);
+    caret-color: var(--wiki-accent-ink);
     outline: none;
     overflow-wrap: anywhere;
 

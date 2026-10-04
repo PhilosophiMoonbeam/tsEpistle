@@ -6,6 +6,8 @@ v-container.admin-utilities(fluid)
     icon='mdi-toolbox-outline'
     heading-id='admin-utilities-heading'
   )
+    template(#actions)
+      v-btn(variant='outlined' prepend-icon='mdi-refresh' :loading='loading' :disabled='busy' @click='reload') {{ $t(`common:actions.refresh`) }}
   async-state.mt-6(
     v-if='loading && !workspace'
     state='loading'
@@ -32,9 +34,10 @@ v-container.admin-utilities(fluid)
       .text-body-medium {{ $t(`admin:utilities.stillRunning`, { kind: operationTitle(runningOperation.kind), interpolation: { escapeValue: false } }) }}
       .text-body-small.mt-1 {{ $t(`admin:utilities.openReceiptFollowPersisted`) }}
       v-btn.mt-3(size='small' variant='outlined' @click='selectReceipt(runningOperation.id)') {{ $t(`admin:utilities.openRunningReceipt`) }}
-    v-row.mt-2
+    v-row.admin-utilities-layout
       v-col(cols='12' lg='3')
         v-card.admin-utilities-nav
+          .admin-utilities-nav__heading {{ $t(`admin:utilities.utilityWorkflows`) }}
           v-card-text.pa-2
             v-select.d-lg-none(
               :model-value='section'
@@ -71,20 +74,37 @@ v-container.admin-utilities(fluid)
             @request='requestOperation'
             @draft-state='setDraftState'
           )
-        v-card.mt-5(variant='outlined')
+        v-card.admin-utilities-receipt-panel.mt-5(variant='outlined')
           v-card-title.d-flex.flex-wrap.align-center.ga-2
             span {{ $t(`admin:utilities.operationReceipts`) }}
+            v-chip(size='small' variant='tonal') {{ workspace.operations.length }}
             v-spacer
             v-btn(size='small' variant='text' :loading='loading' :disabled='busy' @click='reload') {{ $t(`common:actions.refresh`) }}
           v-card-text
             .text-body-small.text-medium-emphasis.mb-3 {{ $t(`admin:utilities.receiptsRecoveryRecordsRefreshing`) }}
+            v-text-field.mb-3(
+              v-if='workspace.operations.length'
+              v-model='receiptQuery'
+              :label='$t(`admin:utilities.filterLoadedReceipts`, { defaultValue: `Filter loaded operation receipts` })'
+              prepend-inner-icon='mdi-magnify'
+              variant='outlined'
+              density='compact'
+              hide-details
+              clearable
+            )
             v-alert(v-if='workspace.operations.length === 0' variant='tonal' color='info') {{ $t(`admin:utilities.noReviewedUtilitiesActions`) }}
+            v-alert(v-else-if='filteredReceipts.length === 0' variant='tonal' color='info')
+              span {{ $t(`admin:utilities.noMatchingReceipts`, { defaultValue: `No loaded receipts match this filter.` }) }}
+              v-btn(variant='text' @click='receiptQuery = ``') {{ $t(`admin:shell.clearSearch`) }}
             v-list.admin-utilities-receipts(v-else lines='two' density='comfortable' :aria-label='$t(`admin:utilities.recentUtilitiesOperationReceipts`)')
-              v-list-item(v-for='operation in workspace.operations' :key='operation.id' :active='receiptId === operation.id' :aria-current='receiptId === operation.id ? `true` : undefined' @click='selectReceipt(operation.id)')
+              v-list-item(v-for='operation in filteredReceipts' :key='operation.id' :active='receiptId === operation.id' :aria-current='receiptId === operation.id ? `true` : undefined' @click='selectReceipt(operation.id)')
                 template(#prepend)
                   v-icon(:color='receiptColor(operation.state)') {{ receiptIcon(operation.state) }}
                 v-list-item-title {{ operationTitle(operation.kind) }}
                 v-list-item-subtitle {{ operation.summary }}
+                .admin-utilities-receipt-meta
+                  time(:datetime='operation.createdAt') {{ new Date(operation.createdAt).toLocaleString() }}
+                  code {{ operation.id }}
                 template(#append)
                   .text-body-small.text-medium-emphasis {{ operation.state }}
             v-card.mt-3(v-if='receiptId' variant='tonal')
@@ -199,6 +219,7 @@ export default defineComponent({
     UtilityTelemetry: defineAsyncComponent(() => import('./admin-utilities-telemetry.vue'))
   },
   data: () => ({
+    receiptQuery: '' as string | null,
     tools,
     section: 'content' as ToolKey,
     workspace: null as UtilitiesWorkspace | null,
@@ -220,6 +241,12 @@ export default defineComponent({
     notice: { open: false, message: '', color: 'success' as NonNullable<Notice['color']> }
   }),
   computed: {
+    filteredReceipts(): UtilityOperation[] {
+      const query = (this.receiptQuery || '').trim().toLocaleLowerCase()
+      return (this.workspace?.operations ?? []).filter(operation =>
+        `${this.operationTitle(operation.kind)} ${operation.summary} ${operation.id} ${operation.state}`.toLocaleLowerCase().includes(query)
+      )
+    },
     selectedComponent() {
       return tools.find((tool) => tool.key === this.section)?.component ?? 'UtilityAuth'
     },
@@ -556,27 +583,36 @@ export default defineComponent({
     line-height: 1.45;
   }
   .admin-utilities-receipts .v-list-item__append {
-    padding-left: 12px;
+    padding-inline-start: 12px;
   }
+  .admin-utilities-layout > .v-col { min-width: 0; }
+  .admin-utilities-receipts .v-list-item { border-bottom: 1px solid var(--wiki-surface-border); }
+  .admin-utilities-receipts .v-list-item:last-child { border-bottom: 0; }
+  .admin-utilities-receipts .v-list-item-subtitle { white-space: normal; overflow-wrap: anywhere; -webkit-line-clamp: unset; }
+  .admin-utilities-nav__heading { padding: .875rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); font-size: .875rem; font-weight: 650; }
+  .admin-utilities-receipt-meta { display: flex; flex-wrap: wrap; gap: .25rem .75rem; margin-block-start: .375rem; font-size: .75rem; color: var(--wiki-text-muted); }
+  .admin-utilities-receipt-meta code { overflow-wrap: anywhere; }
+  .admin-utilities-receipt-panel .v-card-title { border-bottom: 1px solid var(--wiki-surface-border); }
 }
 
 .admin-utilities-nav {
   position: sticky;
-  top: 1rem;
+  top: calc(var(--wiki-chrome-height) + 1rem);
 }
 
 .admin-utilities-result {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 0.35rem 1rem;
   margin-bottom: 0;
 
   dt {
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: var(--wiki-text-muted);
   }
   dd {
     margin: 0;
     font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
   }
 }
 
@@ -589,5 +625,13 @@ export default defineComponent({
   .admin-utilities-nav {
     position: static;
   }
+  .admin-utilities-nav .v-list-item { min-height: 44px; }
+}
+@media (max-width: 599px) {
+  .admin-utilities-result { grid-template-columns: 1fr; gap: .25rem; }
+  .admin-utilities-result dd { margin-block-end: .75rem; }
+  .admin-utilities-receipts .v-list-item { padding-inline: .5rem; }
+  .admin-utilities-receipts .v-list-item__append { align-self: start; }
+  .admin-utilities .v-btn { min-height: 44px; }
 }
 </style>

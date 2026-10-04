@@ -7,7 +7,7 @@
         icon="mdi-text-box-search-outline"
       >
         <template #actions>
-          <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:logging.reloadSavedLoggingSettings') }}</v-tooltip></v-btn>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:logging.reloadSavedLoggingSettings') }}</v-tooltip></v-btn>
           <v-btn v-if="dirty" variant="text" :disabled="busy" @click="askDiscard(reset)">{{ $t('admin:logging.resetDraft') }}</v-btn>
           <v-btn color="primary" :disabled="locked || !dirty || issues.length > 0" @click="openReview">{{ $t('admin:logging.reviewChanges') }}</v-btn>
         </template>
@@ -58,8 +58,7 @@
           <section class="logging-main">
             <template v-if="section === 'destinations'">
               <header class="logging-heading">
-                <span class="logging-kicker">{{ $t('admin:logging.n01IntentionalDelivery') }}</span>
-                <h2>{{ $t('admin:logging.chooseWhereRecordsCan') }}</h2>
+                <h2>{{ $t('admin:logging.destinations') }}</h2>
                 <p>
                   {{ $t('admin:logging.onlyDestinationsActiveTransport') }}
                 </p>
@@ -84,6 +83,7 @@
                   >
                     {{ showLegacy ? $t('admin:logging.hideLegacyDestinations') : $t('admin:logging.showLegacyDestinations', { legacyDestinationCount, interpolation: { escapeValue: false } }) }}
                   </button>
+                  <p class="logging-filter-context" role="status" v-text="$t('admin:logging.loadedDestinationResults', { defaultValue: '{{visible}} of {{loaded}} loaded destinations shown; legacy visibility applies', visible: filteredDestinations.length, loaded: saved.destinations.length })" />
                   <div v-if="filteredDestinations.length" class="logging-destination-list">
                     <button
                       v-for="destination in filteredDestinations"
@@ -217,8 +217,7 @@
 
             <template v-else-if="section === 'console'">
               <header class="logging-heading">
-                <span class="logging-kicker">{{ $t('admin:logging.n02LocalRecord') }}</span>
-                <h2>{{ $t('admin:logging.keepConsoleLegible') }}</h2>
+                <h2>{{ $t('admin:logging.console') }}</h2>
                 <p>
                   {{ $t('admin:logging.consoleAlwaysLocalProcess') }}
                 </p>

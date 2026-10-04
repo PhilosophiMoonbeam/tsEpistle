@@ -1,13 +1,15 @@
 .v-data-table {
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent));
-  border-radius: var(--wiki-control-radius, .75rem);
-  background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
-  box-shadow: var(--wiki-shadow-xs, 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent));
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: none;
   color: rgb(var(--v-theme-on-surface));
   font-variant-numeric: tabular-nums;
 
   .v-table__wrapper {
+    max-width: 100%;
+    overflow-x: auto;
     scrollbar-color:
       var(--wiki-surface-border-strong, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent))
       transparent;
@@ -27,11 +29,11 @@
       color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, rgb(var(--v-theme-surface)))
     );
     color: var(--wiki-text-muted);
-    font-size: var(--wiki-label-size, .6875rem);
-    font-weight: 740;
-    letter-spacing: .055em;
-    line-height: 1.25;
-    text-transform: uppercase;
+    font-size: var(--wiki-type-label);
+    font-weight: 650;
+    letter-spacing: 0;
+    line-height: 1.35;
+    text-transform: none;
   }
 
   > .v-table__wrapper > table > tbody > tr {
@@ -41,8 +43,9 @@
       height: 2.875rem;
       padding-inline: var(--wiki-space-3, .75rem);
       border-bottom: 1px solid var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent));
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 84%, transparent);
+      color: rgb(var(--v-theme-on-surface));
       line-height: 1.45;
+      overflow-wrap: anywhere;
     }
 
     &:last-child > td {
@@ -50,11 +53,11 @@
     }
 
     &[aria-selected='true'] {
-      background: color-mix(
-        in srgb,
-        var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 9%,
-        transparent
-      );
+      background: var(--wiki-purpose-primary-fill);
+
+      > td {
+        color: var(--wiki-purpose-primary-ink);
+      }
     }
 
     &:is([aria-disabled='true'], [disabled]) {
@@ -63,11 +66,7 @@
   }
 
   > .v-table__wrapper > table > tbody > tr:focus-within:not([aria-selected='true']):not([aria-disabled='true']):not([disabled]) {
-    background: color-mix(
-      in srgb,
-      var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 6%,
-      transparent
-    );
+    background: var(--wiki-surface-sunken);
   }
 
   .v-data-table-header__sort-icon {
@@ -115,7 +114,7 @@
     }
 
     &[aria-selected='true'] > :first-child::after {
-      border-inline-start: .1875rem solid var(--wiki-accent-spectral, rgb(var(--v-theme-primary)));
+      border-inline-start: .1875rem solid var(--wiki-purpose-primary-edge);
     }
 
     &:focus-visible > :is(td, th)::after {
@@ -138,11 +137,7 @@
 
 @media (hover: hover) {
   .v-data-table > .v-table__wrapper > table > tbody > tr:hover:not([aria-selected='true']):not([aria-disabled='true']):not([disabled]) {
-    background: color-mix(
-      in srgb,
-      var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 5%,
-      transparent
-    );
+    background: var(--wiki-surface-sunken);
   }
 
   .v-data-table > .v-table__wrapper > table > tbody > .is-clickable:hover:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
@@ -187,5 +182,19 @@
   .v-data-table > .v-table__wrapper > table > tbody > tr,
   .v-data-table .v-data-table-header__sort-icon {
     transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .v-data-table {
+    border-color: CanvasText;
+  }
+
+  .v-data-table > .v-table__wrapper > table > tbody > tr[aria-selected='true'] {
+    background: Highlight;
+
+    > td {
+      color: HighlightText;
+    }
   }
 }

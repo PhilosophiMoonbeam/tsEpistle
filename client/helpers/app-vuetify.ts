@@ -38,36 +38,42 @@ return createVuetify({
     },
     VBtn: {
       elevation: 0,
+      density: 'comfortable',
       rounded: 'lg'
     },
     VTextField: {
       baseColor: 'on-surface',
       color: 'primary',
       rounded: 'lg',
+      density: 'comfortable',
       variant: 'outlined'
     },
     VTextarea: {
       baseColor: 'on-surface',
       color: 'primary',
       rounded: 'lg',
+      density: 'comfortable',
       variant: 'outlined'
     },
     VSelect: {
       baseColor: 'on-surface',
       color: 'primary',
       rounded: 'lg',
+      density: 'comfortable',
       variant: 'outlined'
     },
     VAutocomplete: {
       baseColor: 'on-surface',
       color: 'primary',
       rounded: 'lg',
+      density: 'comfortable',
       variant: 'outlined'
     },
     VCombobox: {
       baseColor: 'on-surface',
       color: 'primary',
       rounded: 'lg',
+      density: 'comfortable',
       variant: 'outlined'
     },
     VChip: {
@@ -89,14 +95,15 @@ return createVuetify({
       transition: 'fade-transition'
     },
     VDataTable: {
-      density: 'comfortable',
+      density: 'compact',
       hover: true
     },
     VNavigationDrawer: {
       elevation: 0
     },
     VAppBar: {
-      elevation: 0
+      elevation: 0,
+      height: 64
     }
   },
   theme: {
