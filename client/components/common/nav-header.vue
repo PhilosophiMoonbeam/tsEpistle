@@ -2295,8 +2295,9 @@ export default defineComponent({
 
     .nav-header-command {
       display: grid;
-      grid-template-columns: 36px minmax(0, 1fr) 36px;
-      gap: var(--wiki-space-1);
+      grid-template-columns: 36px minmax(0, 34rem) 36px;
+      justify-content: center;
+      gap: var(--wiki-space-2, 8px);
     }
 
     .nav-header-command > .nav-header-browse {
