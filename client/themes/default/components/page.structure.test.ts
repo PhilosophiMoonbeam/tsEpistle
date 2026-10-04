@@ -45,7 +45,6 @@ type ReaderContentVm = {
   contentExtensionCleanup: (() => void) | null
   outlineCleanup: PageOutlineTracker | null
   refreshPageContent: () => void
-  resetArticleDisclosures: () => void
   setupTocResizeObserver: () => void
   ensureActiveTocVisible: () => void
 }
@@ -94,7 +93,6 @@ const readerContent = (emptyBlocks = false): HTMLElement => {
   vm.setupTocResizeObserver = () => {}
   vm.ensureActiveTocVisible = () => {}
   cleanups.push(() => {
-    vm.resetArticleDisclosures()
     vm.mermaidAbortController?.abort()
     vm.contentExtensionCleanup?.()
     vm.outlineCleanup?.dispose()
