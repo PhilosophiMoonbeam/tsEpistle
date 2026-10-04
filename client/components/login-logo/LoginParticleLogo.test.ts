@@ -429,10 +429,13 @@ export default defineComponent({
       throw new Error('Wrapper scene event handlers were not installed')
     }
     let tornDown = false
+    let teardownPromise = null
     const teardown = () => {
-      if (tornDown) return
+      if (teardownPromise !== null) return teardownPromise
       tornDown = true
       bridge.tornDown()
+      teardownPromise = Promise.resolve()
+      return teardownPromise
     }
     expose({ teardown })
     onBeforeUnmount(teardown)

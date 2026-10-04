@@ -1,8 +1,7 @@
 diff --git a/dist/tres.js b/dist/tres.js
-index ca514200cc5adc4889d19b56ca2fa7c193ac6801..fb6bfdbcdecc3e04e983482f71a25934850d7ef1 100644
 --- a/dist/tres.js
 +++ b/dist/tres.js
-@@ -791,12 +791,14 @@ const useCreateRafLoop = (cycleFn, { fpsLimit } = {}) => {
+@@ -792,12 +792,14 @@
  		fpsLimit
  	});
  	const start = () => {
@@ -11,18 +10,22 @@ index ca514200cc5adc4889d19b56ca2fa7c193ac6801..fb6bfdbcdecc3e04e983482f71a25934
  		resume();
  	};
  	const stop = () => {
--		timer.stop();
 +		if (!isActive.value) return;
- 		pause();
-+		timer.stop();
++		pause();
+ 		timer.stop();
+-		pause();
  	};
  	return {
  		start,
-@@ -970,6 +972,7 @@ Error details: ${rendererError.message}`, rendererError);
+@@ -967,8 +969,9 @@
+ 		renderer.shadowMap.type = options.shadowMapType ?? fallback;
  		forceMaterialUpdate();
  	});
- 	onUnmounted(() => {
+-	onUnmounted(() => {
+-		renderer.dispose();
++	onUnmounted(async () => {
 +		loop.stop();
- 		renderer.dispose();
++		await renderer.dispose();
  		if ("forceContextLoss" in renderer) renderer.forceContextLoss();
  	});
+ 	return {

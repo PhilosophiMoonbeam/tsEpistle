@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "62f0a02ba2bcf62203e1d268a52a0ab52f2320ec1188a233107833aa483bfdec",
+    "sha256": "c4b619c051aea952cb8baf72a662282eb3263cbae2c7043b8b0ffefd2a7c4e65",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -148,9 +148,9 @@
       "homepage": "https://sharp.pixelplumbing.com",
       "source": "https://registry.npmjs.org/@img%2fsharp-win32-x64/0.35.4"
     },
-    "@pmndrs/pointer-events@6.6.30": {
+    "@pmndrs/pointer-events@6.6.31": {
       "license": "MIT",
-      "source": "https://github.com/pmndrs/xr/blob/main/packages/pointer-events/LICENSE"
+      "source": "https://registry.npmjs.org/@pmndrs/pointer-events/-/pointer-events-6.6.31.tgz"
     },
     "notp@2.0.3": {
       "license": "MIT",
@@ -191,7 +191,7 @@
     {
       "name": "@apm-js-collab/tracing-hooks",
       "versions": [
-        "0.13.0"
+        "0.13.3"
       ],
       "license": "Apache-2.0"
     },
@@ -224,7 +224,7 @@
     {
       "name": "@aws-sdk/checksums",
       "versions": [
-        "3.1000.29"
+        "3.1001.1"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -242,7 +242,7 @@
     {
       "name": "@aws-sdk/core",
       "versions": [
-        "3.977.9"
+        "3.978.1"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -251,7 +251,7 @@
     {
       "name": "@aws-sdk/credential-provider-env",
       "versions": [
-        "3.972.70"
+        "3.972.72"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -260,7 +260,7 @@
     {
       "name": "@aws-sdk/credential-provider-http",
       "versions": [
-        "3.972.72"
+        "3.972.74"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -269,7 +269,7 @@
     {
       "name": "@aws-sdk/credential-provider-ini",
       "versions": [
-        "3.973.15"
+        "3.973.17"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -278,7 +278,7 @@
     {
       "name": "@aws-sdk/credential-provider-login",
       "versions": [
-        "3.972.77"
+        "3.972.79"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -287,7 +287,7 @@
     {
       "name": "@aws-sdk/credential-provider-node",
       "versions": [
-        "3.972.82"
+        "3.972.84"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -296,7 +296,7 @@
     {
       "name": "@aws-sdk/credential-provider-process",
       "versions": [
-        "3.972.70"
+        "3.972.72"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -305,7 +305,7 @@
     {
       "name": "@aws-sdk/credential-provider-sso",
       "versions": [
-        "3.973.14"
+        "3.973.16"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -314,7 +314,7 @@
     {
       "name": "@aws-sdk/credential-provider-web-identity",
       "versions": [
-        "3.972.76"
+        "3.972.78"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -323,7 +323,7 @@
     {
       "name": "@aws-sdk/middleware-sdk-s3",
       "versions": [
-        "3.972.75"
+        "3.972.77"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -332,7 +332,7 @@
     {
       "name": "@aws-sdk/nested-clients",
       "versions": [
-        "3.997.44"
+        "3.997.46"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -341,7 +341,7 @@
     {
       "name": "@aws-sdk/signature-v4-multi-region",
       "versions": [
-        "3.996.46"
+        "3.996.47"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -350,7 +350,7 @@
     {
       "name": "@aws-sdk/token-providers",
       "versions": [
-        "3.1116.0"
+        "3.1138.0"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -359,7 +359,7 @@
     {
       "name": "@aws-sdk/types",
       "versions": [
-        "3.974.5"
+        "3.974.6"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -368,7 +368,7 @@
     {
       "name": "@aws-sdk/xml-builder",
       "versions": [
-        "3.972.40"
+        "3.972.41"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -529,7 +529,7 @@
     {
       "name": "@babel/parser",
       "versions": [
-        "7.29.8"
+        "7.29.9"
       ],
       "license": "MIT",
       "author": "The Babel Team (https://babel.dev/team)",
@@ -564,7 +564,8 @@
     {
       "name": "@codemirror/commands",
       "versions": [
-        "6.11.0"
+        "6.11.0",
+        "6.11.1"
       ],
       "license": "MIT",
       "author": "Marijn Haverbeke"
@@ -652,7 +653,8 @@
     {
       "name": "@colors/colors",
       "versions": [
-        "1.6.0"
+        "1.6.0",
+        "1.6.1"
       ],
       "license": "MIT",
       "author": "DABH",
@@ -661,7 +663,7 @@
     {
       "name": "@csstools/color-helpers",
       "versions": [
-        "6.1.1"
+        "6.1.2"
       ],
       "license": "MIT-0",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/color-helpers#readme"
@@ -669,7 +671,7 @@
     {
       "name": "@csstools/css-calc",
       "versions": [
-        "3.3.0"
+        "3.4.3"
       ],
       "license": "MIT",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-calc#readme"
@@ -677,7 +679,7 @@
     {
       "name": "@csstools/css-color-parser",
       "versions": [
-        "4.2.2"
+        "4.2.6"
       ],
       "license": "MIT",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-color-parser#readme"
@@ -685,7 +687,7 @@
     {
       "name": "@csstools/css-parser-algorithms",
       "versions": [
-        "4.0.0"
+        "4.0.2"
       ],
       "license": "MIT",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-parser-algorithms#readme"
@@ -693,7 +695,7 @@
     {
       "name": "@csstools/css-syntax-patches-for-csstree",
       "versions": [
-        "1.1.12"
+        "1.1.15"
       ],
       "license": "MIT-0",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-syntax-patches-for-csstree#readme"
@@ -701,7 +703,7 @@
     {
       "name": "@csstools/css-tokenizer",
       "versions": [
-        "4.0.0"
+        "4.0.2"
       ],
       "license": "MIT",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-tokenizer#readme"
@@ -709,7 +711,7 @@
     {
       "name": "@dabh/diagnostics",
       "versions": [
-        "2.0.8"
+        "2.0.9"
       ],
       "license": "MIT",
       "author": "Arnout Kazemier",
@@ -736,26 +738,29 @@
     {
       "name": "@envelop/core",
       "versions": [
-        "5.6.0"
+        "5.6.1"
       ],
       "license": "MIT",
-      "author": "Dotan Simha <dotansimha@gmail.com>"
+      "author": "Dotan Simha <dotansimha@gmail.com>",
+      "homepage": "https://github.com/graphql-hive/graphql-yoga/tree/main/packages/envelop/core#readme"
     },
     {
       "name": "@envelop/instrumentation",
       "versions": [
-        "1.0.0"
+        "1.0.1"
       ],
       "license": "MIT",
-      "author": "Valentin Cocaud <v.cocaud@gmail.com>"
+      "author": "Valentin Cocaud <v.cocaud@gmail.com>",
+      "homepage": "https://github.com/graphql-hive/graphql-yoga/tree/main/packages/envelop/instrumentation#readme"
     },
     {
       "name": "@envelop/types",
       "versions": [
-        "5.2.1"
+        "5.2.2"
       ],
       "license": "MIT",
-      "author": "Dotan Simha <dotansimha@gmail.com>"
+      "author": "Dotan Simha <dotansimha@gmail.com>",
+      "homepage": "https://github.com/graphql-hive/graphql-yoga/tree/main/packages/envelop/types#readme"
     },
     {
       "name": "@exlinc/keycloak-passport",
@@ -769,7 +774,7 @@
     {
       "name": "@exodus/bytes",
       "versions": [
-        "1.15.1"
+        "1.16.0"
       ],
       "license": "MIT",
       "author": "Exodus Movement, Inc.",
@@ -880,21 +885,22 @@
     {
       "name": "@graphql-tools/batch-execute",
       "versions": [
-        "10.0.9"
+        "10.2.0"
       ],
       "license": "MIT"
     },
     {
       "name": "@graphql-tools/delegate",
       "versions": [
-        "12.1.3"
+        "12.2.0"
       ],
       "license": "MIT"
     },
     {
       "name": "@graphql-tools/executor",
       "versions": [
-        "1.5.7"
+        "1.5.7",
+        "2.0.3"
       ],
       "license": "MIT",
       "author": "Saihajpreet Singh <saihajpreet.singh@gmail.com>"
@@ -902,7 +908,7 @@
     {
       "name": "@graphql-tools/executor-common",
       "versions": [
-        "1.0.6"
+        "1.1.0"
       ],
       "license": "MIT",
       "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
@@ -910,7 +916,7 @@
     {
       "name": "@graphql-tools/executor-graphql-ws",
       "versions": [
-        "3.1.5"
+        "3.2.0"
       ],
       "license": "MIT",
       "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
@@ -918,7 +924,7 @@
     {
       "name": "@graphql-tools/executor-http",
       "versions": [
-        "3.3.0"
+        "3.4.1"
       ],
       "license": "MIT",
       "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
@@ -926,7 +932,7 @@
     {
       "name": "@graphql-tools/executor-legacy-ws",
       "versions": [
-        "1.1.33"
+        "1.1.37"
       ],
       "license": "MIT",
       "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
@@ -934,7 +940,7 @@
     {
       "name": "@graphql-tools/merge",
       "versions": [
-        "9.2.3"
+        "9.2.6"
       ],
       "license": "MIT",
       "author": "Dotan Simha <dotansimha@gmail.com>"
@@ -942,7 +948,8 @@
     {
       "name": "@graphql-tools/schema",
       "versions": [
-        "10.1.0"
+        "10.1.0",
+        "10.1.3"
       ],
       "license": "MIT"
     },
@@ -959,7 +966,8 @@
       "versions": [
         "10.11.0",
         "11.2.2",
-        "12.0.0"
+        "12.0.0",
+        "12.0.3"
       ],
       "license": "MIT",
       "author": "Dotan Simha <dotansimha@gmail.com>"
@@ -967,7 +975,7 @@
     {
       "name": "@graphql-tools/wrap",
       "versions": [
-        "11.1.23"
+        "11.2.0"
       ],
       "license": "MIT"
     },
@@ -990,25 +998,28 @@
     {
       "name": "@graphql-yoga/logger",
       "versions": [
-        "2.0.1"
+        "2.0.2"
       ],
-      "license": "MIT"
+      "license": "MIT",
+      "homepage": "https://github.com/graphql-hive/graphql-yoga/tree/main/packages/logger#readme"
     },
     {
       "name": "@graphql-yoga/subscription",
       "versions": [
-        "5.0.5"
+        "5.1.1"
       ],
       "license": "MIT",
-      "author": "Laurin Quast <laurinquast@googlemail.com>"
+      "author": "Laurin Quast <laurinquast@googlemail.com>",
+      "homepage": "https://github.com/graphql-hive/graphql-yoga/tree/main/packages/subscription#readme"
     },
     {
       "name": "@graphql-yoga/typed-event-target",
       "versions": [
-        "3.0.2"
+        "3.0.3"
       ],
       "license": "MIT",
-      "author": "Laurin Quast <laurinquast@googlemail.com>"
+      "author": "Laurin Quast <laurinquast@googlemail.com>",
+      "homepage": "https://github.com/graphql-hive/graphql-yoga/tree/main/packages/event-target/typed-event-target#readme"
     },
     {
       "name": "@headlessui/react",
@@ -1354,7 +1365,7 @@
     {
       "name": "@lezer/common",
       "versions": [
-        "1.5.2"
+        "1.5.3"
       ],
       "license": "MIT",
       "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
@@ -1362,7 +1373,7 @@
     {
       "name": "@lezer/css",
       "versions": [
-        "1.3.6"
+        "1.3.8"
       ],
       "license": "MIT",
       "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
@@ -1370,7 +1381,8 @@
     {
       "name": "@lezer/highlight",
       "versions": [
-        "1.2.3"
+        "1.2.3",
+        "1.2.5"
       ],
       "license": "MIT",
       "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
@@ -1386,7 +1398,7 @@
     {
       "name": "@lezer/javascript",
       "versions": [
-        "1.5.4"
+        "1.5.6"
       ],
       "license": "MIT",
       "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
@@ -1478,7 +1490,7 @@
     {
       "name": "@nodable/entities",
       "versions": [
-        "3.0.0"
+        "3.1.0"
       ],
       "license": "MIT",
       "author": "Amit Gupta (https://solothought.com)"
@@ -1574,12 +1586,12 @@
     {
       "name": "@pmndrs/pointer-events",
       "versions": [
-        "6.6.30"
+        "6.6.31"
       ],
       "license": "MIT",
       "author": "Bela Bohlender",
       "homepage": "https://github.com/pmndrs/xr",
-      "licenseMetadataSource": "https://github.com/pmndrs/xr/blob/main/packages/pointer-events/LICENSE"
+      "licenseMetadataSource": "https://registry.npmjs.org/@pmndrs/pointer-events/-/pointer-events-6.6.31.tgz"
     },
     {
       "name": "@profoundlogic/hogan",
@@ -1971,7 +1983,7 @@
     {
       "name": "@simple-git/args-pathspec",
       "versions": [
-        "1.0.3"
+        "1.0.4"
       ],
       "license": "MIT"
     },
@@ -1985,7 +1997,7 @@
     {
       "name": "@smithy/core",
       "versions": [
-        "3.33.3"
+        "3.35.1"
       ],
       "license": "Apache-2.0",
       "author": "AWS Smithy Team",
@@ -2021,7 +2033,7 @@
     {
       "name": "@smithy/signature-v4",
       "versions": [
-        "5.7.3"
+        "5.7.4"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -2030,7 +2042,7 @@
     {
       "name": "@smithy/types",
       "versions": [
-        "4.18.0"
+        "4.19.0"
       ],
       "license": "Apache-2.0",
       "author": "AWS Smithy Team",
@@ -2057,7 +2069,7 @@
     {
       "name": "@tanstack/react-virtual",
       "versions": [
-        "3.14.10"
+        "3.14.13"
       ],
       "license": "MIT",
       "author": "Tanner Linsley",
@@ -2066,7 +2078,7 @@
     {
       "name": "@tanstack/virtual-core",
       "versions": [
-        "3.17.8"
+        "3.17.11"
       ],
       "license": "MIT",
       "author": "Tanner Linsley",
@@ -2075,7 +2087,7 @@
     {
       "name": "@tresjs/core",
       "versions": [
-        "5.8.3"
+        "5.9.2"
       ],
       "license": "MIT",
       "author": "Alvaro Saburido <hola@alvarosaburido.dev> (https://github.com/alvarosabu/)"
@@ -2157,7 +2169,7 @@
       "name": "@types/node",
       "versions": [
         "26.2.0",
-        "26.4.1"
+        "26.6.4"
       ],
       "license": "MIT",
       "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node"
@@ -2237,7 +2249,7 @@
     {
       "name": "@types/three",
       "versions": [
-        "0.185.4"
+        "0.186.0"
       ],
       "license": "MIT",
       "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/three"
@@ -2277,7 +2289,8 @@
     {
       "name": "@types/ws",
       "versions": [
-        "8.18.1"
+        "8.18.1",
+        "8.18.2"
       ],
       "license": "MIT",
       "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ws"
@@ -2415,7 +2428,7 @@
     {
       "name": "@vueuse/core",
       "versions": [
-        "14.4.0"
+        "15.0.0"
       ],
       "license": "MIT",
       "author": "Anthony Fu <https://github.com/antfu>",
@@ -2424,7 +2437,7 @@
     {
       "name": "@vueuse/metadata",
       "versions": [
-        "14.4.0"
+        "15.0.0"
       ],
       "license": "MIT",
       "author": "Anthony Fu <https://github.com/antfu>",
@@ -2433,7 +2446,7 @@
     {
       "name": "@vueuse/shared",
       "versions": [
-        "14.4.0"
+        "15.0.0"
       ],
       "license": "MIT",
       "author": "Anthony Fu <https://github.com/antfu>",
@@ -2442,7 +2455,8 @@
     {
       "name": "@whatwg-node/disposablestack",
       "versions": [
-        "0.0.6"
+        "0.0.6",
+        "0.1.0"
       ],
       "license": "MIT",
       "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
@@ -2474,7 +2488,8 @@
     {
       "name": "@whatwg-node/promise-helpers",
       "versions": [
-        "1.3.2"
+        "1.3.2",
+        "2.0.0"
       ],
       "license": "MIT",
       "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
@@ -2566,7 +2581,7 @@
       "name": "ansi-regex",
       "versions": [
         "5.0.1",
-        "6.3.0"
+        "6.4.0"
       ],
       "license": "MIT",
       "author": "Sindre Sorhus"
@@ -2608,7 +2623,7 @@
     {
       "name": "argparse",
       "versions": [
-        "3.0.1"
+        "3.0.2"
       ],
       "license": "PSF-2.0"
     },
@@ -2688,7 +2703,7 @@
     {
       "name": "b4a",
       "versions": [
-        "1.8.1"
+        "1.9.0"
       ],
       "license": "Apache-2.0",
       "author": "Holepunch",
@@ -2714,7 +2729,7 @@
     {
       "name": "bare-fs",
       "versions": [
-        "4.8.1"
+        "4.8.2"
       ],
       "license": "Apache-2.0",
       "author": "Holepunch",
@@ -2781,7 +2796,7 @@
     {
       "name": "bidi-js",
       "versions": [
-        "1.0.3"
+        "1.1.0"
       ],
       "license": "MIT",
       "author": "Jason Johnston"
@@ -3473,7 +3488,7 @@
         "4.5.0",
         "6.0.1",
         "7.0.1",
-        "8.0.0"
+        "8.1.0"
       ],
       "license": "BSD-2-Clause",
       "author": "Felix Boehm <me@feedic.com>"
@@ -3499,7 +3514,8 @@
     {
       "name": "es-module-lexer",
       "versions": [
-        "2.3.2"
+        "2.3.2",
+        "3.0.2"
       ],
       "license": "MIT",
       "author": "Guy Bedford",
@@ -3650,7 +3666,7 @@
       "name": "fast-xml-parser",
       "versions": [
         "5.10.1",
-        "5.11.1"
+        "5.11.2"
       ],
       "license": "MIT",
       "author": "Amit Gupta (https://solothought.com)"
@@ -3780,7 +3796,7 @@
     {
       "name": "get-east-asian-width",
       "versions": [
-        "1.6.0"
+        "1.7.0"
       ],
       "license": "MIT",
       "author": "Sindre Sorhus"
@@ -3906,7 +3922,8 @@
     {
       "name": "graphql-ws",
       "versions": [
-        "6.2.1"
+        "6.2.1",
+        "6.3.0"
       ],
       "license": "MIT",
       "author": "Denis Badurina <badurinadenis@gmail.com>",
@@ -4067,7 +4084,7 @@
     {
       "name": "import-in-the-middle",
       "versions": [
-        "3.4.0"
+        "3.5.2"
       ],
       "license": "Apache-2.0",
       "author": "Bryan English <bryan.english@datadoghq.com>",
@@ -4107,7 +4124,7 @@
     {
       "name": "is-core-module",
       "versions": [
-        "2.16.2"
+        "2.17.0"
       ],
       "license": "MIT",
       "author": "Jordan Harband <ljharb@gmail.com>",
@@ -4227,7 +4244,7 @@
     {
       "name": "jose",
       "versions": [
-        "6.2.10"
+        "6.2.12"
       ],
       "license": "MIT",
       "author": "Filip Skokan <panva.ip@gmail.com>",
@@ -4386,7 +4403,7 @@
     {
       "name": "lib0",
       "versions": [
-        "0.2.117"
+        "0.2.119"
       ],
       "license": "MIT",
       "author": "Kevin Jahns <kevin.jahns@protonmail.com>",
@@ -4509,7 +4526,7 @@
     {
       "name": "lru-cache",
       "versions": [
-        "11.5.2"
+        "11.5.3"
       ],
       "license": "BlueOak-1.0.0",
       "author": "Isaac Z. Schlueter <i@izs.me>"
@@ -4541,7 +4558,7 @@
     {
       "name": "markdown-it",
       "versions": [
-        "14.3.1",
+        "14.3.2",
         "15.0.1"
       ],
       "license": "MIT"
@@ -4805,14 +4822,14 @@
     {
       "name": "nan",
       "versions": [
-        "2.28.0"
+        "2.29.0"
       ],
       "license": "MIT"
     },
     {
       "name": "nanoid",
       "versions": [
-        "3.3.18",
+        "3.3.19",
         "6.0.1"
       ],
       "license": "MIT",
@@ -4918,7 +4935,7 @@
     {
       "name": "oauth4webapi",
       "versions": [
-        "3.8.7"
+        "3.8.8"
       ],
       "license": "MIT",
       "author": "Filip Skokan <panva.ip@gmail.com>",
@@ -5240,7 +5257,8 @@
     {
       "name": "pg",
       "versions": [
-        "8.23.0"
+        "8.23.0",
+        "8.23.1"
       ],
       "license": "MIT",
       "author": "Brian Carlson <brian.m.carlson@gmail.com>",
@@ -5249,14 +5267,14 @@
     {
       "name": "pg-cloudflare",
       "versions": [
-        "1.4.0"
+        "1.4.1"
       ],
       "license": "MIT"
     },
     {
       "name": "pg-connection-string",
       "versions": [
-        "2.14.0",
+        "2.14.1",
         "2.6.2"
       ],
       "license": "MIT",
@@ -5266,7 +5284,7 @@
     {
       "name": "pg-cursor",
       "versions": [
-        "2.22.0"
+        "2.22.1"
       ],
       "license": "MIT",
       "author": "Brian M. Carlson"
@@ -5299,7 +5317,7 @@
     {
       "name": "pg-protocol",
       "versions": [
-        "1.16.0"
+        "1.16.1"
       ],
       "license": "MIT"
     },
@@ -5443,7 +5461,7 @@
     {
       "name": "prettier",
       "versions": [
-        "3.9.6"
+        "3.9.9"
       ],
       "license": "MIT",
       "author": "James Long",
@@ -5478,7 +5496,7 @@
     {
       "name": "proxy-addr",
       "versions": [
-        "2.0.7"
+        "2.0.8"
       ],
       "license": "MIT",
       "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
@@ -5635,7 +5653,7 @@
     {
       "name": "radashi",
       "versions": [
-        "12.9.1"
+        "12.9.6"
       ],
       "license": "MIT",
       "author": "Alec Larson",
@@ -6027,7 +6045,7 @@
     {
       "name": "source-map-js",
       "versions": [
-        "1.2.1"
+        "1.2.2"
       ],
       "license": "BSD-3-Clause",
       "author": "Valentin 7rulnik Semirulnik <v7rulnik@gmail.com>",
@@ -6112,7 +6130,7 @@
       "versions": [
         "4.2.3",
         "7.2.0",
-        "8.2.2"
+        "8.3.0"
       ],
       "license": "MIT",
       "author": "Sindre Sorhus"
@@ -6146,10 +6164,11 @@
     {
       "name": "style-mod",
       "versions": [
-        "4.1.3"
+        "4.1.4"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>",
+      "homepage": "https://code.haverbeke.berlin/marijn/style-mod"
     },
     {
       "name": "supports-preserve-symlinks-flag",
@@ -6199,7 +6218,7 @@
     {
       "name": "tar-stream",
       "versions": [
-        "3.2.1"
+        "3.2.2"
       ],
       "license": "MIT",
       "author": "Mathias Buus <mathiasbuus@gmail.com>",
@@ -6261,7 +6280,7 @@
     {
       "name": "three",
       "versions": [
-        "0.185.1"
+        "0.186.1"
       ],
       "license": "MIT",
       "author": "mrdoob",
@@ -6286,7 +6305,7 @@
     {
       "name": "tldts",
       "versions": [
-        "7.4.11"
+        "7.4.16"
       ],
       "license": "MIT",
       "author": "Rémi Berson",
@@ -6295,7 +6314,7 @@
     {
       "name": "tldts-core",
       "versions": [
-        "7.4.11"
+        "7.4.16"
       ],
       "license": "MIT",
       "author": "Rémi Berson",
@@ -6440,7 +6459,8 @@
     {
       "name": "undici-types",
       "versions": [
-        "8.3.0"
+        "8.3.0",
+        "8.9.0"
       ],
       "license": "MIT",
       "homepage": "https://undici.nodejs.org"
@@ -6498,7 +6518,7 @@
     {
       "name": "use-sync-external-store",
       "versions": [
-        "1.6.0"
+        "1.7.0"
       ],
       "license": "MIT"
     },
@@ -6566,7 +6586,7 @@
       "name": "vscode-languageserver-types",
       "versions": [
         "3.17.5",
-        "3.18.3"
+        "3.18.4"
       ],
       "license": "MIT",
       "author": "Microsoft Corporation"
@@ -6627,7 +6647,7 @@
       "name": "whatwg-url",
       "versions": [
         "16.0.1",
-        "17.1.0",
+        "17.1.2",
         "5.0.0"
       ],
       "license": "MIT",
@@ -6688,7 +6708,8 @@
     {
       "name": "ws",
       "versions": [
-        "8.21.3"
+        "8.21.3",
+        "8.22.0"
       ],
       "license": "MIT",
       "author": "Einar Otto Stangvik <einaros@gmail.com> (http://2x.io)",
@@ -6697,7 +6718,7 @@
     {
       "name": "xml-crypto",
       "versions": [
-        "6.1.2"
+        "6.3.2"
       ],
       "license": "MIT",
       "author": "Yaron Naveh <yaronn01@gmail.com> (http://webservices20.blogspot.com/)"
@@ -6831,7 +6852,7 @@
       "name": "zod",
       "versions": [
         "4.4.3",
-        "4.5.4"
+        "4.6.5"
       ],
       "license": "MIT",
       "author": "Colin McDonnell <zod@colinhacks.com>",
