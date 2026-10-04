@@ -5547,7 +5547,8 @@ export default defineComponent({
       pointer-events: none;
     }
 
-    &:dir(rtl)::before {
+    &[dir='rtl']::before,
+    [dir='rtl'] &::before {
       background: linear-gradient(to left, rgb(var(--v-theme-primary)), transparent);
     }
 
