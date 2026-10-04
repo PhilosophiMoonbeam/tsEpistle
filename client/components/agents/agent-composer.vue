@@ -235,7 +235,6 @@
                 <span v-bind="tooltipProps" class="agent-composer__attach-wrapper" :tabindex="attachDisabled ? 0 : undefined" :aria-describedby="attachDisabled ? composerIds.attachmentReason : undefined">
                   <v-btn
                     v-bind="activatorProps"
-                    ref="attachmentTrigger"
                     class="agent-composer__attach wiki-purpose-control"
                     variant="text"
                     rounded="pill"
@@ -244,18 +243,19 @@
                     :aria-describedby="attachDisabled ? composerIds.attachmentReason : undefined"
                     :disabled="attachDisabled"
                     :aria-expanded="attachmentMenuOpen"
+                    @keydown.capture="handleOwnedMenuKeydown($event, 'attach')"
                   >{{ $t('common:agentComposer.attach') }} <span class="agent-composer__attachment-count">{{ attachmentCount }}/4</span></v-btn>
                 </span>
               </template>
             </v-tooltip>
           </template>
-          <v-list density="compact" :aria-label="$t('common:agentComposer.attachmentSource')">
+          <v-list density="compact" :aria-label="$t('common:agentComposer.attachmentSource')" @keydown.capture="handleOwnedMenuKeydown($event, 'attach')">
             <v-list-item prepend-icon="mdi-upload" :title="$t('common:agentComposer.uploadFiles')" @click="openFilePicker" />
             <v-list-item prepend-icon="mdi-folder-outline" :title="$t('common:agentComposer.browseWikiAssets')" @click="openAssetBrowser" />
           </v-list>
         </v-menu>
         <span :id="composerIds.attachmentReason" class="sr-only">{{ attachmentAdmissionReason }}</span>
-        <v-menu v-if="createAvailable && !isControlFolded('create')" content-class="agent-owned-overlay" location="top start">
+        <v-menu v-if="createAvailable && !isControlFolded('create')" content-class="agent-owned-overlay" location="top start" v-model="creationMenuOpen">
           <template #activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
@@ -269,9 +269,10 @@
               :aria-label="$t('common:agentComposer.chooseCreationTools')"
               :title="selectedGenerationTools.length ? $t('common:agentComposer.creationToolEnabledAssistant', { count: selectedGenerationTools.length, interpolation: { escapeValue: false } }) : $t('common:agentComposer.chooseCreationTools')"
               :disabled="generationDisabled"
+              @keydown.capture="handleOwnedMenuKeydown($event, 'create')"
             >{{ $t('common:actions.create') }}</v-btn>
           </template>
-          <v-list density="compact" class="agent-composer__tool-menu" :aria-label="$t('common:agentComposer.creationTools')">
+          <v-list density="compact" class="agent-composer__tool-menu" :aria-label="$t('common:agentComposer.creationTools')" @keydown.capture="handleOwnedMenuKeydown($event, 'create')">
             <v-list-subheader>{{ $t('common:agentComposer.availableAssistantUse') }}</v-list-subheader>
             <v-list-item
               v-for="option in generationOptions"
@@ -346,9 +347,10 @@
               :aria-expanded="moreMenuOpen"
               :title="$t('common:agentComposer.moreOptions')"
               :disabled="disabled || sendInProgress"
+              @keydown.capture="handleOwnedMenuKeydown($event, 'more')"
             />
           </template>
-          <v-list density="compact" class="agent-composer__more-menu" :aria-label="$t('common:agentComposer.moreComposerOptions')">
+          <v-list density="compact" class="agent-composer__more-menu" :aria-label="$t('common:agentComposer.moreComposerOptions')" @keydown.capture="handleOwnedMenuKeydown($event, 'more')">
             <v-list-item
               v-for="item in moreMenuItems"
               :key="item.key"
@@ -379,6 +381,7 @@
                   aria-haspopup="dialog"
                   :aria-expanded="foldedSkillMenuOpen"
                   :disabled="disabled || sendInProgress"
+                  @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
                 />
               </template>
               <AgentComposerSkillMenu
@@ -393,6 +396,7 @@
                 :invocation-limit="invocationLimit"
                 :selected-skill-version-ids="selectedSkillIds"
                 :preferred-version-ids="preferredMenuVersionIds"
+                @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
                 @toggle="toggleSkill"
                 @toggle-preference="togglePreference"
                 @manage-skills="manageSkills"
@@ -633,12 +637,12 @@ const openAssetBrowser = (): void => {
   if (!attachDisabled.value) mediaComposer.value?.browseAssets()
 }
 const focusAttachmentTrigger = async (): Promise<void> => {
-  const trigger = attachmentTrigger.value
+  const root = composerRoot.value
+  const element = (root instanceof HTMLElement ? root : root?.$el)?.querySelector<HTMLButtonElement>('.agent-composer__attach')
   const sessionId = props.mediaSession?.id
   await nextTick()
-  if (!mounted || attachmentTrigger.value !== trigger || props.mediaSession?.id !== sessionId ||
+  if (!mounted || composerRoot.value !== root || props.mediaSession?.id !== sessionId ||
       !attachmentsAvailable.value || attachDisabled.value) return
-  const element = trigger instanceof HTMLElement ? trigger : trigger?.$el
   if (!(element instanceof HTMLButtonElement) || !element.isConnected || !element.getClientRects().length ||
       element.disabled || element.getAttribute('aria-disabled') === 'true' ||
       element.closest('[inert], [aria-hidden="true"]')) return
@@ -719,6 +723,7 @@ const goalMode = ref(props.initialMode === 'goal')
 const foldedSkillMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 const attachmentMenuOpen = ref(false)
+const creationMenuOpen = ref(false)
 const selectedSkillIds = ref<string[]>([...(props.initialSkillVersionIds ?? [])])
 let syncingComposition = false
 watch([goalMode, selectedSkillIds], () => {
@@ -732,7 +737,6 @@ watch(() => [props.initialMode, props.initialSkillVersionIds] as const, ([mode, 
 })
 const composerRoot = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('composerRoot')
 const controlsGroup = useTemplateRef<HTMLElement | null>('controlsGroup')
-const attachmentTrigger = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('attachmentTrigger')
 const messageInput = useTemplateRef<{ focus: () => void; $el?: HTMLElement }>('messageInput')
 const dismissedCommandToken = ref<{ start: number; prefix: string } | null>(null)
 const activeCommandIndex = ref(0)
@@ -740,6 +744,39 @@ const sendFailed = ref(false)
 const submissionPending = ref(false)
 const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
+const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'create' | 'more' | 'skills'): Promise<void> => {
+  const open = menu === 'attach' ? attachmentMenuOpen : menu === 'create' ? creationMenuOpen : menu === 'more' ? moreMenuOpen : foldedSkillMenuOpen
+  if (event.key === 'Escape' && open.value) {
+    if (menu === 'more' && foldedSkillMenuOpen.value) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    open.value = false
+    return
+  }
+  if (open.value || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
+  if (menu === 'attach' ? attachDisabled.value : menu === 'create' ? generationDisabled.value : props.disabled || sendInProgress.value) return
+  const trigger = event.currentTarget
+  if (!(trigger instanceof HTMLElement)) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  open.value = true
+  // VMenu's deferred activator callback can reopen a menu after Escape.
+  // Own the opening here and cancel its focus transfer with the same model.
+  await nextTick()
+  if (!open.value || !trigger.isConnected) return
+  const overlayId = trigger.getAttribute('aria-controls')
+  const targets = overlayId
+    ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>('[tabindex]:not([tabindex="-1"]):not([disabled]):not([aria-disabled="true"])')
+    : null
+  if (!targets) return
+  const step = event.key === 'ArrowUp' ? -1 : 1
+  for (let index = step > 0 ? 0 : targets.length - 1; index >= 0 && index < targets.length; index += step) {
+    const target = targets[index]
+    if (target.closest('[inert], [aria-hidden="true"]')) continue
+    target.focus({ preventScroll: true })
+    return
+  }
+}
 watch(attachDisabled, blocked => {
   if (blocked) attachmentMenuOpen.value = false
 }, { flush: 'sync' })
@@ -870,6 +907,9 @@ watch(controlsGroup, (group, previous) => {
   void nextTick(handleFoldResize)
 }, { flush: 'post' })
 const isControlFolded = (control: FoldableControl): boolean => foldedControls.value.includes(control)
+watch(() => generationDisabled.value || isControlFolded('create'), blocked => {
+  if (blocked) creationMenuOpen.value = false
+}, { flush: 'sync' })
 const hasMoreMenuContent = computed(() =>
   moreMenuItems.value.length > 0 || props.skillsEnabled
 )

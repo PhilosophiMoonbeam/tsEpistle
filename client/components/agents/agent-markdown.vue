@@ -4,6 +4,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import i18next from 'i18next'
 import type { AgentCitation } from '../../../shared/agents/contracts.ts'
 import {
   MERMAID_MAX_DIAGRAMS_PER_ROOT,
@@ -18,6 +19,8 @@ import { wikiSourceSelectorFromHref, type WikiSourceSelector } from '../../../sh
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const localeRevision = ref(0)
+const refreshLocale = (): void => { localeRevision.value += 1 }
 
 const {
   content,
@@ -52,8 +55,6 @@ interface RenderedDomState {
   readonly scrollPositions: readonly { readonly blockId: string; readonly left: number; readonly top: number }[]
   readonly copyFeedback: readonly {
     readonly blockId: string
-    readonly label: string
-    readonly ariaLabel: string
     readonly state: 'success' | 'error'
     readonly remaining: number
   }[]
@@ -95,6 +96,14 @@ const stableHash = (value: string): string => {
 const blockIdentity = (element: Element): string | null =>
   element.closest<HTMLElement>('[data-agent-block-id]')?.dataset.agentBlockId ?? null
 
+const anchorIdentityText = (anchor: HTMLAnchorElement): string => {
+  const text = anchor.textContent ?? ''
+  const disclosure = anchor.lastElementChild
+  return disclosure?.classList.contains('agent-markdown__new-window')
+    ? text.slice(0, text.length - (disclosure.textContent?.length ?? 0))
+    : text
+}
+
 const focusIdentity = (element: HTMLElement, root: HTMLElement): FocusTarget => {
   const blockId = blockIdentity(element)
   if (element.matches('[data-copy-code]')) return { kind: 'copy', blockId: blockId ?? undefined }
@@ -102,10 +111,10 @@ const focusIdentity = (element: HTMLElement, root: HTMLElement): FocusTarget => 
   if (element.matches('[role="region"]')) return { kind: 'table', blockId: blockId ?? undefined }
   const anchor = element instanceof HTMLAnchorElement ? element : null
   const href = anchor?.getAttribute('href') ?? ''
-  const text = anchor?.textContent ?? ''
+  const text = anchor ? anchorIdentityText(anchor) : ''
   if (!anchor) return { kind: 'anchor', href, text }
   const matchingAnchors = [...root.querySelectorAll<HTMLAnchorElement>('a[href]')]
-    .filter(candidate => candidate.getAttribute('href') === href && (candidate.textContent ?? '') === text)
+    .filter(candidate => candidate.getAttribute('href') === href && anchorIdentityText(candidate) === text)
   return {
     kind: 'anchor',
     href,
@@ -140,8 +149,6 @@ const captureRenderedDomState = (): RenderedDomState | null => {
       if (!blockId || (state !== 'success' && state !== 'error') || !reset) return []
       return [{
         blockId,
-        label: button.textContent ?? '',
-        ariaLabel: button.getAttribute('aria-label') ?? '',
         state,
         remaining: Math.max(0, reset.expiresAt - Date.now())
       }]
@@ -160,7 +167,7 @@ const findFocusedElement = (root: HTMLElement, target: FocusTarget): HTMLElement
   }
   if (target.href == null || target.text == null || target.occurrence == null || target.matchingCount == null) return null
   const matchingAnchors = [...root.querySelectorAll<HTMLAnchorElement>('a[href]')]
-    .filter(anchor => anchor.getAttribute('href') === target.href && (anchor.textContent ?? '') === target.text)
+    .filter(anchor => anchor.getAttribute('href') === target.href && anchorIdentityText(anchor) === target.text)
   if (matchingAnchors.length !== target.matchingCount) return null
   return matchingAnchors[target.occurrence] ?? null
 }
@@ -184,8 +191,9 @@ const restoreRenderedDomState = (state: RenderedDomState | null): void => {
     const button = [...root.querySelectorAll<HTMLButtonElement>('[data-copy-code]')]
       .find(candidate => blockIdentity(candidate) === feedback.blockId)
     if (!button) continue
-    button.textContent = feedback.label
-    button.setAttribute('aria-label', feedback.ariaLabel)
+    const label = t(feedback.state === 'success' ? 'common:agentMarkdown.copied' : 'common:agentMarkdown.copyUnavailable')
+    button.textContent = label
+    button.setAttribute('aria-label', label)
     button.dataset.copyState = feedback.state
     scheduleCopyReset(button, feedback.remaining)
   }
@@ -300,6 +308,7 @@ let renderedContent = content
 let renderedCitationSignature = citationSemanticSignature.value
 let renderedStreaming = streaming
 let renderedSourcePreviews = sourcePreviews
+let renderedLocaleRevision = localeRevision.value
 let scheduledFrame: number | null = null
 let renderVersion = 0
 const diagramControllers = new Set<AbortController>()
@@ -309,13 +318,12 @@ const cancelDiagramJobs = (): void => {
 }
 
 const MERMAID_LIMIT_NOTICE_CLASS = 'content-extension-diagram__limit-notice'
-const MERMAID_LIMIT_NOTICE_MESSAGE = t('common:agentMarkdown.additionalDiagramsRemainAvailable', { MERMAID_MAX_DIAGRAMS_PER_ROOT, interpolation: { escapeValue: false } })
 
 const showMermaidLimitNotice = (root: HTMLElement): void => {
   if (root.querySelector(`.${MERMAID_LIMIT_NOTICE_CLASS}`)) return
   const notice = root.ownerDocument.createElement('p')
   notice.className = MERMAID_LIMIT_NOTICE_CLASS
-  notice.textContent = MERMAID_LIMIT_NOTICE_MESSAGE
+  notice.textContent = t('common:agentMarkdown.additionalDiagramsRemainAvailable', { MERMAID_MAX_DIAGRAMS_PER_ROOT, interpolation: { escapeValue: false } })
   root.append(notice)
 }
 
@@ -436,13 +444,15 @@ const commitRender = (): void => {
     content === renderedContent &&
     streaming === renderedStreaming &&
     citationSignature === renderedCitationSignature &&
-    sourcePreviews === renderedSourcePreviews
+    sourcePreviews === renderedSourcePreviews &&
+    localeRevision.value === renderedLocaleRevision
   ) return
   const nextRendered = renderMarkdown()
   renderedContent = content
   renderedCitationSignature = citationSignature
   renderedStreaming = streaming
   renderedSourcePreviews = sourcePreviews
+  renderedLocaleRevision = localeRevision.value
   if (nextRendered === rendered.value) {
     if (!streaming) void nextTick(() => enhanceMermaidDiagrams(renderVersion))
     return
@@ -466,7 +476,7 @@ const scheduleRender = (): void => {
   scheduledFrame = window.requestAnimationFrame(commitRender)
 }
 watch(
-  [() => content, citationSemanticSignature, () => streaming, () => sourcePreviews],
+  [() => content, citationSemanticSignature, () => streaming, () => sourcePreviews, localeRevision],
   () => {
     if (streaming) {
       scheduleRender()
@@ -508,10 +518,14 @@ const copyCode = async (event: MouseEvent): Promise<void> => {
 }
 
 onMounted(() => {
+  i18next.on('languageChanged', refreshLocale)
+  i18next.on('loaded', refreshLocale)
   void nextTick(() => enhanceMermaidDiagrams(renderVersion))
   observeDiagramTheme()
 })
 onBeforeUnmount(() => {
+  i18next.off('languageChanged', refreshLocale)
+  i18next.off('loaded', refreshLocale)
   if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame)
   cancelDiagramJobs()
   themeObserver?.disconnect()

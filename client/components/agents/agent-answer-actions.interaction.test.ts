@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { compileScript, parse } from '@vue/compiler-sfc'
+import i18next from 'i18next'
 import type { Component } from 'vue'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { AgentCitation, AgentGoogleSearchGrounding } from '../../../shared/agents/contracts.ts'
@@ -37,11 +38,11 @@ const previousClipboard = Object.getOwnPropertyDescriptor(browserWindow.navigato
 const previousExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand')
 const previousLocation = browserWindow.location.href
 const mountedApps: Array<() => void> = []
-const mount = async (component: Component, props: Record<string, unknown>): Promise<HTMLElement> => {
+const mount = async (component: Component, props: Record<string, unknown>, translate = translateEnglish): Promise<HTMLElement> => {
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({ render: () => Vue.h(component, props) })
-  app.config.globalProperties.$t = translateEnglish
+  app.config.globalProperties.$t = translate
   app.use(createVuetify({ components: { VAlert, VBtn, VCard, VCardActions, VCardText, VCardTitle, VDialog, VSpacer, VTextarea, VTextField } }))
   app.mount(host)
   mountedApps.push(() => {
@@ -228,6 +229,87 @@ describe('Answer export and clipboard interactions', () => {
     expect(host.textContent).not.toContain('Provider secret must not appear')
     expect(document.activeElement).toBe(copyButton)
     expect(document.querySelector('textarea')).toBeNull()
+  })
+
+  it('refreshes localized Markdown shells without losing focus, scroll, disclosure, or active copy feedback', async () => {
+    await i18next.init({
+      lng: 'en',
+      fallbackLng: 'en',
+      ns: ['common'],
+      defaultNS: 'common',
+      resources: {
+        en: JSON.parse(await Bun.file('server/locales/en.json').text()),
+        fr: {
+          common: {
+            actions: { copy: 'Copier « <code> »' },
+            agentThread: { opensNewTab: 'ouvre un autre onglet' },
+            agentMarkdown: {
+              scrollableCode: 'Code défilant {{language}}',
+              scrollableTable: 'Tableau défilant',
+              mermaidSource: 'Source du diagramme',
+              copied: 'Copié pour test'
+            }
+          }
+        }
+      },
+      interpolation: { escapeValue: false },
+      initAsync: false
+    })
+    try {
+      const host = await mount(
+        AgentMarkdown,
+        {
+          content:
+            '```ts\nconst source = "wiki"\n```\n\n| Source | Decision |\n| --- | --- |\n| Wiki | Review |\n\n```mermaid\nflowchart LR\nA --> B\n```\n\n[Reference](https://example.test/reference)',
+          streaming: true
+        },
+        (key, options) => i18next.t(key, options) as string
+      )
+      const code = host.querySelector<HTMLPreElement>('pre')
+      const table = host.querySelector<HTMLElement>('.agent-markdown__table-shell')
+      const source = host.querySelector<HTMLDetailsElement>('.agent-markdown__diagram-source')
+      const copy = host.querySelector<HTMLButtonElement>('[data-copy-code]')
+      if (!code || !table || !source || !copy) throw new Error('Markdown reading controls were not rendered')
+      code.scrollLeft = 37
+      table.scrollLeft = 23
+      source.open = true
+      copy.focus()
+      const flushRender = async () => {
+        await Vue.nextTick()
+        await new Promise<void>(resolve => browserWindow.requestAnimationFrame(() => resolve()))
+        await Vue.nextTick()
+      }
+      await i18next.changeLanguage('fr')
+      await flushRender()
+      const translatedCopy = host.querySelector<HTMLButtonElement>('[data-copy-code]')
+      expect(translatedCopy?.textContent).toBe('Copier « <code> »')
+      expect(translatedCopy?.querySelector('code')).toBeNull()
+      expect(host.querySelector('pre')?.getAttribute('aria-label')).toBe('Code défilant ts')
+      expect(host.querySelector('.agent-markdown__table-shell')?.getAttribute('aria-label')).toBe('Tableau défilant')
+      expect(host.querySelector('pre')?.scrollLeft).toBe(37)
+      expect(host.querySelector('.agent-markdown__table-shell')?.scrollLeft).toBe(23)
+      expect(host.querySelector<HTMLDetailsElement>('.agent-markdown__diagram-source')?.open).toBe(true)
+      expect(document.activeElement).toBe(translatedCopy)
+      if (!translatedCopy) throw new Error('Translated copy control disappeared')
+      Object.defineProperty(browserWindow.navigator, 'clipboard', { configurable: true, value: { writeText: async () => {} } })
+      await clickAndSettle(translatedCopy, () => translatedCopy.dataset.copyState === 'success')
+      await i18next.changeLanguage('en')
+      await flushRender()
+      const restoredCopy = host.querySelector<HTMLButtonElement>('[data-copy-code]')
+      expect(restoredCopy?.dataset.copyState).toBe('success')
+      expect(restoredCopy?.textContent).toBe(translateEnglish('common:agentMarkdown.copied'))
+      expect(document.activeElement).toBe(restoredCopy)
+      const reference = host.querySelector<HTMLAnchorElement>('a[href="https://example.test/reference"]')
+      if (!reference) throw new Error('External reference was not rendered')
+      reference.focus()
+      await i18next.changeLanguage('fr')
+      await flushRender()
+      const translatedReference = host.querySelector<HTMLAnchorElement>('a[href="https://example.test/reference"]')
+      expect(translatedReference?.textContent).toContain('ouvre un autre onglet')
+      expect(document.activeElement).toBe(translatedReference)
+    } finally {
+      await i18next.changeLanguage('en')
+    }
   })
 
   it('copies only code through the legacy path and keeps success and failure feedback on the focused code button', async () => {

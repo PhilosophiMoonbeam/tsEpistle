@@ -3,7 +3,7 @@ import path from 'node:path'
 import { setImmediate as yieldEventLoop } from 'node:timers/promises'
 
 import { compileScript, compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
-import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
@@ -292,7 +292,24 @@ const activeOwnedMenu = (trigger: HTMLElement, selector: string): HTMLElement | 
   const overlay = overlayId ? document.getElementById(overlayId) : null
   return overlay?.classList.contains('v-overlay--active') ? overlay.querySelector<HTMLElement>(selector) : null
 }
+let menuOffsetParentDescriptor: PropertyDescriptor | null = null
+const exposeComposerLayout = (): void => {
+  if (menuOffsetParentDescriptor) return
+  // JSDOM has no layout. Visible controls and overlays need offset parents
+  // for Vuetify's focus navigation and restoration; restore after each test.
+  const prototype = HTMLElement.prototype
+  const original = Object.getOwnPropertyDescriptor(prototype, 'offsetParent')
+  if (!original?.get) throw new Error('The test DOM does not expose offsetParent')
+  menuOffsetParentDescriptor = original
+  Object.defineProperty(prototype, 'offsetParent', {
+    ...original,
+    get(this: HTMLElement) {
+      return this.isConnected && this.closest('.v-overlay--active, .agent-composer') ? this.parentElement : original.get!.call(this)
+    }
+  })
+}
 const openOwnedMenu = async (trigger: HTMLElement, selector: string, description: string, keyboard = false): Promise<HTMLElement> => {
+  exposeComposerLayout()
   if (keyboard) {
     trigger.focus()
     trigger.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
@@ -302,11 +319,14 @@ const openOwnedMenu = async (trigger: HTMLElement, selector: string, description
   await waitForRealSurface(() => activeOwnedMenu(trigger, selector) !== null, description)
   const menu = activeOwnedMenu(trigger, selector)
   if (!menu) throw new Error(`Real ${description} did not open`)
+  // Visibility precedes keyboard opening's focus transfer.
+  if (keyboard) await waitForRealSurface(() => menu.contains(document.activeElement), `${description} keyboard focus`)
   expect(trigger.getAttribute('aria-expanded')).toBe('true')
   return menu
 }
 const closeOwnedMenu = async (menu: HTMLElement): Promise<void> => {
-  menu.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  const target = menu.contains(document.activeElement) ? document.activeElement! : menu
+  target.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
   await waitForRealSurface(() => !menu.isConnected || !menu.closest('.v-overlay--active'), 'composer menu dismissed')
 }
 const openRealAttachmentMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
@@ -635,6 +655,10 @@ const press = (composer: ComposerHarness, key: string, options?: KeyOptions): Ke
 }
 afterEach(() => {
   for (const unmount of mountedComposers.splice(0)) unmount()
+  if (menuOffsetParentDescriptor) {
+    Object.defineProperty(HTMLElement.prototype, 'offsetParent', menuOffsetParentDescriptor)
+    menuOffsetParentDescriptor = null
+  }
   document.body.replaceChildren()
   recording.value = false
   requesting.value = false
@@ -1259,6 +1283,48 @@ describe('Agent composer three-section layout', () => {
     expect(attach?.disabled).toBe(false)
     expect(input?.disabled).toBe(false)
     expect(root.querySelector('.agent-composer__attachment-count')?.textContent?.trim()).toBe('3/4')
+  })
+
+  it('does not reopen Create when revoked creation support returns', async () => {
+    const options = Vue.reactive({ media: true, attachments: false, imageGeneration: true })
+    const mounted = mountRealComposers([options])
+    const root = mounted.roots[0]
+    await Vue.nextTick()
+    await openRealCreationMenu(root)
+    options.imageGeneration = false
+    await waitForRealSurface(() => !root.querySelector('[aria-label="Choose creation tools"]'), 'revoked Create control removed')
+    options.imageGeneration = true
+    await waitForRealSurface(() => root.querySelector('[aria-label="Choose creation tools"]') !== null, 'restored Create control rendered')
+    const create = root.querySelector<HTMLButtonElement>('[aria-label="Choose creation tools"]')
+    if (!create) throw new Error('The restored creation trigger did not render')
+    expect(create.getAttribute('aria-expanded')).toBe('false')
+    expect(activeOwnedMenu(create, '[aria-label="Creation tools"]')).toBeNull()
+  })
+
+  it('keeps a cancelled keyboard opening closed after deferred menu work finishes', async () => {
+    vi.useFakeTimers()
+    try {
+      exposeComposerLayout()
+      const mounted = mountComposer({ mediaCapabilities: { attachments: true, transcription: true }, mediaSession: { id: 'session-1' } })
+      await Vue.nextTick()
+      const attach = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
+      if (!attach) throw new Error('The attachment trigger did not render')
+      attach.focus()
+      attach.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+      await Vue.nextTick()
+      expect(attach.getAttribute('aria-expanded')).toBe('true')
+      attach.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await Vue.nextTick()
+      for (let turn = 0; turn < 100 && vi.getTimerCount(); turn++) {
+        vi.advanceTimersToNextTimer()
+        await Vue.nextTick()
+      }
+      expect(attach.getAttribute('aria-expanded')).toBe('false')
+      expect(activeOwnedMenu(attach, '[aria-label="Attachment source"]')).toBeNull()
+      expect(document.activeElement).toBe(attach)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('closes the attachment chooser when access becomes blocked or attachment support is revoked', async () => {
