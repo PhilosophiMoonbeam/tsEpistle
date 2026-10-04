@@ -233,21 +233,6 @@
               v-tab#page-view-article-tab(value='article' prepend-icon='mdi-file-document-outline') {{$t('common:page.viewArticle')}}
               v-tab#page-view-talk-tab(v-if='commentsEnabled && commentsPerms.read && !commentsExternal' value='talk' prepend-icon='mdi-forum-outline') {{$t('common:comments.title')}}
               v-tab#page-view-links-tab(v-if='linksVisible' value='links' prepend-icon='mdi-link-variant') {{$t('common:page.viewLinks')}}
-            .page-disclosures(
-              v-if='disclosureArticleCount >= 2 && disclosureTotal > 0 && !printView && selectedPageView === `article`'
-              role='group'
-              :aria-label='$t(`common:page.disclosureControls`)'
-            )
-              span.page-disclosures__status(role='status', aria-live='polite', aria-atomic='true') {{$t(disclosureHasExcluded ? 'common:page.disclosureEligibleStatus' : 'common:page.disclosureStatus', { open: disclosureOpenCount, total: disclosureTotal })}}
-              .page-disclosures__actions
-                button.page-disclosures__button(
-                  v-for='open in disclosureBatchStates'
-                  :key='open ? `expand` : `collapse`'
-                  type='button'
-                  :aria-controls='pageArticleId'
-                  :aria-disabled='navigationPending || (open ? disclosureOpenCount === disclosureTotal : disclosureOpenCount === 0)'
-                  @click='setArticleDisclosuresOpen(open)'
-                ) {{$t(open ? 'common:page.expandDisclosures' : 'common:page.collapseDisclosures')}}
             article.contents(ref='container', v-show='printView || selectedPageView === `article`', :id='pageArticleId', role='tabpanel', :aria-labelledby='showPageViewTabs ? `page-view-article-tab` : pageTitleId', tabindex='-1', :lang='locale', :dir='contentDirection')
               template(v-if='$slots.contents')
                 slot(name='contents')
@@ -940,8 +925,6 @@ type Breadcrumb = {
   title: string
 }
 
-const DISCLOSURE_BATCH_STATES = markRaw([true, false] as const)
-
 const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): string => {
   const detail = result.outcome === 'unavailable'
     ? result.error
@@ -1623,14 +1606,6 @@ export default defineComponent({
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
       readerSectionsOpen: false,
-      disclosureBatchStates: DISCLOSURE_BATCH_STATES,
-      disclosureArticleCount: 0,
-      disclosureTotal: 0,
-      disclosureOpenCount: 0,
-      disclosureHasExcluded: false,
-      disclosureRoot: null as HTMLElement | null,
-      disclosureDetails: markRaw([] as HTMLDetailsElement[]),
-      disclosureCleanup: null as (() => void) | null,
       readingProgress: 0,
       activeAnchor: '',
       outlineCleanup: null as PageOutlineTracker | null,
@@ -2342,7 +2317,6 @@ export default defineComponent({
     }
   },
   beforeUnmount () {
-    this.resetArticleDisclosures()
     this.offlineDisposed = true
     if (this.approvalReviewerTimer !== null) clearTimeout(this.approvalReviewerTimer)
     this.pageActionGeneration += 1
@@ -3142,7 +3116,6 @@ export default defineComponent({
       else if (action === 'save') await this.updateOfflinePage(true)
     },
     resetPageRouteState(): void {
-      this.resetArticleDisclosures()
       this.pageActionGeneration += 1
       this.pageWatchRequestId += 1
       this.protectionRequestId += 1
@@ -3289,73 +3262,6 @@ export default defineComponent({
         }
       })
     },
-    resetArticleDisclosures(): void {
-      this.disclosureCleanup?.()
-      this.disclosureCleanup = null
-      this.disclosureRoot = null
-      this.disclosureDetails = markRaw([])
-      this.disclosureArticleCount = 0
-      this.disclosureTotal = 0
-      this.disclosureOpenCount = 0
-      this.disclosureHasExcluded = false
-    },
-    setupArticleDisclosures(container: HTMLElement): void {
-      this.resetArticleDisclosures()
-      const details = Array.from(container.querySelectorAll<HTMLDetailsElement>('details'))
-      // Named disclosures are exclusive, including when nested. Leave their
-      // whole subtree under native control rather than promising Expand all.
-      const eligible = markRaw(details.filter(detail => {
-        const exclusive = detail.closest('details[name]:not([name=""])')
-        return !exclusive || !container.contains(exclusive)
-      }))
-      this.disclosureRoot = container
-      this.disclosureDetails = eligible
-      this.disclosureArticleCount = details.length
-      this.disclosureTotal = eligible.length
-      this.disclosureHasExcluded = eligible.length !== details.length
-      this.syncDisclosureStatus()
-      const onToggle = (event: Event): void => {
-        if (this.disclosureRoot !== container || this.$refs.container !== container) return
-        const detail = event.target
-        if (!(detail instanceof HTMLDetailsElement) || !container.contains(detail)) return
-        if (!detail.open) this.moveDisclosureFocus(detail)
-        this.syncDisclosureStatus()
-      }
-      // Native toggle does not bubble; capture only within this article.
-      container.addEventListener('toggle', onToggle, true)
-      this.disclosureCleanup = () => container.removeEventListener('toggle', onToggle, true)
-    },
-    syncDisclosureStatus(): void {
-      let open = 0
-      for (const detail of this.disclosureDetails) {
-        if (detail.open) open += 1
-      }
-      this.disclosureOpenCount = open
-    },
-    moveDisclosureFocus(detail: HTMLDetailsElement): void {
-      const container = this.disclosureRoot
-      const focused = document.activeElement
-      if (!container || !focused || !detail.contains(focused)) return
-      let target = detail
-      let summary = target.querySelector<HTMLElement>(':scope > summary')
-      if (summary?.contains(focused)) return
-      // A nested summary is not a safe target if an outer disclosure is closed.
-      for (let parent = detail.parentElement; parent && parent !== container; parent = parent.parentElement) {
-        if (parent instanceof HTMLDetailsElement && !parent.open) target = parent
-      }
-      summary = target.querySelector<HTMLElement>(':scope > summary')
-      ;(summary ?? container).focus({ preventScroll: true })
-    },
-    setArticleDisclosuresOpen(open: boolean): void {
-      const container = this.disclosureRoot
-      if (!container || container !== this.$refs.container || !container.isConnected || this.navigationPending || this.printView || this.selectedPageView !== 'article') return
-      for (const detail of this.disclosureDetails) {
-        if (detail.open === open) continue
-        if (!open) this.moveDisclosureFocus(detail)
-        detail.open = open
-      }
-      this.syncDisclosureStatus()
-    },
     refreshPageContent(): void {
       const container = this.$refs.container as HTMLElement
       this.mermaidAbortController?.abort()
@@ -3393,7 +3299,6 @@ export default defineComponent({
       })
       this.contentExtensionCleanup?.()
       this.contentExtensionCleanup = hydrateContentExtensions(container, undefined, { mermaidHosts })
-      this.setupArticleDisclosures(container)
       this.outlineCleanup?.dispose()
       this.outlineCleanup = trackPageOutline(container, this.tocFlattened, anchor => {
         this.activeAnchor = anchor
@@ -4542,55 +4447,6 @@ export default defineComponent({
   transform: translateY(-200%);
   &:focus { transform: translateY(0); }
 }
-
-.page-disclosures {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--wiki-space-2) var(--wiki-space-4);
-  min-inline-size: 0;
-  max-inline-size: var(--page-reader-copy-max);
-  margin-block-start: var(--wiki-space-3);
-  padding-block: var(--wiki-space-2);
-  border-block-end: 1px solid var(--wiki-surface-border);
-  color: var(--wiki-text-muted);
-  font-size: .75rem;
-  line-height: 1.5;
-
-  &__status { flex: 1 1 12rem; overflow-wrap: anywhere; }
-
-  &__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--wiki-space-1) var(--wiki-space-2);
-    min-inline-size: 0;
-  }
-
-  &__button {
-    min-block-size: 44px;
-    max-inline-size: 100%;
-    padding: var(--wiki-space-1) var(--wiki-space-3);
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-control-radius);
-    color: var(--wiki-accent-ink);
-    background: transparent;
-    font: inherit;
-    font-weight: 600;
-    overflow-wrap: anywhere;
-    cursor: pointer;
-
-    &:hover:not([aria-disabled='true']) { background: var(--wiki-surface-raised); }
-    &[aria-disabled='true'] { color: var(--wiki-text-subtle); cursor: default; }
-    &:focus-visible {
-      outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
-      outline-offset: 2px;
-      box-shadow: var(--wiki-focus-ring);
-    }
-  }
-}
-
-.wiki-page--reading .page-disclosures { margin-inline: auto; }
 
 .page-document-label {
   display: flex;
@@ -6366,7 +6222,6 @@ export default defineComponent({
 }
 
 @media print {
-  .page-disclosures,
   .page-navigation,
   .page-nav-toggle,
   .page-header-path,

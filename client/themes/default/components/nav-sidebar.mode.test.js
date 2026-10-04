@@ -109,17 +109,12 @@ const renderMountedSidebar = (options = {}) => {
       expandParentByDefault: options.expandParentByDefault ?? false
     }
   )
-  app.config.globalProperties.$t = (key, values = {}) =>
+  app.config.globalProperties.$t = key =>
     ({
       'common:sidebar.mainMenu': 'Main Menu',
       'common:sidebar.browse': 'Browse',
       'common:sidebar.root': 'Root',
-      'common:sidebar.currentDirectory': 'Current directory',
-      'common:sidebar.filterDirectory': 'Filter this directory',
-      'common:sidebar.directoryMatches': `${values.count} of ${values.total} items`,
-      'common:sidebar.noMatchingItems': 'No matching items in this directory.',
-      'common:sidebar.noPagesInDirectory': 'No pages in this directory.',
-      'common:sidebar.clearFilter': 'Clear filter'
+      'common:sidebar.noPagesInDirectory': 'No pages in this directory.'
     })[key] ?? key
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   const sidebar = app.mount(host)
@@ -128,13 +123,6 @@ const renderMountedSidebar = (options = {}) => {
     host.remove()
   })
   return { sidebar, host }
-}
-const filterDirectory = async (host, value) => {
-  const input = host.querySelector('.nav-sidebar-directory-filter input')
-  input.value = value
-  input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
-  await Vue.nextTick()
-  return input
 }
 const storage = preference => {
   const values = new Map(preference === null ? [] : [['navPref', preference]])
@@ -407,7 +395,7 @@ describe('Custom Navigation preserves its two views', () => {
 })
 
 describe('directory navigation commits', () => {
-  it('filters the authorized root list locally by title or path and recovers from no matches without requests', async () => {
+  it('renders every committed root folder and page with its authorized route', async () => {
     const rows = [
       treeRow(10, 0, 'Recipes', { isFolder: true, path: 'recipes' }),
       treeRow(11, 0, 'Pasta Recipes', { visibility: 'public', path: 'cooking/italian' }),
@@ -419,36 +407,19 @@ describe('directory navigation commits', () => {
     await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
     await Vue.nextTick()
     const titles = () => [...host.querySelectorAll('.nav-sidebar-folder, .nav-sidebar-page')].map(item => item.textContent.trim())
-    const committedItems = sidebar.currentItems
-    expect(host.querySelector('.nav-sidebar-directory-title').textContent).toBe('Root')
-    expect(host.querySelector('.nav-sidebar-directory-count').textContent).toBe('3 of 3 items')
-    const input = await filterDirectory(host, 'PaStA')
-    expect(input.closest('.v-list')).toBeNull()
-    expect(titles()).toEqual(['Pasta Recipes'])
-    expect(host.querySelector('.nav-sidebar-directory-count').textContent).toBe('1 of 3 items')
-    await filterDirectory(host, 'GUIDES/')
-    expect(titles()).toEqual(['Neighbour guide'])
-    expect(host.querySelector('.nav-sidebar-page').getAttribute('href')).toBe('/_private/fr/guides/navigation')
-    await filterDirectory(host, 'not present')
-    expect(titles()).toEqual([])
-    expect(host.querySelector('.nav-sidebar-directory-count').textContent).toBe('0 of 3 items')
-    expect(host.querySelector('[data-async-state="empty"]').textContent).toBe('No matching items in this directory.')
-    host.querySelector('.nav-sidebar-clear-filter').click()
-    await Vue.nextTick()
-    expect(input.value).toBe('')
     expect(titles()).toEqual(['Recipes', 'Pasta Recipes', 'Neighbour guide'])
+    expect([...host.querySelectorAll('.nav-sidebar-page')].map(item => item.getAttribute('href'))).toEqual([
+      '/fr/cooking/italian',
+      '/_private/fr/guides/navigation'
+    ])
     expect(host.querySelector('[data-async-state="empty"]')).toBeNull()
-    expect(sidebar.currentItems).toBe(committedItems)
     expect(sidebar.currentItems.map(item => item.id)).toEqual([10, 11, 12])
     expect(transport).toHaveBeenCalledTimes(1)
     expect(localStorage.setItem).not.toHaveBeenCalled()
-    sidebar.switchMode('custom')
-    await Vue.nextTick()
-    expect(host.querySelector('.nav-sidebar-directory-filter')).toBeNull()
   })
 
   for (const succeeds of [false, true]) {
-    it(`retains its list and filter while loading and ${succeeds ? 'resets the filter after committing a new directory' : 'retains both after an HTTP failure'}`, async () => {
+    it(`retains its list while loading and ${succeeds ? 'commits a new directory on success' : 'retains it after an HTTP failure'}`, async () => {
       let release
       const transport = vi.fn(
         () =>
@@ -468,7 +439,6 @@ describe('directory navigation commits', () => {
       sidebar.currentItems = [child, oldPage]
       sidebar.loadedCache = [10]
       await Vue.nextTick()
-      const input = await filterDirectory(host, 'page in')
       const currentAncestor = host.querySelector('.nav-sidebar-ancestor[aria-current="location"]')
       expect(currentAncestor.textContent).toContain('Directory A')
       currentAncestor.click()
@@ -479,9 +449,6 @@ describe('directory navigation commits', () => {
       expect(sidebar.parents.map(item => item.id)).toEqual([0, 10])
       expect(host.querySelector('.nav-sidebar-ancestor-trail')?.textContent).toContain('Directory A')
       expect(host.querySelector('.nav-sidebar-page')?.textContent).toContain('Page in A')
-      expect(input.value).toBe('page in')
-      expect(host.querySelector('.nav-sidebar-directory-title').textContent).toBe('Directory A')
-      expect(host.querySelector('.nav-sidebar-directory-count').textContent).toBe('1 of 2 items')
       release(
         succeeds
           ? treeResponse([newPage])
@@ -499,13 +466,10 @@ describe('directory navigation commits', () => {
       expect(sidebar.parents.map(item => item.id)).toEqual(succeeds ? [0, 10, 11] : [0, 10])
       expect(host.querySelector('.nav-sidebar-page')?.textContent).toContain(succeeds ? 'Page in B' : 'Page in A')
       expect(host.querySelector('[data-async-state="error"]') !== null).toBe(!succeeds)
-      expect(input.value).toBe(succeeds ? '' : 'page in')
-      expect(host.querySelector('.nav-sidebar-directory-title').textContent).toBe(succeeds ? 'Directory B' : 'Directory A')
-      expect(host.querySelector('.nav-sidebar-directory-count').textContent).toBe(succeeds ? '1 of 1 items' : '1 of 2 items')
     })
   }
 
-  it('preserves the filter on a same-directory retry and keeps root navigation available through the ancestor trail', async () => {
+  it('retries the same directory and keeps root navigation available through the ancestor trail', async () => {
     const directory = treeRow(10, 0, 'Recipes', { isFolder: true, pageId: null, path: 'recipes' })
     const page = treeRow(11, 10, 'Recipe page')
     const transport = vi.fn(async url => {
@@ -518,11 +482,10 @@ describe('directory navigation commits', () => {
     host.querySelector('.nav-sidebar-folder').click()
     await vi.waitFor(() => expect(sidebar.currentParent.id).toBe(10))
     await Vue.nextTick()
-    const input = await filterDirectory(host, 'recipe')
     sidebar.retryBrowse()
     await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
     await Vue.nextTick()
-    expect(input.value).toBe('recipe')
+    expect(host.querySelector('.nav-sidebar-page').textContent).toContain('Recipe page')
     expect(transport).toHaveBeenCalledTimes(3)
     host.querySelector('.nav-sidebar-ancestor[aria-current="location"]').click()
     expect(transport).toHaveBeenCalledTimes(3)
@@ -530,14 +493,12 @@ describe('directory navigation commits', () => {
     rootAncestor.click()
     await vi.waitFor(() => expect(sidebar.currentParent.id).toBe(0))
     await Vue.nextTick()
-    expect(input.value).toBe('')
-    expect(host.querySelector('.nav-sidebar-directory-title').textContent).toBe('Root')
     expect(host.querySelector('.nav-sidebar-folder').textContent).toContain('Recipes')
     expect(transport).toHaveBeenCalledTimes(4)
   })
 
   for (const succeeds of [false, true]) {
-    it(`${succeeds ? 'resets the filter after committing' : 'preserves the committed list and filter after failing'} a locale change in the same directory`, async () => {
+    it(`${succeeds ? 'commits the new locale' : 'preserves the committed list after failing'} a locale change in the same directory`, async () => {
       useCurrentPage()
       let release
       const transport = vi
@@ -556,14 +517,12 @@ describe('directory navigation commits', () => {
       })
       await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
       await Vue.nextTick()
-      const input = await filterDirectory(host, 'private')
       const committedItems = sidebar.currentItems
       wikiStore.page.locale = 'en'
       await Vue.nextTick()
       expect(sidebar.navLoading).toBe(true)
       expect(sidebar.currentParent.id).toBe(10)
       expect(sidebar.currentItems).toBe(committedItems)
-      expect(input.value).toBe('private')
       expect(host.querySelector('.nav-sidebar-page').getAttribute('href')).toBe('/_private/fr/guides/current')
       release(
         succeeds
@@ -585,8 +544,7 @@ describe('directory navigation commits', () => {
       await Vue.nextTick()
       expect(sidebar.currentParent.id).toBe(10)
       expect(sidebar.parents.map(item => item.id)).toEqual([0, 10])
-      expect(input.value).toBe(succeeds ? '' : 'private')
-      expect(host.querySelectorAll('.nav-sidebar-page').length).toBe(succeeds ? 2 : 1)
+      expect(host.querySelectorAll('.nav-sidebar-page').length).toBe(2)
       expect(host.querySelector('.nav-sidebar-page').getAttribute('href')).toBe(`/_private/${succeeds ? 'en' : 'fr'}/guides/current`)
       expect(transport).toHaveBeenCalledTimes(2)
     })
@@ -607,14 +565,12 @@ describe('directory navigation commits', () => {
     const root = sidebar.currentParent
     const older = sidebar.fetchBrowseItems(treeRow(10, 0, 'Older folder', { isFolder: true }))
     await sidebar.fetchBrowseItems(treeRow(20, 0, 'Latest folder', { isFolder: true }))
-    sidebar.directoryFilter = 'Latest'
     releaseOlder(treeResponse([treeRow(13, 10, 'Obsolete page')]))
     await older
     expect(sidebar.currentParent.id).toBe(20)
     expect(sidebar.parents.map(item => item.id)).toEqual([root.id, 20])
     expect(sidebar.currentItems.map(item => item.id)).toEqual([23])
     expect(sidebar.navError).toBe('')
-    expect(sidebar.directoryFilter).toBe('Latest')
   })
 })
 
