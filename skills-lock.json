@@ -1,6 +1,132 @@
 {
   "version": 1,
   "skills": {
+    "ax-agent": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "248a6931a7c8d7b812f18ca7e187e30959a74baa9a2d11e2905cefe786c8587a",
+      "wellKnownDigest": "sha256:1f840b4b4374b3034bfb011ec68ce619d474333e4f6deca715261d262b52da88"
+    },
+    "ax-agent-context": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "8369b5589b203cddf3a16897815be61462651cb807100406f77b8f132e8d2cff",
+      "wellKnownDigest": "sha256:1c54df49ee222f87110185b4886d6760b1bc54090daeb2de81f9b48b000bf7f3"
+    },
+    "ax-agent-memory-skills": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "971c7c50be7d312a56363a660cc662724d8cdc35c0a70ef6303cfd41a584d0c1",
+      "wellKnownDigest": "sha256:d58841067e7c8ddbf63bce992f867ca45b4b556ba57e3293b0580a2347ff1a65"
+    },
+    "ax-agent-observability": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "306714b856de521008f6d956d6fe7f91c4218ddaab96312316d06c138f4f86a7",
+      "wellKnownDigest": "sha256:cd293c2baea19a3f72ca07f92dfffa4768a6b3e3c2427fb956858cced937a277"
+    },
+    "ax-agent-optimize": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "0bac328667b4f750be0196145cd45917e921b32b6d5859e7991353c14976f3cf",
+      "wellKnownDigest": "sha256:d9ae91276e2831dd74f4f78ba04949313e1e19dd05149450c80a0a747fd03fdd"
+    },
+    "ax-agent-rlm": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "a54579e955db83189e5c746ccbe2286324a893858e73a4774598b4a51bf3ab36",
+      "wellKnownDigest": "sha256:87e415812508cf0e1faaba1f1d7fda54497a3d16bd715056a5a51d30dfd3c3b3"
+    },
+    "ax-ai": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "df9ee460371f69e238dce4df00ca10f8a23cf45fa1f6a2420ac3c7ec823fd94b",
+      "wellKnownDigest": "sha256:334080860322b71b454be4e414646f9d20042acd503c93bb1aabeba753d17c4e"
+    },
+    "ax-audio": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "ecd7d58ab957bde22fba75d6dd8221a3d45a6c0f886b7a8d21e6357660e0cecc",
+      "wellKnownDigest": "sha256:61f1e984aef127408ae13814383e67ed3b9ca580b6672531def7d92d3d0f3d18"
+    },
+    "ax-event-runtime": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "889887c460022b7024a13479f63e2d3a3bf931e6a037e12b93bbdc82eba4d1ad",
+      "wellKnownDigest": "sha256:1b6fa59664397099c4624c18933caa10c9fb01625a88d64cc0984ba553c3f1ef"
+    },
+    "ax-flow": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "3f4a06711ab31de6eb4c323223743d5b4ed88fa03a41a8ef5e49799d80b91155",
+      "wellKnownDigest": "sha256:ee6ffa6db8e6a11bcdd3eb6476b7d6ed159bc854f28e82f5c2d7cca2a090009b"
+    },
+    "ax-gen": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "e75f07452a9360b07c8defc99d94b2751e72e7c78a37769b8ea1696caf3b00e9",
+      "wellKnownDigest": "sha256:df14e16c4b164e97743eb8ab531014eef36746e86cd26ff27b81d3a4f73dd71e"
+    },
+    "ax-gepa": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "40bfc32fcb32eb887efbe6b712dd7a1a96de764b66d26cd729aa3f4310290af6",
+      "wellKnownDigest": "sha256:f5de220d60c8101465468dda3cc7d2e8a7521937e1be68bcfd1f38e8fe7029a8"
+    },
+    "ax-llm": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "4a5578551f8e79adf13dfea887ad87fcc3456b0362419e9427b3afb99a8d080d",
+      "wellKnownDigest": "sha256:54e21060c01ec28aefbad63291df436e75aa5dc9fab10d867fca591515afb36a"
+    },
+    "ax-mcp": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "a0e2dc040fa8db6fabed315fce90c9cd6c49d41b4655e9d9f20fb023ecbac489",
+      "wellKnownDigest": "sha256:b7a410d894442058d4ebad9937c19927f29a30f1fb45fe09e784d5e442449b02"
+    },
+    "ax-playbook": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "797f2ccac8f6bb670d6500b30f6e90e731f1aaac848c920ec6ad728d8f7b2310",
+      "wellKnownDigest": "sha256:3335597c720584b2ac4e5f915519eee021a8e62534466422888ea93834f216ff"
+    },
+    "ax-refine": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "48357a05998db00515cd991a660553325ad7face7f1e62aafa8cd1a8fb21b1ba",
+      "wellKnownDigest": "sha256:cc7a41b8d79dd0152be143ab78d054f22aaf11a092cd449145d12ddbf12daebc"
+    },
+    "ax-signature": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "f8000fab7baab5a0acd85d5b5e80e1865bfab3e1d168e3ac5844b4eb9f01c8a9",
+      "wellKnownDigest": "sha256:ef1a3ec89d944e56157f155ff3fcca89af9d9c9c97b3a1e7a4199a1af3bff6e4"
+    },
+    "ax-typesafe": {
+      "source": "ax-llm.github.io",
+      "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
+      "sourceType": "well-known",
+      "computedHash": "40b7e75119479f91e4c73e153a93f6e7adcede5f602d0c5468a70f890ce4047b",
+      "wellKnownDigest": "sha256:d8b8be32a8aa0b53133d6507ae1cf51bb1e032008bd5b065fbf02aa7c45e0c9d"
+    },
     "codemirror": {
       "source": "solanabettercall/skills",
       "sourceType": "github",
