@@ -28,6 +28,11 @@ const loading = ref(true)
 const error = ref('')
 const clock = ref(Date.now())
 const pages = computed(() => offlineNavigationEntries(records.value, window.location.origin, clock.value))
+const filter = ref('')
+const filteredPages = computed(() => {
+  const query = (filter.value || '').trim().toLocaleLowerCase()
+  return query ? pages.value.filter(page => `${page.title} ${page.locale}`.toLocaleLowerCase().includes(query)) : pages.value
+})
 const connectionLabel = computed(() => pwaState.connectionState === 'online' ? t('common:offlineNavigation.savedDevice')
   : pwaState.connectionState === 'checking' ? t('common:offlineNavigation.checkingConnection')
   : pwaState.connectionState === 'server-unavailable' ? t('common:offlineNavigation.serverUnavailable') : t('common:offlineNavigation.youreOffline'))
@@ -172,14 +177,19 @@ onBeforeUnmount(() => {
       <v-icon size="18" aria-hidden="true">mdi-book-open-page-variant-outline</v-icon>
       <p><strong>{{ connectionLabel }}</strong><span>{{ $t('common:offlineNavigation.onlyPagesSavedDevice') }}</span></p>
     </div>
+    <div v-if="!loading && !error && pages.length" class="offline-navigation__filter">
+      <v-text-field v-model="filter" :label="$t('common:offlineLibrary.searchSavedPages')" variant="outlined" density="compact" hide-details clearable @click:clear="filter = ''" />
+      <p class="offline-navigation__scope">{{ $t('common:offlineNavigation.onlyPagesSavedDevice') }} · {{ filteredPages.length }} / {{ pages.length }}</p>
+    </div>
     <p v-if="loading" class="offline-navigation__message" role="status">{{ $t('common:offlineNavigation.openingSavedPages') }}</p>
     <div v-else-if="error" class="offline-navigation__message" role="status">
       <p>{{ error }}</p>
       <v-btn size="small" variant="text" @click="openStorage">{{ $t('common:offlineNavigation.tryAgain') }}</v-btn>
     </div>
     <p v-else-if="!pages.length" class="offline-navigation__message">{{ $t('common:offlineNavigation.noSavedPagesYet') }}</p>
+    <p v-else-if="!filteredPages.length" class="offline-navigation__message" role="status">{{ $t('common:search.noResults', { defaultValue: 'No matching saved pages.' }) }}</p>
     <v-list v-else class="offline-navigation__pages" nav density="compact">
-      <v-list-item v-for="page in pages" :key="page.key" :href="page.href" data-no-wiki-navigation
+      <v-list-item v-for="page in filteredPages" :key="page.key" :href="page.href" data-no-wiki-navigation
         :active="props.activePath === page.href" :aria-current="props.activePath === page.href ? 'page' : undefined" @click="navigate($event, page)">
         <template #prepend><v-icon size="20">mdi-file-document-outline</v-icon></template>
         <v-list-item-title>{{ page.title }}</v-list-item-title>
@@ -195,6 +205,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.offline-navigation { min-width: 0; background: var(--wiki-surface-raised); }
+.offline-navigation__filter { padding: .5rem 1rem; }
+.offline-navigation__scope { margin: .5rem 0; color: var(--wiki-text-muted); font-size: .75rem; line-height: 1.5; }
+.offline-navigation :deep(.v-list-item) { min-height: 44px; border-radius: var(--wiki-control-radius); }
 .offline-navigation__heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: 1.1rem 1.25rem .5rem; }
 .offline-navigation__heading h2 { margin: 0; font: 600 1rem var(--wiki-font-body); }
 .offline-navigation__count { color: rgb(var(--v-theme-on-surface-variant)); font-size: .8125rem; font-variant-numeric: tabular-nums; }

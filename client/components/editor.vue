@@ -98,6 +98,13 @@
         v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-main
       .editor-main-surface
+        .editor-document-context
+          .editor-document-identity
+            v-icon(size='18') mdi-file-document-edit-outline
+            span {{ currentPageTitle }}
+          .editor-document-save-state(:class='{ "is-error": saveFeedback === `failed` }')
+            v-icon(v-if='saveStatusIcon', size='16', :icon='saveStatusIcon')
+            span {{ saveStatusText || saveActionLabel }}
         .editor-notices(v-if='bootstrapNotice || serverSaveDisabled || hasOfflineDraftNotice')
           v-alert.editor-bootstrap-notice.editor-notice(
             v-if='bootstrapNotice'
@@ -2565,9 +2572,7 @@ export default defineComponent({
 
   .v-application__wrap {
     min-width: 0;
-    background:
-      radial-gradient(circle at 50% 0, color-mix(in srgb, var(--wiki-accent-spectral) 7%, transparent), transparent 34rem),
-      rgb(var(--v-theme-background));
+    background: rgb(var(--v-theme-background));
   }
 
   .nav-header {
@@ -2600,6 +2605,32 @@ export default defineComponent({
     min-width: 0;
     min-height: 0;
   }
+
+  .editor-document-context {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wiki-space-2) var(--wiki-space-4);
+    padding: var(--wiki-space-2) var(--wiki-space-4);
+    border-block-end: 1px solid var(--wiki-surface-border);
+    background: var(--wiki-surface-raised);
+    flex: none;
+  }
+
+  .editor-document-identity,
+  .editor-document-save-state {
+    display: flex;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: .875rem;
+  }
+
+  .editor-document-identity { font-weight: 600; }
+  .editor-document-save-state { color: var(--wiki-text-muted); }
+  .editor-document-save-state.is-error { color: var(--wiki-error-ink, rgb(var(--v-theme-error))); }
 
   .editor-active-editor {
     display: flex;
@@ -2726,7 +2757,7 @@ export default defineComponent({
       color: rgb(var(--v-theme-on-surface));
       font-weight: 650;
       letter-spacing: -.01em;
-      text-align: center;
+      text-align: start;
     }
   }
 
@@ -2786,7 +2817,7 @@ export default defineComponent({
   padding-bottom: env(safe-area-inset-bottom);
   border-top: 1px solid var(--wiki-surface-border) !important;
   background: var(--wiki-surface-raised) !important;
-  box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-8) var(--wiki-shadow-color) !important;
+  box-shadow: none !important;
 
   .v-btn {
     min-width: 0;
@@ -2826,6 +2857,26 @@ export default defineComponent({
   margin-inline-start: var(--wiki-space-2);
 }
 
+.editor-pane-label {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 36px;
+  padding: var(--wiki-space-2) var(--wiki-space-4);
+  border-block-end: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+  font-weight: 600;
+}
+
+.editor-insert-label {
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+  font-weight: 600;
+  padding-inline-end: var(--wiki-space-2);
+}
+
 // Formatting tools in the Markdown and visual editors share one neutral look.
 // The accent marks only state (pressed/active), hover and focus, so colour
 // carries meaning instead of decorating every tool.
@@ -2833,12 +2884,14 @@ export default defineComponent({
   align-items: center;
   display: flex;
   gap: 3px;
+  flex-wrap: nowrap;
 }
 
 .editor-tool.v-btn {
   background: transparent;
   border: 1px solid transparent;
   color: var(--wiki-text-muted);
+  border-radius: var(--wiki-control-radius);
 
   &:hover {
     background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 7%, transparent);

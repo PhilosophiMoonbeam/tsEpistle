@@ -77,44 +77,19 @@
           <v-icon :icon="statusIcon" size="22" />
         </span>
         <div>
-          <span class="operation-review__eyebrow">{{ statusLabel }}</span>
+          <span class="operation-review__eyebrow">{{ statusKey === 'pending' ? decisionStageLabel : statusLabel }}</span>
           <h2>{{ actionLabel }}</h2>
           <code>{{ proposal.actionName }}</code>
         </div>
         <span class="operation-review__elapsed">{{ decisionDuration }}</span>
       </div>
 
-      <ol class="approval-sequence" :aria-label="$t('common:agentMcpApproval.authorizationStages')">
-        <li class="approval-sequence__step approval-sequence__step--complete">
-          <v-icon icon="mdi-check-circle-outline" size="17" aria-hidden="true" />
-          <span><strong>{{ $t('common:agentMcpApproval.request') }}</strong><small>{{ $t('common:agentMcpApproval.received') }}</small></span>
-        </li>
-        <li class="approval-sequence__step approval-sequence__step--complete">
-          <v-icon icon="mdi-check-circle-outline" size="17" aria-hidden="true" />
-          <span><strong>{{ $t('common:agentMcpApproval.proposal') }}</strong><small>{{ $t('common:agentMcpApproval.readyInspect') }}</small></span>
-        </li>
-        <li class="approval-sequence__step" :class="`approval-sequence__step--${statusKey}`">
-          <v-icon :icon="statusIcon" size="17" aria-hidden="true" />
-          <span><strong>{{ $t('common:agentMcpApproval.decision') }}</strong><small>{{ decisionStageLabel }}</small></span>
-        </li>
-      </ol>
 
       <v-card-text class="operation-review__body">
-        <div class="risk-brief" :class="{ 'risk-brief--destructive': proposal.risk === 'destructive-write' }">
-          <v-icon
-            :icon="proposal.risk === 'destructive-write' ? 'mdi-alert-octagon-outline' : 'mdi-shield-check-outline'"
-            size="21"
-            aria-hidden="true"
-          />
-          <span>
-            <strong>{{ riskLabel }}</strong>
-            <small>{{ riskDescription }}</small>
-          </span>
-        </div>
+        <div class="operation-review__inspection">
 
         <section class="operation-section" :aria-labelledby="requestRecordTitleId">
           <div class="operation-section__heading">
-            <span class="operation-section__number" aria-hidden="true">01</span>
             <div>
               <h3 :id="requestRecordTitleId">{{ $t('common:agentMcpApproval.requestRecord') }}</h3>
               <p>{{ $t('common:agentMcpApproval.whoAskedWhatWill') }}</p>
@@ -161,7 +136,6 @@
 
         <section class="operation-section" :aria-labelledby="proposalOutputTitleId">
           <div class="operation-section__heading">
-            <span class="operation-section__number" aria-hidden="true">02</span>
             <div>
               <h3 :id="proposalOutputTitleId">{{ $t('common:agentMcpApproval.proposedOutputRecord') }}</h3>
               <p>{{ $t('common:agentMcpApproval.diffBelowProposedOutput') }}</p>
@@ -192,7 +166,20 @@
             </span>
           </div>
         </section>
+        </div>
+        <aside class="operation-review__authorization" :aria-label="$t('common:agentMcpApproval.authorizationDecision')">
 
+        <div class="risk-brief" :class="{ 'risk-brief--destructive': proposal.risk === 'destructive-write' }">
+          <v-icon
+            :icon="proposal.risk === 'destructive-write' ? 'mdi-alert-octagon-outline' : 'mdi-shield-check-outline'"
+            size="21"
+            aria-hidden="true"
+          />
+          <span>
+            <strong>{{ riskLabel }}</strong>
+            <small>{{ riskDescription }}</small>
+          </span>
+        </div>
         <section
           v-if="proposal.approval.status === 'pending' && !locallyExpired && !acceptedDecisionForProposal"
           class="operation-section decision-zone"
@@ -200,7 +187,6 @@
           :aria-labelledby="decisionTitleId"
         >
           <div class="operation-section__heading">
-            <span class="operation-section__number" aria-hidden="true">03</span>
             <div>
               <h3 :id="decisionTitleId">{{ $t('common:agentMcpApproval.authorizationDecision') }}</h3>
               <p>{{ $t('common:agentMcpApproval.denyStopsProposal', { decisionReviewCopy, interpolation: { escapeValue: false } }) }}</p>
@@ -216,6 +202,8 @@
             maxlength="4000"
             counter
             rows="2"
+            variant="outlined"
+            :disabled="Boolean(pendingDecision) || loading || networkBlocked"
           />
 
           <div v-if="proposal.risk === 'destructive-write'" class="decision-zone__confirmation">
@@ -233,6 +221,8 @@
                 spellcheck="false"
                 autocapitalize="none"
                 autocorrect="off"
+                variant="outlined"
+                :disabled="Boolean(pendingDecision) || loading || networkBlocked || !decisionReady"
               />
             </div>
           </div>
@@ -263,7 +253,6 @@
 
         <section v-else class="operation-section decision-receipt" :aria-labelledby="decisionReceiptTitleId">
           <div class="operation-section__heading">
-            <span class="operation-section__number" aria-hidden="true">03</span>
             <div>
               <h3 :id="decisionReceiptTitleId">{{ $t('common:agentMcpApproval.decisionReceipt') }}</h3>
               <p>{{ $t('common:agentMcpApproval.authorizationCheckpointClosed') }}</p>
@@ -282,6 +271,7 @@
             {{ settledCopy }}
           </v-alert>
         </section>
+        </aside>
       </v-card-text>
     </v-card>
   </section>
@@ -668,6 +658,8 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
   }
   const current = proposal.value
   if (!current || current.id !== identity.proposalId) return
+  if (decision === 'approved' && !reviewAdequate.value) return
+  if (decision === 'approved' && current.risk === 'destructive-write' && confirmationPath.value !== current.confirmationPath) return
   pendingDecision.value = decision
   error.value = ''
   const generation = ++decisionGeneration
@@ -809,648 +801,132 @@ onBeforeUnmount(() => {
 .approval-surface {
   --approval-accent: rgb(var(--v-theme-warning));
   box-sizing: border-box;
+  color: rgb(var(--v-theme-on-surface));
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  width: 100%;
-  max-width: 68rem;
-  min-height: 0;
   margin-inline: auto;
-  padding: clamp(var(--wiki-space-3), 2vw, var(--wiki-space-6));
-  overflow-y: auto;
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.approval-surface--running {
-  --approval-accent: rgb(var(--v-theme-primary));
-}
-
-.approval-surface--success {
-  --approval-accent: rgb(var(--v-theme-success));
-}
-
-.approval-surface--failed,
-.approval-surface--denied {
-  --approval-accent: rgb(var(--v-theme-error));
-}
-
-.approval-surface--cancelled {
-  --approval-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-}
-
-.approval-surface--expired {
-  --approval-accent: rgb(var(--v-theme-warning));
-}
-
-.approval-masthead {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--wiki-space-4);
-  align-items: start;
-  margin-bottom: var(--wiki-space-5);
-}
-
-.approval-masthead > div {
+  max-width: 72rem;
+  min-height: 0;
   min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(var(--wiki-space-3), 2vw, var(--wiki-space-5));
+  width: 100%;
 }
-
+.approval-surface--running,
+.operation-review--running { --approval-accent: rgb(var(--v-theme-primary)); }
+.approval-surface--success,
+.operation-review--success { --approval-accent: rgb(var(--v-theme-success)); }
+.approval-surface--failed,
+.approval-surface--denied,
+.operation-review--failed,
+.operation-review--denied { --approval-accent: rgb(var(--v-theme-error)); }
+.approval-surface--cancelled,
+.operation-review--cancelled { --approval-accent: var(--wiki-text-muted); }
+.approval-surface--expired,
+.operation-review--expired { --approval-accent: rgb(var(--v-theme-warning)); }
+.approval-masthead { align-items: start; display: grid; gap: var(--wiki-space-3); grid-template-columns: auto minmax(0, 1fr) auto; margin-bottom: var(--wiki-space-4); }
+.approval-masthead > div { min-width: 0; }
 .approval-masthead__mark,
 .operation-review__state-mark,
-.approval-loading__mark {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--approval-accent) 34%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
-  background: color-mix(in srgb, var(--approval-accent) 10%, var(--wiki-surface-raised));
-  color: var(--approval-accent);
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
-}
-
-.approval-masthead__mark {
-  width: calc(var(--wiki-control-height) + var(--wiki-space-2));
-  height: calc(var(--wiki-control-height) + var(--wiki-space-2));
-}
-
+.approval-loading__mark { align-items: center; color: var(--wiki-text-muted); display: inline-flex; flex: 0 0 auto; height: 2.75rem; justify-content: center; width: 2.75rem; }
 .approval-masthead__eyebrow,
-.operation-review__eyebrow {
-  margin: 0 0 var(--wiki-space-1);
-  color: var(--approval-accent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
-
-.approval-masthead h1 {
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-family: var(--wiki-font-heading);
-  font-size: clamp(1.35rem, 3vw, 2rem);
-  line-height: var(--wiki-leading-heading);
-}
-
-.approval-masthead h1 + p {
-  max-width: 48rem;
-  margin: var(--wiki-space-2) 0 0;
-  color: var(--wiki-text-muted);
-  line-height: 1.55;
-}
-
-.approval-loading-bar {
-  margin-bottom: var(--wiki-space-3);
-}
-
+.operation-review__eyebrow { color: var(--wiki-text-muted); font-size: .8125rem; font-weight: 600; margin: 0 0 var(--wiki-space-1); }
+.approval-masthead h1 { font-family: var(--wiki-font-heading); font-size: clamp(1.125rem, 2vw, 1.5rem); font-weight: 650; line-height: 1.35; margin: 0; overflow-wrap: anywhere; }
+.approval-masthead h1 + p { color: var(--wiki-text-muted); font-size: .875rem; line-height: 1.5; margin: var(--wiki-space-2) 0 0; max-width: 48rem; }
+.approval-loading-bar { margin-bottom: var(--wiki-space-3); }
 .approval-loading,
-.approval-error {
-  margin-bottom: var(--wiki-space-4);
-}
-
-.approval-loading {
-  display: flex;
-  gap: var(--wiki-space-3);
-  align-items: center;
-  padding: var(--wiki-space-5);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-xs);
-}
-
-.approval-loading__mark {
-  width: var(--wiki-control-height);
-  height: var(--wiki-control-height);
-}
-
-.approval-loading > span:last-child {
-  display: grid;
-  min-width: 0;
-}
-
-.approval-loading small {
-  color: var(--wiki-text-muted);
-}
-
-.approval-error__content {
-  display: flex;
-  gap: var(--wiki-space-3);
-  align-items: center;
-  justify-content: space-between;
-}
-
-.approval-error__content > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.operation-review {
-  --approval-accent: rgb(var(--v-theme-warning));
-  overflow: hidden;
-  border-color: color-mix(in srgb, var(--approval-accent) 38%, var(--wiki-surface-border)) !important;
-  border-inline-start-width: var(--wiki-space-1) !important;
-  border-radius: var(--wiki-panel-radius) !important;
-  background: var(--wiki-surface-raised) !important;
-  color: rgb(var(--v-theme-on-surface)) !important;
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
-}
-
-.operation-review--running {
-  --approval-accent: rgb(var(--v-theme-primary));
-}
-
-.operation-review--success {
-  --approval-accent: rgb(var(--v-theme-success));
-}
-
-.operation-review--failed,
-.operation-review--denied {
-  --approval-accent: rgb(var(--v-theme-error));
-}
-
-.operation-review--cancelled {
-  --approval-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-}
-
-.operation-review--expired {
-  --approval-accent: rgb(var(--v-theme-warning));
-}
-
-.operation-review__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--wiki-space-3);
-  align-items: center;
-  padding: var(--wiki-space-4) var(--wiki-space-5);
-  border-block-end: 1px solid var(--wiki-surface-border);
-  background:
-    linear-gradient(110deg, color-mix(in srgb, var(--approval-accent) 10%, transparent), transparent 54%),
-    rgb(var(--v-theme-surface));
-}
-
-.operation-review__header > div {
-  min-width: 0;
-}
-
-.operation-review__state-mark {
-  width: var(--wiki-control-height);
-  height: var(--wiki-control-height);
-}
-
-.operation-review__header h2 {
-  margin: 0;
-  font-size: 1.05rem;
-  line-height: 1.35;
-}
-
-.operation-review__header code {
-  display: block;
-  color: var(--wiki-text-muted);
-  font-family: var(--wiki-font-mono);
-  font-size: var(--wiki-label-size);
-  overflow-wrap: anywhere;
-}
-
-.operation-review__elapsed {
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  font-variant-numeric: tabular-nums;
-}
-
-.approval-sequence {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0;
-  padding: 0;
-  border-block-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-sunken);
-  list-style: none;
-}
-
-.approval-sequence__step {
-  display: flex;
-  gap: var(--wiki-space-2);
-  align-items: center;
-  min-width: 0;
-  padding: var(--wiki-space-3) var(--wiki-space-4);
-  color: var(--approval-accent);
-}
-
-.approval-sequence__step + .approval-sequence__step {
-  border-inline-start: 1px solid var(--wiki-surface-border);
-}
-
-.approval-sequence__step > span {
-  display: grid;
-  min-width: 0;
-}
-
-.approval-sequence__step strong,
-.approval-sequence__step small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.approval-sequence__step strong {
-  font-size: .75rem;
-}
-
-.approval-sequence__step small {
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-}
-
-.approval-sequence__step--complete {
-  color: rgb(var(--v-theme-success));
-}
-
-.operation-review__body {
-  padding: var(--wiki-space-5) !important;
-}
-
-.risk-brief {
-  display: flex;
-  gap: var(--wiki-space-3);
-  align-items: flex-start;
-  padding: var(--wiki-space-3) var(--wiki-space-4);
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 34%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
-  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 9%, transparent);
-  color: color-mix(in srgb, rgb(var(--v-theme-warning)) 76%, rgb(var(--v-theme-on-surface)));
-}
-
-.risk-brief--destructive {
-  border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 40%, var(--wiki-surface-border));
-  background: color-mix(in srgb, rgb(var(--v-theme-error)) 9%, transparent);
-  color: color-mix(in srgb, rgb(var(--v-theme-error)) 82%, rgb(var(--v-theme-on-surface)));
-}
-
-.risk-brief > span {
-  display: grid;
-  gap: var(--wiki-space-1);
-  min-width: 0;
-}
-
-.risk-brief small {
-  color: var(--wiki-text-muted);
-  line-height: 1.5;
-}
-
-.operation-section {
-  margin-top: var(--wiki-space-6);
-  padding-top: var(--wiki-space-5);
-  border-block-start: 1px solid var(--wiki-surface-border);
-}
-
-.operation-section__heading {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--wiki-space-3);
-  align-items: start;
-  margin-bottom: var(--wiki-space-4);
-}
-
-.operation-section__number {
-  color: var(--approval-accent);
-  font-family: var(--wiki-font-mono);
-  font-size: var(--wiki-label-size);
-  font-weight: 700;
-  letter-spacing: .08em;
-}
-
+.approval-error,
+.approval-connection-warning { margin-bottom: var(--wiki-space-4); }
+.approval-loading { align-items: center; background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); display: flex; gap: var(--wiki-space-3); padding: var(--wiki-space-4); }
+.approval-loading > span:last-child { display: grid; gap: var(--wiki-space-1); min-width: 0; overflow-wrap: anywhere; }
+.approval-loading small { color: var(--wiki-text-muted); font-size: .8125rem; }
+.approval-error__content { align-items: center; display: flex; gap: var(--wiki-space-3); justify-content: space-between; }
+.approval-error__content > span { min-width: 0; overflow-wrap: anywhere; }
+.operation-review { background: var(--wiki-surface-raised) !important; border-color: var(--wiki-surface-border) !important; border-inline-start: 3px solid var(--approval-accent) !important; border-radius: var(--wiki-panel-radius) !important; box-shadow: none; color: rgb(var(--v-theme-on-surface)) !important; flex: 0 0 auto; min-width: 0; overflow: hidden; }
+.operation-review__header { align-items: center; background: var(--wiki-surface-sunken); border-bottom: 1px solid var(--wiki-surface-border); display: grid; gap: var(--wiki-space-3); grid-template-columns: auto minmax(0, 1fr) auto; padding: var(--wiki-space-3) var(--wiki-space-4); }
+.operation-review__header > div { min-width: 0; }
+.operation-review__header h2 { font-size: 1rem; font-weight: 650; line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
+.operation-review__header code { color: var(--wiki-text-muted); display: block; font-family: var(--wiki-font-mono); font-size: .8125rem; overflow-wrap: anywhere; }
+.operation-review__elapsed { color: var(--wiki-text-muted); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+.operation-review__body { align-items: start; display: grid; gap: var(--wiki-space-5); grid-template-columns: minmax(0, 1.25fr) minmax(18rem, .8fr); padding: var(--wiki-space-4) !important; }
+.operation-review__inspection,
+.operation-review__authorization { min-width: 0; }
+.operation-review__authorization { border-inline-start: 1px solid var(--wiki-surface-border); padding-inline-start: var(--wiki-space-5); }
+.risk-brief { align-items: flex-start; background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-inline-start: 3px solid rgb(var(--v-theme-warning)); border-radius: var(--wiki-control-radius); display: flex; gap: var(--wiki-space-2); padding: var(--wiki-space-3); }
+.risk-brief--destructive { border-inline-start-color: rgb(var(--v-theme-error)); }
+.risk-brief > span { display: grid; gap: var(--wiki-space-1); min-width: 0; overflow-wrap: anywhere; }
+.risk-brief strong { font-size: .875rem; font-weight: 650; }
+.risk-brief small { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.5; }
+.operation-section + .operation-section { border-top: 1px solid var(--wiki-surface-border); margin-top: var(--wiki-space-4); padding-top: var(--wiki-space-4); }
+.operation-section__heading { margin-bottom: var(--wiki-space-3); min-width: 0; }
 .operation-section__heading h3,
-.operation-section__heading p {
-  margin: 0;
-}
-
-.operation-section__heading h3 {
-  font-size: .95rem;
-  line-height: 1.4;
-}
-
-.operation-section__heading p {
-  margin-top: var(--wiki-space-1);
-  color: var(--wiki-text-muted);
-  font-size: .78rem;
-  line-height: 1.45;
-}
-
-.proposal-facts {
-  display: grid;
-  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
-  gap: var(--wiki-space-2) var(--wiki-space-4);
-  margin: 0;
-}
-
-.proposal-facts dt {
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .055em;
-  text-transform: uppercase;
-}
-
-.proposal-facts dd {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
+.operation-section__heading p { margin: 0; overflow-wrap: anywhere; }
+.operation-section__heading h3 { font-size: .9375rem; font-weight: 650; line-height: 1.4; }
+.operation-section__heading p { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.5; margin-top: var(--wiki-space-1); }
+.proposal-facts { display: grid; font-size: .875rem; gap: var(--wiki-space-2) var(--wiki-space-3); grid-template-columns: minmax(6rem, auto) minmax(0, 1fr); margin: 0; }
+.proposal-facts dt { color: var(--wiki-text-muted); font-size: .8125rem; font-weight: 550; }
+.proposal-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .proposal-facts code,
-.decision-zone__confirmation code {
-  padding-inline: var(--wiki-space-1);
-  border-radius: var(--wiki-radius-xs);
-  background: var(--wiki-surface-sunken);
-  font-family: var(--wiki-font-mono);
-  font-size: .82em;
-  word-break: break-all;
-}
-
+.decision-zone__confirmation code { background: var(--wiki-surface-sunken); font-family: var(--wiki-font-mono); font-size: .875em; overflow-wrap: anywhere; padding-inline: var(--wiki-space-1); }
 .proposal-facts code,
 .decision-zone__confirmation code,
-.proposal-diff {
-  direction: ltr;
-  text-align: start;
-  unicode-bidi: plaintext;
-}
-.proposal-verification {
-  margin-top: var(--wiki-space-4);
-  overflow: hidden;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-control-radius);
-  background: rgb(var(--v-theme-surface));
-}
-
-.proposal-verification summary {
-  display: flex;
-  gap: var(--wiki-space-2);
-  align-items: center;
-  min-height: var(--wiki-control-height);
-  padding: var(--wiki-space-2) var(--wiki-space-3);
-  cursor: pointer;
-  list-style: none;
-}
-
-.proposal-verification summary::-webkit-details-marker {
-  display: none;
-}
-
-.proposal-verification summary > span {
-  display: flex;
-  gap: var(--wiki-space-2);
-  align-items: center;
-  font-weight: 650;
-}
-
-.proposal-verification summary small {
-  margin-inline-start: auto;
-  color: var(--wiki-text-muted);
-}
-
-.proposal-verification summary::after {
-  content: '›';
-  flex: 0 0 auto;
-  font-size: 1.25rem;
-  transform: rotate(90deg);
-  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease);
-}
-
-.proposal-verification[open] summary::after {
-  transform: rotate(270deg);
-}
-
+.decision-zone__confirmation :deep(input),
+.proposal-diff { direction: ltr; text-align: start; unicode-bidi: plaintext; }
+.proposal-verification { background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); margin-top: var(--wiki-space-3); overflow: hidden; }
+.proposal-verification summary { align-items: center; cursor: pointer; display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); list-style: none; min-height: 44px; padding: var(--wiki-space-2) var(--wiki-space-3); }
+.proposal-verification summary::-webkit-details-marker { display: none; }
+.proposal-verification summary > span { align-items: center; display: flex; flex: 1 1 9rem; font-size: .875rem; font-weight: 550; gap: var(--wiki-space-2); min-width: 0; overflow-wrap: anywhere; }
+.proposal-verification summary small { color: var(--wiki-text-muted); font-size: .8125rem; margin-inline-start: auto; }
+.proposal-verification summary::after { content: '›'; flex: 0 0 auto; font-size: 1.25rem; transform: rotate(90deg); }
+.proposal-verification[open] summary::after { transform: rotate(270deg); }
 .proposal-verification summary:focus-visible,
-.proposal-diff:focus-visible {
-  outline: 2px solid var(--wiki-focus-color);
-  outline-offset: calc(-1 * var(--wiki-focus-offset));
-}
-
-.proposal-facts--technical {
-  padding: var(--wiki-space-3);
-  border-block-start: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-sunken);
-}
-
-.proposal-output {
-  overflow: hidden;
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
-}
-
-.proposal-output__legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--wiki-space-3);
-  padding: var(--wiki-space-2) var(--wiki-space-3);
-  border-block-end: 1px solid var(--wiki-surface-border);
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-}
-
-.proposal-output__legend span:last-child {
-  margin-inline-start: auto;
-}
-
-.proposal-output__addition::before,
-.proposal-output__deletion::before {
-  display: inline-block;
-  width: var(--wiki-space-2);
-  height: var(--wiki-space-2);
-  margin-inline-end: var(--wiki-space-1);
-  border-radius: var(--wiki-radius-xs);
-  background: rgb(var(--v-theme-success));
-  content: '';
-}
-
-.proposal-output__deletion::before {
-  background: rgb(var(--v-theme-error));
-}
-
-.proposal-diff {
-  max-height: 32rem;
-  margin: 0;
-  padding: var(--wiki-space-4);
-  overflow: auto;
-  font-family: var(--wiki-font-mono);
-  font-size: .78rem;
-  line-height: 1.55;
-  overscroll-behavior: contain;
-  white-space: pre;
-}
-
+.proposal-diff:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
+.proposal-facts--technical { background: var(--wiki-surface-sunken); border-top: 1px solid var(--wiki-surface-border); padding: var(--wiki-space-3); }
+.proposal-output { background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); min-width: 0; overflow: hidden; }
+.proposal-output__legend { border-bottom: 1px solid var(--wiki-surface-border); color: var(--wiki-text-muted); display: flex; flex-wrap: wrap; font-size: .8125rem; gap: var(--wiki-space-2) var(--wiki-space-3); padding: var(--wiki-space-2) var(--wiki-space-3); }
+.proposal-output__legend span:last-child { margin-inline-start: auto; }
+.proposal-output__addition::before { content: '+ '; font-family: var(--wiki-font-mono); font-weight: 700; }
+.proposal-output__deletion::before { content: '− '; font-family: var(--wiki-font-mono); font-weight: 700; }
+.proposal-diff { font-family: var(--wiki-font-mono); font-size: .8125rem; line-height: 1.55; margin: 0; max-height: min(26rem, 45dvh); overflow: auto; overscroll-behavior: contain; padding: var(--wiki-space-3); scrollbar-gutter: stable; white-space: pre; }
 .proposal-diff ins,
 .proposal-diff del,
-.proposal-diff span {
-  display: inline;
-  text-decoration: none;
+.proposal-diff span { display: inline; text-decoration: none; }
+.proposal-diff ins { background: color-mix(in srgb, rgb(var(--v-theme-success)) 16%, var(--wiki-surface-sunken)); }
+.proposal-diff del { background: color-mix(in srgb, rgb(var(--v-theme-error)) 14%, var(--wiki-surface-sunken)); text-decoration: line-through; }
+.proposal-output__expand { margin: var(--wiki-space-2); max-width: calc(100% - var(--wiki-space-4)); }
+.proposal-output__expand :deep(.v-btn__content) { white-space: normal; }
+.proposal-output__empty { align-items: center; background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); color: var(--wiki-text-muted); display: flex; gap: var(--wiki-space-3); padding: var(--wiki-space-3); }
+.proposal-output__empty > span { display: grid; gap: var(--wiki-space-1); min-width: 0; overflow-wrap: anywhere; }
+.decision-zone,
+.decision-receipt { border-top: 1px solid var(--wiki-surface-border); margin-top: var(--wiki-space-4); padding-top: var(--wiki-space-4); }
+.decision-zone__note { margin-top: var(--wiki-space-2); }
+.decision-zone__confirmation { background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-inline-start: 3px solid rgb(var(--v-theme-error)); border-radius: var(--wiki-control-radius); display: grid; gap: var(--wiki-space-2); grid-template-columns: auto minmax(0, 1fr); margin-top: var(--wiki-space-3); padding: var(--wiki-space-3); }
+.decision-zone__confirmation p { color: var(--wiki-text-muted); font-size: .875rem; line-height: 1.5; margin: var(--wiki-space-1) 0 var(--wiki-space-3); overflow-wrap: anywhere; }
+.decision-zone__confirmation > div { min-width: 0; }
+.decision-zone__confirmation :deep(.v-messages__message),
+.decision-zone__note :deep(.v-messages__message) { overflow-wrap: anywhere; }
+.approval-actions { border-top: 1px solid var(--wiki-surface-border); display: grid; gap: var(--wiki-space-3); margin-top: var(--wiki-space-4); padding-top: var(--wiki-space-3); }
+.approval-actions__choice { display: grid; gap: var(--wiki-space-1); min-width: 0; }
+.approval-actions__choice small { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.45; }
+.approval-actions :deep(.v-btn) { height: auto; min-height: 44px; padding-block: var(--wiki-space-2); }
+.approval-actions :deep(.v-btn__content) { white-space: normal; }
+@media (max-width: 900px) {
+  .operation-review__body { grid-template-columns: minmax(0, 1fr); }
+  .operation-review__authorization { border-inline-start: 0; border-top: 1px solid var(--wiki-surface-border); padding-inline-start: 0; padding-top: var(--wiki-space-4); }
 }
-
-.proposal-diff ins {
-  background: color-mix(in srgb, rgb(var(--v-theme-success)) 20%, transparent);
-}
-
-.proposal-diff del {
-  background: color-mix(in srgb, rgb(var(--v-theme-error)) 18%, transparent);
-  text-decoration: line-through;
-}
-
-.proposal-output__expand {
-  margin: 0 var(--wiki-space-2) var(--wiki-space-2);
-}
-
-.proposal-output__empty {
-  display: flex;
-  gap: var(--wiki-space-3);
-  align-items: center;
-  padding: var(--wiki-space-4);
-  border: 1px dashed var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-sunken);
-  color: var(--wiki-text-muted);
-}
-
-.proposal-output__empty > span {
-  display: grid;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.decision-zone {
-  border-block-start-color: color-mix(in srgb, var(--approval-accent) 34%, var(--wiki-surface-border));
-}
-
-.decision-zone__note {
-  margin-top: var(--wiki-space-2);
-}
-
-.decision-zone__confirmation {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--wiki-space-3);
-  align-items: start;
-  margin-top: var(--wiki-space-4);
-  padding: var(--wiki-space-4);
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 40%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
-  background: color-mix(in srgb, rgb(var(--v-theme-error)) 8%, transparent);
-  color: color-mix(in srgb, rgb(var(--v-theme-error)) 82%, rgb(var(--v-theme-on-surface)));
-}
-
-.decision-zone__confirmation p {
-  margin: var(--wiki-space-1) 0 var(--wiki-space-3);
-  color: var(--wiki-text-muted);
-  line-height: 1.5;
-}
-
-.decision-zone__confirmation > div {
-  min-width: 0;
-}
-
-.decision-zone__confirmation :deep(.v-messages__message) {
-  overflow-wrap: anywhere;
-}
-
-.approval-actions {
-  display: flex;
-  gap: var(--wiki-space-4);
-  align-items: flex-end;
-  justify-content: space-between;
-  margin-top: var(--wiki-space-5);
-  padding-top: var(--wiki-space-4);
-  border-block-start: 1px solid var(--wiki-surface-border);
-}
-
-.approval-actions__choice {
-  display: grid;
-  gap: var(--wiki-space-1);
-}
-
-.approval-actions__choice--approve {
-  justify-items: end;
-  text-align: end;
-}
-
-.approval-actions__choice small {
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-}
-
 @media (max-width: 599.98px) {
-  .approval-masthead {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: var(--wiki-space-3);
-  }
-
-  .approval-masthead :deep(.v-chip) {
-    grid-column: 1 / -1;
-    justify-self: start;
-  }
-
-  .operation-review__header {
-    grid-template-columns: auto minmax(0, 1fr);
-    padding: var(--wiki-space-3);
-  }
-
-  .operation-review__elapsed {
-    grid-column: 2;
-  }
-
-  .approval-sequence {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .approval-sequence__step + .approval-sequence__step {
-    border-block-start: 1px solid var(--wiki-surface-border);
-    border-inline-start: 0;
-  }
-
-  .operation-review__body {
-    padding: var(--wiki-space-3) !important;
-  }
-
-  .proposal-facts {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--wiki-space-1);
-  }
-
-  .proposal-facts dd + dt {
-    margin-top: var(--wiki-space-2);
-  }
-
-  .proposal-verification summary small {
-    display: none;
-  }
-
-  .approval-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .approval-actions__choice,
-  .approval-actions__choice--approve {
-    justify-items: stretch;
-    text-align: start;
-  }
-
-  .approval-actions :deep(.v-btn) {
-    width: 100%;
-    min-height: var(--wiki-control-height);
-  }
-
-  .approval-error__content {
-    align-items: stretch;
-    flex-direction: column;
-  }
+  .approval-masthead { grid-template-columns: auto minmax(0, 1fr); }
+  .approval-masthead :deep(.v-chip) { grid-column: 1 / -1; justify-self: start; }
+  .operation-review__header { grid-template-columns: auto minmax(0, 1fr); padding: var(--wiki-space-3); }
+  .operation-review__elapsed { grid-column: 2; }
+  .operation-review__body { gap: var(--wiki-space-4); padding: var(--wiki-space-3) !important; }
+  .proposal-facts { gap: var(--wiki-space-1); grid-template-columns: minmax(0, 1fr); }
+  .proposal-facts dd + dt { margin-top: var(--wiki-space-2); }
+  .proposal-output__expand { height: auto; min-height: 44px; padding-block: var(--wiki-space-2); }
+  .approval-error__content { align-items: stretch; flex-direction: column; }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .proposal-verification summary::after {
-    transition: none;
-  }
-}
-
 @media (forced-colors: active) {
   .operation-review,
   .approval-loading,
@@ -1458,22 +934,10 @@ onBeforeUnmount(() => {
   .proposal-verification,
   .proposal-output,
   .proposal-output__empty,
-  .decision-zone__confirmation {
-    border-color: CanvasText !important;
-  }
-
-  .proposal-diff ins {
-    border-inline-start: var(--wiki-space-1) solid CanvasText;
-  }
-
-  .proposal-diff del {
-    border-inline-start: var(--wiki-space-1) double CanvasText;
-  }
-
+  .decision-zone__confirmation { border-color: CanvasText !important; }
+  .proposal-diff ins { border-inline-start: 3px solid CanvasText; }
+  .proposal-diff del { border-inline-start: 3px double CanvasText; }
   .proposal-verification summary:focus-visible,
-  .proposal-diff:focus-visible {
-    outline: var(--wiki-space-1) solid Highlight;
-    outline-offset: calc(-1 * var(--wiki-focus-offset));
-  }
+  .proposal-diff:focus-visible { outline-color: Highlight; }
 }
 </style>

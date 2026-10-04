@@ -1893,24 +1893,24 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .offline-library {
-  --offline-paper: rgb(var(--v-theme-background));
+  --offline-paper: var(--wiki-surface);
   --offline-paper-raised: var(--wiki-surface-raised);
-  --offline-paper-sunken: rgb(var(--v-theme-surface-variant));
+  --offline-paper-sunken: var(--wiki-surface-sunken);
   --offline-ink: rgb(var(--v-theme-on-surface));
-  --offline-muted: var(--wiki-muted);
-  --offline-faint: var(--wiki-muted);
+  --offline-muted: var(--wiki-text-muted);
+  --offline-faint: var(--wiki-text-muted);
   --offline-accent: rgb(var(--v-theme-primary));
   --offline-accent-strong: var(--wiki-accent-ink);
   --offline-warm: var(--wiki-accent-warm);
   --offline-border: var(--wiki-surface-border);
   --offline-border-strong: var(--wiki-surface-border);
-  --offline-focus: rgb(var(--v-theme-primary));
+  --offline-focus: var(--wiki-focus-color);
   --offline-shadow: var(--wiki-shadow-sm);
   --offline-shadow-small: var(--wiki-shadow-xs);
-  --offline-radius: 12px;
+  --offline-radius: var(--wiki-panel-radius);
   --offline-mono: var(--wiki-font-body);
   --offline-body: var(--wiki-font-body);
-  --offline-heading: var(--wiki-font-display);
+  --offline-heading: var(--wiki-font-body);
   color: var(--offline-ink);
 }
 .policy-disclosure { margin-block-start: 1rem; border-block-start: 1px solid var(--offline-border); }
@@ -1923,7 +1923,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 .secondary-button, .text-button { padding: .5rem .8rem; border-radius: 8px; color: var(--offline-accent-strong); }
 .secondary-button { border: 1px solid var(--offline-border); background: var(--offline-paper-raised); }
 .text-button { border: 0; background: transparent; }
-.offline-reader h1 { font-family: var(--wiki-font-display); font-size: clamp(2rem, 4vw, 3rem); line-height: 1.16; }
+.offline-reader h1 { font-family: var(--wiki-font-body); font-size: clamp(1.5rem, 3vw, 2rem); line-height: 1.3; }
 .reader-actions { flex-wrap: wrap; }
 
 .offline-library {
@@ -1951,12 +1951,12 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   margin: .3rem 0 0;
   font-family: var(--offline-heading);
   font-weight: 600;
-  letter-spacing: -.045em;
-  line-height: 1.05;
+  letter-spacing: normal;
+  line-height: 1.35;
 }
 
-.offline-library h2 { font-size: clamp(1.55rem, 4vw, 2.25rem); }
-.offline-library h3 { font-size: clamp(1.35rem, 3.5vw, 1.9rem); }
+.offline-library h2 { font-size: 1.25rem; }
+.offline-library h3 { font-size: 1.05rem; }
 
 .count-note {
   flex: 0 0 auto;
@@ -2285,8 +2285,8 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   min-inline-size: 0;
   padding: .85rem;
   border: 1px solid var(--offline-border);
-  border-radius: .7rem;
-  background: color-mix(in srgb, var(--offline-paper-raised) 92%, transparent);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--offline-paper-raised);
   transition: border-color .18s ease, background-color .18s ease;
 }
 
@@ -2314,10 +2314,10 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   overflow: hidden;
   color: var(--offline-ink);
   font-family: var(--offline-heading);
-  font-size: 1.18rem;
+  font-size: 1rem;
   font-weight: 650;
-  letter-spacing: -.02em;
-  line-height: 1.2;
+  letter-spacing: normal;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 

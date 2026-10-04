@@ -1,212 +1,153 @@
+.workbench-state,
 .app-error {
-  --wiki-state-accent: rgb(var(--v-theme-error, 239 68 68));
-  --wiki-accent-ink: color-mix(
-    in srgb,
-    rgb(var(--v-theme-primary, 99 102 241)) 38%,
-    rgb(var(--v-theme-on-surface, 255 255 255)) 62%
-  );
-  --wiki-focus-color: rgb(var(--v-theme-focus, 255 255 255));
-  --wiki-focus-ring: 0 0 0 .1875rem color-mix(
-    in srgb,
-    rgb(var(--v-theme-focus, 255 255 255)) 24%,
-    transparent
-  );
-  --wiki-shadow-inset: inset 0 1px 0 color-mix(
-    in srgb,
-    rgb(var(--v-theme-on-surface, 255 255 255)) 9%,
-    transparent
-  );
-  --wiki-shadow-lg: 0 1.75rem 5rem rgb(0 0 0 / 26%);
-  --wiki-surface-border: color-mix(
-    in srgb,
-    rgb(var(--v-theme-on-surface, 255 255 255)) 13%,
-    transparent
-  );
-  --wiki-surface-raised: color-mix(
-    in srgb,
-    rgb(var(--v-theme-surface, 30 41 59)) 94%,
-    rgb(var(--v-theme-surface-bright, 51 65 85)) 6%
-  );
-  --wiki-surface-sunken: color-mix(
-    in srgb,
-    rgb(var(--v-theme-background, 15 23 42)) 72%,
-    rgb(var(--v-theme-surface, 30 41 59)) 28%
-  );
-  position: relative;
   display: grid;
   min-block-size: 100vh;
   min-block-size: 100dvh;
-  overflow: hidden auto;
-  padding-block: var(--wiki-space-8, 32px);
-  padding-inline: var(--wiki-page-gutter, 24px);
+  padding: var(--wiki-page-gutter, 24px);
   place-items: center;
-  place-items: safe center;
-  background:
-    radial-gradient(circle at 18% 15%, color-mix(in srgb, var(--wiki-state-accent) 16%, transparent), transparent 28rem),
-    radial-gradient(circle at 82% 85%, color-mix(in srgb, rgb(var(--v-theme-primary, 99 102 241)) 14%, transparent), transparent 32rem),
-    linear-gradient(145deg, rgb(var(--v-theme-background, 15 23 42)), color-mix(in srgb, rgb(var(--v-theme-surface, 30 41 59)) 88%, var(--wiki-state-accent) 12%));
-  color: rgb(var(--v-theme-on-background, 255 255 255));
-  font-family: var(--v-font-body);
-
-  &::before {
-    position: absolute;
-    inset: 0;
-    background-image:
-      linear-gradient(color-mix(in srgb, rgb(var(--v-theme-on-background, 255 255 255)) 6%, transparent) 1px, transparent 1px),
-      linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background, 255 255 255)) 6%, transparent) 1px, transparent 1px);
-    background-size: var(--wiki-grid-size, 32px) var(--wiki-grid-size, 32px);
-    content: '';
-    mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-background, 255 255 255)), transparent 85%);
-    opacity: .64;
-    pointer-events: none;
-  }
+  background: rgb(var(--v-theme-background, 15 23 42));
+  color: rgb(var(--v-theme-on-background, 241 245 249));
+  font-family: var(--v-font-body, sans-serif);
 }
 
+.workbench-state {
+  min-block-size: calc(100dvh - var(--v-layout-top, var(--wiki-chrome-height)));
+}
+
+.workbench-state-panel,
 .app-error-content {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  inline-size: min(100%, 640px);
-  min-block-size: 410px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(var(--wiki-space-8, 32px), 6vw, calc(var(--wiki-space-12, 48px) + var(--wiki-space-4, 16px)));
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  inline-size: min(100%, 960px);
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-hero-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
-  backdrop-filter: blur(18px) saturate(135%);
-  -webkit-backdrop-filter: blur(18px) saturate(135%);
-  text-align: center;
+  border-radius: var(--wiki-panel-radius, 12px);
+  background: var(--wiki-surface-raised, rgb(30 41 59));
+  color: rgb(var(--v-theme-on-surface, 241 245 249));
+  overflow: hidden;
+}
+
+.workbench-state-context,
+.app-error-context {
+  min-inline-size: 0;
+  padding: clamp(24px, 4vw, 40px);
+  border-inline-end: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken, rgb(22 32 48));
 
   h1 {
-    margin-block: var(--wiki-space-3, 12px) var(--wiki-space-2, 8px);
-    margin-inline: 0;
-    color: rgb(var(--v-theme-on-surface, 255 255 255));
-    font-family: var(--wiki-font-heading, var(--v-font-body));
-    font-size: clamp(2rem, 5vw, 3rem);
-    font-weight: 760;
-    letter-spacing: -.05em;
-    line-height: 1.05;
+    margin-block: 16px 12px;
+    font-family: var(--v-font-body, sans-serif);
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    font-weight: 700;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
   }
+
+  p { margin-block: 0; line-height: 1.6; overflow-wrap: anywhere; }
+}
+
+.workbench-state-path {
+  display: flex;
+  min-inline-size: 0;
+  gap: 8px;
+  align-items: flex-start;
+  margin-block-start: 24px;
+  padding-block-start: 16px;
+  border-block-start: 1px solid var(--wiki-surface-border);
+
+  code { min-inline-size: 0; overflow-wrap: anywhere; }
+}
+
+.workbench-state-actions,
+.app-error-recovery {
+  display: flex;
+  min-inline-size: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: clamp(24px, 4vw, 40px);
+}
+
+.workbench-state-action {
+  min-block-size: 44px;
+  inline-size: 100%;
+  block-size: auto !important;
+  border-radius: var(--wiki-control-radius);
+
+  .v-btn__content { white-space: normal; padding-block: 10px; text-align: center; }
 }
 
 .app-error-brand {
-  display: grid;
-  inline-size: 86px;
-  block-size: 86px;
-  margin-block-end: var(--wiki-space-5, 20px);
-  padding: var(--wiki-space-4, 16px);
-  place-items: center;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: rgb(23 32 51 / 92%);
-
-  img {
-    display: block;
-    inline-size: 100%;
-    block-size: 100%;
-    filter: grayscale(100%) brightness(2.1);
-    object-fit: contain;
-  }
-}
-
-.app-error-eyebrow {
-  color: color-mix(
-    in srgb,
-    var(--wiki-state-accent) 38%,
-    rgb(var(--v-theme-on-surface, 255 255 255)) 62%
-  );
-  font-size: var(--wiki-type-micro, .68rem);
-  font-weight: 760;
-  letter-spacing: .13em;
-  text-transform: uppercase;
-}
-
-.app-error-message {
-  max-inline-size: 470px;
-  margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface, 255 255 255)) 72%, transparent);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.app-error-home {
-  display: inline-flex;
-  min-block-size: var(--wiki-control-height, 44px);
+  display: flex;
+  min-block-size: 44px;
+  inline-size: fit-content;
+  max-inline-size: 100%;
   align-items: center;
-  justify-content: center;
-  margin-block-start: var(--wiki-space-6, 24px);
-  padding-inline: var(--wiki-space-5, 20px);
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-ink) 60%, transparent);
-  border-radius: var(--wiki-control-radius);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary, 99 102 241)) 12%, transparent);
-  color: var(--wiki-accent-ink);
+  gap: 12px;
+  color: inherit;
   font-weight: 700;
   text-decoration: none;
-  transition: background var(--wiki-motion-fast, .15s) var(--wiki-motion-ease, ease);
+  overflow-wrap: anywhere;
 
-  &:hover,
-  &:focus-visible {
-    background: color-mix(in srgb, rgb(var(--v-theme-primary, 99 102 241)) 20%, transparent);
-  }
+  img { max-inline-size: 72px; max-block-size: 44px; object-fit: contain; }
+}
+
+.app-error-eyebrow { margin-block-start: 32px; font-size: .875rem; font-weight: 600; }
+.app-error-message { overflow-wrap: anywhere; }
+
+.app-error-home {
+  display: flex;
+  min-block-size: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 20px;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius, 8px);
+  background: var(--wiki-surface-sunken, rgb(22 32 48));
+  color: var(--wiki-accent-ink, rgb(226 232 240));
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+
+  &:hover { background: var(--wiki-surface-raised, rgb(30 41 59)); }
 }
 
 .app-error-details {
-  inline-size: 100%;
-  margin-block-start: var(--wiki-space-6, 24px);
+  min-inline-size: 0;
   border-block-start: 1px solid var(--wiki-surface-border);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface, 255 255 255)) 64%, transparent);
-  font-size: var(--wiki-type-micro, .78rem);
-  text-align: start;
 
-  summary {
-    padding-block-start: var(--wiki-space-4, 16px);
-    cursor: pointer;
-    text-align: center;
-  }
-
+  summary { display: list-item; min-block-size: 44px; padding-block: 12px; cursor: pointer; }
   pre {
+    max-block-size: 240px;
     overflow: auto;
-    max-block-size: 220px;
-    margin-block: var(--wiki-space-3, 12px) 0;
-    margin-inline: 0;
-    padding: var(--wiki-space-3, 12px);
+    margin: 0;
+    padding: 12px;
     border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-radius-sm);
-    background: var(--wiki-surface-sunken);
+    border-radius: var(--wiki-control-radius, 8px);
+    background: var(--wiki-surface-sunken, rgb(22 32 48));
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
-
-  code {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface, 255 255 255)) 82%, transparent);
-    font-family: var(--wiki-font-mono);
-    font-size: .72rem;
-  }
+  code { font-family: var(--wiki-font-mono, monospace); font-size: .8125rem; }
 }
 
-@media (max-width: 599.98px) {
-  .app-error {
-    padding: 0;
-  }
+.app-error a:focus-visible,
+.app-error summary:focus-visible {
+  outline: 2px solid var(--wiki-focus-color, currentColor);
+  outline-offset: 3px;
+}
 
-  .app-error-content {
-    inline-size: 100%;
-    min-block-size: 100dvh;
-    padding-block:
-      calc(var(--wiki-space-6, 24px) + env(safe-area-inset-top))
-      calc(var(--wiki-space-6, 24px) + env(safe-area-inset-bottom));
-    padding-inline:
-      calc(var(--wiki-space-4, 16px) + env(safe-area-inset-left))
-      calc(var(--wiki-space-4, 16px) + env(safe-area-inset-right));
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
+@media (max-width: 699px) {
+  .workbench-state,
+  .app-error { padding: 16px; align-items: start; }
+  .workbench-state-panel,
+  .app-error-content { grid-template-columns: minmax(0, 1fr); }
+  .workbench-state-context,
+  .app-error-context {
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--wiki-surface-border);
   }
-
-  .app-error-brand {
-    inline-size: 74px;
-    block-size: 74px;
-  }
+  .workbench-state-context,
+  .workbench-state-actions,
+  .app-error-context,
+  .app-error-recovery { padding: 24px; }
 }

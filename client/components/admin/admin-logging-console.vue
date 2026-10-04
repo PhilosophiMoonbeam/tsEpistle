@@ -26,8 +26,10 @@
         <v-btn size="small" variant="outlined" :disabled="!active" @click="paused = !paused">{{ paused ? $t('admin:loggingConsole.resume') : $t('admin:loggingConsole.pause') }}</v-btn>
         <v-btn size="small" variant="text" :disabled="lines.length === 0" @click="clear">{{ $t('common:actions.clear') }}</v-btn>
         <v-btn size="small" variant="text" :disabled="!active" @click="reconnect">{{ $t('admin:loggingConsole.reconnect') }}</v-btn>
+        <v-btn v-if="!isPinned && visibleLines.length" size="small" variant="outlined" @click="isPinned = true; scrollToNewest()">{{ $t('admin:loggingConsole.followNewest', { defaultValue: 'Follow newest' }) }}</v-btn>
       </div>
     </div>
+    <p class="logging-trail-note" role="status" v-text="$t('admin:loggingConsole.retainedFilterResults', { defaultValue: '{{visible}} of {{retained}} retained records shown; level filters apply only to this browser buffer', visible: visibleLines.length, retained: lines.length })" />
     <p v-if="paused" class="logging-trail-note">
       {{ $t('admin:loggingConsole.pausedLocally', { value: dropped ? $t('admin:loggingConsole.recordsWereNotAdded', { dropped, interpolation: { escapeValue: false } }) : $t('admin:loggingConsole.connectionRemainsOpenBut'), interpolation: { escapeValue: false } }) }}
     </p>
@@ -57,12 +59,14 @@
     </div>
     <div v-else class="logging-trail-empty">
       <v-icon>mdi-pulse</v-icon>
-      <h4>{{ active ? $t('admin:loggingConsole.waitingRecord') : $t('admin:loggingConsole.liveTrailPaused') }}</h4>
+      <h4>{{ lines.length ? $t('admin:loggingConsole.noMatchingRecords', { defaultValue: 'No retained records match these levels' }) : active ? $t('admin:loggingConsole.waitingRecord') : $t('admin:loggingConsole.liveTrailPaused') }}</h4>
       <p>
         {{
-          active
-            ? $t('admin:loggingConsole.processHasNotEmitted')
-            : $t('admin:loggingConsole.openLiveTrailSection')
+          lines.length
+            ? $t('admin:loggingConsole.changeLevelFilters', { defaultValue: 'Choose another level to inspect the retained browser records.' })
+            : active
+              ? $t('admin:loggingConsole.processHasNotEmitted')
+              : $t('admin:loggingConsole.openLiveTrailSection')
         }}
       </p>
     </div>
@@ -253,10 +257,11 @@ onBeforeUnmount(disconnect)
 
 <style lang="scss">
 .logging-trail-panel {
-  padding: 26px;
-  border: 1px solid var(--logging-line);
-  border-radius: 10px;
-  background: rgb(var(--v-theme-surface));
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
 }
 .logging-trail-head {
   display: flex;
@@ -266,7 +271,7 @@ onBeforeUnmount(disconnect)
   margin-bottom: 18px;
 }
 .logging-trail-head h3 {
-  font-size: 19px;
+  font-size: 1rem;
   font-weight: 650;
 }
 .logging-trail-head p {
@@ -290,6 +295,7 @@ onBeforeUnmount(disconnect)
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
+  flex-wrap: wrap;
 }
 .logging-trail-note,
 .logging-trail-retention {
@@ -307,8 +313,8 @@ onBeforeUnmount(disconnect)
   max-height: min(58dvh, 620px);
   overflow: auto;
   border: 1px solid var(--logging-line);
-  border-radius: 8px;
-  background: color-mix(in srgb, rgb(var(--v-theme-background)) 90%, #000);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.65;
@@ -337,24 +343,15 @@ onBeforeUnmount(disconnect)
   text-transform: uppercase;
 }
 .logging-trail-output .level-error strong {
-  color: rgb(var(--v-theme-error));
+  color: var(--wiki-purpose-error-ink);
 }
 .logging-trail-output .level-warn strong {
-  color: rgb(var(--v-theme-warning));
-}
-.v-theme--light .logging-trail-output strong {
-  color: #005a88;
-}
-.v-theme--light .logging-trail-output .level-error strong {
-  color: #9b0024;
-}
-.v-theme--light .logging-trail-output .level-warn strong {
-  color: #704000;
+  color: var(--wiki-purpose-warning-ink);
 }
 .logging-trail-empty {
-  padding: 38px 20px;
-  border: 1px dashed var(--logging-line);
-  border-radius: 8px;
+  padding: 24px 16px;
+  border: 1px solid var(--logging-line);
+  border-radius: var(--wiki-control-radius);
   color: var(--logging-muted);
   text-align: center;
 }
@@ -371,7 +368,7 @@ onBeforeUnmount(disconnect)
 }
 @include until($tablet) {
   .logging-trail-panel {
-    padding: 20px;
+    padding: 16px;
   }
   .logging-trail-head,
   .logging-trail-toolbar {
@@ -383,6 +380,7 @@ onBeforeUnmount(disconnect)
   }
   .logging-trail-actions .v-btn {
     flex: 1 1 0;
+    min-height: 44px;
   }
   .logging-trail-output li {
     grid-template-columns: 1fr;

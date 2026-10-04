@@ -1,15 +1,12 @@
 <template>
   <v-container fluid class="rendering-workspace">
-    <admin-hero :title="$t('admin:rendering.title')" :description="$t('admin:rendering.authoredSourceReadingExperience')" icon="mdi-text-box-edit-outline">
+    <admin-hero :title="$t('admin:rendering.title')" :description="$t('admin:rendering.configureTransformationsBehindPages')" icon="mdi-text-box-edit-outline">
       <template #actions>
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || reviewOpen" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:rendering.reloadSavedRenderingConfiguration') }}</v-tooltip></v-btn>
         <v-btn color="primary" variant="flat" :disabled="!dirty || busy || loading || errors.length > 0" @click="openReview">{{ $t('admin:rendering.reviewChanges') }}</v-btn>
       </template>
     </admin-hero>
-    <section class="rendering-intro">
-      <div><span class="rendering-eyebrow">{{ $t('admin:rendering.publishingLayer') }}</span><h2>{{ $t('admin:rendering.giveEveryFormatClear') }}</h2><p>{{ $t('admin:rendering.configureTransformationsBehindPages') }}</p></div>
-      <dl><div><dt>{{ $t('admin:rendering.enabledDraft') }}</dt><dd>{{ saved ? enabledCount : '—' }}<small v-if="saved"> / {{ draft.length }}</small></dd></div><div><dt>{{ $t('admin:rendering.sourceFormats') }}</dt><dd>{{ saved ? formats.length : '—' }}</dd></div><div><dt>{{ $t('admin:rendering.existingPages') }}</dt><dd>{{ saved ? totalPages : '—' }}</dd></div></dl>
-    </section>
+    <dl class="rendering-summary"><div><dt>{{ $t('admin:rendering.enabledDraft') }}</dt><dd>{{ saved ? enabledCount : '—' }}<small v-if="saved"> / {{ draft.length }}</small></dd></div><div><dt>{{ $t('admin:rendering.sourceFormats') }}</dt><dd>{{ saved ? formats.length : '—' }}</dd></div><div><dt>{{ $t('admin:rendering.existingPages') }}</dt><dd>{{ saved ? totalPages : '—' }}</dd></div></dl>
     <v-alert v-if="success" type="success" variant="tonal" closable class="mb-4" @click:close="success = ''">{{ success }}</v-alert>
     <async-state v-if="loading" state="loading" :title="$t('admin:rendering.readingRenderingWorkspace')" :message="$t('admin:rendering.loadingInstalledModulesSaved')" />
     <async-state v-else-if="loadError" state="error" :title="$t('admin:rendering.renderingConfigurationUnavailable')" :message="loadError" :retry-label="$t('admin:rendering.tryAgain')" @retry="reload" />
@@ -20,10 +17,11 @@
           <button v-for="tab in tabs" :id="`rendering-tab-${tab.key}`" :key="tab.key" role="tab" :aria-controls="`rendering-panel-${tab.key}`" :aria-selected="section === tab.key" :tabindex="section === tab.key ? 0 : -1" @click="setSection(tab.key)" @keydown="tabKey($event, tab.key)">{{ tab.title }}</button>
         </div>
         <span class="rendering-draft-state" aria-live="polite">{{ dirty ? $t('admin:rendering.modulesChanged', { changesCount: changes.length, interpolation: { escapeValue: false } }) : $t('admin:rendering.matchesSavedConfiguration') }}</span>
+        <v-btn variant="text" :disabled="!dirty || busy || reviewOpen" @click="reset">{{ $t('admin:rendering.resetAllDrafts') }}</v-btn>
       </div>
       <section v-show="section === 'modules'" id="rendering-panel-modules" role="tabpanel" aria-labelledby="rendering-tab-modules" class="rendering-modules">
         <aside class="rendering-directory">
-          <div class="rendering-directory-heading"><h3>{{ $t('admin:rendering.moduleLibrary') }}</h3><span>{{ filteredModules.length }}</span></div>
+          <div class="rendering-directory-heading"><h3>{{ $t('admin:rendering.moduleLibrary') }}</h3><span>{{ filteredModules.length }} / {{ draft.length }}</span></div>
           <v-text-field v-model="query" :label="$t('admin:rendering.findModule')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable />
           <div class="rendering-directory-filters">
             <v-select v-model="family" :items="familyOptions" :label="$t('admin:rendering.moduleFamily')" variant="outlined" density="compact" hide-details />
@@ -35,7 +33,7 @@
             </button>
           </div>
           <p v-if="!filteredModules.length" class="rendering-empty">{{ $t('admin:rendering.noModulesMatchTry') }}</p>
-          <div class="rendering-directory-footer"><span>{{ $t('admin:rendering.enabledModulesCanPaused') }}</span><v-btn variant="text" size="small" :disabled="!dirty || busy || reviewOpen" @click="reset">{{ $t('admin:rendering.resetAllDrafts') }}</v-btn></div>
+          <div class="rendering-directory-footer"><span>{{ $t('admin:rendering.enabledModulesCanPaused') }}</span></div>
         </aside>
         <article v-if="current" class="rendering-module-detail">
           <header class="rendering-module-heading">
@@ -48,7 +46,7 @@
             <div><span>{{ (current.dependsOn || current.key) === 'htmlCore' ? $t('admin:rendering.pagesAcrossSourceFormats') : $t('admin:rendering.storedPagesFormat') }}</span><strong>{{ usageCount(current) }}</strong></div>
           </div>
           <v-alert v-if="current.isEnabled && !effective(current)" type="warning" variant="tonal" class="mb-5">{{ $t('admin:rendering.extensionConfiguredEnabledBut') }}</v-alert>
-          <div class="rendering-section-heading"><div><span class="rendering-eyebrow">{{ $t('admin:rendering.configuration') }}</span><h4>{{ properties.length ? $t('admin:rendering.tuneTransformation') : $t('admin:rendering.oneSwitchNoExtra') }}</h4></div><v-btn size="small" variant="text" :disabled="!moduleChanged(current.key) || busy || reviewOpen" @click="resetModule">{{ $t('admin:rendering.resetModule') }}</v-btn></div>
+          <div class="rendering-section-heading"><div><h4>{{ $t('admin:rendering.configuration') }}</h4></div><v-btn size="small" variant="text" :disabled="!moduleChanged(current.key) || busy || reviewOpen" @click="resetModule">{{ $t('admin:rendering.resetModule') }}</v-btn></div>
           <p v-if="!properties.length" class="rendering-empty">{{ $t('admin:rendering.moduleHasNoConfigurable') }}</p>
           <div v-else class="rendering-properties">
             <div v-for="[key, prop] in properties" :key="key" class="rendering-property">
@@ -65,7 +63,7 @@
         <async-state v-else state="empty" :title="$t('admin:rendering.chooseRenderingModule')" :message="$t('admin:rendering.selectInstalledParserExtension')" />
       </section>
       <section v-show="section === 'pipeline'" id="rendering-panel-pipeline" role="tabpanel" aria-labelledby="rendering-tab-pipeline" class="rendering-pipeline-panel">
-        <div class="rendering-section-heading"><div><span class="rendering-eyebrow">{{ $t('admin:rendering.followTransformation') }}</span><h3>{{ $t('admin:rendering.sourceReaderOutputOut') }}</h3><p>{{ $t('admin:rendering.effectiveConfiguredPathNot') }}</p></div><div class="rendering-segment" role="group" :aria-label="$t('admin:rendering.pipelineConfiguration')"><button :aria-pressed="planMode === 'draft'" @click="planMode = 'draft'">{{ $t('admin:rendering.draft') }}</button><button :aria-pressed="planMode === 'saved'" @click="planMode = 'saved'">{{ $t('admin:rendering.saved') }}</button></div></div>
+        <div class="rendering-section-heading"><div><h3>{{ $t('admin:rendering.pipeline') }}</h3><p>{{ $t('admin:rendering.effectiveConfiguredPathNot') }}</p></div><div class="rendering-segment" role="group" :aria-label="$t('admin:rendering.pipelineConfiguration')"><button :aria-pressed="planMode === 'draft'" @click="planMode = 'draft'">{{ $t('admin:rendering.draft') }}</button><button :aria-pressed="planMode === 'saved'" @click="planMode = 'saved'">{{ $t('admin:rendering.saved') }}</button></div></div>
         <div class="rendering-format-choices" role="group" :aria-label="$t('admin:rendering.sourceFormat')"><button v-for="value in formats" :key="value" :aria-pressed="planFormat === value" @click="setPlanFormat(value)"><span>{{ format(value) }}</span><small>{{ $t('admin:rendering.pages', { value: formatUsage(value), interpolation: { escapeValue: false } }) }}</small><v-icon icon="mdi-arrow-right" size="18" /></button></div>
         <div class="rendering-trace-layout">
           <div class="rendering-trace">
@@ -86,7 +84,7 @@
         </div>
       </section>
       <section v-show="section === 'output'" id="rendering-panel-output" role="tabpanel" aria-labelledby="rendering-tab-output" class="rendering-output-panel">
-        <div class="rendering-section-heading"><div><span class="rendering-eyebrow">{{ $t('admin:rendering.inspectResult') }}</span><h3>{{ $t('admin:rendering.seeWhatAlreadyStored') }}</h3><p>{{ $t('admin:rendering.choosePageInspectRendered') }}</p></div></div>
+        <div class="rendering-section-heading"><div><h3>{{ $t('admin:rendering.storedOutput') }}</h3><p>{{ $t('admin:rendering.choosePageInspectRendered') }}</p></div></div>
         <div class="rendering-output-picker"><v-autocomplete v-model="pageId" :items="pageOptions" :label="$t('admin:rendering.pageInspect')" :loading="pagesLoading" variant="outlined" density="comfortable" hide-details clearable :disabled="rendering || renderPending" @update:model-value="inspectOutput" /><v-btn variant="tonal" prepend-icon="mdi-refresh" :disabled="!pageId || outputLoading || rendering || renderPending" @click="inspectOutput">{{ $t('admin:rendering.reloadOutput') }}</v-btn></div>
         <v-alert v-if="pagesError" type="error" variant="tonal" class="mb-4">{{ pagesError }}<v-btn variant="text" size="small" @click="loadPages">{{ $t('admin:rendering.retryPageDirectory') }}</v-btn></v-alert>
         <v-alert v-if="renderNotice && pageId === renderNoticeFor" :type="renderFailed || renderPending ? 'warning' : 'success'" variant="tonal" class="my-4">
@@ -347,58 +345,136 @@ export default {
 }
 </script>
 <style lang="scss" scoped>
-.rendering-workspace,.rendering-review { --render-border:rgba(var(--v-theme-on-surface),.13); --render-muted:var(--wiki-text-muted); }
-.rendering-eyebrow { display:block; font-size:.65rem; font-weight:650; letter-spacing:.13em; text-transform:uppercase; color:var(--render-muted); }
-.rendering-intro { display:flex; align-items:center; justify-content:space-between; gap:2rem; padding:1.8rem 0 2rem; h2 { font-size:clamp(1.4rem,2.3vw,1.9rem); line-height:1.2; font-weight:600; letter-spacing:-.04em; margin:.6rem 0; } p { max-width:580px; font-size:.84rem; line-height:1.75; color:var(--render-muted); margin:0; } dl { display:flex; flex-shrink:0; gap:2rem; } dt { font-size:.67rem; color:var(--render-muted); } dd { margin:.5rem 0 0; font-size:1.9rem; font-weight:550; line-height:1; } small { font-size:.8rem; color:var(--render-muted); } }
-.rendering-tabs-row { display:flex; align-items:center; border-block:1px solid var(--render-border); margin-bottom:1.6rem; }
-.rendering-tabs { display:flex; gap:1rem; button { color:var(--render-muted); border:0; border-bottom:2px solid transparent; background:transparent; padding:.9rem .5rem; font-size:.8rem; &[aria-selected=true] { color:rgb(var(--v-theme-on-surface)); border-bottom-color:rgb(var(--v-theme-primary)); font-weight:650; } } }
-.rendering-error-link { border:0; background:transparent; color:inherit; text-align:left; font-size:.78rem; line-height:1.8; padding:.4rem 0; text-decoration:underline; max-width:100%; overflow-wrap:anywhere; }
-.rendering-workspace button:focus-visible { outline:2px solid rgb(var(--v-theme-on-surface)); outline-offset:2px; }
-.rendering-draft-state { margin-left:auto; color:var(--render-muted); font-size:.68rem; }
-.rendering-modules { display:grid; grid-template-columns:minmax(250px,330px) minmax(0,1fr); gap:1.7rem; align-items:start; }
-.rendering-directory { min-width:0; }
-.rendering-directory-heading { display:flex; justify-content:space-between; align-items:center; margin:.2rem 0 1rem; h3 { font-size:1rem; font-weight:600; } span { font-size:.7rem; color:var(--render-muted); } }
-.rendering-directory-filters { display:grid; grid-template-columns:1fr 1fr; gap:.6rem; margin:.75rem 0; }
-.rendering-records { display:grid; max-height:660px; overflow-y:auto; padding:2px; gap:3px; }
-.rendering-record { display:flex; align-items:center; text-align:left; gap:.7rem; padding:.85rem .6rem; border:1px solid transparent; border-radius:7px; background:transparent; color:rgb(var(--v-theme-on-surface)); width:100%; min-width:0; &:hover { background:rgba(var(--v-theme-on-surface),.035); } &.is-selected { background:rgba(var(--v-theme-primary),.08); border-color:rgba(var(--v-theme-primary),.4); } >span:first-of-type { min-width:0; flex:1; } strong { display:block; font-size:.76rem; font-weight:550; overflow-wrap:anywhere; } small { display:block; font-size:.65rem; color:var(--render-muted); margin-top:.3rem; } .rendering-record-state { font-size:.59rem; color:var(--render-muted); &.is-enabled { color:rgb(var(--v-theme-on-surface)); } } }
-.rendering-change-dot { width:5px; height:5px; border-radius:50%; background:rgb(var(--v-theme-primary)); flex-shrink:0; }
-.rendering-directory-footer { display:grid; justify-items:start; border-top:1px solid var(--render-border); margin-top:.8rem; padding:.9rem .2rem; gap:.5rem; span { font-size:.68rem; color:var(--render-muted); line-height:1.7; } }
-.rendering-module-detail { min-width:0; background:rgb(var(--v-theme-surface)); border:1px solid var(--render-border); border-radius:11px; padding:1.6rem; }
-.rendering-module-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:1.5rem; h3 { display:flex; align-items:center; gap:.7rem; font-size:1.4rem; font-weight:600; letter-spacing:-.03em; margin:.7rem 0; } p { font-size:.8rem; color:var(--render-muted); line-height:1.75; margin:0; } :deep(.v-switch) { flex:0 0 auto; max-width:230px; } :deep(.v-label) { font-size:.75rem; } }
-.rendering-module-context { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; padding:1.2rem 0; border-block:1px solid var(--render-border); margin:1.5rem 0; span { display:block; font-size:.65rem; color:var(--render-muted); margin-bottom:.5rem; } strong,button { font-size:.77rem; font-weight:550; } button { color:rgb(var(--v-theme-on-surface)); border:0; background:transparent; text-align:left; } }
-.rendering-section-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1.2rem; h3,h4 { font-size:1.15rem; font-weight:600; letter-spacing:-.025em; margin:.45rem 0; } p { margin:0; font-size:.78rem; color:var(--render-muted); line-height:1.7; } }
-.rendering-properties { display:grid; gap:1.3rem; padding:.6rem 0 1rem; max-width:740px; }
-.rendering-property { min-width:0; :deep(.v-input__details) { padding-inline:0; padding-top:.5rem; } :deep(.v-messages) { line-height:1.6; font-size:.72rem; } :deep(.v-switch .v-input__control) { min-height:38px; } }
-.rendering-property-note { display:block; font-size:.63rem; color:var(--render-muted); margin-top:.45rem; }
-.rendering-render-receipt { margin-top:.45rem; font-size:.68rem; color:var(--render-muted); overflow-wrap:anywhere; }
-.rendering-empty,.rendering-footnote { color:var(--render-muted); font-size:.74rem; line-height:1.8; margin:.8rem 0; }
-.rendering-module-issues { border-top:1px solid var(--render-border); margin-top:1rem; padding-top:.5rem; p { display:flex; align-items:flex-start; gap:.6rem; font-size:.74rem; line-height:1.7; color:var(--render-muted); margin:.7rem 0; } .is-error { color:rgb(var(--v-theme-error)); } }
-.rendering-behavior { background:rgba(var(--v-theme-on-surface),.035); border-radius:8px; padding:1rem; margin:1rem 0; p { font-size:.74rem; line-height:1.8; color:var(--render-muted); margin:.6rem 0 0; } }
-.rendering-module-footer { display:flex; align-items:center; justify-content:space-between; gap:1rem; border-top:1px solid var(--render-border); padding-top:1rem; margin-top:1rem; code { font-size:.65rem; color:var(--render-muted); overflow-wrap:anywhere; } }
-.rendering-segment { display:flex; border:1px solid var(--render-border); padding:3px; border-radius:6px; button { border:0; border-radius:4px; padding:.45rem .7rem; color:var(--render-muted); background:transparent; font-size:.73rem; white-space:nowrap; &[aria-pressed=true] { background:rgba(var(--v-theme-on-surface),.08); color:rgb(var(--v-theme-on-surface)); } } }
-.rendering-format-choices { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.8rem; margin:1.5rem 0; button { display:grid; grid-template-columns:1fr auto; gap:.6rem; padding:1rem; border:1px solid var(--render-border); border-radius:9px; background:rgb(var(--v-theme-surface)); color:rgb(var(--v-theme-on-surface)); text-align:left; &[aria-pressed=true] { border-color:rgba(var(--v-theme-primary),.6); background:rgba(var(--v-theme-primary),.05); } span { font-size:.85rem; font-weight:550; } small { grid-row:2; font-size:.67rem; color:var(--render-muted); } .v-icon { grid-column:2; grid-row:1/3; align-self:center; } } }
-.rendering-trace-layout { display:grid; grid-template-columns:minmax(0,2fr) minmax(240px,1fr); gap:1.7rem; align-items:start; }
-.rendering-trace { display:grid; gap:1.3rem; }
-.rendering-trace-bookend { display:flex; align-items:center; gap:.7rem; padding:.7rem 1rem; color:var(--render-muted); font-size:.8rem; small { margin-left:auto; font-size:.65rem; } }
-.rendering-stage { position:relative; background:rgb(var(--v-theme-surface)); border:1px solid var(--render-border); border-radius:10px; padding:1.3rem; &::before { content:''; position:absolute; height:1.3rem; width:1px; background:var(--render-border); top:-1.3rem; left:2rem; } }
-.rendering-stage-heading { display:flex; align-items:center; gap:.85rem; >div { flex:1; } h4 { font-size:1.05rem; font-weight:600; margin:.35rem 0 0; } }
-.rendering-stage-number { border:1px solid var(--render-border); border-radius:50%; display:grid; place-items:center; width:30px; height:30px; flex-shrink:0; font-size:.65rem; }
-.rendering-stage-group { margin-top:1.25rem; h5 { font-size:.69rem; font-weight:550; color:var(--render-muted); margin:0 0 .8rem; } >div { display:flex; flex-wrap:wrap; gap:.5rem; } button { border:1px solid var(--render-border); background:transparent; color:rgb(var(--v-theme-on-surface)); border-radius:5px; padding:.4rem .6rem; font-size:.69rem; text-align:left; } ol { padding-left:1.3rem; font-size:.7rem; li { padding:.3rem 0; } small { margin-left:.7rem; color:var(--render-muted); font-size:.6rem; } } }
-.rendering-stage-core { display:flex; align-items:flex-start; gap:.6rem; font-size:.72rem; color:var(--render-muted); line-height:1.7; padding:1rem 0 0; }
-.rendering-pipeline-notes { display:grid; gap:1.2rem; section { border-top:1px solid var(--render-border); padding:1rem 0; } h4 { font-size:.95rem; font-weight:600; margin:.6rem 0; } p,li { color:var(--render-muted); font-size:.74rem; line-height:1.8; } ul { padding-left:1rem; margin:.5rem 0; } li { margin-bottom:.8rem; } button:not(.v-btn) { color:inherit; border:0; background:transparent; text-align:left; text-decoration:underline; text-decoration-color:var(--render-border); text-underline-offset:3px; } }
-.rendering-no-pipeline { border:1px dashed var(--render-border); border-radius:8px; padding:1.4rem; h4 { font-size:.95rem; } p { font-size:.77rem; line-height:1.8; color:var(--render-muted); } }
-.rendering-output-picker { display:flex; align-items:center; gap:1rem; margin:1.2rem 0 1.8rem; :deep(.v-input) { min-width:0; } }
-.rendering-output-heading { display:flex; justify-content:space-between; align-items:center; gap:1.5rem; h4 { font-size:1.3rem; font-weight:600; letter-spacing:-.025em; margin:.6rem 0; overflow-wrap:anywhere; } p { font-size:.71rem; color:var(--render-muted); margin:0; overflow-wrap:anywhere; } }
-.rendering-output-stats { display:flex; flex-wrap:wrap; gap:1.5rem 2.5rem; padding:1.4rem 0; margin:1rem 0; border-block:1px solid var(--render-border); dt { color:var(--render-muted); font-size:.65rem; } dd { margin:.5rem 0 0; font-size:1.4rem; font-weight:550; } small { font-size:.7rem; } }
-.rendering-output-toolbar { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin:1.4rem 0 1rem; }
-.rendering-isolated-preview { border:1px solid var(--render-border); border-radius:9px; overflow:hidden; p { font-size:.7rem; color:var(--render-muted); line-height:1.7; margin:0; padding:.9rem 1rem; background:rgb(var(--v-theme-surface)); border-bottom:1px solid var(--render-border); } iframe { display:block; width:100%; height:600px; border:0; background:#fff; } }
-.rendering-html { margin:0; padding:1.2rem; border:1px solid var(--render-border); border-radius:9px; background:rgb(var(--v-theme-surface)); max-height:650px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.75rem; line-height:1.8; }
-.rendering-outline ol { list-style:none; padding:0; margin:1rem 0; li { display:flex; gap:.8rem; flex-wrap:wrap; align-items:baseline; padding-block:.75rem; border-bottom:1px solid var(--render-border); } span { color:var(--render-muted); font-size:.65rem; } strong { font-size:.8rem; font-weight:550; } code { font-size:.67rem; color:var(--render-muted); overflow-wrap:anywhere; } }
-.rendering-output-welcome { border:1px dashed var(--render-border); border-radius:12px; padding:3rem 2rem; text-align:center; h4 { font-size:1.15rem; font-weight:600; margin:1rem 0 .6rem; } p { color:var(--render-muted); font-size:.78rem; line-height:1.8; max-width:420px; margin:auto; } }
-.rendering-review-heading { padding:1.6rem 1.5rem 1rem; h3 { font-size:1.5rem; font-weight:600; letter-spacing:-.04em; margin:.6rem 0; } p { font-size:.8rem; line-height:1.8; color:var(--render-muted); margin:0; } }
-.rendering-change-list { display:grid; gap:1rem; max-height:330px; overflow:auto; h4 { font-size:.83rem; font-weight:600; margin:0 0 .5rem; } ul { padding-left:1rem; margin:0; font-size:.74rem; line-height:1.8; color:var(--render-muted); overflow-wrap:anywhere; } }
-.rendering-review-checks { padding-top:1rem; margin-top:1rem; border-top:1px solid var(--render-border); h4 { font-size:.83rem; } p { color:var(--render-muted); font-size:.73rem; line-height:1.8; margin:.6rem 0; } }
-.rendering-review :deep(.v-card-actions) { padding:1rem 1.5rem; border-top:1px solid var(--render-border); }
-@media(max-width:1150px) { .rendering-intro { flex-direction:column; align-items:flex-start; gap:1.3rem; } .rendering-modules { grid-template-columns:260px minmax(0,1fr); gap:1rem; } .rendering-module-heading { flex-wrap:wrap; gap:.7rem; } .rendering-module-context { grid-template-columns:1fr 1fr; } .rendering-trace-layout { grid-template-columns:minmax(0,1.6fr) minmax(220px,1fr); gap:1.2rem; } }
-@media(max-width:760px) { .rendering-modules,.rendering-trace-layout { grid-template-columns:1fr; } .rendering-records { max-height:230px; } .rendering-module-detail { padding:1.2rem; } .rendering-tabs-row { flex-wrap:wrap; } .rendering-tabs { gap:.6rem; } .rendering-draft-state { flex-basis:100%; margin:0 0 .7rem .5rem; } .rendering-intro dl { gap:1.7rem; } .rendering-intro dt { font-size:.63rem; } .rendering-intro dd { font-size:1.6rem; } .rendering-section-heading { flex-wrap:wrap; align-items:flex-start; } .rendering-format-choices { grid-template-columns:1fr 1fr; } .rendering-stage { padding:1rem; } .rendering-stage-heading { flex-wrap:wrap; } .rendering-stage-heading h4 { font-size:.95rem; } .rendering-output-picker { flex-wrap:wrap; } .rendering-output-picker :deep(.v-input) { flex-basis:100%; } .rendering-output-heading { flex-wrap:wrap; gap:1rem; } .rendering-output-toolbar { align-items:flex-start; flex-wrap:wrap; } .rendering-output-toolbar .rendering-segment { width:100%; justify-content:space-between; } .rendering-output-toolbar .rendering-segment button { padding:.5rem; font-size:.66rem; } .rendering-pipeline-notes { gap:.4rem; } }
+.rendering-workspace, .rendering-review { min-width: 0; color: rgb(var(--v-theme-on-surface)); overflow-wrap: anywhere; }
+.rendering-eyebrow { display: block; font-size: .75rem; font-weight: 600; color: var(--wiki-text-muted); }
+.rendering-summary { display: flex; flex-wrap: wrap; gap: .75rem 2rem; padding: .75rem 0; margin-bottom: 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
+.rendering-summary > div { display: flex; align-items: baseline; gap: .5rem; }
+.rendering-summary dt, .rendering-summary small { font-size: .75rem; color: var(--wiki-text-muted); }
+.rendering-summary dd { margin: 0; font-size: .875rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.rendering-tabs-row { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; border-bottom: 1px solid var(--wiki-surface-border); margin-bottom: 1rem; }
+.rendering-tabs { display: flex; flex-wrap: wrap; gap: .25rem; }
+.rendering-tabs button { min-height: 44px; color: var(--wiki-text-muted); border: 0; border-bottom: 2px solid transparent; background: transparent; padding: .65rem .75rem; font-size: .8125rem; }
+.rendering-tabs button[aria-selected=true] { color: inherit; border-bottom-color: var(--wiki-primary-ink); font-weight: 650; }
+.rendering-draft-state { margin-inline-start: auto; color: var(--wiki-text-muted); font-size: .75rem; }
+.rendering-error-link { border: 0; background: transparent; color: inherit; text-align: start; font-size: .8125rem; line-height: 1.6; min-height: 44px; text-decoration: underline; max-width: 100%; overflow-wrap: anywhere; }
+.rendering-workspace button:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
+.rendering-modules { display: grid; grid-template-columns: minmax(250px,330px) minmax(0,1fr); gap: 1rem; align-items: start; }
+.rendering-directory { min-width: 0; padding: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
+.rendering-directory-heading { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+.rendering-directory-heading h3 { font-size: 1rem; font-weight: 650; }
+.rendering-directory-heading span { font-size: .75rem; color: var(--wiki-text-muted); }
+.rendering-directory-filters { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: .5rem; margin: .75rem 0; }
+.rendering-records { display: grid; max-height: 600px; overflow-y: auto; padding: 2px; }
+.rendering-record { display: flex; align-items: center; text-align: start; gap: .5rem; padding: .75rem .5rem; min-height: 44px; border: 1px solid transparent; border-bottom-color: var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: transparent; color: inherit; width: 100%; min-width: 0; }
+.rendering-record:hover, .rendering-record.is-selected { background: var(--wiki-surface-sunken); }
+.rendering-record.is-selected { border-color: var(--wiki-primary-ink); }
+.rendering-record > span:first-of-type { min-width: 0; flex: 1; }
+.rendering-record strong { display: block; font-size: .8125rem; font-weight: 600; }
+.rendering-record small { display: block; font-size: .75rem; color: var(--wiki-text-muted); margin-top: .2rem; }
+.rendering-record-state { font-size: .75rem; color: var(--wiki-text-muted); max-width: 5rem; }
+.rendering-record-state.is-enabled { color: inherit; }
+.rendering-change-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--wiki-primary-ink); flex-shrink: 0; }
+.rendering-directory-footer { display: grid; justify-items: start; border-top: 1px solid var(--wiki-surface-border); margin-top: .75rem; padding-top: .75rem; gap: .5rem; }
+.rendering-directory-footer span { font-size: .75rem; color: var(--wiki-text-muted); line-height: 1.6; }
+.rendering-module-detail { min-width: 0; background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); padding: 1rem; }
+.rendering-module-heading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: .75rem; }
+.rendering-module-heading > div { flex: 1 1 220px; min-width: 0; }
+.rendering-module-heading h3 { display: flex; align-items: center; gap: .5rem; font-size: 1.125rem; font-weight: 650; line-height: 1.4; margin: .35rem 0; }
+.rendering-module-heading h3 .v-icon { flex-shrink: 0; }
+.rendering-module-heading p { font-size: .8125rem; color: var(--wiki-text-muted); line-height: 1.6; margin: 0; }
+.rendering-module-heading :deep(.v-switch) { max-width: 100%; }
+.rendering-module-context { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .75rem; padding: .75rem 0; border-block: 1px solid var(--wiki-surface-border); margin: 1rem 0; }
+.rendering-module-context span { display: block; font-size: .75rem; color: var(--wiki-text-muted); margin-bottom: .25rem; }
+.rendering-module-context strong, .rendering-module-context button { font-size: .8125rem; font-weight: 600; }
+.rendering-module-context button { color: var(--wiki-primary-ink); border: 0; background: transparent; text-align: start; min-height: 44px; }
+.rendering-section-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .75rem; margin-bottom: .75rem; }
+.rendering-section-heading h3, .rendering-section-heading h4 { font-size: 1rem; font-weight: 650; margin: .35rem 0; }
+.rendering-section-heading p { margin: 0; font-size: .8125rem; color: var(--wiki-text-muted); line-height: 1.6; }
+.rendering-properties { display: grid; gap: 1rem; padding: .5rem 0; max-width: 740px; }
+.rendering-property { min-width: 0; }
+.rendering-property :deep(.v-input__details) { padding-inline: 0; padding-top: .5rem; }
+.rendering-property :deep(.v-messages) { line-height: 1.6; font-size: .75rem; }
+.rendering-render-receipt { margin-top: .5rem; font-size: .75rem; color: var(--wiki-text-muted); }
+.rendering-empty, .rendering-footnote { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.6; margin: .75rem 0; }
+.rendering-module-issues { border-top: 1px solid var(--wiki-surface-border); margin-top: 1rem; padding-top: .5rem; }
+.rendering-module-issues p { display: flex; align-items: flex-start; gap: .5rem; font-size: .8125rem; line-height: 1.6; margin: .5rem 0; }
+.rendering-module-issues .v-icon { flex-shrink: 0; }
+.rendering-module-issues .is-error { color: var(--wiki-error-ink, rgb(var(--v-theme-on-surface))); }
+.rendering-behavior { background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); padding: .75rem; margin: 1rem 0; }
+.rendering-behavior p { font-size: .8125rem; line-height: 1.6; color: var(--wiki-text-muted); margin: .35rem 0 0; }
+.rendering-module-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; border-top: 1px solid var(--wiki-surface-border); padding-top: .75rem; margin-top: 1rem; }
+.rendering-module-footer code { font-size: .75rem; color: var(--wiki-text-muted); }
+.rendering-segment { display: flex; flex-wrap: wrap; border: 1px solid var(--wiki-surface-border); padding: 3px; border-radius: var(--wiki-control-radius); }
+.rendering-segment button { min-height: 44px; border: 0; border-radius: var(--wiki-control-radius); padding: .5rem .75rem; color: var(--wiki-text-muted); background: transparent; font-size: .8125rem; }
+.rendering-segment button[aria-pressed=true] { background: var(--wiki-surface-sunken); color: inherit; }
+.rendering-format-choices { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+.rendering-format-choices button { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; min-height: 44px; padding: .65rem .75rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-raised); color: inherit; text-align: start; }
+.rendering-format-choices button[aria-pressed=true] { border-color: var(--wiki-primary-ink); background: var(--wiki-surface-sunken); }
+.rendering-format-choices span { font-size: .875rem; font-weight: 600; }
+.rendering-format-choices small { font-size: .75rem; color: var(--wiki-text-muted); }
+.rendering-trace-layout { display: grid; grid-template-columns: minmax(0,2fr) minmax(240px,1fr); gap: 1rem; align-items: start; }
+.rendering-trace { display: grid; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); overflow: hidden; background: var(--wiki-surface-raised); }
+.rendering-trace-bookend { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .75rem 1rem; background: var(--wiki-surface-sunken); color: var(--wiki-text-muted); font-size: .8125rem; }
+.rendering-trace-bookend small { margin-inline-start: auto; font-size: .75rem; }
+.rendering-stage { border-block: 1px solid var(--wiki-surface-border); padding: 1rem; }
+.rendering-stage-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
+.rendering-stage-heading > div { flex: 1 1 150px; min-width: 0; }
+.rendering-stage-heading h4 { font-size: 1rem; font-weight: 650; margin: .25rem 0 0; }
+.rendering-stage-number { color: var(--wiki-text-muted); font: .75rem var(--wiki-font-mono); }
+.rendering-stage-group { margin-top: .75rem; }
+.rendering-stage-group h5 { font-size: .75rem; font-weight: 600; color: var(--wiki-text-muted); margin: 0 0 .5rem; }
+.rendering-stage-group > div { display: flex; flex-wrap: wrap; gap: .5rem; }
+.rendering-stage-group button { min-height: 44px; border: 1px solid var(--wiki-surface-border); background: transparent; color: inherit; border-radius: var(--wiki-control-radius); padding: .5rem .65rem; font-size: .8125rem; text-align: start; }
+.rendering-stage-group ol { padding-inline-start: 1.25rem; font-size: .8125rem; }
+.rendering-stage-group li { padding: .25rem 0; }
+.rendering-stage-group small { margin-inline-start: .5rem; color: var(--wiki-text-muted); font-size: .75rem; }
+.rendering-stage-core { display: flex; align-items: flex-start; gap: .5rem; font-size: .8125rem; color: var(--wiki-text-muted); line-height: 1.6; padding-top: .75rem; }
+.rendering-pipeline-notes { display: grid; gap: .75rem; }
+.rendering-pipeline-notes section { border-top: 1px solid var(--wiki-surface-border); padding: .75rem 0; }
+.rendering-pipeline-notes h4 { font-size: .875rem; font-weight: 650; margin: .35rem 0; }
+.rendering-pipeline-notes p, .rendering-pipeline-notes li { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.6; }
+.rendering-pipeline-notes ul { padding-inline-start: 1rem; }
+.rendering-pipeline-notes li { margin-bottom: .5rem; }
+.rendering-pipeline-notes button:not(.v-btn) { min-height: 44px; color: inherit; border: 0; background: transparent; text-align: start; text-decoration: underline; }
+.rendering-no-pipeline { padding: 1rem; }
+.rendering-no-pipeline h4 { font-size: 1rem; }
+.rendering-no-pipeline p { font-size: .8125rem; line-height: 1.6; color: var(--wiki-text-muted); }
+.rendering-output-picker { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; }
+.rendering-output-picker :deep(.v-input) { min-width: 0; flex: 1 1 250px; }
+.rendering-output-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .75rem; }
+.rendering-output-heading > div { min-width: 0; flex: 1 1 250px; }
+.rendering-output-heading h4 { font-size: 1.125rem; font-weight: 650; margin: .35rem 0; }
+.rendering-output-heading p { font-size: .75rem; color: var(--wiki-text-muted); margin: 0; }
+.rendering-output-stats { display: flex; flex-wrap: wrap; gap: .75rem 2rem; padding: .75rem 0; margin: 1rem 0; border-block: 1px solid var(--wiki-surface-border); }
+.rendering-output-stats dt { color: var(--wiki-text-muted); font-size: .75rem; }
+.rendering-output-stats dd { margin: .25rem 0 0; font-size: .875rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.rendering-output-stats small { font-size: .75rem; }
+.rendering-output-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; }
+.rendering-isolated-preview { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); overflow: hidden; }
+.rendering-isolated-preview p { font-size: .75rem; color: var(--wiki-text-muted); line-height: 1.6; margin: 0; padding: .75rem 1rem; background: var(--wiki-surface-sunken); border-bottom: 1px solid var(--wiki-surface-border); }
+.rendering-isolated-preview iframe { display: block; width: 100%; height: 600px; border: 0; background: #fff; }
+.rendering-html { margin: 0; padding: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-sunken); max-height: 650px; overflow: auto; white-space: pre-wrap; font: .8125rem/1.7 var(--wiki-font-mono); }
+.rendering-outline ol { list-style: none; padding: 0; margin: 1rem 0; }
+.rendering-outline li { display: flex; gap: .75rem; flex-wrap: wrap; align-items: baseline; padding-block: .75rem; border-bottom: 1px solid var(--wiki-surface-border); }
+.rendering-outline span, .rendering-outline code { color: var(--wiki-text-muted); font-size: .75rem; }
+.rendering-outline strong { font-size: .8125rem; font-weight: 600; }
+.rendering-output-welcome { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); padding: 1.5rem; background: var(--wiki-surface-sunken); }
+.rendering-output-welcome h4 { font-size: 1rem; font-weight: 650; margin: .75rem 0 .35rem; }
+.rendering-output-welcome p { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.6; margin: 0; }
+.rendering-review-heading { padding: 1rem 1rem .5rem; }
+.rendering-review-heading h3 { font-size: 1.125rem; font-weight: 650; margin: .35rem 0; line-height: 1.4; }
+.rendering-review-heading p { font-size: .8125rem; line-height: 1.6; color: var(--wiki-text-muted); margin: 0; }
+.rendering-change-list { display: grid; gap: .75rem; max-height: 330px; overflow: auto; }
+.rendering-change-list h4 { font-size: .875rem; font-weight: 650; margin: 0 0 .35rem; }
+.rendering-change-list ul { padding-inline-start: 1rem; margin: 0; font-size: .8125rem; line-height: 1.6; color: var(--wiki-text-muted); }
+.rendering-review-checks { padding-top: .75rem; margin-top: .75rem; border-top: 1px solid var(--wiki-surface-border); }
+.rendering-review-checks h4 { font-size: .875rem; }
+.rendering-review-checks p { color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.6; margin: .5rem 0; }
+.rendering-review :deep(.v-card-actions) { flex-wrap: wrap; gap: .5rem; padding: .75rem 1rem; border-top: 1px solid var(--wiki-surface-border); }
+.rendering-workspace :deep(.v-btn), .rendering-review :deep(.v-btn) { max-width: 100%; height: auto; }
+.rendering-workspace :deep(.v-btn__content), .rendering-review :deep(.v-btn__content) { white-space: normal; padding-block: .4rem; }
+@media(max-width:599px) { .rendering-workspace :deep(.v-btn), .rendering-review :deep(.v-btn) { min-height: 44px; } }
+@media(max-width:1100px) { .rendering-draft-state { flex-basis: 100%; margin: .5rem 0; } .rendering-trace-layout { grid-template-columns: 1fr; } }
+@media(max-width:840px) { .rendering-modules { grid-template-columns: 1fr; } .rendering-records { max-height: 260px; } }
+@media(max-width:599px) { .rendering-module-context, .rendering-directory-filters { grid-template-columns: 1fr; } .rendering-tabs button { padding-inline: .5rem; } .rendering-stage-group small { display: block; margin: .25rem 0; } }
 </style>

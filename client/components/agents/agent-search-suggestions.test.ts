@@ -1,7 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
-import { compileTemplate, parse } from '@vue/compiler-sfc'
+import { compileScript, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
 import { resetBody } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
@@ -11,32 +8,31 @@ import { translateEnglish } from '../../test/english-translate.mts'
 
 resetBody()
 
-const componentPath = join(process.cwd(), 'client/components/agents/agent-search-suggestions.vue')
-const source = readFileSync(componentPath, 'utf8')
-const descriptor = parse(source, { filename: componentPath }).descriptor
-if (!descriptor.template || !descriptor.scriptSetup) throw new Error('Search suggestions component is incomplete')
-const compiledTemplate = compileTemplate({
-  source: descriptor.template.content,
-  filename: componentPath,
-  id: 'agent-search-suggestions-security',
-  compilerOptions: { mode: 'function' }
+// Vuetify snapshots browser capabilities, so it must load after resetBody.
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+Bun.plugin({
+  name: 'agent-search-suggestions-real-sfc',
+  setup(builder) {
+    builder.onLoad({ filter: /agent-search-suggestions\.vue$/ }, async ({ path: filename }) => {
+      const parsed = parse(await Bun.file(filename).text(), { filename })
+      if (parsed.errors.length) throw parsed.errors[0]
+      const script = compileScript(parsed.descriptor, {
+        id: 'agent-search-suggestions-security',
+        genDefaultAs: '__component',
+        inlineTemplate: true
+      })
+      return { loader: 'ts', contents: `${script.content}\nexport default __component;` }
+    })
+  }
 })
-if (compiledTemplate.errors.length) throw new Error(`Search suggestions template failed to compile: ${compiledTemplate.errors.join(', ')}`)
-const render = new Function('Vue', compiledTemplate.code)(Vue) as Vue.RenderFunction
-const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
-const evaluate = new Function('computed', 'useId', 'defineProps', `${executableScript}\nreturn { headingId, isolatedDocument, frameHeight }`) as (
-  ...dependencies: unknown[]
-) => Record<string, unknown>
+// The test SFC loader must be installed before importing this component.
+const AgentSearchSuggestions = (await import('./agent-search-suggestions.vue')).default
 
 const renderSuggestions = async (suggestions: readonly string[]): Promise<string> => {
-  const component = Vue.defineComponent({
-    props: { suggestions: { type: Array, required: true } },
-    setup: props => evaluate(Vue.computed, Vue.useId, () => props),
-    render
-  })
-  const app = Vue.createSSRApp(component, { suggestions })
+  const app = Vue.createSSRApp(AgentSearchSuggestions, { suggestions })
+  app.use(createVuetify({ components: vuetifyComponents, ssr: true }))
   app.config.globalProperties.$t = translateEnglish
-  app.component('v-icon', Vue.defineComponent({ render: () => null }))
   return renderToString(app)
 }
 

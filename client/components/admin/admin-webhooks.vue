@@ -13,13 +13,17 @@
         <v-skeleton-loader v-if="loadState === 'loading'" type="list-item-two-line@3" />
         <v-alert v-else-if="loadState === 'error'" type="error" variant="tonal" class="mt-4">{{ $t('admin:webhooks.unableLoadEndpoints') }} <v-btn variant="text" size="small" @click="loadHooks">{{ $t('admin:webhooks.retry') }}</v-btn></v-alert>
         <div v-else-if="filteredHooks.length" class="endpoint-list">
-          <button v-for="hook in filteredHooks" :key="hook.id" type="button" class="endpoint-choice" :class="{ selected: draft.id === hook.id }" :aria-current="draft.id === hook.id ? 'true' : undefined" :disabled="webhookBusy || Boolean(revealedSecret)" @click="selectHook(hook)">
+          <button v-for="hook in pagedHooks" :key="hook.id" type="button" class="endpoint-choice" :class="{ selected: draft.id === hook.id }" :aria-current="draft.id === hook.id ? 'true' : undefined" :disabled="webhookBusy || Boolean(revealedSecret)" @click="selectHook(hook)">
             <span class="endpoint-choice-top"><strong>{{ hook.name }}</strong><v-icon size="17" :color="hook.isEnabled ? 'success' : undefined">{{ hook.isEnabled ? 'mdi-circle-small' : 'mdi-pause-circle-outline' }}</v-icon></span>
             <span class="endpoint-address">{{ endpointHost(hook.url) }}</span>
             <span class="endpoint-meta">{{ hook.isEnabled ? $t('admin:webhooks.enabled') : $t('admin:webhooks.disabled') }} · {{ hook.events.includes('*') ? $t('admin:webhooks.everyEvent') : `${$t('admin:webhooks.subscriptionsCount', { count: hook.events.length })}` }}</span>
           </button>
         </div>
         <p v-else class="directory-empty">{{ hooks.length ? $t('admin:webhooks.noEndpointsMatchThese') : $t('admin:webhooks.connectionsStartHereAdd') }}</p>
+        <template v-if="loadState === 'success'">
+          <p class="register-count" role="status" v-text="$t('admin:webhooks.loadedEndpointMatches', { defaultValue: '{{matches}} matching · {{loaded}} loaded endpoints', matches: filteredHooks.length, loaded: hooks.length })" />
+          <v-pagination v-if="filteredHooks.length > 12" v-model="endpointPage" :length="Math.ceil(filteredHooks.length / 12)" :total-visible="3" density="comfortable" :aria-label="$t('admin:webhooks.endpointPages', { defaultValue: 'Endpoint pages' })" />
+        </template>
         </div>
         <p class="directory-note">{{ $t('admin:webhooks.httpsReceiversSignedPayloads') }}</p>
       </aside>
@@ -77,13 +81,17 @@
           <v-skeleton-loader v-if="deliveryLoading && !deliveries.length" type="list-item-three-line@3" />
           <v-alert v-if="deliveryError" type="error" variant="tonal" class="mt-4">{{ $t('admin:webhooks.unableRefreshDeliveryHistory') }} <v-btn variant="text" @click="loadDeliveries">{{ $t('admin:webhooks.retry') }}</v-btn></v-alert>
           <div class="delivery-list">
-            <details v-for="delivery in filteredDeliveries" :key="delivery.id" class="delivery-record">
+            <details v-for="delivery in pagedDeliveries" :key="delivery.id" class="delivery-record">
               <summary><span><strong>{{ delivery.eventType }}</strong><small>{{ formatDate(delivery.createdAt) }}</small></span><span>{{ $t('admin:webhooks.attempts', { attempts: delivery.attempts, maxAttempts: delivery.maxAttempts, interpolation: { escapeValue: false } }) }}</span><span class="delivery-http">{{ delivery.statusCode ? $t('admin:webhooks.http', { statusCode: delivery.statusCode, interpolation: { escapeValue: false } }) : $t('admin:webhooks.noHttpResponse') }}</span><v-chip size="small" :color="stateColor(delivery.state)">{{ deliveryLabel(delivery) }}</v-chip><v-icon size="18">mdi-chevron-down</v-icon></summary>
               <div class="delivery-detail"><dl><div><dt>{{ $t('admin:webhooks.deliveryId') }}</dt><dd>{{ delivery.id }}</dd></div><div><dt>{{ $t('admin:webhooks.eventIdVersion', { eventVersion: delivery.eventVersion, interpolation: { escapeValue: false } }) }}</dt><dd>{{ delivery.eventId }}</dd></div><div><dt>{{ delivery.deliveredAt ? $t('admin:webhooks.completed') : $t('admin:webhooks.nextScheduledAttempt') }}</dt><dd>{{ formatDate(delivery.deliveredAt || (delivery.state === 'pending' ? delivery.nextRunAt : null)) }}</dd></div></dl>
               <v-alert v-if="delivery.lastError" type="error" variant="tonal" class="mb-3">{{ delivery.lastError }}</v-alert>
               <h4>{{ $t('admin:webhooks.latestResponse') }}</h4><pre>{{ delivery.responseSnippet || $t('admin:webhooks.noResponseBodyRecorded') }}</pre><p class="field-note">{{ $t('admin:webhooks.responseExcerptsLimited4') }}</p>
               <div class="webhook-actions"><v-btn v-if="delivery.state === 'failed'" variant="outlined" :loading="deliveryBusy === delivery.id" :disabled="webhookBusy || dirty || Boolean(revealedSecret)" @click="changeDelivery(delivery.id, 'retry')">{{ $t('admin:webhooks.retryDelivery') }}</v-btn><v-btn v-if="delivery.state === 'pending' || delivery.state === 'running'" variant="outlined" color="error" :disabled="webhookBusy || Boolean(revealedSecret)" @click="requestDeliveryCancel(delivery.id)">{{ $t('admin:webhooks.cancelDelivery') }}</v-btn></div></div>
             </details>
+          </div>
+          <div v-if="deliveries.length" class="register-pagination">
+            <p class="register-count" role="status" v-text="$t('admin:webhooks.loadedDeliveryMatches', { defaultValue: '{{matches}} matching · {{loaded}} loaded deliveries (latest 100 only)', matches: filteredDeliveries.length, loaded: deliveries.length })" />
+            <v-pagination v-if="filteredDeliveries.length > 20" v-model="deliveryPage" :length="Math.ceil(filteredDeliveries.length / 20)" :total-visible="3" density="comfortable" :aria-label="$t('admin:webhooks.deliveryPages', { defaultValue: 'Delivery pages' })" />
           </div>
           <div v-if="!filteredDeliveries.length && !deliveryLoading && !deliveryError" class="webhook-empty"><v-icon size="36" color="primary">mdi-transit-connection-variant</v-icon><h3>{{ deliveries.length ? $t('admin:webhooks.noMatchingDeliveries') : $t('admin:webhooks.readyFirstEvent') }}</h3><p>{{ deliveries.length ? $t('admin:webhooks.adjustEventSearchState') : $t('admin:webhooks.sendTestCheckReceiver') }}</p></div>
         </section>
@@ -142,6 +150,8 @@ export default {
       endpointQuery: '',
       directoryExpanded: false,
       endpointFilter: 'All endpoints',
+      endpointPage: 1,
+      deliveryPage: 1,
       deliveryQuery: '',
       deliveryFilter: 'All states',
       baseline: '',
@@ -177,7 +187,9 @@ export default {
   watch: {
     section () {
       this.updateLocation()
-    }
+    },
+    filteredHooks () { this.endpointPage = 1 },
+    filteredDeliveries () { this.deliveryPage = 1 }
   },
   beforeRouteLeave (): boolean | Promise<boolean> {
     if (this.webhookBusy) return false
@@ -200,6 +212,8 @@ export default {
         (this.deliveryFilter === 'In progress' && ['pending', 'running'].includes(delivery.state)) ||
         delivery.state === this.deliveryFilter.toLowerCase()))
     },
+    pagedHooks (): AdminWebhook[] { return this.filteredHooks.slice((this.endpointPage - 1) * 12, this.endpointPage * 12) },
+    pagedDeliveries (): WebhookDelivery[] { return this.filteredDeliveries.slice((this.deliveryPage - 1) * 20, this.deliveryPage * 20) },
     webhookBusy (): boolean {
       return this.testing || this.saving || this.rotating || this.deleting || Boolean(this.deliveryBusy)
     },
@@ -496,52 +510,35 @@ export default {
 </script>
 
 <style scoped>
-.webhook-admin { padding-bottom: calc(var(--wiki-footer-height) + 3rem) !important; }
+.webhook-admin { padding-bottom: calc(var(--wiki-footer-height) + 2rem) !important; min-width: 0; }
 .webhook-admin :deep(button) { scroll-margin-block: 6rem; }
-.webhook-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: clamp(1.5rem, 3vw, 3rem); align-items: start; }
-.endpoint-directory { border-right: 1px solid var(--wiki-surface-border); padding-right: 1.5rem; min-width: 0; }
-.directory-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
-.directory-heading h2 { font: 500 1.2rem var(--wiki-font-display); }
-.directory-heading h2 span { font: 400 .8rem var(--wiki-font-body); }.directory-toggle { display: none; }
-.endpoint-list { display: grid; gap: .5rem; margin-top: 1rem; }
-.endpoint-choice { background: transparent; color: inherit; display: block; text-align: left; width: 100%; padding: 1rem; border: 1px solid transparent; border-radius: var(--wiki-control-radius); transition: background .15s; }
-.endpoint-choice:hover { background: var(--wiki-surface-raised); }
-.endpoint-choice.selected { border-color: var(--wiki-surface-border); background: var(--wiki-surface-raised); box-shadow: inset 3px 0 var(--wiki-accent-ink); }
+.webhook-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+.endpoint-directory { border-inline-end: 1px solid var(--wiki-surface-border); padding-inline-end: 1rem; min-width: 0; }
+.directory-heading { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; margin-bottom: .75rem; }
+.directory-heading h2 { font: 600 1rem/1.4 var(--wiki-font-display); }.directory-heading h2 span { font: 400 .8rem var(--wiki-font-body); }.directory-toggle { display: none; }
+.endpoint-list { display: grid; gap: .25rem; margin-top: .75rem; }
+.endpoint-choice { background: transparent; color: inherit; display: block; text-align: start; width: 100%; padding: .75rem; border: 1px solid transparent; border-radius: var(--wiki-control-radius); }
+.endpoint-choice:hover { background: var(--wiki-surface-sunken); }.endpoint-choice.selected { border-color: var(--wiki-surface-border); border-inline-start: 3px solid var(--wiki-accent-ink); background: var(--wiki-surface-sunken); }
 .endpoint-choice:focus-visible, summary:focus-visible, .event-option input:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }
-.endpoint-choice-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.endpoint-choice strong { font-size: .85rem; overflow-wrap: anywhere; }
-.endpoint-address, .endpoint-meta { display: block; font-size: .75rem; margin-top: .4rem; overflow-wrap: anywhere; }
-.directory-note, .directory-empty { font-size: .75rem; line-height: 1.7; margin-top: 1.5rem; }
-.directory-note { border-top: 1px solid var(--wiki-surface-border); padding-top: 1rem; }
-.endpoint-main { min-width: 0; }
-.endpoint-heading, .deliveries-heading, .endpoint-maintenance { display: flex; justify-content: space-between; align-items: start; gap: 1rem; }
-.endpoint-heading h2, .endpoint-welcome h2 { font: 500 clamp(1.6rem, 2.5vw, 2.3rem) var(--wiki-font-display); margin-block: .5rem; overflow-wrap: anywhere; }
-.endpoint-heading p { overflow-wrap: anywhere; }
-.webhook-kicker { font-size: .7rem; text-transform: uppercase; letter-spacing: .09em; color: var(--wiki-accent-ink); }
-p { font-size: .85rem; line-height: 1.7; margin-bottom: 1rem; }
-h3 { font: 500 1.35rem var(--wiki-font-display); margin-block: .5rem .75rem; }
-h4 { font-size: .85rem; margin-bottom: .75rem; }
-.webhook-tabs { border-bottom: 1px solid var(--wiki-surface-border); margin: .75rem 0 1.5rem; }
-.webhook-panel { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); padding: clamp(1rem, 2vw, 1.75rem); background: var(--wiki-surface-raised); }
-.field-note { font-size: .75rem; margin-top: .4rem; }
-.event-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-block: 1.5rem; }
-.event-groups fieldset { border: 0; min-width: 0; }
-.event-groups legend { font-size: .8rem; font-weight: 600; margin-bottom: .75rem; }
-.event-option { display: flex; align-items: start; gap: .75rem; padding-block: .75rem; border-top: 1px solid var(--wiki-surface-border); cursor: pointer; }
-.event-option input { margin-top: .25rem; accent-color: rgb(var(--v-theme-primary)); width: 1rem; height: 1rem; flex-shrink: 0; }
-.event-option strong, .event-option small, .event-option code { display: block; }
-.event-option strong { font-size: .8rem; font-weight: 500; }.event-option small { font-size: .75rem; line-height: 1.6; margin-block: .2rem; }.event-option code { font-size: .68rem; overflow-wrap: anywhere; }
-.custom-events { padding-top: 1rem; border-top: 1px solid var(--wiki-surface-border); }.custom-events summary { font-size: .85rem; cursor: pointer; padding-bottom: 1rem; }
-.webhook-savebar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); margin-top: 1rem; position: sticky; bottom: var(--wiki-footer-height); z-index: 2; }.webhook-savebar > span { font-size: .8rem; }
-.webhook-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
-.endpoint-maintenance { margin-top: 2rem; border-top: 1px solid var(--wiki-surface-border); padding-top: 1rem; }.endpoint-maintenance h3 { font-size: 1.05rem; }.endpoint-maintenance p { font-size: .8rem; }
-.deliveries-heading { margin-bottom: 1rem; }.deliveries-heading > div:first-child { max-width: 55ch; }.deliveries-heading .webhook-actions { flex-shrink: 0; }
-.delivery-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 1rem; margin-bottom: 1rem; }
-.delivery-record { border-bottom: 1px solid var(--wiki-surface-border); }.delivery-record summary { display: grid; grid-template-columns: minmax(0, 1fr) 100px 120px auto 18px; gap: 1rem; align-items: center; cursor: pointer; padding: 1.1rem .5rem; font-size: .75rem; list-style: none; }.delivery-record summary::-webkit-details-marker { display: none; }.delivery-record summary strong { font-weight: 500; font-size: .8rem; overflow-wrap: anywhere; }.delivery-record summary small { display: block; font-size: .7rem; margin-top: .4rem; }.delivery-record[open] summary > .v-icon { transform: rotate(180deg); }
-.delivery-detail { padding: 1rem; background: var(--wiki-surface-raised); }.delivery-detail dl { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }.delivery-detail dt { font-size: .7rem; margin-bottom: .4rem; }.delivery-detail dd { margin: 0; font-size: .8rem; overflow-wrap: anywhere; }.delivery-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; max-height: 240px; overflow: auto; }
-.webhook-empty { text-align: center; padding: 3rem 1.5rem; }.webhook-empty p { max-width: 55ch; margin-inline: auto; }.endpoint-welcome { padding-block: 4rem; }.endpoint-welcome p { margin-block: 1.5rem; }
-.webhook-secret { display: block; margin-top: .75rem; overflow-wrap: anywhere; user-select: all; }
-@media(max-width: 1250px) { .webhook-workspace { grid-template-columns: 230px minmax(0, 1fr); }.endpoint-directory { padding-right: 1rem; }.deliveries-heading, .endpoint-maintenance { flex-direction: column; }.delivery-record summary { grid-template-columns: minmax(0, 1fr) auto 18px; }.delivery-record summary > span:nth-child(2), .delivery-http { display: none; } }
-@media(max-width: 900px) { .directory-toggle { display: inline-flex; }.directory-content:not(.expanded) { display: none; }.directory-heading { margin-bottom: 0; }.directory-content.expanded { margin-top: 1rem; } .webhook-workspace { grid-template-columns: 1fr; }.endpoint-directory { border-right: 0; border-bottom: 1px solid var(--wiki-surface-border); padding: 0 0 1.5rem; }.endpoint-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 280px; overflow-y: auto; }.directory-note { display: none; } }
-@media(max-width: 600px) { .event-groups, .delivery-toolbar, .delivery-detail dl { grid-template-columns: 1fr; }.webhook-savebar { position: static; flex-direction: column; align-items: stretch; }.endpoint-heading { flex-wrap: wrap; }.endpoint-list { grid-template-columns: 1fr; max-height: 220px; }.delivery-record summary { gap: .5rem; } }
+.endpoint-choice-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }.endpoint-choice strong { font-size: .875rem; overflow-wrap: anywhere; }.endpoint-address, .endpoint-meta { display: block; font-size: .8rem; margin-top: .25rem; overflow-wrap: anywhere; color: var(--wiki-text-muted); }
+.directory-note, .directory-empty, .register-count { font-size: .8rem; line-height: 1.6; margin-top: .75rem; color: var(--wiki-text-muted); }.directory-note { border-top: 1px solid var(--wiki-surface-border); padding-top: .75rem; }.register-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.endpoint-main { min-width: 0; }.endpoint-heading, .deliveries-heading, .endpoint-maintenance { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: .75rem 1rem; }.endpoint-heading > div, .deliveries-heading > div:first-child, .endpoint-maintenance > div:first-child { flex: 1 1 20rem; min-width: 0; }
+.endpoint-heading h2, .endpoint-welcome h2 { font: 600 1.25rem/1.4 var(--wiki-font-display); margin-block: .35rem; overflow-wrap: anywhere; }.endpoint-heading p { overflow-wrap: anywhere; }
+.webhook-kicker { font-size: .75rem; font-weight: 600; color: var(--wiki-text-muted); }
+p { font-size: .875rem; line-height: 1.6; margin-bottom: .75rem; }h3 { font: 600 1rem/1.4 var(--wiki-font-display); margin-block: .35rem .5rem; }h4 { font-size: .875rem; margin-bottom: .5rem; }
+.webhook-tabs { border-bottom: 1px solid var(--wiki-surface-border); margin: .75rem 0 1rem; }
+.webhook-panel { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); padding: 1.25rem; background: var(--wiki-surface-raised); min-width: 0; }
+.field-note { font-size: .8rem; margin-top: .35rem; color: var(--wiki-text-muted); }
+.event-groups { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; margin-block: 1rem; }.event-groups fieldset { border: 0; min-width: 0; }.event-groups legend { font-size: .875rem; font-weight: 600; margin-bottom: .5rem; }
+.event-option { display: flex; align-items: start; gap: .75rem; min-height: 44px; padding-block: .75rem; border-top: 1px solid var(--wiki-surface-border); cursor: pointer; }.event-option input { margin-top: .25rem; accent-color: rgb(var(--v-theme-primary)); width: 1.1rem; height: 1.1rem; flex-shrink: 0; }.event-option span { min-width: 0; }.event-option strong, .event-option small, .event-option code { display: block; }.event-option strong { font-size: .875rem; font-weight: 500; }.event-option small { font-size: .8rem; line-height: 1.6; margin-block: .2rem; color: var(--wiki-text-muted); }.event-option code { font: .75rem var(--wiki-font-mono); overflow-wrap: anywhere; }
+.custom-events { padding-top: .75rem; border-top: 1px solid var(--wiki-surface-border); }.custom-events summary { font-size: .875rem; cursor: pointer; padding-block: .5rem; }
+.webhook-savebar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: 1rem; background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); margin-top: 1rem; position: sticky; bottom: var(--wiki-footer-height); z-index: 2; }.webhook-savebar > span { font-size: .8rem; }
+.webhook-actions { display: flex; gap: .5rem; flex-wrap: wrap; min-width: 0; }.endpoint-maintenance { margin-top: 1.5rem; border-top: 1px solid var(--wiki-surface-border); padding-top: 1rem; }.endpoint-maintenance p { font-size: .8rem; }
+.deliveries-heading { margin-bottom: 1rem; }.delivery-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(10rem, 13rem); gap: .75rem; margin-bottom: 1rem; }
+.delivery-record { border-bottom: 1px solid var(--wiki-surface-border); }.delivery-record summary { display: grid; grid-template-columns: minmax(0, 1fr) 100px 120px auto 18px; gap: .75rem; align-items: center; cursor: pointer; padding: .85rem .5rem; font-size: .8rem; list-style: none; }.delivery-record summary::-webkit-details-marker { display: none; }.delivery-record summary strong { font-weight: 600; font-size: .875rem; overflow-wrap: anywhere; }.delivery-record summary small { display: block; font-size: .75rem; margin-top: .25rem; }.delivery-record[open] summary > .v-icon { transform: rotate(180deg); }
+.delivery-detail { padding: 1rem; background: var(--wiki-surface-sunken); }.delivery-detail dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; margin-bottom: 1rem; }.delivery-detail dt { font-size: .75rem; margin-bottom: .25rem; color: var(--wiki-text-muted); }.delivery-detail dd { margin: 0; font-size: .8rem; overflow-wrap: anywhere; }.delivery-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.65 var(--wiki-font-mono); max-height: 240px; overflow: auto; }
+.webhook-empty { text-align: center; padding: 2rem 1rem; }.webhook-empty p { max-width: 55ch; margin-inline: auto; }.endpoint-welcome p { margin-block: 1rem; }.webhook-secret { display: block; margin-top: .75rem; overflow-wrap: anywhere; user-select: all; }
+@media(max-width: 1200px) { .webhook-workspace { grid-template-columns: 240px minmax(0, 1fr); }.delivery-record summary { grid-template-columns: minmax(0, 1fr) auto 18px; }.delivery-record summary > span:nth-child(2), .delivery-http { grid-column: 1; font-size: .75rem; }.delivery-record summary > .v-chip { grid-column: 2; grid-row: 1; }.delivery-record summary > .v-icon { grid-column: 3; grid-row: 1; } }
+@media(max-width: 900px) { .directory-toggle { display: inline-flex; min-height: 44px; }.directory-content:not(.expanded) { display: none; }.directory-heading { margin-bottom: 0; }.directory-content.expanded { margin-top: .75rem; }.webhook-workspace { grid-template-columns: minmax(0,1fr); }.endpoint-directory { border-inline-end: 0; border-bottom: 1px solid var(--wiki-surface-border); padding: 0 0 1rem; }.endpoint-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 280px; overflow-y: auto; }.directory-note { display: none; } }
+@media(max-width: 600px) { .event-groups, .delivery-toolbar, .delivery-detail dl { grid-template-columns: minmax(0,1fr); }.webhook-savebar { position: static; align-items: stretch; }.endpoint-list { grid-template-columns: minmax(0,1fr); max-height: 240px; }.delivery-record summary { gap: .35rem .5rem; }.webhook-panel { padding: 1rem; }.webhook-admin .v-btn { min-height: 44px; height: auto; white-space: normal; max-width: 100%; }.register-pagination { justify-content: start; } }
 </style>

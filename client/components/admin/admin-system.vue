@@ -47,12 +47,7 @@
         <section class="system-main">
           <template v-if="section === 'overview'">
             <div class="system-heading">
-              <span class="system-kicker">{{ $t('admin:system.n01RunningWorkspace') }}</span>
-              <h2>
-                {{ $t('admin:system.clearView') }}
-                <br />
-                {{ $t('admin:system.wiki') }}
-              </h2>
+              <h2>{{ $t('admin:system.overview') }}</h2>
               <p>{{ $t('admin:system.localProcessViewCurrent') }}</p>
             </div>
             <div class="system-release">
@@ -93,8 +88,7 @@
           </template>
           <template v-else-if="section === 'runtime'">
             <div class="system-heading">
-              <span class="system-kicker">{{ $t('admin:system.n02ProcessDeployment') }}</span>
-              <h2>{{ $t('admin:system.knowBoundaries') }}</h2>
+              <h2>{{ $t('admin:system.runtime') }}</h2>
               <p>{{ $t('admin:system.separateProcessYouObserving') }}</p>
             </div>
             <div class="system-metrics">
@@ -211,8 +205,7 @@
           </template>
           <template v-else-if="section === 'background'">
             <div class="system-heading">
-              <span class="system-kicker">{{ $t('admin:system.n03WorkBehindScenes') }}</span>
-              <h2>{{ $t('admin:system.seeWhatMoving') }}</h2>
+              <h2>{{ $t('admin:system.backgroundWork') }}</h2>
               <p>{{ $t('admin:system.scheduledInvocationsBelongProcess') }}</p>
             </div>
             <h3 class="system-section-title">{{ $t('admin:system.processScheduler') }}</h3>
@@ -338,8 +331,7 @@
           </template>
           <template v-else>
             <div class="system-heading">
-              <span class="system-kicker">{{ $t('admin:system.n04EvidenceYouCan') }}</span>
-              <h2>{{ $t('admin:system.usefulSupportReport') }}</h2>
+              <h2>{{ $t('admin:system.supportReport') }}</h2>
               <p>{{ $t('admin:system.inspectPointTimeReport') }}</p>
             </div>
             <div class="system-section-head">
@@ -667,14 +659,16 @@ onBeforeUnmount(() => {
 
 <style lang="scss">
 .system-workspace {
-  --system-line: rgba(var(--v-theme-on-surface), 0.16);
+  --system-line: var(--wiki-surface-border);
+  min-width: 0;
+  .system-release > div, .system-metrics > div, .system-queue-counts > div { min-width: 0; overflow-wrap: anywhere; }
   .system-observed {
     display: flex;
     justify-content: space-between;
     gap: 1rem;
     flex-wrap: wrap;
     font-size: 0.78rem;
-    margin: 1.5rem 0 1.7rem;
+    margin: .75rem 0;
     span {
       display: flex;
       align-items: center;
@@ -692,9 +686,9 @@ onBeforeUnmount(() => {
   }
   .system-tabs {
     display: flex;
-    gap: 1.6rem;
+    gap: .5rem;
     border-bottom: 1px solid var(--system-line);
-    margin-bottom: 2.75rem;
+    margin-bottom: 1rem;
     overflow-x: auto;
     button {
       appearance: none;
@@ -703,7 +697,8 @@ onBeforeUnmount(() => {
       color: inherit;
       font: inherit;
       font-size: 0.87rem;
-      padding: 0.8rem 0 1rem;
+      min-height: 44px;
+      padding: .65rem .875rem;
       white-space: nowrap;
       border-bottom: 2px solid transparent;
       cursor: pointer;
@@ -718,33 +713,35 @@ onBeforeUnmount(() => {
   }
   .system-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 246px;
-    gap: 3rem;
+    grid-template-columns: minmax(0, 1fr) minmax(200px, 246px);
+    gap: 1rem;
   }
   .system-main {
     min-width: 0;
+    padding: 1rem;
+    border: 1px solid var(--system-line);
+    border-radius: var(--wiki-panel-radius);
+    background: var(--wiki-surface-raised);
   }
   .system-kicker {
     display: block;
-    font-size: 0.66rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    font-weight: 700;
-    line-height: 1.6;
+    font-size: .75rem;
+    color: var(--wiki-text-muted);
+    font-weight: 650;
+    line-height: 1.5;
   }
   .system-heading {
-    margin-bottom: 2.2rem;
+    margin-bottom: 1rem;
     h2 {
-      font-family: var(--wiki-font-display);
-      font-size: clamp(2rem, 3.3vw, 3.4rem);
-      line-height: 1.12;
-      letter-spacing: -0.025em;
-      font-weight: 500;
-      margin: 0.7rem 0 1.4rem;
+      font-family: inherit;
+      font-size: 1.25rem;
+      line-height: 1.35;
+      font-weight: 650;
+      margin: 0 0 .5rem;
     }
     p {
-      font-size: 1rem;
-      line-height: 1.8;
+      font-size: .875rem;
+      line-height: 1.6;
       max-width: 65ch;
       color: var(--wiki-text-muted);
     }
@@ -752,15 +749,15 @@ onBeforeUnmount(() => {
   .system-release {
     display: grid;
     grid-template-columns: 1.4fr 1fr;
-    gap: 2rem;
-    padding: 1.8rem 0;
+    gap: 1rem;
+    padding: 1rem 0;
     border-top: 1px solid var(--system-line);
     border-bottom: 1px solid var(--system-line);
     h3 {
-      font-family: var(--wiki-font-display);
-      font-size: 2rem;
-      font-weight: 500;
-      margin: 0.4rem 0;
+      font-family: inherit;
+      font-size: 1.5rem;
+      font-weight: 650;
+      margin: .25rem 0;
     }
     a {
       font-size: 0.85rem;
@@ -768,9 +765,9 @@ onBeforeUnmount(() => {
     }
     strong {
       display: block;
-      font-family: var(--wiki-font-display);
-      font-weight: 500;
-      font-size: 2.5rem;
+      font-family: inherit;
+      font-weight: 650;
+      font-size: 1.5rem;
       margin: 0.15rem 0;
     }
     span:not(.system-kicker),
@@ -780,13 +777,13 @@ onBeforeUnmount(() => {
   }
   .system-section-title {
     font-size: 1rem;
-    margin: 2rem 0 1rem;
+    margin: 1.25rem 0 .75rem;
   }
   .system-signals article {
     display: flex;
     gap: 1rem;
     align-items: flex-start;
-    padding: 1.3rem 0;
+    padding: 1rem 0;
     border-bottom: 1px solid var(--system-line);
     > div {
       flex: 1;
@@ -804,10 +801,10 @@ onBeforeUnmount(() => {
     }
   }
   .system-positive {
-    color: rgb(var(--v-theme-success));
+    color: var(--wiki-success-ink);
   }
   .system-warning {
-    color: rgb(var(--v-theme-warning));
+    color: var(--wiki-warning-ink);
   }
   .system-callout {
     display: flex;
@@ -815,9 +812,9 @@ onBeforeUnmount(() => {
     align-items: flex-start;
     padding: 1.25rem;
     margin: 1.5rem 0;
-    background: rgba(var(--v-theme-on-surface), 0.035);
+    background: var(--wiki-surface-sunken);
     border: 1px solid var(--system-line);
-    border-radius: 8px;
+    border-radius: var(--wiki-control-radius);
     p {
       font-size: 0.83rem;
       line-height: 1.75;
@@ -826,9 +823,9 @@ onBeforeUnmount(() => {
   }
   .system-metrics {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-    padding: 1.6rem 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    padding: 1rem 0;
     border-block: 1px solid var(--system-line);
     span,
     small {
@@ -837,10 +834,10 @@ onBeforeUnmount(() => {
     }
     strong {
       display: block;
-      font-family: var(--wiki-font-display);
-      font-size: clamp(1.8rem, 3vw, 2.5rem);
-      font-weight: 500;
-      margin: 0.3rem 0;
+      font-family: inherit;
+      font-size: 1.5rem;
+      font-weight: 650;
+      margin: .3rem 0;
     }
   }
   .system-facts {
@@ -856,7 +853,7 @@ onBeforeUnmount(() => {
     }
     dt {
       color: var(--wiki-text-muted);
-      padding-right: 1rem;
+      padding-inline-end: 1rem;
     }
     dd {
       overflow-wrap: anywhere;
@@ -865,7 +862,7 @@ onBeforeUnmount(() => {
   .system-mono,
   code,
   .system-report {
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--wiki-font-mono);
   }
   .system-note {
     font-size: 0.78rem;
@@ -876,7 +873,7 @@ onBeforeUnmount(() => {
   .system-table-wrap {
     overflow-x: auto;
     border: 1px solid var(--system-line);
-    border-radius: 8px;
+    border-radius: var(--wiki-control-radius);
     &:focus-visible {
       outline: 2px solid var(--wiki-accent-ink);
       outline-offset: 3px;
@@ -890,15 +887,15 @@ onBeforeUnmount(() => {
     }
     th,
     td {
-      text-align: left;
+      text-align: start;
       vertical-align: top;
-      padding: 1rem;
+      padding: .75rem;
       border-bottom: 1px solid var(--system-line);
     }
     thead th {
       font-size: 0.7rem;
       letter-spacing: 0.04em;
-      background: rgba(var(--v-theme-on-surface), 0.04);
+      background: var(--wiki-surface-sunken);
     }
     tbody th {
       font-weight: 500;
@@ -921,21 +918,21 @@ onBeforeUnmount(() => {
     font-size: 0.72rem;
     line-height: 1.6;
     border: 1px solid var(--system-line);
-    border-radius: 5px;
+    border-radius: var(--wiki-control-radius);
     padding: 0.1rem 0.45rem;
     text-transform: capitalize;
   }
   .system-queue-counts {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 1rem;
     border-block: 1px solid var(--system-line);
-    padding: 1.4rem 0;
+    padding: 1rem 0;
     strong {
       display: block;
-      font-family: var(--wiki-font-display);
-      font-weight: 500;
-      font-size: 2.2rem;
+      font-family: inherit;
+      font-weight: 650;
+      font-size: 1.5rem;
     }
     span {
       font-size: 0.73rem;
@@ -948,11 +945,11 @@ onBeforeUnmount(() => {
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    margin: 1.8rem 0 1rem;
+    margin: 1.25rem 0 .75rem;
     h3 {
       font-size: 1rem;
       span {
-        margin-left: 0.5rem;
+        margin-inline-start: .5rem;
         color: var(--wiki-text-muted);
       }
     }
@@ -967,7 +964,7 @@ onBeforeUnmount(() => {
   }
   .system-job-search {
     flex: 0 1 280px;
-    min-width: 210px;
+    min-width: 0;
   }
   .system-attention article {
     padding: 1.3rem 0;
@@ -989,9 +986,9 @@ onBeforeUnmount(() => {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.8rem;
-    border: 1px dashed var(--system-line);
-    padding: 1.5rem;
-    border-radius: 8px;
+    border: 1px solid var(--system-line);
+    padding: 1rem;
+    border-radius: var(--wiki-panel-radius);
     h4 {
       font-size: 1rem;
     }
@@ -1033,11 +1030,11 @@ onBeforeUnmount(() => {
       overflow-wrap: anywhere;
     }
     ul {
-      padding-left: 1.2rem;
+      padding-inline-start: 1.2rem;
     }
   }
   .system-report-controls {
-    margin: 2rem 0;
+    margin: 1rem 0;
     h3 {
       font-size: 1rem;
     }
@@ -1062,9 +1059,9 @@ onBeforeUnmount(() => {
     overflow: auto;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    background: rgba(var(--v-theme-on-surface), 0.035);
+    background: var(--wiki-surface-sunken);
     padding: 1rem;
-    border-radius: 6px;
+    border-radius: var(--wiki-control-radius);
     margin-top: 1rem;
     &:focus-visible {
       outline: 2px solid var(--wiki-accent-ink);
@@ -1073,25 +1070,31 @@ onBeforeUnmount(() => {
   }
   .system-aside {
     min-width: 0;
+    align-self: start;
+    padding: 1rem;
+    border: 1px solid var(--system-line);
+    border-radius: var(--wiki-panel-radius);
+    background: var(--wiki-surface-raised);
     dl {
       display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 1.15rem;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: .75rem;
       font-size: 0.76rem;
       border-block: 1px solid var(--system-line);
-      padding: 1.8rem 0;
-      margin: 1.4rem 0;
+      padding: 1rem 0;
+      margin: .75rem 0;
     }
     dt {
       color: var(--wiki-text-muted);
     }
     dd {
       margin: 0;
-      text-align: right;
+      text-align: end;
       font-weight: 600;
+      overflow-wrap: anywhere;
     }
     > div {
-      padding: 1.5rem 0;
+      padding: 1rem 0;
       border-bottom: 1px solid var(--system-line);
     }
     h3 {
@@ -1110,7 +1113,8 @@ onBeforeUnmount(() => {
       font-size: 0.8rem;
       color: inherit;
       text-decoration: none;
-      padding: 0.65rem 0;
+      min-height: 44px;
+      padding: .65rem 0;
       &:hover {
         text-decoration: underline;
       }
@@ -1134,11 +1138,11 @@ onBeforeUnmount(() => {
   }
   @media (max-width: 600px) {
     .system-layout {
-      gap: 2rem;
+      gap: 1rem;
     }
     .system-tabs {
-      gap: 1.3rem;
-      margin-bottom: 2rem;
+      gap: .25rem;
+      margin-bottom: 1rem;
     }
     .system-release {
       grid-template-columns: 1fr;
@@ -1158,7 +1162,7 @@ onBeforeUnmount(() => {
       }
     }
     .system-queue-counts {
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .system-aside {
       grid-template-columns: 1fr;
@@ -1168,7 +1172,7 @@ onBeforeUnmount(() => {
       gap: 0.7rem;
       flex-wrap: wrap;
       .v-btn {
-        margin-left: 2.2rem;
+        margin-inline-start: 2.2rem;
       }
     }
     .system-section-head .system-job-search {
@@ -1177,9 +1181,8 @@ onBeforeUnmount(() => {
     .system-observed {
       font-size: 0.73rem;
     }
-    .system-heading h2 br {
-      display: none;
-    }
+    .system-metrics { grid-template-columns: 1fr; }
+    .system-actions .v-btn, .system-signals .v-btn { min-height: 44px; }
   }
 }
 </style>

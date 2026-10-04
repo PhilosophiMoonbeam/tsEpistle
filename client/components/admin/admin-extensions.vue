@@ -7,24 +7,24 @@ v-container.extensions-workspace(fluid)
     icon='mdi-puzzle-plus-outline'
     heading-id='extensions-title'
   )
-    template(#extra)
-      dl.extensions-heading-facts
-        div
-          dt {{ $t(`admin:extensions.bundled`) }}
-          dd.extensions-stat {{ workspace?.extensions.length ?? 0 }}
-        div
-          dt {{ $t(`admin:extensions.usableNow`) }}
-          dd.extensions-stat {{ usableCount }}
-        div
-          dt {{ $t(`admin:extensions.observed`) }}
-          dd: time(:datetime='workspace?.observedAt') {{ workspace ? dateTime(workspace.observedAt) : '—' }}
-      p.extensions-boundary
-        v-icon(icon='mdi-shield-lock-outline' size='16' aria-hidden='true')
-        span {{ $t(`admin:extensions.availabilityCheckedProcessInstallation`) }}
     template(#actions)
       v-btn(variant='text' prepend-icon='mdi-refresh' :loading='loading' :disabled='loading' @click='refresh')
         | {{ $t('admin:shell.reload') }}
         v-tooltip(activator='parent' location='bottom') {{ $t(`admin:extensions.reloadExtensionObservations`) }}
+  .extensions-summary
+    dl.extensions-heading-facts
+      div
+        dt {{ $t(`admin:extensions.bundled`) }}
+        dd {{ workspace?.extensions.length ?? '—' }}
+      div
+        dt {{ $t(`admin:extensions.usableNow`) }}
+        dd {{ workspace ? usableCount : '—' }}
+      div
+        dt {{ $t(`admin:extensions.observed`) }}
+        dd: time(:datetime='workspace?.observedAt') {{ workspace ? dateTime(workspace.observedAt) : '—' }}
+    p.extensions-boundary
+      v-icon(icon='mdi-shield-lock-outline' size='16' aria-hidden='true')
+      span {{ $t(`admin:extensions.availabilityCheckedProcessInstallation`) }}
   async-state(v-if='loading && !workspace' state='loading' :title='$t(`admin:extensions.readingDeployedExtensionLibrary`)' :message='$t(`admin:extensions.checkingBundledDefinitionsTheir`)')
   async-state(v-else-if='error && !workspace' state='error' :title='$t(`admin:extensions.extensionObservationsCouldNot2`)' :message='error' :retry-label='$t(`admin:extensions.tryAgain`)' @retry='refresh')
   template(v-else-if='workspace && workspace.extensions.length')
@@ -35,7 +35,6 @@ v-container.extensions-workspace(fluid)
       aside.extensions-library-nav
         .extensions-library-heading
           div
-            span.extensions-kicker {{ $t(`admin:extensions.deploymentObservations`) }}
             h2#extensions-library-title {{ $t(`admin:extensions.library`) }}
           span {{ $t(`admin:extensions.shown`, { filteredExtensionsCount: filteredExtensions.length, interpolation: { escapeValue: false } }) }}
         v-text-field(
@@ -43,7 +42,7 @@ v-container.extensions-workspace(fluid)
           :label='$t(`admin:extensions.searchExtensions`)'
           prepend-inner-icon='mdi-magnify'
           variant='outlined'
-          density='comfortable'
+          density='compact'
           clearable
           hide-details
         )
@@ -52,7 +51,7 @@ v-container.extensions-workspace(fluid)
           :items='statusFilters'
           :label='$t(`admin:extensions.observedState`)'
           variant='outlined'
-          density='comfortable'
+          density='compact'
           hide-details
         )
         p.extensions-filter-note {{ $t(`admin:extensions.searchMatchesTitlePurpose`) }}
@@ -84,18 +83,8 @@ v-container.extensions-workspace(fluid)
           h3 {{ $t(`admin:extensions.observedProcessEvidence`) }}
           p {{ selectedExtension.observation.evidence }}
           time(:datetime='selectedExtension.observation.checkedAt') {{ $t(`admin:extensions.checked`, { checkedAt: dateTime(selectedExtension.observation.checkedAt), interpolation: { escapeValue: false } }) }}
-        section.extensions-installation
-          span.extensions-section-number 01
-          div
-            h3 {{ $t(`admin:extensions.installationBoundarySetup`) }}
-            p {{ selectedExtension.installation.detail }}
-            dl
-              div
-                dt {{ $t(`admin:extensions.owned`) }}
-                dd {{ boundaryLabels[selectedExtension.installation.boundary] }}
         section.extensions-grid
           section
-            span.extensions-section-number 02
             h3 {{ $t(`admin:extensions.capabilitiesConfiguration`) }}
             ul.extensions-fact-list
               li(v-for='capability in selectedExtension.capabilities' :key='capability.title')
@@ -103,18 +92,22 @@ v-container.extensions-workspace(fluid)
                 p {{ capability.detail }}
                 v-btn(v-if='capability.configuration' :to='linkTarget(capability.configuration)' variant='text' color='primary' size='small' append-icon='mdi-arrow-right') {{ capability.configuration.label }}
           section
-            span.extensions-section-number 03
             h3 {{ $t(`admin:extensions.dependencies`) }}
             ul.extensions-fact-list
               li(v-for='dependency in selectedExtension.dependencies' :key='dependency.title')
                 strong {{ dependency.title }}
                 p {{ dependency.detail }}
+        section.extensions-installation
+          h3 {{ $t(`admin:extensions.installationBoundarySetup`) }}
+          p {{ selectedExtension.installation.detail }}
+          dl
+            div
+              dt {{ $t(`admin:extensions.owned`) }}
+              dd {{ boundaryLabels[selectedExtension.installation.boundary] }}
         section.extensions-recovery
-          span.extensions-section-number 04
-          div
-            h3 {{ $t(`admin:extensions.ifToolMissing`) }}
-            p {{ selectedExtension.installation.recovery }}
-            p.extensions-recovery-note {{ $t(`admin:extensions.afterUpdatingApplicationImage`) }}
+          h3 {{ $t(`admin:extensions.ifToolMissing`) }}
+          p {{ selectedExtension.installation.recovery }}
+          p.extensions-recovery-note {{ $t(`admin:extensions.afterUpdatingApplicationImage`) }}
       v-alert(v-else-if='requestedExtensionIsFilteredOut' type='info' variant='outlined' icon='mdi-filter-variant') {{ $t(`admin:extensions.selectedExtensionOutsideCurrent`) }}
       v-alert(v-else-if='requestedExtensionIsUnavailable' type='warning' variant='outlined' icon='mdi-alert-circle-outline') {{ $t(`admin:extensions.selectedExtensionNotReported`) }}
       v-alert(v-else type='info' variant='outlined' icon='mdi-puzzle-outline') {{ $t(`admin:extensions.selectExtensionInspectDeployment`) }}

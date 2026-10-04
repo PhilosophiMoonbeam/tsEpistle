@@ -1,5 +1,8 @@
 <template lang="pug">
   div.comments(v-intersect.once='onIntersect')
+    header.comments-heading
+      h2 {{ $t('common:comments.title') }}
+      span.comments-count(v-if='hasLoadedOnce') {{ comments.length }}
     v-alert.mb-4(v-if='availability && (availability.closed || !availability.enabled)', type='info', variant='tonal') {{ availability.closed ? $t('common:comments.closed') : $t('common:comments.unavailable') }}
     v-alert.mb-4(v-if='readinessBlocked', type='warning', variant='tonal', role='status', aria-live='polite')
       .d-flex.align-center.ga-2
@@ -14,6 +17,7 @@
       novalidate
       @submit.prevent='postComment'
     )
+      h3.comments-composer-title {{ replyTo > 0 ? $t('common:comments.replyTo', { name: replyAuthor, interpolation: { escapeValue: false } }) : $t('common:comments.postComment') }}
       .comments-replying.d-flex.align-center.mb-3(v-if='replyTo > 0')
         v-icon.mr-2(size='18' aria-hidden='true') mdi-reply
         span.text-body-small
@@ -26,7 +30,9 @@
       v-textarea#discussion-new.comments-composer-field(
         ref='newCommentField'
         variant="outlined"
+        :label='$t(`common:comments.fieldContent`)'
         :placeholder='$t(`common:comments.newPlaceholder`)'
+        persistent-placeholder
         auto-grow
         density="compact"
         rows='3'
@@ -70,7 +76,7 @@
             variant="outlined"
             color="primary"
             bg-color='surface'
-            :placeholder='$t(`common:comments.fieldName`)'
+            :label='$t(`common:comments.fieldName`)'
             hide-details
             density="compact"
             autocomplete='name'
@@ -85,7 +91,7 @@
             variant="outlined"
             color="primary"
             bg-color='surface'
-            :placeholder='$t(`common:comments.fieldEmail`)'
+            :label='$t(`common:comments.fieldEmail`)'
             hide-details
             type='email'
             density="compact"
@@ -114,36 +120,36 @@
           :disabled='isPosting || !commentReady'
         )
           span.text-none {{$t('common:comments.postComment')}}
+    v-alert.mb-3(v-if='fetchError && !readinessBlocked && comments.length > 0', type='error', variant='tonal', role='alert')
+      .d-flex.align-center.ga-2
+        span {{ fetchError }}
+        v-btn(variant='text', prepend-icon='mdi-refresh', :loading='isLoading', @click='retryFetch') {{ $t('common:actions.refresh') }}
     async-state.comments-loading(
       v-if='isLoading && (!hasLoadedOnce || comments.length === 0)'
       state='loading'
       :title='$t(`common:comments.loading`)'
     )
     async-state(
-      v-else-if='fetchError && !readinessBlocked'
+      v-else-if='fetchError && !readinessBlocked && comments.length === 0'
       state='error'
       :title='$t(`common:error.unexpected`)'
       :message='fetchError'
       :retry-label='$t(`common:actions.refresh`)'
       @retry='retryFetch'
     )
-    v-timeline.comments-thread(
-      density="compact"
+    section.comments-thread(
       v-else-if='comments.length > 0'
       :aria-label='$t(`common:comments.title`)'
     )
-      v-timeline-item.comments-post(
+      .comments-thread-status(role='status' aria-live='polite')
+        span {{ batchStart + 1 }}–{{ batchStart + visibleComments.length }} / {{ orderedComments.length }}
+        span {{ $t('common:comments.loadedDiscussion') }}
+      .comments-post(
+        v-for='cm of visibleComments'
         :class='{ "comments-post--reply": cm.replyTo > 0 }'
-        dot-color="primary"
-        size="large"
-        v-for='cm of orderedComments'
         :key='`comment-` + cm.id'
         :id='`comment-post-id-` + cm.id'
-        )
-        template(v-slot:icon)
-          v-avatar(color='primary', aria-hidden='true')
-            //- v-img(src='http://i.pravatar.cc/64')
-            span.text-on-primary.text-headline-small {{cm.initials}}
+      )
         v-card.comments-post-card(
           variant='flat'
           tag='article'
@@ -179,10 +185,14 @@
               ): v-icon(size="small") mdi-delete
             .comments-post-name.text-body-small(:id='`comment-author-${cm.id}`'): strong {{cm.authorName}}
             .comments-post-date.text-label-small {{ $helpers.formatMoment(cm.createdAt, 'from') }} #[em(v-if='cm.createdAt !== cm.updatedAt') - {{$t('common:comments.modified', { reldate: $helpers.formatMoment(cm.updatedAt, 'from') })}}]
+            button.comments-parent-link(v-if='cm.replyTo > 0', type='button', @click='openParentComment(cm.replyTo)')
+              v-icon(size='16' aria-hidden='true') mdi-subdirectory-arrow-right
+              span {{ $t('common:comments.replyTo', { name: commentAuthor(cm.replyTo), interpolation: { escapeValue: false } }) }}
             .comments-post-content.mt-3(v-if='commentEditId !== cm.id', v-html='cm.render')
             form.comments-post-editcontent.mt-3(v-else, novalidate, @submit.prevent='updateComment')
               v-textarea(
                 variant="outlined"
+                :label='$t(`common:comments.updateComment`)'
                 auto-grow
                 density="compact"
                 rows='3'
@@ -214,6 +224,10 @@
                   :disabled='isBusy || !managementReady'
                 )
                   span.text-none {{$t('common:comments.updateComment')}}
+      nav.comments-batches(v-if='orderedComments.length > commentBatchSize', :aria-label='$t(`common:comments.loadedDiscussionBatches`)')
+        v-btn(variant='outlined', prepend-icon='mdi-chevron-left', :disabled='batchStart === 0 || isBusy || commentEditId > 0', @click='changeCommentBatch(-1)') {{ $t('common:comments.previousComments') }}
+        span {{ Math.floor(batchStart / commentBatchSize) + 1 }} / {{ Math.ceil(orderedComments.length / commentBatchSize) }}
+        v-btn(variant='outlined', append-icon='mdi-chevron-right', :disabled='batchStart + visibleComments.length >= orderedComments.length || isBusy || commentEditId > 0', @click='changeCommentBatch(1)') {{ $t('common:comments.nextComments') }}
     async-state.comments-empty(
       v-else-if='permissions.write && availability?.canPost'
       state='empty'
@@ -354,6 +368,8 @@ export default defineComponent({
       composerRevision: 0,
       uncertainCreate: false,
       comments: [] as CommentWithInitials[],
+      commentBatchSize: 40,
+      commentBatchOffset: 0,
       guestName: '',
       guestEmail: '',
       commentToDelete: null as CommentWithInitials | null,
@@ -424,13 +440,36 @@ export default defineComponent({
       return candidate ? `mention-option-${candidate.id}` : undefined
     },
     orderedComments(): CommentWithInitials[] {
-      const roots: CommentWithInitials[] = []
       const replies = new Map<number, CommentWithInitials[]>()
+      const ids = new Set(this.comments.map(comment => comment.id))
       for (const comment of this.comments) {
-        if (comment.replyTo === 0) roots.push(comment)
-        else replies.set(comment.replyTo, [...(replies.get(comment.replyTo) ?? []), comment])
+        const siblings = replies.get(comment.replyTo)
+        if (siblings) siblings.push(comment)
+        else replies.set(comment.replyTo, [comment])
       }
-      return roots.flatMap(root => [root, ...(replies.get(root.id) ?? [])])
+      const ordered: CommentWithInitials[] = []
+      const visited = new Set<number>()
+      const append = (root: CommentWithInitials): void => {
+        const pending = [root]
+        while (pending.length > 0) {
+          const comment = pending.pop()!
+          if (visited.has(comment.id)) continue
+          visited.add(comment.id)
+          ordered.push(comment)
+          const children = replies.get(comment.id) ?? []
+          for (let index = children.length - 1; index >= 0; index -= 1) pending.push(children[index]!)
+        }
+      }
+      this.comments.filter(comment => comment.replyTo === 0 || !ids.has(comment.replyTo)).forEach(append)
+      this.comments.forEach(append)
+      return ordered
+    },
+    batchStart(): number {
+      const lastBatch = Math.max(0, Math.ceil(this.orderedComments.length / this.commentBatchSize) - 1)
+      return Math.min(this.commentBatchOffset, lastBatch) * this.commentBatchSize
+    },
+    visibleComments(): CommentWithInitials[] {
+      return this.orderedComments.slice(this.batchStart, this.batchStart + this.commentBatchSize)
     }
   },
   watch: {
@@ -493,6 +532,39 @@ export default defineComponent({
     wikiStore.stopLoading('comments-delete')
   },
   methods: {
+    revealComment (id: number): void {
+      const index = this.orderedComments.findIndex(comment => comment.id === id)
+      if (index >= 0) this.commentBatchOffset = Math.floor(index / this.commentBatchSize)
+    },
+    commentAuthor (id: number): string {
+      return this.comments.find(comment => comment.id === id)?.authorName ?? `#${id}`
+    },
+    openParentComment (id: number): void {
+      if (this.commentEditId > 0 || this.isBusy) return
+      const context = this.captureContext()
+      this.revealComment(id)
+      this.$nextTick(() => {
+        if (!this.isCurrentContext(context)) return
+        const target = this.$el.querySelector(`#comment-post-id-${id}`)
+        if (!target) return
+        void this.goTo(target, this.scrollOptions(250))
+        target.setAttribute('tabindex', '-1')
+        target.focus({ preventScroll: true })
+      })
+    },
+    changeCommentBatch (direction: number): void {
+      if (this.isBusy || this.commentEditId > 0) return
+      const context = this.captureContext()
+      this.commentBatchOffset = Math.max(0, Math.floor(this.batchStart / this.commentBatchSize) + direction)
+      this.$nextTick(() => {
+        if (!this.isCurrentContext(context)) return
+        const thread = this.$el.querySelector('.comments-thread')
+        if (!thread) return
+        void this.goTo(thread, this.scrollOptions(250))
+        thread.setAttribute('tabindex', '-1')
+        thread.focus({ preventScroll: true })
+      })
+    },
     rotateContext (value: string): void {
       const pageId = this.pageId
       const ownerId = this.ownerId
@@ -529,6 +601,7 @@ export default defineComponent({
       this.authorityErrorKind = null
       this.availability = null
       this.comments = []
+      this.commentBatchOffset = 0
       this.isLoading = false
       this.hasLoadedOnce = false
       this.fetchError = ''
@@ -728,10 +801,16 @@ export default defineComponent({
     },
     focusRequestedComment (expectedContext?: CommentContext): void {
       const context = expectedContext ?? this.captureContext()
+      if (this.commentEditId > 0) {
+        this.revealComment(this.commentEditId)
+        return
+      }
       const anchor = window.location.hash
       if (!/^#comment-post-id-[1-9]\d*$/.test(anchor)) return
+      this.revealComment(Number(anchor.slice('#comment-post-id-'.length)))
+      const batchOffset = this.commentBatchOffset
       this.$nextTick(() => {
-        if (!this.isCurrentContext(context)) return
+        if (!this.isCurrentContext(context) || batchOffset !== this.commentBatchOffset) return
         const target = document.querySelector<HTMLElement>(anchor)
         if (target) {
           void this.goTo(anchor, this.scrollOptions(250))
@@ -1006,6 +1085,7 @@ export default defineComponent({
         const refreshed = await this.fetch(false)
         if (!this.isCurrentContext(context) || generation !== this.postGeneration || !refreshed || !cleared) return
         if (!this.comments.some(comment => comment.id === response.id)) return
+        this.revealComment(response.id)
         this.$nextTick(() => {
           if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
           void this.goTo(`#comment-post-id-${response.id}`, this.scrollOptions())
@@ -1189,303 +1269,129 @@ export default defineComponent({
 <style lang="scss">
 .comments {
   min-width: 0;
+  color: rgb(var(--v-theme-on-surface));
 }
-
+.comments-heading,
+.comments-thread-status,
+.comments-batches {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-3);
+}
+.comments-heading {
+  margin-bottom: var(--wiki-space-4);
+  padding-bottom: var(--wiki-space-3);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  h2 { margin: 0; font-size: 1.125rem; font-weight: 650; }
+}
+.comments-count,
+.comments-thread-status,
+.comments-post-date,
+.comments-format,
+.comments-posting-as {
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+}
 .comments-composer {
   padding: var(--wiki-space-4);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--wiki-accent-spectral) 5%, transparent), transparent 55%),
-    var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
-
-  .v-field {
-    border-radius: var(--wiki-control-radius);
-    background: var(--wiki-surface-sunken);
-  }
+  background: var(--wiki-surface-raised);
+  .v-field { border-radius: var(--wiki-control-radius); }
 }
-
-.comments-composer-field textarea {
-  line-height: var(--wiki-leading-body);
-}
+.comments-composer-title { margin: 0 0 var(--wiki-space-3); font-size: .9375rem; font-weight: 650; }
+.comments-composer-field textarea { line-height: var(--wiki-leading-body); }
 .comments-replying {
   padding: var(--wiki-space-2) var(--wiki-space-3);
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 30%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
-  background: color-mix(in srgb, var(--wiki-accent-warm) 7%, var(--wiki-surface-raised));
+  border-inline-start: 3px solid var(--wiki-focus-color);
+  background: var(--wiki-surface-sunken);
 }
-
 .comments-mentions {
   max-height: 16rem;
   overflow: auto;
   margin-top: var(--wiki-space-2);
-  border-color: var(--wiki-surface-border-strong) !important;
   background: var(--wiki-surface-raised);
 }
-
-.comments-post--reply .v-timeline-item__body {
-  margin-inline-start: var(--wiki-space-6);
-}
-
-.comment-mention {
-  padding: .08em .34em;
-  border-radius: var(--wiki-radius-xs);
-  background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent);
-  color: var(--wiki-primary-ink);
-  font-weight: 650;
-}
-
-
-.comments-guest-fields {
-  gap: var(--wiki-space-2);
-
-  .v-col {
-    min-width: 0;
-  }
-}
-
-.comments-actions {
-  flex-wrap: wrap;
-  gap: var(--wiki-space-3);
-
-  .v-btn {
-    border-radius: var(--wiki-control-radius);
-    font-weight: 650;
-    text-transform: none;
-  }
-}
-
-.comments-format,
-.comments-posting-as {
-  color: var(--wiki-text-muted);
-}
-
+.comments-guest-fields .v-col { min-width: 0; }
+.comments-actions { flex-wrap: wrap; gap: var(--wiki-space-3); }
+.comments .v-btn { border-radius: var(--wiki-control-radius); text-transform: none; letter-spacing: normal; }
 .comments-loading,
-.comments-empty {
-  margin-top: var(--wiki-space-4);
-}
-
+.comments-empty,
+.comments-thread { margin-top: var(--wiki-space-4); }
 .comments-thread {
-  margin-top: var(--wiki-space-4);
-
-  .v-timeline-divider__dot {
-    border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 28%, transparent);
-    box-shadow: var(--wiki-shadow-xs);
-  }
-
-  .v-timeline-divider__inner-dot {
-    background: var(--wiki-accent-warm) !important;
-  }
-
-  .v-timeline-item__body {
-    min-width: 0;
-  }
-}
-
-.comments-post {
-  position: relative;
-
-  &:hover,
-  &:focus-within {
-    .comments-post-actions {
-      opacity: 1;
-    }
-
-    .comments-post-card {
-      border-color: var(--wiki-surface-border-strong);
-      box-shadow: var(--wiki-shadow-sm);
-    }
-  }
-
-  &-card {
-    overflow: hidden;
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius) !important;
-    background: var(--wiki-surface-raised);
-    box-shadow: var(--wiki-shadow-xs);
-    transition:
-      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-      box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
-
-    > .v-card-text {
-      padding: var(--wiki-space-4);
-    }
-  }
-
-  &-actions {
-    position: absolute;
-    z-index: 1;
-    inset-block-start: var(--wiki-space-3);
-    inset-inline-end: var(--wiki-space-3);
-    display: flex;
-    gap: var(--wiki-space-1);
-    padding: var(--wiki-space-1);
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-control-radius);
-    background: var(--wiki-surface-raised);
-    box-shadow: var(--wiki-shadow-xs);
-    transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
-
-    .v-btn {
-      min-width: var(--wiki-control-height);
-      min-height: var(--wiki-control-height);
-      color: var(--wiki-primary-ink);
-    }
-  }
-
-  &-name {
-    max-width: calc(100% - 7rem);
-    color: rgb(var(--v-theme-on-surface));
-    font-size: .875rem !important;
-  }
-
-  &-date {
-    margin-top: var(--wiki-space-1);
-    color: var(--wiki-text-muted);
-  }
-
-  &-content {
-    min-width: 0;
-    overflow-wrap: anywhere;
-    color: rgb(var(--v-theme-on-surface));
-    line-height: var(--wiki-leading-body);
-
-    > p:first-child {
-      padding-top: 0;
-    }
-
-    p {
-      margin-bottom: 0;
-      padding-top: var(--wiki-space-4);
-    }
-
-    a {
-      color: var(--wiki-primary-ink);
-      text-underline-offset: var(--wiki-space-1);
-    }
-
-    img {
-      max-width: 100%;
-      border-radius: var(--wiki-control-radius);
-    }
-
-    code {
-      border-radius: var(--wiki-radius-xs);
-      background: color-mix(in srgb, var(--wiki-accent-spectral) 10%, transparent);
-      box-shadow: none;
-    }
-
-    pre {
-      max-width: 100%;
-      overflow: auto;
-      margin-top: var(--wiki-space-4);
-    }
-
-    pre > code {
-      display: block;
-      width: max-content;
-      min-width: 100%;
-      margin-top: 0;
-      padding: var(--wiki-space-4);
-      border: 1px solid var(--wiki-surface-border);
-      border-radius: var(--wiki-control-radius);
-      background: var(--wiki-surface-sunken);
-      color: rgb(var(--v-theme-on-surface));
-      font-family: var(--wiki-font-mono);
-      font-size: .85rem;
-      font-weight: 400;
-    }
-  }
-}
-
-.comments-post-editcontent {
-  padding-top: var(--wiki-space-2);
-  border-top: 1px solid var(--wiki-surface-border);
-}
-
-.comments-delete-dialog {
-  overflow: hidden;
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius) !important;
+  border-radius: var(--wiki-panel-radius);
+  overflow: hidden;
   background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-lg);
 }
-
-.comments-delete-header {
-  border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 22%, transparent);
-  background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, var(--wiki-surface-raised));
-  color: rgb(var(--v-theme-on-surface));
+.comments-thread-status,
+.comments-batches { padding: var(--wiki-space-3) var(--wiki-space-4); background: var(--wiki-surface-sunken); }
+.comments-post { min-width: 0; border-top: 1px solid var(--wiki-surface-border); }
+.comments-post--reply { border-inline-start: 3px solid var(--wiki-surface-border-strong); }
+.comments-post-card {
+  background: var(--wiki-surface-raised);
+  border-radius: 0 !important;
+  > .v-card-text { padding: var(--wiki-space-4); }
 }
-
-@media (hover: hover) and (pointer: fine) {
-  .comments-post-actions {
-    opacity: 0;
+.comments-post-actions {
+  display: flex;
+  flex-wrap: wrap;
+  float: inline-end;
+  margin-inline-start: var(--wiki-space-2);
+  .v-btn { color: var(--wiki-text-muted); }
+}
+.comments-post-name { overflow-wrap: anywhere; font-size: .875rem !important; }
+.comments-post-date { margin-top: var(--wiki-space-1); }
+.comments-parent-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wiki-space-1);
+  margin-top: var(--wiki-space-2);
+  padding: var(--wiki-space-1) 0;
+  max-width: 100%;
+  text-align: start;
+  overflow-wrap: anywhere;
+  color: var(--wiki-primary-ink);
+  font-size: .8125rem;
+}
+.comments-parent-link:focus-visible,
+.comments-post:focus-visible,
+.comments-thread:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
+.comments-post-content {
+  clear: both;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: var(--wiki-leading-body);
+  p { margin-bottom: 0; padding-top: var(--wiki-space-3); }
+  > p:first-child { padding-top: 0; }
+  a { color: var(--wiki-primary-ink); text-underline-offset: .15em; }
+  img { max-width: 100%; }
+  table { display: block; max-width: 100%; overflow: auto; }
+  code { background: var(--wiki-surface-sunken); box-shadow: none; }
+  pre { max-width: 100%; overflow: auto; margin-top: var(--wiki-space-3); }
+  pre > code {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+    padding: var(--wiki-space-3);
+    font-family: var(--wiki-font-mono);
+    color: rgb(var(--v-theme-on-surface));
   }
 }
-
+.comment-mention { color: var(--wiki-primary-ink); background: var(--wiki-surface-sunken); font-weight: 650; }
+.comments-post-editcontent { clear: both; padding-top: var(--wiki-space-3); border-top: 1px solid var(--wiki-surface-border); }
+.comments-delete-dialog { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius) !important; background: var(--wiki-surface-raised); }
+.comments-delete-header { padding: var(--wiki-space-4); border-bottom: 1px solid var(--wiki-surface-border); font-size: 1.125rem; font-weight: 650; }
 @media (max-width: 599px) {
-  .comments-composer {
-    padding: var(--wiki-space-3);
-    border-radius: var(--wiki-control-radius);
-  }
-
-  .comments-actions {
-    align-items: stretch !important;
-  }
-
-  .comments-format {
-    flex: 1 1 auto;
-  }
-
-  .comments-posting-as {
-    margin-inline-start: auto;
-  }
-
-  .comments-submit {
-    flex: 1 0 100%;
-  }
-
-  .comments-thread {
-    .v-timeline-divider {
-      min-width: calc(var(--wiki-control-height) + var(--wiki-space-2));
-    }
-
-    .v-timeline-item__body {
-      padding-inline-start: var(--wiki-space-2);
-    }
-  }
-
-  .comments-post-card > .v-card-text {
-    padding: var(--wiki-space-3);
-  }
-
-  .comments-post-actions {
-    position: static;
-    width: fit-content;
-    margin: 0 0 var(--wiki-space-2);
-    margin-inline-start: auto;
-    opacity: 1;
-  }
-
-  .comments-post-name {
-    max-width: none;
-  }
-}
-
-@media (forced-colors: active) {
   .comments-composer,
-  .comments-post-card,
-  .comments-post-actions,
-  .comments-delete-dialog {
-    border-color: CanvasText;
-  }
+  .comments-post-card > .v-card-text { padding: var(--wiki-space-3); }
+  .comments-submit { flex: 1 0 100%; }
+  .comments .v-btn { min-height: 44px; min-width: 44px; }
+  .comments-batches { justify-content: center; }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .comments-post-actions,
-  .comments-post-card {
-    transition-duration: .01ms !important;
-  }
+@media (forced-colors: active) {
+  .comments-composer, .comments-post, .comments-thread, .comments-delete-dialog { border-color: CanvasText; }
 }
 </style>

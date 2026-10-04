@@ -37,16 +37,14 @@
           </div>
         </div>
         <nav class="tls-nav" :aria-label="$t('admin:ssl.httpsWorkspaceSections')">
-          <button v-for="item in sections" :key="item.id" :aria-current="section === item.id ? 'page' : undefined" @click="selectSection(item.id)">
-            <span>{{ item.number }}</span>
+          <button v-for="item in sections" :key="item.id" type="button" :aria-current="section === item.id ? 'page' : undefined" @click="selectSection(item.id)">
             {{ item.label }}
           </button>
         </nav>
         <section v-if="section === 'connections'" aria-labelledby="tls-connections">
           <div class="tls-section-heading">
             <div>
-              <p class="tls-eyebrow">{{ $t('admin:ssl.n01ConnectionPath') }}</p>
-              <h2 id="tls-connections">{{ $t('admin:ssl.followEncryptedConnection') }}</h2>
+              <h2 id="tls-connections">{{ $t('admin:ssl.encryptionBoundary') }}</h2>
               <p>{{ $t('admin:ssl.publicHttpsApplicationListener') }}</p>
             </div>
             <v-btn color="primary" :disabled="locked || workspace.offline" @click="runCheck('public-check')">{{ $t('admin:ssl.checkPublicHttps') }}</v-btn>
@@ -144,8 +142,7 @@
         <section v-else-if="section === 'certificates'" aria-labelledby="tls-certificates">
           <div class="tls-section-heading">
             <div>
-              <p class="tls-eyebrow">{{ $t('admin:ssl.n02CertificateLifecycle') }}</p>
-              <h2 id="tls-certificates">{{ $t('admin:ssl.validateReviewPutInto') }}</h2>
+              <h2 id="tls-certificates">{{ $t('admin:ssl.httpsCertificates') }}</h2>
               <p>{{ $t('admin:ssl.savedCertificateBecomesActive') }}</p>
             </div>
           </div>
@@ -244,8 +241,7 @@
         <section v-else-if="section === 'policy'" aria-labelledby="tls-policy">
           <div class="tls-section-heading">
             <div>
-              <p class="tls-eyebrow">{{ $t('admin:ssl.n03RedirectPolicy') }}</p>
-              <h2 id="tls-policy">{{ $t('admin:ssl.makeSecureRouteDefault') }}</h2>
+              <h2 id="tls-policy">{{ $t('admin:ssl.redirectPolicy') }}</h2>
               <p>{{ $t('admin:ssl.reviewDestinationTrustBoundary') }}</p>
             </div>
           </div>
@@ -335,8 +331,7 @@
         <section v-else aria-labelledby="tls-operations">
           <div class="tls-section-heading">
             <div>
-              <p class="tls-eyebrow">{{ $t('admin:ssl.n04OperationRegister') }}</p>
-              <h2 id="tls-operations">{{ $t('admin:ssl.inspectableRecordEveryAction') }}</h2>
+              <h2 id="tls-operations">{{ $t('admin:ssl.operationRegister', { defaultValue: 'Operation register' }) }}</h2>
               <p>{{ $t('admin:ssl.refreshReadsExistingReceipts') }}</p>
             </div>
             <v-btn variant="outlined" :disabled="!workspace.operations.length" @click="exportEvidence">{{ $t('admin:ssl.exportEvidence') }}</v-btn>

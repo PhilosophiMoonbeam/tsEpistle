@@ -2,19 +2,9 @@
 .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content > form > :is(.v-card, .v-sheet) {
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent));
-  border-radius: var(--wiki-panel-radius, 1rem);
-  background:
-    radial-gradient(
-      circle at 50% 0,
-      color-mix(
-        in srgb,
-        var(--wiki-ambient-accent, rgb(var(--v-theme-primary))) 7%,
-        transparent
-      ),
-      transparent 18rem
-    ),
-    var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
-  box-shadow: var(--wiki-shadow-lg, 0 1.75rem 5rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 20%, transparent));
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
 }
 
 .v-dialog.v-dialog--fullscreen > .v-overlay__content > :is(.v-card, .v-sheet),
@@ -36,8 +26,8 @@
 
   > .v-card-text,
   > :is(form, .v-form) > .v-card-text {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 82%, transparent);
-    line-height: 1.6;
+    color: rgb(var(--v-theme-on-surface));
+    line-height: 1.5;
   }
 
   > .v-card-actions,
@@ -47,16 +37,12 @@
     padding-block: var(--wiki-space-3, .75rem);
     padding-inline: var(--wiki-space-4, 1rem);
     border-block-start: 1px solid var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent));
-    background: color-mix(
-      in srgb,
-      var(--wiki-surface-sunken, rgb(var(--v-theme-background))) 68%,
-      var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
-    );
+    background: var(--wiki-surface-sunken);
   }
 }
 
 .dialog-header {
-  --dialog-accent: var(--wiki-accent-spectral, rgb(var(--v-theme-primary)));
+  --dialog-accent: var(--wiki-primary-ink);
 
   display: flex;
   min-height: 4rem;
@@ -64,18 +50,8 @@
   gap: var(--wiki-space-3, .75rem);
   padding-block: var(--wiki-space-3, .75rem);
   padding-inline: var(--wiki-space-5, 1.25rem);
-  border-block-end: 1px solid color-mix(in srgb, var(--dialog-accent) 22%, transparent);
-  border-inline-start: .25rem solid var(--dialog-accent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(
-        in srgb,
-        var(--dialog-accent) 10%,
-        var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
-      ),
-      var(--wiki-surface-raised, rgb(var(--v-theme-surface))) 72%
-    );
+  border-block-end: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-raised);
   color: rgb(var(--v-theme-on-surface));
   font-size: 1.0625rem;
   font-weight: 720;
@@ -99,15 +75,15 @@
   }
 
   &.is-red {
-    --dialog-accent: rgb(var(--v-theme-error));
+    --dialog-accent: var(--wiki-error-ink);
   }
 
   &.is-orange {
-    --dialog-accent: rgb(var(--v-theme-warning));
+    --dialog-accent: var(--wiki-warning-ink);
   }
 
   &.is-indigo {
-    --dialog-accent: rgb(var(--v-theme-accent));
+    --dialog-accent: var(--wiki-secondary-ink);
   }
 
   &.is-dark {
@@ -115,7 +91,7 @@
   }
 
   &.is-teal {
-    --dialog-accent: rgb(var(--v-theme-secondary));
+    --dialog-accent: var(--wiki-secondary-ink);
   }
 }
 
@@ -132,6 +108,7 @@
     min-height: 3.5rem;
     padding-block: var(--wiki-space-2, .5rem);
     padding-inline: var(--wiki-space-3, .75rem);
+    flex-wrap: wrap;
   }
 }
 

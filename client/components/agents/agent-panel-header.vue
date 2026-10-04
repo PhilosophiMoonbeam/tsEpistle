@@ -33,34 +33,15 @@ const requestClose = (): void => {
 }
 </script>
 <style scoped>
-/* Top padding centers the title row with the agent header controls (64px toolbar). */
-.agent-panel-header { flex: 0 0 auto; padding: .5rem 1.25rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); outline: none; }
+.agent-panel-header { flex: 0 0 auto; padding: 1rem 1.25rem; border-bottom: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-raised); outline: none; }
 .agent-panel-header:focus-visible { box-shadow: inset var(--wiki-focus-ring); }
-.agent-panel-header__title-row { display: flex; align-items: center; gap: .6rem; }
+.agent-panel-header__title-row { display: flex; align-items: center; gap: .6rem; min-height: 2.75rem; }
 .agent-panel-header__actions { display: flex; flex: 0 0 auto; align-items: center; gap: .25rem; }
-.agent-panel-header__actions :deep(.v-btn) { width: 2.25rem; min-width: 2.25rem; height: 2.25rem; border-radius: 8px; }
-.agent-panel-header__actions :deep(.v-btn .v-icon) { font-size: 1.125rem; }
+.agent-panel-header__actions :deep(.v-btn) { min-width: 2.75rem; width: 2.75rem; height: 2.75rem; border-radius: var(--wiki-control-radius); }
 .agent-panel-header__divider { align-self: stretch; width: 1px; margin-inline: .25rem; background: var(--wiki-surface-border); }
-/* The panel close button mirrors the agent header's close control: square,
-   the same height, no glow or scale, and an error-toned icon hover. */
-.agent-panel-header__close { border-radius: 8px; }
 .agent-panel-header__close[aria-disabled='true'] { opacity: .6; }
-@media (hover: hover) {
-  .agent-panel-header__close:not([aria-disabled='true']):hover {
-    color: rgb(var(--v-theme-error));
-    background-color: transparent;
-    transform: none;
-    box-shadow: none;
-  }
-}
-.agent-panel-header__close:not([aria-disabled='true']):active {
-  color: rgb(var(--v-theme-error));
-  background-color: transparent;
-  transform: none;
-  box-shadow: none;
-}
-.agent-panel-header__icon { color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
-.agent-panel-header h2 { flex: 1; min-width: 0; margin: 0; font-family: var(--wiki-font-display, 'Newsreader', serif); font-size: 1.55rem; font-weight: 500; letter-spacing: -.025em; line-height: 1.2; }
-.agent-panel-header__description { margin-top: .5rem; color: var(--wiki-text-muted); font-size: .75rem; line-height: 1.5; }
-@media(max-width: 599.98px) { .agent-panel-header { padding-top: max(1rem, env(safe-area-inset-top)); } }
+.agent-panel-header__icon { color: var(--wiki-primary-ink); }
+.agent-panel-header h2 { flex: 1; min-width: 0; margin: 0; font-family: var(--wiki-font-heading); font-size: 1.125rem; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+.agent-panel-header__description { margin-top: .5rem; color: var(--wiki-text-muted); font-size: .875rem; line-height: 1.5; }
+@media(max-width: 599.98px) { .agent-panel-header { padding: max(1rem, env(safe-area-inset-top)) 1rem 1rem; } }
 </style>

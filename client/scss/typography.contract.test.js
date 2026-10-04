@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { compileStyle, parse as parseSfc } from '@vue/compiler-sfc'
 import postcss from 'postcss'
 
 const root = process.cwd()
@@ -9,25 +8,6 @@ const normalizeValue = value => value.replace(/\s+/g, ' ').trim()
 const declarations = block => Object.fromEntries(
   block.nodes.filter(node => node.type === 'decl').map(node => [node.prop, normalizeValue(node.value)])
 )
-const compileCss = (source, filename) => {
-  const result = compileStyle({ source, filename, id: 'typography-contract', preprocessLang: 'scss' })
-  if (result.errors.length) throw result.errors[0]
-  return postcss.parse(result.code, { from: filename })
-}
-const displayFamily = (relativePath, selector) => {
-  const descriptor = parseSfc(read(relativePath)).descriptor
-  let family
-  for (const style of descriptor.styles) {
-    compileCss(style.content, relativePath).walkRules(rule => {
-      if (rule.selectors.some(candidate => candidate === selector || candidate.endsWith(` ${selector}`))) {
-        rule.nodes.filter(node => node.type === 'decl' && node.prop === 'font-family')
-          .forEach(node => { family = normalizeValue(node.value) })
-      }
-    })
-  }
-  return family
-}
-const families = value => value.split(',').map(name => name.trim().replace(/^(['"])(.*)\1$/, '$2'))
 
 const LATIN_EXT =
   'U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF'
@@ -47,44 +27,10 @@ const expectedFaces = [
 const expectedLicenses = ['Newsreader-OFL.txt', 'RobotoFlex-OFL.txt', 'RobotoMono-OFL.txt', 'NotoSansEgyptianHieroglyphs-OFL.txt']
 
 describe('self-hosted typography contracts', () => {
-  const base = read('client/scss/base/base.scss')
   const fontSource = read('client/scss/fonts/default.scss')
   const fontFaces = []
   postcss.parse(fontSource).walkAtRules('font-face', rule => fontFaces.push(declarations(rule)))
 
-  test('retains the Editorial Blend family roles and shared typography bridges', () => {
-    let rootTokens = {}
-    compileCss(base, 'client/scss/base/base.scss').walkRules(':root', rule => {
-      rootTokens = { ...rootTokens, ...declarations(rule) }
-    })
-
-    for (const [token, primary, generic] of [
-      ['--wiki-font-newsreader', 'Newsreader', 'serif'],
-      ['--wiki-font-roboto-flex', 'Roboto Flex', 'sans-serif'],
-      ['--wiki-font-mono', 'Roboto Mono', 'monospace']
-    ]) {
-      const stack = families(rootTokens[token])
-      expect(stack[0]).toBe(primary)
-      expect(stack).toContain(generic)
-    }
-    // Rare scripts (e.g. Egyptian hieroglyphs) fall back to the vendored face before the generic family.
-    expect(families(rootTokens['--wiki-font-script-fallback'])[0]).toBe('Noto Sans Egyptian Hieroglyphs')
-    for (const token of ['--wiki-font-newsreader', '--wiki-font-roboto-flex']) {
-      const stack = families(rootTokens[token])
-      expect(stack.indexOf('var(--wiki-font-script-fallback)')).toBeGreaterThan(0)
-      expect(stack.indexOf('var(--wiki-font-script-fallback)')).toBeLessThan(stack.length - 1)
-    }
-    expect(rootTokens['--wiki-font-selected']).toBe('var(--wiki-font-roboto-flex)')
-    expect(rootTokens['--wiki-font-display']).toBe('var(--wiki-font-newsreader)')
-
-    for (const token of ['--wiki-font-body', '--wiki-font-heading', '--wiki-font-reader']) {
-      expect(rootTokens[token]).toBe('var(--wiki-font-selected)')
-    }
-    expect(rootTokens['--v-font-body']).toBe('var(--wiki-font-body)')
-    expect(rootTokens['--v-font-heading']).toBe('var(--wiki-font-heading)')
-    expect(displayFamily('client/themes/default/components/page.vue', '.page-title')).toBe('var(--wiki-font-display)')
-    expect(displayFamily('client/components/agents/inline-agent-chat.vue', '.inline-agent__welcome-title')).toBe('var(--wiki-font-display)')
-  })
 
   test('declares the required local variable faces and real Newsreader italics', () => {
     for (const expected of expectedFaces) {

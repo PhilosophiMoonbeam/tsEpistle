@@ -8,8 +8,11 @@
       size='wide'
       :busy='loading'
     )
-      template(#lead)
+      template(#context)
         p {{ $t(`common:setup.independentCommunityForkDerived`, { defaultValue: `Independent community fork derived from ${product.upstreamBase}`, upstreamBase: product.upstreamBase, interpolation: { escapeValue: false } }) }}
+        p.mt-3 {{ $t(`common:setup.youInstalling`, { defaultValue: "You are installing" }) }} #[strong {{ product.name }} {{ product.version }}].
+        p.mt-2
+          a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') {{ $t(`common:setup.viewSourceRevision`, { defaultValue: `View source at revision ${product.revision.slice(0, 12)}`, revision: product.revision.slice(0, 12), interpolation: { escapeValue: false } }) }}
 
       v-alert.setup-alert(
         v-model='error'
@@ -21,16 +24,6 @@
         tabindex='-1'
         ref='setupAlert'
       ) {{ errorMessage }}
-      v-alert.setup-alert(
-        v-if='!error'
-        :model-value='true'
-        color='primary'
-        variant='tonal'
-        icon='mdi-package-variant-closed'
-      )
-        span {{ $t(`common:setup.youInstalling`, { defaultValue: "You are installing" }) }} #[strong {{ product.name }} {{ product.version }}].
-        .text-body-small.mt-1
-          a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') {{ $t(`common:setup.viewSourceRevision`, { defaultValue: `View source at revision ${product.revision.slice(0, 12)}`, revision: product.revision.slice(0, 12), interpolation: { escapeValue: false } }) }}
 
       form#setup-form.setup-form(@submit.prevent='install', :aria-busy='loading', novalidate)
         section.setup-section(aria-labelledby='setup-admin-title')
@@ -44,6 +37,7 @@
             v-col(cols='12')
               v-text-field(
                 variant='outlined'
+                active
                 v-model='conf.adminEmail'
                 :label='$t(`common:setup.administratorEmail`, { defaultValue: "Administrator email" })'
                 :hint='$t(`common:setup.emailAddressAdministratorAccount`, { defaultValue: "The email address of the administrator account." })'
@@ -56,9 +50,10 @@
                 ref='adminEmailInput'
                 prepend-inner-icon='mdi-email-outline'
               )
-            v-col(cols='12', sm='6')
+            v-col(cols='12', lg='6')
               v-text-field(
                 variant='outlined'
+                active
                 ref='adminPassword'
                 counter
                 v-model='conf.adminPassword'
@@ -77,9 +72,10 @@
                   password-visibility-toggle(v-model:visible='showPassword', :field='$t(`common:setup.administratorPassword`, { defaultValue: "administrator password" })', :disabled='loading')
                 template(v-slot:loader)
                   password-strength(:model-value='conf.adminPassword')
-            v-col(cols='12', sm='6')
+            v-col(cols='12', lg='6')
               v-text-field(
                 variant='outlined'
+                active
                 ref='adminPasswordConfirm'
                 counter
                 v-model='conf.adminPasswordConfirm'
@@ -105,6 +101,7 @@
               p {{ $t(`common:setup.tellWikiWhichUrl`, { defaultValue: "Tell the wiki which URL visitors will use." }) }}
           v-text-field(
             variant='outlined'
+            active
             ref='adminSiteUrl'
             v-model='conf.siteUrl'
             :label='$t(`common:setup.siteUrl`, { defaultValue: "Site URL" })'
@@ -160,13 +157,7 @@
       v-card.setup-progress(variant='flat' :aria-busy='loading')
         v-progress-linear(v-if='!success' indeterminate color='primary' aria-hidden='true')
         v-card-text.text-center
-          .setup-progress-spinner(v-if='!success')
-            breeding-rhombus-spinner(
-              :animation-duration='2000'
-              :size='56'
-              color='rgb(var(--v-theme-primary))'
-            )
-          v-icon.setup-progress-success(v-else icon='mdi-check-circle-outline' size='56' color='success' aria-hidden='true')
+          v-icon.setup-progress-success(v-if='success' icon='mdi-check-circle-outline' size='40' color='success' aria-hidden='true')
           template(v-if='!success')
             .setup-progress-title#setup-progress-title(role='status' aria-live='polite') {{ $t(`common:setup.finalizingInstallation`, { defaultValue: "Finalizing your installation..." }) }}
             .setup-progress-copy {{ $t(`common:setup.justMoment`, { defaultValue: "Just a moment" }) }}
@@ -189,11 +180,9 @@
 import { markRaw } from 'vue'
 import validateValues from '../../shared/validation'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
-import { BreedingRhombusSpinner } from 'epic-spinners'
 import AuthShell from './common/auth-shell.vue'
 import PasswordStrength from './common/password-strength.vue'
 import PasswordVisibilityToggle from './common/password-visibility-toggle.vue'
-import confetti from 'canvas-confetti'
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
 import { isRecord } from '../helpers/type-guards'
@@ -244,7 +233,6 @@ function normalizeFinalizeResponse (payload: unknown): FinalizeResponse {
 export default {
   components: {
     AuthShell,
-    BreedingRhombusSpinner,
     PasswordStrength,
     PasswordVisibilityToggle
   },
@@ -413,18 +401,6 @@ export default {
         }
 
         this.success = true
-        try {
-          if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-            confetti({
-              particleCount: 100,
-              spread: 70,
-              zIndex: 100000,
-              disableForReducedMotion: true,
-            })
-          }
-        } catch (celebrationError) {
-          console.error(celebrationError)
-        }
         this.redirectTimer = window.setTimeout(() => {
           this.redirectTimer = null
           this.continueToLogin()
@@ -641,7 +617,8 @@ export default {
   p {
     margin: var(--wiki-space-1) 0 0;
     color: var(--wiki-text-muted);
-    font-size: .8125rem;
+    font-size: .9375rem;
+    line-height: 1.6;
   }
 }
 
@@ -651,9 +628,9 @@ export default {
   height: 2.5rem;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
+  border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
-  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
+  background: var(--wiki-surface-sunken);
   color: var(--wiki-accent-ink);
 }
 
@@ -667,16 +644,14 @@ export default {
   max-width: 65ch;
   margin: var(--wiki-space-2) 0 0;
   color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  line-height: 1.55;
+  font-size: .9375rem;
+  line-height: 1.6;
 }
 
 .setup-actions {
-  margin: 0 calc(-1 * var(--wiki-space-8)) calc(-1 * var(--wiki-space-8));
-  padding: var(--wiki-space-5) var(--wiki-space-8) var(--wiki-space-6);
+  margin-top: var(--wiki-space-2);
+  padding-top: var(--wiki-space-5);
   border-top: 1px solid var(--wiki-surface-border);
-  border-radius: 0 0 var(--wiki-hero-radius) var(--wiki-hero-radius);
-  background: var(--wiki-surface-sunken);
 
   .v-btn {
     min-height: var(--wiki-control-height);
@@ -687,7 +662,8 @@ export default {
 }
 
 .setup-progress {
-  overflow: hidden;
+  max-height: calc(100dvh - var(--wiki-space-8));
+  overflow-y: auto;
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius) !important;
   background: var(--wiki-surface-raised) !important;
@@ -719,7 +695,7 @@ export default {
 .setup-progress-copy {
   margin-top: var(--wiki-space-1);
   color: var(--wiki-text-muted);
-  font-size: .8125rem;
+  font-size: .9375rem;
 }
 
 @media (max-width: 599px) {
@@ -733,9 +709,7 @@ export default {
   }
 
   .setup-actions {
-    margin: 0 calc(-1 * var(--wiki-space-5)) calc(-1 * var(--wiki-space-6));
-    padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-5);
-    border-radius: 0;
+    padding-top: var(--wiki-space-4);
   }
 }
 

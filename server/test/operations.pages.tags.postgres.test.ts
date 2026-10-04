@@ -3,6 +3,7 @@
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import { getPostgresTestConnection } from './postgres-test-connection.mts'
+import type { PageDirectoryInput, PageDirectoryResult } from '../operations/pages.ts'
 
 const connection = getPostgresTestConnection('_tag_browse_test', import.meta.path)
 
@@ -32,6 +33,7 @@ interface RecentPageEvidenceResult {
   pages: RecentPageEvidence[]
 }
 interface PageTagOperations {
+  directory(input: PageDirectoryInput): Promise<PageDirectoryResult>
   list(input: {
     requester?: Express.User
     tags?: string[]
@@ -272,6 +274,56 @@ suite('PostgreSQL page tag authorization candidates', () => {
 
     const andRows = await operations.list({ requester, tags: ['old-topic', 'topic-zulu'] })
     expect(andRows.map(row => row.path)).toEqual(['docs/topic-allow-needed'])
+  })
+
+  it('keeps denied metadata out of directory counts, search probes and continuation positions', async () => {
+    const first = await operations.directory({ requester, limit: 2 })
+    expect(first.items.map(page => page.id)).toEqual([2, 3])
+    expect(first).toMatchObject({ scanned: 2, nextOffset: 2 })
+    expect(await operations.directory({ requester, search: 'docs/topic-denied' })).toEqual({ items: [], scanned: 0, nextOffset: null })
+    expect(await operations.directory({ requester, search: 'private/other' })).toEqual({ items: [], scanned: 0, nextOffset: null })
+    await seedPage({ id: 12, path: 'confidential/needle' }, ['deny-access'])
+    expect(await operations.directory({ requester, limit: 2 })).toEqual(first)
+    expect(await operations.directory({ requester, search: 'confidential/needle' })).toEqual({ items: [], scanned: 0, nextOffset: null })
+    const next = await operations.directory({ requester, limit: 2, offset: first.nextOffset! })
+    expect(next.items.map(page => page.id)).toEqual([4, 5])
+  })
+
+  it('does not reveal projected-away publication flags through filter counters', async () => {
+    const options = { requester, search: 'docs/topic-allow-needed' }
+    const published = await operations.directory({ ...options, publication: 'published' })
+    const unpublished = await operations.directory({ ...options, publication: 'unpublished' })
+    expect(published).toEqual({ items: [], scanned: 1, nextOffset: null })
+    expect(unpublished).toEqual(published)
+    await db('pages').where('id', 2).update({ isPublished: false })
+    expect(await operations.directory({ ...options, publication: 'published' })).toEqual(published)
+    expect(await operations.directory({ ...options, publication: 'unpublished' })).toEqual(unpublished)
+    const visible = await operations.directory({ ...options, publication: 'Unavailable' })
+    expect(visible.items.map(page => page.id)).toEqual([2])
+    expect(visible.items[0]).not.toHaveProperty('isPublished')
+    expect(visible.items[0]).not.toHaveProperty('publishStartDate')
+  })
+
+  it('resolves normalized historical tag names without losing ACL or ownership checks', async () => {
+    const canonical = await operations.directory({ requester, tag: 'topic' })
+    expect(canonical.items.map(page => page.id)).toEqual([2, 3, 5, 7, 8, 9])
+    expect(await operations.directory({ requester, tag: ' OLD-TOPIC ' })).toEqual(canonical)
+  })
+
+  it('continues empty projected windows past 1,000 authorized candidates without skipping the tail', async () => {
+    const template = await db('pages').where('id', 2).first()
+    const rows = Array.from({ length: 1_005 }, (_, index) => ({
+      ...template, id: index + 20, path: `native-directory/reference-${index}`, title: `Native-directory reference ${index}`
+    }))
+    await db.batchInsert('pages', rows, 100)
+    await db.batchInsert('pageTags', rows.map(page => ({ pageId: page.id, tagId: tagIds['allow-access'] })), 100)
+    const options = { requester, search: 'native-directory', publication: 'published' as const }
+    const first = await operations.directory(options)
+    expect(first).toEqual({ items: [], scanned: 1_000, nextOffset: 1_000 })
+    const last = await operations.directory({ ...options, offset: first.nextOffset! })
+    expect(last).toEqual({ items: [], scanned: 5, nextOffset: null })
+    const readable = await operations.directory({ ...options, publication: 'Unavailable', offset: first.nextOffset! })
+    expect(readable.items.map(page => page.id)).toEqual([1_020, 1_021, 1_022, 1_023, 1_024])
   })
   it('applies root limits and offsets without truncating tags needed for later authorization', async () => {
     expect(await operations.list({ requester, tags: ['old-topic'], limit: 1 })).toEqual([])

@@ -49,8 +49,7 @@
           <section class="mail-main">
             <template v-if="section === 'transport'">
               <header class="mail-heading">
-                <span class="mail-kicker">{{ $t('admin:mail.n01RecognisableSender') }}</span>
-                <h2>{{ $t('admin:mail.workspace2') }}</h2>
+                <h2>{{ $t('admin:mail.smtpTransport') }}</h2>
                 <p>{{ $t('admin:mail.giveEveryMessageClear') }}</p>
               </header>
               <section class="mail-panel">
@@ -175,7 +174,6 @@
             </template>
             <template v-else-if="section === 'signing'">
               <header class="mail-heading">
-                <span class="mail-kicker">{{ $t('admin:mail.n02VerifiableOrigin') }}</span>
                 <h2>{{ $t('admin:mail.signDomain') }}</h2>
                 <p>{{ $t('admin:mail.prepareSigningKeyPublish') }}</p>
               </header>
@@ -290,8 +288,7 @@
             </template>
             <template v-else-if="section === 'templates'">
               <header class="mail-heading">
-                <span class="mail-kicker">{{ $t('admin:mail.n03MessagesPeopleReceive') }}</span>
-                <h2>{{ $t('admin:mail.oneFamiliarVoice') }}</h2>
+                <h2>{{ $t('admin:mail.emailTemplates') }}</h2>
                 <p>{{ $t('admin:mail.inspectActualBundledLayouts') }}</p>
               </header>
               <div class="mail-template-layout">
@@ -342,8 +339,7 @@
             </template>
             <template v-else>
               <header class="mail-heading">
-                <span class="mail-kicker">{{ $t('admin:mail.n04EvidenceBeforeAssumptions') }}</span>
-                <h2>{{ $t('admin:mail.followDeliveryPath') }}</h2>
+                <h2>{{ $t('admin:mail.diagnosticRegister') }}</h2>
                 <p>{{ $t('admin:mail.testSpecificStepKeep') }}</p>
               </header>
               <div class="mail-diagnostic-actions">

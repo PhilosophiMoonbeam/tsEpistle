@@ -20,6 +20,7 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
     template(v-else-if="view")
       p.wiki-page-ratings__error(v-if="error" role="alert") {{ error }}
 
+      p.wiki-page-ratings__instruction {{ view.kind === 'thumbs' ? $t('common:pageRatings.rateThisPage') : $t('common:pageRatings.chooseStars') }}
       .wiki-page-ratings__controls.wiki-page-ratings__controls--thumbs(
         v-if="view.kind === 'thumbs'"
         :class="{ 'wiki-page-ratings__controls--voted': view.ownVote !== null }"
@@ -40,6 +41,7 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           @click="saveVote(1)"
         )
           v-icon(aria-hidden="true") {{ view.ownVote === 1 ? 'mdi-thumb-up' : 'mdi-thumb-up-outline' }}
+          span {{ $t('common:pageRatings.helpful') }}
         v-btn(
           class="wiki-page-ratings__choice"
           :class="{ 'wiki-page-ratings__choice--selected': view.ownVote === -1 }"
@@ -54,6 +56,7 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           @click="saveVote(-1)"
         )
           v-icon(aria-hidden="true") {{ view.ownVote === -1 ? 'mdi-thumb-down' : 'mdi-thumb-down-outline' }}
+          span {{ $t('common:pageRatings.notHelpful') }}
         v-tooltip(v-if="view.ownVote !== null" location="bottom")
           template(#activator="{ props: tooltipProps }")
             v-btn(
@@ -68,6 +71,7 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
               @click="removeVote"
             )
               v-icon(aria-hidden="true") mdi-close-circle-outline
+              span {{ $t('common:pageRatings.remove') }}
           span {{ $t('common:pageRatings.removeMine') }}
       .wiki-page-ratings__balance(
         v-if="view.kind === 'thumbs' && view.ownVote !== null && view.count > 0"
@@ -76,6 +80,7 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
       )
         .wiki-page-ratings__balance-positive(:style="{ flexGrow: view.distribution['1'] }" aria-hidden="true")
         .wiki-page-ratings__balance-negative(:style="{ flexGrow: view.distribution['-1'] }" aria-hidden="true")
+      p.wiki-page-ratings__distribution(v-if="view.kind === 'thumbs' && view.ownVote !== null && view.count > 0") {{ $t('common:pageRatings.balance', { helpful: view.distribution['1'], notHelpful: view.distribution['-1'] }) }}
 
       .wiki-page-ratings__controls.wiki-page-ratings__controls--stars(v-if="view.kind === 'stars'" role="group" :aria-label="$t('common:pageRatings.chooseStars')")
         v-btn(
@@ -320,284 +325,58 @@ onBeforeUnmount(() => {
 .wiki-page-ratings {
   box-sizing: border-box;
   display: grid;
-  gap: 4px;
+  gap: var(--wiki-space-3);
   width: 100%;
   min-width: 0;
-  padding: 12px 8px;
+  padding: var(--wiki-space-4);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-xs);
   color: rgb(var(--v-theme-on-surface));
 }
-
-.wiki-page-ratings__heading {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 4px 8px;
-}
-
-.wiki-page-ratings__heading h2 {
-  min-width: 0;
-  margin: 0;
-  font-family: var(--wiki-font-display);
-  font-size: .875rem;
-  font-weight: 560;
-  letter-spacing: -.02em;
-  line-height: 1.2;
-}
-
+.wiki-page-ratings__heading { display: grid; gap: var(--wiki-space-1); padding-bottom: var(--wiki-space-2); border-bottom: 1px solid var(--wiki-surface-border); }
+.wiki-page-ratings__heading h2 { min-width: 0; margin: 0; font-size: 1rem; font-weight: 650; line-height: 1.4; }
 .wiki-page-ratings__aggregate,
-.wiki-page-ratings__prompt {
-  min-width: 0;
-  margin: 0;
-  font-size: .78rem;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.wiki-page-ratings__aggregate {
-  flex: 0 1 auto;
-  color: var(--wiki-text-muted);
-  font-variant-numeric: tabular-nums;
-  text-align: end;
-}
-
-.wiki-page-ratings__prompt {
-  flex: 1 1 100%;
-  color: var(--wiki-text-muted);
-}
-
-/* Shared async-state, sized down for the narrow rail card. */
-.wiki-page-ratings__loading {
-  min-height: 0;
-  padding: var(--wiki-space-3);
-  justify-content: flex-start;
-}
-
-.wiki-page-ratings__load-error {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-
-.wiki-page-ratings__error {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  color: rgb(var(--v-theme-error));
-  font-size: .78rem;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.wiki-page-ratings__controls {
-  min-width: 0;
-}
-
-.wiki-page-ratings__controls--thumbs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.wiki-page-ratings__controls--voted {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.wiki-page-ratings__controls--thumbs :deep(.v-btn) {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 30px;
-  min-height: 30px;
-  height: auto;
-  padding: 2px 3px;
-  font-size: .75rem;
-}
-
-.wiki-page-ratings__controls--thumbs :deep(.v-btn__content) {
-  justify-content: center;
-}
-
-.wiki-page-ratings__controls--thumbs :deep(.v-icon) {
-  font-size: 1rem;
-}
-
-.wiki-page-ratings__controls--thumbs .wiki-page-ratings__remove {
-  margin-inline-start: 0;
-  padding: 2px 3px;
-}
-
-.wiki-page-ratings__balance {
-  display: flex;
-  height: 8px;
-  overflow: hidden;
-  border-radius: 999px;
-}
-
+.wiki-page-ratings__prompt,
+.wiki-page-ratings__instruction,
+.wiki-page-ratings__distribution,
+.wiki-page-ratings__own-vote { margin: 0; color: var(--wiki-text-muted); font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
+.wiki-page-ratings__aggregate { font-variant-numeric: tabular-nums; }
+.wiki-page-ratings__loading { min-height: 0; padding: var(--wiki-space-3); }
+.wiki-page-ratings__load-error,
+.wiki-page-ratings__stale,
+.wiki-page-ratings__personal { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--wiki-space-2); }
+.wiki-page-ratings__error { margin: 0; color: rgb(var(--v-theme-error)); font-size: .875rem; line-height: 1.5; overflow-wrap: anywhere; }
+.wiki-page-ratings__controls { min-width: 0; display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); }
+.wiki-page-ratings :deep(.v-btn) { min-height: 40px; border-radius: var(--wiki-control-radius); letter-spacing: normal; text-transform: none; }
+.wiki-page-ratings__controls--thumbs .wiki-page-ratings__choice { flex: 1 1 auto; }
+.wiki-page-ratings__controls--thumbs :deep(.v-btn__content) { gap: var(--wiki-space-2); }
+.wiki-page-ratings__controls--thumbs .wiki-page-ratings__remove { flex: 1 1 100%; }
+.wiki-page-ratings__balance { display: flex; height: 6px; overflow: hidden; border-radius: var(--wiki-control-radius); }
 .wiki-page-ratings__balance-positive,
-.wiki-page-ratings__balance-negative {
-  flex-basis: 0;
-  min-width: 0;
+.wiki-page-ratings__balance-negative { flex-basis: 0; min-width: 0; }
+.wiki-page-ratings__balance-positive { background: rgb(var(--v-theme-success)); }
+.wiki-page-ratings__balance-negative { background: rgb(var(--v-theme-error)); }
+.wiki-page-ratings__choice--selected { border: 1px solid var(--wiki-focus-color); }
+.wiki-page-ratings__controls--stars { gap: 0; }
+.wiki-page-ratings__controls--stars :deep(.v-btn) { width: 44px; min-width: 44px; min-height: 44px; height: 44px; padding: 0; border: 1px solid transparent; }
+.wiki-page-ratings__star--selected { border-color: var(--wiki-focus-color) !important; background: var(--wiki-surface-sunken); }
+.wiki-page-ratings :deep(.v-btn:focus-visible) { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.wiki-page-ratings__personal { padding-top: var(--wiki-space-2); border-top: 1px solid var(--wiki-surface-border); }
+.wiki-page-ratings__feedback { display: inline-flex; align-items: center; flex: 1 1 auto; gap: var(--wiki-space-2); min-width: 0; color: var(--wiki-text-muted); font-size: .8125rem; overflow-wrap: anywhere; }
+.wiki-page-ratings__stale > p:first-child { margin: 0; font-size: .875rem; overflow-wrap: anywhere; }
+@media (max-width: 599px) {
+  .wiki-page-ratings { padding: var(--wiki-space-3); }
+  .wiki-page-ratings :deep(.v-btn) { min-height: 44px; }
 }
-
-.wiki-page-ratings__balance-positive {
-  background: rgb(var(--v-theme-success));
-}
-
-.wiki-page-ratings__balance-negative {
-  background: rgb(var(--v-theme-error));
-}
-
-.wiki-page-ratings__choice--selected {
-  border: 1px solid var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
-}
-
-.wiki-page-ratings__controls--stars {
-  display: flex;
-  width: 220px;
-  max-width: 100%;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px;
-}
-
-.wiki-page-ratings__controls--stars :deep(.v-btn) {
-  box-sizing: border-box;
-  flex: 0 0 30px;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
-  padding: 0;
-  border: 1px solid transparent;
-}
-
-.wiki-page-ratings__controls--stars :deep(.v-icon) {
-  font-size: 1.25rem;
-}
-
-.wiki-page-ratings__star--selected {
-  border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))) !important;
-  background-color: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 12%, var(--wiki-surface-raised));
-}
-
-.wiki-page-ratings :deep(.v-btn) {
-  letter-spacing: normal;
-  text-transform: none;
-}
-
-.wiki-page-ratings :deep(.v-btn:focus-visible) {
-  outline: 2px solid var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
-  outline-offset: 2px;
-}
-
-.wiki-page-ratings__personal {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-
-.wiki-page-ratings__own-vote {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin: 0;
-  color: var(--wiki-text-muted);
-  font-size: .78rem;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.wiki-page-ratings__feedback {
-  display: inline-flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 5px;
-  margin: 0;
-  color: rgb(var(--v-theme-success));
-  font-size: .78rem;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.wiki-page-ratings__remove {
-  min-width: 30px;
-  min-height: 30px;
-  height: 30px;
-  margin-inline-start: auto;
-  padding-inline: 10px;
-}
-
-.wiki-page-ratings__stale {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-
-.wiki-page-ratings__stale > p:first-child {
-  flex: 1 1 11rem;
-  min-width: 0;
-  margin: 0;
-  font-size: .78rem;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.wiki-page-ratings__stale :deep(.v-btn),
-.wiki-page-ratings__load-error :deep(.v-btn) {
-  min-width: 30px;
-  min-height: 30px;
-  height: 30px;
-}
-
 @media (forced-colors: active) {
-  .wiki-page-ratings {
-    border-color: CanvasText;
-    background: Canvas;
-    color: CanvasText;
-    box-shadow: none;
-  }
-
-  .wiki-page-ratings__choice--selected {
-    border-color: Highlight !important;
-    background: Highlight;
-    color: HighlightText !important;
-  }
-
-  .wiki-page-ratings__star--selected {
-    border-color: Highlight !important;
-    background: Highlight;
-    color: HighlightText !important;
-  }
-
-  .wiki-page-ratings__balance-positive {
-    background: Highlight;
-  }
-
-  .wiki-page-ratings__balance-negative {
-    background: CanvasText;
-  }
-
-  .wiki-page-ratings :deep(.v-btn--variant-outlined) {
-    border-color: ButtonText;
-  }
-
-  .wiki-page-ratings :deep(.v-btn--disabled) {
-    color: GrayText;
-  }
-
-  .wiki-page-ratings :deep(.v-btn:focus-visible) {
-    outline-color: Highlight;
-  }
+  .wiki-page-ratings,
+  .wiki-page-ratings__heading,
+  .wiki-page-ratings__personal { border-color: CanvasText; }
+  .wiki-page-ratings__choice--selected,
+  .wiki-page-ratings__star--selected { border-color: Highlight !important; background: Highlight; color: HighlightText !important; }
+  .wiki-page-ratings__balance-positive { background: Highlight; }
+  .wiki-page-ratings__balance-negative { background: CanvasText; }
+  .wiki-page-ratings :deep(.v-btn--disabled) { color: GrayText; }
 }
 </style>

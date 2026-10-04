@@ -645,6 +645,17 @@ defineExpose({ clear, addFiles, editImage, reattachMedia, attachments, startReco
 <style scoped>
 .agent-media-composer { min-width: 0; }
 .agent-media-composer__file { display: none; }
-.agent-media-composer__hint { margin: 2px 0 6px; font-size: .78rem; color: rgb(var(--v-theme-on-surface), .68); }
-.agent-media-composer__error { color: rgb(var(--v-theme-error)); font-size: .8rem; margin: 6px 0; }
+.agent-media-composer__hint,
+.agent-media-composer__error {
+  margin: var(--wiki-space-2) 0;
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  color: var(--wiki-text-muted);
+  font-size: var(--wiki-label-size);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.agent-media-composer__error { color: var(--wiki-error-ink); border-color: var(--wiki-error-ink); }
 </style>
