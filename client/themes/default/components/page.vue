@@ -5536,6 +5536,21 @@ export default defineComponent({
     color: var(--wiki-accent-ink);
     font-weight: 600;
 
+    &::before {
+      content: '';
+      position: absolute;
+      inset-inline-start: -2px;
+      inset-inline-end: 0;
+      inset-block-end: 0;
+      height: 2px;
+      background: linear-gradient(to right, rgb(var(--v-theme-primary)), transparent);
+      pointer-events: none;
+    }
+
+    &:dir(rtl)::before {
+      background: linear-gradient(to left, rgb(var(--v-theme-primary)), transparent);
+    }
+
     &::after {
       opacity: 1;
     }
@@ -5549,6 +5564,12 @@ export default defineComponent({
 // Nested entries stay visually subordinate to top-level sections.
 .page-toc-sublist .page-toc-item {
   color: var(--wiki-text-muted);
+
+  &:hover,
+  &[aria-current='location'],
+  &.page-toc-item--active {
+    color: var(--wiki-accent-ink);
+  }
 }
 
 .page-toc-item-title {
@@ -6394,6 +6415,10 @@ export default defineComponent({
       background: Highlight !important;
       color: HighlightText;
     }
+  }
+
+  .page-toc-item::before {
+    display: none !important;
   }
 
   .page-hero--accent-present::before {
