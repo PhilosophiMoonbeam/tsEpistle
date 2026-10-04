@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.wiki-source-preview { position: fixed; inset: 0; z-index: 2800; display: flex; justify-content: flex-end; background: rgb(0 0 0 / .42); backdrop-filter: blur(3px); }
+.wiki-source-preview { position: fixed; inset: 0; z-index: 2800; display: flex; justify-content: flex-end; container: wiki-source-reader / size; background: rgb(0 0 0 / .42); backdrop-filter: blur(3px); }
 .wiki-source-preview__panel { display: flex; flex-direction: column; width: min(42rem, 100%); height: 100%; min-width: 0; background: var(--wiki-surface-raised, rgb(var(--v-theme-surface))); color: rgb(var(--v-theme-on-surface)); box-shadow: -12px 0 60px rgb(0 0 0 / .18); }
 .wiki-source-preview__header { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: var(--wiki-space-4, 1rem); padding: max(var(--wiki-space-8, 2rem), env(safe-area-inset-top)) max(var(--wiki-space-6, 1.5rem), env(safe-area-inset-right)) var(--wiki-space-5, 1.25rem) max(var(--wiki-space-6, 1.5rem), env(safe-area-inset-left)); border-bottom: 1px solid var(--wiki-surface-border); }
 .wiki-source-preview__header > div { min-width: 0; }
@@ -125,5 +125,10 @@ onBeforeUnmount(() => {
   .wiki-source-preview__header { padding: max(var(--wiki-space-5, 1.25rem), env(safe-area-inset-top)) max(var(--wiki-space-4, 1rem), env(safe-area-inset-right)) var(--wiki-space-5, 1.25rem) max(var(--wiki-space-4, 1rem), env(safe-area-inset-left)); }
   .wiki-source-preview__body, .wiki-source-preview__actions { padding-inline: max(var(--wiki-space-4, 1rem), env(safe-area-inset-left)) max(var(--wiki-space-4, 1rem), env(safe-area-inset-right)); }
   .wiki-source-preview__action-buttons { flex-direction: column; align-items: stretch; }
+}
+/* Container rem units track enlarged root text, unlike viewport media-query rem units. */
+@container wiki-source-reader (height < 38rem) {
+  .wiki-source-preview__panel { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .wiki-source-preview__body { flex: 1 0 auto; min-height: auto; overflow: visible; scrollbar-gutter: auto; }
 }
 </style>
