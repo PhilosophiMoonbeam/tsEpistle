@@ -7,6 +7,12 @@
       "skillPath": "skills/codemirror/SKILL.md",
       "computedHash": "691f68166f4881f7607780b3ffc251a3eb2281a2366fc46aa575d4308ac1586e"
     },
+    "design": {
+      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/design/SKILL.md",
+      "computedHash": "5323cb84852303e2cbd76c909e3165a3b63f4e4f81a85ab0a549481fc3d5f86f"
+    },
     "frontend-design": {
       "source": "vercel-labs/agent-eval",
       "sourceType": "github",
