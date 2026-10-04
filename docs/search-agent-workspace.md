@@ -16,7 +16,7 @@ The offline shell bundles the same search and page-selector control labels, incl
 
 The full page reader leaves disclosures under native, individual control: click or keyboard-activate each summary to expand or collapse its content. There are no bulk disclosure actions or expanded-count strip, and authored open states and named exclusive groups retain browser behavior. Browse lists the current directory's folders and pages without a directory filter, match count, or duplicate current-directory heading; the ancestor trail remains available for navigation.
 
-In **On this page**, the current section keeps the hover accent text color at every outline depth. Its solid inline-start edge continues along the bottom, follows the row's existing rounded corners, and fades toward the opposite edge, retaining the existing glow without changing section navigation or scroll tracking.
+In **On this page**, the current section keeps the hover accent text color at every outline depth and adds subtle depth-aware text emphasis: weights 700, 600, and 500 for top-level, nested, and deeper headings respectively. Hover and inactive weights remain unchanged. Its solid inline-start edge continues along the bottom, follows the row's existing rounded corners, and fades toward the opposite edge, retaining the existing glow without changing section navigation or scroll tracking.
 
 `GET /_api/pages/preview` uses the existing owner, page-rule, and password-unlock checks, then projects only source fields. Excerpts are plain text, with escaped Vue text nodes for highlights. Responses are private and non-cacheable. Selected-source metadata is a navigation hint, not authority or permission to read the page.
 
