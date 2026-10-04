@@ -848,17 +848,21 @@ export default defineComponent({
     searchIsFocused(open: boolean): void {
       if (!open && this.$vuetify.display.smAndDown) this.searchIsShown = false
     },
-    '$vuetify.display.smAndDown'(small: boolean): void {
-      const searchHadFocus = typeof document !== 'undefined' &&
-        Boolean(document.activeElement?.closest('.nav-header-search-control'))
-      if (small) {
-        if (!this.searchIsFocused) this.searchIsShown = false
-      } else {
-        const showSearch = !this.hideSearch && !this.dense
-        if (!showSearch && this.searchIsFocused) this.searchClose()
-        this.searchIsShown = showSearch
+    '$vuetify.display.smAndDown': {
+      // Capture focus before responsive rendering or modal-root repair moves it.
+      flush: 'sync',
+      handler(small: boolean): void {
+        const searchHadFocus = typeof document !== 'undefined' &&
+          Boolean(document.activeElement?.closest('.nav-header-search-control'))
+        if (small) {
+          if (!this.searchIsFocused) this.searchIsShown = false
+        } else {
+          const showSearch = !this.hideSearch && !this.dense
+          if (!showSearch && this.searchIsFocused) this.searchClose()
+          this.searchIsShown = showSearch
+        }
+        if (searchHadFocus && this.searchIsFocused) void this.focusSearchField()
       }
-      if (searchHadFocus && this.searchIsFocused) void this.focusSearchField()
     },
     hideSearch(hidden: boolean): void {
       if (hidden) {
