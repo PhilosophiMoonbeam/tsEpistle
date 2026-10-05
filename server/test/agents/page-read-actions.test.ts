@@ -1,8 +1,10 @@
 import type { AgentKnowledgeContext } from '../../../shared/agents/knowledge-context.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
-import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags, type RequestAuthContext } from '../../../shared/agents/contracts.ts'
-import { ActionKernel, createActionAuthority, type ActionAdmissionSnapshot, type ActionAuthority } from '../../agents/actions/kernel.ts'
+import { AGENT_FEATURE_FLAG_KEYS } from '../../../shared/agents/contracts.ts'
+import type { AgentActionName, AgentFeatureFlags, RequestAuthContext } from '../../../shared/agents/contracts.ts'
+import { ActionKernel, createActionAuthority } from '../../agents/actions/kernel.ts'
+import type { ActionAdmissionSnapshot, ActionAuthority } from '../../agents/actions/kernel.ts'
 import { actionDefinition } from '../../agents/actions/catalog.ts'
 import { createPageEvidenceValidator, registerPageReadActions } from '../../agents/actions/page-reads.ts'
 import type { KnowledgeProjectionView } from '../../knowledge/projection.ts'
@@ -35,6 +37,7 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   content: '# Start',
   updatedAt: new Date('2026-08-17T00:00:00.000Z'),
   visibility: 'public',
+  isSearchable: true,
   ownerId: null,
   extra: { js: 'must-not-leak' },
   ...overrides
@@ -245,6 +248,7 @@ describe('permission-safe page read actions', () => {
           pages: [
             {
               id: 43,
+              sourceRevision: '8',
               locale: scenario.excludedLocale,
               path: scenario.excludedPath,
               title: 'Secret Page',
@@ -570,6 +574,7 @@ describe('permission-safe page read actions', () => {
         pages: [
           {
             id: 42,
+            sourceRevision: '8',
             locale: 'en',
             path: 'docs/start',
             title: 'Start',
@@ -609,13 +614,92 @@ describe('permission-safe page read actions', () => {
     expect(operations.discover).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en', path: 'docs', depth: 1, order: 'path', requester: principal }))
   })
 
+  it.each([51, 100])('bounds discovery summaries after normalizing %i authored tags without narrowing the filter', async count => {
+    const authoredTags = Array.from({ length: count }, (_, index) => ` TAG-${String(index).padStart(3, '0')} `).reverse()
+    if (count === 100) authoredTags[0] = 'tag-098'
+    const requestedTag = count === 100 ? 'tag-098' : 'tag-050'
+    const { execute } = setup({
+      discover: async () => ({
+        pages: [{
+          id: 42,
+          sourceRevision: 8,
+          locale: 'en',
+          path: 'docs/start',
+          title: 'Start',
+          description: null,
+          updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+          tags: authoredTags
+        }],
+        totalInWindow: 1,
+        windowLimit: 100,
+        nextOffset: null
+      }),
+      get: async () => page({ tags: authoredTags.map(tag => ({ tag })) })
+    })
+
+    const result = await execute('pages.discover', { locale: 'en', path: 'docs', tags: [requestedTag], limit: 1 }) as {
+      pages: Array<{ tags: string[] }>
+    }
+    expect(result).toMatchObject({
+      pages: [{
+        id: 42,
+        sourceRevision: '8',
+        tags: Array.from({ length: 50 }, (_, index) => `tag-${String(index).padStart(3, '0')}`),
+        citation: { evidenceId: 'page:42:revision:8', href: '/en/docs/start' }
+      }],
+      totalInWindow: 1,
+      nextOffset: null
+    })
+    expect(result.pages[0].tags).not.toContain(requestedTag)
+  })
+
+  it.each([
+    ['source revision', { sourceRevision: '9' }],
+    ['tag membership', { tags: [] }],
+    ['searchability', { isSearchable: false }],
+    ['identity', { id: 43 }],
+    ['locale', { localeCode: 'fr' }],
+    ['path', { path: 'archive/start' }],
+    ['title', { title: 'Changed' }]
+  ] as const)('omits discovery candidates whose %s changes before hydration', async (_case, changes) => {
+    let currentPage = page({ tags: [{ tag: 'runbook' }] })
+    const getCurrentMany = vi.fn(async () => new Map([[42, knowledgeProjection()]]))
+    const { execute } = setup({
+      discover: async () => {
+        currentPage = page({ tags: [{ tag: 'runbook' }], ...changes })
+        return {
+          pages: [{
+            id: 42,
+            sourceRevision: '8',
+            locale: 'en',
+            path: 'docs/start',
+            title: 'Start',
+            description: null,
+            updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+            tags: ['runbook']
+          }],
+          totalInWindow: 2,
+          windowLimit: 100,
+          nextOffset: 1
+        }
+      },
+      get: async () => currentPage
+    }, { getCurrent: async () => null, getRevision: async () => null, getCurrentMany })
+
+    expect(await execute('pages.discover', { locale: 'en', path: 'docs', tags: [' Runbook '], limit: 1 }, {
+      scope: { kind: 'section', locale: 'en', path: 'docs' },
+      sources: []
+    })).toEqual({ pages: [], totalInWindow: 0, windowLimit: 100, nextOffset: null })
+    expect(getCurrentMany).toHaveBeenCalledWith([])
+  })
+
   it('skips locked discovery and recent candidates while direct reads remain explicit', async () => {
     const locked = new PageLocked()
     const { execute } = setup({
       discover: async () => ({
         pages: [
-          { id: 42, locale: 'en', path: 'docs/locked', title: 'Locked', description: null, updatedAt: new Date(), tags: [] },
-          { id: 43, locale: 'en', path: 'docs/visible', title: 'Visible', description: null, updatedAt: new Date(), tags: [] }
+          { id: 42, sourceRevision: '8', locale: 'en', path: 'docs/locked', title: 'Locked', description: null, updatedAt: new Date(), tags: [] },
+          { id: 43, sourceRevision: '8', locale: 'en', path: 'docs/visible', title: 'Visible', description: null, updatedAt: new Date(), tags: [] }
         ],
         totalInWindow: 2,
         windowLimit: 100,
@@ -1192,6 +1276,35 @@ describe('permission-safe page read actions', () => {
       code: 'INVALID_RELATED_CURSOR'
     })
     expect(operations.listRelated).toHaveBeenCalledTimes(3)
+  })
+
+  it('preserves uncapped related distances above 32 across cursor continuation while bounding explicit depth', async () => {
+    const { execute } = setup({
+      get: async input => Number(input.id) === 42 ? page() : page({ id: Number(input.id), path: `docs/node-${input.id}` }),
+      listRelated: async input => ({
+        pages: [page({
+          id: Number(input.offset) === 0 ? 74 : 75,
+          path: Number(input.offset) === 0 ? 'docs/node-74' : 'docs/node-75',
+          distance: Number(input.offset) === 0 ? 32 : 33,
+          direction: 'outgoing',
+          viaPageId: Number(input.offset) === 0 ? 73 : 74
+        })],
+        truncated: Number(input.offset) === 0,
+        nextOffset: Number(input.offset) === 0 ? 1 : null
+      })
+    })
+
+    const first = await execute('pages.related', { pageId: 42, limit: 1 }) as { nextCursor: string | null }
+    const opaqueCursor = first.nextCursor
+    expect(typeof opaqueCursor).toBe('string')
+    expect(first).toMatchObject({ pages: [{ id: 74, distance: 32 }] })
+    expect(await execute('pages.related', { pageId: 42, limit: 1, cursor: opaqueCursor })).toMatchObject({
+      pages: [{ id: 75, distance: 33, citation: { evidenceId: 'page:75:revision:8', href: '/en/docs/node-75' } }],
+      nextCursor: null
+    })
+    await expect(Promise.resolve().then(() => execute('pages.related', { pageId: 42, limit: 1, maxDepth: 33 }))).rejects.toMatchObject({
+      code: 'INVALID_ACTION_INPUT'
+    })
   })
 
   it('skips locked related candidates before loading their derived knowledge', async () => {

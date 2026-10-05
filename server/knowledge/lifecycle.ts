@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { canonicalJson } from '../helpers/canonical-json.ts'
-import { canReadPage, scopePageQuery, type PagePrincipal } from '../helpers/page-access.ts'
+import { canReadPage, scopePageQuery } from '../helpers/page-access.ts'
+import type { PagePrincipal } from '../helpers/page-access.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { isStructuredSearchQuery } from '../helpers/search-query.ts'
+import { lockSearchPage, withSearchContract } from '../helpers/search-contract.ts'
 import {
   claimPageMutationEffects,
   enqueuePageMutationEffects,
@@ -11,11 +13,9 @@ import {
   PageMutationOutboxError,
   PageProjectionPayloadSchema,
   rearmFailedKnowledgeEffect,
-  rearmPageMutationEffect,
-  type ClaimedPageProjectionEffect,
-  type PageProjectionPayload,
-  type PageProjectionSink
+  rearmPageMutationEffect
 } from '../core/page-mutation-outbox.ts'
+import type { ClaimedPageProjectionEffect, PageProjectionPayload, PageProjectionSink } from '../core/page-mutation-outbox.ts'
 import { validateStoredOkfMetadata } from '../okf/format.ts'
 import type { AgentKnowledgeEnricher } from '../agents/providers/utility.ts'
 import {
@@ -24,12 +24,11 @@ import {
   KnowledgeProjectionSchema,
   knowledgeProjectionView,
   knowledgeSearchText,
+  knowledgeSourceSha256,
   mergeKnowledgeUtilityResult,
-  projectPageKnowledge,
-  type KnowledgePageSource,
-  type KnowledgeProjection,
-  type KnowledgeProjectionView
+  projectPageKnowledge
 } from './projection.ts'
+import type { KnowledgePageSource, KnowledgeProjection, KnowledgeProjectionView } from './projection.ts'
 
 const RETRY_FAILED_AFTER_MILLISECONDS = 24 * 60 * 60 * 1_000
 const KNOWLEDGE_EFFECT_LEASE_MILLISECONDS = 120_000
@@ -97,6 +96,7 @@ interface StoredProjectionRow {
   readonly searchDictionary: string | null
   readonly updatedAt: string | Date
   readonly projection: string | Record<string, unknown>
+  readonly lastError: string | null
 }
 
 export interface KnowledgeDiscoveryFilter {
@@ -147,13 +147,17 @@ const currentProfileVersionId = async (knex: Knex): Promise<string | null> => {
 
 const usesPostgres = (knex: Knex): boolean => ['pg', 'postgres', 'postgresql'].includes(String(knex.client.config.client).toLocaleLowerCase())
 
-const knowledgeSearchDictionary = (): string => {
-  const wiki = Reflect.get(globalThis, 'WIKI')
-  const data = wiki && typeof wiki === 'object' ? Reflect.get(wiki, 'data') : undefined
-  const searchEngine = data && typeof data === 'object' ? Reflect.get(data, 'searchEngine') : undefined
-  const config = searchEngine && typeof searchEngine === 'object' ? Reflect.get(searchEngine, 'config') : undefined
-  const dictionary = config && typeof config === 'object' ? Reflect.get(config, 'dictLanguage') : undefined
-  return typeof dictionary === 'string' && /^[a-z][a-z0-9_]{0,62}$/iu.test(dictionary) ? dictionary : 'english'
+const withKnowledgeSearchContract = async <T>(
+  knex: Knex | Knex.Transaction,
+  work: (transaction: Knex.Transaction, dictionary: string | null) => Promise<T>
+): Promise<T> => {
+  if (usesPostgres(knex)) return withSearchContract(knex, work)
+  if (knex.isTransaction) return work(knex as Knex.Transaction, null)
+  return knex.transaction(transaction => work(transaction, null))
+}
+
+const lockKnowledgePage = async (transaction: Knex.Transaction, pageId: number): Promise<void> => {
+  if (usesPostgres(transaction)) await lockSearchPage(transaction, pageId)
 }
 
 type UtilityEligibility = 'eligible' | 'superseded' | 'withheld-private' | 'withheld-unpublished' | 'withheld-unsearchable' | 'withheld-protected'
@@ -206,6 +210,32 @@ const loadTags = async (knex: Knex, pageId: number, historyId?: number): Promise
   return rows
 }
 
+const knowledgeSourceSnapshot = (
+  row: SourceSnapshotRow,
+  pageId: number,
+  sourceRevision: string,
+  updatedAt: string | Date,
+  tags: readonly string[]
+): KnowledgePageSource => {
+  const extra = parsedExtra(row.extra)
+  if (Object.hasOwn(extra, 'okf') && validateStoredOkfMetadata(extra.okf) === null) throw new Error('Invalid claimed OKF metadata in pages.extra.okf')
+  return {
+    pageId,
+    sourceRevision,
+    locale: row.localeCode,
+    path: row.path,
+    visibility: row.visibility,
+    contentType: row.contentType,
+    content: row.content,
+    title: row.title,
+    description: row.description,
+    tags,
+    updatedAt,
+    authorId: row.authorId,
+    metadata: extra.okf
+  }
+}
+
 const loadSource = async (knex: Knex, pageId: number, sourceRevision: string): Promise<KnowledgePageSource | null> => {
   const current = await knex<CurrentSourceRow>('pages').where({ id: pageId, sourceRevision }).first()
   let row: SourceSnapshotRow
@@ -221,23 +251,47 @@ const loadSource = async (knex: Knex, pageId: number, sourceRevision: string): P
     historyId = history.id
     updatedAt = history.versionDate
   }
-  const extra = parsedExtra(row.extra)
-  if (Object.hasOwn(extra, 'okf') && validateStoredOkfMetadata(extra.okf) === null) throw new Error('Invalid claimed OKF metadata in pages.extra.okf')
-  return {
-    pageId,
-    sourceRevision,
-    locale: row.localeCode,
-    path: row.path,
-    visibility: row.visibility,
-    contentType: row.contentType,
-    content: row.content,
-    title: row.title,
-    description: row.description,
-    tags: await loadTags(knex, pageId, historyId),
-    updatedAt,
-    authorId: row.authorId,
-    metadata: extra.okf
+  return knowledgeSourceSnapshot(row, pageId, sourceRevision, updatedAt, await loadTags(knex, pageId, historyId))
+}
+
+const currentSourceDigests = async (
+  knex: Knex,
+  rows: readonly { readonly pageId: number; readonly sourceRevision: string | number }[],
+  tagsByPage?: ReadonlyMap<number, readonly string[]>
+): Promise<ReadonlyMap<number, string>> => {
+  if (rows.length === 0) return new Map()
+  const requestedRevisions = new Map(rows.map(row => [Number(row.pageId), revision(row.sourceRevision)]))
+  const ids = [...requestedRevisions.keys()]
+  const pages = await knex<CurrentSourceRow>('pages')
+    .whereIn('id', ids)
+    .select('id', 'sourceRevision', 'localeCode', 'path', 'visibility', 'isSearchable', 'contentType', 'content', 'title', 'description', 'authorId', 'extra', 'ownerId', 'updatedAt')
+  if (tagsByPage === undefined) {
+    const tagRows = (await knex('pageTags')
+      .join('tags', 'tags.id', 'pageTags.tagId')
+      .whereIn('pageTags.pageId', ids)
+      .orderBy('tags.tag')
+      .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>
+    const sourceTags = new Map<number, string[]>()
+    for (const tag of tagRows) {
+      const pageId = Number(tag.pageId)
+      const tags = sourceTags.get(pageId) ?? []
+      tags.push(tag.tag)
+      sourceTags.set(pageId, tags)
+    }
+    tagsByPage = sourceTags
   }
+  const digests = new Map<number, string>()
+  for (const page of pages) {
+    const pageId = Number(page.id)
+    const sourceRevision = revision(page.sourceRevision)
+    if (requestedRevisions.get(pageId) !== sourceRevision) continue
+    try {
+      digests.set(pageId, knowledgeSourceSha256(knowledgeSourceSnapshot(page, pageId, sourceRevision, page.updatedAt, tagsByPage.get(pageId) ?? [])))
+    } catch {
+      // Invalid authoritative metadata cannot certify a derived projection.
+    }
+  }
+  return digests
 }
 
 const projectionColumns = (
@@ -245,10 +299,11 @@ const projectionColumns = (
   projection: KnowledgeProjection,
   enrichmentState: string,
   error: string | null,
-  now: string
+  now: string,
+  dictionary: string | null
 ): Record<string, unknown> => {
   const searchText = knowledgeSearchText(projection)
-  const dictionary = knowledgeSearchDictionary()
+  if (usesPostgres(knex) && dictionary === null) throw new Error('PostgreSQL knowledge search dictionary is unavailable')
   return {
     pageId: projection.source.pageId,
     sourceRevision: projection.source.sourceRevision,
@@ -328,7 +383,11 @@ class KnowledgeProjectionSink implements PageProjectionSink {
     let error: string | null = null
     const persist = async (value: KnowledgeProjection, state: string, lastError: string | null, requireCurrentSource: boolean): Promise<boolean> => {
       const now = new Date().toISOString()
-      return this.#knex.transaction(async transaction => {
+      return withKnowledgeSearchContract(this.#knex, async (transaction, dictionary) => {
+        await lockKnowledgePage(transaction, payload.pageId)
+        const current = (await transaction('pages').where({ id: payload.pageId }).forUpdate().first('sourceRevision', 'content')) as
+          | { sourceRevision: string | number; content: string }
+          | undefined
         const lease = await transaction('pageMutationOutbox')
           .where({ id: this.#claim.id, status: 'running', leaseToken: this.#claim.leaseToken })
           .forUpdate()
@@ -338,9 +397,6 @@ class KnowledgeProjectionSink implements PageProjectionSink {
           return false
         }
         if (requireCurrentSource) {
-          const current = (await transaction('pages').where({ id: payload.pageId }).forUpdate().first('sourceRevision', 'content')) as
-            | { sourceRevision: string | number; content: string }
-            | undefined
           if (
             !current ||
             revision(current.sourceRevision) !== sourceRevision ||
@@ -349,7 +405,9 @@ class KnowledgeProjectionSink implements PageProjectionSink {
           )
             return false
         }
-        const columns = projectionColumns(transaction, value, state, lastError, now)
+        const authoritativeSource = await loadSource(transaction, payload.pageId, sourceRevision)
+        if (!authoritativeSource || knowledgeSourceSha256(authoritativeSource) !== value.source.sha256) return false
+        const columns = projectionColumns(transaction, value, state, lastError, now, dictionary)
         await transaction('pageKnowledgeProjections')
           .insert({ ...columns, createdAt: now })
           .onConflict(['pageId', 'sourceRevision'])
@@ -359,18 +417,43 @@ class KnowledgeProjectionSink implements PageProjectionSink {
     }
     const persistSuperseded = async (): Promise<boolean> => {
       const now = new Date().toISOString()
-      return this.#knex.transaction(async transaction => {
+      return withKnowledgeSearchContract(this.#knex, async (transaction, dictionary) => {
+        await lockKnowledgePage(transaction, payload.pageId)
+        const current = (await transaction('pages').where({ id: payload.pageId }).forUpdate().first('sourceRevision', 'content')) as
+          | { sourceRevision: string | number; content: string }
+          | undefined
         const lease = await transaction('pageMutationOutbox')
           .where({ id: this.#claim.id, status: 'running', leaseToken: this.#claim.leaseToken })
           .forUpdate()
           .first('id')
         if (!lease) return false
-        const current = (await transaction('pages').where({ id: payload.pageId }).forUpdate().first('sourceRevision', 'content')) as
-          | { sourceRevision: string | number; content: string }
-          | undefined
-        if (current && revision(current.sourceRevision) === sourceRevision && payload.sourceSha256 !== null && sha256(current.content) === payload.sourceSha256)
+        const authoritativeSource = await loadSource(transaction, payload.pageId, sourceRevision)
+        const authoritativeMatches = authoritativeSource !== null && knowledgeSourceSha256(authoritativeSource) === projection.source.sha256
+        if (
+          current &&
+          revision(current.sourceRevision) === sourceRevision &&
+          payload.sourceSha256 !== null &&
+          sha256(current.content) === payload.sourceSha256 &&
+          authoritativeMatches
+        )
           return false
-        const columns = projectionColumns(transaction, projection, 'superseded', null, now)
+        if (!authoritativeSource) {
+          // The admitted deterministic bytes remain immutable when their canonical
+          // source is no longer available. Only terminate their operational state;
+          // this does not certify a historical digest or admit paid utility output.
+          await transaction('pageKnowledgeProjections')
+            .where({
+              pageId: payload.pageId,
+              sourceRevision,
+              sourceSha256: projection.source.sha256,
+              projection: canonicalJson(projection),
+              enrichmentState: 'pending'
+            })
+            .update({ enrichmentState: 'superseded', lastError: null, updatedAt: now })
+          return true
+        }
+        if (!authoritativeMatches) return false
+        const columns = projectionColumns(transaction, projection, 'superseded', null, now, dictionary)
         await transaction('pageKnowledgeProjections')
           .insert({ ...columns, createdAt: now })
           .onConflict(['pageId', 'sourceRevision'])
@@ -424,8 +507,10 @@ class KnowledgeProjectionSink implements PageProjectionSink {
               outputSha256: result.outputSha256,
               generatedAt
             })
-            if ((await persistOrSupersede(merged, 'succeeded', null)) === 'persisted') projection = merged
-            else enrichmentState = 'superseded'
+            if ((await persistOrSupersede(merged, 'succeeded', null)) === 'persisted') {
+              projection = merged
+              enrichmentState = 'succeeded'
+            } else enrichmentState = 'superseded'
           }
         } catch (cause: unknown) {
           if (signal.aborted) throw signal.reason
@@ -437,18 +522,23 @@ class KnowledgeProjectionSink implements PageProjectionSink {
       }
     }
 
-    const stored = (await this.#knex('pageKnowledgeProjections').where({ pageId: payload.pageId, sourceRevision }).first('sourceRevision', 'sourceSha256')) as
-      | { sourceRevision: string | number; sourceSha256: string }
-      | undefined
-    const satisfied = stored?.sourceSha256 === projection.source.sha256
+    const stored = await withKnowledgeSearchContract(this.#knex, async transaction =>
+      transaction<Pick<StoredProjectionRow, 'pageId' | 'sourceRevision' | 'sourceSha256'>>('pageKnowledgeProjections')
+        .where({ pageId: payload.pageId, sourceRevision })
+        .first('sourceRevision', 'sourceSha256')
+    )
+    const superseded = enrichmentState === 'superseded'
+    const satisfied = superseded || stored?.sourceSha256 === projection.source.sha256
     return {
       result: { state: projection.completeness.state, enrichmentState, missingFields: projection.completeness.missingFields },
       postcondition: {
         satisfied,
         observedSourceRevision: stored ? revision(stored.sourceRevision) : null,
-        detail: satisfied
-          ? 'Knowledge projection matches the exact source revision and authoritative snapshot hash'
-          : 'Knowledge projection postcondition failed'
+        detail: superseded
+          ? 'Source was superseded; utility output was discarded without certifying unavailable historical source'
+          : satisfied
+            ? 'Knowledge projection matches the exact source revision and authoritative snapshot hash'
+            : 'Knowledge projection postcondition failed'
       }
     }
   }
@@ -468,24 +558,20 @@ const parseProjection = (row: Pick<StoredProjectionRow, 'projection'>): Knowledg
   return KnowledgeProjectionSchema.parse(decoded)
 }
 
-const isValidProjection = (
-  row: Pick<StoredProjectionRow, 'sourceSha256' | 'deterministicVersion' | 'searchDictionary' | 'projection'> | undefined,
+const validatedSourceProjection = (
+  row: Pick<StoredProjectionRow, 'projection'> | undefined,
   pageId: number,
   sourceRevision: string,
-  sourceSha256: string,
-  expectedDictionary: string | null
-): boolean => {
-  if (!row || row.sourceSha256 !== sourceSha256 || (expectedDictionary !== null && row.searchDictionary !== expectedDictionary)) return false
+  sourceSha256: string | undefined
+): KnowledgeProjection | null => {
+  if (!row || sourceSha256 === undefined) return null
   try {
     const projection = parseProjection(row)
-    return (
-      row.deterministicVersion === projection.provenance.deterministicVersion &&
-      projection.source.pageId === pageId &&
-      projection.source.sourceRevision === sourceRevision &&
-      projection.source.sha256 === sourceSha256
-    )
+    return projection.source.pageId === pageId && projection.source.sourceRevision === sourceRevision && projection.source.sha256 === sourceSha256
+      ? projection
+      : null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -493,14 +579,38 @@ const projectionView = (
   row: Pick<StoredProjectionRow, 'sourceSha256' | 'deterministicVersion' | 'searchDictionary' | 'projection'>,
   pageId: number,
   sourceRevision: string,
+  sourceSha256: string | undefined,
   expectedDictionary: string | null
 ): KnowledgeProjectionView | null => {
-  if (!isValidProjection(row, pageId, sourceRevision, row.sourceSha256, expectedDictionary)) return null
-  try {
-    return knowledgeProjectionView(parseProjection(row))
-  } catch {
+  const projection = validatedSourceProjection(row, pageId, sourceRevision, sourceSha256)
+  if (
+    !projection ||
+    row.sourceSha256 !== sourceSha256 ||
+    row.deterministicVersion !== projection.provenance.deterministicVersion ||
+    (expectedDictionary !== null && row.searchDictionary !== expectedDictionary)
+  )
     return null
+  return knowledgeProjectionView(projection)
+}
+
+const repairProjectionColumns = async (
+  transaction: Knex.Transaction,
+  row: StoredProjectionRow,
+  projection: KnowledgeProjection,
+  dictionary: string | null,
+  now: Date
+): Promise<number> => {
+  const columns = projectionColumns(transaction, projection, row.enrichmentState, row.lastError, now.toISOString(), dictionary)
+  const healthy = transaction('pageKnowledgeProjections').where({ pageId: row.pageId, sourceRevision: row.sourceRevision })
+  for (const [key, value] of Object.entries(columns)) {
+    if (key === 'projection' || key === 'enrichmentState' || key === 'lastError' || key === 'updatedAt' || key === 'searchTokens') continue
+    healthy.where({ [key]: value })
   }
+  if (dictionary !== null)
+    healthy.whereRaw('?? = to_tsvector(?::regconfig, ?)', ['searchTokens', dictionary, knowledgeSearchText(projection)])
+  if (await healthy.first('pageId')) return 0
+  await transaction('pageKnowledgeProjections').where({ pageId: row.pageId, sourceRevision: row.sourceRevision }).update(columns)
+  return 1
 }
 
 const searchIds = (ids: readonly number[] | undefined): readonly number[] | undefined =>
@@ -525,16 +635,24 @@ export class PageKnowledgeRepository {
 
   async #rearmUnavailableRevision(pageId: number, sourceRevision: string): Promise<void> {
     try {
-      await this.#knex.transaction(async transaction => {
+      await withKnowledgeSearchContract(this.#knex, async (transaction, dictionary) => {
+        await lockKnowledgePage(transaction, pageId)
+        await transaction('pages').where({ id: pageId }).forUpdate().first('id')
         const effect = await transaction<CurrentKnowledgeEffectRow>('pageMutationOutbox')
           .where({ pageId, sourceRevision, effectKind: 'knowledge' })
-          .whereIn('status', ['succeeded', 'failed'])
-          .first('id', 'payload')
-        if (!effect) return
+          .forUpdate()
+          .first('id', 'status', 'payload')
         const source = await loadSource(transaction, pageId, sourceRevision)
+        if (!source) return
+        const row = await transaction<StoredProjectionRow>('pageKnowledgeProjections').where({ pageId, sourceRevision }).forUpdate().first()
+        const projection = validatedSourceProjection(row, pageId, sourceRevision, knowledgeSourceSha256(source))
+        if (row && projection) {
+          await repairProjectionColumns(transaction, row, projection, dictionary, new Date())
+          return
+        }
+        if (!effect || (effect.status !== 'succeeded' && effect.status !== 'failed')) return
         const payload = parseKnowledgeEffectPayload(effect.payload)
         if (
-          !source ||
           payload.pageId !== pageId ||
           payload.sourceRevision !== sourceRevision ||
           payload.sourceSha256 === null ||
@@ -549,27 +667,22 @@ export class PageKnowledgeRepository {
   }
 
   async getCurrent(pageId: number): Promise<KnowledgeProjectionView | null> {
-    const row = await this.#knex<StoredProjectionRow>('pageKnowledgeProjections as projections')
-      .join('pages', function () {
-        this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
-      })
-      .where('projections.pageId', pageId)
-      .first(
-        'projections.pageId',
-        'projections.sourceRevision',
-        'projections.sourceSha256',
-        'projections.deterministicVersion',
-        'projections.searchDictionary',
-        'projections.projection'
-      )
-    return row ? projectionView(row, Number(row.pageId), revision(row.sourceRevision), usesPostgres(this.#knex) ? knowledgeSearchDictionary() : null) : null
+    return (await this.getCurrentMany([pageId])).get(pageId) ?? null
   }
 
   async getRevision(pageId: number, sourceRevision: string): Promise<KnowledgeProjectionView | null> {
-    const row = await this.#knex<StoredProjectionRow>('pageKnowledgeProjections')
-      .where({ pageId, sourceRevision })
-      .first('pageId', 'sourceRevision', 'sourceSha256', 'deterministicVersion', 'searchDictionary', 'projection')
-    const view = row ? projectionView(row, pageId, sourceRevision, usesPostgres(this.#knex) ? knowledgeSearchDictionary() : null) : null
+    const view = await withKnowledgeSearchContract(this.#knex, async (transaction, dictionary) => {
+      const row = await transaction<StoredProjectionRow>('pageKnowledgeProjections')
+        .where({ pageId, sourceRevision })
+        .first('pageId', 'sourceRevision', 'sourceSha256', 'deterministicVersion', 'searchDictionary', 'projection')
+      if (!row) return null
+      try {
+        const source = await loadSource(transaction, pageId, sourceRevision)
+        return source ? projectionView(row, pageId, sourceRevision, knowledgeSourceSha256(source), dictionary) : null
+      } catch {
+        return null
+      }
+    })
     if (view === null) await this.#rearmUnavailableRevision(pageId, sourceRevision)
     return view
   }
@@ -577,27 +690,29 @@ export class PageKnowledgeRepository {
   async getCurrentMany(pageIds: readonly number[]): Promise<ReadonlyMap<number, KnowledgeProjectionView>> {
     const ids = searchIds(pageIds)
     if (!ids || ids.length === 0) return new Map()
-    const rows = await this.#knex<StoredProjectionRow>('pageKnowledgeProjections as projections')
-      .join('pages', function () {
-        this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
-      })
-      .whereIn('projections.pageId', ids)
-      .select(
-        'projections.pageId',
-        'projections.sourceRevision',
-        'projections.sourceSha256',
-        'projections.deterministicVersion',
-        'projections.searchDictionary',
-        'projections.projection'
-      )
-    const dictionary = usesPostgres(this.#knex) ? knowledgeSearchDictionary() : null
-    const values = new Map<number, KnowledgeProjectionView>()
-    for (const row of rows) {
-      const pageId = Number(row.pageId)
-      const view = projectionView(row, pageId, revision(row.sourceRevision), dictionary)
-      if (view) values.set(pageId, view)
-    }
-    return values
+    return withKnowledgeSearchContract(this.#knex, async (transaction, dictionary) => {
+      const rows = await transaction<StoredProjectionRow>('pageKnowledgeProjections as projections')
+        .join('pages', function () {
+          this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
+        })
+        .whereIn('projections.pageId', ids)
+        .select(
+          'projections.pageId',
+          'projections.sourceRevision',
+          'projections.sourceSha256',
+          'projections.deterministicVersion',
+          'projections.searchDictionary',
+          'projections.projection'
+        )
+      const sourceDigests = await currentSourceDigests(transaction, rows)
+      const values = new Map<number, KnowledgeProjectionView>()
+      for (const row of rows) {
+        const pageId = Number(row.pageId)
+        const view = projectionView(row, pageId, revision(row.sourceRevision), sourceDigests.get(pageId), dictionary)
+        if (view) values.set(pageId, view)
+      }
+      return values
+    })
   }
 
   async filterVisibleCurrentIds(input: {
@@ -609,92 +724,92 @@ export class PageKnowledgeRepository {
   }): Promise<readonly number[]> {
     const selectedIds = searchIds(input.pageIds)
     if (input.pageIds !== undefined && selectedIds?.length === 0) return []
-    const authorizedPublicIds = searchIds(input.authorizedPageIds)
-    const dictionary = usesPostgres(this.#knex) ? knowledgeSearchDictionary() : null
-    const now = new Date()
-    const nowIso = now.toISOString()
-    const rowsQuery = this.#knex<KnowledgeSearchProjectionRow>('pageKnowledgeProjections as projections')
-      .join('pages', function () {
-        this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
-      })
-      .where('projections.schemaVersion', KNOWLEDGE_SCHEMA_VERSION)
-      .where('projections.deterministicVersion', KNOWLEDGE_DETERMINISTIC_VERSION)
-      .where('pages.isSearchable', true)
-      .whereNotExists(protection =>
-        protection.select(this.#knex.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
-      )
-      .where(visibility => {
-        visibility.where('pages.visibility', 'private').orWhere(publicPage => {
-          publicPage.where('pages.isPublished', true)
+    return withKnowledgeSearchContract(this.#knex, async (transaction, dictionary) => {
+      const authorizedPublicIds = searchIds(input.authorizedPageIds)
+      const now = new Date()
+      const nowIso = now.toISOString()
+      const rowsQuery = transaction<KnowledgeSearchProjectionRow>('pageKnowledgeProjections as projections')
+        .join('pages', function () {
+          this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
         })
-      })
-    if (selectedIds !== undefined) rowsQuery.whereIn('pages.id', selectedIds)
-    else rowsQuery.where('pages.visibility', 'private')
-    if (dictionary !== null) rowsQuery.where('projections.searchDictionary', dictionary)
-    if (input.filter?.state !== undefined) rowsQuery.where('projections.state', input.filter.state)
-    if (input.filter?.lifecycleStatus !== undefined) rowsQuery.where('projections.lifecycleStatus', input.filter.lifecycleStatus)
-    if (input.filter?.trustTier !== undefined) rowsQuery.where('projections.trustTier', input.filter.trustTier)
-    if (input.filter?.stale === true) rowsQuery.whereNotNull('projections.staleAfter').andWhere('projections.staleAfter', '<=', nowIso)
-    if (input.filter?.stale === false) {
-      rowsQuery.andWhere(stale => stale.whereNull('projections.staleAfter').orWhere('projections.staleAfter', '>', nowIso))
-    }
-    if (input.filter?.conceptType !== undefined) {
-      rowsQuery.whereRaw('LOWER(??) = ?', ['projections.conceptType', input.filter.conceptType.toLocaleLowerCase()])
-    }
-    scopePageQuery(rowsQuery, input.requester, { table: 'pages', includeAllForSystemManager: true })
-    if (authorizedPublicIds !== undefined) {
-      rowsQuery.andWhere(visible => {
-        visible.where('pages.visibility', 'private')
-        if (authorizedPublicIds.length > 0)
-          visible.orWhere(publicPage => publicPage.where('pages.visibility', 'public').whereIn('pages.id', authorizedPublicIds))
-      })
-    }
-    if (selectedIds === undefined) {
-      const privateRows = await rowsQuery.select('pages.id').orderBy('pages.id')
-      return privateRows.map(row => Number(row.id))
-    }
-    const rows = await rowsQuery.select(
-      'pages.id',
-      'pages.localeCode',
-      'pages.path',
-      'pages.visibility',
-      'pages.ownerId',
-      'pages.isSearchable',
-      'pages.isPublished',
-      'pages.publishStartDate',
-      'pages.publishEndDate',
-      'projections.sourceRevision',
-      'projections.sourceSha256',
-      'projections.deterministicVersion',
-      'projections.searchDictionary',
-      'projections.projection'
-    )
-    const tagRows = (await this.#knex('pageTags')
-      .join('tags', 'tags.id', 'pageTags.tagId')
-      .whereIn(
-        'pageTags.pageId',
-        rows.map(row => Number(row.id))
-      )
-      .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>
-    const tagsByPage = new Map<number, string[]>()
-    for (const tag of tagRows) {
-      const pageId = Number(tag.pageId)
-      tagsByPage.set(pageId, [...(tagsByPage.get(pageId) ?? []), tag.tag])
-    }
-    const visibleIds = new Set<number>()
-    for (const row of rows) {
-      const pageId = Number(row.id)
-      if (
-        row.isSearchable === false ||
-        row.isSearchable === 0 ||
-        (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf())))
-      )
-        continue
-      if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] }, input.authority)) continue
-      const knowledge = projectionView(row, pageId, revision(row.sourceRevision), dictionary)
-      if (knowledge && matchesKnowledgeFilter(knowledge, input.filter)) visibleIds.add(pageId)
-    }
-    return selectedIds.filter(pageId => visibleIds.has(pageId))
+        .where('projections.schemaVersion', KNOWLEDGE_SCHEMA_VERSION)
+        .where('projections.deterministicVersion', KNOWLEDGE_DETERMINISTIC_VERSION)
+        .where('pages.isSearchable', true)
+        .whereNotExists(protection =>
+          protection.select(transaction.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
+        )
+        .where(visibility => {
+          visibility.where('pages.visibility', 'private').orWhere(publicPage => {
+            publicPage.where('pages.isPublished', true)
+          })
+        })
+      if (selectedIds !== undefined) rowsQuery.whereIn('pages.id', selectedIds)
+      else rowsQuery.where('pages.visibility', 'private')
+      if (dictionary !== null) rowsQuery.where('projections.searchDictionary', dictionary)
+      if (input.filter?.state !== undefined) rowsQuery.where('projections.state', input.filter.state)
+      if (input.filter?.lifecycleStatus !== undefined) rowsQuery.where('projections.lifecycleStatus', input.filter.lifecycleStatus)
+      if (input.filter?.trustTier !== undefined) rowsQuery.where('projections.trustTier', input.filter.trustTier)
+      if (input.filter?.stale === true) rowsQuery.whereNotNull('projections.staleAfter').andWhere('projections.staleAfter', '<=', nowIso)
+      if (input.filter?.stale === false) {
+        rowsQuery.andWhere(stale => stale.whereNull('projections.staleAfter').orWhere('projections.staleAfter', '>', nowIso))
+      }
+      if (input.filter?.conceptType !== undefined) {
+        rowsQuery.whereRaw('LOWER(??) = ?', ['projections.conceptType', input.filter.conceptType.toLocaleLowerCase()])
+      }
+      scopePageQuery(rowsQuery, input.requester, { table: 'pages', includeAllForSystemManager: true })
+      if (authorizedPublicIds !== undefined) {
+        rowsQuery.andWhere(visible => {
+          visible.where('pages.visibility', 'private')
+          if (authorizedPublicIds.length > 0)
+            visible.orWhere(publicPage => publicPage.where('pages.visibility', 'public').whereIn('pages.id', authorizedPublicIds))
+        })
+      }
+      const rows = await rowsQuery
+        .select(
+          'pages.id',
+          'pages.localeCode',
+          'pages.path',
+          'pages.visibility',
+          'pages.ownerId',
+          'pages.isSearchable',
+          'pages.isPublished',
+          'pages.publishStartDate',
+          'pages.publishEndDate',
+          'projections.sourceRevision',
+          'projections.sourceSha256',
+          'projections.deterministicVersion',
+          'projections.searchDictionary',
+          'projections.projection'
+        )
+        .orderBy('pages.id')
+      const tagRows = (await transaction('pageTags')
+        .join('tags', 'tags.id', 'pageTags.tagId')
+        .whereIn('pageTags.pageId', rows.map(row => Number(row.id)))
+        .orderBy('tags.tag')
+        .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>
+      const tagsByPage = new Map<number, string[]>()
+      for (const tag of tagRows) {
+        const pageId = Number(tag.pageId)
+        const tags = tagsByPage.get(pageId) ?? []
+        tags.push(tag.tag)
+        tagsByPage.set(pageId, tags)
+      }
+      const sourceDigests = await currentSourceDigests(transaction, rows.map(row => ({ pageId: Number(row.id), sourceRevision: row.sourceRevision })), tagsByPage)
+      const visibleIds = new Set<number>()
+      for (const row of rows) {
+        const pageId = Number(row.id)
+        if (
+          row.isSearchable === false ||
+          row.isSearchable === 0 ||
+          (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf())))
+        )
+          continue
+        if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] }, input.authority)) continue
+        const knowledge = projectionView(row, pageId, revision(row.sourceRevision), sourceDigests.get(pageId), dictionary)
+        if (knowledge && matchesKnowledgeFilter(knowledge, input.filter)) visibleIds.add(pageId)
+      }
+      return selectedIds === undefined ? [...visibleIds] : selectedIds.filter(pageId => visibleIds.has(pageId))
+    })
   }
 
   async searchVisible(input: {
@@ -713,111 +828,113 @@ export class PageKnowledgeRepository {
     const limit = Math.max(1, Math.min(100, input.limit))
     const selectedIds = searchIds(input.pageIds)
     if (selectedIds?.length === 0 || isStructuredSearchQuery(query)) return []
-    const authorizedPublicIds = searchIds(input.authorizedPageIds)
-    const postgresql = usesPostgres(this.#knex)
-    const dictionary = postgresql ? knowledgeSearchDictionary() : null
-    const escapeLike = (value: string): string => value.replace(/[\\%_]/gu, '\\$&')
-    const now = new Date()
-    const candidateLimit = Math.max(limit, Math.min(500, limit * 10))
-    const batchSize = 50
-    const candidates: KnowledgeSearchCandidate[] = []
-    let afterId = 0
+    return withKnowledgeSearchContract(this.#knex, async (transaction, dictionary) => {
+      const authorizedPublicIds = searchIds(input.authorizedPageIds)
+      const postgresql = usesPostgres(transaction)
+      const escapeLike = (value: string): string => value.replace(/[\\%_]/gu, '\\$&')
+      const now = new Date()
+      const candidateLimit = Math.max(limit, Math.min(500, limit * 10))
+      const batchSize = 50
+      const candidates: KnowledgeSearchCandidate[] = []
+      let afterId = 0
 
-    while (candidates.length < candidateLimit) {
-      const rowsQuery = this.#knex<KnowledgeSearchProjectionRow>('pageKnowledgeProjections as projections')
-        .join('pages', function () {
-          this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
-        })
-        .where('pages.id', '>', afterId)
-        .whereNotExists(protection =>
-          protection.select(this.#knex.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
-        )
-        .where(visibility => {
-          visibility.where('pages.visibility', 'private').orWhere(publicPage => {
-            publicPage.where('pages.visibility', 'public').where('pages.isPublished', true)
+      while (candidates.length < candidateLimit) {
+        const rowsQuery = transaction<KnowledgeSearchProjectionRow>('pageKnowledgeProjections as projections')
+          .join('pages', function () {
+            this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
           })
-        })
-        .where('pages.isSearchable', true)
-      scopePageQuery(rowsQuery, input.requester, { table: 'pages', includeAllForSystemManager: true })
-      if (selectedIds !== undefined) rowsQuery.whereIn('pages.id', selectedIds)
-      if (authorizedPublicIds !== undefined) {
-        rowsQuery.andWhere(visible => {
-          visible.where('pages.visibility', 'private')
-          if (authorizedPublicIds.length > 0)
-            visible.orWhere(publicPage => publicPage.where('pages.visibility', 'public').whereIn('pages.id', authorizedPublicIds))
-        })
+          .where('pages.id', '>', afterId)
+          .whereNotExists(protection =>
+            protection.select(transaction.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
+          )
+          .where(visibility => {
+            visibility.where('pages.visibility', 'private').orWhere(publicPage => {
+              publicPage.where('pages.visibility', 'public').where('pages.isPublished', true)
+            })
+          })
+          .where('pages.isSearchable', true)
+        scopePageQuery(rowsQuery, input.requester, { table: 'pages', includeAllForSystemManager: true })
+        if (selectedIds !== undefined) rowsQuery.whereIn('pages.id', selectedIds)
+        if (authorizedPublicIds !== undefined) {
+          rowsQuery.andWhere(visible => {
+            visible.where('pages.visibility', 'private')
+            if (authorizedPublicIds.length > 0)
+              visible.orWhere(publicPage => publicPage.where('pages.visibility', 'public').whereIn('pages.id', authorizedPublicIds))
+          })
+        }
+        if (input.locale !== undefined) rowsQuery.where('pages.localeCode', input.locale)
+        const path = input.path
+        if (path !== undefined) {
+          rowsQuery.andWhere(pathScope => {
+            pathScope.where('pages.path', path).orWhereRaw('?? LIKE ? ESCAPE ?', ['pages.path', `${escapeLike(path)}/%`, '\\'])
+          })
+        }
+        if (postgresql)
+          rowsQuery
+            .where('projections.searchDictionary', dictionary)
+            .whereRaw('?? @@ websearch_to_tsquery(?::regconfig, ?)', ['projections.searchTokens', dictionary, query])
+        else rowsQuery.whereRaw('?? LIKE ? ESCAPE ?', ['projections.searchText', `%${escapeLike(query.toLocaleLowerCase())}%`, '\\'])
+        const rows = await rowsQuery
+          .select(
+            'pages.id',
+            'pages.localeCode',
+            'pages.path',
+            'pages.visibility',
+            'pages.isPublished',
+            'pages.isSearchable',
+            'pages.publishStartDate',
+            'pages.publishEndDate',
+            'pages.ownerId',
+            'projections.sourceRevision',
+            'projections.sourceSha256',
+            'projections.deterministicVersion',
+            'projections.searchDictionary',
+            'projections.projection'
+          )
+          .orderBy('pages.id')
+          .limit(batchSize)
+        if (rows.length === 0) break
+        afterId = Number(rows.at(-1)?.id ?? afterId)
+        const tagRows = (await transaction('pageTags')
+          .join('tags', 'tags.id', 'pageTags.tagId')
+          .whereIn('pageTags.pageId', rows.map(row => Number(row.id)))
+          .orderBy('tags.tag')
+          .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>
+        const tagsByPage = new Map<number, string[]>()
+        for (const tag of tagRows) {
+          const pageId = Number(tag.pageId)
+          const tags = tagsByPage.get(pageId) ?? []
+          tags.push(tag.tag)
+          tagsByPage.set(pageId, tags)
+        }
+        const sourceDigests = await currentSourceDigests(transaction, rows.map(row => ({ pageId: Number(row.id), sourceRevision: row.sourceRevision })), tagsByPage)
+        for (const row of rows) {
+          const pageId = Number(row.id)
+          if (row.isSearchable === false || row.isSearchable === 0) continue
+          if (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf()))) continue
+          if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] }, input.authority)) continue
+          const sourceRevision = revision(row.sourceRevision)
+          const knowledge = projectionView(row, pageId, sourceRevision, sourceDigests.get(pageId), dictionary)
+          if (!knowledge || !matchesKnowledgeFilter(knowledge, input.filter)) continue
+          const exact =
+            knowledge.conceptType?.toLocaleLowerCase() === query.toLocaleLowerCase() ||
+            knowledge.tags.some(tag => tag.toLocaleLowerCase() === query.toLocaleLowerCase())
+          candidates.push({
+            id: pageId,
+            sourceRevision,
+            locale: row.localeCode,
+            path: row.path,
+            visibility: row.visibility,
+            score: exact ? 7 : 2,
+            matchedFields: ['knowledge'],
+            knowledge
+          })
+        }
       }
-      if (input.locale !== undefined) rowsQuery.where('pages.localeCode', input.locale)
-      const path = input.path
-      if (path !== undefined) {
-        rowsQuery.andWhere(pathScope => {
-          pathScope.where('pages.path', path).orWhereRaw('?? LIKE ? ESCAPE ?', ['pages.path', `${escapeLike(path)}/%`, '\\'])
-        })
-      }
-      if (postgresql)
-        rowsQuery
-          .where('projections.searchDictionary', dictionary)
-          .whereRaw('?? @@ websearch_to_tsquery(?::regconfig, ?)', ['projections.searchTokens', dictionary, query])
-      else rowsQuery.whereRaw('?? LIKE ? ESCAPE ?', ['projections.searchText', `%${escapeLike(query.toLocaleLowerCase())}%`, '\\'])
-      const rows = await rowsQuery
-        .select(
-          'pages.id',
-          'pages.localeCode',
-          'pages.path',
-          'pages.visibility',
-          'pages.isPublished',
-          'pages.isSearchable',
-          'pages.publishStartDate',
-          'pages.publishEndDate',
-          'pages.ownerId',
-          'projections.sourceRevision',
-          'projections.sourceSha256',
-          'projections.deterministicVersion',
-          'projections.searchDictionary',
-          'projections.projection'
-        )
-        .orderBy('pages.id')
-        .limit(batchSize)
-      if (rows.length === 0) break
-      afterId = Number(rows.at(-1)?.id ?? afterId)
-      const tagRows = (await this.#knex('pageTags')
-        .join('tags', 'tags.id', 'pageTags.tagId')
-        .whereIn(
-          'pageTags.pageId',
-          rows.map(row => Number(row.id))
-        )
-        .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>
-      const tagsByPage = new Map<number, string[]>()
-      for (const tag of tagRows) {
-        const pageId = Number(tag.pageId)
-        tagsByPage.set(pageId, [...(tagsByPage.get(pageId) ?? []), tag.tag])
-      }
-      for (const row of rows) {
-        const pageId = Number(row.id)
-        if (row.isSearchable === false || row.isSearchable === 0) continue
-        if (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf()))) continue
-        if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] }, input.authority)) continue
-        const sourceRevision = revision(row.sourceRevision)
-        const knowledge = projectionView(row, pageId, sourceRevision, dictionary)
-        if (!knowledge || !matchesKnowledgeFilter(knowledge, input.filter)) continue
-        const exact =
-          knowledge.conceptType?.toLocaleLowerCase() === query.toLocaleLowerCase() ||
-          knowledge.tags.some(tag => tag.toLocaleLowerCase() === query.toLocaleLowerCase())
-        candidates.push({
-          id: pageId,
-          sourceRevision,
-          locale: row.localeCode,
-          path: row.path,
-          visibility: row.visibility,
-          score: exact ? 7 : 2,
-          matchedFields: ['knowledge'],
-          knowledge
-        })
-      }
-    }
-    return candidates
-      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path) || left.locale.localeCompare(right.locale) || left.id - right.id)
-      .slice(0, limit)
+      return candidates
+        .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path) || left.locale.localeCompare(right.locale) || left.id - right.id)
+        .slice(0, limit)
+    })
   }
 }
 
@@ -850,7 +967,7 @@ const isMissingMaintenanceTable = (error: unknown): boolean =>
 
 const claimMaintenanceEpoch = async (knex: Knex, workerId: string, now: Date): Promise<KnowledgeMaintenanceRow | null> => {
   try {
-    return await knex.transaction(async transaction => {
+    return await withKnowledgeSearchContract(knex, async transaction => {
       const current = (await transaction<KnowledgeMaintenanceRow>('pageKnowledgeMaintenance').where({ id: 1 }).forUpdate().first()) as
         | KnowledgeMaintenanceRow
         | undefined
@@ -947,7 +1064,8 @@ const parseKnowledgeEffectPayload = (value: string): PageProjectionPayload => {
 }
 
 const repairCurrentProjection = async (knex: Knex, scanned: CurrentProjectionScanRow, now: Date): Promise<number> =>
-  knex.transaction(async transaction => {
+  withKnowledgeSearchContract(knex, async (transaction, dictionary) => {
+    await lockKnowledgePage(transaction, Number(scanned.id))
     const page = await transaction<ProjectionQueueSourceRow>('pages')
       .where({ id: scanned.id, sourceRevision: scanned.sourceRevision })
       .forUpdate()
@@ -956,18 +1074,14 @@ const repairCurrentProjection = async (knex: Knex, scanned: CurrentProjectionSca
     const sourceRevision = revision(page.sourceRevision)
     const authoritativeSource = await loadSource(transaction, Number(page.id), sourceRevision)
     if (!authoritativeSource) return 0
-    const sourceSha256 = projectPageKnowledge(authoritativeSource).source.sha256
-    const dictionary = usesPostgres(transaction) ? knowledgeSearchDictionary() : null
-    const projection = await transaction<StoredProjectionRow>('pageKnowledgeProjections')
-      .where({ pageId: page.id, sourceRevision })
-      .first('sourceSha256', 'deterministicVersion', 'searchDictionary', 'projection')
-    if (isValidProjection(projection, Number(page.id), sourceRevision, sourceSha256, dictionary)) return 0
-
+    const sourceSha256 = knowledgeSourceSha256(authoritativeSource)
     const effect = await transaction<CurrentKnowledgeEffectRow>('pageMutationOutbox')
-      .where('pageId', page.id)
-      .where('sourceRevision', sourceRevision)
-      .where('effectKind', 'knowledge')
+      .where({ pageId: page.id, sourceRevision, effectKind: 'knowledge' })
+      .forUpdate()
       .first('id', 'status', 'attempts', 'payload')
+    const row = await transaction<StoredProjectionRow>('pageKnowledgeProjections').where({ pageId: page.id, sourceRevision }).forUpdate().first()
+    const projection = validatedSourceProjection(row, Number(page.id), sourceRevision, sourceSha256)
+    if (row && projection) return repairProjectionColumns(transaction, row, projection, dictionary, now)
     const location = {
       locale: page.localeCode,
       path: page.path,
@@ -1004,40 +1118,38 @@ const repairCurrentProjection = async (knex: Knex, scanned: CurrentProjectionSca
 
 const recoverTerminalFailures = async (knex: Knex, now: Date): Promise<number> => {
   const failedBefore = new Date(now.valueOf() - RETRY_FAILED_AFTER_MILLISECONDS)
-  const rows = (await knex('pageMutationOutbox as effects')
-    .join('pages', function () {
-      this.on('pages.id', '=', 'effects.pageId').andOn('pages.sourceRevision', '=', 'effects.sourceRevision')
-    })
-    .where({
-      'effects.effectKind': 'knowledge',
-      'effects.desiredState': 'present',
-      'effects.status': 'failed'
-    })
-    .where('effects.attempts', '>=', 5)
-    .where('effects.updatedAt', '<=', failedBefore.toISOString())
-    .orderBy('effects.updatedAt')
-    .orderBy('effects.id')
-    .select('effects.id', 'effects.pageId', 'effects.sourceRevision')
-    .limit(25)) as Array<{ id: string; pageId: number; sourceRevision: string | number }>
+  const rows = await withKnowledgeSearchContract(knex, async transaction =>
+    transaction<CurrentKnowledgeEffectRow>('pageMutationOutbox as effects')
+      .join('pages', function () {
+        this.on('pages.id', '=', 'effects.pageId').andOn('pages.sourceRevision', '=', 'effects.sourceRevision')
+      })
+      .where({
+        'effects.effectKind': 'knowledge',
+        'effects.desiredState': 'present',
+        'effects.status': 'failed'
+      })
+      .where('effects.attempts', '>=', 5)
+      .where('effects.updatedAt', '<=', failedBefore.toISOString())
+      .orderBy('effects.updatedAt')
+      .orderBy('effects.id')
+      .select('effects.id', 'effects.pageId', 'effects.sourceRevision')
+      .limit(25)
+  )
   let rearmed = 0
   for (const row of rows) {
-    rearmed += await knex.transaction(async transaction => {
+    rearmed += await withKnowledgeSearchContract(knex, async transaction => {
+      await lockKnowledgePage(transaction, Number(row.pageId))
       const source = await transaction<ProjectionQueueSourceRow>('pages')
         .where({ id: row.pageId, sourceRevision: row.sourceRevision })
         .forUpdate()
         .first('id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
       if (!source) return 0
       const sourceRevision = revision(source.sourceRevision)
-      const dictionary = usesPostgres(transaction) ? knowledgeSearchDictionary() : null
-      const projection = await transaction<StoredProjectionRow>('pageKnowledgeProjections')
-        .where({ pageId: row.pageId, sourceRevision })
-        .first('sourceSha256', 'deterministicVersion', 'searchDictionary', 'projection')
-      if (projection) {
-        const authoritativeSource = await loadSource(transaction, Number(row.pageId), sourceRevision)
-        if (!authoritativeSource) return 0
-        const sourceSha256 = projectPageKnowledge(authoritativeSource).source.sha256
-        if (isValidProjection(projection, Number(row.pageId), sourceRevision, sourceSha256, dictionary)) return 0
-      }
+      const effect = await transaction('pageMutationOutbox').where({ id: row.id, pageId: row.pageId, sourceRevision }).forUpdate().first('id')
+      if (!effect) return 0
+      const projection = await transaction<StoredProjectionRow>('pageKnowledgeProjections').where({ pageId: row.pageId, sourceRevision }).forUpdate().first()
+      const authoritativeSource = await loadSource(transaction, Number(row.pageId), sourceRevision)
+      if (!authoritativeSource || validatedSourceProjection(projection, Number(row.pageId), sourceRevision, knowledgeSourceSha256(authoritativeSource))) return 0
       const rearmed = await rearmFailedKnowledgeEffect(transaction, {
         id: row.id,
         pageId: Number(row.pageId),
@@ -1060,60 +1172,21 @@ const recoverTerminalFailures = async (knex: Knex, now: Date): Promise<number> =
 
 const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now: Date): Promise<number> => {
   if (profileVersionId === null) return 0
-  const retryBefore = new Date(now.valueOf() - RETRY_FAILED_AFTER_MILLISECONDS).toISOString()
-  const rows: Array<{ id: string }> = []
-  let afterPageId = 0
-  while (rows.length < 25) {
-    const batch = (await knex<PublicationWindowRow & { id: string; pageId: number }>('pageKnowledgeProjections as projections')
-      .join('pages', function () {
-        this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
-      })
-      .join('pageMutationOutbox as effects', function () {
-        this.on('effects.pageId', '=', 'projections.pageId').andOn('effects.sourceRevision', '=', 'projections.sourceRevision')
-      })
-      .where('pages.id', '>', afterPageId)
-      .where('effects.effectKind', 'knowledge')
-      .where('effects.status', 'succeeded')
-      .where('pages.visibility', 'public')
-      .where('pages.isPublished', true)
-      .where('pages.isSearchable', true)
-      .whereNotExists(function () {
-        this.select(knex.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
-      })
-      .where(builder =>
-        builder
-          .where('projections.enrichmentState', 'unavailable')
-          .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore))
-          .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-unsearchable', 'withheld-protected']))
-          .orWhere(retry => retry.where('projections.enrichmentState', 'succeeded').andWhereNot('projections.utilityProfileVersionId', profileVersionId))
-      )
-      .select('effects.id', 'pages.id as pageId', 'pages.publishStartDate', 'pages.publishEndDate')
-      .orderBy('pages.id')
-      .limit(50)) as Array<PublicationWindowRow & { id: string; pageId: number }>
-    if (batch.length === 0) break
-    afterPageId = Number(batch.at(-1)?.pageId ?? afterPageId)
-    for (const row of batch) {
-      if (publicationWindowOpen(row, now.valueOf())) rows.push({ id: row.id })
-      if (rows.length === 25) break
-    }
-  }
-  if (rows.length === 0) return 0
-  return knex.transaction(async transaction => {
-    let requeued = 0
-    for (const row of rows) {
-      const effect = await transaction<CurrentKnowledgeEffectRow>('pageMutationOutbox')
-        .where({ id: row.id, status: 'succeeded' })
-        .whereNull('leaseOwner')
-        .whereNull('leaseToken')
-        .whereNull('leaseExpiresAt')
-        .forUpdate()
-        .first('id', 'pageId', 'sourceRevision')
-      if (!effect) continue
-      const retryable = await transaction<PublicationWindowRow>('pageKnowledgeProjections as projections')
+  return withKnowledgeSearchContract(knex, async transaction => {
+    const retryBefore = new Date(now.valueOf() - RETRY_FAILED_AFTER_MILLISECONDS).toISOString()
+    const rows: Array<{ id: string; pageId: number; sourceRevision: string | number }> = []
+    let afterPageId = 0
+    while (rows.length < 25) {
+      const batch = (await transaction<PublicationWindowRow & { id: string; pageId: number; sourceRevision: string | number }>('pageKnowledgeProjections as projections')
         .join('pages', function () {
           this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
         })
-        .where({ 'projections.pageId': effect.pageId, 'projections.sourceRevision': effect.sourceRevision })
+        .join('pageMutationOutbox as effects', function () {
+          this.on('effects.pageId', '=', 'projections.pageId').andOn('effects.sourceRevision', '=', 'projections.sourceRevision')
+        })
+        .where('pages.id', '>', afterPageId)
+        .where('effects.effectKind', 'knowledge')
+        .where('effects.status', 'succeeded')
         .where('pages.visibility', 'public')
         .where('pages.isPublished', true)
         .where('pages.isSearchable', true)
@@ -1127,9 +1200,53 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
             .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-unsearchable', 'withheld-protected']))
             .orWhere(retry => retry.where('projections.enrichmentState', 'succeeded').andWhereNot('projections.utilityProfileVersionId', profileVersionId))
         )
+        .select('effects.id', 'pages.id as pageId', 'projections.sourceRevision', 'pages.publishStartDate', 'pages.publishEndDate')
+        .orderBy('pages.id')
+        .limit(50)) as Array<PublicationWindowRow & { id: string; pageId: number; sourceRevision: string | number }>
+      if (batch.length === 0) break
+      afterPageId = Number(batch.at(-1)?.pageId ?? afterPageId)
+      for (const row of batch) {
+        if (publicationWindowOpen(row, now.valueOf())) rows.push({ id: row.id, pageId: Number(row.pageId), sourceRevision: row.sourceRevision })
+        if (rows.length === 25) break
+      }
+    }
+    let requeued = 0
+    for (const row of rows) {
+      await lockKnowledgePage(transaction, row.pageId)
+      const page = await transaction<CurrentUtilityPageRow>('pages')
+        .where({ id: row.pageId, sourceRevision: row.sourceRevision })
         .forUpdate()
-        .first('projections.pageId', 'pages.publishStartDate', 'pages.publishEndDate')
-      if (!retryable || !publicationWindowOpen(retryable, now.valueOf())) continue
+        .first('id', 'sourceRevision', 'visibility', 'isPublished', 'isSearchable', 'publishStartDate', 'publishEndDate')
+      if (
+        !page ||
+        page.visibility !== 'public' ||
+        (page.isPublished !== true && page.isPublished !== 1) ||
+        page.isSearchable === false ||
+        page.isSearchable === 0 ||
+        !publicationWindowOpen(page, now.valueOf()) ||
+        await transaction('pageAccessPasswords').where({ pageId: row.pageId }).first('pageId')
+      )
+        continue
+      const effect = await transaction<CurrentKnowledgeEffectRow>('pageMutationOutbox')
+        .where({ id: row.id, pageId: row.pageId, sourceRevision: row.sourceRevision, status: 'succeeded' })
+        .whereNull('leaseOwner')
+        .whereNull('leaseToken')
+        .whereNull('leaseExpiresAt')
+        .forUpdate()
+        .first('id', 'pageId', 'sourceRevision')
+      if (!effect) continue
+      const retryable = await transaction('pageKnowledgeProjections as projections')
+        .where({ 'projections.pageId': effect.pageId, 'projections.sourceRevision': effect.sourceRevision })
+        .where(builder =>
+          builder
+            .where('projections.enrichmentState', 'unavailable')
+            .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore))
+            .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-unsearchable', 'withheld-protected']))
+            .orWhere(retry => retry.where('projections.enrichmentState', 'succeeded').andWhereNot('projections.utilityProfileVersionId', profileVersionId))
+        )
+        .forUpdate()
+        .first('projections.pageId')
+      if (!retryable) continue
       const updated = await transaction('pageMutationOutbox')
         .where({ id: effect.id, status: 'succeeded' })
         .whereNull('leaseOwner')

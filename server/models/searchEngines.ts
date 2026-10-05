@@ -5,14 +5,15 @@ import fs from 'fs-extra'
 import _ from 'lodash'
 import * as yaml from 'js-yaml'
 import commonHelper from '../helpers/common.ts'
-import { hasMethod, isRecord, readModuleDefinition, readModuleDirectories } from './moduleTypes.ts'
+import { lockSearchIndex } from '../helpers/search-contract.ts'
+import { isRecord, readModuleDefinition, readModuleDirectories } from './moduleTypes.ts'
 import type { LoadedModuleDefinition, ModuleConfig, ModuleDefinition } from './moduleTypes.ts'
+import postgresSearchEngine from '../modules/search/postgres/engine.ts'
 import type { SearchOptions, SearchResult, WikiPage } from '../modules/types.ts'
 
 interface SearchEnginePlugin {
   activate(): Promise<void>
-  deactivate(): Promise<void>
-  init(): Promise<void>
+  init(trx?: Knex.Transaction): Promise<void>
   query(query: string, options: SearchOptions): Promise<SearchResult>
   created(page: WikiPage): Promise<void>
   updated(page: WikiPage): Promise<void>
@@ -44,46 +45,18 @@ interface SearchEngineWikiRuntime {
   models: {
     searchEngines: typeof SearchEngine
     knex: Knex
-    Objection: {
-      transaction: {
-        start(knex: Knex): Promise<Knex.Transaction>
-      }
-    }
   }
-}
-
-interface InitEngineOptions {
-  activate?: boolean
 }
 
 interface RefreshSearchEnginesOptions {
   strict?: boolean
 }
 
-const pluginMethods = ['activate', 'deactivate', 'init', 'query', 'created', 'updated', 'deleted', 'renamed', 'rebuild'] as const
-
-function isSearchEnginePlugin(value: unknown): value is SearchEnginePlugin {
-  return isRecord(value) && pluginMethods.every(method => typeof value[method] === 'function')
-}
-
-function readSearchEnginePlugin(value: unknown, source: string): SearchEnginePlugin {
-  if (!isRecord(value) || !isSearchEnginePlugin(value.default)) {
-    throw new Error(`Invalid search engine module: ${source}`)
-  }
-  return value.default
-}
-
 function isSearchEngineWikiRuntime(value: unknown): value is SearchEngineWikiRuntime {
   if (!isRecord(value) || typeof value.SERVERPATH !== 'string') return false
   if (!isRecord(value.data) || !isRecord(value.logger) || !isRecord(value.models)) return false
   if (typeof value.logger.error !== 'function' || typeof value.logger.info !== 'function' || typeof value.logger.warn !== 'function') return false
-  if (
-    typeof value.models.searchEngines !== 'function' ||
-    typeof value.models.knex !== 'function' ||
-    !isRecord(value.models.Objection) ||
-    !hasMethod(value.models.Objection.transaction, 'start')
-  )
-    return false
+  if (typeof value.models.searchEngines !== 'function' || typeof value.models.knex !== 'function') return false
   return true
 }
 
@@ -104,12 +77,34 @@ function createDefaultConfig(props: LoadedModuleDefinition['props']): ModuleConf
 }
 
 function addMissingConfigDefaults(config: ModuleConfig, props: LoadedModuleDefinition['props']): ModuleConfig {
+  let updatedConfig = config
   for (const [key, value] of Object.entries(props)) {
-    if (!_.has(config, key)) {
-      _.set(config, key, value.default)
+    if (!_.has(updatedConfig, key)) {
+      if (updatedConfig === config) updatedConfig = _.cloneDeep(config)
+      _.set(updatedConfig, key, value.default)
     }
   }
-  return config
+  return updatedConfig
+}
+
+function validateDictionary(wiki: SearchEngineWikiRuntime, dictionary: unknown): asserts dictionary is string {
+  const choices = wiki.data.searchEngines?.find(engine => engine.key === 'postgres')?.props.dictLanguage?.enum
+  if (typeof dictionary !== 'string' || !Array.isArray(choices) || !choices.includes(dictionary)) {
+    throw new Error('Invalid value for search setting dictLanguage')
+  }
+}
+
+async function initializeEngine(wiki: SearchEngineWikiRuntime, config: ModuleConfig, trx: Knex.Transaction): Promise<RuntimeSearchEngine> {
+  validateDictionary(wiki, config.dictLanguage)
+  const engine: RuntimeSearchEngine = { ...postgresSearchEngine, key: 'postgres', config: { dictLanguage: config.dictLanguage } }
+  try {
+    await engine.activate()
+    await engine.init(trx)
+  } catch (error) {
+    wiki.logger.warn(error)
+    throw error
+  }
+  return engine
 }
 
 /**
@@ -152,11 +147,8 @@ export default class SearchEngine extends Model {
 
   static async refreshSearchEnginesFromDisk({ strict = false }: RefreshSearchEnginesOptions = {}): Promise<void> {
     const wiki = getWiki()
-    let trx: Knex.Transaction | undefined
     try {
-      const dbSearchEngines = await wiki.models.searchEngines.query()
-
-      // -> Fetch definitions from disk
+      // Load definitions before opening a transaction or taking the index lock.
       const searchEnginesDirs = await readModuleDirectories(path.join(wiki.SERVERPATH, 'modules/search'))
       const definitions: ModuleDefinition[] = []
       for (const dir of searchEnginesDirs) {
@@ -168,92 +160,89 @@ export default class SearchEngine extends Model {
         ...searchEngine,
         props: commonHelper.parseModuleProps(searchEngine.props)
       }))
-      wiki.data.searchEngines = diskSearchEngines
-
-      // -> Insert new searchEngines
-      const newSearchEngines: Array<Pick<SearchEngine, 'key' | 'isEnabled' | 'config'>> = []
-      for (const searchEngine of diskSearchEngines) {
-        const dbSearchEngine = dbSearchEngines.find(candidate => candidate.key === searchEngine.key)
-        if (!dbSearchEngine) {
-          newSearchEngines.push({
-            key: searchEngine.key,
-            isEnabled: false,
-            config: createDefaultConfig(searchEngine.props)
-          })
-        } else {
-          const config = isRecord(dbSearchEngine.config) ? dbSearchEngine.config : {}
-          await wiki.models.searchEngines
-            .query()
-            .patch({
-              config: addMissingConfigDefaults(config, searchEngine.props)
+      const changes = await wiki.models.knex.transaction(async trx => {
+        // Configuration may have committed while definitions were loading or
+        // this lock was waiting. Read only after taking the configure/startup lock.
+        await lockSearchIndex(trx, true)
+        const dbSearchEngines = await wiki.models.searchEngines.query(trx)
+        let added = 0
+        const removed: string[] = []
+        for (const searchEngine of diskSearchEngines) {
+          const dbSearchEngine = dbSearchEngines.find(candidate => candidate.key === searchEngine.key)
+          if (!dbSearchEngine) {
+            await wiki.models.searchEngines.query(trx).insert({
+              key: searchEngine.key,
+              isEnabled: false,
+              config: createDefaultConfig(searchEngine.props)
             })
-            .where('key', searchEngine.key)
+            added += 1
+          } else {
+            const config = isRecord(dbSearchEngine.config) ? dbSearchEngine.config : {}
+            const updatedConfig = addMissingConfigDefaults(config, searchEngine.props)
+            if (updatedConfig !== config) {
+              await wiki.models.searchEngines.query(trx).patch({ config: updatedConfig }).where('key', searchEngine.key)
+            }
+          }
         }
-      }
-      if (newSearchEngines.length > 0) {
-        trx = await wiki.models.Objection.transaction.start(wiki.models.knex)
-        for (const searchEngine of newSearchEngines) {
-          await wiki.models.searchEngines.query(trx).insert(searchEngine)
+        for (const searchEngine of dbSearchEngines) {
+          if (!diskSearchEngines.some(candidate => candidate.key === searchEngine.key)) {
+            await wiki.models.searchEngines.query(trx).where('key', searchEngine.key).del()
+            removed.push(searchEngine.key)
+          }
         }
-        await trx.commit()
-        wiki.logger.info(`Loaded ${newSearchEngines.length} new search engines: [ OK ]`)
+        return { added, removed }
+      })
+      wiki.data.searchEngines = diskSearchEngines
+      if (changes.added > 0) {
+        wiki.logger.info(`Loaded ${changes.added} new search engines: [ OK ]`)
       } else {
         wiki.logger.info('No new search engines found: [ SKIPPED ]')
       }
-
-      // -> Delete removed search engines
-      for (const searchEngine of dbSearchEngines) {
-        if (!diskSearchEngines.some(candidate => candidate.key === searchEngine.key)) {
-          await wiki.models.searchEngines.query().where('key', searchEngine.key).del()
-          wiki.logger.info(`Removed search engine ${searchEngine.key} because it is no longer present in the modules folder: [ OK ]`)
-        }
+      for (const key of changes.removed) {
+        wiki.logger.info(`Removed search engine ${key} because it is no longer present in the modules folder: [ OK ]`)
       }
     } catch (err) {
       wiki.logger.error('Failed to scan or load new search engines: [ FAILED ]')
       wiki.logger.error(err)
-      if (trx) {
-        try {
-          await trx.rollback()
-        } catch (rollbackError) {
-          wiki.logger.error(rollbackError)
-        }
-      }
       if (strict) throw err
     }
   }
 
-  static async initEngine({ activate = false }: InitEngineOptions = {}): Promise<void> {
+  static async initEngine(): Promise<void> {
     const wiki = getWiki()
-    const enabledSearchEngines = await wiki.models.searchEngines.query().where('isEnabled', true)
-    if (enabledSearchEngines.length !== 1) {
-      throw new Error(`Expected exactly one enabled search provider, found ${enabledSearchEngines.length}`)
-    }
-    const searchEngine = enabledSearchEngines[0]
-    if (!searchEngine) {
-      throw new Error(`Expected exactly one enabled search provider, found ${enabledSearchEngines.length}`)
-    }
-    if (searchEngine.key !== 'postgres') {
-      throw new Error(`Expected postgres to be the enabled search provider, found ${searchEngine.key}`)
-    }
+    const engine = await wiki.models.knex.transaction(async trx => {
+      // Wait first: another instance may commit a new dictionary while startup is blocked.
+      await lockSearchIndex(trx, true)
+      const enabledSearchEngines = await wiki.models.searchEngines.query(trx).where('isEnabled', true)
+      if (enabledSearchEngines.length !== 1) {
+        throw new Error(`Expected exactly one enabled search provider, found ${enabledSearchEngines.length}`)
+      }
+      const searchEngine = enabledSearchEngines[0]
+      if (!searchEngine || searchEngine.key !== 'postgres') {
+        throw new Error(`Expected postgres to be the enabled search provider, found ${searchEngine?.key}`)
+      }
+      return initializeEngine(wiki, searchEngine.config, trx)
+    })
+    wiki.data.searchEngine = engine
+  }
 
-    // Provider is selected from the runtime registry, so a static import cannot identify the module.
-    const source = `../modules/search/${searchEngine.key}/engine.ts`
-    const plugin = readSearchEnginePlugin(await import(source), source)
-    const engine: RuntimeSearchEngine = {
-      ...plugin,
-      key: searchEngine.key,
-      config: searchEngine.config
-    }
-    if (activate) {
-      await engine.activate()
-    }
-
-    try {
-      await engine.init()
-    } catch (err) {
-      wiki.logger.warn(err)
-      throw err
-    }
+  static async configure({ dictLanguage }: { dictLanguage: string }): Promise<void> {
+    const wiki = getWiki()
+    validateDictionary(wiki, dictLanguage)
+    const engine = await wiki.models.knex.transaction(async trx => {
+      await lockSearchIndex(trx, true)
+      const changed = await wiki.models.searchEngines.query(trx).patch({
+        isEnabled: true,
+        config: { dictLanguage }
+      }).where('key', 'postgres')
+      if (changed !== 1) throw new Error('Canonical postgres search provider is missing')
+      const enabledSearchEngines = await wiki.models.searchEngines.query(trx).where('isEnabled', true)
+      if (enabledSearchEngines.length !== 1 || enabledSearchEngines[0]?.key !== 'postgres') {
+        throw new Error('Expected exactly one enabled postgres search provider')
+      }
+      return initializeEngine(wiki, { dictLanguage }, trx)
+    })
+    // The old runtime remains available through the entire transaction, including rollback.
     wiki.data.searchEngine = engine
   }
 }

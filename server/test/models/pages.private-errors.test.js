@@ -173,6 +173,8 @@ describe('private page mutation existence isolation', () => {
       }
       return { insert: vi.fn().mockResolvedValue(1) }
     })
+    knex.client = { config: { client: 'pg' } }
+    knex.raw = vi.fn()
     knex.transaction = vi.fn(callback => callback(knex))
     global.WIKI = {
       ROOTPATH: '/test',
@@ -313,7 +315,7 @@ describe('private page mutation existence isolation', () => {
     global.WIKI.models.pages = {
       query,
       getPageFromDb: vi.fn().mockResolvedValue(updatedPage),
-      renderPage: vi.fn().mockResolvedValue(undefined)
+      deletePageFromCache: vi.fn().mockResolvedValue(undefined)
     }
     global.WIKI.models.tags = { associateTags }
     global.WIKI.models.knex.table = vi.fn().mockReturnValue({

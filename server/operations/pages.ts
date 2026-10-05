@@ -4,10 +4,11 @@ import {
   openPageMoveReviewCursor,
   pageMoveSessionDigest,
   sealPageMoveReviewCursor,
-  signPageMoveReviewToken,
-  type PageMoveReviewTokenPayload
+  signPageMoveReviewToken
 } from '../helpers/page-move-review-token.ts'
-import { rewriteMovedPageLinks, type PageMoveLinkRewriteResult } from '../helpers/page-move-link-rewrite.ts'
+import type { PageMoveReviewTokenPayload } from '../helpers/page-move-review-token.ts'
+import { rewriteMovedPageLinks } from '../helpers/page-move-link-rewrite.ts'
+import type { PageMoveLinkRewriteResult } from '../helpers/page-move-link-rewrite.ts'
 import taxonomy from './taxonomy.ts'
 import { resolveTagName } from '../helpers/tag-aliases.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
@@ -15,7 +16,9 @@ import { tagNames } from '../helpers/taxonomy-plan.ts'
 import _ from 'lodash'
 import { searchExcerpt } from '../helpers/search-excerpt.ts'
 import { isStructuredSearchQuery } from '../helpers/search-query.ts'
-import { PageKnowledgeRepository, type KnowledgeDiscoveryFilter } from '../knowledge/lifecycle.ts'
+import { withSearchContract } from '../helpers/search-contract.ts'
+import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
+import type { KnowledgeDiscoveryFilter } from '../knowledge/lifecycle.ts'
 import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
@@ -24,15 +27,14 @@ import {
   buildOfflinePageSnapshot,
   canonicalOfflineOrigin,
   OfflinePageAuthorityError,
-  OfflinePageProjectionError,
-  type OfflinePageSource
+  OfflinePageProjectionError
 } from '../helpers/offline-page.ts'
+import type { OfflinePageSource } from '../helpers/offline-page.ts'
 import {
   OFFLINE_PRIVATE_SNAPSHOT_RESPONSE_SCHEMA_VERSION,
-  OfflinePrivateSnapshotResponseV1Schema,
-  type OfflinePageSnapshotV1,
-  type OfflinePrivateSnapshotResponseV1
+  OfflinePrivateSnapshotResponseV1Schema
 } from '../../shared/offline.ts'
+import type { OfflinePageSnapshotV1, OfflinePrivateSnapshotResponseV1 } from '../../shared/offline.ts'
 import { accountSessionIsCurrent, sessionVersion } from '../helpers/account-session.ts'
 import { isApiPrincipal } from '../helpers/api-principal.ts'
 import {
@@ -43,22 +45,23 @@ import {
   pageAuthorizationContext,
   pageRoute,
   principalId,
-  scopePageQuery,
-  type PageVisibility
+  scopePageQuery
 } from '../helpers/page-access.ts'
+import type { PageVisibility } from '../helpers/page-access.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
+import type { PageIndexCandidate } from '../repositories/page-index.ts'
 import { pageTreeAccess, treeAncestorIds } from '../repositories/page-tree-access.ts'
 import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
 import { OKF_PRODUCER_CONTEXT } from '../okf/mutation-context.ts'
 import { assertPageUnlocked, pageRequiresUnlock } from './page-protection.ts'
 import errors from './errors.ts'
-import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
+import { PageBrandingAssignmentSchema } from '../../shared/page-branding.ts'
+import type { PageBrandingAssignment, PageBrandingView } from '../../shared/page-branding.ts'
 import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
-import { normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
-import {
-  DeletedPageRecoverySecurityContextSchema,
-  type DeletedPageRecoverySecurityContext
-} from '../models/pages.ts'
+import { normalizePageFeatures } from '../../shared/page-features.ts'
+import type { PageFeatures } from '../../shared/page-features.ts'
+import { DeletedPageRecoverySecurityContextSchema } from '../models/pages.ts'
+import type { DeletedPageRecoverySecurityContext } from '../models/pages.ts'
 const MOVE_REVIEW_PAGE_SIZE = 20
 const MOVE_REVIEW_CANDIDATE_BATCH = 100
 const MOVE_REVIEW_SCAN_LIMIT = 10_000
@@ -705,6 +708,7 @@ interface PrivateSearchRankRow {
   score: number
   sourceRevision: string | number
   metadataOnly?: boolean
+  matchedFields?: SearchMatchField[]
 }
 interface WikiPageOperations {
   data: {
@@ -1281,31 +1285,32 @@ const listIndex = async (input: OperationInput): Promise<PageIndexItem[]> => {
   if (depth > 5) throw new ApplicationError('depth must not exceed 5', { code: 'INVALID_INPUT', status: 400 })
   if (limit > 200) throw new ApplicationError('limit must not exceed 200', { code: 'INVALID_INPUT', status: 400 })
   if (!['path', 'title', 'updated'].includes(order)) throw new ApplicationError('order must be path, title, or updated', { code: 'INVALID_INPUT', status: 400 })
+  const prefix = path.length > 0 ? `${path}/` : ''
+  const eligible = (page: PageIndexCandidate): boolean => {
+    if (!page.path.startsWith(prefix)) return false
+    const relativePath = page.path.slice(prefix.length)
+    return relativePath.length > 0 &&
+      relativePath.split('/').length <= depth + 1 &&
+      canReadPage(requester, { ...page, tags: page.tags.map(tag => tag.tag) }, authority)
+  }
 
   const pages = await listPageIndexCandidates(wiki.models.knex, {
     locale,
     path,
     limit: PAGE_INDEX_CANDIDATE_LIMIT,
+    accept: eligible,
     scope: query => {
       scopePageQuery(query, requester, { table: 'pages', includeAllForSystemManager: true })
     }
   })
-  if (pages.length >= PAGE_INDEX_CANDIDATE_LIMIT) {
+  const accessible = pages.filter(eligible)
+  if (accessible.length >= PAGE_INDEX_CANDIDATE_LIMIT) {
     throw new ApplicationError('Page index path matches too many pages; choose a narrower path.', { code: 'PAGE_INDEX_TOO_BROAD', status: 422 })
   }
-
-  const prefix = path.length > 0 ? `${path}/` : ''
-  const accessible = pages
-    .filter(page => page.path.startsWith(prefix))
-    .filter(page => {
-      const relativePath = page.path.slice(prefix.length)
-      return relativePath.length > 0 && relativePath.split('/').length <= depth + 1
-    })
-    .filter(page => canReadPage(requester, { ...page, tags: page.tags.map(tag => tag.tag) }, authority))
   accessible.sort((left, right) => {
-    if (order === 'title') return left.title.localeCompare(right.title) || left.path.localeCompare(right.path)
-    if (order === 'updated') return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf() || left.path.localeCompare(right.path)
-    return left.path.localeCompare(right.path)
+    if (order === 'title') return left.title.localeCompare(right.title) || left.path.localeCompare(right.path) || left.id - right.id
+    if (order === 'updated') return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf() || left.path.localeCompare(right.path) || left.id - right.id
+    return left.path.localeCompare(right.path) || left.id - right.id
   })
   return accessible.slice(0, limit).map(page => ({
     id: page.id,
@@ -1338,21 +1343,8 @@ const discover = async (input: OperationInput) => {
     throw new ApplicationError(`offset must not exceed ${PAGE_INDEX_CANDIDATE_LIMIT - 1}`, { code: 'INVALID_INPUT', status: 400 })
   if (!['path', 'title', 'updated'].includes(order)) throw new ApplicationError('order must be path, title, or updated', { code: 'INVALID_INPUT', status: 400 })
   if (tags === null || tags.length > 20) throw new ApplicationError('tags must contain at most 20 strings', { code: 'INVALID_INPUT', status: 400 })
-
-  const candidates = await listPageIndexCandidates(wiki.models.knex, {
-    locale,
-    path,
-    limit: PAGE_INDEX_CANDIDATE_LIMIT,
-    scope: query => {
-      scopePageQuery(query, requester, { table: 'pages', includeAllForSystemManager: true })
-      applyAgentScope(query, input.agentScope)
-    }
-  })
-  if (candidates.length >= PAGE_INDEX_CANDIDATE_LIMIT) {
-    throw new ApplicationError('Page discovery path matches too many pages; choose a narrower path.', { code: 'PAGE_INDEX_TOO_BROAD', status: 422 })
-  }
   const prefix = path.length > 0 ? `${path}/` : ''
-  const pages = candidates.filter(page => {
+  const eligible = (page: PageIndexCandidate): boolean => {
     if (!pageMatchesAgentScope(page, input.agentScope) || !page.path.startsWith(prefix)) return false
     const relativePath = page.path.slice(prefix.length)
     const pageTags = page.tags.map(tag => tag.tag.trim().toLocaleLowerCase())
@@ -1362,7 +1354,22 @@ const discover = async (input: OperationInput) => {
       tags.every(tag => pageTags.includes(tag)) &&
       canReadPage(requester, { ...page, tags: pageTags }, authority)
     )
+  }
+
+  const candidates = await listPageIndexCandidates(wiki.models.knex, {
+    locale,
+    path,
+    limit: PAGE_INDEX_CANDIDATE_LIMIT,
+    accept: eligible,
+    scope: query => {
+      scopePageQuery(query, requester, { table: 'pages', includeAllForSystemManager: true })
+      applyAgentScope(query, input.agentScope)
+    }
   })
+  const pages = candidates.filter(eligible)
+  if (pages.length >= PAGE_INDEX_CANDIDATE_LIMIT) {
+    throw new ApplicationError('Page discovery path matches too many pages; choose a narrower path.', { code: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+  }
   pages.sort((left, right) => {
     if (order === 'title') return left.title.localeCompare(right.title) || left.path.localeCompare(right.path) || left.id - right.id
     if (order === 'updated')
@@ -1373,6 +1380,7 @@ const discover = async (input: OperationInput) => {
   return {
     pages: selected.map(page => ({
       id: page.id,
+      sourceRevision: String(page.sourceRevision),
       locale: page.localeCode,
       path: page.path,
       title: page.title,
@@ -1400,15 +1408,15 @@ const listTags = async (inputOrRequester?: OperationInput | Express.User, suppli
   const authority = await authorityFor(operationInput)
   const pages = await wiki.models.pages
     .query()
-    .column(['path', { locale: 'localeCode' }, 'visibility', 'ownerId'])
+    .column(['pages.id', 'path', { locale: 'localeCode' }, 'visibility', 'ownerId', 'isPublished', 'publishStartDate', 'publishEndDate', 'isSearchable'])
     .modify(queryBuilder => {
-      scopePageQuery(queryBuilder, requester, { table: 'pages' })
+      scopePageQuery(queryBuilder, requester, { table: 'pages', includeAllForSystemManager: true })
       applyAgentScope(queryBuilder, operationInput.agentScope)
       queryBuilder.where('pages.isSearchable', true)
     })
     .withGraphJoined('tags')
   const tags = pages
-    .filter(page => pageMatchesAgentScope(page, operationInput.agentScope) && canReadPage(requester, page, authority))
+    .filter(page => pageMatchesAgentScope(page, operationInput.agentScope) && (page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))) && canReadPage(requester, page, authority))
     .flatMap(page => page.tags)
   return _.orderBy(_.uniqBy(tags, 'id'), ['tag'], ['asc'])
 }
@@ -1588,13 +1596,13 @@ const searchTags = async (input: OperationInput) => {
   if (limit > 20) throw new ApplicationError('limit must not exceed 20', { code: 'INVALID_INPUT', status: 400 })
   const pages = await wiki.models.pages
     .query()
-    .column(['path', { locale: 'localeCode' }, 'visibility', 'ownerId'])
+    .column(['pages.id', 'path', { locale: 'localeCode' }, 'visibility', 'ownerId', 'isPublished', 'publishStartDate', 'publishEndDate', 'isSearchable'])
     .withGraphJoined('tags')
     .modifyGraph('tags', builder => {
       builder.select('tag')
     })
     .modify(queryBuilder => {
-      scopePageQuery(queryBuilder, requester, { table: 'pages' })
+      scopePageQuery(queryBuilder, requester, { table: 'pages', includeAllForSystemManager: true })
       applyAgentScope(queryBuilder, input.agentScope)
       queryBuilder.where('pages.isSearchable', true)
       queryBuilder.whereExists(builder => {
@@ -1603,12 +1611,12 @@ const searchTags = async (input: OperationInput) => {
           .from('pageTags')
           .join('tags', 'tags.id', 'pageTags.tagId')
           .whereRaw('?? = ??', ['pageTags.pageId', 'pages.id'])
-          .whereRaw('LOWER(??) LIKE ?', ['tags.tag', `%${normalizedQuery}%`])
+          .whereRaw('strpos(LOWER(??), ?) > 0', ['tags.tag', normalizedQuery])
       })
     })
   return _.uniq(
     pages
-      .filter(page => pageMatchesAgentScope(page, input.agentScope) && canReadPage(requester, page, authority))
+      .filter(page => pageMatchesAgentScope(page, input.agentScope) && (page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))) && canReadPage(requester, page, authority))
       .flatMap(page => page.tags)
       .map(tag => tag.tag)
       .filter(tag => tag.toLowerCase().includes(normalizedQuery))
@@ -1660,6 +1668,9 @@ const preview = async (input: OperationInput): Promise<WikiSource> => {
   const page = input.id === undefined ? await getByPath(input, authority) : await get(input, authority)
   if (page.visibility === 'public' && (!page.isPublished || !publicationWindowOpen(page)) && !canWritePage(input.requester, page, authority))
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+  const sourceRevision = currentSourceRevision(Reflect.get(page, 'sourceRevision'))
+  if (sourceRevision === undefined || currentSourceRevision(Reflect.get(page, 'renderedSourceRevision')) !== sourceRevision)
+    throw new ApplicationError('The page render is pending for its current source revision. Retry shortly.', { code: 'PAGE_RENDER_PENDING', status: 503 })
   const render = Reflect.get(page, 'render')
   const rendered = typeof render === 'string' ? render : ''
   const query = typeof input.query === 'string' ? input.query.slice(0, 256) : ''
@@ -1671,7 +1682,7 @@ const preview = async (input: OperationInput): Promise<WikiSource> => {
     description: page.description ?? '',
     visibility: page.visibility,
     updatedAt: new Date(page.updatedAt).toISOString(),
-    sourceRevision: String(Reflect.get(page, 'sourceRevision')),
+    sourceRevision,
     ...searchExcerpt(rendered, query)
   }
 }
@@ -2170,22 +2181,27 @@ const structuredPrivateSearch = async (
   bindings: readonly Knex.RawBinding[],
   limit: number
 ): Promise<PrivateSearchRankRow[]> => {
-  const ranked = await wiki.models.knex.raw<{ rows: PrivateSearchRankRow[] }>(
+  const ranked = await withSearchContract(wiki.models.knex, (trx, dictionary) => trx.raw<{ rows: PrivateSearchRankRow[] }>(
     `
       WITH query_input AS (
-        SELECT websearch_to_tsquery('simple', ?::text) AS query
+        SELECT ?::regconfig AS dictionary, websearch_to_tsquery(?::regconfig, ?::text) AS query
       ), matched AS MATERIALIZED (
         SELECT
           page.id,
           page."sourceRevision" AS "sourceRevision",
           lower(page.title) AS title_order,
           lower(page.path) AS path_order,
+          page.title,
+          page.path,
+          coalesce(page.description, '') AS description,
+          coalesce(tag_matches.tag_text, '') AS tag_text,
           EXISTS (SELECT 1 FROM "pageAccessPasswords" protection WHERE protection."pageId" = page.id) AS is_protected,
           to_tsvector(
-            'simple',
+            ?::regconfig,
             concat_ws(' ', page.title, page.path, coalesce(page.description, ''), coalesce(tag_matches.tag_text, ''))
           ) AS metadata_tokens,
-          to_tsvector('simple', coalesce(page.content, '')) AS content_tokens
+          CASE WHEN EXISTS (SELECT 1 FROM "pageAccessPasswords" protection WHERE protection."pageId" = page.id)
+            THEN ''::tsvector ELSE to_tsvector(?::regconfig, coalesce(page.content, '')) END AS content_tokens
         FROM pages page
         LEFT JOIN LATERAL (
           SELECT string_agg(tag.tag, ' ') AS tag_text
@@ -2201,6 +2217,11 @@ const structuredPrivateSearch = async (
           matched.is_protected,
           matched.title_order,
           matched.path_order,
+          matched.title,
+          matched.path,
+          matched.description,
+          matched.tag_text,
+          matched.content_tokens,
           CASE
             WHEN matched.is_protected THEN ts_rank_cd(matched.metadata_tokens, input.query, 32)
             ELSE ts_rank_cd(matched.metadata_tokens || matched.content_tokens, input.query, 32)
@@ -2210,14 +2231,40 @@ const structuredPrivateSearch = async (
         WHERE
           (matched.is_protected AND matched.metadata_tokens @@ input.query) OR
           (NOT matched.is_protected AND (matched.metadata_tokens || matched.content_tokens) @@ input.query)
+      ), bounded AS MATERIALIZED (
+        SELECT * FROM ranked
+        ORDER BY score DESC, title_order, path_order, id
+        LIMIT ?
       )
-      SELECT id, score, "sourceRevision", is_protected AS "metadataOnly"
-      FROM ranked
-      ORDER BY score DESC, title_order, path_order, id
-      LIMIT ?
+      SELECT bounded.id, bounded.score, bounded."sourceRevision", bounded.is_protected AS "metadataOnly",
+        array_remove(ARRAY[
+          CASE WHEN evidence.has_positive_evidence AND fields.title_tokens @@ input.query
+            AND ts_rank_cd(fields.title_tokens, input.query, 32) > 0 THEN 'title' END,
+          CASE WHEN evidence.has_positive_evidence AND fields.tag_tokens @@ input.query
+            AND ts_rank_cd(fields.tag_tokens, input.query, 32) > 0 THEN 'tag' END,
+          CASE WHEN evidence.has_positive_evidence AND fields.path_tokens @@ input.query
+            AND ts_rank_cd(fields.path_tokens, input.query, 32) > 0 THEN 'path' END,
+          CASE WHEN evidence.has_positive_evidence AND fields.description_tokens @@ input.query
+            AND ts_rank_cd(fields.description_tokens, input.query, 32) > 0 THEN 'description' END,
+          CASE WHEN evidence.has_positive_evidence AND NOT bounded.is_protected AND bounded.content_tokens @@ input.query
+            AND ts_rank_cd(bounded.content_tokens, input.query, 32) > 0 THEN 'content' END
+        ], NULL)::text[] AS "matchedFields"
+      FROM bounded
+      CROSS JOIN query_input input
+      CROSS JOIN LATERAL (
+        SELECT querytree(input.query) NOT IN ('', 'T') AS has_positive_evidence
+      ) evidence
+      CROSS JOIN LATERAL (
+        SELECT
+          to_tsvector(input.dictionary, bounded.title) AS title_tokens,
+          to_tsvector(input.dictionary, bounded.tag_text) AS tag_tokens,
+          to_tsvector(input.dictionary, replace(bounded.path, '/', ' ')) AS path_tokens,
+          to_tsvector(input.dictionary, bounded.description) AS description_tokens
+      ) fields
+      ORDER BY bounded.score DESC, bounded.title_order, bounded.path_order, bounded.id
     `,
-    [query, ...bindings, limit]
-  )
+    [dictionary, dictionary, query, dictionary, dictionary, ...bindings, limit]
+  ))
   return ranked.rows
 }
 
@@ -2360,6 +2407,7 @@ const searchPrivatePages = async ({
         ...page,
         sourceRevision: hydratedRevision,
         ...(rank.metadataOnly ? { metadataOnly: true } : {}),
+        ...(rank.matchedFields === undefined ? {} : { matchedFields: rank.matchedFields }),
         score: rank.score
       }
     ]
@@ -2371,17 +2419,18 @@ const protectedPageIds = async (): Promise<Set<number>> =>
 
 const matchingProtectedMetadataIds = async (query: string, pageIds: readonly number[]): Promise<Set<number>> => {
   if (pageIds.length === 0) return new Set()
-  const matched = await wiki.models.knex.raw<{ rows: Array<{ id: number }> }>(
+  const matched = await withSearchContract(wiki.models.knex, (trx, dictionary) => trx.raw<{ rows: Array<{ id: number }> }>(
     `
       WITH query_input AS (
-        SELECT websearch_to_tsquery('simple', ?::text) AS query
+        SELECT websearch_to_tsquery(?::regconfig, ?::text) AS query
       ), metadata AS MATERIALIZED (
         SELECT
           page.id,
           to_tsvector(
-            'simple',
+            ?::regconfig,
             concat_ws(' ', page.title, page.path, coalesce(page.description, ''), coalesce(string_agg(tag.tag, ' '), ''))
-          ) AS tokens
+          ) AS tokens,
+          concat_ws(' ', page.title, page.path, coalesce(page.description, ''), coalesce(string_agg(tag.tag, ' '), '')) AS metadata_text
         FROM pages page
         LEFT JOIN "pageTags" page_tag ON page_tag."pageId" = page.id
         LEFT JOIN tags tag ON tag.id = page_tag."tagId"
@@ -2392,9 +2441,10 @@ const matchingProtectedMetadataIds = async (query: string, pageIds: readonly num
       FROM metadata
       CROSS JOIN query_input
       WHERE metadata.tokens @@ query_input.query
+        OR (?::boolean AND strpos(lower(metadata.metadata_text), lower(?::text)) > 0)
     `,
-    [query, [...pageIds]]
-  )
+    [dictionary, query, dictionary, [...pageIds], !isStructuredSearchQuery(query), query]
+  ))
   return new Set(matched.rows.map(row => row.id))
 }
 
@@ -2726,6 +2776,7 @@ const search = async (input: OperationInput) => {
           ...page,
           locale: page.locale ?? page.localeCode,
           sourceRevision,
+          matchedFields: metadataOnly && Array.isArray(page.matchedFields) ? page.matchedFields.filter(field => field !== 'content') : page.matchedFields,
           metadataOnly
         },
         query

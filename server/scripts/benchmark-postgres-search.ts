@@ -2,9 +2,9 @@ import {
   evaluateSearchRelevance,
   SEARCH_AUGMENTED_RELEVANCE_CASES,
   SEARCH_RELEVANCE_ACCEPTANCE_CASES,
-  SEARCH_RELEVANCE_CASES,
-  type SearchRelevanceEvaluation
+  SEARCH_RELEVANCE_CASES
 } from './search-relevance.ts'
+import type { SearchRelevanceEvaluation } from './search-relevance.ts'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
@@ -419,6 +419,7 @@ const recreateSourceSchema = async (knex: Knex): Promise<void> => {
     CREATE TABLE pages (
       id integer PRIMARY KEY,
       "sourceRevision" bigint NOT NULL,
+      "renderedSourceRevision" bigint,
       path text NOT NULL,
       "localeCode" varchar(35) NOT NULL,
       title text NOT NULL,
@@ -432,8 +433,9 @@ const recreateSourceSchema = async (knex: Knex): Promise<void> => {
       "updatedAt" timestamptz NOT NULL DEFAULT now(),
       visibility text NOT NULL,
       "isPublished" boolean NOT NULL,
-      "publishStartDate" timestamptz,
-      "publishEndDate" timestamptz
+      "isSearchable" boolean NOT NULL DEFAULT true,
+      "publishStartDate" varchar(255),
+      "publishEndDate" varchar(255)
     );
     CREATE TABLE tags (
       id integer PRIMARY KEY,
@@ -452,7 +454,7 @@ const recreateSourceSchema = async (knex: Knex): Promise<void> => {
       PRIMARY KEY ("pageId", "localeCode", path)
     );
     CREATE TABLE "pageMutationOutbox" (
-      "pageId" integer NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      "pageId" integer NOT NULL,
       "sourceRevision" bigint NOT NULL,
       "effectKind" varchar(64) NOT NULL,
       "desiredState" varchar(32) NOT NULL,
@@ -468,8 +470,9 @@ const recreateSourceSchema = async (knex: Knex): Promise<void> => {
 const prepareCorpus = async (knex: Knex): Promise<void> => {
   await knex.raw(
     `
-      INSERT INTO pages (id, "sourceRevision", path, "localeCode", title, description, content, render, visibility, "isPublished")
+      INSERT INTO pages (id, "sourceRevision", "renderedSourceRevision", path, "localeCode", title, description, content, render, visibility, "isPublished")
       SELECT
+        sequence,
         sequence,
         sequence,
         'knowledge/topic-' || (sequence % 200) || '/page-' || sequence,

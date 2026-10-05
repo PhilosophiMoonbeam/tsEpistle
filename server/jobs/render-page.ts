@@ -1,9 +1,20 @@
 import _ from 'lodash'
+import { createHash } from 'node:crypto'
+import type { Knex } from 'knex'
+import { PageProjectionPayloadSchema } from '../core/page-mutation-outbox.ts'
+import type { PageRenderPublicationFence } from '../core/page-mutation-outbox.ts'
+import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
 import database from '../core/db.ts'
 import { buildTocFromHtml } from './render-page-toc.ts'
 
 interface PageRecord {
   id: number
+  sourceRevision: string | number
+  render: string
+  localeCode: string
+  path: string
+  visibility: 'public' | 'private'
+  ownerId: number | null
   renderedSourceRevision: string | number | null
   content: string
   contentType: string
@@ -14,17 +25,13 @@ interface PipelineCore {
   config: unknown
   children: unknown
 }
-interface PageQuery extends PromiseLike<number> {
-  update(data: Record<string, unknown>): PageQuery
-  where(column: string, value: unknown): PageQuery
-}
 interface Models {
   renderers: { fetchDefinitions(): Promise<void>; getRenderingPipeline(contentType: string): Promise<PipelineCore[]> }
   pages: {
     getPageFromDb(pageId: number): Promise<PageRecord | null>
     savePageToCache(page: PageRecord): Promise<void>
   }
-  knex: { (table: string): PageQuery; destroy(): Promise<void> }
+  knex: Knex
 }
 interface WikiContext {
   models: Models
@@ -36,9 +43,65 @@ interface Renderer {
 }
 const wiki = WIKI as unknown as WikiContext
 
-export default async function renderPage(pageId: number | string): Promise<void> {
-  const normalizedPageId = Number(pageId)
+type RenderPageJobInput = number | string | ({ readonly pageId: number } & PageRenderPublicationFence)
+const sourceHash = (source: string): string => createHash('sha256').update(source).digest('hex')
+
+const readPublishablePage = async (
+  transaction: Knex.Transaction,
+  pageId: number,
+  sourceRevision: string,
+  sourceSha256: string,
+  fence: PageRenderPublicationFence | undefined
+): Promise<PageRecord | undefined> => {
+  await lockSearchIndex(transaction, false)
+  await lockSearchPage(transaction, pageId)
+  const current = await transaction<PageRecord>('pages').where({ id: pageId }).forUpdate().first()
+  if (!current || String(current.sourceRevision) !== sourceRevision || sourceHash(current.content) !== sourceSha256) {
+    return undefined
+  }
+  if (!fence) return current
+  const effect = await transaction<{
+    id: string
+    pageId: number
+    sourceRevision: string
+    effectKind: string
+    desiredState: string
+    status: string
+    leaseToken: string | null
+    payload: string
+    payloadSha256: string
+    leaseExpiresAt: string | Date | null
+  }>('pageMutationOutbox')
+    .where({
+      id: fence.effectId, pageId, sourceRevision: fence.sourceRevision, effectKind: 'render',
+      desiredState: 'present', status: 'running', leaseToken: fence.leaseToken
+    }).forUpdate().first('payload', 'payloadSha256', 'leaseExpiresAt')
+  if (!effect || effect.leaseExpiresAt === null) return undefined
+  const expiresAt = effect.leaseExpiresAt instanceof Date ? effect.leaseExpiresAt.valueOf() : Date.parse(effect.leaseExpiresAt)
+  if (!(expiresAt > Date.now())) return undefined
+  if (sourceHash(effect.payload) !== effect.payloadSha256) throw new Error('Render effect immutable payload hash does not match')
+  const payload = PageProjectionPayloadSchema.parse(JSON.parse(effect.payload) as unknown)
+  if (
+    payload.effectKind !== 'render' || payload.desiredState !== 'present' || payload.pageId !== pageId ||
+    payload.sourceRevision !== fence.sourceRevision || payload.sourceSha256 !== fence.sourceSha256 ||
+    String(current.sourceRevision) !== fence.sourceRevision || sourceSha256 !== fence.sourceSha256 ||
+    payload.location === null || current.localeCode !== payload.location.locale || current.path !== payload.location.path ||
+    current.visibility !== payload.location.visibility || current.ownerId !== payload.location.ownerId
+  ) {
+    throw new Error('Render effect immutable intent does not match the current page source')
+  }
+  return current
+}
+
+export default async function renderPage(input: RenderPageJobInput): Promise<void> {
+  const fence = typeof input === 'object' && input !== null ? input : undefined
+  const normalizedPageId = Number(fence ? fence.pageId : input)
   if (!Number.isSafeInteger(normalizedPageId) || normalizedPageId < 1) throw new TypeError('Page ID must be a positive integer')
+  if (fence && (
+    typeof fence.effectId !== 'string' || !fence.effectId || typeof fence.leaseToken !== 'string' || !fence.leaseToken ||
+    typeof fence.sourceRevision !== 'string' || !/^[1-9][0-9]*$/.test(fence.sourceRevision) ||
+    typeof fence.sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(fence.sourceSha256)
+  )) throw new TypeError('Render publication fence is invalid')
   wiki.logger.info(`Rendering page ID ${normalizedPageId}...`)
   let models: Models | undefined
   try {
@@ -46,19 +109,26 @@ export default async function renderPage(pageId: number | string): Promise<void>
     wiki.models = models
     await wiki.configSvc.loadFromDb()
     await wiki.configSvc.applyFlags()
-    const page = await wiki.models.pages.getPageFromDb(normalizedPageId)
+    const page = await models.pages.getPageFromDb(normalizedPageId)
     if (!page) throw new Error('Invalid Page Id')
-
-    if (_.isEmpty(page.content)) {
-      wiki.logger.warn(`Skipped rendering page ID ${pageId} because content was empty. [ SKIPPED ]`)
+    const sourceRevision = String(page.sourceRevision)
+    const sourceSha256 = sourceHash(page.content)
+    if (fence && (sourceRevision !== fence.sourceRevision || sourceSha256 !== fence.sourceSha256)) {
+      wiki.logger.info(`Skipped rendering page ID ${normalizedPageId} because its admitted source is no longer current. [ SKIPPED ]`)
       return
     }
 
-    await wiki.models.renderers.fetchDefinitions()
-    const pipeline = await wiki.models.renderers.getRenderingPipeline(page.contentType)
+    if (_.isEmpty(page.content)) {
+      wiki.logger.warn(`Skipped rendering page ID ${normalizedPageId} because content was empty. [ SKIPPED ]`)
+      return
+    }
+
+    await models.renderers.fetchDefinitions()
+    const pipeline = await models.renderers.getRenderingPipeline(page.contentType)
     if (!pipeline.length) throw new Error(`No enabled rendering pipeline for ${page.contentType}. Existing output was preserved.`)
     let output = page.content
     for (const core of pipeline) {
+      // Renderer implementations are selected from the enabled filesystem registry at runtime.
       const rendererModule = (await import(`../modules/rendering/${_.kebabCase(core.key)}/renderer.ts`)) as unknown as { default: Renderer }
       output = await rendererModule.default.render.call({
         config: core.config,
@@ -68,28 +138,32 @@ export default async function renderPage(pageId: number | string): Promise<void>
       })
     }
     const toc = buildTocFromHtml(output)
-    // Derived render writes must not invoke the page model's editorial timestamp hook.
-    const updatedRows = await wiki.models
-      .knex('pages')
-      .update({ render: output, toc: JSON.stringify(toc), renderedSourceRevision: page.sourceRevision })
-      .where('id', normalizedPageId)
-      .where('sourceRevision', page.sourceRevision)
-    if (updatedRows !== 1) {
-      wiki.logger.info(`Skipped rendering page ID ${normalizedPageId} because its source revision changed. [ SKIPPED ]`)
+    const renderModels = models
+    const published = await renderModels.knex.transaction(async transaction => {
+      const current = await readPublishablePage(transaction, normalizedPageId, sourceRevision, sourceSha256, fence)
+      if (!current) return false
+      // Derived writes bypass editorial hooks and publish only while the exact render lease is live.
+      const updatedRows = await transaction('pages')
+        .where({ id: normalizedPageId, sourceRevision })
+        .update({ render: output, toc: JSON.stringify(toc), renderedSourceRevision: sourceRevision })
+      return updatedRows === 1
+    })
+    if (!published) {
+      wiki.logger.info(`Skipped rendering page ID ${normalizedPageId} because its source or render lease changed. [ SKIPPED ]`)
       return
     }
-    const renderedPage = await wiki.models.pages.getPageFromDb(normalizedPageId)
-    if (
-      !renderedPage ||
-      String(renderedPage.sourceRevision) !== String(page.sourceRevision) ||
-      renderedPage.renderedSourceRevision === null ||
-      renderedPage.renderedSourceRevision === undefined ||
-      String(renderedPage.renderedSourceRevision) !== String(page.sourceRevision)
-    ) {
-      wiki.logger.info(`Skipped caching page ID ${normalizedPageId} because its source revision changed. [ SKIPPED ]`)
+    // Cache I/O follows committed publication. This transaction only locks/reads,
+    // so a cache write never represents a render rolled back with this transaction.
+    const cached = await renderModels.knex.transaction(async transaction => {
+      const current = await readPublishablePage(transaction, normalizedPageId, sourceRevision, sourceSha256, fence)
+      if (!current || current.render !== output || String(current.renderedSourceRevision) !== sourceRevision) return false
+      await renderModels.pages.savePageToCache({ ...page, ...current })
+      return true
+    })
+    if (!cached) {
+      wiki.logger.info(`Skipped caching page ID ${normalizedPageId} because its render publication changed. [ SKIPPED ]`)
       return
     }
-    await wiki.models.pages.savePageToCache(renderedPage)
     wiki.logger.info(`Rendering page ID ${normalizedPageId}: [ COMPLETED ]`)
   } catch (error) {
     wiki.logger.error(`Rendering page ID ${normalizedPageId}: [ FAILED ]`)

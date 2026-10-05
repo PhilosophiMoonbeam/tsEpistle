@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
-import knexModule, { type Knex } from 'knex'
+import knexModule from 'knex'
+import type { Knex } from 'knex'
 
 import { scopePageQueryForOwner } from '../helpers/page-access.ts'
-import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT, type PageIndexCandidate } from '../repositories/page-index.ts'
+import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
+import type { PageIndexCandidate } from '../repositories/page-index.ts'
 
 const outputPath = process.env.PAGE_INDEX_BENCHMARK_FILE ?? 'page-index-benchmark.json'
 const iterations = Number(process.env.PAGE_INDEX_BENCHMARK_ITERATIONS ?? 30)
@@ -38,9 +40,12 @@ const prepareDataset = async (): Promise<void> => {
     table.string('path', 512).notNullable()
     table.string('title', 255).notNullable()
     table.text('description').nullable()
+    table.bigInteger('sourceRevision').notNullable().defaultTo(1)
     table.string('visibility', 16).notNullable()
     table.boolean('isPublished').notNullable().defaultTo(true)
     table.boolean('isSearchable').notNullable().defaultTo(true)
+    table.timestamp('publishStartDate').nullable()
+    table.timestamp('publishEndDate').nullable()
     table.integer('ownerId').nullable()
     table.timestamp('updatedAt').notNullable()
     table.index(['localeCode', 'path'], 'page_index_benchmark_locale_path')

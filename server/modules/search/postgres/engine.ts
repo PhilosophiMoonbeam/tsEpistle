@@ -1,13 +1,14 @@
 import { isStructuredSearchQuery } from '../../../helpers/search-query.ts'
-import {
-  wiki,
-  type SearchConfig,
-  type SearchContext,
-  type SearchOptions,
-  type SearchPlugin,
-  type SearchResult,
-  type SearchResultEntry,
-  type WikiPage
+import { lockSearchIndex, lockSearchPage, readSearchDictionary, withSearchContract } from '../../../helpers/search-contract.ts'
+import { wiki } from '../../types.ts'
+import type {
+  SearchConfig,
+  SearchContext,
+  SearchOptions,
+  SearchPlugin,
+  SearchResult,
+  SearchResultEntry,
+  WikiPage
 } from '../../types.ts'
 import type { Knex } from 'knex'
 
@@ -18,7 +19,6 @@ const SEARCH_SCHEMA_VERSION = 2
 const GRAPH_DEPTH = 2
 const REBUILD_CURSOR_SIZE = 100
 const EXACT_MATCH_CANDIDATE_MULTIPLIER = 3
-const REBUILD_LOCK_NAME = 'wiki.search.postgres.derived-index'
 
 interface PostgresSearchConfig extends SearchConfig {
   dictLanguage: string
@@ -60,9 +60,12 @@ interface CanonicalSearchPageRow {
   isProtected: boolean
   isPublished: boolean
   isSearchable: boolean
+  publishStartDate: string | null
+  publishEndDate: string | null
   localeCode: string
   path: string
   render: string | null
+  renderedSourceRevision: string | number | null
   sourceRevision: string | number
   tags: unknown
   title: string
@@ -71,13 +74,6 @@ interface CanonicalSearchPageRow {
 
 interface CanonicalPageModel {
   cleanHTML(rawHTML?: string): string
-}
-
-const isPublishedPublicPage = (page: WikiPage): boolean => {
-  const visibility = Reflect.get(page, 'visibility')
-  const isPublished = Reflect.get(page, 'isPublished')
-  const isSearchable = Reflect.get(page, 'isSearchable')
-  return visibility === 'public' && (isPublished === true || isPublished === 1) && isSearchable !== false && isSearchable !== 0
 }
 
 const pageSourceRevision = (page: WikiPage): string => {
@@ -240,8 +236,8 @@ const recreateSearchSchema = async (transaction: Knex.Transaction): Promise<void
     DROP INDEX IF EXISTS pages_words_word_trgm_idx;
   `)
   await transaction.schema.dropTableIfExists(METADATA_TABLE)
-  await transaction.schema.dropTableIfExists(WORDS_TABLE)
   await transaction.schema.dropTableIfExists(VECTOR_TABLE)
+  await transaction.schema.dropTableIfExists(WORDS_TABLE)
   await transaction.raw(`
     CREATE TABLE "pagesVector" (
       "pageId" integer CONSTRAINT pages_vector_pkey PRIMARY KEY,
@@ -281,7 +277,7 @@ const ensureSourceIndexes = async (transaction: Knex.Transaction): Promise<void>
 const metadataIsCurrent = async (transaction: Knex.Transaction, dictionary: string): Promise<boolean> => {
   const result = await transaction.raw<PostgresRawResult<PostgresBooleanRow>>(
     `
-      SELECT EXISTS (
+      SELECT (SELECT count(*) FROM "pagesSearchMetadata") = 1 AND EXISTS (
         SELECT 1
         FROM "pagesSearchMetadata"
         WHERE "contractId" = 1 AND "schemaVersion" = ? AND dictionary = ?
@@ -292,6 +288,31 @@ const metadataIsCurrent = async (transaction: Knex.Transaction, dictionary: stri
   return result.rows[0]?.value === true
 }
 
+const searchEligibility = (alias: string): string => `(
+  ${alias}.visibility = 'public'
+  AND ${alias}."isPublished" = true
+  AND ${alias}."isSearchable" = true
+  AND (NULLIF(${alias}."publishStartDate", '')::timestamptz IS NULL
+    OR NULLIF(${alias}."publishStartDate", '')::timestamptz <= statement_timestamp())
+  AND (NULLIF(${alias}."publishEndDate", '')::timestamptz IS NULL
+    OR NULLIF(${alias}."publishEndDate", '')::timestamptz >= statement_timestamp())
+)`
+
+const canonicalPageIsEligible = (page: CanonicalSearchPageRow): boolean => {
+  const now = Date.now()
+  return page.visibility === 'public' && page.isPublished === true && page.isSearchable === true
+    && (!page.publishStartDate || Date.parse(page.publishStartDate) <= now)
+    && (!page.publishEndDate || Date.parse(page.publishEndDate) >= now)
+}
+
+const unsafeBodyTokens = `
+  ts_filter(vector.tokens, ARRAY['C']::"char"[]) <> ''::tsvector
+  AND (
+    page."renderedSourceRevision" IS DISTINCT FROM page."sourceRevision"
+    OR EXISTS (SELECT 1 FROM "pageAccessPasswords" protection WHERE protection."pageId" = page.id)
+  )
+`
+
 const sourceRevisionsAreCurrent = async (transaction: Knex.Transaction): Promise<boolean> => {
   const result = await transaction.raw<PostgresRawResult<PostgresBooleanRow>>(`
     SELECT NOT EXISTS (
@@ -299,13 +320,11 @@ const sourceRevisionsAreCurrent = async (transaction: Knex.Transaction): Promise
       FROM pages page
       FULL OUTER JOIN "pagesVector" vector ON vector."pageId" = page.id
       WHERE (
-        page.visibility = 'public'
-        AND page."isPublished" = true
-        AND page."isSearchable" = true
-        AND (vector."pageId" IS NULL OR vector."sourceRevision" IS DISTINCT FROM page."sourceRevision")
+        ${searchEligibility('page')}
+        AND (vector."pageId" IS NULL OR vector."sourceRevision" IS DISTINCT FROM page."sourceRevision" OR (${unsafeBodyTokens}))
       ) OR (
         vector."pageId" IS NOT NULL
-        AND (page.id IS NULL OR page.visibility IS DISTINCT FROM 'public' OR page."isPublished" IS DISTINCT FROM true OR page."isSearchable" IS DISTINCT FROM true)
+        AND ${searchEligibility('page')} IS NOT TRUE
       )
     ) AS value
   `)
@@ -322,8 +341,11 @@ const canonicalPageSelection = `
     page.description,
     page."isSearchable",
     page.render,
+    page."renderedSourceRevision",
     page.visibility,
     page."isPublished",
+    page."publishStartDate",
+    page."publishEndDate",
     EXISTS (
       SELECT 1
       FROM "pageAccessPasswords" protection
@@ -341,38 +363,47 @@ const canonicalPageSelection = `
   FROM pages page
 `
 
-const canonicalPageBatch = async (transaction: Knex.Transaction, pageIdCursor: number): Promise<CanonicalSearchPageRow[]> => {
+const readCanonicalPage = async (transaction: Knex.Transaction, pageId: number): Promise<CanonicalSearchPageRow | undefined> => {
+  // Relations must be sampled after any row-lock wait, not in the statement which waits.
+  await transaction('pages').select('id').where({ id: pageId }).forShare()
   const result = await transaction.raw<PostgresRawResult<CanonicalSearchPageRow>>(
-    `
-      ${canonicalPageSelection}
-      WHERE page.visibility = 'public'
-        AND page."isPublished" = true
-        AND page."isSearchable" = true
-        AND page.id > ?
-      ORDER BY page.id
-      LIMIT ?
-      FOR SHARE OF page
-    `,
-    [pageIdCursor, REBUILD_CURSOR_SIZE]
+    `${canonicalPageSelection} WHERE page.id = ?`,
+    [pageId]
   )
-  return result.rows
+  return result.rows[0]
 }
 
+const canonicalPageBatch = async (transaction: Knex.Transaction, pageIdCursor: number): Promise<Array<{ id: number }>> =>
+  transaction<CanonicalSearchPageRow>('pages as page')
+    .select('id')
+    .whereRaw(searchEligibility('page'))
+    .where('id', '>', pageIdCursor)
+    .orderBy('id')
+    .limit(REBUILD_CURSOR_SIZE)
+
+const certifiedSearchContent = (page: CanonicalSearchPageRow, pageModel: CanonicalPageModel): string =>
+  page.isProtected || page.renderedSourceRevision === null || String(page.renderedSourceRevision) !== String(page.sourceRevision)
+    ? ''
+    : pageModel.cleanHTML(page.render ?? '')
+
 const rebuildSearchIndex = async (transaction: Knex.Transaction, dictionary: string): Promise<void> => {
+  // The exclusive index lock drains page writers; per-page advisory locks would exhaust PostgreSQL's lock table on large rebuilds.
   const pageModel = wiki.models.pages as typeof wiki.models.pages & CanonicalPageModel
-  await transaction(WORDS_TABLE).truncate()
   await transaction(VECTOR_TABLE).truncate()
+  await transaction(WORDS_TABLE).truncate()
 
   let pageIdCursor = 0
   while (true) {
     const pages = await canonicalPageBatch(transaction, pageIdCursor)
     if (pages.length === 0) break
 
-    for (const page of pages) {
+    for (const candidate of pages) {
+      const page = await readCanonicalPage(transaction, candidate.id)
+      if (!page || !canonicalPageIsEligible(page)) continue
       const tags = Array.isArray(page.tags) ? page.tags : []
       await indexPage(transaction, dictionary, {
         ...page,
-        safeContent: page.isProtected ? '' : pageModel.cleanHTML(page.render ?? ''),
+        safeContent: certifiedSearchContent(page, pageModel),
         tags
       } as unknown as WikiPage)
     }
@@ -396,33 +427,19 @@ const pageTags = (page: WikiPage): { tags: string[]; tagText: string } => {
   return { tags: [...tags].sort(), tagText: [...terms].join(' ') }
 }
 
-const removePage = async (knex: Knex, pageId: number): Promise<void> => {
-  await knex.transaction(async transaction => {
-    await transaction(WORDS_TABLE).where({ pageId }).delete()
-    await transaction(VECTOR_TABLE).where({ pageId }).delete()
-  })
-}
-
-const reconcilePage = async (knex: Knex, dictionary: string, pageId: number): Promise<void> => {
+const reconcilePage = async (knex: Knex, pageId: number): Promise<void> => {
   const pageModel = wiki.models.pages as typeof wiki.models.pages & CanonicalPageModel
-  await knex.transaction(async transaction => {
-    const result = await transaction.raw<PostgresRawResult<CanonicalSearchPageRow>>(
-      `
-        ${canonicalPageSelection}
-        WHERE page.id = ?
-        FOR SHARE OF page
-      `,
-      [pageId]
-    )
-    const page = result.rows[0]
-    if (!page || page.visibility !== 'public' || page.isPublished !== true || page.isSearchable !== true) {
-      await transaction(WORDS_TABLE).where({ pageId }).delete()
+  await withSearchContract(knex, async (transaction, dictionary) => {
+    await lockSearchPage(transaction, pageId)
+    const page = await readCanonicalPage(transaction, pageId)
+    if (!page || !canonicalPageIsEligible(page)) {
       await transaction(VECTOR_TABLE).where({ pageId }).delete()
+      await transaction(WORDS_TABLE).where({ pageId }).delete()
       return
     }
     await indexPage(transaction, dictionary, {
       ...page,
-      safeContent: page.isProtected ? '' : pageModel.cleanHTML(page.render ?? ''),
+      safeContent: certifiedSearchContent(page, pageModel),
       tags: Array.isArray(page.tags) ? page.tags : []
     } as unknown as WikiPage)
   })
@@ -503,14 +520,12 @@ const indexPage = async (transaction: Knex.Transaction, dictionary: string, page
   )
 }
 
-const ensureSearchIndex = async (knex: Knex, dictionary: string, forceRebuild: boolean): Promise<boolean> =>
-  knex.transaction(async transaction => {
-    const lockResult = await transaction.raw<PostgresRawResult<PostgresBooleanRow>>('SELECT pg_try_advisory_xact_lock(hashtext(?)) AS value', [
-      REBUILD_LOCK_NAME
-    ])
-    if (lockResult.rows[0]?.value !== true) {
-      throw new Error('PostgreSQL search rebuild is already in progress')
-    }
+const ensureSearchIndex = async (db: Knex | Knex.Transaction, configuredDictionary: string | undefined, forceRebuild: boolean): Promise<boolean> => {
+  const run = async (transaction: Knex.Transaction): Promise<boolean> => {
+    await lockSearchIndex(transaction, true, !forceRebuild)
+    const dictionary = forceRebuild ? await readSearchDictionary(transaction) : configuredDictionary
+    if (typeof dictionary !== 'string' || !dictionary) throw new Error('PostgreSQL search requires a dictionary')
+    await transaction.raw('CREATE EXTENSION IF NOT EXISTS pg_trgm')
 
     const schemaCurrent = await hasCurrentSearchSchema(transaction)
     if (!schemaCurrent) await recreateSearchSchema(transaction)
@@ -522,6 +537,7 @@ const ensureSearchIndex = async (knex: Knex, dictionary: string, forceRebuild: b
     if (!rebuildRequired) return false
 
     await rebuildSearchIndex(transaction, dictionary)
+    await transaction(METADATA_TABLE).whereNot('contractId', 1).delete()
     await transaction.raw(
       `
         INSERT INTO "pagesSearchMetadata" ("contractId", "schemaVersion", dictionary)
@@ -533,11 +549,8 @@ const ensureSearchIndex = async (knex: Knex, dictionary: string, forceRebuild: b
       [SEARCH_SCHEMA_VERSION, dictionary]
     )
     return true
-  })
-
-const upsertPage = async (knex: Knex, dictionary: string, page: WikiPage): Promise<void> => {
-  // Re-read the canonical row under a transaction; event payloads may be stale after a later metadata edit.
-  await reconcilePage(knex, dictionary, page.id)
+  }
+  return db.isTransaction ? run(db as Knex.Transaction) : db.transaction(run)
 }
 
 const escapedLikeTerm = (value: string): string => `%${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
@@ -587,7 +600,7 @@ const queryPages = async (
     ), priority_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
-      JOIN pages current_page ON current_page.id = vector."pageId" AND current_page."isSearchable" = true
+      JOIN pages current_page ON current_page.id = vector."pageId" AND ${searchEligibility('current_page')}
       CROSS JOIN query_input input
       WHERE NOT input.is_structured
         AND (
@@ -616,7 +629,7 @@ const queryPages = async (
     ), lexical_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
-      JOIN pages current_page ON current_page.id = vector."pageId" AND current_page."isSearchable" = true
+      JOIN pages current_page ON current_page.id = vector."pageId" AND ${searchEligibility('current_page')}
       CROSS JOIN query_input input
       WHERE (SELECT count(*) FROM priority_ids) < ?
       AND NOT EXISTS (SELECT 1 FROM priority_ids exact JOIN "pagesVector" direct ON direct."pageId" = exact."pageId" WHERE lower(direct.path) = input.raw_query)
@@ -648,7 +661,7 @@ const queryPages = async (
     ), fuzzy_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
-      JOIN pages current_page ON current_page.id = vector."pageId" AND current_page."isSearchable" = true
+      JOIN pages current_page ON current_page.id = vector."pageId" AND ${searchEligibility('current_page')}
       CROSS JOIN query_input input
       WHERE (SELECT count(*) FROM exact_ids) < 5
       AND NOT EXISTS (SELECT 1 FROM priority_ids exact JOIN "pagesVector" direct ON direct."pageId" = exact."pageId" WHERE lower(direct.path) = input.raw_query OR lower(direct.title) = input.raw_query)
@@ -683,9 +696,9 @@ const queryPages = async (
         ts_rank_cd('{0.05,0.2,0.6,1.0}'::real[], vector.tokens, input.query, 32) AS lexical_rank,
         lower(vector.title) = input.raw_query AS exact_title,
         lower(vector.path) = input.raw_query AS exact_path,
-        lower(vector.title) LIKE input.raw_query || '%' AS title_prefix,
+        starts_with(lower(vector.title), input.raw_query) AS title_prefix,
         EXISTS (SELECT 1 FROM unnest(vector.tags) tag WHERE lower(tag) = input.raw_query) AS exact_tag,
-        EXISTS (SELECT 1 FROM unnest(vector.tags) tag WHERE lower(tag) LIKE input.raw_query || '%') AS tag_prefix,
+        EXISTS (SELECT 1 FROM unnest(vector.tags) tag WHERE starts_with(lower(tag), input.raw_query)) AS tag_prefix,
         CASE WHEN input.is_structured THEN 0.0 ELSE word_similarity(input.raw_query, vector.facets) END AS facet_similarity
       FROM candidate_ids ids
       JOIN "pagesVector" vector ON vector."pageId" = ids."pageId"
@@ -712,9 +725,7 @@ const queryPages = async (
         AND page."sourceRevision" = candidate."sourceRevision"
         AND page."localeCode" = candidate.locale
         AND page.path = candidate.path
-      WHERE page.visibility = 'public'
-        AND page."isPublished" = true
-        AND page."isSearchable" = true
+      WHERE ${searchEligibility('page')}
         AND NOT EXISTS (
           SELECT 1
           FROM "pageAccessPasswords" protection
@@ -828,7 +839,7 @@ const suggestionsFor = async (knex: Knex, query: string, pageIds: number[]): Pro
     `
     SELECT word
     FROM "pagesWords" words
-    JOIN pages page ON page.id = words."pageId" AND page."isSearchable" = true
+    JOIN pages page ON page.id = words."pageId" AND ${searchEligibility('page')}
     WHERE words."pageId" = ANY(?::integer[]) AND words.word % ?
     GROUP BY word
     ORDER BY similarity(word, ?) DESC, count(*) DESC, word
@@ -854,20 +865,9 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
     }
   },
 
-  async deactivate() {
-    const knex = getKnexClient()
-    wiki.logger.info('(SEARCH/POSTGRES) Dropping derived search tables...')
-    await knex.schema.dropTableIfExists(METADATA_TABLE)
-    await knex.schema.dropTableIfExists(WORDS_TABLE)
-    await knex.schema.dropTableIfExists(VECTOR_TABLE)
-    wiki.logger.info('(SEARCH/POSTGRES) Derived search tables have been dropped.')
-  },
-
-  async init() {
-    const knex = getKnexClient()
+  async init(trx) {
     wiki.logger.info('(SEARCH/POSTGRES) Initializing hybrid lexical and graph search...')
-    await knex.raw('CREATE EXTENSION IF NOT EXISTS pg_trgm')
-    await ensureSearchIndex(knex, this.config.dictLanguage, false)
+    await ensureSearchIndex(trx ?? getKnexClient(), this.config.dictLanguage, false)
     wiki.logger.info('(SEARCH/POSTGRES) Hybrid search is ready.')
   },
 
@@ -877,23 +877,25 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
     const isStructured = isStructuredSearchQuery(query)
     const knex = getKnexClient()
     try {
-      const results = await queryPages(
-        knex,
-        this.config.dictLanguage,
-        query,
-        isStructured,
-        opts,
-        Math.min(1001, Math.max(1, opts.limit ?? wiki.config.search.maxHits))
-      )
-      const suggestions =
-        results.length < 5 && !isStructured
-          ? await suggestionsFor(
-              knex,
-              query,
-              results.map(result => result.id)
-            )
-          : []
-      return { results, suggestions, totalHits: results.length }
+      return await withSearchContract(knex, async (transaction, dictionary) => {
+        const results = await queryPages(
+          transaction,
+          dictionary,
+          query,
+          isStructured,
+          opts,
+          Math.min(1001, Math.max(1, opts.limit ?? wiki.config.search.maxHits))
+        )
+        const suggestions =
+          results.length < 5 && !isStructured
+            ? await suggestionsFor(
+                transaction,
+                query,
+                results.map(result => result.id)
+              )
+            : []
+        return { results, suggestions, totalHits: results.length }
+      })
     } catch (error: unknown) {
       wiki.logger.warn(`Search Engine Error: ${error instanceof Error ? error.message : String(error)}`)
       throw error
@@ -901,37 +903,34 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
   },
 
   async created(page) {
-    await upsertPage(getKnexClient(), this.config.dictLanguage, page)
+    await reconcilePage(getKnexClient(), page.id)
   },
 
   async updated(page) {
-    await upsertPage(getKnexClient(), this.config.dictLanguage, page)
+    await reconcilePage(getKnexClient(), page.id)
   },
 
   async deleted(page) {
-    await removePage(getKnexClient(), page.id)
+    await reconcilePage(getKnexClient(), page.id)
   },
 
   async renamed(page) {
-    await upsertPage(getKnexClient(), this.config.dictLanguage, {
-      ...page,
-      path: page.destinationPath,
-      localeCode: page.destinationLocaleCode
-    })
+    await reconcilePage(getKnexClient(), page.id)
   },
 
   async reconcilePage(pageId) {
-    await reconcilePage(getKnexClient(), this.config.dictLanguage, pageId)
+    await reconcilePage(getKnexClient(), pageId)
   },
 
   async removePage(pageId) {
-    await removePage(getKnexClient(), pageId)
+    // Removal intents may be stale: reconcile current eligibility under the same page lock.
+    await reconcilePage(getKnexClient(), pageId)
   },
 
   async rebuild() {
     const knex = getKnexClient()
     wiki.logger.info('(SEARCH/POSTGRES) Rebuilding hybrid search index...')
-    await ensureSearchIndex(knex, this.config.dictLanguage, true)
+    await ensureSearchIndex(knex, undefined, true)
     wiki.logger.info('(SEARCH/POSTGRES) Hybrid search index rebuilt successfully.')
   },
 
@@ -939,6 +938,7 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
     // A single statement observes one database snapshot without modifying the index.
     const result = await getKnexClient().transaction(async transaction => {
       await transaction.raw("SET LOCAL statement_timeout = '5s'")
+      await lockSearchIndex(transaction, false)
       return transaction.raw<
         PostgresRawResult<{
           publicPages: string
@@ -946,18 +946,19 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
           missingPages: string
           stalePages: string
           excludedEntries: string
+          configuredDictionary: string | null
           dictionary: string | null
           schemaVersion: number | null
         }>
       >(`
       SELECT
-        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished" AND page."isSearchable") AS "publicPages",
+        count(page.id) FILTER (WHERE ${searchEligibility('page')}) AS "publicPages",
         count(vector."pageId") AS "indexedPages",
-        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished" AND page."isSearchable" AND vector."pageId" IS NULL) AS "missingPages",
-        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished" AND page."isSearchable" AND vector."pageId" IS NOT NULL
-          AND vector."sourceRevision" IS DISTINCT FROM page."sourceRevision") AS "stalePages",
-        count(vector."pageId") FILTER (WHERE page.id IS NULL OR page.visibility IS DISTINCT FROM 'public'
-          OR page."isPublished" IS DISTINCT FROM true OR page."isSearchable" IS DISTINCT FROM true) AS "excludedEntries",
+        count(page.id) FILTER (WHERE ${searchEligibility('page')} AND vector."pageId" IS NULL) AS "missingPages",
+        count(page.id) FILTER (WHERE ${searchEligibility('page')} AND vector."pageId" IS NOT NULL
+          AND (vector."sourceRevision" IS DISTINCT FROM page."sourceRevision" OR (${unsafeBodyTokens}))) AS "stalePages",
+        count(vector."pageId") FILTER (WHERE ${searchEligibility('page')} IS NOT TRUE) AS "excludedEntries",
+        (SELECT config ->> 'dictLanguage' FROM "searchEngines" WHERE key = 'postgres' AND "isEnabled" = true) AS "configuredDictionary",
         (SELECT dictionary FROM "pagesSearchMetadata" WHERE "contractId" = 1) AS dictionary,
         (SELECT "schemaVersion" FROM "pagesSearchMetadata" WHERE "contractId" = 1) AS "schemaVersion"
       FROM pages page FULL OUTER JOIN "pagesVector" vector ON vector."pageId" = page.id
@@ -965,6 +966,7 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
     })
     const row = result.rows[0]
     if (!row) throw new Error('Search index inspection returned no data')
+    if (typeof row.configuredDictionary !== 'string' || !row.configuredDictionary) throw new Error('Canonical search dictionary configuration is missing')
     return {
       checkedAt: new Date().toISOString(),
       publicPages: Number(row.publicPages),
@@ -972,7 +974,7 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
       missingPages: Number(row.missingPages),
       stalePages: Number(row.stalePages),
       excludedEntries: Number(row.excludedEntries),
-      configuredDictionary: this.config.dictLanguage,
+      configuredDictionary: row.configuredDictionary,
       indexedDictionary: row.dictionary,
       schemaVersion: row.schemaVersion,
       expectedSchemaVersion: SEARCH_SCHEMA_VERSION

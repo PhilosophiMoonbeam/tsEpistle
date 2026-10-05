@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
-import createKnex, { type Knex } from 'knex'
+import createKnex from 'knex'
+import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { up as upProtection } from '../../db/migrations/2.5.134.ts'
+import { enqueuePageMutationEffects, PageProjectionLifecycle } from '../../core/page-mutation-outbox.ts'
 
 let knex: Knex
 let page: Record<string, unknown>
@@ -34,6 +36,17 @@ beforeEach(async () => {
   })
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
+    table.bigInteger('sourceRevision').notNullable()
+    table.bigInteger('renderedSourceRevision').nullable()
+    table.string('title').notNullable()
+    table.string('path').notNullable()
+    table.string('localeCode').notNullable()
+    table.string('visibility').notNullable()
+    table.integer('ownerId').nullable()
+    table.boolean('isPublished').notNullable()
+    table.boolean('isSearchable').notNullable()
+    table.dateTime('publishStartDate').nullable()
+    table.dateTime('publishEndDate').nullable()
     table.text('content').notNullable()
     table.text('render').notNullable()
     table.text('extra').notNullable().defaultTo('{}')
@@ -46,9 +59,55 @@ beforeEach(async () => {
     table.integer('pageId').notNullable()
     table.integer('tagId').notNullable()
   })
+  await knex.schema.createTable('pageMutationOutbox', table => {
+    table.uuid('id').primary()
+    table.integer('pageId').notNullable()
+    table.bigInteger('sourceRevision').notNullable()
+    table.string('effectKind').notNullable()
+    table.string('effectKey').notNullable()
+    table.string('desiredState').notNullable()
+    table.string('payloadSha256').notNullable()
+    table.text('payload').notNullable()
+    table.string('status').notNullable().defaultTo('pending')
+    table.integer('attempts').notNullable().defaultTo(0)
+    table.string('leaseOwner').nullable()
+    table.uuid('leaseToken').nullable()
+    table.dateTime('leaseExpiresAt').nullable()
+    table.dateTime('availableAt').notNullable()
+    table.text('result').nullable()
+    table.text('postcondition').nullable()
+    table.dateTime('createdAt').notNullable()
+    table.dateTime('updatedAt').notNullable()
+    table.unique(['pageId', 'sourceRevision', 'effectKind'])
+  })
+  await knex.schema.createTable('pageLinks', table => {
+    table.increments('id').primary()
+    table.integer('pageId').notNullable()
+    table.string('localeCode').notNullable()
+    table.string('path').notNullable()
+    table.unique(['pageId', 'localeCode', 'path'])
+  })
+  await knex.schema.createTable('pagesVector', table => {
+    table.integer('pageId').primary()
+    table.bigInteger('sourceRevision').notNullable()
+  })
+  await knex.schema.createTable('pagesWords', table => {
+    table.integer('pageId').notNullable()
+    table.string('word').notNullable()
+    table.primary(['pageId', 'word'])
+  })
   await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
   await knex('pages').insert({
     id: 42,
+    sourceRevision: 8,
+    renderedSourceRevision: 8,
+    title: 'Protected plan',
+    path: 'plans/private',
+    localeCode: 'en',
+    visibility: 'public',
+    ownerId: null,
+    isPublished: true,
+    isSearchable: true,
     content: '![Plan](/uploads/private-plan.png)',
     render: '<img src="/uploads/private-plan.png">',
     extra: '{}'
@@ -62,6 +121,10 @@ beforeEach(async () => {
 
   page = {
     id: 42,
+    sourceRevision: 8,
+    renderedSourceRevision: 8,
+    isPublished: true,
+    isSearchable: true,
     title: 'Protected plan',
     path: 'plans/private',
     localeCode: 'en',
@@ -301,6 +364,15 @@ describe('password-protected pages', () => {
     const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
     await knex('pages').insert({
       id: 43,
+      sourceRevision: 9,
+      renderedSourceRevision: 9,
+      title: 'Reader plan',
+      path: 'plans/reader',
+      localeCode: 'en',
+      visibility: 'private',
+      ownerId: 8,
+      isPublished: true,
+      isSearchable: true,
       content: '![Plan](/uploads/private-plan.png)',
       render: '<img src="/uploads/private-plan.png">',
       extra: '{}'
@@ -327,6 +399,7 @@ describe('password-protected pages', () => {
     page.visibility = 'private'
     page.ownerId = 7
 
+    await knex('pages').where({ id: 42 }).update({ visibility: 'private', ownerId: 7 })
     expect(
       await protection.protectedAssetRequiresUnlock({
         requester: user(8, []),
@@ -375,6 +448,7 @@ describe('password-protected pages', () => {
     const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
     page.visibility = 'private'
     page.ownerId = 7
+    await knex('pages').where({ id: 42 }).update({ visibility: 'private', ownerId: 7 })
     await protection.setPageProtection({ requester: user(7, []), pageId: 42, password: 'private owner password', sessionId: 'owner-session' })
     expect(await protection.pageRequiresUnlock({ requester: user(7, []), pageId: 42, sessionId: 'other-owner-session' })).toBe(true)
     await expect(
@@ -401,5 +475,80 @@ describe('password-protected pages', () => {
     expect(searchUpdated).toHaveBeenLastCalledWith(expect.objectContaining({ safeContent: '<img src="/uploads/private-plan.png">' }))
     expect(await knex('pageUnlockGrants')).toEqual([])
     expect(await knex('pageProtectedAssets')).toEqual([])
+  })
+
+  it.each(['set', 'remove'] as const)('repairs %s protection after the immediate search callback fails without mutating immutable intent', async action => {
+    const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
+    const source = 'classifiedbody'
+    await knex('pages').where({ id: 42 }).update({ content: source, render: '<p>classifiedbody</p>' })
+    await enqueuePageMutationEffects(knex, {
+      pageId: 42,
+      sourceRevision: 8,
+      desiredState: 'present',
+      action: 'update',
+      source,
+      location: { locale: 'en', path: 'plans/private', visibility: 'public', ownerId: null },
+      effects: ['render', 'links', 'search']
+    })
+    if (action === 'remove') {
+      await protection.setPageProtection({
+        requester: user(7, ['write:pages']),
+        pageId: 42,
+        password: 'durable protection password',
+        sessionId: 'manager-session'
+      })
+    }
+    await knex('pageMutationOutbox').update({ status: 'succeeded', attempts: 3, result: '{"indexed":true}', postcondition: '{"satisfied":true}' })
+    await knex('pagesVector').insert({ pageId: 42, sourceRevision: 8 })
+    await knex('pagesWords').insert({ pageId: 42, word: action === 'set' ? 'classifiedbody' : 'protectedmetadata' })
+    const immutable = await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('id', 'sourceRevision', 'payload', 'payloadSha256', 'effectKey')
+    searchUpdated.mockRejectedValueOnce(new Error('search callback unavailable'))
+
+    await expect(action === 'set'
+      ? protection.setPageProtection({ requester: user(7, ['write:pages']), pageId: 42, password: 'durable protection password', sessionId: 'manager-session' })
+      : protection.removePageProtection({ requester: user(7, ['write:pages']), pageId: 42 })
+    ).rejects.toThrow('search callback unavailable')
+
+    expect(await protection.isPageProtected(42)).toBe(action === 'set')
+    expect(await knex('pages').where({ id: 42 }).first('content', 'render', 'sourceRevision', 'renderedSourceRevision')).toEqual({
+      content: source, render: '<p>classifiedbody</p>', sourceRevision: 8, renderedSourceRevision: 8
+    })
+    if (action === 'set') {
+      expect(await knex('pagesVector').where({ pageId: 42 })).toEqual([])
+      expect(await knex('pagesWords').where({ pageId: 42 })).toEqual([])
+      expect(await knex('pageUnlockGrants').where({ pageId: 42 })).toEqual([
+        expect.objectContaining({ sessionId: 'manager-session', userId: 7, passwordVersion: 1 })
+      ])
+    }
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('id', 'sourceRevision', 'payload', 'payloadSha256', 'effectKey')).toEqual(immutable)
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts', 'leaseToken', 'result', 'postcondition')).toEqual({
+      status: 'retry',
+      attempts: 0,
+      leaseToken: null,
+      result: null,
+      postcondition: null
+    })
+    const reconcileSearchPage = vi.fn(async (pageId: number) => {
+      const current = await knex('pages').where({ id: pageId }).first('render', 'sourceRevision')
+      const searchable = await protection.redactProtectedPageForSearch({ id: pageId, safeContent: current.render })
+      await knex.transaction(async transaction => {
+        await transaction('pagesWords').where({ pageId }).delete()
+        await transaction('pagesVector').insert({ pageId, sourceRevision: current.sourceRevision }).onConflict('pageId').merge()
+        await transaction('pagesWords').insert({ pageId, word: searchable.safeContent.includes('classifiedbody') ? 'classifiedbody' : 'protectedmetadata' })
+      })
+    })
+    const lifecycle = new PageProjectionLifecycle(knex, 'protection-repair-worker', {
+      renderPage: async () => { throw new Error('Protection-only repair must not rerender certified source') },
+      evictLocation: async () => undefined,
+      reconcileSearchPage,
+      removeSearchPage: async () => { throw new Error('Published public protection repair must not remove the page') }
+    })
+    await lifecycle.runOnce()
+
+    expect(reconcileSearchPage).toHaveBeenCalledTimes(1)
+    expect(await knex('pagesWords').where({ pageId: 42, word: 'classifiedbody' })).toHaveLength(action === 'remove' ? 1 : 0)
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts')).toEqual({ status: 'succeeded', attempts: 1 })
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('id', 'sourceRevision', 'payload', 'payloadSha256', 'effectKey')).toEqual(immutable)
+    expect(await knex('pagesVector').where({ pageId: 42 })).toEqual([{ pageId: 42, sourceRevision: 8 }])
   })
 })

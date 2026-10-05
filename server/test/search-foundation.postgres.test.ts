@@ -1,6 +1,7 @@
 /// <reference types="bun" />
 
-import knexModule, { type Knex } from 'knex'
+import knexModule from 'knex'
+import type { Knex } from 'knex'
 import { afterAll, beforeAll, describe, expect, it } from './bun-test.mts'
 import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { knowledgeSearchText, mergeKnowledgeUtilityResult, projectPageKnowledge } from '../knowledge/projection.ts'
@@ -32,6 +33,8 @@ interface PostgreSqlSearchEngine {
   config: { dictLanguage: string }
   init(): Promise<void>
   rebuild(): Promise<void>
+  reconcilePage(pageId: number): Promise<void>
+  removePage(pageId: number): Promise<void>
   query(query: string, options: { pageIds?: number[]; pageRevisions?: Record<string, string>; limit?: number }): Promise<SearchResponse>
 }
 
@@ -59,7 +62,7 @@ suite('PostgreSQL shared search foundation', () => {
       CREATE TABLE pages (
         id integer PRIMARY KEY,
         "sourceRevision" bigint NOT NULL,
-        "renderedSourceRevision" bigint NOT NULL DEFAULT 1,
+        "renderedSourceRevision" bigint,
         path text NOT NULL,
         hash text NOT NULL DEFAULT '',
         "localeCode" varchar(35) NOT NULL,
@@ -79,8 +82,8 @@ suite('PostgreSQL shared search foundation', () => {
         visibility text NOT NULL,
         "isPublished" boolean NOT NULL,
         "isSearchable" boolean NOT NULL DEFAULT true,
-        "publishStartDate" timestamptz,
-        "publishEndDate" timestamptz
+        "publishStartDate" varchar(255),
+        "publishEndDate" varchar(255)
       );
       CREATE TABLE tags (
         id integer PRIMARY KEY,
@@ -103,7 +106,7 @@ suite('PostgreSQL shared search foundation', () => {
       );
       CREATE TABLE "pageMutationOutbox" (
         id uuid PRIMARY KEY,
-        "pageId" integer NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        "pageId" integer NOT NULL,
         "sourceRevision" bigint NOT NULL,
         "effectKind" text NOT NULL,
         "effectKey" text NOT NULL,
@@ -459,7 +462,7 @@ suite('PostgreSQL shared search foundation', () => {
       }))
     ]
     await db('users').insert([{ id: 1, name: 'Search Fixture Author', email: 'search-fixture@example.test' }])
-    await db('pages').insert(pages)
+    await db('pages').insert(pages.map(source => ({ ...source, renderedSourceRevision: source.sourceRevision })))
     await db('tags').insert([
       { id: 1, tag: 'common-platform', title: 'Common Platform' },
       { id: 2, tag: 'incident', title: 'Incident' },
@@ -765,6 +768,7 @@ suite('PostgreSQL shared search foundation', () => {
     }
     await db('pages').where({ id: 70 }).update({
       sourceRevision: 71,
+      renderedSourceRevision: 71,
       content: '# No outgoing references',
       render: '<article>No outgoing references</article>'
     })
@@ -796,9 +800,99 @@ suite('PostgreSQL shared search foundation', () => {
       await db('pageAccessPasswords').insert({ pageId: 70 })
       await db('pages').where({ id: 70 }).update({
         sourceRevision: 70,
+        renderedSourceRevision: 70,
         content: '# Protected bridge\n\nHidden relationship',
         render: '<article>Hidden relationship</article>'
       })
+    }
+  })
+  it('applies punctuation-prefixed exclusions across public, owner-private, and protected metadata boundaries', async () => {
+    const queries = ['-(falcon)', '-!falcon', '---falcon']
+    const details = queries.flatMap((query, index) => [
+      { id: 820 + index * 3, title: query, visibility: 'public', isPublished: true, ownerId: null },
+      { id: 821 + index * 3, title: query, visibility: 'private', isPublished: false, ownerId: 7 },
+      { id: 822 + index * 3, title: query, visibility: 'public', isPublished: true, ownerId: null }
+    ])
+    details.push(
+      { id: 830, title: 'Neutral Raven', visibility: 'public', isPublished: true, ownerId: null },
+      { id: 831, title: 'Neutral Raven', visibility: 'private', isPublished: false, ownerId: 7 },
+      { id: 832, title: 'Neutral Raven', visibility: 'public', isPublished: true, ownerId: null }
+    )
+    const ids = details.map(source => source.id)
+    await db('pages').insert(details.map(source => ({
+      ...source,
+      sourceRevision: source.id,
+      renderedSourceRevision: source.id,
+      path: `search-audit/punctuation-boundary-${source.id}`,
+      localeCode: 'en',
+      description: 'Boundary control',
+      content: source.id === 832 ? 'falcon punctuationsecretcipher' : source.title,
+      render: `<article>${source.id === 832 ? 'falcon punctuationsecretcipher' : source.title}</article>`
+    })))
+    await db('pageAccessPasswords').insert([822, 825, 828, 832].map(pageId => ({ pageId })))
+    try {
+      await engine.rebuild()
+      for (const query of queries) {
+        const selectedIds = details.filter(source => source.title === query || source.id >= 830).map(source => source.id)
+        const publicResults = await operations.search({ query, pageIds: selectedIds, limit: 20 })
+        expect(publicResults.results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual([830, 832])
+        const ownerResults = await operations.search({ query, requester: { id: 7 } as Express.User, pageIds: selectedIds, limit: 20 })
+        expect(ownerResults.results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual([830, 831, 832])
+        for (const result of ownerResults.results) expect(result.matchedFields).toEqual([])
+        const foreignResults = await operations.search({ query, requester: { id: 8 } as Express.User, pageIds: selectedIds, limit: 20 })
+        expect(foreignResults.results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual([830, 832])
+      }
+      expect((await operations.search({ query: '"punctuationsecretcipher"', pageIds: [832] })).results).toEqual([])
+      expect(await db('pagesVector').whereIn('pageId', [821, 824, 827, 831]).select('pageId')).toEqual([])
+      expect((await db.raw('SELECT count(*)::integer AS count FROM "pagesVector" WHERE "pageId" = 832 AND tokens @@ plainto_tsquery(\'english\', \'punctuationsecretcipher\')')).rows[0].count).toBe(0)
+    } finally {
+      await db('pages').whereIn('id', ids).delete()
+      for (const id of ids) await engine.removePage(id)
+    }
+  })
+
+  it('uses the active English dictionary for protected inflection without searching secret bodies', async () => {
+    const ids = [840, 841, 842]
+    await db('pages').insert(ids.map(id => ({
+      id,
+      sourceRevision: id,
+      renderedSourceRevision: id,
+      path: `search-audit/stem-boundary-${id}`,
+      localeCode: 'en',
+      title: 'Falcon',
+      description: 'Bird reference',
+      content: 'protectedinflectionsecretcipher',
+      render: '<article>protectedinflectionsecretcipher</article>',
+      visibility: id === 842 ? 'private' : 'public',
+      ownerId: id === 842 ? 7 : null,
+      isPublished: id !== 842
+    })))
+    await db('pageAccessPasswords').insert([{ pageId: 840 }, { pageId: 842 }])
+    try {
+      await engine.rebuild()
+      const publicResults = await operations.search({ query: '"falcons"', pageIds: ids, limit: 10 })
+      expect(publicResults.results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual([840, 841])
+      const ownerResults = await operations.search({ query: '"falcons"', requester: { id: 7 } as Express.User, pageIds: ids, limit: 10 })
+      expect(ownerResults.results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual(ids)
+      for (const result of ownerResults.results) {
+        expect(result.matchedFields).toContain('title')
+        expect(result.matchedFields).not.toContain('content')
+      }
+      expect((await engine.query('"falcons"', { pageIds: [840, 841], limit: 10 })).results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual([840, 841])
+      const secretBody = await operations.search({ query: '"protectedinflectionsecretcipher"', requester: { id: 7 } as Express.User, pageIds: ids, limit: 10 })
+      expect(secretBody.results).toEqual([expect.objectContaining({ id: 841, matchedFields: ['content'] })])
+
+      const simpleEngine = { ...engine, config: { dictLanguage: 'simple' } }
+      await simpleEngine.init()
+      expect(await db('pagesSearchMetadata').select('dictionary')).toEqual([{ dictionary: 'simple' }])
+      expect(engine.config.dictLanguage).toBe('english')
+      expect((await operations.search({ query: '"falcons"', requester: { id: 7 } as Express.User, pageIds: ids, limit: 10 })).results).toEqual([])
+      expect((await operations.search({ query: '"Falcon"', requester: { id: 7 } as Express.User, pageIds: ids, limit: 10 })).results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual(ids)
+      expect((await operations.search({ query: '"protectedinflectionsecretcipher"', requester: { id: 7 } as Express.User, pageIds: [840, 842], limit: 10 })).results).toEqual([])
+    } finally {
+      await engine.init()
+      await db('pages').whereIn('id', ids).delete()
+      for (const id of ids) await engine.removePage(id)
     }
   })
 })

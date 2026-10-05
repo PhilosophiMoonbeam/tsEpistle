@@ -9,16 +9,18 @@ import fs from 'fs-extra'
 import getos from 'getos'
 
 import errors from './errors.ts'
-import { ProductMetadataSchema, type ProductMetadata } from '../../shared/product.ts'
+import { ProductMetadataSchema } from '../../shared/product.ts'
+import type { ProductMetadata } from '../../shared/product.ts'
 
-import { requireSystemAuthority, type SystemRequester } from '../helpers/system-authority.ts'
+import { requireSystemAuthority } from '../helpers/system-authority.ts'
+import type { SystemRequester } from '../helpers/system-authority.ts'
+import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
 import {
   admitPageRenderEffect,
   readPageRenderEffectStatus,
-  supersedeStalePageRenderEffects,
-  type PageProjectionLocation,
-  type PageRenderEffectStatusView
+  supersedeStalePageRenderEffects
 } from '../core/page-mutation-outbox.ts'
+import type { PageProjectionLocation, PageRenderEffectStatusView } from '../core/page-mutation-outbox.ts'
 const { ApplicationError } = errors
 
 interface CountResult {
@@ -44,7 +46,7 @@ interface PageModel {
   flushCache(): Promise<unknown>
   rebuildTree(): unknown
   migrateToLocale(locales: { sourceLocale: string; targetLocale: string; user: PageMigrationActor }): Promise<number>
-  renderPage(page: unknown): Promise<unknown>
+  deletePageFromCache(hash: string): Promise<void>
 }
 
 interface ScheduledWorker {
@@ -120,8 +122,9 @@ interface WikiServices extends Record<string, unknown> {
     restartServer(protocol: string): Promise<unknown>
   }
   events: {
-    outbound: { emit(event: string): unknown }
+    outbound: { emit(event: string, ...args: unknown[]): unknown }
   }
+  logger: { warn(message: unknown): void }
   Error: {
     SystemSSLDisabled: new () => Error
     SystemSSLRenewInvalidProvider: new () => Error
@@ -252,6 +255,7 @@ const migratePagesToLocale = (input: unknown): Promise<number> => {
 
 interface RenderPageRow {
   readonly id: number
+  readonly hash: string
   readonly sourceRevision: string | number
   readonly content: string
   readonly localeCode: string
@@ -276,8 +280,10 @@ const renderPage = async (
     throw new ApplicationError('A current system administrator is required.', { code: 'AUTH_REQUIRED', status: 401 })
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) throw new ApplicationError('id must be a positive integer', { code: 'INVALID_PAGE_ID' })
 
-  return wiki.models.knex.transaction(async transaction => {
+  const committed = await wiki.models.knex.transaction(async transaction => {
     await requireSystemAuthority(transaction, requester as SystemRequester, true)
+    await lockSearchIndex(transaction, false)
+    await lockSearchPage(transaction, id)
     const page = await transaction<RenderPageRow>('pages').where({ id }).forUpdate().first()
     if (!page) throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
     const location: PageProjectionLocation = {
@@ -294,13 +300,23 @@ const renderPage = async (
       location
     })
     return {
-      message: 'Page render accepted.',
-      effectId: admission.effectId,
-      pageId: page.id,
-      sourceRevision: admission.sourceRevision,
-      statusUrl: `/_api/system/content/render-page/status/${encodeURIComponent(admission.effectId)}`
+      hash: page.hash,
+      response: {
+        message: 'Page render accepted.',
+        effectId: admission.effectId,
+        pageId: page.id,
+        sourceRevision: admission.sourceRevision,
+        statusUrl: `/_api/system/content/render-page/status/${encodeURIComponent(admission.effectId)}`
+      }
     }
   })
+  try {
+    await wiki.models.pages.deletePageFromCache(committed.hash)
+    wiki.events.outbound.emit('deletePageFromCache', committed.hash)
+  } catch (error) {
+    wiki.logger.warn(`Page render accepted; committed cache eviction remains pending: ${String(error)}`)
+  }
+  return committed.response
 }
 const renderPageImmediately = async (input: unknown): Promise<void> => {
   const record = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : undefined

@@ -15,6 +15,7 @@ const page = {
   title: 'Start',
   description: 'A guide',
   sourceRevision: '8',
+  renderedSourceRevision: '8' as string | null,
   updatedAt: new Date('2026-09-01T00:00:00Z'),
   visibility: 'public',
   isPublished: true,
@@ -51,6 +52,42 @@ describe('source preview access', () => {
     expect(result).not.toHaveProperty('authorEmail')
     expect(result).not.toHaveProperty('render')
   })
+  it('returns retryable pending without an excerpt until the current source revision has a certified render', async () => {
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
+    const input = { requester: { id: 7 }, sessionId: 'session', query: 'removed-secret' }
+    for (const renderedSourceRevision of [null, '8']) {
+      getPage.mockResolvedValue({
+        ...page,
+        sourceRevision: '9',
+        renderedSourceRevision,
+        content: 'Current replacement source',
+        render: '<p>removed-secret belongs only to the old revision</p>'
+      })
+      for (const identity of [{ id: 42 }, { locale: 'en', path: 'docs/start' }]) {
+        const failure = await operations.preview({ ...input, ...identity }).then(
+          () => { throw new Error('An uncertified render must not produce a preview') },
+          error => error
+        )
+        expect(failure).toMatchObject({ name: 'PAGE_RENDER_PENDING', status: 503 })
+        expect(failure.message).toMatch(/retry/i)
+        expect(failure).not.toHaveProperty('excerpt')
+        expect(failure).not.toHaveProperty('render')
+        expect(failure).not.toHaveProperty('content')
+      }
+    }
+
+    getPage.mockResolvedValue({
+      ...page,
+      sourceRevision: '9',
+      renderedSourceRevision: '9',
+      content: 'Current replacement source',
+      render: '<p>Current replacement source</p>'
+    })
+    expect(await operations.preview({ ...input, id: 42 })).toMatchObject({
+      sourceRevision: '9',
+      excerpt: 'Current replacement source'
+    })
+  })
   it('does not produce an excerpt for a revoked page or a locked page', async () => {
     const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     checkAccess.mockReturnValue(false)
@@ -66,6 +103,8 @@ describe('source preview access', () => {
     getPage.mockResolvedValue({ ...page, isPublished: false })
     await expect(operations.preview({ id: 42, requester: { id: 7 } })).rejects.toMatchObject({ status: 404 })
     getPage.mockResolvedValue({ ...page, publishStartDate: '2099-01-01T00:00:00Z' })
+    await expect(operations.preview({ id: 42, requester: { id: 7 } })).rejects.toMatchObject({ status: 404 })
+    getPage.mockResolvedValue({ ...page, publishEndDate: '2000-01-01T00:00:00Z' })
     await expect(operations.preview({ id: 42, requester: { id: 7 } })).rejects.toMatchObject({ status: 404 })
   })
 

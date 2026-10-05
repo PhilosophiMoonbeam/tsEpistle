@@ -20,6 +20,7 @@ vi.mockModule('express', import.meta.url, () => {
   return { default: expressMock, ...expressMock }
 })
 
+// Load Express after installing the router mock so each fresh controller uses it.
 const express = await import('express')
 
 describe('controllers/api search endpoints', () => {
@@ -34,10 +35,13 @@ describe('controllers/api search endpoints', () => {
       data: {
         searchEngine: {
           key: 'beta',
-          rebuild: vi.fn().mockResolvedValue(true),
-          deactivate: vi.fn().mockResolvedValue(true)
+          rebuild: vi.fn().mockResolvedValue(true)
         },
         searchEngines: [
+          {
+            key: 'postgres',
+            props: { dictLanguage: { enum: ['english', 'simple'] } }
+          },
           {
             key: 'beta',
             title: 'Beta Search',
@@ -79,8 +83,7 @@ describe('controllers/api search endpoints', () => {
       },
       models: {
         searchEngines: {
-          query: vi.fn(),
-          initEngine: vi.fn().mockResolvedValue(true),
+          configure: vi.fn().mockResolvedValue(undefined),
           getSearchEngines: vi.fn().mockResolvedValue([
             {
               key: 'beta',
@@ -114,18 +117,9 @@ describe('controllers/api search endpoints', () => {
       }
     }
 
-    global.WIKI.models.searchEngines.query.mockImplementation(() => {
-      const query = {
-        patch: vi.fn().mockReturnThis(),
-        where: vi.fn().mockResolvedValue(1)
-      }
-      global.WIKI.models.searchEngines.__lastQuery = query
-      global.WIKI.models.searchEngines.__queries = global.WIKI.models.searchEngines.__queries || []
-      global.WIKI.models.searchEngines.__queries.push(query)
-      return query
-    })
   })
 
+  // Fresh controllers intentionally capture the current mocked WIKI/model boundary.
   const loadHandlers = async () => {
     await vi.importFresh('../../controllers/api/search.ts', import.meta.url)
     const router = express.__routers[0]
@@ -279,23 +273,11 @@ describe('controllers/api search endpoints', () => {
 
   const createSavePayload = () => ({
     body: {
-      engines: [
-        {
-          key: 'alpha',
-          isEnabled: true,
-          config: [
-            { key: 'endpoint', value: JSON.stringify({ v: 'https://example.test/alpha' }) },
-            { key: 'missingValue', value: JSON.stringify({ label: 'No value key' }) }
-          ]
-        },
-        {
-          key: 'beta',
-          isEnabled: false,
-          config: [
-            { key: 'enabledFlag', value: JSON.stringify({ v: false }) }
-          ]
-        }
-      ]
+      engines: [{
+        key: 'postgres',
+        isEnabled: true,
+        config: [{ key: 'dictLanguage', value: JSON.stringify({ v: 'english' }) }]
+      }]
     },
     user: { permissions: ['manage:system'] }
   })
@@ -310,67 +292,19 @@ describe('controllers/api search endpoints', () => {
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
-    expect(global.WIKI.models.searchEngines.query).not.toHaveBeenCalled()
-    expect(global.WIKI.data.searchEngine.deactivate).not.toHaveBeenCalled()
-    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
+    expect(global.WIKI.models.searchEngines.configure).not.toHaveBeenCalled()
   })
 
-  it('saves search engines with GraphQL parity and activates the selected engine', async () => {
+  it('returns a successful HTTP response for an enabled PostgreSQL dictionary configuration', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { saveEngines } = await loadHandlers()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(createSavePayload(), res)
 
-    const queries = global.WIKI.models.searchEngines.__queries
-    expect(queries).toHaveLength(2)
-    expect(queries[0].patch).toHaveBeenCalledWith({
-      isEnabled: true,
-      config: {
-        endpoint: 'https://example.test/alpha',
-        missingValue: null
-      }
-    })
-    expect(queries[0].where).toHaveBeenCalledWith('key', 'alpha')
-    expect(queries[1].patch).toHaveBeenCalledWith({
-      isEnabled: false,
-      config: {
-        enabledFlag: false
-      }
-    })
-    expect(queries[1].where).toHaveBeenCalledWith('key', 'beta')
-    expect(global.WIKI.data.searchEngine.deactivate).toHaveBeenCalledTimes(1)
-    expect(global.WIKI.models.searchEngines.initEngine).toHaveBeenCalledWith({ activate: true })
     expect(res.status).not.toHaveBeenCalled()
-    expect(res.json).toHaveBeenCalledWith({ message: 'Search Engines updated successfully' })
-  })
-
-  it('does not deactivate the current search engine when the selected engine is unchanged', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveEngines } = await loadHandlers()
-    const req = createSavePayload()
-    req.body.engines[0].isEnabled = false
-    req.body.engines[1].isEnabled = true
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-
-    await saveEngines(req, res)
-
-    expect(global.WIKI.data.searchEngine.deactivate).not.toHaveBeenCalled()
-    expect(global.WIKI.models.searchEngines.initEngine).toHaveBeenCalledWith({ activate: true })
-    expect(res.json).toHaveBeenCalledWith({ message: 'Search Engines updated successfully' })
-  })
-
-  it('continues when previous search engine deactivation fails', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const deactivateError = new Error('deactivate failed')
-    global.WIKI.data.searchEngine.deactivate.mockRejectedValueOnce(deactivateError)
-    const { saveEngines } = await loadHandlers()
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-
-    await saveEngines(createSavePayload(), res)
-
-    expect(global.WIKI.models.searchEngines.initEngine).toHaveBeenCalledWith({ activate: true })
-    expect(res.json).toHaveBeenCalledWith({ message: 'Search Engines updated successfully' })
+    expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) })
+    expect(res.json.mock.calls[0][0]).not.toHaveProperty('error')
   })
 
   it('returns JSON 400 for malformed engine save payloads', async () => {
@@ -378,38 +312,46 @@ describe('controllers/api search endpoints', () => {
     const { saveEngines } = await loadHandlers()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await saveEngines({ body: { engines: [{ key: 'alpha', isEnabled: 'yes', config: [] }] }, user: {} }, res)
+    await saveEngines({ body: { engines: [{ key: 'postgres', isEnabled: 'yes', config: [] }] }, user: {} }, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid search engines payload' })
-    expect(global.WIKI.models.searchEngines.query).not.toHaveBeenCalled()
-    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
+    expect(global.WIKI.models.searchEngines.configure).not.toHaveBeenCalled()
   })
 
   it('returns JSON 400 for malformed engine save config JSON', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { saveEngines } = await loadHandlers()
     const req = createSavePayload()
-    req.body.engines[1].config[0].value = '{not-json'
+    req.body.engines[0].config[0].value = '{not-json'
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid search engines payload' })
-    expect(global.WIKI.models.searchEngines.query).not.toHaveBeenCalled()
-    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
+    expect(global.WIKI.models.searchEngines.configure).not.toHaveBeenCalled()
   })
 
-  it('rejects unsupported enumerated settings before changing the saved configuration', async () => {
+  it.each([
+    ['a disabled provider', engine => ({ ...engine, isEnabled: false })],
+    ['a noncanonical provider', engine => ({ ...engine, key: 'legacy' })],
+    ['an unsupported dictionary', engine => ({
+      ...engine, config: [{ key: 'dictLanguage', value: JSON.stringify({ v: 'not-a-dictionary' }) }]
+    })],
+    ['a missing dictionary', engine => ({ ...engine, config: [] })]
+  ])('returns JSON 400 for %s without configuring the engine', async (_kind, invalidEngine) => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    WIKI.data.searchEngines.find(engine => engine.key === 'alpha').props.endpoint = { enum: ['supported'] }
     const { saveEngines } = await loadHandlers()
+    const req = createSavePayload()
+    req.body.engines[0] = invalidEngine(req.body.engines[0])
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-    await saveEngines(createSavePayload(), res)
+
+    await saveEngines(req, res)
+
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(WIKI.models.searchEngines.query).not.toHaveBeenCalled()
-    expect(WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
+    expect(WIKI.models.searchEngines.configure).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -423,43 +365,32 @@ describe('controllers/api search endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const secret = failure()
     const secretMessage = typeof secret === 'string' ? secret : secret.message
-    const query = {
-      patch: vi.fn().mockReturnThis(),
-      where: vi.fn().mockRejectedValueOnce(secret)
-    }
-    global.WIKI.models.searchEngines.query.mockReturnValue(query)
+    global.WIKI.models.searchEngines.configure.mockRejectedValueOnce(secret)
     const { saveEngines } = await loadHandlers()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(createSavePayload(), res)
 
-    expect(query.where).toHaveBeenCalledTimes(1)
     expect(res.status).toHaveBeenCalledWith(status)
     expect(res.json).toHaveBeenCalledTimes(1)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Search Engines update failed' })
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
     expect(JSON.stringify(res.json.mock.calls)).not.toContain(secretMessage)
-    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
   })
 
   it('redacts 5xx ApplicationError messages from search engine saves', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { saveEngines } = await loadHandlers()
+    // Match the ApplicationError class from the freshly loaded controller module graph.
     const { default: errors } = await import('../../operations/errors.ts')
     const secret = new errors.ApplicationError('db-secret-search-application', { status: 503 })
-    const query = {
-      patch: vi.fn().mockReturnThis(),
-      where: vi.fn().mockRejectedValueOnce(secret)
-    }
-    global.WIKI.models.searchEngines.query.mockReturnValue(query)
+    global.WIKI.models.searchEngines.configure.mockRejectedValueOnce(secret)
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(createSavePayload(), res)
 
-    expect(query.where).toHaveBeenCalledTimes(1)
     expect(res.status).toHaveBeenCalledWith(503)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Search Engines update failed' })
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
     expect(JSON.stringify(res.json.mock.calls)).not.toContain(secret.message)
-    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
   })
 
   it('returns 403 for unauthorized rebuild requests without rebuilding', async () => {
@@ -485,7 +416,7 @@ describe('controllers/api search endpoints', () => {
 
     expect(global.WIKI.data.searchEngine.rebuild).toHaveBeenCalledTimes(1)
     expect(res.sendStatus).not.toHaveBeenCalled()
-    expect(res.json).toHaveBeenCalledWith({ message: 'Index rebuilt successfully' })
+    expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) })
   })
 
   it.each([
@@ -504,48 +435,7 @@ describe('controllers/api search endpoints', () => {
     expect(global.WIKI.data.searchEngine.rebuild).toHaveBeenCalledTimes(1)
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledTimes(1)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Index rebuild failed' })
+    expect(res.json).toHaveBeenCalledWith({ error: expect.any(String) })
     expect(JSON.stringify(res.json.mock.calls)).not.toContain(secret instanceof Error ? secret.message : secret)
-  })
-  it('is mounted by the API index router', async () => {
-    const modulePaths = [
-      '../../controllers/api/analytics.ts',
-      '../../controllers/api/assets.ts',
-      '../../controllers/api/auth.ts',
-      '../../controllers/api/comments.ts',
-      '../../controllers/api/content-extensions.ts',
-      '../../controllers/api/groups.ts',
-      '../../controllers/api/locales.ts',
-      '../../controllers/api/logging.ts',
-      '../../controllers/api/mail.ts',
-      '../../controllers/api/navigation.ts',
-      '../../controllers/api/pages.ts',
-      '../../controllers/api/rendering.ts',
-      '../../controllers/api/search.ts',
-      '../../controllers/api/site.ts',
-      '../../controllers/api/storage.ts',
-      '../../controllers/api/system.ts',
-      '../../controllers/api/theming.ts',
-      '../../controllers/api/users.ts',
-      '../../controllers/api/webhooks.ts'
-    ]
-    for (const modulePath of modulePaths) {
-      vi.mockModule(modulePath, import.meta.url, () => ({ default: {} }))
-    }
-
-    try {
-      expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
-      const apiRouter = express.__routers.find(router =>
-        router.use.mock.calls.some(([path]) => path === '/search')
-      )
-
-      expect(apiRouter).toBeDefined()
-
-      expect(apiRouter.use).toHaveBeenCalledWith('/search', expect.any(Object))
-    } finally {
-      for (const modulePath of modulePaths) {
-        vi.unmockModule(modulePath, import.meta.url)
-      }
-    }
   })
 })

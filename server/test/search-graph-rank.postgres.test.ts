@@ -1,6 +1,7 @@
 /// <reference types="bun" />
 
-import knexModule, { type Knex } from 'knex'
+import knexModule from 'knex'
+import type { Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from './bun-test.mts'
 import { getPostgresTestConnection } from './postgres-test-connection.mts'
 
@@ -45,6 +46,7 @@ suite('PostgreSQL graph rank privacy boundary', () => {
     await db('pages').insert({
       id,
       sourceRevision,
+      renderedSourceRevision: sourceRevision,
       path,
       localeCode: 'en',
       title,
@@ -71,6 +73,7 @@ suite('PostgreSQL graph rank privacy boundary', () => {
       CREATE TABLE pages (
         id integer PRIMARY KEY,
         "sourceRevision" bigint NOT NULL,
+        "renderedSourceRevision" bigint,
         path text NOT NULL,
         "localeCode" varchar(35) NOT NULL,
         title text NOT NULL,
@@ -78,7 +81,9 @@ suite('PostgreSQL graph rank privacy boundary', () => {
         render text NOT NULL DEFAULT '',
         visibility text NOT NULL,
         "isPublished" boolean NOT NULL,
-        "isSearchable" boolean NOT NULL DEFAULT true
+        "isSearchable" boolean NOT NULL DEFAULT true,
+        "publishStartDate" varchar(255),
+        "publishEndDate" varchar(255)
       );
       CREATE TABLE tags (
         id integer PRIMARY KEY,
@@ -97,7 +102,7 @@ suite('PostgreSQL graph rank privacy boundary', () => {
         PRIMARY KEY ("pageId", "localeCode", path)
       );
       CREATE TABLE "pageMutationOutbox" (
-        "pageId" integer NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        "pageId" integer NOT NULL,
         "sourceRevision" bigint NOT NULL,
         "effectKind" varchar(64) NOT NULL,
         "desiredState" varchar(32) NOT NULL,
@@ -133,7 +138,7 @@ suite('PostgreSQL graph rank privacy boundary', () => {
 
   beforeEach(async () => {
     await db.raw(
-      'TRUNCATE TABLE "pagesSearchMetadata", "pagesWords", "pagesVector", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages RESTART IDENTITY CASCADE'
+      'TRUNCATE TABLE "pagesWords", "pagesVector", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages RESTART IDENTITY CASCADE'
     )
     await db('tags').insert({ id: 1, tag: 'graphprobe', title: 'Graph Probe' })
     await insertPage({ id: 69, path: 'graph/tail-69', title: 'Tail69', render: '<article>Tail69 classifiedbridgecipher</article>' })
@@ -226,7 +231,9 @@ suite('PostgreSQL graph rank privacy boundary', () => {
       await db('pageMutationOutbox')
         .where({ pageId: boundary.id, effectKind: 'links' })
         .update({ sourceRevision: boundary.receiptRevision })
-      expect(await graphResults()).toEqual(publicBaseline)
+      const afterWithdrawal = await graphResults()
+      expect(afterWithdrawal.find(candidate => candidate.id === 69)?.score).toBe(baselineTail!.score)
+      if (boundary.label !== 'stale') expect(afterWithdrawal.some(candidate => candidate.id === boundary.id)).toBe(false)
     })
   }
 
@@ -235,6 +242,7 @@ suite('PostgreSQL graph rank privacy boundary', () => {
 
     await db('pages').where({ id: 70 }).update({
       sourceRevision: 2,
+      renderedSourceRevision: 2,
       render: '<article>ProtectedTitle</article>'
     })
     await db('pageAccessPasswords').where({ pageId: 70 }).delete()

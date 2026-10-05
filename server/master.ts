@@ -17,14 +17,16 @@ import { publicSiteBanner } from '../shared/site-banner.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import { normalizeReaderLayout } from '../shared/theme-policy.ts'
 import { BrowserWorkerClient } from './agents/browser/client.ts'
-import { type AgentOperationalLimits, parseAgentOperationalLimits } from './agents/config.ts'
+import { parseAgentOperationalLimits } from './agents/config.ts'
+import type { AgentOperationalLimits } from './agents/config.ts'
 import { agentCsrfToken } from './agents/csrf.ts'
 import { runAgentMaintenance } from './agents/maintenance.ts'
 import { createWikiMcpController } from './agents/mcp.ts'
 import { AgentProviderConformanceRunner } from './agents/providers/conformance.ts'
 import { AxAgentEngine } from './agents/providers/engine.ts'
 import { AgentProviderFactory } from './agents/providers/factory.ts'
-import { type AgentProfileTokenKeys, AgentProviderRegistry } from './agents/providers/registry.ts'
+import { AgentProviderRegistry } from './agents/providers/registry.ts'
+import type { AgentProfileTokenKeys } from './agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environmentSecretValue } from './agents/providers/secrets.ts'
 import { AgentUtilityModel } from './agents/providers/utility.ts'
 import { assertWikiAgentMediaAccess, createWikiActionSessionProvider, loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
@@ -49,6 +51,7 @@ import authCore from './core/auth.ts'
 import localization from './core/localization.ts'
 import mail from './core/mail.ts'
 import { PageProjectionLifecycle } from './core/page-mutation-outbox.ts'
+import type { PageRenderPublicationFence } from './core/page-mutation-outbox.ts'
 import system from './core/system.ts'
 import { createApiPrincipal } from './helpers/api-principal.ts'
 import pageHelper from './helpers/page.ts'
@@ -152,7 +155,6 @@ interface MasterWiki extends Record<string, unknown> {
     searchEngine?: {
       key: string
       reconcilePage(pageId: number): Promise<void>
-      removePage(pageId: number): Promise<void>
     }
   }
   events: {
@@ -166,7 +168,7 @@ interface MasterWiki extends Record<string, unknown> {
     locales: { getNavLocales(options: { cache: boolean }): Promise<unknown> }
     pages: {
       getPageFromDb(pageId: number): Promise<unknown | null>
-      renderPage(page: unknown): Promise<unknown>
+      renderPage(page: unknown, fence?: PageRenderPublicationFence): Promise<unknown>
       deletePageFromCache(hash: string): Promise<void>
     }
     users: {
@@ -402,10 +404,10 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     utilityConcurrency: agentLimits.provider.globalConcurrency
   })
   const projectionLifecycle = new PageProjectionLifecycle(wiki.models.knex, `page-projection-${process.pid}`, {
-    async renderPage(pageId): Promise<void> {
+    async renderPage(pageId, fence): Promise<void> {
       const page = await wiki.models.pages.getPageFromDb(pageId)
       if (!page) return
-      await wiki.models.pages.renderPage(page)
+      await wiki.models.pages.renderPage(page, fence)
     },
     async evictLocation(location): Promise<void> {
       const hash = pageHelper.generateHash({
@@ -425,7 +427,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     async removeSearchPage(pageId): Promise<void> {
       const searchEngine = wiki.data.searchEngine
       if (!searchEngine || searchEngine.key !== 'postgres') throw new Error('The active PostgreSQL search engine is unavailable')
-      await searchEngine.removePage(pageId)
+      await searchEngine.reconcilePage(pageId)
     }
   })
   let agentTimer: NodeJS.Timeout | undefined

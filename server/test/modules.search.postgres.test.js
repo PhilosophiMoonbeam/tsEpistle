@@ -5,96 +5,6 @@ import { isStructuredSearchQuery } from '../helpers/search-query.ts'
 const originalWiki = global.WIKI
 const connection = getPostgresTestConnection('_modules_search_test', import.meta.path)
 
-const knexHarness = (options = {}) => {
-  const truncate = vi.fn().mockResolvedValue(undefined)
-  const deleteRows = vi.fn().mockResolvedValue(1)
-  const where = vi.fn().mockReturnValue({ delete: deleteRows })
-  const rebuildPages = options.rebuildPages ?? []
-  const transactionRaw = vi.fn().mockImplementation(async (sql, bindings = []) => {
-    const statement = String(sql)
-    if (statement.includes('AS "publicPages"')) return { rows: options.inspectionRow ? [options.inspectionRow] : [] }
-    if (statement.includes('pg_try_advisory_xact_lock')) return { rows: [{ value: options.lockAcquired !== false }] }
-    if (statement.includes('WITH expected_columns')) return { rows: [{ value: options.schemaCurrent !== false }] }
-    if (statement.includes('FROM "pagesSearchMetadata"')) {
-      const value = options.metadataDictionary === undefined
-        ? options.metadataCurrent !== false
-        : options.metadataDictionary === bindings[1]
-      return { rows: [{ value }] }
-    }
-    if (statement.includes('FULL OUTER JOIN "pagesVector"')) {
-      return { rows: [{ value: options.revisionsCurrent !== false }] }
-    }
-    if (statement.includes('FOR SHARE OF page')) {
-      const [cursor, limit] = bindings
-      const pages = statement.includes('page."isSearchable" = true')
-        ? rebuildPages.filter(page => page.isSearchable !== false && page.isSearchable !== 0)
-        : rebuildPages
-      return { rows: pages.filter(page => page.id > cursor).slice(0, limit) }
-    }
-    return { rows: [] }
-  })
-  const table = vi.fn().mockImplementation(() => ({ truncate, where }))
-  const transactionSchema = {
-    dropTableIfExists: vi.fn().mockResolvedValue(undefined)
-  }
-  const transactionClient = Object.assign(table, { raw: transactionRaw, schema: transactionSchema })
-  let transactionHeld = false
-  const raw = vi.fn().mockImplementation(async (sql, bindings = []) => {
-    if (options.rejectSecondConnection && transactionHeld) throw new Error('pool exhausted')
-    const statement = String(sql)
-    if (statement.includes('websearch_to_tsquery')) {
-      const pageRevisions = bindings[10] === null ? null : JSON.parse(String(bindings[10]))
-      const sourceRows = options.queryRows ?? []
-      const searchableRows = statement.includes('current_page."isSearchable" = true')
-        ? sourceRows.filter(row => row.isSearchable !== false && row.isSearchable !== 0)
-        : sourceRows
-      const rows = options.scope
-        ? searchableRows.filter(row =>
-            row.locale === options.scope.locale &&
-            (row.path === options.scope.path || row.path.startsWith(`${options.scope.path}/`))
-          )
-        : searchableRows
-      const revisionFilteredRows =
-        pageRevisions === null
-          ? rows
-          : rows.filter(row => String(row.sourceRevision) === pageRevisions[String(row.id)])
-      return { rows: revisionFilteredRows.slice(0, bindings.at(-1)) }
-    }
-    if (statement.includes('FROM "pagesWords"')) {
-      const pageIds = new Set(bindings[0])
-      const sourceRows = options.suggestionRows ?? []
-      const searchableRows = statement.includes('page."isSearchable" = true')
-        ? sourceRows.filter(row => row.isSearchable !== false && row.isSearchable !== 0)
-        : sourceRows
-      const words = []
-      for (const candidate of searchableRows) {
-        if (pageIds.has(candidate.pageId) && !words.some(row => row.word === candidate.word)) words.push({ word: candidate.word })
-      }
-      return { rows: words.slice(0, 5) }
-    }
-    return { rows: [] }
-  })
-  const schema = {
-    dropTableIfExists: vi.fn().mockResolvedValue(undefined)
-  }
-  const transaction = vi.fn(async callback => {
-    transactionHeld = true
-    try {
-      return await callback(transactionClient)
-    } finally {
-      transactionHeld = false
-    }
-  })
-  const knex = Object.assign(vi.fn().mockImplementation(table), { raw, schema, transaction })
-  return {
-    knex,
-    raw,
-    transaction,
-    transactionRaw,
-    truncate,
-    dropTableIfExists: transactionSchema.dropTableIfExists
-  }
-}
 
 const installWiki = (knex, pages = {}) => {
   global.WIKI = {
@@ -118,209 +28,28 @@ afterEach(() => {
   else global.WIKI = originalWiki
 })
 
-describe('PostgreSQL hybrid search', () => {
-  it('classifies PostgreSQL web-search syntax without treating literal hyphens as operators', () => {
-    expect(isStructuredSearchQuery('"Amber Falcon"')).toBe(true)
-    expect(isStructuredSearchQuery('Amber OR Falcon')).toBe(true)
-    expect(isStructuredSearchQuery('Amber -Marmot')).toBe(true)
-    expect(isStructuredSearchQuery('Amber - Falcon')).toBe(true)
-    expect(isStructuredSearchQuery('Amber- Falcon')).toBe(false)
-    expect(isStructuredSearchQuery('amber-or-falcon')).toBe(false)
-    expect(isStructuredSearchQuery('part-number-42')).toBe(false)
-  })
-
-  it('inspects coverage and dictionary metadata without rebuilding or modifying page data', async () => {
-    const harness = knexHarness({ inspectionRow: { publicPages: '10', indexedPages: '9', missingPages: '2', stalePages: '1', excludedEntries: '1', dictionary: 'english', schemaVersion: 2 } })
-    installWiki(harness.knex)
-    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
-    Object.assign(plugin, { config: { dictLanguage: 'simple' } })
-    const status = await plugin.inspectIndex()
-    expect(status).toMatchObject({ publicPages: 10, indexedPages: 9, missingPages: 2, stalePages: 1, excludedEntries: 1, configuredDictionary: 'simple', indexedDictionary: 'english', schemaVersion: 2, expectedSchemaVersion: 2 })
-    expect(Number.isNaN(Date.parse(status.checkedAt))).toBe(false)
-    expect(harness.truncate).not.toHaveBeenCalled()
-    expect(harness.dropTableIfExists).not.toHaveBeenCalled()
-  })
-
-  it('rejects a concurrent rebuild before changing visible derived data', async () => {
-    const harness = knexHarness({ lockAcquired: false })
-    installWiki(harness.knex)
-    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
-    Object.assign(plugin, { config: { dictLanguage: 'english' } })
-
-    await expect(plugin.rebuild()).rejects.toThrow('PostgreSQL search rebuild is already in progress')
-    expect(harness.truncate).not.toHaveBeenCalled()
-  })
-
-
-  it('returns suggestions only for syntax-neutral result candidates', async () => {
-    const inScope = {
-      id: 42,
-      sourceRevision: '1',
-      path: 'runbooks/falcon',
-      locale: 'en',
-      title: 'Falcon Runbook',
-      description: '',
-      tags: [],
-      score: 1,
-      matchedFields: ['content']
+describe('PostgreSQL web-search syntax', () => {
+  it('recognizes exclusion punctuation without treating literal hyphens as operators', () => {
+    for (const query of ['"Amber Falcon"', 'Amber OR Falcon', 'Amber -Marmot', 'Amber - Falcon', '-(falcon)', '-!falcon', '---falcon']) {
+      expect(isStructuredSearchQuery(query)).toBe(true)
     }
-    const harness = knexHarness({
-      queryRows: [inScope],
-      scope: { locale: 'en', path: 'runbooks' },
-      suggestionRows: [
-        { pageId: 42, word: 'falcon' },
-        { pageId: 77, word: 'unrelated-french-term' }
-      ]
-    })
-    installWiki(harness.knex)
-    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
-    Object.assign(plugin, { config: { dictLanguage: 'english' } })
-    await expect(plugin.query('falcn', { locale: 'en', path: 'runbooks' })).resolves.toMatchObject({
-      suggestions: ['falcon']
-    })
-    await expect(plugin.query('falcn OR kestrel', { locale: 'en', path: 'runbooks' })).resolves.toMatchObject({
-      suggestions: []
-    })
-  })
-
-  it('pins vectors to caller-authorized page revisions before candidate caps', async () => {
-    const harness = knexHarness({
-      queryRows: [
-        { id: 42, sourceRevision: '2', path: 'runbooks/falcon', locale: 'en', title: 'New Falcon', description: '', tags: [], score: 2, matchedFields: ['title'] },
-        { id: 43, sourceRevision: '1', path: 'runbooks/kestrel', locale: 'en', title: 'Authorized Kestrel', description: '', tags: [], score: 1, matchedFields: ['title'] }
-      ]
-    })
-    installWiki(harness.knex)
-    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
-    Object.assign(plugin, { config: { dictLanguage: 'english' } })
-
-    await expect(plugin.query('falcon', { pageIds: [42, 43], pageRevisions: { '42': '1', '43': '1' }, limit: 1 })).resolves.toMatchObject({
-      results: [expect.objectContaining({ id: 43, sourceRevision: '1' })]
-    })
-  })
-
-  it('filters an opted-out page from stale indexed candidates before worker cleanup', async () => {
-    const harness = knexHarness({
-      queryRows: [
-        {
-          id: 42,
-          sourceRevision: '1',
-          path: 'runbooks/opted-out',
-          locale: 'en',
-          title: 'Opted Out Falcon',
-          description: '',
-          tags: [],
-          score: 10,
-          matchedFields: ['title'],
-          isSearchable: false
-        },
-        {
-          id: 43,
-          sourceRevision: '1',
-          path: 'runbooks/searchable',
-          locale: 'en',
-          title: 'Searchable Falcon',
-          description: '',
-          tags: [],
-          score: 1,
-          matchedFields: ['title']
-        }
-      ]
-    })
-    installWiki(harness.knex)
-    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
-    Object.assign(plugin, { config: { dictLanguage: 'english' } })
-
-    await expect(plugin.query('falcon', {})).resolves.toMatchObject({
-      results: [expect.objectContaining({ id: 43 })],
-      totalHits: 1
-    })
-  })
-
-  it('returns no candidates for blank input without querying the index', async () => {
-    const harness = knexHarness()
-    installWiki(harness.knex)
-    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
-    Object.assign(plugin, { config: { dictLanguage: 'english' } })
-
-    await expect(plugin.query(' \t ', {})).resolves.toEqual({ results: [], suggestions: [], totalHits: 0 })
-    expect(harness.raw).not.toHaveBeenCalled()
-  })
-
-
-  it('rebuilds from canonical rendered rows without requesting a second pool connection', async () => {
-    const page = {
-      id: 42,
-      sourceRevision: '8',
-      path: 'runbooks/falcon',
-      localeCode: 'en',
-      title: 'Falcon Runbook',
-      description: 'Incident response',
-      render: '<p>rendered-only unique-extension-term</p>',
-      tags: [{ tag: 'incident', title: 'Incident response' }],
-      visibility: 'public',
-      isPublished: true
+    for (const query of ['Amber- Falcon', 'amber-or-falcon', 'part-number-42']) {
+      expect(isStructuredSearchQuery(query)).toBe(false)
     }
-    const harness = knexHarness({ rebuildPages: [page], rejectSecondConnection: true })
-    const cleanHTML = vi.fn(() => 'rendered-only unique-extension-term')
-    installWiki(harness.knex, { cleanHTML })
-    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
-    Object.assign(plugin, { config: { dictLanguage: 'english' } })
-
-    await expect(plugin.rebuild()).resolves.toBeUndefined()
-
-    expect(harness.transaction).toHaveBeenCalledTimes(1)
-    expect(cleanHTML).toHaveBeenCalledWith('<p>rendered-only unique-extension-term</p>')
   })
-  it('rebuilds opted-out pages out of the derived index while keeping legacy rows searchable by default', async () => {
-    const optedOut = {
-      id: 42,
-      sourceRevision: '8',
-      path: 'runbooks/opted-out',
-      localeCode: 'en',
-      title: 'Opted Out Runbook',
-      description: 'Excluded from search',
-      render: '<p>opted-out-content</p>',
-      tags: [],
-      visibility: 'public',
-      isPublished: true,
-      isSearchable: false
-    }
-    const defaultSearchable = {
-      id: 43,
-      sourceRevision: '9',
-      path: 'runbooks/default',
-      localeCode: 'en',
-      title: 'Default Runbook',
-      description: 'Included in search',
-      render: '<p>default-content</p>',
-      tags: [],
-      visibility: 'public',
-      isPublished: true
-    }
-    const harness = knexHarness({ rebuildPages: [optedOut, defaultSearchable] })
-    const cleanHTML = vi.fn(value => value)
-    installWiki(harness.knex, { cleanHTML })
-    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
-    Object.assign(plugin, { config: { dictLanguage: 'english' } })
-
-    await expect(plugin.rebuild()).resolves.toBeUndefined()
-
-    expect(cleanHTML).toHaveBeenCalledTimes(1)
-    expect(cleanHTML).toHaveBeenCalledWith(defaultSearchable.render)
-  })
-
-
 })
 
 if (connection) {
   describe('PostgreSQL hybrid search persisted contracts', () => {
     let db
+    let observer
+    let enginePid
     let plugin
 
     const page = (id, overrides = {}) => ({
       id,
       sourceRevision: 1,
+      renderedSourceRevision: overrides.sourceRevision ?? 1,
       path: `runbooks/page-${id}`,
       localeCode: 'en',
       title: `Runbook ${id}`,
@@ -332,16 +61,55 @@ if (connection) {
       ...overrides
     })
 
-    const snapshot = async () => {
+    const snapshot = async (client = db) => {
       const state = {}
-      for (const table of ['pages', 'tags', 'pageTags', 'pageLinks', 'pageAccessPasswords', 'pageMutationOutbox', 'pagesVector', 'pagesWords', 'pagesSearchMetadata']) {
-        const result = await db.raw(
+      for (const table of ['searchEngines', 'pages', 'tags', 'pageTags', 'pageLinks', 'pageAccessPasswords', 'pageMutationOutbox', 'pagesVector', 'pagesWords', 'pagesSearchMetadata']) {
+        const result = await client.raw(
           `SELECT COALESCE(jsonb_agg(to_jsonb(entry) ORDER BY to_jsonb(entry)::text), '[]'::jsonb) AS rows FROM ?? entry`,
           [table]
         )
         state[table] = result.rows[0].rows
       }
       return state
+    }
+
+    const track = promise => {
+      const operation = { settled: false }
+      operation.outcome = promise.then(
+        value => { operation.settled = true; return { value } },
+        error => { operation.settled = true; return { error } }
+      )
+      return operation
+    }
+
+    const complete = async operation => {
+      const outcome = await operation.outcome
+      if (outcome.error) throw outcome.error
+      return outcome.value
+    }
+
+    // Observe PostgreSQL's lock queue, rather than guessing when a concurrent call has reached its gate.
+    const waitForBlock = async (operation, pid, blockerPid) => {
+      const deadline = Date.now() + 5000
+      while (Date.now() < deadline) {
+        if (operation.settled) {
+          await complete(operation)
+          throw new Error('Expected operation to wait for the PostgreSQL lock')
+        }
+        const result = await observer.raw('SELECT pg_blocking_pids(?::integer) AS blockers', [pid])
+        if (result.rows[0].blockers.includes(blockerPid)) return
+      }
+      throw new Error('PostgreSQL operation did not enter the expected lock queue')
+    }
+
+    const inTransaction = async (transaction, work) => {
+      const previous = global.WIKI.models.knex
+      global.WIKI.models.knex = transaction
+      try {
+        return await work()
+      } finally {
+        global.WIKI.models.knex = previous
+      }
     }
 
     beforeAll(async () => {
@@ -351,10 +119,18 @@ if (connection) {
         pool: { min: 1, max: 1 },
         acquireConnectionTimeout: 1000
       })
+      observer = knexModule({ client: 'pg', connection, pool: { min: 1, max: 2 }, acquireConnectionTimeout: 1000 })
+      enginePid = (await db.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
       await db.raw(`
+        CREATE TABLE "searchEngines" (
+          key text PRIMARY KEY,
+          "isEnabled" boolean NOT NULL,
+          config jsonb NOT NULL
+        );
         CREATE TABLE pages (
           id integer PRIMARY KEY,
           "sourceRevision" bigint NOT NULL,
+          "renderedSourceRevision" bigint,
           path text NOT NULL,
           "localeCode" varchar(35) NOT NULL,
           title text NOT NULL,
@@ -363,7 +139,9 @@ if (connection) {
           render text NOT NULL DEFAULT '',
           visibility text NOT NULL,
           "isPublished" boolean NOT NULL,
-          "isSearchable" boolean NOT NULL DEFAULT true
+          "isSearchable" boolean NOT NULL DEFAULT true,
+          "publishStartDate" varchar(255),
+          "publishEndDate" varchar(255)
         );
         CREATE TABLE tags (
           id integer PRIMARY KEY,
@@ -386,7 +164,7 @@ if (connection) {
         );
         CREATE TABLE "pageMutationOutbox" (
           id uuid PRIMARY KEY,
-          "pageId" integer NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+          "pageId" integer NOT NULL,
           "sourceRevision" bigint NOT NULL,
           "effectKind" text NOT NULL,
           "desiredState" text NOT NULL,
@@ -396,7 +174,8 @@ if (connection) {
     })
 
     beforeEach(async () => {
-      await db.raw('TRUNCATE pages, tags, "pageTags", "pageLinks", "pageAccessPasswords", "pageMutationOutbox" CASCADE')
+      await db.raw('TRUNCATE "searchEngines", pages, tags, "pageTags", "pageLinks", "pageAccessPasswords", "pageMutationOutbox" CASCADE')
+      await db('searchEngines').insert({ key: 'postgres', isEnabled: true, config: JSON.stringify({ dictLanguage: 'english' }) })
       installWiki(db)
       const Page = (await vi.importFresh('../models/pages.ts', import.meta.url)).default
       Page.knex(db)
@@ -408,6 +187,7 @@ if (connection) {
 
     afterAll(async () => {
       if (db) await db.destroy()
+      if (observer) await observer.destroy()
     })
 
     it('inspects real coverage and metadata without changing canonical or derived rows', async () => {
@@ -416,7 +196,7 @@ if (connection) {
       await db('pagesVector').whereIn('pageId', [9, 10]).delete()
       await db('pages').where({ id: 1 }).update({ sourceRevision: 2 })
       await db('pages').where({ id: 11 }).update({ isSearchable: false })
-      plugin.config.dictLanguage = 'simple'
+      await db('searchEngines').where({ key: 'postgres' }).update({ config: JSON.stringify({ dictLanguage: 'simple' }) })
 
       const before = await snapshot()
       const status = await plugin.inspectIndex()
@@ -434,6 +214,59 @@ if (connection) {
       })
       expect(Number.isNaN(Date.parse(status.checkedAt))).toBe(false)
       expect(await snapshot()).toEqual(before)
+    })
+
+    it('withdraws window-ineligible metadata before query caps and converges on canonical removal', async () => {
+      await db('pages').insert([
+        page(42, { title: 'Falcone', description: 'falcn futuremetadatacipher' }),
+        page(43, { title: 'Falcon Runbook', description: 'falcn', publishStartDate: '', publishEndDate: '' }),
+        page(44, { title: 'Falconer', description: 'falcn expiredmetadatacipher' }),
+        page(45, { title: 'Falconette', description: 'falcn privatemetadatacipher' })
+      ])
+      await plugin.rebuild()
+      await db('pages').where({ id: 42 }).update({ publishStartDate: '2999-01-01T00:00:00.000Z' })
+      await db('pages').where({ id: 44 }).update({ publishEndDate: '2000-01-01T00:00:00.000Z' })
+      await db('pages').where({ id: 45 }).update({ visibility: 'private' })
+
+      expect((await plugin.query('falcn', { limit: 1 })).results.map(result => result.id)).toEqual([43])
+      expect((await plugin.query('"falcn"', {})).results.map(result => result.id)).toEqual([43])
+      expect((await plugin.query('falcn', {})).suggestions).toEqual(['falcon'])
+      for (const term of ['futuremetadatacipher', 'expiredmetadatacipher', 'privatemetadatacipher']) {
+        expect((await plugin.query(`"${term}"`, {})).results).toEqual([])
+      }
+      expect(await plugin.inspectIndex()).toMatchObject({
+        publicPages: 1, indexedPages: 4, missingPages: 0, stalePages: 0, excludedEntries: 3
+      })
+
+      for (const id of [42, 44, 45]) await plugin.removePage(id)
+      expect(await db('pagesVector').orderBy('pageId').select('pageId')).toEqual([{ pageId: 43 }])
+      expect(await db('pagesWords').whereIn('pageId', [42, 44, 45]).select('word')).toEqual([])
+      const converged = await snapshot()
+      for (const id of [42, 44, 45]) await plugin.removePage(id)
+      expect(await snapshot()).toEqual(converged)
+      await plugin.rebuild()
+      expect(await snapshot()).toEqual(converged)
+
+      // A crossed publication window is canonical eligibility, even if a stale removal resumes.
+      await db('pages').where({ id: 42 }).update({
+        publishStartDate: '2000-01-01T10:00:00.000+10:00',
+        publishEndDate: '2998-12-31T14:00:00.000-10:00'
+      })
+      await plugin.removePage(42)
+      expect((await plugin.query('"Falcone"', { pageIds: [42] })).results.map(result => result.id)).toEqual([42])
+      expect(await db('pagesWords').where({ pageId: 42, word: 'falcone' }).select('word')).toEqual([{ word: 'falcone' }])
+      expect(await plugin.inspectIndex()).toMatchObject({
+        publicPages: 2, indexedPages: 2, missingPages: 0, stalePages: 0, excludedEntries: 0
+      })
+
+      await db('pages').where({ id: 42 }).update({ publishEndDate: '2000-01-01T00:00:00.000Z' })
+      await plugin.init()
+      expect(await db('pagesVector').orderBy('pageId').select('pageId')).toEqual([{ pageId: 43 }])
+      expect(await db('pagesWords').where({ pageId: 42 }).select('word')).toEqual([])
+      expect(await plugin.inspectIndex()).toMatchObject({
+        publicPages: 1, indexedPages: 1, missingPages: 0, stalePages: 0, excludedEntries: 0,
+        schemaVersion: 2, expectedSchemaVersion: 2
+      })
     })
 
     it('restricts reachable suggestion vocabulary by locale and path and suppresses structured suggestions', async () => {
@@ -541,5 +374,264 @@ if (connection) {
       ])
       expect((await plugin.query('uniqueextensionterm', {})).results).toEqual([])
     })
+    it('excludes stale and null-certified body bytes until their exact revisions are rendered', async () => {
+      await db('pages').insert([
+        page(42, { sourceRevision: 2, renderedSourceRevision: 1, render: '<p>revokedbodytoken</p>' }),
+        page(43, { sourceRevision: 3, renderedSourceRevision: null, render: '<p>uncertifiedbodytoken</p>' })
+      ])
+      await plugin.rebuild()
+      for (const [id, token] of [[42, 'revokedbodytoken'], [43, 'uncertifiedbodytoken']]) {
+        expect((await plugin.query(`"${token}"`, { pageIds: [id] })).results).toEqual([])
+        expect((await db.raw('SELECT count(*)::integer AS count FROM "pagesVector" WHERE "pageId" = ? AND tokens @@ plainto_tsquery(\'english\', ?)', [id, token])).rows[0].count).toBe(0)
+        await plugin.reconcilePage(id)
+        expect((await plugin.query(`"${token}"`, { pageIds: [id] })).results).toEqual([])
+      }
+      await db('pages').where({ id: 42 }).update({ renderedSourceRevision: 2, render: '<p>repairedbodytoken</p>' })
+      await db('pages').where({ id: 43 }).update({ renderedSourceRevision: 3, render: '<p>certifiedbodytoken</p>' })
+      await plugin.reconcilePage(42)
+      await plugin.rebuild()
+      for (const [id, revision, token] of [[42, '2', 'repairedbodytoken'], [43, '3', 'certifiedbodytoken']]) {
+        expect((await plugin.query(`"${token}"`, { pageIds: [id] })).results).toEqual([
+          expect.objectContaining({ id, sourceRevision: revision, matchedFields: ['content'] })
+        ])
+      }
+      expect((await plugin.query('"revokedbodytoken"', {})).results).toEqual([])
+      expect((await plugin.query('"uncertifiedbodytoken"', {})).results).toEqual([])
+      expect(await db('pages').orderBy('id').select('id', 'sourceRevision', 'renderedSourceRevision')).toEqual([
+        { id: 42, sourceRevision: '2', renderedSourceRevision: '2' },
+        { id: 43, sourceRevision: '3', renderedSourceRevision: '3' }
+      ])
+    })
+
+    it('uses a committed simple dictionary for old English queries, reconciliations, and rebuilds', async () => {
+      await db('pages').insert(page(42, { title: 'Runner Manual', render: '<p>running</p>' }))
+      await plugin.rebuild()
+      expect((await plugin.query('"running"', { pageIds: [42] })).results.map(result => result.id)).toEqual([42])
+      expect((await plugin.query('"run"', { pageIds: [42] })).results.map(result => result.id)).toEqual([42])
+
+      const replacement = { ...plugin, config: { dictLanguage: 'simple' } }
+      await db('searchEngines').where({ key: 'postgres' }).update({ config: JSON.stringify({ dictLanguage: 'simple' }) })
+      await replacement.init()
+      expect(await db('pagesSearchMetadata').select('dictionary')).toEqual([{ dictionary: 'simple' }])
+      expect(plugin.config.dictLanguage).toBe('english')
+      expect((await plugin.query('"running"', { pageIds: [42] })).results.map(result => result.id)).toEqual([42])
+      expect((await plugin.query('"run"', { pageIds: [42] })).results).toEqual([])
+
+      await db('pages').where({ id: 42 }).update({ sourceRevision: 2, renderedSourceRevision: 2 })
+      await plugin.reconcilePage(42)
+      const tokens = await db.raw('SELECT tokens @@ plainto_tsquery(\'simple\', \'running\') AS running, tokens @@ plainto_tsquery(\'simple\', \'run\') AS run FROM "pagesVector" WHERE "pageId" = 42')
+      expect(tokens.rows[0]).toEqual({ running: true, run: false })
+      expect((await plugin.query('"running"', { pageIds: [42], pageRevisions: { 42: '2' } })).results).toEqual([
+        expect.objectContaining({ id: 42, sourceRevision: '2', matchedFields: ['content'] })
+      ])
+      await plugin.rebuild()
+      expect(await db('pagesSearchMetadata').select('dictionary')).toEqual([{ dictionary: 'simple' }])
+      expect((await plugin.query('"run"', { pageIds: [42] })).results).toEqual([])
+    })
+
+    it('waits during startup while an explicit overlapping rebuild fails without changing rows', async () => {
+      await db('pages').insert(page(42))
+      await plugin.rebuild()
+      const before = await snapshot()
+      const holder = await observer.transaction()
+      let startup
+      try {
+        await holder.raw('SELECT pg_advisory_xact_lock(hashtext(?))', ['wiki.search.postgres.derived-index'])
+        const blockerPid = (await holder.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
+        startup = track(plugin.init())
+        await waitForBlock(startup, enginePid, blockerPid)
+        await expect(inTransaction(observer, () => plugin.rebuild())).rejects.toThrow('PostgreSQL search rebuild is already in progress')
+        expect(await snapshot(observer)).toEqual(before)
+        await holder.commit()
+        await complete(startup)
+        expect(await snapshot()).toEqual(before)
+      } finally {
+        if (!holder.isCompleted()) await holder.rollback()
+        if (startup) await startup.outcome
+      }
+    })
+
+    it('shares rebuild exclusion while an incremental vector write is held before its vocabulary update', async () => {
+      await db('pages').insert(page(42, { title: 'Original Falcon' }))
+      await plugin.rebuild()
+      await db('pages').where({ id: 42 }).update({ sourceRevision: 2, renderedSourceRevision: 2, title: 'Newest Falcon', render: '<p>overlapbodytoken</p>' })
+      await db.raw(`
+        CREATE FUNCTION test_search_vector_gate() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(hashtext('test.search.vector-write-barrier'));
+          RETURN NEW;
+        END $$;
+        CREATE TRIGGER test_search_vector_gate AFTER INSERT OR UPDATE ON "pagesVector"
+          FOR EACH ROW EXECUTE FUNCTION test_search_vector_gate();
+      `)
+      const holder = await observer.transaction()
+      let rebuildTransaction
+      let incremental
+      try {
+        await holder.raw('SELECT pg_advisory_xact_lock(hashtext(?))', ['test.search.vector-write-barrier'])
+        const blockerPid = (await holder.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
+        incremental = track(plugin.reconcilePage(42))
+        await waitForBlock(incremental, enginePid, blockerPid)
+        rebuildTransaction = await observer.transaction()
+        // Bound a broken implementation that attempts table truncation instead of rejecting the held shared index lock.
+        await rebuildTransaction.raw("SET LOCAL statement_timeout = '3000ms'")
+        await expect(inTransaction(rebuildTransaction, () => plugin.rebuild())).rejects.toThrow('PostgreSQL search rebuild is already in progress')
+        await rebuildTransaction.rollback()
+        expect(await observer('pagesVector').where({ pageId: 42 }).select('sourceRevision', 'title')).toEqual([{ sourceRevision: '1', title: 'Original Falcon' }])
+        await holder.commit()
+        await complete(incremental)
+        await plugin.rebuild()
+        expect(await db('pagesVector').where({ pageId: 42 }).select('sourceRevision', 'title')).toEqual([{ sourceRevision: '2', title: 'Newest Falcon' }])
+        expect(await db('pagesWords').where({ pageId: 42, word: 'newest' }).select('word')).toEqual([{ word: 'newest' }])
+        expect((await plugin.query('"overlapbodytoken"', { pageIds: [42] })).results).toEqual([
+          expect.objectContaining({ id: 42, sourceRevision: '2', matchedFields: ['content'] })
+        ])
+      } finally {
+        if (rebuildTransaction && !rebuildTransaction.isCompleted()) await rebuildTransaction.rollback()
+        if (!holder.isCompleted()) await holder.rollback()
+        if (incremental) await incremental.outcome
+        await observer.raw('DROP TRIGGER IF EXISTS test_search_vector_gate ON "pagesVector"; DROP FUNCTION IF EXISTS test_search_vector_gate()')
+      }
+    })
+
+    it('refreshes protection and tags after waiting for the canonical page row', async () => {
+      await db('pages').insert(page(42, { title: 'Metadata Anchor', render: '<p>protectionracecipher</p>' }))
+      await db('tags').insert([{ id: 1, tag: 'oldrelation', title: 'Old Relation' }, { id: 2, tag: 'freshrelation', title: 'Fresh Relation' }])
+      await db('pageTags').insert({ pageId: 42, tagId: 1 })
+      await plugin.rebuild()
+      expect((await plugin.query('"protectionracecipher"', { pageIds: [42] })).results.map(result => result.id)).toEqual([42])
+      const holder = await observer.transaction()
+      let reconciliation
+      try {
+        await holder('pages').where({ id: 42 }).forUpdate().first()
+        await holder('pageAccessPasswords').insert({ pageId: 42 })
+        await holder('pageTags').where({ pageId: 42 }).delete()
+        await holder('pageTags').insert({ pageId: 42, tagId: 2 })
+        const blockerPid = (await holder.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
+        reconciliation = track(plugin.reconcilePage(42))
+        await waitForBlock(reconciliation, enginePid, blockerPid)
+        await holder.commit()
+        await complete(reconciliation)
+        expect(await db('pagesVector').where({ pageId: 42 }).select('sourceRevision', 'tags')).toEqual([{ sourceRevision: '1', tags: ['freshrelation'] }])
+        expect((await plugin.query('"protectionracecipher"', { pageIds: [42] })).results).toEqual([])
+        expect((await plugin.query('"freshrelation"', { pageIds: [42] })).results.map(result => result.id)).toEqual([42])
+        expect(await db('pagesWords').where({ pageId: 42, word: 'oldrelation' }).select('word')).toEqual([])
+        expect(await db('pagesWords').where({ pageId: 42, word: 'freshrelation' }).select('word')).toEqual([{ word: 'freshrelation' }])
+      } finally {
+        if (!holder.isCompleted()) await holder.rollback()
+        if (reconciliation) await reconciliation.outcome
+      }
+    })
+
+    it('does not republish same-revision body bytes after render certification is revoked while waiting', async () => {
+      await db('pages').insert(page(42, { render: '<p>rerenderrevokedcipher</p>' }))
+      await plugin.rebuild()
+      const holder = await observer.transaction()
+      let reconciliation
+      try {
+        await holder('pages').where({ id: 42 }).forUpdate().first()
+        await holder('pages').where({ id: 42 }).update({ renderedSourceRevision: null })
+        const blockerPid = (await holder.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
+        reconciliation = track(plugin.reconcilePage(42))
+        await waitForBlock(reconciliation, enginePid, blockerPid)
+        await holder.commit()
+        await complete(reconciliation)
+        expect((await plugin.query('"rerenderrevokedcipher"', { pageIds: [42] })).results).toEqual([])
+        expect((await db.raw('SELECT count(*)::integer AS count FROM "pagesVector" WHERE "pageId" = 42 AND tokens @@ plainto_tsquery(\'english\', \'rerenderrevokedcipher\')')).rows[0].count).toBe(0)
+        expect(await db('pages').where({ id: 42 }).select('sourceRevision', 'renderedSourceRevision')).toEqual([{ sourceRevision: '1', renderedSourceRevision: null }])
+        await db('pages').where({ id: 42 }).update({ renderedSourceRevision: 1, render: '<p>rerenderreplacementcipher</p>' })
+        await plugin.reconcilePage(42)
+        expect((await plugin.query('"rerenderreplacementcipher"', { pageIds: [42] })).results).toEqual([
+          expect.objectContaining({ id: 42, sourceRevision: '1', matchedFields: ['content'] })
+        ])
+      } finally {
+        if (!holder.isCompleted()) await holder.rollback()
+        if (reconciliation) await reconciliation.outcome
+      }
+    })
+
+    it.each([
+      ['future', { publishStartDate: '2999-01-01T00:00:00.000Z' }],
+      ['expired', { publishEndDate: '2000-01-01T00:00:00.000Z' }]
+    ])('withdraws a newly %s page after waiting for the canonical row', async (_boundary, window) => {
+      await db('pages').insert(page(42, { title: 'Window Boundary', render: '<p>windowbodycipher</p>' }))
+      await plugin.rebuild()
+      const holder = await observer.transaction()
+      let reconciliation
+      try {
+        await holder('pages').where({ id: 42 }).forUpdate().first()
+        await holder('pages').where({ id: 42 }).update(window)
+        const blockerPid = (await holder.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
+        reconciliation = track(plugin.reconcilePage(42))
+        await waitForBlock(reconciliation, enginePid, blockerPid)
+        await holder.commit()
+        await complete(reconciliation)
+        expect(await db('pagesVector').where({ pageId: 42 }).select('pageId')).toEqual([])
+        expect(await db('pagesWords').where({ pageId: 42 }).select('word')).toEqual([])
+        expect((await plugin.query('"windowbodycipher"', { pageIds: [42] })).results).toEqual([])
+      } finally {
+        if (!holder.isCompleted()) await holder.rollback()
+        if (reconciliation) await reconciliation.outcome
+      }
+    })
+
+    for (const boundary of ['opted-out', 'absent', 'future', 'expired']) {
+      it(`preserves a newer eligible vector and vocabulary when a stale ${boundary} removal resumes`, async () => {
+        await db('pages').insert(page(42, { title: 'Original Falcon' }))
+        await db('pageMutationOutbox').insert({
+          id: '00000000-0000-4000-8000-000000000042', pageId: 42, sourceRevision: 1, effectKind: 'search', desiredState: 'absent', status: 'pending'
+        })
+        await plugin.rebuild()
+        if (boundary === 'absent') await db('pages').where({ id: 42 }).delete()
+        else if (boundary === 'future') await db('pages').where({ id: 42 }).update({ publishStartDate: '2999-01-01T00:00:00.000Z' })
+        else if (boundary === 'expired') await db('pages').where({ id: 42 }).update({ publishEndDate: '2000-01-01T00:00:00.000Z' })
+        else await db('pages').where({ id: 42 }).update({ isSearchable: false })
+        const holder = await observer.transaction()
+        let removal
+        try {
+          await holder.raw('SELECT pg_advisory_xact_lock_shared(hashtext(?))', ['wiki.search.postgres.derived-index'])
+          await holder.raw('SELECT pg_advisory_xact_lock(hashtext(?), ?::integer)', ['wiki.search.postgres.page', 42])
+          const blockerPid = (await holder.raw('SELECT pg_backend_pid() AS pid')).rows[0].pid
+          removal = track(plugin.removePage(42))
+          await waitForBlock(removal, enginePid, blockerPid)
+          const newer = page(42, {
+            sourceRevision: 2, title: 'Newest Falcon', render: '<p>restoredeligiblecipher</p>',
+            isSearchable: true, publishStartDate: '', publishEndDate: ''
+          })
+          if (boundary === 'absent') await holder('pages').insert(newer)
+          else await holder('pages').where({ id: 42 }).update(newer)
+          await inTransaction(holder, () => plugin.reconcilePage(42))
+          await holder.commit()
+          await complete(removal)
+          expect(await db('pagesVector').where({ pageId: 42 }).select('sourceRevision', 'title')).toEqual([{ sourceRevision: '2', title: 'Newest Falcon' }])
+          expect(await db('pagesWords').where({ pageId: 42, word: 'newest' }).select('word')).toEqual([{ word: 'newest' }])
+          expect(await db('pageMutationOutbox').where({ pageId: 42 }).select('sourceRevision', 'desiredState', 'status')).toEqual([{ sourceRevision: '1', desiredState: 'absent', status: 'pending' }])
+          expect((await plugin.query('"restoredeligiblecipher"', { pageIds: [42], pageRevisions: { 42: '2' } })).results).toEqual([
+            expect.objectContaining({ id: 42, sourceRevision: '2', matchedFields: ['content'] })
+          ])
+        } finally {
+          if (!holder.isCompleted()) await holder.rollback()
+          if (removal) await removal.outcome
+        }
+      })
+    }
+
+    for (const literal of ['%', '_', '\\']) {
+      it(`scores ${JSON.stringify(literal)} as a literal title/tag prefix rather than a LIKE operator`, async () => {
+        await db('pages').insert([
+          page(42, { title: 'Zeta', description: literal, render: '<p>ordinary body</p>' }),
+          page(43, { title: `${literal} Target`, description: literal, render: '<p>ordinary body</p>' })
+        ])
+        await db('tags').insert([{ id: 1, tag: 'unrelated', title: 'Unrelated' }, { id: 2, tag: `${literal}tag`, title: `${literal}tag` }])
+        await db('pageTags').insert([{ pageId: 42, tagId: 1 }, { pageId: 43, tagId: 2 }])
+        await plugin.rebuild()
+        const result = await plugin.query(literal, { pageIds: [42, 43], limit: 2 })
+        expect(result.results.map(candidate => ({ id: candidate.id, score: candidate.score }))).toEqual([
+          { id: 43, score: 5 },
+          { id: 42, score: 0 }
+        ])
+        expect((await plugin.query(literal, { pageIds: [42, 43], limit: 1 })).results.map(candidate => candidate.id)).toEqual([43])
+      })
+    }
   })
 }

@@ -56,6 +56,8 @@ describe('Visual Markdown page contracts', () => {
       }
       return { insert: vi.fn().mockResolvedValue(1) }
     })
+    knex.client = { config: { client: 'pg' } }
+    knex.raw = vi.fn()
     knex.transaction = vi.fn(callback => callback(knex))
     const checkAccess = vi.fn().mockReturnValue(true)
     const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
@@ -141,7 +143,7 @@ describe('Visual Markdown page contracts', () => {
           })
         }),
       getPageFromDb: vi.fn().mockResolvedValue(updatedPage),
-      renderPage: vi.fn().mockResolvedValue(undefined)
+      deletePageFromCache: vi.fn().mockResolvedValue(undefined)
     }
     global.WIKI.models.knex.table = vi.fn().mockReturnValue({
       where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })

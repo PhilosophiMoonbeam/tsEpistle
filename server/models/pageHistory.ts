@@ -38,6 +38,8 @@ interface PageVersionOptions {
   action?: string
   versionDate: string
   sourceRevision?: string | number | bigint
+  /** Authoritative canonical relation IDs captured under the page lock before a tag mutation. */
+  historyTagIds?: readonly number[]
   transaction?: Knex.Transaction
 }
 
@@ -287,7 +289,9 @@ export default class PageHistory extends Model {
       versionDate: opts.versionDate
     })
     const knex = opts.transaction ?? wiki.models.knex
-    const tags = await knex('pageTags').select('tagId').where('pageId', opts.id)
+    const tags = opts.historyTagIds === undefined
+      ? await knex('pageTags').select('tagId').where('pageId', opts.id)
+      : opts.historyTagIds.map(tagId => ({ tagId }))
     if (tags.length > 0) {
       await knex('pageHistoryTags').insert(tags.map(({ tagId }) => ({ pageId: version.id, tagId })))
     }
