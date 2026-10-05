@@ -15,6 +15,8 @@ import {
   AGENT_TASK_KINDS,
   AGENT_TERMINAL_RUN_STATUSES,
   AGENT_TOOL_CALL_NAMES,
+  isExternalMcpToolCallName,
+  type ExternalMcpToolCallName,
   type AgentConversationFolderView,
   type AgentEventType,
   type AgentMediaView,
@@ -44,6 +46,7 @@ const Run = z.object({
   attempt: z.number().int().nonnegative(),
   eventSequence: z.number().int().nonnegative(),
   canCancel: z.boolean(),
+  workingPhase: z.literal('correcting').optional(),
   createdAt: Iso,
   startedAt: Iso.nullable(),
   completedAt: Iso.nullable(),
@@ -119,7 +122,6 @@ const Skill = z.object({
   ordinal: z.number().int().nonnegative()
 })
 const Session = z.object({
-  googleSearchEnabled: z.boolean().optional().default(false),
   id: Uuid,
   title: z.string(),
   retention: z.enum(['temporary', 'saved']),
@@ -136,24 +138,28 @@ const Session = z.object({
   lastActivityAt: Iso,
   expiresAt: Iso.nullable()
 })
-const Tool = z.object({
-  id: z.string(),
-  runId: Uuid,
-  actionName: z.enum(AGENT_TOOL_CALL_NAMES),
-  title: z.string(),
-  state: z.enum(['preparing', 'running', 'awaitingApproval', 'complete', 'failed', 'denied', 'cancelled', 'omitted', 'not_executed']),
-  risk: z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write']),
-  summary: z.string().nullable(),
-  proposalId: Uuid.nullable(),
-  startedAt: Iso,
-  completedAt: Iso.nullable(),
-  contextExclusion: z
-    .object({
-      status: z.enum(['omitted', 'not_executed']),
-      reason: z.literal('tool_result_capacity')
-    })
-    .optional()
-})
+const Tool = z
+  .object({
+    id: z.string(),
+    runId: Uuid,
+    actionName: z.union([z.enum(AGENT_TOOL_CALL_NAMES), z.custom<ExternalMcpToolCallName>(isExternalMcpToolCallName)]),
+    title: z.string(),
+    state: z.enum(['preparing', 'running', 'awaitingApproval', 'complete', 'failed', 'denied', 'cancelled', 'omitted', 'not_executed']),
+    risk: z.enum(['read', 'open-world-read', 'external', 'proposal', 'reversible-write', 'destructive-write']),
+    summary: z.string().nullable(),
+    proposalId: Uuid.nullable(),
+    startedAt: Iso,
+    completedAt: Iso.nullable(),
+    contextExclusion: z
+      .object({
+        status: z.enum(['omitted', 'not_executed']),
+        reason: z.literal('tool_result_capacity')
+      })
+      .optional()
+  })
+  .refine(tool => isExternalMcpToolCallName(tool.actionName) === (tool.risk === 'external'), {
+    message: 'External MCP activity must retain its external risk classification.'
+  })
 const Task = z.object({
   id: Uuid,
   runId: Uuid,
@@ -287,7 +293,6 @@ const SessionSummary = z.object({
 })
 const ConversationFolder = z.object({ id: Uuid, name: z.string(), version: z.number().int().positive(), createdAt: Iso, updatedAt: Iso })
 const Profile = z.object({
-  googleSearchAvailable: z.boolean().optional().default(false),
   media: z
     .object({
       attachments: z.boolean(),
@@ -447,7 +452,7 @@ const errorMessage = async (response: Response): Promise<string> => {
   }
 }
 
-const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, path: string, schema: z.ZodType<T>, init: RequestInit = {}): Promise<T> => {
+export const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, path: string, schema: z.ZodType<T>, init: RequestInit = {}): Promise<T> => {
   const response = await sameOriginJsonFetch(fetcher, path, {
     credentials: 'same-origin',
     ...init,
@@ -767,20 +772,11 @@ export const updateAgentSkillPreferences = async (
     })
   ).skillIds
 
-const MAX_GOOGLE_SEARCH_SUGGESTIONS_JSON = 128 * 1_024
-const GoogleSearchSuggestionsEvent = z
-  .object({
-    runId: Uuid,
-    suggestions: z.array(z.string().min(1).max(32_768)).max(8)
-  })
-  .strict()
-
 export const subscribeAgentRun = (
   runId: string,
   after: number,
   handlers: {
     readonly event: (type: AgentEventType, sequence: number) => void
-    readonly googleSearchSuggestions?: (runId: string, suggestions: readonly string[]) => void
     readonly error: () => void
   }
 ): EventSource => {
@@ -792,21 +788,6 @@ export const subscribeAgentRun = (
       handlers.event(type, Number.isSafeInteger(sequence) && sequence > after ? sequence : after)
     })
   }
-  source.addEventListener('google_search.suggestions', event => {
-    const data = (event as MessageEvent).data
-    if (
-      typeof data !== 'string' ||
-      data.length > MAX_GOOGLE_SEARCH_SUGGESTIONS_JSON ||
-      new TextEncoder().encode(data).byteLength > MAX_GOOGLE_SEARCH_SUGGESTIONS_JSON
-    )
-      return
-    try {
-      const parsed = GoogleSearchSuggestionsEvent.parse(JSON.parse(data))
-      if (parsed.runId === runId) handlers.googleSearchSuggestions?.(parsed.runId, parsed.suggestions)
-    } catch {
-      // Transient display data is ignored when malformed; it never affects the durable event cursor.
-    }
-  })
   source.addEventListener('error', handlers.error)
   return source
 }

@@ -41,7 +41,16 @@ const okfOutput = serializeCanonicalOkfPage({
   knowledge: null
 })
 const historyOutput = {
-  versions: [{ id: 9, sourceRevision: '8', resourceUri: 'wiki://pages/42/versions/9/revisions/8/okf', action: 'updated', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Author' }]
+  versions: [
+    {
+      id: 9,
+      sourceRevision: '8',
+      resourceUri: 'wiki://pages/42/versions/9/revisions/8/okf',
+      action: 'updated',
+      versionDate: '2026-08-16T00:00:00.000Z',
+      authorName: 'Author'
+    }
+  ]
 }
 const historicalOutput = {
   ...actionOutput,
@@ -98,7 +107,6 @@ const request = (signal: AbortSignal, purpose: 'root' | 'subagent' = 'root', act
   },
   purpose,
   ...(actionAllowlist === undefined ? {} : { actionAllowlist }),
-  googleSearchEnabled: false,
   messages: [{ role: 'user', content: 'Read the page' }],
   memory: { user: [], agent: [] },
   skills: [],
@@ -148,7 +156,6 @@ describe('page evidence validation on action sessions', () => {
     expect(await session?.validateObservation?.('pages.get', actionOutput, new AbortController().signal)).toBe(false)
     expect(validateObservation).toHaveBeenCalled()
     validateObservation.mockClear()
-
 
     liveAdmission = admission(['skills.list'])
     expect(await session?.validateObservation?.('pages.get', actionOutput, new AbortController().signal)).toBe(false)
@@ -213,5 +220,4 @@ describe('page evidence validation on action sessions', () => {
     expect(validateObservation).not.toHaveBeenCalled()
     session?.close()
   })
-
 })

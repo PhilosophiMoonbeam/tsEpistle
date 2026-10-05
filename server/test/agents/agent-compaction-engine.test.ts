@@ -8,7 +8,7 @@ import {
 } from '../../agents/compaction.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
-import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
+import { geminiFixtureService } from './gemini-fixture.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -63,7 +63,6 @@ const canonicalMessages = (
 }
 
 const engineRequest = (messages: readonly AgentEngineMessage[], signal = new AbortController().signal): AgentEngineRequest => ({
-  googleSearchEnabled: true,
   run: {
     id: '00000000-0000-4000-8000-000000000101',
     sessionId: '00000000-0000-4000-8000-000000000102',
@@ -213,7 +212,7 @@ describe('Ax agent engine context compaction', () => {
       expect(committed).toBe(true)
       return response('Done.', 900, 10)
     })
-    const { create, factory } = factoryFor(chat)
+    const { factory } = factoryFor(chat)
     const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {
       committed = true
     })
@@ -228,7 +227,6 @@ describe('Ax agent engine context compaction', () => {
     )
 
     expect(calls).toHaveLength(2)
-    expect(create).toHaveBeenNthCalledWith(2, '00000000-0000-4000-8000-000000000106', expect.objectContaining({ purpose: 'agent', googleSearchEnabled: false }))
     expect(calls[0]).not.toHaveProperty('functions')
     expect(JSON.stringify(calls[0])).toContain('OLDEST_USER_CONSTRAINT')
     expect(JSON.stringify(calls[0])).not.toContain('encrypted-prefix-state')
@@ -311,7 +309,7 @@ describe('Ax agent engine context compaction', () => {
       return calls.length === 1 ? response('Earlier constraint and decision remain.', 100, 10) : response('Done.', 80, 5)
     })
     const factory = {
-      create: vi.fn(async () => ({ ...profile, preserveCachePrefix: true, continuationDialect: 'gemini-interactions-v1' as const, service: { chat } }))
+      create: vi.fn(async () => ({ ...profile, preserveCachePrefix: true, continuationDialect: 'gemini-generate-content-v1' as const, service: { chat } }))
     } as unknown as AgentProviderFactory
     const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
     const result = await new AxAgentEngine(factory).execute(
@@ -333,7 +331,7 @@ describe('Ax agent engine context compaction', () => {
   it('retains reported Gemini cache tokens on a committed summary and its follow-on answer', async () => {
     const history = oversizedHistory()
     let dispatch = 0
-    const native = createGeminiInteractionsService({
+    const native = geminiFixtureService({
       apiKey: 'test-key',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       model: 'gemini-3.8-flash',
@@ -341,10 +339,11 @@ describe('Ax agent engine context compaction', () => {
       fetch: (async () => {
         const summary = dispatch++ === 0
         return Response.json({
-          model: 'gemini-3.8-flash',
-          status: 'completed',
-          usage: { total_input_tokens: 4, total_output_tokens: 2, total_tokens: 6, total_cached_tokens: summary ? 2 : 3 },
-          steps: [{ type: 'model_output', content: [{ type: 'text', text: summary ? 'Earlier constraint and decision remain.' : 'Done.' }] }]
+          modelVersion: 'gemini-3.8-flash',
+          usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 2, totalTokenCount: 6, cachedContentTokenCount: summary ? 2 : 3 },
+          candidates: [
+            { index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ text: summary ? 'Earlier constraint and decision remain.' : 'Done.' }] } }
+          ]
         })
       }) as typeof fetch
     })
@@ -354,7 +353,7 @@ describe('Ax agent engine context compaction', () => {
         preserveCachePrefix: true,
         model: 'gemini-3.8-flash',
         transportKind: 'gemini-api' as const,
-        continuationDialect: 'gemini-interactions-v1' as const,
+        continuationDialect: 'gemini-generate-content-v1' as const,
         service: native
       }))
     } as unknown as AgentProviderFactory
@@ -552,7 +551,6 @@ describe('Ax agent engine context compaction', () => {
         {
           ...base,
           run: { ...base.run, executionMode: 'agent' },
-          googleSearchEnabled: false,
           compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
           research: {
             packets: [],
@@ -996,7 +994,6 @@ ${sourceUnit}`,
       {
         ...base,
         run: { ...base.run, executionMode: 'agent' },
-        googleSearchEnabled: false,
         limits: { maxTurns: 4, maxToolCalls: 4, maxOutputTokens: 8_192 },
         dispatchBudget: sequencedBudget(400_000)
       },

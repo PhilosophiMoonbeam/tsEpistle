@@ -341,8 +341,6 @@ const loadGoalLockState = (
     decidingApprovalId: ref(null),
     error: ref(''),
     goalBusy: ref(false),
-    googleSearchPending: ref(null),
-    googleSearchSuggestions: ref(null),
     initializationAdmissionFailure: ref<'access' | 'authentication' | null>(null),
     loading: ref(false),
     pinnedSessionId: ref<string | null>(null),
@@ -614,7 +612,6 @@ const profileResolutionToken = (id: string, version: number, profileId = profile
       profilePolicyVersion: profileFixture.policyVersion,
       defaultGeneration: 1,
       executionMode: 'agent',
-      googleSearchEnabled: false,
       exp: 4_000_000_000
     })
   ).toString('base64url')
@@ -631,7 +628,6 @@ const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved
     version: 1,
     providerProfileId: null,
     profileResolutionToken: profileResolutionToken(id, 1),
-    googleSearchEnabled: false,
     skills: [],
     currentRun: null,
     createdAt: timestamp,
@@ -645,8 +641,8 @@ const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved
   artifacts: [],
   proposals: [],
   goal: null,
-  historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
-  suggestions: []
+  suggestions: [],
+  historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
 })
 const profileFixture: AgentProviderProfileView = {
   id: '00000000-0000-4000-8000-000000000010',
@@ -732,7 +728,6 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
           ...serverThread.session,
           providerProfileId: profileId,
           version,
-          googleSearchEnabled: false,
           profileResolutionToken: profileResolutionToken(
             serverThread.session.id,
             version,
@@ -853,9 +848,6 @@ const mountInlineAgent = (
       skillsEnabled: Boolean,
       skillsLoading: Boolean,
       generationToolsEnabled: Boolean,
-      googleSearchAvailable: Boolean,
-      googleSearchEnabled: Boolean,
-      googleSearchBusy: Boolean,
       goalsEnabled: Boolean,
       skills: Array,
       skillsLoadError: String,
@@ -871,7 +863,7 @@ const mountInlineAgent = (
       mediaCapabilities: Object,
       networkBlocked: Boolean
     },
-    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange', 'compositionChange', 'mediaSettled', 'updateGoogleSearch'],
+    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange', 'compositionChange', 'mediaSettled'],
     setup(props, { emit, expose }) {
       const bindings = evaluateComposer(
         Vue.computed,
@@ -911,7 +903,15 @@ const mountInlineAgent = (
   const app = Vue.createApp(inlineHarness, Object.fromEntries(Object.entries(lockState.componentProps).filter(([name]) => inlinePropNames.includes(name))))
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
-  for (const name of ['AgentGoalStatus', 'AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentThread', 'WikiSourcePreview'])
+  for (const name of [
+    'AgentGoalStatus',
+    'AgentMcpApproval',
+    'AgentMemoryManager',
+    'AgentPersonalSkills',
+    'AgentPersonalMcp',
+    'AgentThread',
+    'WikiSourcePreview'
+  ])
     app.component(name, componentStub)
   app.component(
     'AgentHistoryPanel',
@@ -1587,9 +1587,6 @@ describe('Inline Agent workspace actions', () => {
     const second = { ...profileFixture, id: '00000000-0000-4000-8000-000000000012', name: 'Review provider', model: 'review-model', isGlobalDefault: false }
     workspace.authorization.profiles = [profileFixture, second]
     workspace.store.profiles = workspace.authorization.profiles
-    const initialThread = workspace.store.thread
-    if (!initialThread) throw new Error('Conversation missing')
-    workspace.store.thread = { ...initialThread, session: { ...initialThread.session, googleSearchEnabled: true } }
     const draft: AgentDraft = {
       ...emptyAgentDraft(),
       text: 'Keep this research draft',
@@ -1621,13 +1618,11 @@ describe('Inline Agent workspace actions', () => {
     const selected = menuAction(options, second.name)
     expect(selected.getAttribute('aria-checked')).toBe('false')
     expect(selected.querySelector('.v-list-item-subtitle')?.textContent).toBe(second.model)
-    expect(mounted.root.querySelector('.inline-agent__provider-help')?.textContent).toBe(translateEnglish('common:inlineAgentChat.providerWebConsentHelp'))
     selected.click()
     selected.click()
     await settle()
     expect(workspace.profileChanges).toEqual([{ expectedSessionVersion: 1, profileId: second.id }])
     expect(workspace.store.thread?.session.providerProfileId).toBe(second.id)
-    expect(workspace.store.thread?.session.googleSearchEnabled).toBe(false)
     expect(workspace.store.drafts[sessionId]).toEqual(draft)
     expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(draft.text)
     expect(mounted.root.querySelector('.inline-agent__provider-identity')?.textContent).toContain(second.model)

@@ -76,7 +76,7 @@ let disposed = false
 const endpoint = new URL('/mcp', window.location.origin).href
 const transports = [{ title: t('admin:agentAdminTools.eitherInterface'), value: 'all' }, { title: t('admin:agentAdminTools.wikiAgent'), value: 'agent' }, { title: t('admin:agentAdminTools.mcpClients'), value: 'mcp' }]
 const states = [{ title: t('admin:agentAdminTools.allStates'), value: 'all' }, { title: t('admin:agentAdminTools.eligible'), value: 'eligible' }, { title: t('admin:agentAdminTools.deploymentBlocked'), value: 'blocked' }]
-const riskLabels = { read: t('admin:agentAdminTools.readOnly'), 'open-world-read': t('admin:agentAdminTools.externalBrowsing'), proposal: t('admin:agentAdminTools.preparesChangeReview'), 'reversible-write': t('admin:agentAdminTools.changesStoredData'), 'destructive-write': t('admin:agentAdminTools.appliesApprovedChange') }
+const riskLabels = { read: t('admin:agentAdminTools.readOnly'), 'open-world-read': t('admin:agentAdminTools.externalBrowsing'), external: t('admin:agentAdminTools.externalOperation', { defaultValue: 'External MCP operation' }), proposal: t('admin:agentAdminTools.preparesChangeReview'), 'reversible-write': t('admin:agentAdminTools.changesStoredData'), 'destructive-write': t('admin:agentAdminTools.appliesApprovedChange') }
 const interfaceNames = ['agent', 'mcp'] as const
 const interfaceState = (tool: AgentAdminTool, interfaceName: 'agent' | 'mcp') => !tool.exposure[interfaceName]
   ? t('admin:agentAdminTools.notExposed')

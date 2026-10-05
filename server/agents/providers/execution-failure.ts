@@ -50,6 +50,15 @@ export type AgentExecutionFailureCode =
   | 'PROVIDER_REQUEST_REJECTED'
   | 'PROVIDER_UNAVAILABLE'
   | 'PROVIDER_REQUEST_FAILED'
+  | 'EXTERNAL_MCP_ACCESS_DENIED'
+  | 'EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED'
+  | 'EXTERNAL_MCP_TOOL_COLLISION'
+  | 'EXTERNAL_MCP_CATALOG_LIMIT'
+  | 'EXTERNAL_MCP_RESULT_LIMIT'
+  | 'EXTERNAL_MCP_BUDGET_REQUIRED'
+  | 'EXTERNAL_MCP_SIDE_EFFECT_FENCE_REQUIRED'
+  | 'EXTERNAL_MCP_CALL_FAILED'
+  | 'EXTERNAL_MCP_MODALITY_UNSUPPORTED'
 
 export const AGENT_USAGE_ISSUES = ['missing', 'shape', 'unsafe_integer', 'directional_overflow', 'total_below_directions', 'regression'] as const
 export type AgentExecutionFailureUsageIssue = (typeof AGENT_USAGE_ISSUES)[number]
@@ -82,7 +91,19 @@ export interface AgentExecutionFailureDiagnostics {
   readonly transportKind?: AgentProviderTransportKind
   readonly providerErrorCode?: string
 }
+const SAFE_EXTERNAL_MCP_CODES: Readonly<Record<string, true>> = {
+  EXTERNAL_MCP_ACCESS_DENIED: true,
+  EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED: true,
+  EXTERNAL_MCP_TOOL_COLLISION: true,
+  EXTERNAL_MCP_CATALOG_LIMIT: true,
+  EXTERNAL_MCP_RESULT_LIMIT: true,
+  EXTERNAL_MCP_BUDGET_REQUIRED: true,
+  EXTERNAL_MCP_SIDE_EFFECT_FENCE_REQUIRED: true,
+  EXTERNAL_MCP_CALL_FAILED: true,
+  EXTERNAL_MCP_MODALITY_UNSUPPORTED: true
+}
 const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
+  ...SAFE_EXTERNAL_MCP_CODES,
   AGENT_MEDIA_WINDOW_LIMIT: true,
   ...Object.fromEntries(Object.keys(AGENT_PDF_ERRORS).map(code => [code, true as const])),
   AGENT_PDF_PAGE_LIMIT: true,
@@ -146,6 +167,15 @@ const SAFE_STAGES: Readonly<Record<string, true>> = {
 
 const SAFE_MESSAGE = 'Agent inference failed'
 const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
+  EXTERNAL_MCP_ACCESS_DENIED: 'External MCP access is no longer available. Check endpoint access before starting another run.',
+  EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED: 'External MCP requires a model with native tool calling.',
+  EXTERNAL_MCP_TOOL_COLLISION: 'The external MCP tool catalog conflicts with the available tools.',
+  EXTERNAL_MCP_CATALOG_LIMIT: 'The external MCP catalog exceeds the supported limit.',
+  EXTERNAL_MCP_RESULT_LIMIT: 'The external MCP result exceeds the supported limit. The operation was not retried.',
+  EXTERNAL_MCP_BUDGET_REQUIRED: 'External MCP requires an admitted run budget.',
+  EXTERNAL_MCP_SIDE_EFFECT_FENCE_REQUIRED: 'External MCP requires a durable run fence before an operation can start.',
+  EXTERNAL_MCP_CALL_FAILED: 'The external MCP operation could not be confirmed. It was not retried; do not assume success.',
+  EXTERNAL_MCP_MODALITY_UNSUPPORTED: 'The selected model cannot consume the external MCP media result. The operation was not retried.',
   AGENT_MEDIA_WINDOW_LIMIT:
     'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new conversation with the files needed for this request.',
   ...Object.fromEntries(Object.entries(AGENT_PDF_ERRORS).map(([code, detail]) => [code, detail.message])),
@@ -155,6 +185,15 @@ const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
 }
 const SAFE_STATUS_BY_CODE: Readonly<Record<string, number>> = {
   AGENT_MEDIA_WINDOW_LIMIT: 413,
+  EXTERNAL_MCP_ACCESS_DENIED: 403,
+  EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED: 409,
+  EXTERNAL_MCP_TOOL_COLLISION: 409,
+  EXTERNAL_MCP_CATALOG_LIMIT: 413,
+  EXTERNAL_MCP_RESULT_LIMIT: 413,
+  EXTERNAL_MCP_BUDGET_REQUIRED: 409,
+  EXTERNAL_MCP_SIDE_EFFECT_FENCE_REQUIRED: 409,
+  EXTERNAL_MCP_CALL_FAILED: 502,
+  EXTERNAL_MCP_MODALITY_UNSUPPORTED: 409,
   ...Object.fromEntries(Object.entries(AGENT_PDF_ERRORS).map(([code, detail]) => [code, detail.status])),
   AGENT_PDF_PAGE_LIMIT: 413,
   AGENT_MEDIA_PART_LIMIT: 413,
@@ -312,7 +351,9 @@ export const classifyAgentExecutionFailure = (error: unknown, stage: AgentExecut
     if (current.value instanceof AgentRepositoryError) {
       const code = SAFE_REPOSITORY_CODES[current.value.code] === true ? (current.value.code as AgentExecutionFailureCode) : 'PROVIDER_REQUEST_FAILED'
       const providerStatus = UPSTREAM_REPOSITORY_CODES[code] === true ? safeProviderStatus(current.value.status) : undefined
-      return new AgentExecutionFailure(code, stage, providerStatus, attachedDiagnostics(current.value))
+      const diagnostics =
+        SAFE_REPOSITORY_CODES[current.value.code] === true && SAFE_EXTERNAL_MCP_CODES[code] !== true ? attachedDiagnostics(current.value) : undefined
+      return new AgentExecutionFailure(code, stage, providerStatus, diagnostics)
     }
     if (current.value instanceof AgentProviderAttemptError) {
       const providerStatus = safeProviderStatus(current.value.status)

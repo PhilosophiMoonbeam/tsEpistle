@@ -131,7 +131,6 @@
                       @click="selectProvider(profile.id)"
                     />
                     <p v-if="providerSelectionUnavailableReason" class="inline-agent__provider-help" role="status">{{ providerSelectionUnavailableReason }}</p>
-                    <p class="inline-agent__provider-help">{{ $t('common:inlineAgentChat.providerWebConsentHelp') }}</p>
                   </v-list>
                 </v-menu>
               </div>
@@ -177,6 +176,14 @@
                 :aria-expanded="memoryOpen"
                 :disabled="memoryMutationBusy"
                 @click="toggleMemory"
+              />
+              <v-list-item
+                v-if="!admissionBlocked"
+                class="inline-agent__panel-menu-item"
+                link
+                prepend-icon="mdi-connection"
+                title="My MCP servers"
+                @click="personalMcpOpen = true"
               />
               <v-list-item
                 class="inline-agent__panel-menu-item"
@@ -398,7 +405,6 @@
                 :deciding-approval-id="decidingApprovalId"
                 :can-submit="canSubmit"
                 :network-blocked="connectionBlocked"
-                :google-search-suggestions="liveGoogleSearchSuggestions"
                 @suggest="preparePrompt"
                 @edit-image="composer?.editImage($event)"
                 @reattach="media => void composer?.reattachMedia(media)"
@@ -489,9 +495,6 @@
                       :media-session="thread?.session"
                       :media-capabilities="providerEnabled ? mediaProfile?.media : undefined"
                       :generation-tools-enabled="thread?.session.executionMode === 'agent'"
-                      :google-search-available="googleSearchAvailable"
-                      :google-search-enabled="googleSearchEnabled"
-                      :google-search-busy="googleSearchPending !== null"
                       @media-settled="refreshAfterMedia"
                       :session-id="thread?.session.id ?? offlineSessionId"
                       :initial-draft="thread ? agents.drafts[thread.session.id]?.text ?? offlineComposerDraft : offlineComposerDraft"
@@ -521,7 +524,6 @@
                       @manage-skills="openSkillManager"
                       @retry-skills="reloadSkillCatalog"
                       @update-skill-preferences="updateSkillPreferences"
-                      @update-google-search="updateGoogleSearch"
                     >
                       <template #context-controls>
                         <AgentContextPicker
@@ -582,6 +584,16 @@
     :network-blocked="connectionBlocked"
     :connection-retrying="connectionRetrying"
     @changed="reloadSkillCatalog"
+    @retry-connection="retryAgentConnection"
+  />
+
+  <AgentPersonalMcp
+    v-if="!admissionBlocked"
+    v-model="personalMcpOpen"
+    :csrf-token="csrfToken"
+    :owner-id="ownerId"
+    :network-blocked="connectionBlocked"
+    :connection-retrying="connectionRetrying"
     @retry-connection="retryAgentConnection"
   />
 
@@ -684,6 +696,7 @@ import AgentComposer from './agent-composer.vue'
 import AgentHistoryPanel from './agent-history-panel.vue'
 import AgentMemoryManager from './agent-memory-manager.vue'
 import AgentPersonalSkills from './agent-personal-skills.vue'
+import AgentPersonalMcp from './agent-personal-mcp.vue'
 import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentGoalStatus from './agent-goal-status.vue'
 import AgentThread from './agent-thread.vue'
@@ -716,7 +729,7 @@ const emit = defineEmits<{
 }>()
 const agents = useAgentsStore()
 const userPicture = computed(() => resolveUserPicture(wikiStore.user))
-const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchPending, googleSearchSuggestions, initializationAdmissionFailure, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
+const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, initializationAdmissionFailure, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
@@ -740,6 +753,7 @@ const discardDraftDescriptionId = `${panelIdPrefix}-discard-draft-description`
 const goalExpanded = ref(false)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
+const personalMcpOpen = ref(false)
 const clearUnfiledHistoryOpen = ref(false)
 const discardDraftOpen = ref(false)
 let draftDiscardResolver: ((discard: boolean) => void) | null = null
@@ -847,17 +861,6 @@ const mediaProfile = computed(() => thread.value?.session.providerProfileId ? pr
 const providerIdentity = computed(() => mediaProfile.value
   ? t('common:inlineAgentChat.providerIdentity', { name: mediaProfile.value.name, model: mediaProfile.value.model, interpolation: { escapeValue: false } })
   : '')
-const googleSearchAvailable = computed(() => Boolean(thread.value && thread.value.session.executionMode === 'agent' && mediaProfile.value?.googleSearchAvailable === true))
-/* Optimistic while the Web toggle request is in flight, so the button state
-   is truthful immediately and the global session mutation lock stays free. */
-const googleSearchEnabled = computed(() => googleSearchPending.value !== null ? googleSearchPending.value : thread.value?.session.googleSearchEnabled === true)
-const liveGoogleSearchSuggestions = computed(() => {
-  const live = googleSearchSuggestions.value
-  const session = thread.value?.session
-  return live && session && live.ownerId === props.ownerId && live.sessionId === session.id
-    ? { runId: live.runId, suggestions: live.suggestions }
-    : null
-})
 const mediaRefreshing = ref(false)
 const refreshAfterMedia = async () => {
   mediaRefreshing.value = true
@@ -915,11 +918,7 @@ const goalSubmitUnavailableReason = computed(() => !openGoal.value
   : openGoal.value.status === 'paused'
     ? t('common:inlineAgentChat.resumeCancelCurrentGoal')
     : t('common:inlineAgentChat.finishCancelCurrentGoal'))
-/* The session-mutation lock message is delayed briefly: a quick mutation
-   (Web search toggle, temporary toggle) resolves within the delay and never
-   flashes "Wait for the current conversation update to finish". Longer
-   mutations keep the normal immediate disable behavior; only the message
-   waits. */
+// Delay only the mutation-lock message; controls remain disabled immediately.
 const mutationLockMessageVisible = ref(false)
 let mutationLockMessageTimer: ReturnType<typeof setTimeout> | null = null
 watch(sessionMutationBusy, busy => {
@@ -968,7 +967,7 @@ const providerSelectionUnavailableReason = computed(() => {
   if (composer.value?.hasUnsentMedia()) return t('common:inlineAgentChat.providerRemoveAttachments')
   if (providerSelectionPending.value) return t('common:inlineAgentChat.providerChanging')
   if (promptSubmissionPending.value) return t('common:inlineAgentChat.sendingMessage')
-  if (creatingRetention.value || keepingConversation.value || googleSearchPending.value !== null) return t('common:inlineAgentChat.waitCurrentConversationUpdate')
+  if (creatingRetention.value || keepingConversation.value) return t('common:inlineAgentChat.waitCurrentConversationUpdate')
   return canSubmit.value ? '' : submitUnavailableReason.value || t('common:inlineAgentChat.providerConversationRequired')
 })
 const selectProvider = async (providerProfileId: string | null): Promise<void> => {
@@ -1309,11 +1308,6 @@ const reloadSkillCatalog = async (): Promise<void> => {
 }
 const updateSkillPreferences = (skillIds: readonly string[]): void => {
   if (networkActionAllowed()) void agents.setSkillPreferences(skillIds)
-}
-const updateGoogleSearch = (enabled: boolean): void => {
-  if (!networkActionAllowed() || activeRun.value || openGoal.value || sessionMutationBusy.value) return
-  if (enabled && !googleSearchAvailable.value) return
-  void agents.setGoogleSearchEnabled(enabled)
 }
 const keepConversation = async (): Promise<void> => {
   if (!networkActionAllowed()) return
@@ -1690,6 +1684,7 @@ watch(admissionBlocked, blocked => {
   waitingForConnection.value = false
   memoryOpen.value = false
   skillManagerOpen.value = false
+  personalMcpOpen.value = false
 })
 watch(() => pwaState.connectionState, state => {
   if (state === 'offline' || state === 'server-unavailable') {

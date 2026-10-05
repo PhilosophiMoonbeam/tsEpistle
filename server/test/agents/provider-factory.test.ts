@@ -56,27 +56,30 @@ const openAIResponsesStream = (
 }
 
 describe('guarded provider fetch', () => {
-  it('allows larger inline video and music responses while preserving the image response bound', async () => {
+  it('retains bounded native image responses and denies retired media endpoints', async () => {
     const largerBody = new Uint8Array(16 * 1024 * 1024 + 1)
     const limits = { ...deriveAgentProviderResourceLimits(65_536), rawBodyBytes: 64 * 1024 * 1024, rawChunkBytes: 64 * 1024 * 1024 }
+    let called = 0
     const guarded = createGuardedProviderFetch(
       'https://generativelanguage.googleapis.com/v1beta',
       'gemini-media',
       {},
-      (async () => new Response(largerBody)) as typeof fetch,
+      (async () => {
+        called++
+        return new Response(largerBody)
+      }) as typeof fetch,
       publicResolver as never,
       limits
     )
-    for (const [url, init] of [
-      ['https://generativelanguage.googleapis.com/v1beta/interactions', { method: 'POST', body: JSON.stringify({ model: 'gemini-omni-1.1-flash' }) }],
-      ['https://generativelanguage.googleapis.com/v1beta/interactions', { method: 'POST', body: JSON.stringify({ model: 'lyria-3.5' }) }]
-    ] as const) {
-      const response = await guarded(url, init)
-      expect((await response.arrayBuffer()).byteLength).toBe(largerBody.byteLength)
+    for (const model of ['gemini-omni-1.1-flash', 'lyria-3.5']) {
+      await expect(
+        Promise.resolve(guarded('https://generativelanguage.googleapis.com/v1beta/interactions', { method: 'POST', body: JSON.stringify({ model }) }))
+      ).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
     }
-    const image = await guarded('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    expect(called).toBe(0)
+    const image = await guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gemini-3.1-flash-image' })
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Draw a tree.' }] }] })
     })
     await expect(image.arrayBuffer()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
   })
@@ -100,31 +103,44 @@ describe('guarded provider fetch', () => {
     expect(called).toBe(0)
   })
 
-  it('allows only the exact Gemini Interactions endpoint', async () => {
+  it('allows only exact Gemini GenerateContent paths and query dialects for the configured model', async () => {
     let called = 0
     const implementation = async (): Promise<Response> => {
       called++
       return Response.json({ ok: true })
     }
+    const base = 'https://generativelanguage.googleapis.com/v1beta'
     const guarded = createGuardedProviderFetch(
-      'https://generativelanguage.googleapis.com/v1beta',
-      '/interactions',
+      base,
+      'gemini-chat',
       {},
       implementation as typeof fetch,
-      publicResolver as never
+      publicResolver as never,
+      deriveAgentProviderResourceLimits(100),
+      undefined,
+      'gemini-3.7-flash'
     )
-    expect(await guarded('https://generativelanguage.googleapis.com/v1beta/interactions')).toBeInstanceOf(Response)
-    await expect(Promise.resolve(guarded('https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse'))).rejects.toMatchObject({
+    const init = { method: 'POST', body: '{}' }
+    await guarded(`${base}/models/gemini-3.7-flash:generateContent`, init)
+    await guarded(`${base}/models/gemini-3.7-flash:streamGenerateContent?alt=sse`, init)
+    for (const path of [
+      '/interactions',
+      '/interactions/id',
+      '/models/gemini-3.8-flash:generateContent',
+      '/models/gemini-3.7-flash:generateContent?key=credential',
+      '/models/gemini-3.7-flash:streamGenerateContent',
+      '/models/gemini-3.7-flash:streamGenerateContent?alt=sse&key=credential',
+      '/models/gemini-3.7-flash:countTokens'
+    ]) {
+      await expect(Promise.resolve(guarded(base + path, init))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    }
+    await expect(Promise.resolve(guarded(`${base}/models/gemini-3.7-flash:generateContent`, { ...init, method: 'GET' }))).rejects.toMatchObject({
       code: 'PROVIDER_EGRESS_DENIED'
     })
-    await expect(Promise.resolve(guarded('https://generativelanguage.googleapis.com/v1beta/interactions/interaction_1'))).rejects.toMatchObject({
+    await expect(Promise.resolve(guarded('https://other.example.test/v1beta/models/gemini-3.7-flash:generateContent', init))).rejects.toMatchObject({
       code: 'PROVIDER_EGRESS_DENIED'
     })
-    await expect(Promise.resolve(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent'))).rejects.toMatchObject({
-      code: 'PROVIDER_EGRESS_DENIED'
-    })
-    await expect(Promise.resolve(guarded('https://other.example.test/v1beta/interactions'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    expect(called).toBe(1)
+    expect(called).toBe(2)
   })
 
   it('blocks redirects and exposes only bounded retry metadata for provider failures', async () => {
@@ -350,14 +366,7 @@ describe('provider usage accounting', () => {
     const premium = { revision: 'cached-write', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000, cacheWritePremium: true }
     expect(agentProviderCostMicros(premium, 1, 0, 1)).toBe(2)
     expect(agentProviderCostMicros(premium, 1, 0, 2)).toBe(4)
-    expect(
-      agentProviderCostMicros(
-        { ...premium, inputMicrosPerMillionTokens: 2_000_000, outputMicrosPerMillionTokens: 1_000_000 },
-        1,
-        1,
-        4
-      )
-    ).toBe(9)
+    expect(agentProviderCostMicros({ ...premium, inputMicrosPerMillionTokens: 2_000_000, outputMicrosPerMillionTokens: 1_000_000 }, 1, 1, 4)).toBe(9)
     expect(() => agentProviderCostMicros(premium, Number.MAX_SAFE_INTEGER, 0, Number.MAX_SAFE_INTEGER)).toThrow(
       expect.objectContaining({ code: 'PROVIDER_USAGE_INVALID', status: 502 })
     )
@@ -462,6 +471,66 @@ it('normalizes root token budget failures as safe 409 execution errors', () => {
     stage: 'dispatch_admission',
     status: 409,
     message: 'Agent inference failed'
+  })
+})
+
+describe('external MCP execution failure boundary', () => {
+  it('retains application-owned failures through nested Ax error wrappers with host-owned HTTP statuses', () => {
+    const cases = [
+      ['EXTERNAL_MCP_ACCESS_DENIED', 403],
+      ['EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED', 409],
+      ['EXTERNAL_MCP_TOOL_COLLISION', 409],
+      ['EXTERNAL_MCP_CATALOG_LIMIT', 413],
+      ['EXTERNAL_MCP_RESULT_LIMIT', 413],
+      ['EXTERNAL_MCP_BUDGET_REQUIRED', 409],
+      ['EXTERNAL_MCP_SIDE_EFFECT_FENCE_REQUIRED', 409],
+      ['EXTERNAL_MCP_CALL_FAILED', 502],
+      ['EXTERNAL_MCP_MODALITY_UNSUPPORTED', 409]
+    ] as const
+    const privateDetails = 'https://private-endpoint.example/mcp?api_key=sk-secret-credential'
+    for (const [code, status] of cases) {
+      const applicationError = new AgentRepositoryError(code, privateDetails, 401)
+      Object.assign(applicationError, { agentDiagnostics: { providerErrorCode: 'sk_secret_credential', transportKind: 'gemini-api' } })
+      const functionError = Object.assign(new Error(privateDetails), { originalError: applicationError })
+      const generationError = new Error(privateDetails, { cause: functionError })
+      const failure = classifyAgentExecutionFailure(generationError, 'provider_response')
+      expect(failure).toMatchObject({ code, status, stage: 'provider_response' })
+      expect(failure.providerStatus).toBeUndefined()
+      expect(failure.diagnostics).toBeUndefined()
+      expect(failure.message.length).toBeGreaterThan(0)
+      expect(failure.message).not.toBe(new AgentExecutionFailure('PROVIDER_REQUEST_FAILED', 'provider_response').message)
+      expect(JSON.stringify({ ...failure, message: failure.message })).not.toContain(privateDetails)
+      expect(failure.cause).toBeUndefined()
+    }
+  })
+
+  it('does not trust remote codes, statuses, messages or arbitrary external prefixes', () => {
+    const privateDetails = 'https://private-endpoint.example/mcp?api_key=sk-secret-credential'
+    const errors = [
+      new AgentRepositoryError('EXTERNAL_MCP_REMOTE_SECRET', privateDetails, 403),
+      new AgentRepositoryError('EXTERNAL_ARBITRARY_CODE', privateDetails, 429),
+      Object.assign(new Error(privateDetails), { code: 'EXTERNAL_MCP_ACCESS_DENIED', status: 403 }),
+      { originalError: Object.assign(new Error(privateDetails), { code: 'remote_failure', status: 401 }) }
+    ]
+    for (const error of errors) {
+      if (error instanceof AgentRepositoryError) Object.assign(error, { agentDiagnostics: { providerErrorCode: 'sk_secret_credential' } })
+      const failure = classifyAgentExecutionFailure(error, 'provider_response')
+      expect(failure).toMatchObject({ code: 'PROVIDER_REQUEST_FAILED', status: 502 })
+      expect(failure.providerStatus).toBeUndefined()
+      expect(failure.diagnostics).toBeUndefined()
+      expect(JSON.stringify({ ...failure, message: failure.message })).not.toContain(privateDetails)
+      expect(failure.cause).toBeUndefined()
+    }
+  })
+
+  it('preserves cleanup precedence and already-classified uncertainty', () => {
+    const applicationError = new AgentRepositoryError('EXTERNAL_MCP_ACCESS_DENIED', 'private details', 403)
+    expect(classifyAgentExecutionFailure(applicationError, 'action_cleanup')).toMatchObject({
+      code: 'ACTION_SESSION_CLOSE_FAILED',
+      status: 502
+    })
+    const uncertain = new AgentExecutionFailure('EXTERNAL_MCP_CALL_FAILED', 'provider_response')
+    expect(classifyAgentExecutionFailure(uncertain, 'action_cleanup')).toBe(uncertain)
   })
 })
 
@@ -619,6 +688,7 @@ describe('Ax provider factory', () => {
       content: [],
       encrypted_content: 'encrypted-reasoning-2'
     })
+    const requestBeforeCorruptContinuation = request
     await expect(
       Promise.resolve(
         provider.service.chat(
@@ -632,7 +702,12 @@ describe('Ax provider factory', () => {
           { stream: false }
         )
       )
-    ).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
+    ).rejects.toMatchObject({
+      code: 'AGENT_PROVIDER_STATE_CORRUPT',
+      status: 500,
+      message: 'Stored provider continuation is invalid'
+    })
+    expect(request).toBe(requestBeforeCorruptContinuation)
     await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ pricingRevision: 'price-2|0|2000000' })
     await expect(Promise.resolve(factory.create('00000000-0000-4000-8000-000000000001'))).rejects.toMatchObject({ code: 'PROVIDER_PRICING_INVALID' })
   })
@@ -703,12 +778,8 @@ describe('Ax provider factory', () => {
     const secondItems = []
     for await (const item of second) secondItems.push(item)
     expect(
-      secondItems
-        .map(item => readAgentProviderUsage('openai-responses', item))
-        .filter((usage): usage is NonNullable<typeof usage> => usage !== null)
-    ).toEqual([
-      { inputTokens: 3, outputTokens: 20, totalTokens: 43 }
-    ])
+      secondItems.map(item => readAgentProviderUsage('openai-responses', item)).filter((usage): usage is NonNullable<typeof usage> => usage !== null)
+    ).toEqual([{ inputTokens: 3, outputTokens: 20, totalTokens: 43 }])
   })
 
   it('loads an admitted version snapshot after the profile pointer advances', async () => {

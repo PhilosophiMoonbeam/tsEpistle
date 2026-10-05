@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
+import { ai, type AxAIGoogleGeminiModel, type AxChatRequest } from '@ax-llm/ax'
 
 import { AgentRepositoryError } from '../repository.ts'
 import { AgentProviderAttemptError, type AgentProviderFetch } from './factory.ts'
@@ -72,113 +73,31 @@ const fileSchema = z.object({
   state: z.enum(['PROCESSING', 'ACTIVE', 'FAILED']),
   sizeBytes: z.string().regex(/^\d+$/u).optional()
 })
-const textSchema = z.strictObject({
-  type: z.literal('text'),
-  text: z.string().max(MAX_TEXT)
-})
-const imageSchema = z.strictObject({
-  type: z.literal('image'),
-  mime_type: z.enum(['image/png', 'image/jpeg', 'image/webp']),
-  data: z.string().max(GEMINI_MEDIA_OUTPUT_LIMIT)
-})
+// Ax 25 does not expose Gemini transcription usage or normalize Gemini image
+// inlineData. Only those missing fields are read by this application bridge.
 const usageSchema = z
   .object({
-    total_input_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-    total_output_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-    total_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+    promptTokenCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    candidatesTokenCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    totalTokenCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    thoughtsTokenCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
   })
-  .refine(value => value.total_tokens >= value.total_input_tokens + value.total_output_tokens)
-const stepSchema = z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('model_output'),
-    id: z.string().max(256).optional(),
-    content: z.array(z.union([textSchema, imageSchema])).max(16)
-  }),
-  z.strictObject({
-    type: z.literal('thought'),
-    id: z.string().max(256).optional(),
-    // Image-edit signatures can include nearly a megabyte of opaque media state.
-    // They are discarded here; the entire response remains bounded to 16 MiB.
-    signature: z.string().max(GEMINI_MEDIA_OUTPUT_LIMIT).optional(),
-    summary: z.array(textSchema).max(16).optional()
-  })
-])
-const interactionSchema = z.object({
-  model: z.string(),
-  status: z.literal('completed'),
-  steps: z.array(stepSchema).max(64),
-  usage: usageSchema
+  .refine(value => value.totalTokenCount >= value.promptTokenCount + value.candidatesTokenCount + (value.thoughtsTokenCount ?? 0))
+const inlineImageSchema = z.strictObject({
+  mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+  data: z.string().max(GEMINI_MEDIA_OUTPUT_LIMIT)
 })
-
-const generatedAudioSchema = z.strictObject({
-  type: z.literal('audio'),
-  mime_type: z.enum(['audio/mp3', 'audio/mpeg']),
-  data: z.string().max(Math.ceil(GEMINI_MUSIC_OUTPUT_LIMIT / 3) * 4),
-  channels: z.number().int().min(1).max(2).optional(),
-  sample_rate: z.number().int().positive().max(192_000).optional()
-})
-const generatedVideoSchema = z.strictObject({
-  type: z.literal('video'),
-  mime_type: z.literal('video/mp4'),
-  data: z.string().max(Math.ceil(GEMINI_VIDEO_OUTPUT_LIMIT / 3) * 4)
-})
-const generatedInteractionSchema = z.object({
-  model: z.string(),
-  status: z.literal('completed'),
-  usage: z.unknown().optional(),
-  steps: z
+const mediaEnvelopeSchema = z.object({
+  candidates: z
     .array(
-      z.discriminatedUnion('type', [
-        z.strictObject({
-          type: z.literal('model_output'),
-          id: z.string().max(256).optional(),
-          content: z.array(z.union([textSchema, generatedAudioSchema, generatedVideoSchema])).max(16)
-        }),
-        z.strictObject({
-          type: z.literal('thought'),
-          id: z.string().max(256).optional(),
-          signature: z.string().max(GEMINI_MEDIA_OUTPUT_LIMIT).optional(),
-          summary: z.array(textSchema).max(16).optional(),
-          content: z
-            .array(
-              z.union([
-                textSchema,
-                z.strictObject({
-                  type: z.literal('thought'),
-                  text: z.string().max(MAX_TEXT).optional(),
-                  signature: z.string().max(GEMINI_MEDIA_OUTPUT_LIMIT).optional()
-                })
-              ])
-            )
-            .max(16)
-            .optional()
-        }),
-        z.strictObject({
-          type: z.literal('user_input'),
-          id: z.string().max(256).optional(),
-          content: z
-            .array(z.union([textSchema, z.strictObject({ type: z.literal('image'), uri: z.string().max(512), mime_type: z.string().max(128).optional() })]))
-            .max(16)
-        })
-      ])
+      z.object({
+        finishReason: z.literal('STOP'),
+        content: z.object({ parts: z.array(z.record(z.string(), z.unknown())).min(1).max(64) })
+      })
     )
-    .max(64)
+    .length(1),
+  usageMetadata: usageSchema
 })
-const generatedUsageSchema = usageSchema.and(
-  z.object({
-    total_thought_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-    output_tokens_by_modality: z
-      .array(
-        z.object({ modality: z.enum(['text', 'video', 'audio', 'image', 'document']), tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) })
-      )
-      .max(5)
-      .optional()
-  })
-)
-const validMp4 = (bytes: Buffer): boolean =>
-  bytes.length >= 12 && bytes.toString('ascii', 4, 8) === 'ftyp' && bytes.readUInt32BE(0) >= 12 && bytes.readUInt32BE(0) <= bytes.length
-const validMp3 = (bytes: Buffer): boolean =>
-  bytes.length >= 10 && (bytes.toString('ascii', 0, 3) === 'ID3' || (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0 && (bytes[1]! & 0x06) === 0x02))
 
 const validRaster = (bytes: Uint8Array, mime: string): boolean => {
   const buffer = Buffer.from(bytes)
@@ -393,13 +312,29 @@ export const createGeminiMediaTransport = (options: GeminiMediaOptions) => {
       throw error
     }
   }
-  const countTokens = async (model: string, input: readonly GeminiMediaContent[], signal?: AbortSignal): Promise<number> => {
-    if (
-      (!/^gemini-3(?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?$/u.test(model) && ![GEMINI_VIDEO_MODEL, GEMINI_MUSIC_MODEL].includes(model)) ||
-      model.length > 128 ||
-      input.length > 32
+  type CountPart = { text: string } | { fileData: { fileUri: string; mimeType: string } } | { inlineData: { data: string; mimeType: string } }
+  const countParts = async (model: string, parts: readonly CountPart[], signal: AbortSignal): Promise<number> => {
+    const parsed = z.object({ totalTokens: z.number().int().nonnegative().max(10_000_000) }).safeParse(
+      await json(
+        await request(
+          `${ORIGIN}/v1beta/models/${model}:countTokens`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ contents: [{ role: 'user', parts }] })
+          },
+          signal
+        ),
+        signal,
+        64 * 1_024
+      )
     )
-      throw inputError()
+    if (!parsed.success) throw invalid()
+    return parsed.data.totalTokens
+  }
+  const countTokens = async (model: string, input: readonly GeminiMediaContent[], signal?: AbortSignal): Promise<number> => {
+    // Count both supported Gemini families, including the dedicated image/audio models.
+    if (!/^gemini-[23](?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?$/u.test(model) || model.length > 128 || input.length > 32) throw inputError()
     const parts = input.map(block => {
       if (block.type === 'text') {
         if (typeof block.text !== 'string' || block.text.length > MAX_TEXT) throw inputError()
@@ -417,207 +352,130 @@ export const createGeminiMediaTransport = (options: GeminiMediaOptions) => {
         throw inputError()
       return { fileData: { fileUri: block.uri, mimeType: block.mime_type } }
     })
-    const activeSignal = operationSignal(signal)
-    const parsed = z.object({ totalTokens: z.number().int().nonnegative().max(10_000_000) }).safeParse(
-      await json(
-        await request(
-          `${ORIGIN}/v1beta/models/${model}:countTokens`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ contents: [{ role: 'user', parts }] })
-          },
-          activeSignal
-        ),
-        activeSignal,
-        64 * 1_024
-      )
-    )
-    if (!parsed.success) throw invalid()
-    return parsed.data.totalTokens
+    return countParts(model, parts, operationSignal(signal))
   }
-  const interact = async (model: string, input: GeminiMediaContent[], signal: AbortSignal, image: boolean, overrides: GeminiMediaTokenLimits) => {
+  const infer = async (
+    model: typeof GEMINI_IMAGE_MODEL | typeof GEMINI_TRANSCRIPTION_MODEL,
+    parts: readonly CountPart[],
+    overrides: GeminiMediaTokenLimits,
+    signal: AbortSignal,
+    audio?: { data: string; mimeType: string }
+  ) => {
     tokenLimit(overrides.maxInputTokens)
     tokenLimit(overrides.maxOutputTokens)
-    const maxInputTokens =
-      overrides.maxInputTokens === undefined ? options.maxInputTokens : Math.min(overrides.maxInputTokens, options.maxInputTokens ?? overrides.maxInputTokens)
-    const maxOutputTokens =
-      overrides.maxOutputTokens === undefined
-        ? options.maxOutputTokens
-        : Math.min(overrides.maxOutputTokens, options.maxOutputTokens ?? overrides.maxOutputTokens)
-    const inputTokens = maxInputTokens !== undefined || overrides.beforeDispatch ? await countTokens(model, input, signal) : undefined
-    if (maxInputTokens !== undefined && inputTokens! > maxInputTokens)
-      throw new AgentRepositoryError('AGENT_MEDIA_CONTEXT_LIMIT', 'The media exceeds this provider’s input token limit', 413)
-    const body = {
-      model,
-      store: false,
-      stream: false,
-      input,
-      ...(maxOutputTokens === undefined ? {} : { generation_config: { max_output_tokens: maxOutputTokens } }),
-      ...(image ? { response_format: { type: 'image', aspect_ratio: '1:1' } } : {})
+    const maxInputTokens = Math.min(overrides.maxInputTokens ?? options.maxInputTokens ?? 10_000_000, options.maxInputTokens ?? 10_000_000)
+    const maxOutputTokens = Math.min(
+      overrides.maxOutputTokens ?? options.maxOutputTokens ?? GENERATED_MEDIA_TOKEN_LIMIT,
+      options.maxOutputTokens ?? GENERATED_MEDIA_TOKEN_LIMIT
+    )
+    if (overrides.maxInputTokens !== undefined || options.maxInputTokens !== undefined || overrides.beforeDispatch) {
+      const inputTokens = await countParts(model, parts, signal)
+      if (inputTokens > maxInputTokens) throw new AgentRepositoryError('AGENT_MEDIA_CONTEXT_LIMIT', 'The media exceeds this provider’s input token limit', 413)
+      await overrides.beforeDispatch?.({ inputTokens, outputTokens: maxOutputTokens, totalTokens: inputTokens + maxOutputTokens })
     }
     signal.throwIfAborted()
-    if (overrides.beforeDispatch) {
-      if (maxOutputTokens === undefined || inputTokens === undefined) throw inputError()
-      await overrides.beforeDispatch({ inputTokens, outputTokens: maxOutputTokens, totalTokens: inputTokens + maxOutputTokens })
-      signal.throwIfAborted()
-    }
-    overrides.onDispatch?.()
-    const parsed = interactionSchema.safeParse(
-      await json(
-        await request(
-          `${ORIGIN}/v1beta/interactions`,
-          {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              accept: 'application/json'
-            },
-            body: JSON.stringify(body)
-          },
-          signal
-        ),
-        signal
-      )
-    )
-    if (!parsed.success || parsed.data.model !== model) throw invalid()
-    const text: string[] = []
+    let usage: GeminiMediaUsage | undefined
     const images: { bytes: Buffer; mimeType: string }[] = []
-    for (const step of parsed.data.steps) {
-      if (step.type !== 'model_output') continue
-      for (const block of step.content) {
-        if (block.type === 'text') text.push(block.text)
-        else {
-          if (!image) throw invalid()
-          images.push(decodeImage(block.data, block.mime_type))
+    let bridgeError: unknown
+    // Ax owns GenerateContent serialization and text normalization. This bridge
+    // adds only unsupported image settings, transcription caps, and media fields.
+    const mediaFetch = Object.assign(
+      async (destination: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+        try {
+          if (String(destination) !== `${ORIGIN}/v1beta/models/${model}:generateContent` || init?.method !== 'POST' || typeof init.body !== 'string')
+            throw denied()
+          const body = JSON.parse(init.body) as { generationConfig?: Record<string, unknown> }
+          body.generationConfig = {
+            ...body.generationConfig,
+            maxOutputTokens,
+            ...(audio ? {} : { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '1:1' } })
+          }
+          if (!audio) delete body.generationConfig.responseMimeType
+          const serialized = JSON.stringify(body)
+          if (Buffer.byteLength(serialized) > 4 * Math.ceil(GEMINI_MEDIA_INPUT_LIMIT / 3) * 4 + MAX_TEXT * 4) throw inputError()
+          signal.throwIfAborted()
+          overrides.onDispatch?.()
+          const raw = await json(await request(String(destination), { ...init, body: serialized }, signal), signal)
+          const parsed = mediaEnvelopeSchema.safeParse(raw)
+          if (!parsed.success) throw invalid()
+          const measured = parsed.data.usageMetadata
+          usage = {
+            inputTokens: measured.promptTokenCount,
+            outputTokens: measured.candidatesTokenCount + (measured.thoughtsTokenCount ?? 0),
+            totalTokens: measured.totalTokenCount
+          }
+          for (const part of parsed.data.candidates[0]!.content.parts) {
+            if ('text' in part && (typeof part.text !== 'string' || part.text.length > MAX_TEXT)) throw invalid()
+            if ('audioTranscription' in part && (!audio || !z.object({ text: z.string().max(MAX_TEXT) }).safeParse(part.audioTranscription).success))
+              throw invalid()
+            if ('functionCall' in part || 'fileData' in part || 'executableCode' in part || 'codeExecutionResult' in part) throw invalid()
+            if ('inlineData' in part) {
+              if (audio || part.thought === true) throw invalid()
+              const image = inlineImageSchema.safeParse(part.inlineData)
+              if (!image.success) throw invalid()
+              images.push(decodeImage(image.data.data, image.data.mimeType))
+            } else if (!('text' in part) && !(audio && 'audioTranscription' in part)) throw invalid()
+          }
+          return Response.json(raw)
+        } catch (error) {
+          bridgeError = error
+          throw error
         }
+      },
+      { preconnect: () => {} }
+    ) as AgentProviderFetch
+    const service = ai({
+      name: 'google-gemini',
+      apiKey: options.apiKey,
+      config: { model: model as AxAIGoogleGeminiModel, stream: false, safetySettings: [] },
+      options: { debug: false, verbose: false, excludeContentFromTrace: true, retry: { maxRetries: 0 }, fetch: mediaFetch }
+    })
+    try {
+      let text: string
+      if (audio) {
+        const result = await service.transcribe(
+          {
+            model: GEMINI_TRANSCRIPTION_MODEL,
+            audio,
+            prompt: 'Generate a transcript of the speech in this audio.'
+          },
+          { fetch: mediaFetch, abortSignal: signal, timeout: options.timeoutMs }
+        )
+        text = result.text
+      } else {
+        const content: Extract<AxChatRequest['chatPrompt'][number], { role: 'user' }>['content'] = parts.map(part => {
+          if ('text' in part) return { type: 'text' as const, text: part.text }
+          if (!('inlineData' in part)) throw inputError()
+          return { type: 'image' as const, image: part.inlineData.data, mimeType: part.inlineData.mimeType }
+        })
+        const result = await service.chat(
+          { model: GEMINI_IMAGE_MODEL, chatPrompt: [{ role: 'user', content }] },
+          { stream: false, fetch: mediaFetch, abortSignal: signal, timeout: options.timeoutMs }
+        )
+        if (result instanceof ReadableStream || result.results.length !== 1 || result.results[0]?.functionCalls?.length) throw invalid()
+        text = result.results[0]?.content ?? ''
       }
-    }
-    const content = text.join('\n')
-    if (content.length > MAX_TEXT || (image ? images.length === 0 || images.length > 4 : !content.trim())) throw invalid()
-    const usage = parsed.data.usage
-    return {
-      text: content,
-      images,
-      usage: {
-        inputTokens: usage.total_input_tokens,
-        outputTokens: usage.total_output_tokens,
-        totalTokens: usage.total_tokens
-      }
+      signal.throwIfAborted()
+      if (!usage || text.length > MAX_TEXT || (audio ? !text.trim() : images.length === 0 || images.length > 4)) throw invalid()
+      return { text, images, usage }
+    } catch (error) {
+      if (signal.aborted) throw new AgentRepositoryError('AGENT_MEDIA_CANCELLED', 'The media request was cancelled or timed out', 408)
+      if (bridgeError) throw bridgeError
+      if (error instanceof AgentRepositoryError || error instanceof AgentProviderAttemptError) throw error
+      throw new AgentRepositoryError('AGENT_MEDIA_PROVIDER_FAILED', 'The media provider request failed', 502)
     }
   }
-  const generateMedia = async (
-    kind: 'video' | 'music',
-    input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits,
-    signal?: AbortSignal
-  ): Promise<GeminiGeneratedMediaResult> => {
-    if (!input.prompt.trim() || input.prompt.length > MAX_TEXT || (input.images?.length || 0) > 4) throw inputError()
-    tokenLimit(input.maxInputTokens)
-    tokenLimit(input.maxOutputTokens)
-    const maxInputTokens = Math.min(input.maxInputTokens ?? GENERATED_MEDIA_TOKEN_LIMIT, GENERATED_MEDIA_TOKEN_LIMIT)
-    const maxOutputTokens = Math.min(input.maxOutputTokens ?? GENERATED_MEDIA_TOKEN_LIMIT, GENERATED_MEDIA_TOKEN_LIMIT)
-    for (const image of input.images || []) {
-      validateInput(image)
-      if (!IMAGE_TYPES.has(image.mimeType)) throw inputError()
-    }
-    const activeSignal = operationSignal(signal)
-    const temporaryNames = new Set<string>()
-    const contents: GeminiMediaContent[] = [{ type: 'text', text: input.prompt }]
-    const model = kind === 'video' ? GEMINI_VIDEO_MODEL : GEMINI_MUSIC_MODEL
-    try {
-      for (const image of input.images || []) {
-        await input.beforeUpload?.()
-        const uploaded = await upload(image, activeSignal)
-        temporaryNames.add(uploaded.name)
-        contents.push({ type: 'image', uri: uploaded.uri, mime_type: uploaded.mimeType })
-      }
-      const inputTokens = await countTokens(model, contents, activeSignal)
-      if (inputTokens > maxInputTokens) throw new AgentRepositoryError('AGENT_MEDIA_CONTEXT_LIMIT', 'The media exceeds this provider’s input token limit', 413)
-      const exposure = { inputTokens, outputTokens: maxOutputTokens, totalTokens: inputTokens + maxOutputTokens }
-      await input.beforeDispatch?.(exposure)
-      activeSignal.throwIfAborted()
-      input.onDispatch?.()
-      const raw = await json(
-        await request(
-          `${ORIGIN}/v1beta/interactions`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', accept: 'application/json' },
-            body: JSON.stringify({
-              model,
-              store: false,
-              background: false,
-              stream: false,
-              input: contents,
-              generation_config: { max_output_tokens: maxOutputTokens },
-              ...(kind === 'video' ? { response_format: { type: 'video', resolution: '720p', aspect_ratio: '16:9' } } : {})
-            })
-          },
-          activeSignal
-        ),
-        activeSignal,
-        kind === 'music' ? GEMINI_MUSIC_RESPONSE_LIMIT : GEMINI_VIDEO_RESPONSE_LIMIT
-      )
-      const parsed = generatedInteractionSchema.safeParse(raw)
-      if (!parsed.success || parsed.data.model !== model) throw invalid()
-      let usage: GeminiMediaUsage = exposure
-      let usageSource: 'reported' | 'estimated' = 'estimated'
-      let outputTokensByModality: { text: number; video: number } | undefined
-      if (parsed.data.usage !== undefined) {
-        const measured = generatedUsageSchema.safeParse(parsed.data.usage)
-        if (!measured.success) throw invalid()
-        const value = measured.data
-        if (value.total_thought_tokens !== undefined && value.total_thought_tokens > value.total_tokens - value.total_input_tokens - value.total_output_tokens)
-          throw invalid()
-        usage = { inputTokens: value.total_input_tokens, outputTokens: value.total_output_tokens, totalTokens: value.total_tokens }
-        usageSource = 'reported'
-        if (value.output_tokens_by_modality) {
-          const entries = value.output_tokens_by_modality
-          const total = entries.reduce((sum, entry) => sum + entry.tokens, 0)
-          if (!Number.isSafeInteger(total) || total > value.total_output_tokens || new Set(entries.map(entry => entry.modality)).size !== entries.length)
-            throw invalid()
-          if (kind === 'video' && total === value.total_output_tokens && entries.every(entry => ['text', 'video'].includes(entry.modality)))
-            outputTokensByModality = {
-              text: entries.find(entry => entry.modality === 'text')?.tokens ?? 0,
-              video: entries.find(entry => entry.modality === 'video')?.tokens ?? 0
-            }
-        }
-      }
-      const blocks = parsed.data.steps.flatMap(step => (step.type === 'model_output' ? step.content : []))
-      const text = blocks
-        .filter(block => block.type === 'text')
-        .map(block => block.text)
-        .join('\n')
-      const media = blocks.filter(block => block.type !== 'text')
-      if (text.length > MAX_TEXT || media.length !== 1) throw invalid()
-      const output = media[0]!
-      let bytes: Buffer
-      let mimeType: string
-      if (kind === 'video' && output.type === 'video') {
-        if (output.data.length % 4 !== 0 || /[^A-Za-z0-9+/=]/u.test(output.data)) throw invalid()
-        bytes = Buffer.from(output.data, 'base64')
-        if (bytes.length > GEMINI_VIDEO_OUTPUT_LIMIT || bytes.toString('base64') !== output.data || !validMp4(bytes)) throw invalid()
-        mimeType = 'video/mp4'
-      } else if (kind === 'music' && output.type === 'audio') {
-        if (output.data.length % 4 !== 0 || /[^A-Za-z0-9+/=]/u.test(output.data)) throw invalid()
-        bytes = Buffer.from(output.data, 'base64')
-        if (bytes.length > GEMINI_MUSIC_OUTPUT_LIMIT || bytes.toString('base64') !== output.data || !validMp3(bytes)) throw invalid()
-        mimeType = 'audio/mpeg'
-      } else throw invalid()
-      activeSignal.throwIfAborted()
-      return { text, usage, usageSource, files: [{ bytes, mimeType }], ...(outputTokensByModality ? { outputTokensByModality } : {}) }
-    } finally {
-      await cleanup([...temporaryNames])
-    }
+  const unsupported = async (kind: 'video' | 'music'): Promise<GeminiGeneratedMediaResult> => {
+    // Exact configured Omni/Lyria models have no documented non-retired endpoint.
+    // Never substitute Veo, realtime Lyria, or another differently priced model.
+    throw new AgentRepositoryError('AGENT_MEDIA_UNSUPPORTED', `The configured Gemini ${kind} model has no supported non-Interactions API`, 409)
   }
   return {
     upload,
     countTokens,
     delete: remove,
-    generateVideo: (input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits, signal?: AbortSignal) =>
-      generateMedia('video', input, signal),
-    generateMusic: (input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits, signal?: AbortSignal) =>
-      generateMedia('music', input, signal),
+    generateVideo: (_input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits, _signal?: AbortSignal) => unsupported('video'),
+    generateMusic: (_input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits, _signal?: AbortSignal) => unsupported('music'),
     generateImage: async (input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits, signal?: AbortSignal) => {
       if (!input.prompt.trim() || input.prompt.length > MAX_TEXT || (input.images?.length || 0) > 4) throw inputError()
       for (const image of input.images || []) {
@@ -625,42 +483,26 @@ export const createGeminiMediaTransport = (options: GeminiMediaOptions) => {
         if (!IMAGE_TYPES.has(image.mimeType)) throw inputError()
       }
       const activeSignal = operationSignal(signal)
-      const files: GeminiMediaFile[] = []
-      try {
-        for (const image of input.images || []) {
-          await input.beforeUpload?.()
-          files.push(await upload(image, activeSignal))
-        }
-        return await interact(
-          GEMINI_IMAGE_MODEL,
-          [
-            { type: 'text', text: input.prompt },
-            ...files.map(file => ({
-              type: 'image' as const,
-              uri: file.uri,
-              mime_type: file.mimeType
-            }))
-          ],
-          activeSignal,
-          true,
-          input
-        )
-      } finally {
-        await cleanup(files.map(file => file.name))
+      const parts: CountPart[] = [{ text: input.prompt }]
+      for (const image of input.images || []) {
+        await input.beforeUpload?.()
+        activeSignal.throwIfAborted()
+        parts.push({
+          inlineData: { data: Buffer.from(image.bytes.buffer, image.bytes.byteOffset, image.bytes.byteLength).toString('base64'), mimeType: image.mimeType }
+        })
       }
+      return infer(GEMINI_IMAGE_MODEL, parts, input, activeSignal)
     },
     transcribe: async (input: GeminiMediaInput & GeminiMediaTokenLimits, signal?: AbortSignal): Promise<{ text: string; usage: GeminiMediaUsage }> => {
       validateInput(input)
       if (!AUDIO_TYPES.has(input.mimeType)) throw inputError()
       const activeSignal = operationSignal(signal)
       await input.beforeUpload?.()
-      const file = await upload(input, activeSignal)
-      try {
-        const result = await interact(GEMINI_TRANSCRIPTION_MODEL, [{ type: 'audio', uri: file.uri, mime_type: file.mimeType }], activeSignal, false, input)
-        return { text: result.text, usage: result.usage }
-      } finally {
-        await cleanup([file.name])
-      }
+      activeSignal.throwIfAborted()
+      const audio = { data: Buffer.from(input.bytes.buffer, input.bytes.byteOffset, input.bytes.byteLength).toString('base64'), mimeType: input.mimeType }
+      const parts: CountPart[] = [{ inlineData: audio }, { text: 'Generate a transcript of the speech in this audio.' }]
+      const result = await infer(GEMINI_TRANSCRIPTION_MODEL, parts, input, activeSignal, audio)
+      return { text: result.text, usage: result.usage }
     }
   }
 }

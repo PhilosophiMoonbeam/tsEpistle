@@ -62,8 +62,9 @@ import {
   updateAgentSession
 } from '../agents/repository.ts'
 import { streamOwnedAgentEvents } from '../agents/sse.ts'
+import createAgentControls, { type AgentControlServices } from './agent-controls.ts'
 
-interface AgentHostWiki {
+interface AgentHostWiki extends AgentControlServices {
   readonly auth: {
     authenticate(req: Request, res: Response, next: NextFunction): void
     loadPageRuleAuthority?(requester: PagePrincipal, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
@@ -112,7 +113,6 @@ interface AgentHostWiki {
     | 'create'
     | 'getAdmin'
     | 'assertProfileAvailable'
-    | 'assertSessionGoogleSearchAvailable'
     | 'issueResolutionToken'
     | 'listAll'
     | 'listVisible'
@@ -197,10 +197,9 @@ const UpdateSessionSchema = z
   .strictObject({
     expectedSessionVersion: z.number().int().positive(),
     title: z.string().max(255).optional(),
-    retention: z.enum(['temporary', 'saved']).optional(),
-    googleSearchEnabled: z.boolean().optional()
+    retention: z.enum(['temporary', 'saved']).optional()
   })
-  .refine(value => value.title !== undefined || value.retention !== undefined || value.googleSearchEnabled !== undefined)
+  .refine(value => value.title !== undefined || value.retention !== undefined)
 const ConversationFolderNameSchema = z.string().transform(cleanAgentConversationFolderName).pipe(z.string().min(1).max(64))
 const CreateConversationFolderSchema = z.strictObject({ name: ConversationFolderNameSchema })
 const RenameConversationFolderSchema = z.strictObject({ expectedVersion: z.number().int().positive(), name: ConversationFolderNameSchema })
@@ -396,6 +395,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       return res.sendStatus(403)
     return next()
   })
+  router.use(apiPrefix, createAgentControls(wiki))
 
   router.get(
     `${apiPrefix}/conversation-folders`,
@@ -899,16 +899,11 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const input = UpdateSessionSchema.parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId
       await wiki.models.knex.transaction(async transaction => {
-        if (input.googleSearchEnabled === true) {
-          if (!wiki.providerRegistry) throw new AgentRepositoryError('GOOGLE_SEARCH_UNAVAILABLE', 'Google Search is unavailable', 409)
-          await wiki.providerRegistry.assertSessionGoogleSearchAvailable(ownerId, sessionId, transaction)
-        }
         await updateAgentSession(transaction, {
           ownerId,
           sessionId,
           expectedVersion: input.expectedSessionVersion,
           ...(input.title === undefined ? {} : { title: input.title }),
-          ...(input.googleSearchEnabled === undefined ? {} : { googleSearchEnabled: input.googleSearchEnabled }),
           ...(input.retention === undefined
             ? {}
             : {

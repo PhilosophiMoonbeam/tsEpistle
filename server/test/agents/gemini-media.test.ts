@@ -1,20 +1,15 @@
 import type { lookup } from 'node:dns/promises'
 import createKnex, { type Knex } from 'knex'
+import { ai, type AxAIGoogleGeminiModel } from '@ax-llm/ax'
 import { AgentProviderAttemptError, AgentProviderFactory, type AgentProviderFetch, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
-import {
-  createGeminiMediaTransport,
-  GEMINI_MEDIA_INPUT_LIMIT,
-  GEMINI_MEDIA_OUTPUT_LIMIT,
-  GEMINI_MUSIC_MODEL,
-  GEMINI_MUSIC_OUTPUT_LIMIT,
-  GEMINI_PDF_INPUT_LIMIT,
-  GEMINI_VIDEO_MODEL,
-  GEMINI_VIDEO_OUTPUT_LIMIT
-} from '../../agents/providers/gemini-media.ts'
+import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT } from '../../agents/providers/gemini-media.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const origin = 'https://generativelanguage.googleapis.com'
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==', 'base64')
+const png = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==',
+  'base64'
+)
 const file = (state = 'ACTIVE') => ({
   name: 'files/abc123',
   uri: `${origin}/v1beta/files/abc123`,
@@ -22,16 +17,10 @@ const file = (state = 'ACTIVE') => ({
   sizeBytes: String(png.length),
   state
 })
-const usage = {
-  total_input_tokens: 4,
-  total_output_tokens: 6,
-  total_tokens: 10
-}
-const generated = (content: unknown[] = [{ type: 'image', data: png.toString('base64'), mime_type: 'image/png' }]) => ({
-  model: 'gemini-3.1-flash-image',
-  status: 'completed',
-  steps: [{ type: 'model_output', content }],
-  usage
+const usage = { promptTokenCount: 4, candidatesTokenCount: 6, totalTokenCount: 10 }
+const generated = (parts: unknown[] = [{ inlineData: { data: png.toString('base64'), mimeType: 'image/png' } }]) => ({
+  candidates: [{ finishReason: 'STOP', content: { role: 'model', parts } }],
+  usageMetadata: usage
 })
 
 describe('Gemini media egress guard', () => {
@@ -53,15 +42,13 @@ describe('Gemini media egress guard', () => {
     await guard(`${origin}/upload/v1beta/files?upload_id=abc&upload_protocol=resumable`, { method: 'POST', body: png })
     await guard(`${origin}/v1beta/files/abc`, { method: 'GET' })
     await guard(`${origin}/v1beta/files/abc`, { method: 'DELETE' })
-    await guard(`${origin}/v1beta/interactions`, {
-      method: 'POST',
-      body: '{}'
-    })
+    await guard(`${origin}/v1beta/models/gemini-3.1-flash-image:generateContent`, { method: 'POST', body: '{}' })
     await guard(`${origin}/v1beta/models/gemini-3.5-transcribe:countTokens`, { method: 'POST', body: '{}' })
     for (const [path, method] of [
       ['/v1beta/files', 'GET'],
       ['/v1beta/files/abc', 'POST'],
       ['/v1beta/interactions', 'GET'],
+      ['/v1beta/interactions', 'POST'],
       ['/upload/v1beta/files', 'DELETE'],
       ['/upload/v1beta/files?upload_id=abc&api_key=secret', 'POST'],
       ['/v1beta/models', 'GET'],
@@ -75,7 +62,7 @@ describe('Gemini media egress guard', () => {
         body: Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1)
       })
     ).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    const ordinary = createGuardedProviderFetch(`${origin}/v1beta`, '/interactions', {}, implementation, resolve)
+    const ordinary = createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-chat', {}, implementation, resolve)
     await expect(ordinary(`${origin}/upload/v1beta/files`, { method: 'POST', body: png })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
     expect(calls).toHaveLength(6)
   })
@@ -94,7 +81,7 @@ describe('Gemini media egress guard', () => {
     body.write('%PDF-1.7')
     await guard(`${origin}/upload/v1beta/files?upload_id=abc`, { method: 'POST', headers: { 'content-type': 'application/pdf' }, body })
     for (const [path, type, bytes] of [
-      ['/v1beta/interactions', 'application/pdf', body],
+      ['/v1beta/models/gemini-3.1-flash-image:generateContent', 'application/pdf', body],
       ['/upload/v1beta/files?upload_id=abc', 'image/png', body],
       ['/upload/v1beta/files?upload_id=abc', 'application/pdf', Buffer.alloc(GEMINI_PDF_INPUT_LIMIT + 1)]
     ] as const)
@@ -254,424 +241,260 @@ const setup = (handler: Handler) => {
 const start = (url = `${origin}/upload/v1beta/files?upload_id=upload123&upload_protocol=resumable`) =>
   new Response(null, { headers: { 'x-goog-upload-url': url } })
 
-describe('Gemini media transport', () => {
-  it('rechecks authorization before each upload and cleans up when access is revoked', async () => {
-    let checks = 0
-    const { requests, transport } = setup((url, init) =>
-      init.method === 'DELETE' ? new Response(null, { status: 204 }) : url.includes('?') ? Response.json({ file: file() }) : start()
+describe('Ax-backed Gemini media transport', () => {
+  it('generates private raster bytes through GenerateContent with measured usage and no tools', async () => {
+    const { requests, transport } = setup(() =>
+      Response.json(generated([{ text: 'A blue sky' }, { inlineData: { mimeType: 'image/png', data: png.toString('base64') }, thoughtSignature: 'opaque' }]))
     )
-    await expect(
-      transport.generateImage({
-        prompt: 'Edit',
-        images: [
-          { bytes: png, mimeType: 'image/png' },
-          { bytes: png, mimeType: 'image/png' }
-        ],
-        beforeUpload: async () => {
-          if (++checks === 2) throw new Error('Access revoked')
-        }
-      })
-    ).rejects.toThrow('Access revoked')
-    expect(checks).toBe(2)
-    expect(requests).toHaveLength(3)
-    expect(requests.at(-1)?.init.method).toBe('DELETE')
+    const result = await transport.generateImage({ prompt: 'Draw a sky' })
+    expect(result).toEqual({ text: 'A blue sky', images: [{ bytes: png, mimeType: 'image/png' }], usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 } })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe(`${origin}/v1beta/models/gemini-3.1-flash-image:generateContent`)
+    const body = JSON.parse(String(requests[0]?.init.body))
+    expect(body.contents).toEqual([{ role: 'user', parts: [{ text: 'Draw a sky' }] }])
+    expect(body.generationConfig).toMatchObject({ responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '1:1' }, maxOutputTokens: 65536 })
+    expect(body.generationConfig).not.toHaveProperty('responseMimeType')
+    expect(body).not.toHaveProperty('tools')
+    expect(requests[0]?.init.redirect).toBe('manual')
+    expect(requests[0]?.init.credentials).toBe('omit')
+    expect(new Headers(requests[0]?.init.headers).get('x-goog-api-key')).toBe('test-key')
   })
 
-  it('does not upload recorded speech when its fresh authorization check fails', async () => {
-    const { requests, transport } = setup(() => start())
-    await expect(
-      transport.transcribe({
-        bytes: Buffer.from('audio'),
-        mimeType: 'audio/webm',
-        beforeUpload: async () => {
-          throw new Error('Access revoked')
-        }
-      })
-    ).rejects.toThrow('Access revoked')
-    expect(requests).toHaveLength(0)
-  })
-
-  it('counts multimodal Files API references without issuing a generation', async () => {
-    const { requests, transport } = setup(() => Response.json({ totalTokens: 258 }))
-    expect(await transport.countTokens('gemini-3.8-flash', [{ type: 'document', uri: file().uri, mime_type: 'application/pdf' }])).toBe(258)
-    expect(requests[0]?.url).toBe(`${origin}/v1beta/models/gemini-3.8-flash:countTokens`)
-    expect(JSON.parse(String(requests[0]?.init.body))).toEqual({
-      contents: [{ role: 'user', parts: [{ fileData: { fileUri: file().uri, mimeType: 'application/pdf' } }] }]
+  it('passes reference images inline after fresh authorization without creating provider files', async () => {
+    let checks = 0
+    const { requests, transport } = setup(() => Response.json(generated()))
+    await transport.generateImage({
+      prompt: 'Make it blue',
+      images: [
+        { bytes: png, mimeType: 'image/png' },
+        { bytes: png, mimeType: 'image/png' }
+      ],
+      beforeUpload: async () => {
+        checks++
+      }
     })
+    expect(checks).toBe(2)
+    expect(requests).toHaveLength(1)
+    const parts = JSON.parse(String(requests[0]?.init.body)).contents[0].parts
+    expect(parts.slice(1)).toEqual([
+      { inlineData: { data: png.toString('base64'), mimeType: 'image/png' } },
+      { inlineData: { data: png.toString('base64'), mimeType: 'image/png' } }
+    ])
   })
 
-  it('counts before paid media dispatch and applies the explicit output token limit', async () => {
-    let dispatched = false
+  it('does not transfer references or recorded speech after authorization revocation', async () => {
+    for (const kind of ['image', 'audio'] as const) {
+      const { requests, transport } = setup(() => {
+        throw new Error('must not fetch')
+      })
+      const beforeUpload = async () => {
+        throw new Error('Access revoked')
+      }
+      await expect(
+        kind === 'image'
+          ? transport.generateImage({ prompt: 'Edit', images: [{ bytes: png, mimeType: 'image/png' }], beforeUpload })
+          : transport.transcribe({ bytes: Buffer.from('audio'), mimeType: 'audio/webm', beforeUpload })
+      ).rejects.toThrow('Access revoked')
+      expect(requests).toHaveLength(0)
+    }
+  })
+
+  it('counts exactly the inline inference input, awaits admission, then marks one paid dispatch', async () => {
+    const order: string[] = []
     const { requests, transport } = setup(url => {
       if (url.endsWith(':countTokens')) {
-        expect(dispatched).toBe(false)
+        order.push('count')
         return Response.json({ totalTokens: 100 })
       }
-      expect(dispatched).toBe(true)
+      order.push('paid')
       return Response.json(generated())
     })
     await transport.generateImage({
-      prompt: 'Draw',
+      prompt: 'Edit',
+      images: [{ bytes: png, mimeType: 'image/png' }],
       maxInputTokens: 200,
       maxOutputTokens: 123,
+      beforeUpload: async () => {
+        order.push('authorize')
+      },
+      beforeDispatch: async exposure => {
+        expect(exposure).toEqual({ inputTokens: 100, outputTokens: 123, totalTokens: 223 })
+        await Promise.resolve()
+        order.push('admit')
+      },
       onDispatch: () => {
-        dispatched = true
+        order.push('dispatch')
       }
     })
-    expect(JSON.parse(String(requests[1]?.init.body)).generation_config).toEqual({ max_output_tokens: 123 })
+    expect(order).toEqual(['authorize', 'count', 'admit', 'dispatch', 'paid'])
+    const counted = JSON.parse(String(requests[0]?.init.body))
+    const inferred = JSON.parse(String(requests[1]?.init.body))
+    expect(counted.contents).toEqual(inferred.contents)
+    expect(inferred.generationConfig.maxOutputTokens).toBe(123)
   })
 
-  it('rejects over-budget and unsupported token counts without dispatching a paid interaction', async () => {
-    for (const response of [Response.json({ totalTokens: 201 }), Response.json({ error: 'unsupported model' }, { status: 400 })]) {
+  it('respects provider caps when a caller requests larger limits', async () => {
+    const bodies: unknown[] = []
+    const fetch = Object.assign(
+      async (url: URL | RequestInfo, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)))
+        return String(url).endsWith(':countTokens') ? Response.json({ totalTokens: 4 }) : Response.json(generated())
+      },
+      { preconnect: () => {} }
+    ) as AgentProviderFetch
+    const transport = createGeminiMediaTransport({
+      apiKey: 'test-key',
+      baseUrl: `${origin}/v1beta`,
+      timeoutMs: 5000,
+      maxInputTokens: 5,
+      maxOutputTokens: 20,
+      fetch
+    })
+    await transport.generateImage({
+      prompt: 'Draw',
+      maxInputTokens: 100,
+      maxOutputTokens: 100,
+      beforeDispatch: async exposure => {
+        expect(exposure).toEqual({ inputTokens: 4, outputTokens: 20, totalTokens: 24 })
+      }
+    })
+    expect(bodies[1]).toMatchObject({ generationConfig: { maxOutputTokens: 20 } })
+  })
+
+  for (const failure of ['count', 'context', 'admission', 'cancel'] as const)
+    it(`does not dispatch paid inference after ${failure} failure`, async () => {
+      const controller = new AbortController()
       let dispatched = false
-      const { requests, transport } = setup(() => response)
+      const { requests, transport } = setup(() =>
+        failure === 'count' ? new Response(null, { status: 400 }) : Response.json({ totalTokens: failure === 'context' ? 201 : 100 })
+      )
       await expect(
-        transport.generateImage({
-          prompt: 'Draw',
-          maxInputTokens: 200,
-          onDispatch: () => {
-            dispatched = true
-          }
-        })
+        transport.generateImage(
+          {
+            prompt: 'Draw',
+            maxInputTokens: 200,
+            maxOutputTokens: 123,
+            beforeDispatch: async () => {
+              if (failure === 'admission') throw new Error('Budget exceeded')
+              if (failure === 'cancel') controller.abort()
+            },
+            onDispatch: () => {
+              dispatched = true
+            }
+          },
+          controller.signal
+        )
       ).rejects.toThrow()
       expect(dispatched).toBe(false)
       expect(requests).toHaveLength(1)
       expect(requests[0]?.url).toContain(':countTokens')
-    }
-  })
+    })
 
-  it('preserves sanitized guarded HTTP failures for actionable provider diagnostics', async () => {
-    const failure = new AgentProviderAttemptError('invalid_argument', 400, null, 'generation_config')
-    const { transport } = setup(() => {
+  it('preserves sanitized guarded failures without automatic inference retries', async () => {
+    const failure = new AgentProviderAttemptError('invalid_argument', 400, null, 'generationConfig')
+    const { requests, transport } = setup(() => {
       throw failure
     })
-    await expect(transport.generateVideo({ prompt: 'A landscape' })).rejects.toBe(failure)
-  })
-
-  it('awaits measured admission before dispatch and never generates when admission rejects', async () => {
-    let admissions = 0
-    const { requests, transport } = setup(() => Response.json({ totalTokens: 258 }))
-    await expect(
-      transport.generateImage({
-        prompt: 'Draw',
-        maxOutputTokens: 4_000,
-        beforeDispatch: async exposure => {
-          expect(exposure).toEqual({ inputTokens: 258, outputTokens: 4_000, totalTokens: 4_258 })
-          await Promise.resolve()
-          admissions++
-          throw new Error('Budget exceeded')
-        },
-        onDispatch: () => {
-          throw new Error('Must not dispatch')
-        }
-      })
-    ).rejects.toThrow('Budget exceeded')
-    expect(admissions).toBe(1)
-    expect(requests).toHaveLength(1)
-    expect(requests[0]?.url).toContain(':countTokens')
-  })
-
-  it('does not send arbitrary URL references to the token counter', async () => {
-    const { requests, transport } = setup(() => Response.json({ totalTokens: 1 }))
-    await expect(
-      transport.countTokens('gemini-3.8-flash', [{ type: 'image', uri: 'https://private.example/secret', mime_type: 'image/png' }])
-    ).rejects.toMatchObject({ code: 'INVALID_MEDIA_INPUT' })
-    expect(requests).toHaveLength(0)
-  })
-
-  it('generates raster outputs with measured usage and no stored interactions or tools', async () => {
-    const { requests, transport } = setup(() =>
-      Response.json(
-        generated([
-          { type: 'text', text: 'A blue sky' },
-          {
-            type: 'image',
-            data: png.toString('base64'),
-            mime_type: 'image/png'
-          }
-        ])
-      )
-    )
-    const result = await transport.generateImage({ prompt: 'Draw a sky' })
-    expect(result.images[0]?.bytes).toEqual(png)
-    expect(result.text).toBe('A blue sky')
-    expect(result.usage).toEqual({
-      inputTokens: 4,
-      outputTokens: 6,
-      totalTokens: 10
-    })
-    expect(JSON.parse(String(requests[0]?.init.body))).toEqual({
-      model: 'gemini-3.1-flash-image',
-      store: false,
-      stream: false,
-      input: [{ type: 'text', text: 'Draw a sky' }],
-      response_format: { type: 'image', aspect_ratio: '1:1' }
-    })
-    expect(requests[0]?.init.redirect).toBe('manual')
-    expect(new Headers(requests[0]?.init.headers).get('x-goog-api-key')).toBe('test-key')
-  })
-
-  it('discards large opaque image-edit signatures within the response byte limit', async () => {
-    const result = generated()
-    const { transport } = setup(() => Response.json({ ...result, steps: [{ type: 'thought', signature: 's'.repeat(985_664) }, ...result.steps] }))
-    const response = await transport.generateImage({ prompt: 'Edit this image' })
-    expect(response.images[0]?.bytes).toEqual(png)
-    expect(response).not.toHaveProperty('steps')
-    expect(response.usage.totalTokens).toBe(10)
-  })
-
-  it('uploads edits via resumable Files API, waits for ACTIVE, then deletes the file', async () => {
-    const { requests, transport } = setup((url, init) => {
-      if (init.method === 'DELETE') return new Response(null, { status: 204 })
-      if (url.endsWith('/interactions')) return Response.json(generated())
-      if (init.method === 'GET') return Response.json(file())
-      if (url.includes('?')) return Response.json({ file: file('PROCESSING') })
-      return start()
-    })
-    await transport.generateImage({
-      prompt: 'Make it blue',
-      images: [{ bytes: png, mimeType: 'image/png' }]
-    })
-    expect(requests.map(entry => entry.init.method)).toEqual(['POST', 'POST', 'GET', 'POST', 'DELETE'])
-    expect(new Headers(requests[0]?.init.headers).get('x-goog-upload-header-content-length')).toBe(String(png.length))
-    expect(new Headers(requests[1]?.init.headers).get('x-goog-upload-command')).toBe('upload, finalize')
-    expect(Buffer.from(requests[1]?.init.body as Uint8Array)).toEqual(png)
-    expect(JSON.parse(String(requests[3]?.init.body)).input[1]).toEqual({
-      type: 'image',
-      uri: file().uri,
-      mime_type: 'image/png'
-    })
-  })
-
-  it('transcribes audio with the dedicated model and deletes the upload', async () => {
-    const { requests, transport } = setup((url, init) => {
-      if (init.method === 'DELETE') return new Response(null, { status: 204 })
-      if (url.endsWith('/interactions'))
-        return Response.json({
-          ...generated([{ type: 'text', text: 'Hello world.' }]),
-          model: 'gemini-3.5-transcribe'
-        })
-      if (url.includes('?'))
-        return Response.json({
-          file: { ...file(), mimeType: 'audio/webm', sizeBytes: '4' }
-        })
-      return start()
-    })
-    expect(
-      await transport.transcribe({
-        bytes: Buffer.from('test'),
-        mimeType: 'audio/webm'
-      })
-    ).toEqual({
-      text: 'Hello world.',
-      usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 }
-    })
-    expect(JSON.parse(String(requests[2]?.init.body))).toEqual({
-      model: 'gemini-3.5-transcribe',
-      store: false,
-      stream: false,
-      input: [{ type: 'audio', uri: file().uri, mime_type: 'audio/webm' }]
-    })
-    expect(requests[3]?.init.method).toBe('DELETE')
-  })
-
-  it('accepts PDF uploads for chat consumers', async () => {
-    const bytes = Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1)
-    bytes.write('%PDF-1.7')
-    const { transport } = setup(url =>
-      url.includes('?')
-        ? Response.json({
-            file: { ...file(), mimeType: 'application/pdf', sizeBytes: String(bytes.length) }
-          })
-        : start()
-    )
-    expect(
-      (
-        await transport.upload({
-          bytes,
-          mimeType: 'application/pdf'
-        })
-      ).mimeType
-    ).toBe('application/pdf')
-  })
-
-  for (const destination of [
-    'https://evil.example/upload/v1beta/files?upload_id=x',
-    `${origin}/v1beta/interactions?upload_id=x`,
-    `${origin}/upload/v1beta/files?upload_id=x&key=secret`,
-    `${origin}/upload/v1beta/files?upload_id=x&upload_id=y`,
-    `${origin}/upload/v1beta/files?upload_id=x#fragment`,
-    'http://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=x',
-    'https://user@generativelanguage.googleapis.com/upload/v1beta/files?upload_id=x'
-  ])
-    it(`refuses an untrusted upload destination ${destination}`, async () => {
-      const { requests, transport } = setup(() => start(destination))
-      await expect(transport.upload({ bytes: png, mimeType: 'image/png' })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-      expect(requests).toHaveLength(1)
-    })
-
-  it('refuses custom origins before making any request', () => {
-    expect(() =>
-      createGeminiMediaTransport({
-        apiKey: 'key',
-        baseUrl: 'https://proxy.example/v1beta',
-        timeoutMs: 10,
-        fetch: (() => {}) as unknown as AgentProviderFetch
-      })
-    ).toThrow()
-  })
-
-  it('rejects provider redirects without following or exposing their location', async () => {
-    const { requests, transport } = setup(
-      () =>
-        new Response(null, {
-          status: 302,
-          headers: { location: 'https://evil.example/secret' }
-        })
-    )
-    await expect(transport.generateImage({ prompt: 'Draw' })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(transport.generateImage({ prompt: 'Draw' })).rejects.toBe(failure)
     expect(requests).toHaveLength(1)
   })
 
-  it('rejects oversized, empty, forged raster, executable, and noncanonical media before egress', async () => {
-    const { requests, transport } = setup(() => {
-      throw new Error('must not fetch')
+  it('uses Ax batch transcription for dedicated audioTranscription parts and retains usage and cap', async () => {
+    const { requests, transport } = setup(url =>
+      url.endsWith(':countTokens') ? Response.json({ totalTokens: 4 }) : Response.json(generated([{ audioTranscription: { text: 'Hello world.' } }]))
+    )
+    const result = await transport.transcribe({
+      bytes: Buffer.from('test'),
+      mimeType: 'audio/webm',
+      maxOutputTokens: 123,
+      beforeDispatch: async exposure => {
+        expect(exposure).toEqual({ inputTokens: 4, outputTokens: 123, totalTokens: 127 })
+      }
     })
-    const oversizedPdf = Buffer.alloc(GEMINI_PDF_INPUT_LIMIT + 1)
-    oversizedPdf.write('%PDF-1.7')
-    for (const input of [
-      {
-        bytes: oversizedPdf,
-        mimeType: 'application/pdf'
-      },
-      { bytes: Buffer.alloc(0), mimeType: 'image/png' },
-      { bytes: Buffer.from('<svg/>'), mimeType: 'image/png' },
-      { bytes: png, mimeType: 'image/svg+xml' },
-      { bytes: png, mimeType: 'image/png; charset=utf-8' }
+    expect(result).toEqual({ text: 'Hello world.', usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 } })
+    expect(requests.map(row => row.url)).toEqual([
+      `${origin}/v1beta/models/gemini-3.5-transcribe:countTokens`,
+      `${origin}/v1beta/models/gemini-3.5-transcribe:generateContent`
     ])
-      await expect(transport.upload(input)).rejects.toMatchObject({
-        code: 'INVALID_MEDIA_INPUT'
-      })
-    expect(requests).toHaveLength(0)
+    const counted = JSON.parse(String(requests[0]?.init.body))
+    const inferred = JSON.parse(String(requests[1]?.init.body))
+    expect(inferred.contents).toEqual(counted.contents)
+    expect(inferred.contents[0].parts[0]).toEqual({ inlineData: { data: Buffer.from('test').toString('base64'), mimeType: 'audio/webm' } })
+    expect(inferred.generationConfig).toEqual({ maxOutputTokens: 123 })
   })
 
-  it('cleans up FAILED uploads and never calls the model', async () => {
-    const { requests, transport } = setup((url, init) =>
-      init.method === 'DELETE' ? new Response(null, { status: 204 }) : url.includes('?') ? Response.json({ file: file('FAILED') }) : start()
+  it('bills reported thought tokens without exposing thought text or signatures', async () => {
+    const { transport } = setup(() =>
+      Response.json({
+        ...generated([
+          { text: 'private thought', thought: true, thoughtSignature: 's'.repeat(985664) },
+          { inlineData: { data: png.toString('base64'), mimeType: 'image/png' } }
+        ]),
+        usageMetadata: { ...usage, thoughtsTokenCount: 3, totalTokenCount: 13 }
+      })
     )
-    await expect(
-      transport.generateImage({
-        prompt: 'Draw',
-        images: [{ bytes: png, mimeType: 'image/png' }]
-      })
-    ).rejects.toMatchObject({ code: 'AGENT_MEDIA_PROCESSING_FAILED' })
-    expect(requests.at(-1)?.init.method).toBe('DELETE')
-    expect(requests.some(entry => entry.url.endsWith('/interactions'))).toBe(false)
+    const result = await transport.generateImage({ prompt: 'Draw' })
+    expect(result.text).toBe('')
+    expect(result.usage).toEqual({ inputTokens: 4, outputTokens: 9, totalTokens: 13 })
+    expect(result).not.toHaveProperty('thoughtBlocks')
   })
 
-  it('cleans up when cancelled while the file is processing using a fresh signal', async () => {
-    const controller = new AbortController()
-    const { requests, transport } = setup((url, init) => {
-      if (init.method === 'DELETE') {
-        expect(init.signal?.aborted).toBe(false)
-        return new Response(null, { status: 204 })
-      }
-      if (url.includes('?')) {
-        setTimeout(() => controller.abort(), 10)
-        return Response.json({ file: file('PROCESSING') })
-      }
-      return start()
-    })
-    await expect(transport.upload({ bytes: png, mimeType: 'image/png' }, controller.signal)).rejects.toThrow()
-    expect(requests.at(-1)?.init.method).toBe('DELETE')
-  })
-
-  it('cleans up edits on invalid model output', async () => {
-    const { requests, transport } = setup((url, init) =>
-      init.method === 'DELETE'
-        ? new Response(null, { status: 204 })
-        : url.endsWith('/interactions')
-          ? Response.json({ error: { message: 'private provider detail' } })
-          : url.includes('?')
-            ? Response.json({ file: file() })
-            : start()
-    )
-    await expect(
-      transport.generateImage({
-        prompt: 'Draw',
-        images: [{ bytes: png, mimeType: 'image/png' }]
-      })
-    ).rejects.toMatchObject({
-      message: 'Gemini returned an invalid media response'
-    })
-    expect(requests.at(-1)?.init.method).toBe('DELETE')
-  })
-
-  it('rejects missing or inconsistent measured usage', async () => {
-    for (const usageValue of [undefined, { ...usage, total_tokens: 1 }, { ...usage, total_input_tokens: -1 }]) {
-      const { transport } = setup(() => Response.json({ ...generated(), usage: usageValue }))
+  for (const usageValue of [
+    undefined,
+    { ...usage, totalTokenCount: 1 },
+    { ...usage, promptTokenCount: -1 },
+    { ...usage, thoughtsTokenCount: 3 },
+    { ...usage, candidatesTokenCount: 0.5 }
+  ])
+    it('rejects absent or inconsistent measured usage rather than inventing success accounting', async () => {
+      const { transport } = setup(() => Response.json({ ...generated(), usageMetadata: usageValue }))
       await expect(transport.generateImage({ prompt: 'Draw' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-    }
-  })
+    })
 
-  it('refuses function calls, URI outputs, extra block fields, malformed base64, and forged raster bytes', async () => {
-    for (const content of [
-      [{ type: 'function_call', name: 'fetch_url', arguments: {} }],
-      [
-        {
-          type: 'image',
-          mime_type: 'image/png',
-          uri: 'https://evil.example/image'
-        }
-      ],
-      [
-        {
-          type: 'image',
-          mime_type: 'image/png',
-          data: png.toString('base64'),
-          uri: 'https://evil.example/image'
-        }
-      ],
-      [
-        {
-          type: 'image',
-          mime_type: 'image/png',
-          data: `${png.toString('base64')}\n`
-        }
-      ],
-      [
-        {
-          type: 'image',
-          mime_type: 'image/png',
-          data: Buffer.from('<script/>').toString('base64')
-        }
-      ]
-    ]) {
-      const { transport } = setup(() => Response.json(generated(content)))
+  for (const parts of [
+    [{ functionCall: { name: 'fetch_url', args: {} } }],
+    [{ fileData: { mimeType: 'image/png', fileUri: 'https://evil.example/image' } }],
+    [{ inlineData: { mimeType: 'image/png', data: png.toString('base64'), uri: 'https://evil.example/image' } }],
+    [{ inlineData: { mimeType: 'image/png', data: `${png.toString('base64')}\n` } }],
+    [{ inlineData: { mimeType: 'image/png', data: Buffer.from('<script/>').toString('base64') } }],
+    [{ inlineData: { mimeType: 'image/svg+xml', data: Buffer.from('<svg/>').toString('base64') } }],
+    [{ text: 'No image' }]
+  ])
+    it('refuses unrequested remote outputs, tools, malformed raster data, and missing images', async () => {
+      const { transport } = setup(() => Response.json(generated(parts)))
       await expect(transport.generateImage({ prompt: 'Draw' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-    }
-  })
+    })
 
-  it('cleans up a known file even when the provider omits its metadata on failure', async () => {
-    const { requests, transport } = setup((url, init) =>
-      init.method === 'DELETE'
-        ? new Response(null, { status: 204 })
-        : url.includes('?')
-          ? Response.json({ file: { name: 'files/abc123', state: 'FAILED', error: { message: 'private detail' } } })
-          : start()
-    )
-    await expect(transport.upload({ bytes: png, mimeType: 'image/png' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-    expect(requests.at(-1)?.init.method).toBe('DELETE')
-  })
+  for (const finishReason of ['MAX_TOKENS', 'SAFETY'])
+    it(`rejects ${finishReason} as incomplete media, including batch transcription`, async () => {
+      for (const audio of [false, true]) {
+        const { transport } = setup(() =>
+          Response.json({
+            ...generated(),
+            candidates: [
+              {
+                finishReason,
+                content: {
+                  parts: audio ? [{ audioTranscription: { text: 'partial' } }] : [{ inlineData: { mimeType: 'image/png', data: png.toString('base64') } }]
+                }
+              }
+            ]
+          })
+        )
+        await expect(
+          audio ? transport.transcribe({ bytes: Buffer.from('audio'), mimeType: 'audio/webm' }) : transport.generateImage({ prompt: 'Draw' })
+        ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      }
+    })
 
-  it('rejects decoded generated images larger than the private storage limit', async () => {
+  it('rejects decoded images exceeding private storage limits', async () => {
     const oversized = Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1)
     png.copy(oversized)
-    const { transport } = setup(() => Response.json(generated([{ type: 'image', data: oversized.toString('base64'), mime_type: 'image/png' }])))
+    const { transport } = setup(() => Response.json(generated([{ inlineData: { data: oversized.toString('base64'), mimeType: 'image/png' } }])))
     await expect(transport.generateImage({ prompt: 'Draw' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
   })
 
-  it('bounds response bytes even if content length is absent or forged', async () => {
+  it('bounds response bytes when Content-Length is absent or forged and cancels the body', async () => {
     for (const headers of [{ 'content-type': 'application/json' }, { 'content-type': 'application/json', 'content-length': '2' }] as Record<string, string>[]) {
       let cancelled = false
       const { transport } = setup(
@@ -692,244 +515,255 @@ describe('Gemini media transport', () => {
       expect(cancelled).toBe(true)
     }
   })
-})
 
-const mp4 = Buffer.from('000000186674797069736f6d0000000069736f6d6d703432', 'hex')
-const mp3 = Buffer.from([0xff, 0xfb, 0x90, 0x00, ...Array(400).fill(0)])
-const videoUri = `${origin}/v1beta/files/video123:download?alt=media`
-const avResponse = (kind: 'video' | 'music', measured: unknown = usage, content?: unknown[]) => ({
-  model: kind === 'video' ? GEMINI_VIDEO_MODEL : GEMINI_MUSIC_MODEL,
-  status: 'completed',
-  steps: [
-    { type: 'user_input', content: [{ type: 'text', text: 'A peaceful sunset.' }] },
-    { type: 'thought', signature: 'opaque', content: [{ type: 'thought', text: 'Discard this reasoning.' }] },
-    {
-      type: 'model_output',
-      content: content ?? [
-        kind === 'video'
-          ? { type: 'video', data: mp4.toString('base64'), mime_type: 'video/mp4' }
-          : { type: 'audio', data: mp3.toString('base64'), mime_type: 'audio/mp3' }
-      ]
-    }
-  ],
-  ...(measured === 'absent' ? {} : { usage: measured })
-})
-
-describe('Gemini video and music transport', () => {
-  for (const kind of ['video', 'music'] as const)
-    it(`counts and admits ${kind} before dispatch, returning only private bytes`, async () => {
-      const order: string[] = []
-      const { transport, requests } = setup((url, init) => {
-        if (url.endsWith(':countTokens')) {
-          order.push('count')
-          return Response.json({ totalTokens: 5 })
-        }
-        if (url.endsWith('/interactions')) {
-          order.push('paid')
-          return Response.json(avResponse(kind))
-        }
-        if (init.method === 'DELETE') {
-          order.push('delete')
-          return new Response(null, { status: 204 })
-        }
-        throw new Error('Unexpected media request')
-      })
-      const input = {
-        prompt: 'A peaceful sunset.',
-        beforeDispatch: async (exposure: { inputTokens: number; outputTokens: number; totalTokens: number }) => {
-          order.push('reserve')
-          expect(exposure).toEqual({ inputTokens: 5, outputTokens: 65536, totalTokens: 65541 })
-        },
-        onDispatch: () => {
-          order.push('dispatch')
-        }
-      }
-      const result = await (kind === 'video' ? transport.generateVideo(input) : transport.generateMusic(input))
-      expect(order.slice(0, 4)).toEqual(['count', 'reserve', 'dispatch', 'paid'])
-      expect(result.usageSource).toBe('reported')
-      expect(result.usage).toEqual({ inputTokens: 4, outputTokens: 6, totalTokens: 10 })
-      expect(result.files).toEqual([{ bytes: kind === 'video' ? mp4 : mp3, mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg' }])
-      expect(JSON.stringify(result)).not.toContain('generativelanguage.googleapis.com')
-      const body = JSON.parse(String(requests.find(row => row.url.endsWith('/interactions'))!.init.body))
-      expect(body).toMatchObject({
-        model: kind === 'video' ? GEMINI_VIDEO_MODEL : GEMINI_MUSIC_MODEL,
-        store: false,
-        background: false,
-        stream: false,
-        generation_config: { max_output_tokens: 65536 }
-      })
-      expect(body.tools).toBeUndefined()
-      if (kind === 'video') {
-        expect(body.response_format).toEqual({ type: 'video', resolution: '720p', aspect_ratio: '16:9' })
-        expect(requests).toHaveLength(2)
-      } else expect(body.response_format).toBeUndefined()
-    })
-
-  it('keeps new model caps independent of legacy image limits and marks missing usage as estimated', async () => {
-    let body: { generation_config: { max_output_tokens: number } } | undefined
-    const fetch = Object.assign(
-      async (url: unknown, init?: RequestInit) => {
-        if (String(url).endsWith(':countTokens')) return Response.json({ totalTokens: 8 })
-        body = JSON.parse(String(init?.body))
-        return Response.json(avResponse('music', 'absent'))
-      },
-      { preconnect: () => {} }
-    ) as AgentProviderFetch
-    const transport = createGeminiMediaTransport({ apiKey: 'key', baseUrl: `${origin}/v1beta`, timeoutMs: 5000, maxInputTokens: 1, maxOutputTokens: 1, fetch })
-    const result = await transport.generateMusic({ prompt: 'A song.' })
-    expect(body?.generation_config.max_output_tokens).toBe(65536)
-    expect(result.usageSource).toBe('estimated')
-    expect(result.usage).toEqual({ inputTokens: 8, outputTokens: 65536, totalTokens: 65544 })
+  it('rejects provider redirects without following or exposing the destination', async () => {
+    const { requests, transport } = setup(() => new Response(null, { status: 302, headers: { location: 'https://evil.example/private' } }))
+    await expect(transport.generateImage({ prompt: 'Draw' })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    expect(requests).toHaveLength(1)
   })
 
-  for (const failure of ['count', 'context', 'admission', 'cancel'] as const)
-    it(`does not make a paid call after ${failure} failure`, async () => {
-      const controller = new AbortController()
-      const { transport, requests } = setup(() =>
-        failure === 'count' ? new Response(null, { status: 404 }) : Response.json({ totalTokens: failure === 'context' ? 65537 : 5 })
-      )
-      await expect(
-        transport.generateMusic(
-          {
-            prompt: 'A song.',
-            beforeDispatch: async () => {
-              if (failure === 'admission') throw new Error('budget')
-              if (failure === 'cancel') controller.abort()
-            }
-          },
-          controller.signal
-        )
-      ).rejects.toThrow()
-      expect(requests.some(row => row.url.endsWith('/interactions'))).toBe(false)
+  it('rejects invalid inputs and excess image references before egress', async () => {
+    const { requests, transport } = setup(() => {
+      throw new Error('must not fetch')
     })
+    for (const input of [
+      { bytes: Buffer.alloc(0), mimeType: 'image/png' },
+      { bytes: Buffer.from('<svg/>'), mimeType: 'image/png' },
+      { bytes: png, mimeType: 'image/svg+xml' },
+      { bytes: png, mimeType: 'image/png; charset=utf-8' },
+      { bytes: Buffer.alloc(GEMINI_PDF_INPUT_LIMIT + 1), mimeType: 'application/pdf' }
+    ])
+      await expect(transport.upload(input)).rejects.toMatchObject({ code: 'INVALID_MEDIA_INPUT' })
+    await expect(transport.generateImage({ prompt: 'Draw', images: Array(5).fill({ bytes: png, mimeType: 'image/png' }) })).rejects.toMatchObject({
+      code: 'INVALID_MEDIA_INPUT'
+    })
+    await expect(transport.transcribe({ bytes: Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1), mimeType: 'audio/webm' })).rejects.toMatchObject({
+      code: 'INVALID_MEDIA_INPUT'
+    })
+    expect(requests).toHaveLength(0)
+  })
+})
 
-  it('uploads reference images under fresh authorization and deletes them on rejection', async () => {
-    const order: string[] = []
-    const { transport } = setup((url, init) => {
-      if (init.method === 'DELETE') {
-        order.push('delete')
-        return new Response(null, { status: 204 })
+describe('Gemini Files API application integration', () => {
+  it('uploads and counts Gemini 2.5 Flash PDF/image attachments before native Ax dispatch, then cleans up', async () => {
+    for (const attachment of [
+      { bytes: Buffer.from('%PDF-1.7\nfixture'), mimeType: 'application/pdf', type: 'document' as const },
+      { bytes: png, mimeType: 'image/png', type: 'image' as const }
+    ]) {
+      const requests: { url: string; init: RequestInit }[] = []
+      const wire = Object.assign(
+        async (input: URL | RequestInfo, init?: RequestInit) => {
+          const url = String(input)
+          requests.push({ url, init: init || {} })
+          if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+          if (url.endsWith(':countTokens')) return Response.json({ totalTokens: 258 })
+          if (url.endsWith(':generateContent'))
+            return Response.json({
+              ...generated([{ text: 'Attachment read.' }]),
+              usageMetadata: { promptTokenCount: 258, candidatesTokenCount: 6, totalTokenCount: 264 }
+            })
+          if (url.includes('?'))
+            return Response.json({ file: { ...file(), mimeType: attachment.mimeType, sizeBytes: String(attachment.bytes.length) } })
+          return start()
+        },
+        { preconnect: () => {} }
+      ) as AgentProviderFetch
+      const resolve = (async () => [{ address: '142.250.1.1', family: 4 }]) as unknown as typeof lookup
+      const transport = createGeminiMediaTransport({
+        apiKey: 'test-key',
+        baseUrl: `${origin}/v1beta`,
+        timeoutMs: 5_000,
+        fetch: createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, wire, resolve)
+      })
+      const remote = await transport.upload(attachment)
+      try {
+        const inputTokens = await transport.countTokens('gemini-2.5-flash', [
+          { type: 'text', text: 'Read it.' },
+          { type: attachment.type, uri: remote.uri, mime_type: remote.mimeType }
+        ])
+        expect(inputTokens).toBe(258)
+        const service = ai({
+          name: 'google-gemini',
+          apiKey: 'test-key',
+          config: { model: 'gemini-2.5-flash' as AxAIGoogleGeminiModel, stream: false, maxTokens: 16 },
+          options: {
+            fetch: createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-chat', {}, wire, resolve),
+            retry: { maxRetries: 0 }
+          }
+        })
+        const response = await service.chat(
+          {
+            chatPrompt: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'Read it.' },
+                  { type: 'file', fileUri: remote.uri, mimeType: remote.mimeType }
+                ]
+              }
+            ]
+          },
+          { stream: false }
+        )
+        if (response instanceof ReadableStream) throw new Error('Expected non-streaming response')
+        expect(response.results[0]?.content).toBe('Attachment read.')
+        const contents = [
+          {
+            role: 'user',
+            parts: [{ text: 'Read it.' }, { fileData: { fileUri: remote.uri, mimeType: attachment.mimeType } }]
+          }
+        ]
+        expect(JSON.parse(String(requests[2]?.init.body)).contents).toEqual(contents)
+        expect(JSON.parse(String(requests[3]?.init.body)).contents).toEqual(contents)
+        expect(Buffer.from(requests[1]?.init.body as Uint8Array)).toEqual(attachment.bytes)
+      } finally {
+        await transport.delete(remote.name)
       }
-      if (url.endsWith(':countTokens')) return Response.json({ totalTokens: 5 })
-      if (url.endsWith('/interactions')) throw new Error('must not dispatch')
-      if (!url.includes('upload_id')) {
-        order.push('upload')
-        return start()
-      }
-      return Response.json({ file: file() })
+      expect(requests.map(request => [request.init.method, request.url])).toEqual([
+        ['POST', `${origin}/upload/v1beta/files`],
+        ['POST', `${origin}/upload/v1beta/files?upload_id=upload123&upload_protocol=resumable`],
+        ['POST', `${origin}/v1beta/models/gemini-2.5-flash:countTokens`],
+        ['POST', `${origin}/v1beta/models/gemini-2.5-flash:generateContent`],
+        ['DELETE', remote.uri]
+      ])
+    }
+  })
+
+  it('rejects unsupported or unsafe count model names and bounded inputs before count egress', async () => {
+    const { requests, transport } = setup(() => {
+      throw new Error('must not fetch')
+    })
+    const input = [{ type: 'document' as const, uri: file().uri, mime_type: 'application/pdf' }]
+    for (const model of [
+      'gemini-1.5-flash',
+      'gemini-4-flash',
+      'gemini-omni-1.1-flash',
+      'lyria-3.5',
+      'models/gemini-2.5-flash',
+      'gemini-2.5-flash?key=secret',
+      'gemini-2.5-flash/other',
+      'gemini-2.5-Flash',
+      `gemini-2.5-${'a'.repeat(118)}`
+    ])
+      await expect(transport.countTokens(model, input)).rejects.toMatchObject({ code: 'INVALID_MEDIA_INPUT' })
+    await expect(transport.countTokens('gemini-2.5-flash', Array(33).fill(input[0]))).rejects.toMatchObject({ code: 'INVALID_MEDIA_INPUT' })
+    await expect(transport.countTokens('gemini-2.5-flash', [{ type: 'text', text: 'a'.repeat(64 * 1_024 + 1) }])).rejects.toMatchObject({
+      code: 'INVALID_MEDIA_INPUT'
+    })
+    expect(requests).toHaveLength(0)
+  })
+
+  it('uploads prepared PDFs and images, polls processing, then deletes temporary files', async () => {
+    const { requests, transport } = setup((url, init) => {
+      if (init.method === 'DELETE') return new Response(null, { status: 204 })
+      if (init.method === 'GET') return Response.json(file())
+      return url.includes('?') ? Response.json({ file: file('PROCESSING') }) : start()
+    })
+    expect(await transport.upload({ bytes: png, mimeType: 'image/png' })).toEqual({
+      name: 'files/abc123',
+      uri: file().uri,
+      mimeType: 'image/png'
+    })
+    await transport.delete('files/abc123')
+    expect(requests.map(row => row.init.method)).toEqual(['POST', 'POST', 'GET', 'DELETE'])
+    expect(new Headers(requests[0]?.init.headers).get('x-goog-upload-header-content-length')).toBe(String(png.length))
+    expect(new Headers(requests[1]?.init.headers).get('x-goog-upload-command')).toBe('upload, finalize')
+    expect(Buffer.from(requests[1]?.init.body as Uint8Array)).toEqual(png)
+    const bytes = Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1)
+    bytes.write('%PDF-1.7')
+    const pdf = setup(url =>
+      url.includes('?') ? Response.json({ file: { ...file(), mimeType: 'application/pdf', sizeBytes: String(bytes.length) } }) : start()
+    )
+    expect((await pdf.transport.upload({ bytes, mimeType: 'application/pdf' })).mimeType).toBe('application/pdf')
+  })
+
+  it('counts validated PDF file references without paid generation or arbitrary remote URLs', async () => {
+    const { requests, transport } = setup(() => Response.json({ totalTokens: 258 }))
+    expect(await transport.countTokens('gemini-3.8-flash', [{ type: 'document', uri: file().uri, mime_type: 'application/pdf' }])).toBe(258)
+    expect(JSON.parse(String(requests[0]?.init.body))).toEqual({
+      contents: [{ role: 'user', parts: [{ fileData: { fileUri: file().uri, mimeType: 'application/pdf' } }] }]
     })
     await expect(
-      transport.generateVideo({
-        prompt: 'Animate this.',
-        images: [{ bytes: png, mimeType: 'image/png' }],
-        beforeUpload: async () => {
-          order.push('authorize')
-        },
-        beforeDispatch: async () => {
-          throw new Error('denied')
-        }
-      })
-    ).rejects.toThrow()
-    expect(order).toEqual(['authorize', 'upload', 'delete'])
+      transport.countTokens('gemini-3.8-flash', [{ type: 'image', uri: 'https://private.example/secret', mime_type: 'image/png' }])
+    ).rejects.toMatchObject({ code: 'INVALID_MEDIA_INPUT' })
+    expect(requests).toHaveLength(1)
   })
 
-  it('rejects an unrequested video URI even on the official Files endpoint', async () => {
-    const { transport, requests } = setup(url =>
-      url.endsWith(':countTokens')
-        ? Response.json({ totalTokens: 5 })
-        : Response.json(avResponse('video', usage, [{ type: 'video', mime_type: 'video/mp4', uri: videoUri }]))
-    )
-    await expect(transport.generateVideo({ prompt: 'A sunset.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-    expect(requests).toHaveLength(2)
-  })
-
-  for (const failure of ['signature', 'usage', 'base64', 'mime', 'oversize'] as const)
-    it(`rejects invalid inline video ${failure}`, async () => {
-      const data = failure === 'oversize' ? Buffer.alloc(GEMINI_VIDEO_OUTPUT_LIMIT + 1) : failure === 'signature' ? Buffer.alloc(mp4.length) : mp4
-      if (failure === 'oversize') mp4.copy(data)
-      const { transport, requests } = setup(url =>
-        url.endsWith(':countTokens')
-          ? Response.json({ totalTokens: 5 })
-          : Response.json(
-              avResponse('video', failure === 'usage' ? { ...usage, total_input_tokens: -1 } : usage, [
-                { type: 'video', mime_type: failure === 'mime' ? 'text/html' : 'video/mp4', data: failure === 'base64' ? 'invalid!' : data.toString('base64') }
-              ])
-            )
-      )
-      await expect(transport.generateVideo({ prompt: 'A sunset.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-      expect(requests).toHaveLength(2)
+  for (const destination of [
+    'https://evil.example/upload/v1beta/files?upload_id=x',
+    `${origin}/v1beta/models/gemini-3.1-flash-image:generateContent?upload_id=x`,
+    `${origin}/upload/v1beta/files?upload_id=x&key=secret`,
+    `${origin}/upload/v1beta/files?upload_id=x&upload_id=y`,
+    `${origin}/upload/v1beta/files?upload_id=x#fragment`,
+    'http://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=x',
+    'https://user@generativelanguage.googleapis.com/upload/v1beta/files?upload_id=x'
+  ])
+    it('refuses credential crossing through an untrusted resumable destination', async () => {
+      const { requests, transport } = setup(() => start(destination))
+      await expect(transport.upload({ bytes: png, mimeType: 'image/png' })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+      expect(requests).toHaveLength(1)
     })
 
-  it('cleans uploaded references with an independent signal when inline generation is cancelled', async () => {
+  it('cleans failed and malformed known uploads', async () => {
+    for (const metadata of [file('FAILED'), { name: 'files/abc123', state: 'FAILED' }]) {
+      const { requests, transport } = setup((url, init) =>
+        init.method === 'DELETE' ? new Response(null, { status: 204 }) : url.includes('?') ? Response.json({ file: metadata }) : start()
+      )
+      await expect(transport.upload({ bytes: png, mimeType: 'image/png' })).rejects.toThrow()
+      expect(requests.at(-1)?.init.method).toBe('DELETE')
+    }
+  })
+
+  it('cleans processing uploads on cancellation with a fresh signal', async () => {
     const controller = new AbortController()
-    let deleted = false
-    const { transport } = setup((url, init) => {
+    const { requests, transport } = setup((url, init) => {
       if (init.method === 'DELETE') {
         expect(init.signal?.aborted).toBe(false)
-        deleted = true
         return new Response(null, { status: 204 })
       }
-      if (url.endsWith(':countTokens')) return Response.json({ totalTokens: 5 })
-      if (url.endsWith('/interactions')) {
+      if (init.method === 'GET') {
         controller.abort()
-        return Response.json(avResponse('video'))
+        return Response.json(file())
       }
-      return url.includes('upload_id') ? Response.json({ file: file() }) : start()
+      if (url.includes('?')) return Response.json({ file: file('PROCESSING') })
+      return start()
     })
-    await expect(transport.generateVideo({ prompt: 'A sunset.', images: [{ bytes: png, mimeType: 'image/png' }] }, controller.signal)).rejects.toThrow()
-    expect(deleted).toBe(true)
+    await expect(transport.upload({ bytes: png, mimeType: 'image/png' }, controller.signal)).rejects.toThrow()
+    expect(requests.at(-1)?.init.method).toBe('DELETE')
   })
 
-  it('returns complete video/text modality usage without losing thought tokens', async () => {
-    const { transport } = setup((url, init) => {
-      if (url.endsWith(':countTokens')) return Response.json({ totalTokens: 5 })
-      if (url.endsWith('/interactions'))
-        return Response.json(
-          avResponse('video', {
-            ...usage,
-            total_tokens: 13,
-            total_thought_tokens: 3,
-            output_tokens_by_modality: [
-              { modality: 'video', tokens: 5 },
-              { modality: 'text', tokens: 1 }
-            ]
-          })
-        )
-      if (init.method === 'DELETE') return new Response(null, { status: 204 })
-      throw new Error('Unexpected media request')
-    })
-    const result = await transport.generateVideo({ prompt: 'A sunset.' })
-    expect(result.outputTokensByModality).toEqual({ text: 1, video: 5 })
-    expect(result.usage.totalTokens).toBe(13)
+  it('refuses nonofficial origins before making requests', () => {
+    expect(() =>
+      createGeminiMediaTransport({ apiKey: 'key', baseUrl: 'https://proxy.example/v1beta', timeoutMs: 10, fetch: (() => {}) as unknown as AgentProviderFetch })
+    ).toThrow()
   })
+})
 
-  for (const [label, content] of [
-    ['noncanonical base64', [{ type: 'audio', mime_type: 'audio/mp3', data: `${mp3.toString('base64')}!` }]],
-    ['invalid audio', [{ type: 'audio', mime_type: 'audio/mpeg', data: Buffer.alloc(12).toString('base64') }]],
-    [
-      'multiple outputs',
-      [
-        { type: 'audio', mime_type: 'audio/mp3', data: mp3.toString('base64') },
-        { type: 'audio', mime_type: 'audio/mp3', data: mp3.toString('base64') }
-      ]
-    ],
-    ['unexpected video', [{ type: 'video', mime_type: 'video/mp4', data: mp4.toString('base64') }]]
-  ] as const)
-    it(`rejects ${label} in music output`, async () => {
-      const { transport } = setup(url =>
-        url.endsWith(':countTokens') ? Response.json({ totalTokens: 5 }) : Response.json(avResponse('music', usage, [...content]))
-      )
-      await expect(transport.generateMusic({ prompt: 'A song.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+describe('Unavailable exact Gemini video/music models', () => {
+  for (const kind of ['video', 'music'] as const)
+    it(`reports ${kind} incompatibility before uploads, admission, or provider dispatch`, async () => {
+      const { requests, transport } = setup(() => {
+        throw new Error('must not fetch')
+      })
+      const callbacks: string[] = []
+      const input = {
+        prompt: 'A peaceful sunset',
+        images: [{ bytes: png, mimeType: 'image/png' }],
+        beforeUpload: async () => {
+          callbacks.push('upload')
+        },
+        beforeDispatch: async () => {
+          callbacks.push('admit')
+        },
+        onDispatch: () => {
+          callbacks.push('dispatch')
+        }
+      }
+      await expect(kind === 'video' ? transport.generateVideo(input) : transport.generateMusic(input)).rejects.toMatchObject({
+        code: 'AGENT_MEDIA_UNSUPPORTED',
+        status: 409
+      })
+      expect(callbacks).toEqual([])
+      expect(requests).toHaveLength(0)
     })
-
-  it('rejects music output above its decoded byte limit', async () => {
-    const bytes = Buffer.alloc(GEMINI_MUSIC_OUTPUT_LIMIT + 1)
-    bytes.write('ID3')
-    const { transport } = setup(url =>
-      url.endsWith(':countTokens')
-        ? Response.json({ totalTokens: 5 })
-        : Response.json(avResponse('music', usage, [{ type: 'audio', mime_type: 'audio/mp3', data: bytes.toString('base64') }]))
-    )
-    await expect(transport.generateMusic({ prompt: 'A song.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-  })
 })

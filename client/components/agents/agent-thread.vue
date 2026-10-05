@@ -242,10 +242,6 @@
                 </li>
               </ol>
             </details>
-            <AgentSearchSuggestions
-              v-if="entry.message.role === 'assistant' && entry.message.runId && googleSearchSuggestions?.runId === entry.message.runId && googleSearchSuggestions.suggestions.length"
-              :suggestions="googleSearchSuggestions.suggestions"
-            />
             <nav
               v-if="entry.message.role === 'assistant' && entry.run?.pageLinks.length"
               class="agent-page-links mt-3"
@@ -335,7 +331,6 @@ import ControlBorderBeam from '../common/control-border-beam.vue'
 import StatusIndicator from '../common/status-indicator.vue'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentAnswerActions from './agent-answer-actions.vue'
-import AgentSearchSuggestions from './agent-search-suggestions.vue'
 import WikiSourcePreview from '../common/wiki-source-preview.vue'
 import { wikiSourceSelectorFromHref, type WikiSource, type WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import AgentTaskProgress from './agent-task-progress.vue'
@@ -373,7 +368,6 @@ const props = defineProps<{
   canSubmit?: boolean
   imageEditingEnabled?: boolean
   networkBlocked?: boolean
-  googleSearchSuggestions?: { readonly runId: string; readonly suggestions: readonly string[] } | null
 }>()
 const emit = defineEmits<{
   editImage: [media: AgentMediaView]

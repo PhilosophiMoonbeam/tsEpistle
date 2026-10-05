@@ -22,7 +22,6 @@ import {
   deleteAgentSession,
   getAgentMemories,
   getAgentThread,
-  listAgentProfiles,
   listAgentSessions,
   listPersonalAgentSkills,
   removePersonalAgentSkill,
@@ -451,66 +450,6 @@ describe('agents client boundary', () => {
     expect(source).toBeInstanceOf(FakeEventSource)
   })
 
-  it('accepts real-size transient Google Search widgets without advancing the durable cursor and rejects oversized payloads', () => {
-    const listeners = new Map<string, (event: MessageEvent) => void>()
-    class FakeEventSource {
-      constructor(readonly url: string) {}
-      addEventListener(type: string, listener: EventListener) {
-        listeners.set(type, listener as (event: MessageEvent) => void)
-      }
-    }
-    vi.stubGlobal('EventSource', FakeEventSource)
-    const event = vi.fn()
-    const googleSearchSuggestions = vi.fn()
-    const runId = '00000000-0000-4000-8000-000000000001'
-    subscribeAgentRun(runId, 7, { event, googleSearchSuggestions, error: vi.fn() })
-    const listener = listeners.get('google_search.suggestions')
-    const realSizeWidget = `<a href="https://www.google.com/search?q=grounding">${'result '.repeat(660)}</a>`
-
-    listener?.({ data: JSON.stringify({ runId, suggestions: [realSizeWidget] }), lastEventId: '' } as MessageEvent)
-    listener?.({ data: JSON.stringify({ runId, suggestions: ['x'.repeat(32_769)] }), lastEventId: '999' } as MessageEvent)
-    listener?.({ data: JSON.stringify({ runId, suggestions: Array.from({ length: 5 }, () => 'x'.repeat(30_000)) }), lastEventId: '999' } as MessageEvent)
-    listener?.({ data: JSON.stringify({ runId, suggestions: ['valid'], unexpected: true }), lastEventId: '999' } as MessageEvent)
-    listener?.({ data: JSON.stringify({ runId: '00000000-0000-4000-8000-000000000002', suggestions: ['wrong run'] }), lastEventId: '999' } as MessageEvent)
-
-    expect(googleSearchSuggestions).toHaveBeenCalledOnce()
-    expect(googleSearchSuggestions).toHaveBeenCalledWith(runId, [realSizeWidget])
-    expect(event).not.toHaveBeenCalled()
-  })
-
-  it('requires explicit server capability before making Google Search available', async () => {
-    const profile = {
-      id: '00000000-0000-4000-8000-000000000001',
-      name: 'OpenAI',
-      transport: 'openai-responses',
-      model: 'gpt-test',
-      utilityModel: null,
-      destinationHost: 'api.example.test',
-      capabilities: {
-        streaming: true,
-        toolCalling: 'native',
-        parallelToolCalls: true,
-        structuredOutput: 'native-json-schema',
-        usage: 'terminal',
-        cancellation: true,
-        maxContextTokens: 100_000,
-        maxOutputTokens: 4_000
-      },
-      capabilityRevision: 'cap-1',
-      policyVersion: 2,
-      isGlobalDefault: true
-    }
-    const responses = [
-      Response.json({ profiles: [profile] }),
-      Response.json({ profiles: [{ ...profile, googleSearchAvailable: true }] }),
-      Response.json({ profiles: [{ ...profile, googleSearchAvailable: 'true' }] })
-    ]
-    const fetcher = vi.fn(async () => responses.shift()!) as unknown as typeof fetch
-    expect((await listAgentProfiles(fetcher, 'csrf'))[0]?.googleSearchAvailable).toBe(false)
-    expect((await listAgentProfiles(fetcher, 'csrf'))[0]?.googleSearchAvailable).toBe(true)
-    await expect(listAgentProfiles(fetcher, 'csrf')).rejects.toThrow()
-  })
-
   it('validates personal skill documents across create, list, update, and remove requests', async () => {
     const skill = {
       id: '00000000-0000-4000-8000-000000000011',
@@ -717,6 +656,32 @@ describe('agents client boundary', () => {
       expiresAt: now,
       approval: null
     }
+    const historicalMessage = {
+      id: '00000000-0000-4000-8000-000000000046',
+      runId: null,
+      ordinal: 1,
+      role: 'assistant',
+      status: 'complete',
+      content: 'Deployment evidence.',
+      citations: [],
+      googleSearchGrounding: {
+        citations: [{ url: 'https://example.test/archive', title: 'Archived source', startIndex: 0, endIndex: 10 }]
+      },
+      createdAt: now,
+      updatedAt: now
+    }
+    const externalTool = {
+      id: 'external-call',
+      runId: '00000000-0000-4000-8000-000000000047',
+      actionName: `mcp.external_${'a'.repeat(32)}.tools.lookup`,
+      title: 'External MCP: Personal catalog / lookup',
+      state: 'complete',
+      risk: 'external',
+      summary: 'Untrusted external result',
+      proposalId: null,
+      startedAt: now,
+      completedAt: now
+    }
     const thread = {
       session: {
         id: sessionId,
@@ -735,8 +700,8 @@ describe('agents client boundary', () => {
         lastActivityAt: now,
         expiresAt: null
       },
-      messages: [],
-      tools: [],
+      messages: [historicalMessage],
+      tools: [externalTool],
       tasks: [task],
       goal: null,
       proposals: [proposal],
@@ -746,10 +711,20 @@ describe('agents client boundary', () => {
     }
     const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
     expect(await getAgentThread(fetcher, 'csrf', sessionId)).toMatchObject({
+      messages: [historicalMessage],
+      tools: [externalTool],
       tasks: [task],
       proposals: [proposal],
       historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
     })
+    for (const invalidTool of [
+      { ...externalTool, risk: 'read' },
+      { ...externalTool, actionName: 'pages.get' },
+      { ...externalTool, actionName: 'mcp.unscoped.tools.lookup' }
+    ]) {
+      const invalidFetcher = vi.fn(async () => Response.json({ ...thread, tools: [invalidTool] })) as unknown as typeof fetch
+      await expect(getAgentThread(invalidFetcher, 'csrf', sessionId)).rejects.toThrow()
+    }
   })
   it('sends approved destructive and denied decisions with the exact shared request fields', async () => {
     const proposalId = '00000000-0000-4000-8000-000000000041'

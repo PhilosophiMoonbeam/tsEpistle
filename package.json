@@ -78,7 +78,7 @@
   "dependencies": {
     "@asciidoctor/core": "4.0.8",
     "@aws-sdk/client-s3": "3.1108.0",
-    "@ax-llm/ax": "24.0.24",
+    "@ax-llm/ax": "25.0.0",
     "@azure/storage-blob": "12.33.0",
     "@codemirror/autocomplete": "6.20.3",
     "@codemirror/commands": "6.11.0",
@@ -107,6 +107,7 @@
     "@sentry/node": "10.70.0",
     "@sentry/node-core": "10.70.0",
     "acme": "3.0.3",
+    "ajv": "8.20.0",
     "auto-load": "3.0.4",
     "bcryptjs-then": "1.0.1",
     "chalk": "6.0.0",

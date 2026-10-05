@@ -20,7 +20,6 @@ const admissionToken = (sessionId: string, ownerId: number): string => {
     profilePolicyVersion: 1,
     defaultGeneration: 1,
     executionMode: 'agent',
-    googleSearchEnabled: false,
     exp: 4_000_000_000
   }
   return `${kid}.${btoa(JSON.stringify(payload)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')}.fixture-signature`
@@ -37,7 +36,6 @@ const activeThread = (ownerId = 1, sessionId = '00000000-0000-4000-8000-00000000
     version: 1,
     providerProfileId: null,
     profileResolutionToken: admissionToken(sessionId, ownerId),
-    googleSearchEnabled: false,
     skills: [],
     currentRun: {
       id: '00000000-0000-4000-8000-000000000002',
@@ -63,8 +61,8 @@ const activeThread = (ownerId = 1, sessionId = '00000000-0000-4000-8000-00000000
   goal: null,
   proposals: [],
   artifacts: [],
-  historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
-  suggestions: []
+  suggestions: [],
+  historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
 })
 
 const threadForSession = (sessionId: string, runId: string, ownerId = 1): AgentThreadState => {
@@ -186,13 +184,23 @@ describe('Agent chat refresh fallback', () => {
     const store = createStore()
     const thread = activeThread()
     store.thread = thread
-    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(Response.json(thread))
+    const refreshed: AgentThreadState = {
+      ...thread,
+      session: {
+        ...thread.session,
+        currentRun: { ...thread.session.currentRun!, eventSequence: 2, workingPhase: 'correcting' }
+      },
+      suggestions: [{ id: 'review', label: 'Review the evidence', prompt: 'Review the evidence behind this answer.' }]
+    }
+    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(Response.json(refreshed))
 
     store.connect(thread.session.currentRun!.id, 999)
     expect(FakeEventSource.instances[0]?.url).toContain('after=1')
     FakeEventSource.instances[0]?.emit('run.started', '2')
     await vi.advanceTimersByTimeAsync(50)
     expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(store.thread?.session.currentRun?.workingPhase).toBe('correcting')
+    expect(store.thread?.suggestions).toEqual(refreshed.suggestions)
 
     await vi.advanceTimersByTimeAsync(1_000)
     expect(fetcher).toHaveBeenCalledTimes(1)
@@ -460,66 +468,6 @@ describe('Agent store initialization', () => {
     store.profiles = [staleProfile]
     store.closeWorkspace()
     expect(store.profiles).toEqual([])
-  })
-
-  it('applies the Web toggle optimistically without consuming the session mutation lock', async () => {
-    setActivePinia(createPinia())
-    const store = useAgentsStore()
-    const baseThread = threadForSession('00000000-0000-4000-8000-000000000072', '00000000-0000-4000-8000-000000000073')
-    const thread: AgentThreadState = { ...baseThread, session: { ...baseThread.session, currentRun: null } }
-    store.thread = thread
-    store.sessions = [summaryForThread(thread)]
-    markWorkspaceReady(store)
-    store.profiles = [
-      {
-        id: '00000000-0000-4000-8000-000000000074',
-        name: 'Default',
-        media: undefined,
-        googleSearchAvailable: true,
-        googleSearchSuggestionLimit: 5,
-        inputTokens: 0,
-        outputTokens: 0,
-        contextWindowTokens: 400_000,
-        capabilityRevision: 'v1',
-        policyVersion: 1,
-        isGlobalDefault: true
-      } satisfies AgentProviderProfileView
-    ]
-    const patchBodies: unknown[] = []
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
-      const path = String(input)
-      const method = init?.method ?? 'GET'
-      if (path === `/_api/agents/sessions/${thread.session.id}` && method === 'PATCH') {
-        patchBodies.push(JSON.parse(String(init?.body)))
-        return Promise.resolve(
-          Response.json({
-            ...thread,
-            session: { ...thread.session, googleSearchEnabled: true, version: 2, updatedAt: '2026-08-23T00:05:00.000Z' }
-          })
-        )
-      }
-      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
-    })
-
-    // The toggle is applied optimistically and does NOT flip the session
-    // mutation lock that disables the composer, starters, and New button.
-    const toggling = store.setGoogleSearchEnabled(true)
-    expect(store.googleSearchPending).toBe(true)
-    expect(store.sessionMutationBusy).toBe(false)
-    await toggling
-    expect(store.googleSearchPending).toBe(null)
-    expect(store.sessionMutationBusy).toBe(false)
-    expect(patchBodies).toEqual([{ expectedSessionVersion: 1, googleSearchEnabled: true }])
-    expect(store.thread?.session.googleSearchEnabled).toBe(true)
-    expect(store.thread?.session.version).toBe(2)
-
-    // A failed request reverts the optimistic state and surfaces the error.
-    vi.spyOn(window, 'fetch').mockRejectedValue(new TypeError('Offline'))
-    await expect(store.setGoogleSearchEnabled(false)).resolves.toBeUndefined()
-    expect(store.googleSearchPending).toBe(null)
-    expect(store.sessionMutationBusy).toBe(false)
-    expect(store.thread?.session.googleSearchEnabled).toBe(true)
-    expect(store.error).toContain('Offline')
   })
 
   it('blocks folder mutations until the initial authoritative folders have loaded', async () => {
@@ -2027,6 +1975,13 @@ describe('Agent chat pin availability', () => {
         maxTokens: 48_000,
         consumedToolCalls: 1,
         maxToolCalls: 96,
+        budgetPolicyVersion: 1,
+        budgetSelection: 'utility',
+        tokenTier: 'extended',
+        tokenAllowance: 48_000,
+        budgetCycle: 1,
+        budgetLimitReason: null,
+        canRenewTokenBudget: false,
         startedAt: thread.session.createdAt,
         deadlineAt: '2026-08-23T01:00:00.000Z',
         completedAt: null,

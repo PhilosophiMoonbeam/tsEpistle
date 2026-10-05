@@ -29,6 +29,9 @@ import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environment
 import { AgentUtilityModel } from './agents/providers/utility.ts'
 import { assertWikiAgentMediaAccess, createWikiActionSessionProvider, loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
 import { AgentProductRuntime } from './agents/runtime.ts'
+import { DecisionProviderRegistry } from './agents/decision-providers.ts'
+import { ExternalMcpService } from './agents/external-mcp.ts'
+import { AgentRoutingPolicyRegistry, AgentTurnRouter } from './agents/routing.ts'
 import { configureTransportRuntime } from './controllers/_types.ts'
 import createAgentsHostController from './controllers/agents-host.ts'
 import apiController, { type ApiRuntime } from './controllers/api/index.ts'
@@ -334,6 +337,9 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   let agentRuntime: AgentProductRuntime | undefined
   let providerConformance: AgentProviderConformanceRunner | undefined
   let utilityModel: AgentUtilityModel | undefined
+  let decisionProviders: DecisionProviderRegistry | undefined
+  let externalMcp: ExternalMcpService | undefined
+  let routingPolicies: AgentRoutingPolicyRegistry | undefined
   if (wiki.config.agents.provider.enabled) {
     const encodedKeys = environmentSecretValue('AGENT_PROFILE_RESOLUTION_KEYS')
     if (!encodedKeys) throw new Error('AGENT_PROFILE_RESOLUTION_KEYS or AGENT_PROFILE_RESOLUTION_KEYS_FILE is required when agent providers are enabled')
@@ -348,6 +354,14 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     const secrets = new DatabaseAgentSecretRegistry(wiki.models.knex, decodeAgentProviderSecretKeys(encodedSecretKeys))
     const snapshotSigningSecret = actionSnapshotSigningSecret
     providerRegistry = new AgentProviderRegistry(wiki.models.knex, secrets, keys)
+    decisionProviders = new DecisionProviderRegistry(wiki.models.knex, secrets)
+    externalMcp = new ExternalMcpService({
+      knex: wiki.models.knex,
+      secrets,
+      enabled: () => wiki.config.agents.enabled && wiki.config.agents.provider.enabled
+    })
+    routingPolicies = new AgentRoutingPolicyRegistry(wiki.models.knex)
+    const router = new AgentTurnRouter(routingPolicies, decisionProviders)
     const actionSessions = createWikiActionSessionProvider(
       wiki.models.knex,
       {
@@ -370,7 +384,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     const providerFactory = new AgentProviderFactory(wiki.models.knex, secrets)
     utilityModel = new AgentUtilityModel(providerFactory)
     providerConformance = new AgentProviderConformanceRunner(wiki.models.knex, providerFactory, providerRegistry)
-    agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions), {
+    agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions, undefined, { externalMcp }), {
+      router,
       authorizeMedia: ownerId =>
         assertWikiAgentMediaAccess(ownerId, { enabled: wiki.config.agents.enabled, providerEnabled: wiki.config.agents.provider.enabled }),
       workerId: `http-${process.pid}`,
@@ -537,6 +552,9 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   const agentsController = createAgentsHostController({
     ...wiki,
     agentLimits,
+    ...(decisionProviders === undefined ? {} : { decisionProviders }),
+    ...(externalMcp === undefined ? {} : { externalMcp }),
+    ...(routingPolicies === undefined ? {} : { routingPolicies }),
     ...(providerRegistry === undefined ? {} : { providerRegistry }),
     ...(agentRuntime === undefined ? {} : { agentRuntime }),
     ...(providerConformance === undefined ? {} : { providerConformance })
@@ -580,9 +598,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use(async (_req, res, next) => {
     const branding = await resolveActiveBranding(wiki.models.knex, wiki.config.logoUrl)
     // Presentation only: JWT appearance claims may predate a saved preference.
-    const profile = _req.authContext?.kind === 'user'
-      ? await wiki.models.knex('users').select('appearance').where({ id: _req.authContext.userId }).first()
-      : undefined
+    const profile =
+      _req.authContext?.kind === 'user' ? await wiki.models.knex('users').select('appearance').where({ id: _req.authContext.userId }).first() : undefined
     const initialAppearance = profile?.appearance === 'light' || profile?.appearance === 'dark' ? profile.appearance : 'system'
     res.locals.faviconUrl = normalizeFaviconUrl(branding.logoUrl)
     res.locals.siteConfig = {

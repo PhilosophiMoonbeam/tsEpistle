@@ -59,7 +59,10 @@ export const TOOL_DISCOVERY_CONTROL_NAME = 'wiki_enable_tools' as const
 export const AGENT_TOOL_CONTROL_NAMES = [TOOL_DISCOVERY_CONTROL_NAME] as const
 export type AgentToolControlName = (typeof AGENT_TOOL_CONTROL_NAMES)[number]
 export const AGENT_TOOL_CALL_NAMES = [...AGENT_ACTION_NAMES, ...AGENT_TOOL_CONTROL_NAMES] as const
-export type AgentToolCallName = (typeof AGENT_TOOL_CALL_NAMES)[number]
+export type ExternalMcpToolCallName = `mcp.${string}.tools.${string}`
+export const isExternalMcpToolCallName = (value: unknown): value is ExternalMcpToolCallName =>
+  typeof value === 'string' && /^mcp\.external_[a-f0-9]{32}\.tools\.[A-Za-z0-9_.-]{1,128}$/u.test(value)
+export type AgentToolCallName = (typeof AGENT_TOOL_CALL_NAMES)[number] | ExternalMcpToolCallName
 
 export const AGENT_TOOL_NAMES = {
   'pages.search': 'wiki_search_pages',
@@ -98,7 +101,7 @@ export const AGENT_ACTION_BY_TOOL_NAME = Object.fromEntries(
   Object.entries(AGENT_TOOL_NAMES).map(([actionName, toolName]) => [toolName, actionName])
 ) as Readonly<Record<AgentToolName, AgentActionName>>
 export type AgentTransport = 'agent' | 'mcp'
-export type AgentActionRisk = 'read' | 'open-world-read' | 'proposal' | 'reversible-write' | 'destructive-write'
+export type AgentActionRisk = 'read' | 'open-world-read' | 'proposal' | 'reversible-write' | 'destructive-write' | 'external'
 export type AgentExecutionMode = 'agent' | 'generation-only'
 export type AgentSessionRetention = 'temporary' | 'saved'
 export type AgentSessionStatus = 'active' | 'deletion_pending'
@@ -306,7 +309,6 @@ export const agentProviderReasoningEfforts = (transport: AgentProviderTransport)
 
 export interface AgentProviderProfileView {
   readonly media?: AgentMediaCapabilities
-  readonly googleSearchAvailable?: boolean
   readonly id: string
   readonly name: string
   readonly transport: AgentProviderTransport
@@ -345,7 +347,6 @@ export interface AgentConversationFolderView {
 }
 
 export interface AgentSessionView {
-  readonly googleSearchEnabled?: boolean
   readonly id: string
   readonly title: string
   readonly retention: AgentSessionRetention
@@ -582,7 +583,6 @@ export interface UpdateAgentSessionRequest {
   readonly expectedSessionVersion: number
   readonly title?: string
   readonly retention?: AgentSessionRetention
-  readonly googleSearchEnabled?: boolean
 }
 export interface UpdateAgentSessionFolderRequest {
   readonly expectedSessionVersion: number

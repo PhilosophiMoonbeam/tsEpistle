@@ -4089,6 +4089,26 @@ describe('ordinary-origin agent session API', () => {
     })
   })
 
+  it('rejects retired Google Search opt-in without mutating a saved conversation', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+    })
+    expect(created.status).toBe(201)
+    const { session } = z.object({ session: z.object({ id: z.string(), version: z.number() }) }).parse(await created.json())
+    const changed = await fetch(`${baseUrl}/_api/agents/sessions/${session.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ expectedSessionVersion: session.version, googleSearchEnabled: true })
+    })
+    expect(changed.status).toBe(400)
+    const row = await db('agentSessions').where({ id: session.id }).first('googleSearchEnabled', 'version', 'retention')
+    expect(Boolean(row.googleSearchEnabled)).toBe(false)
+    expect(row).toMatchObject({ version: session.version, retention: 'saved' })
+  })
+
   it('clears only unfiled history while preserving folders, owner isolation, and personal memory', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const SessionResponseSchema = z.object({ session: z.object({ id: z.string(), version: z.number() }) })

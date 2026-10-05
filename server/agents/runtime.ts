@@ -15,6 +15,8 @@ import {
   isTerminalAgentRunStatus
 } from '../../shared/agents/contracts.ts'
 import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { DecisionUsageSchema, type DecisionUsage } from '../../shared/agents/decision-providers.ts'
+import type { RoutingRequirements, RoutingTurnDecision } from '../../shared/agents/routing.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
   type AgentCompactionCanonicalSource,
@@ -46,6 +48,7 @@ import {
   getOwnedAgentRun,
   normalizeAgentGenerationTools,
   persistAgentRunQuotaSettlementIntent,
+  markAgentRunSideEffectsStarted,
   readAgentApprovalContinuation,
   terminalizeAgentRun
 } from './coordinator.ts'
@@ -99,6 +102,8 @@ import {
   decodeAgentProviderContinuation
 } from './providers/factory.ts'
 import { AgentProviderPoliciesSchema, type AgentProviderTransportKind } from './providers/registry.ts'
+import type { AgentRoutingCandidate } from './providers/registry.ts'
+import type { AgentTurnRouter } from './routing.ts'
 import { assertAgentTokenUsage, readAgentUsageEvent } from './providers/usage.ts'
 import type {
   AgentConversationTitleGenerator,
@@ -109,7 +114,6 @@ import type {
 import { AgentRepositoryError, appendAgentEvent, validateAgentGoogleSearchGrounding } from './repository.ts'
 import { SkillValidationError } from './skills/parser.ts'
 import { lockSkillAdmissionPrincipal, resolveSelectedSkillVersionIdsInTransaction, validateSelectedSkillVersionIdsInTransaction } from './skills/runtime.ts'
-import { publishAgentGoogleSearchSuggestions } from './sse.ts'
 import {
   type AgentTaskRecord,
   cancelAgentRunTasks,
@@ -212,6 +216,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
   readonly #ownerId: number
   readonly #providerProfileVersionId: string
   readonly #maximumToolCalls: number | undefined
+  readonly #authorize: (() => Promise<void>) | undefined
   #limits: AgentQuotaLimits | undefined
   #expiresAt: Date | undefined
   readonly #active = new Map<number, AgentQuotaRequest>()
@@ -231,7 +236,9 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
     claim: AgentRunClaim,
     maximumTokens?: number,
     maximumToolCalls?: number,
-    initialUsage: Readonly<AgentUsageTotals> = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+    initialUsage: Readonly<AgentUsageTotals> = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 },
+    authorize?: () => Promise<void>,
+    initialExposure: AgentDispatchExposure = { tokens: 0, costMicros: 0 }
   ) {
     this.#knex = knex
     this.#runId = claim.id
@@ -244,6 +251,13 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
     this.#consumedTotalTokens = nonNegativeUsage(initialUsage.totalTokens, 'Persisted provider total tokens')
     assertAgentTokenUsage(this.#consumedInputTokens, this.#consumedOutputTokens, this.#consumedTotalTokens)
     this.#consumedCostMicros = nonNegativeUsage(initialUsage.costMicros, 'Persisted provider cost')
+    this.#authorize = authorize
+    if (initialExposure.tokens > 0 || initialExposure.costMicros > 0) {
+      this.#active.set(this.#nextId++, {
+        tokens: nonNegativeUsage(initialExposure.tokens, 'Recorded unknown dispatch exposure'),
+        costMicros: nonNegativeUsage(initialExposure.costMicros, 'Recorded unknown dispatch cost')
+      })
+    }
   }
   setMaximumTokens(maximumTokens: number): void {
     if (!Number.isSafeInteger(maximumTokens) || maximumTokens < 0)
@@ -295,6 +309,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
     const budget = this
     const reserve = async (requested: AgentQuotaRequest): Promise<AgentDispatchBudgetReservation> =>
       this.#exclusive(async () => {
+        await this.#authorize?.()
         if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is closed', 500)
         const remaining = this.#active.get(parent.id)
         if (!remaining) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is not active', 500)
@@ -311,8 +326,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
     const resizeUndispatched = async (maximum: AgentQuotaRequest): Promise<void> =>
       this.#exclusive(async () => {
         if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is closed', 500)
-        if (!this.#active.has(parent.id))
-          throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is not active', 500)
+        if (!this.#active.has(parent.id)) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is not active', 500)
         const tokens = nonNegativeUsage(maximum.tokens, 'Dispatch token exposure')
         const costMicros = nonNegativeUsage(maximum.costMicros, 'Dispatch cost exposure')
         let activeTokens = 0
@@ -390,6 +404,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
   }
   async reserve(maximum: AgentQuotaRequest): Promise<AgentDispatchBudgetReservation> {
     return this.#exclusive(async () => {
+      await this.#authorize?.()
       await this.#initialize()
       const tokens = nonNegativeUsage(maximum.tokens, 'Dispatch token exposure')
       const costMicros = nonNegativeUsage(maximum.costMicros, 'Dispatch cost exposure')
@@ -576,6 +591,8 @@ const persistedResearchEvidence = (data: Readonly<Record<string, unknown>>, task
 }
 
 export interface AgentResolvedAdmission {
+  readonly maxAttempts?: number
+  readonly ownerAuthVersion?: number
   readonly profileResolutionSha256: string
   readonly providerProfileVersionId: string
   readonly transportKind: string
@@ -598,6 +615,14 @@ export interface AgentAdmissionResolver {
     input: { readonly ownerId: number; readonly sessionId: string; readonly profileResolutionToken: string }
   ): Promise<AgentResolvedAdmission>
   resolveCurrent(transaction: Knex.Transaction, input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission>
+  listRoutingCandidates?(
+    transaction: Knex.Transaction,
+    input: { readonly ownerId: number; readonly sessionId: string }
+  ): Promise<readonly AgentRoutingCandidate[]>
+  resolveRoutingCandidate?(
+    transaction: Knex.Transaction,
+    input: { readonly ownerId: number; readonly sessionId: string; readonly profileId: string; readonly profileVersionId: string }
+  ): Promise<AgentResolvedAdmission>
 }
 export interface AgentEngineMessage {
   readonly canonicalSource?: AgentCompactionCanonicalSource
@@ -647,9 +672,10 @@ export interface AgentRecoveredAction {
 
 export interface AgentEngineRequest {
   readonly compaction?: AgentCompactionContext
-  readonly googleSearchEnabled: boolean
   readonly generationTools?: readonly AgentGenerationTool[]
   readonly authorizeMedia?: () => Promise<void>
+  readonly authorizeDispatch?: () => Promise<void>
+  readonly beforeExternalTool?: () => Promise<void>
   readonly mediaRequest?: { readonly kind: 'image' | 'transcription' | 'video' | 'music' }
   readonly run: AgentRunClaim
   readonly purpose?: 'root' | 'planner' | 'subagent'
@@ -676,7 +702,6 @@ export interface AgentEngineRequest {
 
 export interface AgentEngineSink {
   commitCompaction?(receipt: AgentCompactionReceipt): Promise<void>
-  googleSearchSuggestions?(suggestions: readonly string[]): Promise<void>
   media?(
     images: readonly {
       readonly payload: Buffer
@@ -721,6 +746,7 @@ export interface AgentEnginePreflight {
 }
 
 export interface AgentEngine {
+  routingRequirements?(ownerId: number, signal: AbortSignal): Promise<{ readonly externalMcp: boolean }>
   preflight(request: AgentEngineRequest): Promise<AgentEnginePreflight>
   execute(request: AgentEngineRequest, sink: AgentEngineSink): Promise<AgentEngineResult>
   resumeAction?(request: AgentEngineRequest, checkpoint: AgentApprovalContinuationCheckpoint, sink: AgentEngineSink): Promise<AgentEngineResult>
@@ -776,6 +802,7 @@ export interface MutateAgentGoalInput {
 }
 
 export interface AgentProductRuntimeOptions {
+  readonly router?: AgentTurnRouter
   readonly authorizeMedia?: (ownerId: number) => Promise<void>
   readonly workerId: string
   readonly globalConcurrency: number
@@ -984,13 +1011,7 @@ const validatedExecutionLimit = (value: unknown): NonNullable<AgentEngineResult[
   }
   const reason: unknown = reasonDescriptor.value
   const publication: unknown = publicationDescriptor.value
-  if (
-    reason !== 'turns' &&
-    reason !== 'tokens' &&
-    reason !== 'quota' &&
-    reason !== 'tools' &&
-    reason !== 'evidence'
-  ) {
+  if (reason !== 'turns' && reason !== 'tokens' && reason !== 'quota' && reason !== 'tools' && reason !== 'evidence') {
     throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid execution limit', 500)
   }
   if (publication !== 'partial' && publication !== 'inability') {
@@ -1034,7 +1055,7 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
     }
     const data = parsedObject(row.data, 'AGENT_PRIOR_ACTIVITY_CORRUPT')
     if (row.type === 'model.turn') {
-      if (!isAgentCompactionOutcome(data.outcome)) run.modelTurns += 1
+      if (data.purpose !== 'routing' && !isAgentCompactionOutcome(data.outcome)) run.modelTurns += 1
       continue
     }
     if (row.type === 'evidence.provenance') {
@@ -1207,6 +1228,13 @@ const safeUsageSum = (left: number, right: number, label: string): number => {
   if (!Number.isSafeInteger(sum) || sum < 0) throw new AgentRepositoryError('INVALID_AGENT_USAGE', `${label} exceeds the supported range`, 500)
   return sum
 }
+const routingClassifierUsage = (decision: RoutingTurnDecision): DecisionUsage | null => {
+  const measured = decision.classification ?? decision.classifierFailure
+  if (measured === undefined || measured === null || measured.usage === null) return null
+  const usage = DecisionUsageSchema.safeParse(measured.usage)
+  if (!usage.success) throw new AgentRepositoryError('INVALID_AGENT_USAGE', 'Routing classifier usage is invalid', 500)
+  return usage.data
+}
 interface GoalBudgetCheckpoint {
   readonly goalId: string
   readonly runId: string
@@ -1344,6 +1372,7 @@ export class AgentProductRuntime {
   readonly #goals: AgentGoalLimits
   readonly #logger: AgentProductRuntimeOptions['logger']
   readonly #authorizeMedia: AgentProductRuntimeOptions['authorizeMedia']
+  readonly #router: AgentTurnRouter | undefined
   constructor(knex: Knex, resolver: AgentAdmissionResolver, engine: AgentEngine, options: AgentProductRuntimeOptions) {
     this.#knex = knex
     this.#resolver = resolver
@@ -1354,6 +1383,507 @@ export class AgentProductRuntime {
     this.#goals = options.goals ?? DEFAULT_AGENT_GOAL_LIMITS
     this.#logger = options.logger
     this.#authorizeMedia = options.authorizeMedia
+    this.#router = options.router
+  }
+
+  async #routingRecord(
+    claim: Pick<AgentRunClaim, 'id' | 'ownerId' | 'sessionId'>,
+    database: Knex | Knex.Transaction = this.#knex
+  ): Promise<{
+    decision: RoutingTurnDecision
+    sessionVersion: number
+    incumbent: AgentResolvedAdmission
+    selected: AgentResolvedAdmission
+  } | null> {
+    const rows = await database('agentEvents').where({ runId: claim.id, type: 'model.turn' }).orderBy('sequence').select('data', 'dataSha256')
+    let record: { decision: RoutingTurnDecision; sessionVersion: number; incumbent: AgentResolvedAdmission; selected: AgentResolvedAdmission } | null = null
+    for (const row of rows) {
+      if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing event hash is invalid', 500)
+      const data = parsedObject(row.data, 'AGENT_EVENT_CORRUPT')
+      if (data.purpose !== 'routing') continue
+      if (record !== null) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Duplicate routing decision', 500)
+      const journalUsage = readAgentUsageEvent(data as AgentEventData)
+      const decision = data.routingDecision as RoutingTurnDecision | undefined
+      const incumbent = data.routingIncumbent as AgentResolvedAdmission | undefined
+      const selected = data.routingSelected as AgentResolvedAdmission | undefined
+      if (
+        !decision ||
+        decision.version !== 1 ||
+        decision.ownerId !== claim.ownerId ||
+        decision.sessionId !== claim.sessionId ||
+        decision.runId !== claim.id ||
+        typeof decision.profileId !== 'string' ||
+        typeof decision.profileVersionId !== 'string' ||
+        !Number.isSafeInteger(data.routingSessionVersion) ||
+        !incumbent ||
+        typeof incumbent.providerProfileVersionId !== 'string' ||
+        !selected ||
+        selected.providerProfileVersionId !== decision.profileVersionId
+      )
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing binding is invalid', 500)
+      let usage: DecisionUsage | null
+      try {
+        usage = routingClassifierUsage(decision)
+      } catch {
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing classifier usage is invalid', 500)
+      }
+      if (
+        data.usageVersion !== 2 ||
+        data.totalTokensSource !== (usage?.totalTokensSource ?? null) ||
+        journalUsage.inputTokens !== (usage?.inputTokens ?? 0) ||
+        journalUsage.outputTokens !== (usage?.outputTokens ?? 0) ||
+        journalUsage.totalTokens !== (usage?.totalTokens ?? 0)
+      )
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing classifier usage does not match its journal', 500)
+      record = { decision, sessionVersion: data.routingSessionVersion as number, incumbent, selected }
+    }
+    return record
+  }
+
+  #routingExposure(decision: RoutingTurnDecision | null): AgentDispatchExposure {
+    const usage = decision === null ? null : routingClassifierUsage(decision)
+    return usage || !decision?.unknownExposure
+      ? { tokens: 0, costMicros: 0 }
+      : {
+          tokens: nonNegativeUsage(decision.unknownExposure.tokens, 'Recorded classifier token exposure'),
+          costMicros: nonNegativeUsage(decision.unknownExposure.costMicros, 'Recorded classifier cost exposure')
+        }
+  }
+
+  async #authorizeClaim(claim: AgentRunClaim): Promise<void> {
+    const record = await this.#routingRecord(claim)
+    await this.#knex.transaction(async transaction => {
+      await acquireAgentCoordinatorAdvisoryLocks(transaction, [claim.ownerId])
+      await this.#lockAdmissionContext(transaction, claim.ownerId, claim.sessionId, record?.sessionVersion)
+      const run = await transaction('agentRuns')
+        .where({
+          id: claim.id,
+          ownerId: claim.ownerId,
+          sessionId: claim.sessionId,
+          leaseOwner: claim.leaseOwner,
+          leaseToken: claim.leaseToken,
+          providerProfileVersionId: claim.providerProfileVersionId
+        })
+        .whereIn('status', ['running', 'awaiting_approval'])
+        .whereNull('cancelRequestedAt')
+        .forUpdate()
+        .first('id', 'leaseExpiresAt', 'profilePolicyVersion', 'defaultGeneration')
+      if (!run || new Date(run.leaseExpiresAt).valueOf() <= Date.now())
+        throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before dispatch', 409)
+      if (claim.goalId !== null) {
+        const goal = await getOwnedAgentGoal(transaction, claim.ownerId, claim.goalId, true)
+        if (new Date(goal.deadlineAt).valueOf() <= Date.now()) throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal deadline was reached', 409)
+      }
+      const current =
+        record !== null && this.#resolver.resolveRoutingCandidate
+          ? await this.#resolver.resolveRoutingCandidate(transaction, {
+              ownerId: claim.ownerId,
+              sessionId: claim.sessionId,
+              profileId: record.decision.profileId,
+              profileVersionId: record.decision.profileVersionId
+            })
+          : await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+      if (record === null && this.#resolver.resolveRoutingCandidate) {
+        const version = await transaction('agentProviderProfileVersions').where({ id: current.providerProfileVersionId }).first('profileId')
+        if (!version) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider settings are unavailable', 409)
+        await this.#resolver.resolveRoutingCandidate(transaction, {
+          ownerId: claim.ownerId,
+          sessionId: claim.sessionId,
+          profileId: version.profileId,
+          profileVersionId: current.providerProfileVersionId
+        })
+      }
+      if (
+        current.providerProfileVersionId !== claim.providerProfileVersionId ||
+        current.model !== claim.model ||
+        current.capabilityRevision !== claim.capabilityRevision ||
+        current.pricingRevision !== claim.pricingRevision ||
+        current.promptVersion !== claim.promptVersion ||
+        current.executionMode !== claim.executionMode ||
+        current.profilePolicyVersion !== Number(run.profilePolicyVersion) ||
+        current.defaultGeneration !== Number(run.defaultGeneration) ||
+        (record !== null && current.ownerAuthVersion !== record.selected.ownerAuthVersion)
+      )
+        throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Provider settings changed before dispatch', 409)
+      if (record !== null) {
+        if (!this.#router) throw new AgentRepositoryError('ROUTING_UNAVAILABLE', 'Recorded routing authority is unavailable', 409)
+        await this.#router.validateDecision(record.decision, transaction)
+        const selectedSnapshot = await transaction('agentEvents').where({ runId: claim.id, type: 'usage.updated' }).select('data', 'dataSha256')
+        const retarget = selectedSnapshot
+          .map(row => {
+            if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing binding hash is invalid', 500)
+            return parsedObject(row.data, 'AGENT_EVENT_CORRUPT')
+          })
+          .find(data => data.purpose === 'routing.binding')
+        if (!retarget || current.profilePolicyVersion !== retarget.profilePolicyVersion || current.defaultGeneration !== retarget.defaultGeneration)
+          throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Routing profile authority changed before dispatch', 409)
+      }
+    })
+  }
+
+  async #routeClaim(
+    claim: AgentRunClaim,
+    input: {
+      readonly sessionVersion: number
+      readonly messageRows: readonly RuntimeMessageRow[]
+      readonly media: readonly AgentMediaMetadata[]
+      readonly generationTools: readonly AgentGenerationTool[] | undefined
+      readonly checkpointCandidates: readonly AgentCompactionCheckpoint[]
+      readonly canonicalSources: readonly AgentCompactionCanonicalSource[]
+      readonly memory: AgentMemorySnapshot
+      readonly skills: readonly RuntimeSkillRow[]
+      readonly maxTokens?: number
+      readonly currentPage?: AgentCurrentPageHint
+      readonly knowledgeContext?: AgentKnowledgeContext
+      readonly priorActivity: readonly AgentPriorRunActivity[]
+      readonly signal: AbortSignal
+      readonly budget: AgentRunDispatchBudget
+    }
+  ): Promise<AgentRunClaim> {
+    const router = this.#router
+    const list = this.#resolver.listRoutingCandidates
+    const resolve = this.#resolver.resolveRoutingCandidate
+    if (!router || !list || !resolve) return claim
+    let record = await this.#routingRecord(claim)
+    if (record === null) {
+      if (claim.attempts !== 1 || claim.status !== 'running' || claim.sideEffectsStarted) return claim
+      const paid = await this.#knex('agentEvents').where({ runId: claim.id }).whereIn('type', ['model.turn', 'task.planCreated', 'tool.started']).first('id')
+      if (paid !== undefined) return claim
+      const snapshot = await this.#knex.transaction(async transaction => {
+        await acquireAgentCoordinatorAdvisoryLocks(transaction, [claim.ownerId])
+        await this.#lockAdmissionContext(transaction, claim.ownerId, claim.sessionId, input.sessionVersion)
+        const session = await transaction('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).first('providerProfileId')
+        if (session.providerProfileId !== null) return null
+        const incumbent = await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+        if (incumbent.providerProfileVersionId !== claim.providerProfileVersionId)
+          throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Default profile changed before routing', 409)
+        const candidates = await list.call(this.#resolver, transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+        const liveIncumbent = candidates.find(candidate => candidate.profileVersionId === incumbent.providerProfileVersionId)
+        return {
+          incumbent: {
+            ...incumbent,
+            ...(liveIncumbent?.admission.ownerAuthVersion === undefined ? {} : { ownerAuthVersion: liveIncumbent.admission.ownerAuthVersion })
+          },
+          candidates
+        }
+      })
+      if (snapshot === null) return claim
+      const current = snapshot.candidates.find(candidate => candidate.profileVersionId === claim.providerProfileVersionId)
+      if (!current) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Current provider is no longer eligible', 409)
+      const external =
+        claim.executionMode === 'agent' && !claim.mediaRequest ? await this.#engine.routingRequirements?.(claim.ownerId, input.signal) : undefined
+      const currentMessage = [...input.messageRows].reverse().find(message => message.role === 'user')?.content ?? ''
+      const overhead = canonicalJson({ memory: input.memory, skills: input.skills }).length
+      const fullHistoryInputTokens = safeUsageSum(
+        input.messageRows.reduce((sum, message) => safeUsageSum(sum, Buffer.byteLength(message.content), 'Routing context estimate'), 0),
+        overhead,
+        'Routing context estimate'
+      )
+      const canonicalPrefixes = agentCompactionSourcePrefixes(input.canonicalSources)
+      const usableCheckpoint = input.checkpointCandidates.find(
+        checkpoint =>
+          agentCompactionBindingMatches(checkpoint.metadata, {
+            ownerId: claim.ownerId,
+            sessionId: claim.sessionId,
+            providerProfileVersionId: claim.providerProfileVersionId,
+            transportKind: claim.transportKind,
+            model: claim.model,
+            capabilityRevision: claim.capabilityRevision
+          }) &&
+          (checkpoint.metadata.groundedExpiresAt === null || Date.parse(checkpoint.metadata.groundedExpiresAt) > Date.now()) &&
+          input.canonicalSources.some(
+            (source, index) =>
+              source.id === checkpoint.metadata.throughMessageId &&
+              source.ordinal === checkpoint.metadata.throughOrdinal &&
+              canonicalPrefixes[index] === checkpoint.metadata.sourceSha256
+          )
+      )
+      const compactedCharacters =
+        usableCheckpoint === undefined
+          ? fullHistoryInputTokens
+          : safeUsageSum(
+              overhead + Buffer.byteLength(usableCheckpoint.content),
+              input.messageRows
+                .filter(message => message.ordinal > usableCheckpoint.metadata.throughOrdinal)
+                .reduce((sum, message) => safeUsageSum(sum, Buffer.byteLength(message.content), 'Routing compacted estimate'), 0),
+              'Routing compacted estimate'
+            )
+      const mediaRequest = claim.mediaRequest ? (JSON.parse(claim.mediaRequest) as { kind: string }) : null
+      const requiredModalities = new Set<RoutingRequirements['modalities'][number]>(['text'])
+      if (mediaRequest?.kind !== 'transcription') {
+        for (const media of input.media) {
+          if (
+            media.detachedAt !== null ||
+            media.kind === 'generated-video' ||
+            media.kind === 'generated-audio' ||
+            (!current.media.attachments && media.messageId !== claim.userMessageId)
+          )
+            continue
+          requiredModalities.add(
+            media.mimeType.startsWith('image/')
+              ? 'image'
+              : media.mimeType.startsWith('audio/')
+                ? 'audio'
+                : media.mimeType.startsWith('video/')
+                  ? 'video'
+                  : 'file'
+          )
+        }
+      }
+      let candidates = snapshot.candidates.filter(
+        candidate =>
+          (input.generationTools ?? []).every(tool => tool === 'image' && candidate.media.imageGeneration) &&
+          (mediaRequest === null ||
+            (mediaRequest.kind === 'image' && candidate.media.imageGeneration) ||
+            (mediaRequest.kind === 'transcription' && candidate.media.transcription))
+      )
+      const expectedOutputTokens = Math.min(current.capabilities.maxOutputTokens, current.admission.quota.tokens, input.maxTokens ?? Number.MAX_SAFE_INTEGER)
+      let currentInputTokens = compactedCharacters
+      const declared = await router.policies.getRuntime()
+      if (declared.policy.enabled && mediaRequest === null) {
+        const checked: AgentRoutingCandidate[] = []
+        for (const candidate of candidates) {
+          const incumbent = candidate.profileVersionId === current.profileVersionId
+          if (!incumbent && !declared.models.some(model => model.profileId === candidate.profileId && model.profileVersionId === candidate.profileVersionId))
+            continue
+          if (external?.externalMcp && (candidate.capabilities.toolCalling !== 'native' || candidate.capabilities.structuredOutput !== 'native-json-schema'))
+            continue
+          const previewMessages: AgentEngineMessage[] = input.messageRows.map((message, index) => ({
+            role: message.role,
+            content: message.content,
+            canonicalSource: input.canonicalSources[index]!,
+            ...(candidate.media.attachments
+              ? {
+                  attachments: input.media
+                    .filter(
+                      media =>
+                        media.messageId === message.id && media.detachedAt === null && media.kind !== 'generated-video' && media.kind !== 'generated-audio'
+                    )
+                    .map(media => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, media))
+                }
+              : {})
+          }))
+          try {
+            const proof = await this.#engine.preflight({
+              run: { ...claim, ...candidate.admission },
+              purpose: 'root',
+              messages: previewMessages,
+              memory: input.memory,
+              skills: input.skills,
+              priorActivity: input.priorActivity,
+              ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
+              ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
+              ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
+              ...(incumbent && usableCheckpoint !== undefined
+                ? {
+                    compaction: {
+                      checkpoint: usableCheckpoint,
+                      sourcePrefixSha256: canonicalPrefixes,
+                      groundedExpiresAt: usableCheckpoint.metadata.groundedExpiresAt
+                    }
+                  }
+                : {}),
+              limits: {
+                maxTurns: 12,
+                maxToolCalls: 32,
+                maxOutputTokens: expectedOutputTokens,
+                ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens })
+              },
+              signal: input.signal
+            })
+            if (!proof.admissible) {
+              if (incumbent) return claim
+              continue
+            }
+            const estimate = nonNegativeUsage(proof.inputExposureTokens, 'Native routing input estimate')
+            if (incumbent) {
+              const previewTime = Date.now()
+              const continuationBytes = input.messageRows.reduce((total, message, index) => {
+                const source = input.canonicalSources[index]!
+                const compatible =
+                  (usableCheckpoint === undefined || message.ordinal > usableCheckpoint.metadata.throughOrdinal) &&
+                  message.originOwnerId === claim.ownerId &&
+                  message.originSessionId === claim.sessionId &&
+                  message.originProviderProfileVersionId === claim.providerProfileVersionId &&
+                  message.originTransportKind === claim.transportKind &&
+                  message.originModel === claim.model &&
+                  message.originCapabilityRevision === claim.capabilityRevision &&
+                  (source.groundedExpiresAt === null || Date.parse(source.groundedExpiresAt) > previewTime)
+                return compatible ? safeUsageSum(total, message.providerStateCiphertext?.byteLength ?? 0, 'Routing continuation byte proxy') : total
+              }, 0)
+              currentInputTokens = safeUsageSum(estimate, continuationBytes, 'Routing incumbent input estimate')
+            }
+            checked.push({ ...candidate, canonicalReplayInputTokens: estimate })
+          } catch (error) {
+            input.signal.throwIfAborted()
+            if (incumbent) throw error
+          }
+        }
+        candidates = checked
+      } else if (!declared.policy.enabled) {
+        // A concurrent enable must not dispatch a classifier against un-preflighted alternatives.
+        candidates = [current]
+      }
+      const decision = await router.routeTurn(
+        {
+          ownerId: claim.ownerId,
+          sessionId: claim.sessionId,
+          runId: claim.id,
+          pinned: false,
+          current,
+          candidates,
+          requirements: {
+            modalities: [...requiredModalities],
+            nativeTools: external?.externalMcp ?? false,
+            nativeExternalMcp: external?.externalMcp ?? false,
+            nativeSchema: external?.externalMcp ?? false,
+            minimumOutputTokens: 1,
+            ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
+            transcription: mediaRequest?.kind === 'transcription'
+          },
+          currentInputTokens,
+          fullHistoryInputTokens,
+          expectedOutputTokens,
+          classifierState: { currentMessage, ...(usableCheckpoint === undefined ? {} : { recentSummary: usableCheckpoint.content }) },
+          signal: input.signal
+        },
+        {
+          budget: input.budget,
+          checkpoint: async decision => {
+            const measured = decision.classification ?? decision.classifierFailure
+            const usage = routingClassifierUsage(decision)
+            const inputTokens = usage?.inputTokens ?? 0
+            const outputTokens = usage?.outputTokens ?? 0
+            const totalTokens = usage?.totalTokens ?? 0
+            const costMicros = nonNegativeUsage(
+              usage ? (measured?.estimatedCostMicros ?? decision.unknownExposure?.costMicros ?? 0) : 0,
+              'Routing classifier cost'
+            )
+            await this.#appendPresentationEvent(claim, 'model.turn', {
+              purpose: 'routing',
+              usageVersion: 2,
+              inputTokens,
+              outputTokens,
+              totalTokens,
+              costMicros,
+              totalTokensSource: usage?.totalTokensSource ?? null,
+              usageSource: usage === null ? 'unmeasured-exposure' : 'reported',
+              costSource: 'configured-estimate',
+              content: '',
+              contentTruncated: false,
+              actionCallIds: [],
+              routingDecision: decision,
+              routingSessionVersion: input.sessionVersion,
+              routingIncumbent: snapshot.incumbent,
+              routingSelected: snapshot.candidates.find(candidate => candidate.profileVersionId === decision.profileVersionId)?.admission
+            } as unknown as AgentEventData)
+          }
+        }
+      )
+      const selected = snapshot.candidates.find(candidate => candidate.profileVersionId === decision.profileVersionId)
+      if (!selected) throw new AgentRepositoryError('ROUTING_CHECKPOINT_INVALID', 'Selected routing candidate is absent', 500)
+      record = { decision, sessionVersion: input.sessionVersion, incumbent: snapshot.incumbent, selected: selected.admission }
+    }
+    const recorded = record
+    if (recorded === null) throw new AgentRepositoryError('ROUTING_CHECKPOINT_INVALID', 'Routing decision was not recorded', 500)
+    if (recorded.decision.reason === 'classifier-budget-exceeded')
+      throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Recorded classifier usage exceeded its dispatch budget', 409)
+    const bindingRows = await this.#knex('agentEvents').where({ runId: claim.id, type: 'usage.updated' }).select('data')
+    if (bindingRows.some(row => parsedObject(row.data, 'AGENT_EVENT_CORRUPT').purpose === 'routing.binding')) return claim
+    return this.#knex.transaction(async transaction => {
+      await acquireAgentCoordinatorAdvisoryLocks(transaction, [claim.ownerId])
+      await this.#lockAdmissionContext(transaction, claim.ownerId, claim.sessionId, recorded.sessionVersion)
+      const run = await transaction('agentRuns')
+        .where({
+          id: claim.id,
+          ownerId: claim.ownerId,
+          sessionId: claim.sessionId,
+          status: 'running',
+          leaseOwner: claim.leaseOwner,
+          leaseToken: claim.leaseToken,
+          sideEffectsStarted: false
+        })
+        .whereNull('cancelRequestedAt')
+        .forUpdate()
+        .first('id', 'runtimeStateCiphertext', 'leaseExpiresAt')
+      if (!run || run.runtimeStateCiphertext !== null || new Date(run.leaseExpiresAt).valueOf() <= Date.now())
+        throw new AgentRepositoryError('RUN_LEASE_LOST', 'Run cannot be retargeted after continuation or lease loss', 409)
+      const paidEvents = await transaction('agentEvents')
+        .where({ runId: claim.id })
+        .whereIn('type', ['model.turn', 'task.planCreated', 'tool.started'])
+        .select('type', 'data')
+      if (paidEvents.some(event => event.type !== 'model.turn' || parsedObject(event.data, 'AGENT_EVENT_CORRUPT').purpose !== 'routing'))
+        throw new AgentRepositoryError('ROUTING_RUN_STARTED', 'Run has already started paid root or task operations', 409)
+      await router.validateDecision(recorded.decision, transaction)
+      const incumbent = await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+      if (
+        incumbent.providerProfileVersionId !== recorded.incumbent.providerProfileVersionId ||
+        incumbent.defaultGeneration !== recorded.incumbent.defaultGeneration ||
+        incumbent.profilePolicyVersion !== recorded.incumbent.profilePolicyVersion
+      )
+        throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Current profile authority changed during routing', 409)
+      const selected = await resolve.call(this.#resolver, transaction, {
+        ownerId: claim.ownerId,
+        sessionId: claim.sessionId,
+        profileId: recorded.decision.profileId,
+        profileVersionId: recorded.decision.profileVersionId
+      })
+      if (selected.profilePolicyVersion !== recorded.selected.profilePolicyVersion || selected.ownerAuthVersion !== recorded.selected.ownerAuthVersion)
+        throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Selected routing authority changed during classification', 409)
+      const reservation = await transaction('agentQuotaReservations')
+        .where({ runId: claim.id, ownerId: claim.ownerId, status: 'reserved' })
+        .forUpdate()
+        .first('day', 'expiresAt')
+      if (!reservation) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Routing quota reservation is missing', 500)
+      const daily = await transaction('agentQuotaDaily').where({ ownerId: claim.ownerId, day: reservation.day }).forUpdate().first()
+      if (
+        !daily ||
+        Number(daily.consumedTokens) + Number(daily.reservedTokens) > selected.quotaLimits.dailyTokens ||
+        Number(daily.consumedCostMicros) + Number(daily.reservedCostMicros) > selected.quotaLimits.dailyCostMicros
+      )
+        throw new AgentRepositoryError('AGENT_QUOTA_EXCEEDED', 'Selected profile daily quota is exhausted', 429)
+      await ensureAgentRunQuota(
+        transaction,
+        claim.id,
+        claim.ownerId,
+        {
+          tokens: safeUsageSum(selected.quota.tokens, input.budget.consumed.totalTokens + input.budget.unsettledExposure.tokens, 'Routed quota tokens'),
+          costMicros: safeUsageSum(selected.quota.costMicros, input.budget.consumed.costMicros + input.budget.unsettledExposure.costMicros, 'Routed quota cost')
+        },
+        selected.quotaLimits,
+        new Date(reservation.expiresAt)
+      )
+      const expiresAt = new Date(Math.min(new Date(reservation.expiresAt).valueOf(), Date.now() + selected.reservationMilliseconds))
+      await transaction('agentQuotaReservations').where({ runId: claim.id, ownerId: claim.ownerId, status: 'reserved' }).update({ expiresAt })
+      const patch = {
+        providerProfileVersionId: selected.providerProfileVersionId,
+        transportKind: selected.transportKind,
+        model: selected.model,
+        executionMode: selected.executionMode,
+        capabilityRevision: selected.capabilityRevision,
+        pricingRevision: selected.pricingRevision,
+        promptVersion: selected.promptVersion,
+        profilePolicyVersion: selected.profilePolicyVersion,
+        defaultGeneration: selected.defaultGeneration,
+        profileResolutionSha256: selected.profileResolutionSha256,
+        runtimeStateCiphertext: null,
+        maxAttempts: selected.maxAttempts ?? claim.maxAttempts
+      }
+      const changed = await transaction('agentRuns').where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).update(patch)
+      if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Run lease changed during routing', 409)
+      await this.#appendPresentationEventInTransaction(transaction, claim, 'usage.updated', {
+        purpose: 'routing.binding',
+        usageVersion: 2,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costMicros: 0,
+        profilePolicyVersion: selected.profilePolicyVersion,
+        defaultGeneration: selected.defaultGeneration,
+        providerProfileVersionId: selected.providerProfileVersionId
+      } as unknown as AgentEventData)
+      return { ...claim, ...patch }
+    })
   }
 
   #logTerminalFailure(
@@ -1785,7 +2315,8 @@ export class AgentProductRuntime {
         {
           run: claim,
           purpose: 'planner',
-          googleSearchEnabled: false,
+          authorizeDispatch: () => this.#authorizeClaim(claim),
+          beforeExternalTool: () => markAgentRunSideEffectsStarted(this.#knex, claim),
           ...(currentPage === undefined ? {} : { currentPage }),
           ...(knowledgeContext === undefined ? {} : { knowledgeContext }),
           actionAllowlist: [],
@@ -1972,7 +2503,7 @@ export class AgentProductRuntime {
         continue
       }
       if (typeof Reflect.get(data, 'taskId') !== 'string' || typeof Reflect.get(data, 'subagentRunId') !== 'string') {
-        if (!isAgentCompactionOutcome(Reflect.get(data, 'outcome'))) modelTurns += 1
+        if (Reflect.get(data, 'purpose') !== 'routing' && !isAgentCompactionOutcome(Reflect.get(data, 'outcome'))) modelTurns += 1
         modelUsage.inputTokens = safeUsageSum(modelUsage.inputTokens, eventUsage.inputTokens, 'Model input tokens')
         modelUsage.outputTokens = safeUsageSum(modelUsage.outputTokens, eventUsage.outputTokens, 'Model output tokens')
         modelUsage.totalTokens = safeUsageSum(modelUsage.totalTokens, eventUsage.totalTokens, 'Model total tokens')
@@ -2072,8 +2603,9 @@ export class AgentProductRuntime {
     readonly dispatchBudget?: AgentDispatchBudget
   }): AgentEngineRequest {
     return {
-      googleSearchEnabled: false,
       run: input.claim,
+      authorizeDispatch: () => this.#authorizeClaim(input.claim),
+      beforeExternalTool: () => markAgentRunSideEffectsStarted(this.#knex, input.claim),
       purpose: 'subagent',
       task: input.task,
       ...(input.subagentRunId === undefined ? {} : { subagentRunId: input.subagentRunId }),
@@ -2357,9 +2889,12 @@ export class AgentProductRuntime {
     let dispatchBudget: AgentRunDispatchBudget | undefined
     let goalBudgetClassification: AgentGoalBudgetClassificationResult | null = null
     let classifierUsageForSettlement: AgentUsageTotals = zeroUsage()
+    let routingExposureForSettlement: AgentDispatchExposure = { tokens: 0, costMicros: 0 }
     let goalDeadlineAt: number | null = null
     let goalDeadlineTimer: NodeJS.Timeout | undefined
     try {
+      const previousRouting = await this.#routingRecord(claim)
+      routingExposureForSettlement = this.#routingExposure(previousRouting?.decision ?? null)
       let goal = claim.goalId === null ? null : await getOwnedAgentGoal(this.#knex, claim.ownerId, claim.goalId)
       if (goal !== null) {
         const { checkpoints } = await this.#goalBudgetCheckpoints(this.#knex, goal)
@@ -2497,6 +3032,115 @@ export class AgentProductRuntime {
         )
       )
       const sourcePrefixSha256 = agentCompactionSourcePrefixes(canonicalSources)
+      const continuation = await readAgentApprovalContinuation(this.#knex, claim)
+      let orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
+      const persistedProviderUsage = {
+        inputTokens: safeUsageSum(
+          safeUsageSum(orchestrationTelemetry.usage.inputTokens, orchestrationTelemetry.modelUsage.inputTokens, 'Persisted provider input tokens'),
+          classifierUsageForSettlement.inputTokens,
+          'Persisted provider input tokens'
+        ),
+        outputTokens: safeUsageSum(
+          safeUsageSum(orchestrationTelemetry.usage.outputTokens, orchestrationTelemetry.modelUsage.outputTokens, 'Persisted provider output tokens'),
+          classifierUsageForSettlement.outputTokens,
+          'Persisted provider output tokens'
+        ),
+        totalTokens: safeUsageSum(
+          safeUsageSum(orchestrationTelemetry.usage.totalTokens, orchestrationTelemetry.modelUsage.totalTokens, 'Persisted provider total tokens'),
+          classifierUsageForSettlement.totalTokens,
+          'Persisted provider total tokens'
+        ),
+        costMicros: safeUsageSum(
+          safeUsageSum(orchestrationTelemetry.usage.costMicros, orchestrationTelemetry.modelUsage.costMicros, 'Persisted provider cost'),
+          classifierUsageForSettlement.costMicros,
+          'Persisted provider cost'
+        )
+      }
+      const startingGoalUsage = goal === null ? null : await this.#goalUsage(this.#knex, goal.id, claim.id)
+      let startingGoalTokens = goal === null ? undefined : goal.maxTokens - (startingGoalUsage?.tokens ?? 0)
+      const startingGoalToolCalls = goal === null ? undefined : goal.maxToolCalls - (startingGoalUsage?.toolCalls ?? 0)
+      if (startingGoalToolCalls !== undefined && startingGoalToolCalls <= 0)
+        throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal action budget was exhausted', 409)
+      dispatchBudget = new AgentRunDispatchBudget(
+        this.#knex,
+        claim,
+        startingGoalTokens,
+        startingGoalToolCalls,
+        persistedProviderUsage,
+        this.#resolver.resolveRoutingCandidate ? () => this.#authorizeClaim(claim) : undefined,
+        routingExposureForSettlement
+      )
+      if (goal !== null && goal.budgetSelection === 'pending') {
+        const selected = await this.#classifyGoalBudget(goal, claim, executionSignal, dispatchBudget)
+        goal = selected.goal
+        goalBudgetClassification = selected.classification
+        classifierUsageForSettlement = {
+          inputTokens: selected.classification.inputTokens,
+          outputTokens: selected.classification.outputTokens,
+          totalTokens: selected.classification.totalTokens,
+          costMicros: selected.classification.costMicros
+        }
+        startingGoalTokens = goal.maxTokens - (startingGoalUsage?.tokens ?? 0)
+        dispatchBudget.setMaximumTokens(Math.max(0, startingGoalTokens))
+        startingGoalTokens = Math.max(0, startingGoalTokens - dispatchBudget.consumed.totalTokens)
+      }
+      if (startingGoalTokens !== undefined && startingGoalTokens < 1)
+        throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
+      if (claim.status === 'awaiting_approval' && continuation === null) {
+        throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISSING', 'Awaiting approval run has no durable action continuation', 500)
+      }
+      if (continuation === null) {
+        claim = await this.#routeClaim(claim, {
+          sessionVersion: Number(sessionRow.version),
+          messageRows,
+          media: mediaIndex,
+          generationTools,
+          checkpointCandidates,
+          canonicalSources,
+          memory,
+          skills,
+          ...(currentPage === undefined ? {} : { currentPage }),
+          ...(knowledgeContext === undefined ? {} : { knowledgeContext }),
+          priorActivity,
+          ...(startingGoalTokens === undefined ? {} : { maxTokens: startingGoalTokens }),
+          signal: executionSignal,
+          budget: dispatchBudget
+        })
+        orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
+        const settledUsage = {
+          inputTokens: safeUsageSum(
+            orchestrationTelemetry.usage.inputTokens + orchestrationTelemetry.modelUsage.inputTokens,
+            classifierUsageForSettlement.inputTokens,
+            'Routed provider input tokens'
+          ),
+          outputTokens: safeUsageSum(
+            orchestrationTelemetry.usage.outputTokens + orchestrationTelemetry.modelUsage.outputTokens,
+            classifierUsageForSettlement.outputTokens,
+            'Routed provider output tokens'
+          ),
+          totalTokens: safeUsageSum(
+            orchestrationTelemetry.usage.totalTokens + orchestrationTelemetry.modelUsage.totalTokens,
+            classifierUsageForSettlement.totalTokens,
+            'Routed provider total tokens'
+          ),
+          costMicros: safeUsageSum(
+            orchestrationTelemetry.usage.costMicros + orchestrationTelemetry.modelUsage.costMicros,
+            classifierUsageForSettlement.costMicros,
+            'Routed provider cost'
+          )
+        }
+        const routedRecord = await this.#routingRecord(claim)
+        routingExposureForSettlement = this.#routingExposure(routedRecord?.decision ?? null)
+        dispatchBudget = new AgentRunDispatchBudget(
+          this.#knex,
+          claim,
+          goal === null ? undefined : goal.maxTokens - (startingGoalUsage?.tokens ?? 0),
+          startingGoalToolCalls,
+          settledUsage,
+          this.#resolver.resolveRoutingCandidate ? () => this.#authorizeClaim(claim) : undefined,
+          routingExposureForSettlement
+        )
+      }
       const binding = {
         ownerId: claim.ownerId,
         sessionId: claim.sessionId,
@@ -2607,59 +3251,8 @@ export class AgentProductRuntime {
           ...(attachments.length ? { attachments } : {})
         }
       })
-      const continuation = await readAgentApprovalContinuation(this.#knex, claim)
-      let orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
-      const persistedProviderUsage = {
-        inputTokens: safeUsageSum(
-          safeUsageSum(orchestrationTelemetry.usage.inputTokens, orchestrationTelemetry.modelUsage.inputTokens, 'Persisted provider input tokens'),
-          classifierUsageForSettlement.inputTokens,
-          'Persisted provider input tokens'
-        ),
-        outputTokens: safeUsageSum(
-          safeUsageSum(orchestrationTelemetry.usage.outputTokens, orchestrationTelemetry.modelUsage.outputTokens, 'Persisted provider output tokens'),
-          classifierUsageForSettlement.outputTokens,
-          'Persisted provider output tokens'
-        ),
-        totalTokens: safeUsageSum(
-          safeUsageSum(orchestrationTelemetry.usage.totalTokens, orchestrationTelemetry.modelUsage.totalTokens, 'Persisted provider total tokens'),
-          classifierUsageForSettlement.totalTokens,
-          'Persisted provider total tokens'
-        ),
-        costMicros: safeUsageSum(
-          safeUsageSum(orchestrationTelemetry.usage.costMicros, orchestrationTelemetry.modelUsage.costMicros, 'Persisted provider cost'),
-          classifierUsageForSettlement.costMicros,
-          'Persisted provider cost'
-        )
-      }
-      const startingGoalUsage = goal === null ? null : await this.#goalUsage(this.#knex, goal.id, claim.id)
-      let startingGoalTokens = goal === null ? undefined : goal.maxTokens - (startingGoalUsage?.tokens ?? 0)
-      const startingGoalToolCalls = goal === null ? undefined : goal.maxToolCalls - (startingGoalUsage?.toolCalls ?? 0)
-      if (startingGoalToolCalls !== undefined && startingGoalToolCalls <= 0)
-        throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal action budget was exhausted', 409)
-      dispatchBudget = new AgentRunDispatchBudget(this.#knex, claim, startingGoalTokens, startingGoalToolCalls, persistedProviderUsage)
-      if (goal !== null && goal.budgetSelection === 'pending') {
-        const selected = await this.#classifyGoalBudget(goal, claim, executionSignal, dispatchBudget)
-        goal = selected.goal
-        goalBudgetClassification = selected.classification
-        classifierUsageForSettlement = {
-          inputTokens: selected.classification.inputTokens,
-          outputTokens: selected.classification.outputTokens,
-          totalTokens: selected.classification.totalTokens,
-          costMicros: selected.classification.costMicros
-        }
-        startingGoalTokens = goal.maxTokens - (startingGoalUsage?.tokens ?? 0)
-        dispatchBudget.setMaximumTokens(Math.max(0, startingGoalTokens))
-        startingGoalTokens = Math.max(0, startingGoalTokens - dispatchBudget.consumed.totalTokens)
-      }
-      if (startingGoalTokens !== undefined && startingGoalTokens < 1)
-        throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
-      if (claim.status === 'awaiting_approval' && continuation === null) {
-        throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISSING', 'Awaiting approval run has no durable action continuation', 500)
-      }
       const groundingRetention =
-        mediaRequest === undefined && (claim.googleSearchEnabled || messageRows.some(message => message.googleSearchGrounding !== null))
-          ? canonicalJson({ citations: [] })
-          : null
+        mediaRequest === undefined && messageRows.some(message => message.googleSearchGrounding !== null) ? canonicalJson({ citations: [] }) : null
       if (continuation === null) {
         await this.#appendPresentationEvent(claim, 'run.attemptStarted', { runId: claim.id, attempt: claim.attempts })
         if (claim.attempts > 1)
@@ -2730,7 +3323,11 @@ export class AgentProductRuntime {
         'Current run event tokens'
       )
       const remainingGoalTokens =
-        goal === null ? null : goal.maxTokens - (goalUsage?.tokens ?? 0) - Math.max(currentRunEventTokens, dispatchBudget?.consumed.totalTokens ?? 0)
+        goal === null
+          ? null
+          : goal.maxTokens -
+            (goalUsage?.tokens ?? 0) -
+            Math.max(currentRunEventTokens, dispatchBudget.consumed.totalTokens + dispatchBudget.unsettledExposure.tokens)
       const remainingGoalToolCalls = goal === null ? null : goal.maxToolCalls - (goalUsage?.toolCalls ?? 0)
       if (remainingGoalToolCalls !== null && remainingGoalToolCalls <= 0)
         throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal action budget was exhausted', 409)
@@ -2740,21 +3337,9 @@ export class AgentProductRuntime {
         executionSignal.throwIfAborted()
         if (!this.#authorizeMedia) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media authorization is unavailable.', 403)
         await this.#authorizeMedia(claim.ownerId)
-        await this.#knex.transaction(async transaction => {
-          const current = await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
-          if (current.providerProfileVersionId !== claim.providerProfileVersionId || current.executionMode !== claim.executionMode)
-            throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Provider settings changed. Send the request again.', 409)
-          const active = await transaction('agentRuns')
-            .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
-            .whereIn('status', ['running', 'awaiting_approval'])
-            .whereNull('cancelRequestedAt')
-            .first('id')
-          if (!active) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost.', 409)
-        })
+        await this.#authorizeClaim(claim)
         executionSignal.throwIfAborted()
       }
-      const googleSearchEnabled = mediaRequest === undefined && claim.googleSearchEnabled
-      let googleSearchSuggestions: readonly string[] | undefined
       const engineRequest: AgentEngineRequest = {
         compaction: compactionContext,
         ...(generationTools === undefined ? {} : { generationTools }),
@@ -2762,7 +3347,8 @@ export class AgentProductRuntime {
         ...(mediaRequest ? { mediaRequest } : {}),
         run: claim,
         purpose: 'root',
-        googleSearchEnabled,
+        authorizeDispatch: () => this.#authorizeClaim(claim),
+        beforeExternalTool: () => markAgentRunSideEffectsStarted(this.#knex, claim),
         messages,
         memory,
         skills,
@@ -2955,19 +3541,6 @@ export class AgentProductRuntime {
             modelTurnPersistenceMs += performance.now() - persistenceStartedAt
             if (data.outcome === 'answer_accepted') acceptedTurnCommittedAt = performance.now()
           }
-        },
-        googleSearchSuggestions: async suggestions => {
-          if (executionSignal.aborted) throw executionSignal.reason
-          assertGroundedContextFresh()
-          if (!googleSearchEnabled)
-            throw new AgentRepositoryError(
-              'INVALID_ENGINE_RESULT',
-              'Inference engine emitted Google Search suggestions when search was disabled for this dispatch',
-              500
-            )
-          if (googleSearchSuggestions !== undefined)
-            throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted Google Search suggestions more than once', 500)
-          googleSearchSuggestions = [...suggestions]
         }
       }
       if (mediaRequest || attachedRows.length) await authorizeMedia()
@@ -3042,7 +3615,7 @@ export class AgentProductRuntime {
       if (
         result.providerState !== undefined &&
         claim.transportKind === 'gemini-api' &&
-        decodeAgentProviderContinuation(result.providerState, 'gemini-interactions-v1') === undefined
+        decodeAgentProviderContinuation(result.providerState, 'gemini-generate-content-v1') === undefined
       )
         throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine returned invalid Gemini continuation state', 500)
       const providerStateJson =
@@ -3055,6 +3628,9 @@ export class AgentProductRuntime {
         outputTokens: measuredOutputTokens,
         totalTokens: measuredTotalTokens,
         costMicros: measuredCostMicros,
+        ...(unsettledExposure.tokens === 0 && unsettledExposure.costMicros === 0
+          ? {}
+          : { unsettledExposure: { tokens: unsettledExposure.tokens, costMicros: unsettledExposure.costMicros } }),
         model: modelUsage,
         orchestration: { ...orchestrationUsage, taskCount: tasks.length },
         utility: {
@@ -3131,13 +3707,6 @@ export class AgentProductRuntime {
         issueCodes: completion.issues.map(issue => issue.code)
       })
       assertGroundedContextFresh()
-      if (googleSearchSuggestions !== undefined)
-        await publishAgentGoogleSearchSuggestions(this.#knex, {
-          ownerId: claim.ownerId,
-          sessionId: claim.sessionId,
-          runId: claim.id,
-          suggestions: googleSearchSuggestions
-        })
       const partial = completion.outcome !== 'complete'
       await persistAgentRunQuotaSettlementIntent(this.#knex, {
         runId: claim.id,
@@ -3291,7 +3860,7 @@ export class AgentProductRuntime {
                   }
                 })()
           assertAgentTokenUsage(settledUsage.inputTokens, settledUsage.outputTokens, settledUsage.totalTokens)
-          const unsettledExposure = dispatchBudget?.unsettledExposure ?? { tokens: 0, costMicros: 0 }
+          const unsettledExposure = dispatchBudget?.unsettledExposure ?? routingExposureForSettlement
           const consumedTokens = safeUsageSum(settledUsage.totalTokens, unsettledExposure.tokens, 'Total provider tokens')
           const consumedCostMicros = safeUsageSum(settledUsage.costMicros, unsettledExposure.costMicros, 'Total provider cost')
           const unsettledEventData: { unsettledExposure?: { tokens: number; costMicros: number } } =
@@ -3595,9 +4164,10 @@ export class AgentProductRuntime {
         })
         return { goal: limitedGoal, run: null, replayed: false }
       }
-      const firstRun = (await transaction('agentRuns')
+      let firstRun = (await transaction('agentRuns')
         .where({ goalId: locked.id, goalContinuation: 0, ownerId: locked.ownerId })
         .first(
+          'id',
           'providerProfileVersionId',
           'transportKind',
           'model',
@@ -3609,6 +4179,7 @@ export class AgentProductRuntime {
           'promptVersion'
         )) as
         | {
+            id: string
             providerProfileVersionId: string
             transportKind: string
             model: string
@@ -3621,6 +4192,8 @@ export class AgentProductRuntime {
           }
         | undefined
       if (!firstRun) throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Agent goal has no initial run', 500)
+      const originalRouting = await this.#routingRecord({ id: firstRun.id, ownerId: locked.ownerId, sessionId: locked.sessionId }, transaction)
+      if (originalRouting !== null) firstRun = { ...firstRun, ...originalRouting.incumbent }
       const resolved = await this.#resolver.resolveCurrent(transaction, { ownerId: locked.ownerId, sessionId: locked.sessionId })
       this.#assertResolvedAdmission(resolved)
       const configurationMatches =
@@ -3873,9 +4446,10 @@ export class AgentProductRuntime {
         throw new AgentRepositoryError('GOAL_DURATION_EXHAUSTED', 'Goal duration budget is exhausted', 409)
       if (usage.tokens < locked.maxTokens && !tokenFence)
         throw new AgentRepositoryError('GOAL_TOKEN_RENEWAL_UNAVAILABLE', 'Goal token budget has not been exhausted', 409)
-      const firstRun = (await transaction('agentRuns')
+      let firstRun = (await transaction('agentRuns')
         .where({ goalId: locked.id, goalContinuation: 0, ownerId: locked.ownerId })
         .first(
+          'id',
           'providerProfileVersionId',
           'transportKind',
           'model',
@@ -3887,6 +4461,7 @@ export class AgentProductRuntime {
           'promptVersion'
         )) as
         | {
+            id: string
             providerProfileVersionId: string
             transportKind: string
             model: string
@@ -3899,6 +4474,8 @@ export class AgentProductRuntime {
           }
         | undefined
       if (!firstRun) throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Agent goal has no initial run', 500)
+      const originalRouting = await this.#routingRecord({ id: firstRun.id, ownerId: locked.ownerId, sessionId: locked.sessionId }, transaction)
+      if (originalRouting !== null) firstRun = { ...firstRun, ...originalRouting.incumbent }
       const resolved = await this.#resolver.resolveCurrent(transaction, { ownerId: locked.ownerId, sessionId: locked.sessionId })
       this.#assertResolvedAdmission(resolved)
       const configurationMatches =

@@ -334,11 +334,11 @@ describe('provider conformance runner', () => {
     expect(requests.filter(input => input.chatPrompt.some(message => message.role === 'function'))).toEqual([])
   })
 
-  it('replays encrypted Gemini Interactions state through a no-tools final', async () => {
+  it('replays opaque native Gemini signed-part state through a no-tools final', async () => {
     const setConformed = vi.fn(async () => {})
     let continuationObserved = false
     let finalRequest: Readonly<AxChatRequest> | undefined
-    const interactionState = 'wiki.gemini.interactions.v1:[{"signature":"opaque-signature","type":"thought"}]'
+    const interactionState = 'wiki.gemini.generate-content.v1:[{"text":"","thought":true,"thoughtSignature":"opaque-signature"}]'
     const factory = {
       create: async () => ({
         ...service(
@@ -370,7 +370,7 @@ describe('provider conformance runner', () => {
         ),
         transportKind: 'gemini-api',
         preserveThoughtBlock: (_resultId: string, block: { data: string; encrypted: boolean; signature?: string }) =>
-          block.encrypted && block.data.startsWith('wiki.gemini.interactions.v1:') ? { data: block.data, encrypted: true as const } : null
+          block.encrypted && block.data.startsWith('wiki.gemini.generate-content.v1:') ? { data: block.data, encrypted: true as const } : null
       })
     } as unknown as AgentProviderFactory
 

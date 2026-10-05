@@ -68,7 +68,6 @@ interface AgentAdmissionPins {
   readonly profilePolicyVersion: number
   readonly defaultGeneration: number
   readonly executionMode: 'agent'
-  readonly googleSearchEnabled: boolean
 }
 
 const admissionPinFields = [
@@ -97,7 +96,6 @@ const readAdmissionPins = (token: string): AgentAdmissionPins | null => {
     if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) return null
     const payload = decoded as Record<string, unknown>
     for (const field of admissionPinFields) if (!Object.hasOwn(payload, field)) return null
-    const consent = Object.hasOwn(payload, 'googleSearchEnabled') ? payload.googleSearchEnabled : false
     if (
       payload.v !== 1 ||
       typeof payload.kid !== 'string' ||
@@ -113,11 +111,9 @@ const readAdmissionPins = (token: string): AgentAdmissionPins | null => {
       !Number.isSafeInteger(payload.defaultGeneration) ||
       payload.defaultGeneration < 0 ||
       payload.executionMode !== 'agent' ||
-      !positiveAdmissionInteger(payload.exp) ||
-      typeof consent !== 'boolean'
+      !positiveAdmissionInteger(payload.exp)
     )
       return null
-    payload.googleSearchEnabled = consent
     return payload as unknown as AgentAdmissionPins
   } catch {
     return null
@@ -136,8 +132,7 @@ const sameAdmissionPins = (previous: AgentAdmissionPins | null, next: AgentAdmis
   previous.profileVersion === next.profileVersion &&
   previous.profilePolicyVersion === next.profilePolicyVersion &&
   previous.defaultGeneration === next.defaultGeneration &&
-  previous.executionMode === next.executionMode &&
-  previous.googleSearchEnabled === next.googleSearchEnabled
+  previous.executionMode === next.executionMode
 
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.partial', 'run.failed', 'run.cancelled', 'run.recovery_required'])
 const fetchFromWindow: typeof fetch = (input, init) => window.fetch(input, init)
@@ -200,23 +195,12 @@ export const useAgentsStore = defineStore('agents', {
     sending: false,
     sessionMutationTokenCounter: 0,
     sessionMutationToken: null as number | null,
-    /* Lightweight pending state for the Web (Google Search) toggle. It must not
-       consume the session mutation lock: a settings toggle should never flash
-       the whole composer/transcript UI with disable transitions. The value is
-       the optimistic target (true/false) while the request is in flight. */
-    googleSearchPending: null as boolean | null,
     error: '',
     connection: 'idle' as 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed',
     networkPaused: false,
     initializationAdmissionFailure: null as 'access' | 'authentication' | null,
     eventSequence: 0,
     source: null as EventSource | null,
-    googleSearchSuggestions: null as {
-      readonly ownerId: number
-      readonly sessionId: string
-      readonly runId: string
-      readonly suggestions: readonly string[]
-    } | null,
     refreshTimer: null as number | null,
     watchdogTimer: null as number | null,
     refreshGeneration: 0,
@@ -277,7 +261,6 @@ export const useAgentsStore = defineStore('agents', {
         this.invalidateRefresh()
         this.cancelSessionTransition()
         this.thread = null
-        this.googleSearchSuggestions = null
         this.drafts = {}
         this.sessions = []
         this.sessionsNextCursor = null
@@ -654,7 +637,6 @@ export const useAgentsStore = defineStore('agents', {
         else writeAgentChatRecent(this.pinOwnerId, this.thread.session.id, this.conversationPage, this.workspaceClosedAt)
       }
       this.cancelContextTransfer()
-      this.googleSearchSuggestions = null
       this.invalidateSessionMutation()
       this.workspaceVersion += 1
       this.workspaceDisposed = true
@@ -779,7 +761,6 @@ export const useAgentsStore = defineStore('agents', {
       }
     },
     applyCreatedThread(created: CreatedAgentThread) {
-      this.googleSearchSuggestions = null
       this.thread = markRaw(created)
       this.continuitySessionId = created.session.id
       this.workspaceClosedAt = null
@@ -810,7 +791,6 @@ export const useAgentsStore = defineStore('agents', {
         this.sessionTransitionController = null
         this.sessionTransitionKind = null
         this.closeStream()
-        this.googleSearchSuggestions = null
         this.invalidateRefresh()
         this.thread = markRaw(candidate)
         this.continuitySessionId = candidate.session.id
@@ -1175,36 +1155,6 @@ export const useAgentsStore = defineStore('agents', {
         this.endSessionMutation(mutationToken)
       }
     },
-    async setGoogleSearchEnabled(enabled: boolean) {
-      if (!this.isWorkspaceReady()) return
-      const thread = this.thread
-      if (!thread || this.googleSearchPending !== null || this.sessionMutationToken !== null) return
-      const run = thread.session.currentRun
-      if (run && (run.status === 'queued' || run.status === 'running' || run.status === 'awaiting_approval')) return
-      if (thread.goal && (thread.goal.status === 'active' || thread.goal.status === 'paused' || thread.goal.status === 'blocked')) return
-      const profile = thread.session.providerProfileId
-        ? this.profiles.find(candidate => candidate.id === thread.session.providerProfileId)
-        : (this.profiles.find(candidate => candidate.isGlobalDefault) ?? (this.profiles.length === 1 ? this.profiles[0] : undefined))
-      if (enabled && profile?.googleSearchAvailable !== true) return
-      if ((thread.session.googleSearchEnabled ?? false) === enabled) return thread
-      const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
-      const ownerGeneration = this.ownerGeneration
-      const sessionId = thread.session.id
-      this.googleSearchPending = enabled
-      try {
-        const projected = await updateAgentSession(fetchFromWindow, this.csrfToken, sessionId, {
-          expectedSessionVersion: thread.session.version,
-          googleSearchEnabled: enabled
-        })
-        this.projectCommittedSessionMutation(workspaceVersion, sessionId, projected, ownerId, ownerGeneration)
-        return projected
-      } catch (error) {
-        this.error = error instanceof Error ? error.message : 'The Web search setting changed concurrently.'
-      } finally {
-        this.googleSearchPending = null
-      }
-    },
     async refreshCommittedMutation(workspaceVersion: number, sessionId: string, message: string): Promise<boolean> {
       if (!this.isSessionContextCurrent(workspaceVersion, sessionId)) return false
       const refreshed = await this.refreshThread()
@@ -1234,7 +1184,6 @@ export const useAgentsStore = defineStore('agents', {
         !thread ||
         (!trimmed && !media?.attachmentIds.length) ||
         this.sending ||
-        this.googleSearchPending !== null ||
         thread.session.currentRun?.canCancel ||
         (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))
       )
@@ -1247,7 +1196,6 @@ export const useAgentsStore = defineStore('agents', {
       const capturedSessionVersion = thread.session.version
       const capturedProfileId = thread.session.providerProfileId
       const capturedExecutionMode = thread.session.executionMode
-      const capturedGoogleSearch = thread.session.googleSearchEnabled === true
       const mutationToken = this.beginSessionMutation()
       if (mutationToken === null) return false
       this.sending = true
@@ -1268,7 +1216,7 @@ export const useAgentsStore = defineStore('agents', {
             !this.isSessionMutationOwned(mutationToken)
           )
             return false
-          if (!refreshed.accepted || !refreshed.current || !this.isWorkspaceReady() || this.googleSearchPending !== null) {
+          if (!refreshed.accepted || !refreshed.current || !this.isWorkspaceReady()) {
             if (refreshed.current) this.error = 'The conversation could not be refreshed. Nothing was sent; retry when ready.'
             return false
           }
@@ -1288,9 +1236,7 @@ export const useAgentsStore = defineStore('agents', {
             freshThread.session.providerProfileId !== capturedProfileId ||
             (freshThread.session.providerProfileId !== null && freshPins?.profileId !== freshThread.session.providerProfileId) ||
             freshThread.session.executionMode !== capturedExecutionMode ||
-            freshPins?.executionMode !== freshThread.session.executionMode ||
-            (freshThread.session.googleSearchEnabled === true) !== capturedGoogleSearch ||
-            freshPins?.googleSearchEnabled !== (freshThread.session.googleSearchEnabled === true)
+            freshPins?.executionMode !== freshThread.session.executionMode
           ) {
             this.error = freshPins
               ? `Agent settings changed (profile ${freshPins.profileId}, revision ${freshPins.profileVersion}). Review the current settings before sending again. Nothing was sent.`
@@ -1635,12 +1581,6 @@ export const useAgentsStore = defineStore('agents', {
           this.isSessionMutationOwned(mutationToken)
         )
           this.thread = markRaw(projected)
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
-          this.googleSearchSuggestions = null
         return projected
       } catch (error) {
         if (
@@ -1919,8 +1859,6 @@ export const useAgentsStore = defineStore('agents', {
     connect(runId: string, _after: number) {
       const workspaceVersion = this.workspaceVersion
       const sessionId = this.thread?.session.id
-      const ownerId = this.pinOwnerId
-      const ownerGeneration = this.ownerGeneration
       const run = this.thread?.session.currentRun
       if (!sessionId || !run?.canCancel || run.id !== runId || !this.isWorkspaceCurrent(workspaceVersion)) return
       this.networkPaused = false
@@ -1933,7 +1871,6 @@ export const useAgentsStore = defineStore('agents', {
       const generation = this.connectionGeneration + 1
       this.connectionGeneration = generation
       this.eventSequence = run.eventSequence
-      if (this.googleSearchSuggestions?.runId !== runId) this.googleSearchSuggestions = null
       this.connection = 'connecting'
       this.reconnectAttempt = 0
       let terminalObserved = false
@@ -1956,20 +1893,6 @@ export const useAgentsStore = defineStore('agents', {
               this.armInactivityWatchdog(runId, generation)
               this.scheduleRefresh(false, 50, runId, generation)
             }
-          },
-          googleSearchSuggestions: (suggestionRunId, suggestions) => {
-            if (
-              ownerId === null ||
-              !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-              !this.isConnectionCurrent(generation, workspaceVersion, sessionId, suggestionRunId)
-            )
-              return
-            this.googleSearchSuggestions = markRaw({
-              ownerId,
-              sessionId,
-              runId: suggestionRunId,
-              suggestions: [...suggestions]
-            })
           },
           error: () => {
             if (terminalObserved || !this.isConnectionCurrent(generation, workspaceVersion, sessionId, runId)) return

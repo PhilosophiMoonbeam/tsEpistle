@@ -9,14 +9,7 @@ export type AgentProviderUsage = AgentTokenUsage & {
   readonly cacheCreationInputTokens?: number
 }
 
-type AgentUsageIssue =
-  | 'missing'
-  | 'shape'
-  | 'unsafe_integer'
-  | 'directional_overflow'
-  | 'total_below_directions'
-  | 'cache_exceeds_input'
-  | 'regression'
+type AgentUsageIssue = 'missing' | 'shape' | 'unsafe_integer' | 'directional_overflow' | 'total_below_directions' | 'cache_exceeds_input' | 'regression'
 type AgentUsageField = 'inputTokens' | 'outputTokens' | 'totalTokens' | 'cachedInputTokens' | 'cacheCreationInputTokens'
 type UsageReceipt = Partial<AgentProviderUsage>
 type UsageDiagnostics = {
@@ -92,18 +85,11 @@ const readUsageToken = (value: unknown, field: AgentUsageField): number => {
   return value
 }
 
-const readOptionalUsageToken = (value: unknown, field: AgentUsageField): number | undefined =>
-  value === undefined ? undefined : readUsageToken(value, field)
+const readOptionalUsageToken = (value: unknown, field: AgentUsageField): number | undefined => (value === undefined ? undefined : readUsageToken(value, field))
 
 const assertAgentProviderUsage = (usage: AgentProviderUsage): void => {
   assertAgentTokenUsage(usage.inputTokens, usage.outputTokens, usage.totalTokens)
-  const current = safeReceipt(
-    usage.inputTokens,
-    usage.outputTokens,
-    usage.totalTokens,
-    usage.cachedInputTokens,
-    usage.cacheCreationInputTokens
-  )
+  const current = safeReceipt(usage.inputTokens, usage.outputTokens, usage.totalTokens, usage.cachedInputTokens, usage.cacheCreationInputTokens)
   if (usage.cachedInputTokens !== undefined && !validToken(usage.cachedInputTokens))
     throw invalidProviderUsage({
       usageIssue: invalidTokenIssue(usage.cachedInputTokens),
@@ -118,17 +104,11 @@ const assertAgentProviderUsage = (usage: AgentProviderUsage): void => {
     })
   const cachedInputTokens = usage.cachedInputTokens ?? 0
   const cacheCreationInputTokens = usage.cacheCreationInputTokens ?? 0
-  if (
-    cachedInputTokens > usage.inputTokens ||
-    cacheCreationInputTokens > usage.inputTokens - cachedInputTokens
-  )
+  if (cachedInputTokens > usage.inputTokens || cacheCreationInputTokens > usage.inputTokens - cachedInputTokens)
     throw invalidProviderUsage({ usageIssue: 'cache_exceeds_input', current })
 }
 
-export const readAgentProviderUsage = (
-  transportKind: AgentProviderTransportKind,
-  response: AxChatResponse
-): AgentProviderUsage | null => {
+export const readAgentProviderUsage = (transportKind: AgentProviderTransportKind, response: AxChatResponse): AgentProviderUsage | null => {
   try {
     const modelUsage = Reflect.get(response, 'modelUsage')
     if (modelUsage === undefined) return null
@@ -140,10 +120,7 @@ export const readAgentProviderUsage = (
     const outputTokens = readUsageToken(Reflect.get(tokens, 'completionTokens'), 'outputTokens')
     const rawTotalTokens = Reflect.get(tokens, 'totalTokens')
     const reportedCachedInputTokens = readOptionalUsageToken(Reflect.get(tokens, 'cacheReadTokens'), 'cachedInputTokens')
-    const reportedCacheCreationInputTokens = readOptionalUsageToken(
-      Reflect.get(tokens, 'cacheCreationTokens'),
-      'cacheCreationInputTokens'
-    )
+    const reportedCacheCreationInputTokens = readOptionalUsageToken(Reflect.get(tokens, 'cacheCreationTokens'), 'cacheCreationInputTokens')
     let cachedInputTokens: number | undefined
     let cacheCreationInputTokens: number | undefined
     let inputTokens: number
@@ -151,7 +128,8 @@ export const readAgentProviderUsage = (
       case 'openai-responses':
       case 'openresponses':
       case 'openai-chat':
-      case 'anthropic-messages': {
+      case 'anthropic-messages':
+      case 'gemini-api': {
         cachedInputTokens = reportedCachedInputTokens
         cacheCreationInputTokens = reportedCacheCreationInputTokens
         const fullInput = safeTokenSum(promptTokens, cachedInputTokens ?? 0, cacheCreationInputTokens ?? 0)
@@ -159,10 +137,6 @@ export const readAgentProviderUsage = (
         inputTokens = fullInput
         break
       }
-      case 'gemini-api':
-        inputTokens = promptTokens
-        cachedInputTokens = reportedCachedInputTokens
-        break
       case 'legacy-completions':
         inputTokens = promptTokens
         break
@@ -190,10 +164,7 @@ export const readAgentProviderUsage = (
   }
 }
 
-export const acceptCumulativeAgentProviderUsage = (
-  previous: AgentProviderUsage | null,
-  next: AgentProviderUsage
-): AgentProviderUsage => {
+export const acceptCumulativeAgentProviderUsage = (previous: AgentProviderUsage | null, next: AgentProviderUsage): AgentProviderUsage => {
   assertAgentProviderUsage(next)
   if (previous === null) return next
   assertAgentProviderUsage(previous)
@@ -204,16 +175,9 @@ export const acceptCumulativeAgentProviderUsage = (
     previous.cachedInputTokens,
     previous.cacheCreationInputTokens
   )
-  const currentReceipt = safeReceipt(
-    next.inputTokens,
-    next.outputTokens,
-    next.totalTokens,
-    next.cachedInputTokens,
-    next.cacheCreationInputTokens
-  )
+  const currentReceipt = safeReceipt(next.inputTokens, next.outputTokens, next.totalTokens, next.cachedInputTokens, next.cacheCreationInputTokens)
   for (const field of ['inputTokens', 'outputTokens', 'totalTokens'] as const) {
-    if (next[field] < previous[field])
-      throw invalidProviderUsage({ usageIssue: 'regression', usageField: field, prior: priorReceipt, current: currentReceipt })
+    if (next[field] < previous[field]) throw invalidProviderUsage({ usageIssue: 'regression', usageField: field, prior: priorReceipt, current: currentReceipt })
   }
   for (const field of ['cachedInputTokens', 'cacheCreationInputTokens'] as const) {
     const current = next[field]
@@ -221,21 +185,12 @@ export const acceptCumulativeAgentProviderUsage = (
     if (current !== undefined && prior !== undefined && current < prior)
       throw invalidProviderUsage({ usageIssue: 'regression', usageField: field, prior: priorReceipt, current: currentReceipt })
   }
-  if (
-    next.cachedInputTokens !== undefined ||
-    previous.cachedInputTokens === undefined
-  ) {
-    if (
-      next.cacheCreationInputTokens !== undefined ||
-      previous.cacheCreationInputTokens === undefined
-    )
-      return next
+  if (next.cachedInputTokens !== undefined || previous.cachedInputTokens === undefined) {
+    if (next.cacheCreationInputTokens !== undefined || previous.cacheCreationInputTokens === undefined) return next
   }
   const cumulative = {
     ...next,
-    ...(next.cachedInputTokens === undefined && previous.cachedInputTokens !== undefined
-      ? { cachedInputTokens: previous.cachedInputTokens }
-      : {}),
+    ...(next.cachedInputTokens === undefined && previous.cachedInputTokens !== undefined ? { cachedInputTokens: previous.cachedInputTokens } : {}),
     ...(next.cacheCreationInputTokens === undefined && previous.cacheCreationInputTokens !== undefined
       ? { cacheCreationInputTokens: previous.cacheCreationInputTokens }
       : {})
@@ -270,4 +225,3 @@ export const readAgentUsageEvent = (data: AgentEventData): AgentTokenUsage & { r
     throw invalidEventUsage()
   }
 }
-

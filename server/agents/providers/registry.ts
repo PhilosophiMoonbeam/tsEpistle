@@ -8,11 +8,14 @@ import {
   type AgentExecutionMode,
   type AgentProviderProfileView as AgentProviderSelectionView
 } from '../../../shared/agents/contracts.ts'
+import type { RoutingCandidate } from '../../../shared/agents/routing.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
+import { sessionVersion } from '../../helpers/account-session.ts'
 import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import { lockSkillAdmissionPrincipal } from '../skills/runtime.ts'
 import type { AgentSecretRegistry } from './secrets.ts'
-import { isGeminiInteractionsModel } from './gemini-interactions.ts'
+import { isGeminiChatModel } from './gemini.ts'
 
 const TransportKindSchema = z.enum(['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages', 'gemini-api'])
 const AuthModeSchema = z.enum(['bearer', 'api-key-header', 'anthropic-api-key', 'google-api-key'])
@@ -149,6 +152,22 @@ export type AgentProviderCapabilities = z.infer<typeof AgentProviderCapabilities
 export type AgentProviderPolicies = z.infer<typeof AgentProviderPoliciesSchema>
 export type AgentProviderTransportKind = z.infer<typeof TransportKindSchema>
 
+export interface AgentRoutingCandidate extends RoutingCandidate {
+  readonly profileId: string
+  readonly profileVersionId: string
+  readonly model: string
+  readonly transportKind: AgentProviderTransportKind
+  readonly capabilities: AgentProviderCapabilities
+  readonly media: {
+    readonly attachments: boolean
+    readonly imageGeneration: boolean
+    readonly videoGeneration: boolean
+    readonly musicGeneration: boolean
+    readonly transcription: boolean
+  }
+  readonly admission: AgentResolvedAdmission
+}
+
 export interface AgentProviderSettingsInput {
   readonly transportKind: AgentProviderTransportKind
   readonly model: string
@@ -197,6 +216,7 @@ export interface AgentProviderProfileView {
 }
 
 export interface AgentProviderProfileAdminView extends AgentProviderProfileView {
+  readonly profileVersionId: string
   readonly baseUrl: string
   readonly adapterConfig: z.infer<typeof AgentProviderAdapterConfigSchema>
   readonly policies: z.infer<typeof AgentProviderPoliciesSchema>
@@ -256,8 +276,6 @@ interface VersionRow {
 }
 
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
-const supportsGoogleSearch = (version: Pick<VersionRow, 'transportKind' | 'model' | 'conformed'>): boolean =>
-  version.conformed && version.transportKind === 'gemini-api' && isGeminiInteractionsModel(version.model)
 const googleSearchConsent = (value: unknown): boolean => {
   if (value === undefined || value === null || value === false || value === 0) return false
   if (value === true || value === 1) return true
@@ -344,8 +362,8 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
   const model = normalizedString(input.model, 'Provider model', 255)
   const utilityModel = input.utilityModel === null ? null : normalizedString(input.utilityModel, 'Utility model', 255)
   const baseUrl = normalizeBaseUrl(input.baseUrl)
-  if (transportKind === 'gemini-api' && (!isGeminiInteractionsModel(model) || (utilityModel !== null && !isGeminiInteractionsModel(utilityModel))))
-    throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini Interactions requires Gemini 3.x model IDs', 400)
+  if (transportKind === 'gemini-api' && (!isGeminiChatModel(model) || (utilityModel !== null && !isGeminiChatModel(utilityModel))))
+    throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini requires native GenerateContent chat model IDs', 400)
   const authMode = AuthModeSchema.parse(input.authMode)
   const secretReference = input.secretReference === null ? null : normalizedString(input.secretReference, 'Secret reference', 255)
   const secretValue = input.secretValue
@@ -370,7 +388,7 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
     adapterConfig.media !== undefined &&
     (transportKind !== 'gemini-api' || baseUrl.replace(/\/$/u, '') !== 'https://generativelanguage.googleapis.com/v1beta')
   )
-    throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', 'Media requires the official Google Gemini Interactions endpoint', 400)
+    throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', 'Media requires the official Google Gemini endpoint', 400)
   const supportedReasoningEfforts = agentProviderReasoningEfforts(transportKind)
   for (const [field, label] of [
     ['agentReasoningEffort', 'Agent reasoning effort'],
@@ -381,8 +399,6 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
       throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', `${label} is not supported by the selected API protocol`, 400)
     }
   }
-  if (transportKind === 'gemini-api' && adapterConfig.temperature !== undefined)
-    throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', 'Gemini Interactions does not support temperature overrides', 400)
   validateHeaders(adapterConfig.additionalHeaders)
   const capabilities = AgentProviderCapabilitiesSchema.parse(input.capabilities)
   const policies = AgentProviderPoliciesSchema.parse(input.policies)
@@ -861,6 +877,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       capabilityRevision: row.capabilityRevision,
       pricingRevision: row.pricingRevision,
       createdAt: new Date(row.createdAt).toISOString(),
+      profileVersionId: row.currentVersionId,
       baseUrl: row.baseUrl,
       adapterConfig: parseJson(AgentProviderAdapterConfigSchema, row.adapterConfig, 'PROVIDER_PROFILE_CORRUPT'),
       policies: parseJson(AgentProviderPoliciesSchema, row.policies, 'PROVIDER_PROFILE_CORRUPT')
@@ -967,17 +984,6 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     if (!supportsAgentExecution(capabilities, policies))
       throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
   }
-  async assertSessionGoogleSearchAvailable(ownerId: number, sessionId: string, database: Knex | Knex.Transaction = this.#knex): Promise<void> {
-    const session = (await database('agentSessions').where({ id: sessionId, ownerId }).whereNull('deletedAt').first('providerProfileId')) as
-      | { providerProfileId: string | null }
-      | undefined
-    if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
-    const profileId = session.providerProfileId ?? (await this.#implicitProfileId(database, ownerId, true))
-    if (!profileId) return this.#profileUnavailable()
-    const { version } = await this.#availableProfileVersion(database, ownerId, profileId)
-    if (!supportsGoogleSearch(version))
-      throw new AgentRepositoryError('GOOGLE_SEARCH_UNAVAILABLE', 'Google Search is unavailable for the selected provider profile', 409)
-  }
 
   async listVisible(ownerId: number, limit = 100): Promise<AgentProviderSelectionView[]> {
     const profileIds = await this.#visibleAgentProfileIds(this.#knex, ownerId, limit)
@@ -993,14 +999,13 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       capabilityRevision: profile.capabilityRevision,
       policyVersion: profile.policyVersion,
       isGlobalDefault: profile.isGlobalDefault,
-      googleSearchAvailable: profile.conformed && profile.transportKind === 'gemini-api' && isGeminiInteractionsModel(profile.model),
       ...(profile.transportKind === 'gemini-api' && profile.adapterConfig.media
         ? {
             media: {
               attachments: profile.adapterConfig.media.attachments,
               imageGeneration: profile.adapterConfig.media.imageGeneration !== undefined,
-              videoGeneration: profile.adapterConfig.media.videoGeneration !== undefined,
-              musicGeneration: profile.adapterConfig.media.musicGeneration !== undefined,
+              videoGeneration: false,
+              musicGeneration: false,
               transcription: profile.adapterConfig.media.transcription !== undefined
             }
           }
@@ -1048,7 +1053,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
   async #resolveInTransaction(
     transaction: Knex.Transaction,
     input: { readonly ownerId: number; readonly sessionId: string },
-    payload: TokenPayload | null
+    payload: TokenPayload | null,
+    routingCandidate?: { readonly profileId: string; readonly profileVersionId: string }
   ): Promise<AgentResolvedAdmission> {
     const sessionQuery = transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt')
     if (payload !== null) sessionQuery.andWhere({ version: payload.sessionVersion, executionMode: payload.executionMode })
@@ -1062,8 +1068,9 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         payload === null ? 404 : 409
       )
     const configuration = await this.#lockConfiguration(transaction)
-    const implicitProfileId = session.providerProfileId === null ? await this.#implicitProfileId(transaction, input.ownerId, true) : null
-    const selectedProfileId = payload?.profileId ?? session.providerProfileId ?? implicitProfileId ?? undefined
+    const implicitProfileId =
+      routingCandidate === undefined && session.providerProfileId === null ? await this.#implicitProfileId(transaction, input.ownerId, true) : null
+    const selectedProfileId = routingCandidate?.profileId ?? payload?.profileId ?? session.providerProfileId ?? implicitProfileId ?? undefined
     if (!selectedProfileId) return this.#profileUnavailable()
     const profileQuery = transaction<ProfileRow>('agentProviderProfiles')
       .where({ id: selectedProfileId, status: 'enabled', conformed: true })
@@ -1084,7 +1091,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     if (
       !profile ||
       !version ||
-      expectedProfileId !== selectedProfileId ||
+      (routingCandidate === undefined ? expectedProfileId !== selectedProfileId : version.id !== routingCandidate.profileVersionId) ||
       (payload !== null &&
         (version.id !== payload.profileVersionId ||
           Number(version.version) !== payload.profileVersion ||
@@ -1109,8 +1116,6 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     const payloadGoogleSearchEnabled = payload?.googleSearchEnabled ?? false
     if (payload !== null && (typeof payloadGoogleSearchEnabled !== 'boolean' || payloadGoogleSearchEnabled !== googleSearchEnabled))
       throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Google Search consent changed before admission', 409)
-    if (googleSearchEnabled && !supportsGoogleSearch(version))
-      throw new AgentRepositoryError('GOOGLE_SEARCH_UNAVAILABLE', 'Google Search is unavailable for the selected provider profile', 409)
     const resolvedPayload =
       payload ??
       ({
@@ -1142,7 +1147,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       promptVersion: policies.promptVersion,
       quota: { tokens: policies.reservationTokens, costMicros: policies.reservationCostMicros },
       quotaLimits: { dailyTokens: policies.dailyTokens, dailyCostMicros: policies.dailyCostMicros },
-      reservationMilliseconds: policies.reservationMilliseconds
+      reservationMilliseconds: policies.reservationMilliseconds,
+      maxAttempts: policies.maxAttempts
     }
   }
 
@@ -1174,5 +1180,92 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
 
   async resolveCurrent(transaction: Knex.Transaction, input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission> {
     return this.#resolveInTransaction(transaction, input, null)
+  }
+
+  async #lockRoutingOwner(transaction: Knex.Transaction, ownerId: number): Promise<number> {
+    await lockSkillAdmissionPrincipal(transaction, ownerId)
+    const owner = await transaction('users').where({ id: ownerId }).first('isActive', 'authVersion')
+    const groups = await transaction('groups')
+      .join('userGroups', 'userGroups.groupId', 'groups.id')
+      .where('userGroups.userId', ownerId)
+      .select('groups.permissions')
+    const permissions = groups.flatMap((group: { permissions: unknown }) => {
+      const value = typeof group.permissions === 'string' ? JSON.parse(group.permissions) : group.permissions
+      return Array.isArray(value) ? value : []
+    })
+    if (!owner || (owner.isActive !== true && owner.isActive !== 1) || (!permissions.includes('use:agents') && !permissions.includes('manage:system')))
+      throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Current account cannot use Wiki Agents', 403)
+    const authVersion = sessionVersion(owner.authVersion)
+    if (ownerId === 2 || authVersion === null) throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Current account authority is invalid', 403)
+    return authVersion
+  }
+
+  async resolveRoutingCandidate(
+    transaction: Knex.Transaction,
+    input: {
+      readonly ownerId: number
+      readonly sessionId: string
+      readonly profileId: string
+      readonly profileVersionId: string
+    }
+  ): Promise<AgentResolvedAdmission> {
+    const session = await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').forUpdate().first('id')
+    if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
+    const ownerAuthVersion = await this.#lockRoutingOwner(transaction, input.ownerId)
+    return { ...(await this.#resolveInTransaction(transaction, input, null, input)), ownerAuthVersion }
+  }
+
+  async listRoutingCandidates(
+    transaction: Knex.Transaction,
+    input: { readonly ownerId: number; readonly sessionId: string }
+  ): Promise<readonly AgentRoutingCandidate[]> {
+    const session = await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').forUpdate().first('id')
+    if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
+    const ownerAuthVersion = await this.#lockRoutingOwner(transaction, input.ownerId)
+    await this.#lockConfiguration(transaction)
+    const ids = await this.#visibleAgentProfileIds(transaction, input.ownerId)
+    if (ids.length)
+      await transaction('agentProviderProfiles')
+        .whereIn('id', [...ids].sort())
+        .orderBy('id')
+        .forUpdate()
+        .select('id')
+    const currentIds = await this.#visibleAgentProfileIds(transaction, input.ownerId)
+    const candidates: AgentRoutingCandidate[] = []
+    for (const profileId of currentIds) {
+      const { version } = await this.#availableProfileVersion(transaction, input.ownerId, profileId)
+      const admission = await this.#resolveInTransaction(transaction, input, null, { profileId, profileVersionId: version.id })
+      const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
+      const config = parseJson(AgentProviderAdapterConfigSchema, version.adapterConfig, 'PROVIDER_PROFILE_CORRUPT')
+      const transportKind = TransportKindSchema.parse(version.transportKind)
+      candidates.push({
+        profileId,
+        profileVersionId: version.id,
+        enabled: true,
+        authorized: true,
+        credentialReady: true,
+        conformed: true,
+        modalities: version.transportKind === 'gemini-api' && config.media?.attachments === true ? ['text', 'image', 'audio', 'video', 'file'] : ['text'],
+        generationTools: version.transportKind === 'gemini-api' && config.media?.imageGeneration !== undefined ? ['image'] : [],
+        transcription: version.transportKind === 'gemini-api' && config.media?.transcription !== undefined,
+        pricing: {
+          inputPerMillion: Number(version.pricingRevision.split('|')[1]) / 1_000_000,
+          outputPerMillion: Number(version.pricingRevision.split('|')[2]) / 1_000_000,
+          revision: version.pricingRevision
+        },
+        model: version.model,
+        transportKind,
+        capabilities,
+        media: {
+          attachments: version.transportKind === 'gemini-api' && config.media?.attachments === true,
+          imageGeneration: version.transportKind === 'gemini-api' && config.media?.imageGeneration !== undefined,
+          videoGeneration: false,
+          musicGeneration: false,
+          transcription: version.transportKind === 'gemini-api' && config.media?.transcription !== undefined
+        },
+        admission: { ...admission, ownerAuthVersion }
+      })
+    }
+    return candidates
   }
 }

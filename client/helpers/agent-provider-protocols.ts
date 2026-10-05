@@ -8,7 +8,6 @@ export type AgentProviderExecutionMode = 'agent'
 
 export const AGENT_PROVIDER_PRICING_REVISION = 'price-v1|1000000|2000000'
 
-
 export interface AgentProviderProtocolOption {
   readonly value: AgentProviderTransport
   readonly title: string
@@ -72,17 +71,15 @@ export const AGENT_PROVIDER_PROTOCOL_OPTIONS = [
   },
   {
     value: 'gemini-api',
-    title: 'Google Gemini Interactions API',
+    title: 'Google Gemini GenerateContent API',
     group: 'Native provider APIs',
     startsGroup: false,
-    description: 'Native POST /v1beta/interactions API with stateless streaming, structured outputs, parallel function calls, and exact thought-step continuation.',
-    endpoint: '/interactions'
+    description: 'Ax native GenerateContent chat with bounded stateless streaming, native JSON schemas, parallel actions, and signed-part continuation.',
+    endpoint: '/models/{model}:generateContent · :streamGenerateContent?alt=sse'
   }
 ] as const satisfies readonly AgentProviderProtocolOption[]
 
-const optionByTransport = new Map<AgentProviderTransport, AgentProviderProtocolOption>(
-  AGENT_PROVIDER_PROTOCOL_OPTIONS.map(option => [option.value, option])
-)
+const optionByTransport = new Map<AgentProviderTransport, AgentProviderProtocolOption>(AGENT_PROVIDER_PROTOCOL_OPTIONS.map(option => [option.value, option]))
 
 const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProviderProtocolDefaults>> = {
   'openai-responses': {
@@ -155,9 +152,10 @@ const executionModesByTransport: Readonly<Record<AgentProviderTransport, readonl
   'gemini-api': ['agent']
 }
 
-export const agentProviderProtocolExecutionModes = (transport: AgentProviderTransport): readonly AgentProviderExecutionMode[] => executionModesByTransport[transport]
+export const agentProviderProtocolExecutionModes = (transport: AgentProviderTransport): readonly AgentProviderExecutionMode[] =>
+  executionModesByTransport[transport]
 
-export const agentProviderCapabilityRevision = (transport: AgentProviderTransport): string => `wiki-protocol-capabilities-v${transport === 'gemini-api' ? '3' : '2'}:${transport}`
+export const agentProviderCapabilityRevision = (transport: AgentProviderTransport): string => `wiki-protocol-capabilities-v4:${transport}`
 
 export const agentProviderProtocolOption = (transport: AgentProviderTransport): AgentProviderProtocolOption => {
   const option = optionByTransport.get(transport)
@@ -167,4 +165,5 @@ export const agentProviderProtocolOption = (transport: AgentProviderTransport): 
 
 export const agentProviderProtocolDefaults = (transport: AgentProviderTransport): AgentProviderProtocolDefaults => defaultsByTransport[transport]
 
-export const isAgentProviderTransport = (value: unknown): value is AgentProviderTransport => typeof value === 'string' && (AGENT_PROVIDER_TRANSPORTS as readonly string[]).includes(value)
+export const isAgentProviderTransport = (value: unknown): value is AgentProviderTransport =>
+  typeof value === 'string' && (AGENT_PROVIDER_TRANSPORTS as readonly string[]).includes(value)

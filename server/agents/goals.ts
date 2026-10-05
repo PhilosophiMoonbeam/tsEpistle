@@ -233,7 +233,8 @@ export const agentGoalRecord = (row: AgentGoalRow): AgentGoalRecord => {
         tokenTier !== null ||
         tokenAllowance !== null ||
         budgetCycle !== 0 ||
-        (budgetLimitReason !== null && !(row.status === 'blocked' && budgetLimitReason === 'accounting')))) ||
+        (budgetLimitReason !== null &&
+          !((row.status === 'blocked' && budgetLimitReason === 'accounting') || (row.status === 'budget_limited' && budgetLimitReason === 'duration'))))) ||
     (selected &&
       (!isSelectedAgentGoalBudgetPolicyVersion(budgetPolicyVersion) ||
         tokenTier === null ||

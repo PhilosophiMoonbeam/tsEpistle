@@ -1,41 +1,24 @@
 import { lookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
 import {
-  AxAIAnthropic,
-  AxAIAnthropicModel,
+  ai,
+  type AxAIAnthropicModel,
   type AxAIFeatures,
-  AxAIOpenAIBase,
-  type AxAIOpenAIChatRequest,
-  AxAIOpenAIEmbedModel,
-  AxAIOpenAIResponsesBase,
+  type AxAIOpenAIResponsesModel,
   type AxAIOpenAIResponsesRequest,
   type AxAIService,
   type AxAIServiceOptions,
   type AxChatRequest,
   type AxChatResponse,
-  type AxChatResponseResult,
-  axAIOpenAIDefaultConfig,
-  axAIOpenAIResponsesDefaultConfig
+  type AxChatResponseResult
 } from '@ax-llm/ax'
 import type { Knex } from 'knex'
 // The explicit entry point avoids Bun's built-in shim, which ignores dispatchers.
 import { Agent, type RequestInit as UndiciRequestInit, fetch as undiciFetch } from 'undici/index.js'
 import { type AgentReasoningEffort, agentProviderReasoningEfforts } from '../../../shared/agents/contracts.ts'
 import { AgentRepositoryError } from '../repository.ts'
-import {
-  createGeminiInteractionsService,
-  isGeminiInteractionContinuation,
-  isGeminiInteractionsModel,
-  preserveGeminiInteractionState
-} from './gemini-interactions.ts'
-import {
-  createGeminiMediaTransport,
-  GEMINI_MEDIA_INPUT_LIMIT,
-  GEMINI_MEDIA_OUTPUT_LIMIT,
-  GEMINI_PDF_INPUT_LIMIT,
-  GEMINI_VIDEO_RESPONSE_LIMIT,
-  GEMINI_MUSIC_RESPONSE_LIMIT
-} from './gemini-media.ts'
+import { createGeminiAxService, isGeminiChatModel, isGeminiContinuation, preserveGeminiContinuation } from './gemini.ts'
+import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT } from './gemini-media.ts'
 import { createOpenResponsesFetch } from './openresponses.ts'
 import {
   AgentProviderAdapterConfigSchema,
@@ -63,7 +46,7 @@ const MAX_STRUCTURED_BYTES = 65_536
 export const AGENT_PROVIDER_CONTINUATION_DIALECTS = [
   'openai-responses-reasoning-v1',
   'openresponses-reasoning-v1',
-  'gemini-interactions-v1',
+  'gemini-generate-content-v1',
   'openai-chat-ax-encrypted-v1',
   'anthropic-messages-ax-encrypted-v1'
 ] as const
@@ -148,7 +131,7 @@ const providerContinuationDialect = (transportKind: AgentProviderTransportKind):
     : transportKind === 'openresponses'
       ? 'openresponses-reasoning-v1'
       : transportKind === 'gemini-api'
-        ? 'gemini-interactions-v1'
+        ? 'gemini-generate-content-v1'
         : transportKind === 'openai-chat'
           ? 'openai-chat-ax-encrypted-v1'
           : transportKind === 'anthropic-messages'
@@ -290,8 +273,8 @@ const validateContinuationBlocks = (
     if (
       dialect === 'openai-responses-reasoning-v1' || dialect === 'openresponses-reasoning-v1'
         ? !isOpenAIReasoningBlock(block)
-        : dialect === 'gemini-interactions-v1'
-          ? !isGeminiInteractionContinuation(block)
+        : dialect === 'gemini-generate-content-v1'
+          ? !isGeminiContinuation(block)
           : block.encrypted !== true
     )
       fail()
@@ -353,8 +336,7 @@ export const decodeAgentProviderContinuation = (
     }
   }
   if (!Array.isArray(thoughtBlocks)) return undefined
-  if (expectedDialect !== 'openai-responses-reasoning-v1' && expectedDialect !== 'openresponses-reasoning-v1' && expectedDialect !== 'gemini-interactions-v1')
-    return undefined
+  if (expectedDialect !== 'openai-responses-reasoning-v1' && expectedDialect !== 'openresponses-reasoning-v1') return undefined
   return {
     thoughtBlocks: validateContinuationBlocks(expectedDialect, thoughtBlocks, 'stored')
   }
@@ -445,6 +427,8 @@ export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputToke
 export interface AgentProviderService {
   readonly service: Pick<AxAIService, 'chat'>
   readonly capabilities: AgentProviderCapabilities
+  /** Actual configured Ax model facts, available after the first native chat; unknown services leave these undefined. */
+  readonly nativeMediaCapabilities?: AxAIFeatures['media'] | undefined
   readonly transportKind: AgentProviderTransportKind
   readonly continuationDialect?: AgentProviderContinuationDialect | null
   readonly model: string
@@ -710,15 +694,9 @@ const pinnedProviderDispatcher = (resolve: typeof lookup): Agent => {
   providerDispatchers.set(resolve, dispatcher)
   return dispatcher
 }
-type ProviderEndpoint = '/responses' | '/chat/completions' | '/messages' | '/completions' | '/interactions' | 'gemini-media'
+type ProviderEndpoint = '/responses' | '/chat/completions' | '/messages' | '/completions' | 'gemini-chat' | 'gemini-media'
 const exactProviderBase = (base: URL, origin: string, path: string): boolean =>
-  base.protocol === 'https:' &&
-  base.origin === origin &&
-  base.pathname === path &&
-  !base.search &&
-  !base.hash &&
-  !base.username &&
-  !base.password
+  base.protocol === 'https:' && base.origin === origin && base.pathname === path && !base.search && !base.hash && !base.username && !base.password
 
 const isOpenAIGpt56OrLater = (model: string): boolean => {
   const match = /^gpt-(\d+)(?:\.(\d+))?(?:[-.]|$)/u.exec(model)
@@ -728,12 +706,19 @@ const isOpenAIGpt56OrLater = (model: string): boolean => {
   return major > 5 || (major === 5 && minor >= 6)
 }
 
-const isOpenAICacheCapableModel = (model: string): boolean =>
-  isOpenAIGpt56OrLater(model) || /^(?:gpt-(?:5(?:\.\d+)?|4\.1|4o)|o[134])(?:[-.]|$)/u.test(model)
+const isOpenAICacheCapableModel = (model: string): boolean => isOpenAIGpt56OrLater(model) || /^(?:gpt-(?:5(?:\.\d+)?|4\.1|4o)|o[134])(?:[-.]|$)/u.test(model)
 
-const isNonnegativeSafeTokenCount = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+const isNonnegativeSafeTokenCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 
+const geminiGenerateEndpointAllowed = (base: URL, url: URL, init?: RequestInit, model?: string): boolean => {
+  if (init?.method?.toUpperCase() !== 'POST' || typeof init.body !== 'string') return false
+  const prefix = `${base.pathname.replace(/\/$/u, '')}/models/`
+  if (!url.pathname.startsWith(prefix)) return false
+  const relative = url.pathname.slice(prefix.length)
+  const match = /^([a-z0-9][a-z0-9._-]{0,254}):(generateContent|streamGenerateContent)$/u.exec(relative)
+  if (!match || (model !== undefined && match[1] !== model)) return false
+  return match[2] === 'generateContent' ? !url.search : url.search === '?alt=sse'
+}
 
 const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): boolean => {
   if (base.origin !== 'https://generativelanguage.googleapis.com' || !['/v1beta', '/v1beta/'].includes(base.pathname)) return false
@@ -742,10 +727,16 @@ const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): bo
   if (body !== undefined && body !== null && typeof body !== 'string' && !(body instanceof Uint8Array)) return false
   const length = typeof body === 'string' ? Buffer.byteLength(body) : body instanceof Uint8Array ? body.byteLength : 0
   const pdfUpload = url.pathname === '/upload/v1beta/files' && new Headers(init?.headers).get('content-type') === 'application/pdf'
-  if (length > (pdfUpload ? GEMINI_PDF_INPUT_LIMIT : GEMINI_MEDIA_INPUT_LIMIT)) return false
-  if (url.pathname === '/v1beta/interactions') return method === 'POST' && !url.search
-  if (/^\/v1beta\/models\/gemini-3(?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?:countTokens$/u.test(url.pathname)) return method === 'POST' && !url.search
-  if (/^\/v1beta\/models\/(?:gemini-omni-1\.1-flash|lyria-3\.5):countTokens$/u.test(url.pathname)) return method === 'POST' && !url.search
+  const maximum =
+    url.pathname.includes(':generateContent') || url.pathname.includes(':countTokens')
+      ? 4 * Math.ceil(GEMINI_MEDIA_INPUT_LIMIT / 3) * 4 + 262_144
+      : pdfUpload
+        ? GEMINI_PDF_INPUT_LIMIT
+        : GEMINI_MEDIA_INPUT_LIMIT
+  if (length > maximum) return false
+  if (geminiGenerateEndpointAllowed(base, url, init))
+    return /^\/v1beta\/models\/(?:gemini-3\.1-flash-image|gemini-3\.5-transcribe):generateContent$/u.test(url.pathname)
+  if (/^\/v1beta\/models\/gemini-[23](?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?:countTokens$/u.test(url.pathname)) return method === 'POST' && !url.search
   if (/^\/v1beta\/files\/[A-Za-z0-9_-]{1,128}$/u.test(url.pathname)) return ['GET', 'DELETE'].includes(method) && !url.search && length === 0
   if (url.pathname !== '/upload/v1beta/files' || method !== 'POST') return false
   if (!url.search) return true
@@ -758,8 +749,9 @@ const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): bo
   )
 }
 
-const providerEndpointAllowed = (base: URL, url: URL, endpoint: ProviderEndpoint, init?: RequestInit): boolean => {
+const providerEndpointAllowed = (base: URL, url: URL, endpoint: ProviderEndpoint, init?: RequestInit, model?: string): boolean => {
   if (endpoint === 'gemini-media') return geminiMediaEndpointAllowed(base, url, init)
+  if (endpoint === 'gemini-chat') return geminiGenerateEndpointAllowed(base, url, init, model)
   const basePath = base.pathname.replace(/\/$/, '')
   return url.pathname === `${basePath}${endpoint}` && url.search.length === 0
 }
@@ -771,7 +763,8 @@ export const createGuardedProviderFetch = (
   implementation: AgentProviderFetch = undiciFetch as unknown as AgentProviderFetch,
   resolve: typeof lookup = lookup,
   limits: AgentProviderResourceLimits = deriveAgentProviderResourceLimits(4_096),
-  onLimit?: (error: AgentRepositoryError) => void
+  onLimit?: (error: AgentRepositoryError) => void,
+  model?: string
 ): AgentProviderFetch => {
   const base = new URL(baseUrl)
   const dispatcher = pinnedProviderDispatcher(resolve)
@@ -781,13 +774,15 @@ export const createGuardedProviderFetch = (
       if (
         url.protocol !== 'https:' ||
         url.origin !== base.origin ||
-        !providerEndpointAllowed(base, url, endpoint, init) ||
+        !providerEndpointAllowed(base, url, endpoint, init, model) ||
         url.hash ||
         url.username ||
         url.password ||
-        (endpoint === 'gemini-media' && typeof input !== 'string' && !(input instanceof URL))
+        ((endpoint === 'gemini-media' || endpoint === 'gemini-chat') && typeof input !== 'string' && !(input instanceof URL))
       )
         throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider request destination is not allowlisted', 502)
+      if (endpoint === 'gemini-chat' && (typeof init?.body !== 'string' || Buffer.byteLength(init.body) > limits.rawBodyBytes))
+        throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider request exceeded its byte limit', 500)
       assertPublicProviderAddresses(await resolve(url.hostname, { all: true, verbatim: true }))
       const headers = new Headers(init?.headers)
       for (const [name, value] of Object.entries(additionalHeaders)) headers.set(name, value)
@@ -808,18 +803,7 @@ export const createGuardedProviderFetch = (
         const failure = await providerFailure(response, signal)
         throw new AgentProviderAttemptError(failure.code, response.status, retryAfter(response.headers.get('retry-after')), failure.parameter)
       }
-      let mediaBodyLimit = GEMINI_MEDIA_OUTPUT_LIMIT
-      if (endpoint === 'gemini-media') {
-        if (url.pathname === '/v1beta/interactions' && typeof init?.body === 'string') {
-          try {
-            const model = JSON.parse(init.body)?.model
-            if (model === 'lyria-3.5') mediaBodyLimit = GEMINI_MUSIC_RESPONSE_LIMIT
-            if (model === 'gemini-omni-1.1-flash') mediaBodyLimit = GEMINI_VIDEO_RESPONSE_LIMIT
-          } catch {
-            /* invalid JSON retains the smaller bound */
-          }
-        }
-      }
+      const mediaBodyLimit = GEMINI_MEDIA_OUTPUT_LIMIT
       return guardedSuccessfulResponse(
         response,
         endpoint === 'gemini-media'
@@ -855,11 +839,7 @@ const createAnthropicEffortFetch = (
         throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic request body is invalid', 500)
       }
       const existing = body.output_config
-      if (
-        effort !== undefined &&
-        existing !== undefined &&
-        (typeof existing !== 'object' || existing === null || Array.isArray(existing))
-      ) {
+      if (effort !== undefined && existing !== undefined && (typeof existing !== 'object' || existing === null || Array.isArray(existing))) {
         throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic output configuration is invalid', 500)
       }
       return implementation(input, {
@@ -886,21 +866,6 @@ const geminiThinkingLevel = (effort: AgentReasoningEffort): 'minimal' | 'low' | 
   if (effort === 'minimal' || effort === 'low' || effort === 'medium' || effort === 'high') return effort
   throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored Gemini reasoning effort is invalid', 500)
 }
-
-const axFeatures = (capabilities: AgentProviderCapabilities): AxAIFeatures => ({
-  functions: capabilities.toolCalling === 'native',
-  streaming: capabilities.streaming,
-  structuredOutputs: capabilities.structuredOutput === 'native-json-schema',
-  media: {
-    images: { supported: false, formats: [] },
-    audio: { supported: false, formats: [] },
-    files: { supported: false, formats: [], uploadMethod: 'none' },
-    urls: { supported: false, webSearch: false, contextFetching: false }
-  },
-  caching: { supported: false, types: [] },
-  thinking: false,
-  multiTurn: true
-})
 
 const legacyPrompt = (request: Readonly<AxChatRequest<unknown>>): string =>
   request.chatPrompt
@@ -948,11 +913,7 @@ const createLegacyCompletionService = (
       const promptTokens: unknown = Reflect.get(rawUsage, 'prompt_tokens')
       const completionTokens: unknown = Reflect.get(rawUsage, 'completion_tokens')
       const totalTokens: unknown = Reflect.get(rawUsage, 'total_tokens')
-      if (
-        !isNonnegativeSafeTokenCount(promptTokens) ||
-        !isNonnegativeSafeTokenCount(completionTokens) ||
-        !isNonnegativeSafeTokenCount(totalTokens)
-      )
+      if (!isNonnegativeSafeTokenCount(promptTokens) || !isNonnegativeSafeTokenCount(completionTokens) || !isNonnegativeSafeTokenCount(totalTokens))
         throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
       assertAgentTokenUsage(promptTokens, completionTokens, totalTokens)
       modelUsage = {
@@ -975,6 +936,7 @@ const createLegacyCompletionService = (
 interface ProviderRequestScope {
   readonly limits: AgentProviderResourceLimits
   readonly onLimit: (error: AgentRepositoryError) => void
+  readonly onError: (error: AgentRepositoryError) => void
 }
 
 const requestOutputTokens = (request: Readonly<AxChatRequest<unknown>>, ceiling: number): number => {
@@ -985,18 +947,48 @@ const requestOutputTokens = (request: Readonly<AxChatRequest<unknown>>, ceiling:
   return Math.min(requested, ceiling)
 }
 
-const createRequestScopedService = (ceiling: number, build: (scope: ProviderRequestScope) => Pick<AxAIService, 'chat'>): Pick<AxAIService, 'chat'> => ({
-  chat: (request, options) => {
-    const controller = new AbortController()
-    const limits = readAgentProviderResourceLimits(request) ?? deriveAgentProviderResourceLimits(requestOutputTokens(request, ceiling))
-    const onLimit = (error: AgentRepositoryError): void => {
-      if (!controller.signal.aborted) controller.abort(error)
+type ProviderChatService = Pick<AxAIService, 'chat'> & Partial<Pick<AxAIService, 'getFeatures'>> & Pick<AgentProviderService, 'nativeMediaCapabilities'>
+
+const createRequestScopedService = (ceiling: number, build: (scope: ProviderRequestScope) => ProviderChatService): ProviderChatService => {
+  let nativeMediaCapabilities: AxAIFeatures['media'] | undefined
+  return {
+    get nativeMediaCapabilities() {
+      return nativeMediaCapabilities
+    },
+    chat: async (request, options) => {
+      const controller = new AbortController()
+      let applicationError: AgentRepositoryError | undefined
+      const onError = (error: AgentRepositoryError): void => {
+        applicationError ??= error
+      }
+      const attached = readAgentProviderResourceLimits(request)
+      const outputTokens = requestOutputTokens(request, ceiling)
+      const limits = attached
+        ? { ...attached, maxOutputTokens: Math.min(attached.maxOutputTokens, outputTokens) }
+        : deriveAgentProviderResourceLimits(outputTokens)
+      const onLimit = (error: AgentRepositoryError): void => {
+        if (!controller.signal.aborted) controller.abort(error)
+      }
+      const signal = options?.abortSignal === undefined ? controller.signal : AbortSignal.any([options.abortSignal, controller.signal])
+      const scopedOptions = { ...(options ?? {}), abortSignal: signal }
+      const boundedRequest = {
+        ...request,
+        modelConfig: { ...request.modelConfig, maxTokens: Math.min(limits.maxOutputTokens, requestOutputTokens(request, ceiling)) }
+      }
+      try {
+        const service = build({ limits, onLimit, onError })
+        const response = await service.chat(boundedRequest, scopedOptions)
+        // Query the instance's configured default model, never the caller's model override.
+        // Gemini captures these facts inside chat because its native instance is request-local.
+        nativeMediaCapabilities = service.getFeatures?.().media ?? service.nativeMediaCapabilities
+        return response
+      } catch (error) {
+        // Ax wraps custom-fetch failures; retain only errors recorded by our own boundary.
+        throw applicationError ?? error
+      }
     }
-    const signal = options?.abortSignal === undefined ? controller.signal : AbortSignal.any([options.abortSignal, controller.signal])
-    const scopedOptions = { ...(options ?? {}), abortSignal: signal }
-    return build({ limits, onLimit }).chat(request, scopedOptions)
   }
-})
+}
 
 export class AgentProviderFactory {
   readonly #knex: Knex
@@ -1045,8 +1037,8 @@ export class AgentProviderFactory {
     if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
     const limits = {
       ...deriveAgentProviderResourceLimits(capabilities.maxOutputTokens),
-      rawBodyBytes: config.videoGeneration ? GEMINI_VIDEO_RESPONSE_LIMIT : config.musicGeneration ? GEMINI_MUSIC_RESPONSE_LIMIT : GEMINI_MEDIA_OUTPUT_LIMIT,
-      rawChunkBytes: config.videoGeneration ? GEMINI_VIDEO_RESPONSE_LIMIT : config.musicGeneration ? GEMINI_MUSIC_RESPONSE_LIMIT : GEMINI_MEDIA_OUTPUT_LIMIT
+      rawBodyBytes: GEMINI_MEDIA_OUTPUT_LIMIT,
+      rawChunkBytes: GEMINI_MEDIA_OUTPUT_LIMIT
     }
     const maxOutputTokens = Math.min(capabilities.maxOutputTokens, 8_192)
     const maxInputTokens = capabilities.maxContextTokens - maxOutputTokens
@@ -1090,7 +1082,6 @@ export class AgentProviderFactory {
     loadOptions: {
       readonly requireConformed?: boolean
       readonly purpose?: 'agent' | 'utility'
-      readonly googleSearchEnabled?: boolean
     } = {}
   ): Promise<AgentProviderService> {
     const query = this.#knex<ProviderVersionRow>('agentProviderProfileVersions').where({ id: profileVersionId })
@@ -1100,24 +1091,18 @@ export class AgentProviderFactory {
     const secret = await this.#secrets.get(row.secretReference)
     if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
     const model = loadOptions.purpose === 'utility' ? (row.utilityModel ?? row.model) : row.model
-    if (row.transportKind === 'gemini-api' && !isGeminiInteractionsModel(model))
-      throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini Interactions requires a Gemini 3.x model ID', 400)
+    if (row.transportKind === 'gemini-api' && !isGeminiChatModel(model))
+      throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini requires a native GenerateContent chat model ID', 400)
     const providerBase = new URL(row.baseUrl)
     const officialOpenAIEndpoint =
-      (row.transportKind === 'openai-responses' || row.transportKind === 'openai-chat') &&
-      exactProviderBase(providerBase, 'https://api.openai.com', '/v1')
-    const automaticAnthropicCaching =
-      row.transportKind === 'anthropic-messages' && exactProviderBase(providerBase, 'https://api.anthropic.com', '/v1')
-    const officialGeminiInteractions =
-      row.transportKind === 'gemini-api' &&
-      exactProviderBase(providerBase, 'https://generativelanguage.googleapis.com', '/v1beta') &&
-      isGeminiInteractionsModel(model)
+      (row.transportKind === 'openai-responses' || row.transportKind === 'openai-chat') && exactProviderBase(providerBase, 'https://api.openai.com', '/v1')
+    const automaticAnthropicCaching = row.transportKind === 'anthropic-messages' && exactProviderBase(providerBase, 'https://api.anthropic.com', '/v1')
+    const officialGemini = row.transportKind === 'gemini-api' && exactProviderBase(providerBase, 'https://generativelanguage.googleapis.com', '/v1beta')
     const pricing = {
       ...parseAgentProviderPricing(row.pricingRevision),
       ...(automaticAnthropicCaching || (officialOpenAIEndpoint && isOpenAIGpt56OrLater(model)) ? { cacheWritePremium: true } : {})
     }
-    const preserveCachePrefix =
-      automaticAnthropicCaching || officialGeminiInteractions || (officialOpenAIEndpoint && isOpenAICacheCapableModel(model))
+    const preserveCachePrefix = automaticAnthropicCaching || officialGemini || (officialOpenAIEndpoint && isOpenAICacheCapableModel(model))
     let adapterConfig: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>
     let capabilities: AgentProviderCapabilities
     try {
@@ -1138,7 +1123,7 @@ export class AgentProviderFactory {
           : row.transportKind === 'legacy-completions'
             ? '/completions'
             : row.transportKind === 'gemini-api'
-              ? '/interactions'
+              ? 'gemini-chat'
               : '/chat/completions'
     const createTransportFetch = (scope: ProviderRequestScope): AgentProviderFetch => {
       const guardedFetch = createGuardedProviderFetch(
@@ -1148,108 +1133,106 @@ export class AgentProviderFactory {
         this.#fetch,
         this.#resolve,
         scope.limits,
-        scope.onLimit
+        scope.onLimit,
+        row.transportKind === 'gemini-api' ? model : undefined
       )
       return row.transportKind === 'openresponses' ? createOpenResponsesFetch(guardedFetch) : guardedFetch
     }
-    const createOptions = (transportFetch: AgentProviderFetch) =>
+    const createOptions = (scope: ProviderRequestScope, transportFetch: AgentProviderFetch) =>
       ({
-        fetch: transportFetch,
+        fetch: Object.assign(
+          async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
+            try {
+              return await transportFetch(input, init)
+            } catch (error) {
+              if (error instanceof AgentRepositoryError) scope.onError(error)
+              throw error
+            }
+          },
+          { preconnect: transportFetch.preconnect }
+        ) as AgentProviderFetch,
         timeout: adapterConfig.timeoutMs,
         retry: { maxRetries: 0 },
         includeRequestBodyInErrors: false,
         excludeContentFromTrace: true
       }) as const
     const legacyRow = { ...row, model }
-    let service: Pick<AxAIService, 'chat'>
-    if (row.transportKind === 'openai-responses' || row.transportKind === 'openresponses') {
-      service = createRequestScopedService(
-        capabilities.maxOutputTokens,
-        scope =>
-          new AxAIOpenAIResponsesBase<string, AxAIOpenAIEmbedModel, string, AxAIOpenAIResponsesRequest<string>>({
-            apiKey: secret,
-            apiURL: row.baseUrl,
-            config: {
-              ...axAIOpenAIResponsesDefaultConfig(),
-              model,
-              store: false,
-              parallelToolCalls: capabilities.toolCalling === 'native' && capabilities.parallelToolCalls,
-              ...(reasoningEffort === undefined ? {} : { reasoningEffort })
-            },
-            options: createOptions(createTransportFetch(scope)),
-            modelInfo: [],
-            supportFor: axFeatures(capabilities),
-            responsesReqUpdater: request => {
-              const updated = {
-                ...request,
-                input: restoreOpenAIReasoningInput(request.input),
+    let service: ProviderChatService
+    if (row.transportKind === 'openai-responses' || row.transportKind === 'openresponses' || row.transportKind === 'openai-chat') {
+      service = createRequestScopedService(capabilities.maxOutputTokens, scope => {
+        const transport = createTransportFetch(scope)
+        const configuredFetch = Object.assign(
+          async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
+            if (typeof init?.body !== 'string') throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider request body is invalid', 500)
+            const body = JSON.parse(init.body)
+            if (row.transportKind === 'openai-chat') {
+              if (body.tools?.length) body.parallel_tool_calls = capabilities.parallelToolCalls
+              if (reasoningEffort !== undefined) body.reasoning_effort = reasoningEffort
+            } else {
+              body.input = restoreOpenAIReasoningInput(body.input)
+              body.store = false
+              body.previous_response_id = null
+              body.include = [...new Set([...(body.include ?? []), 'reasoning.encrypted_content'])]
+              if (body.tools) body.tools = body.tools.map((tool: { type: string }) => (tool.type === 'function' ? { ...tool, strict: false } : tool))
+              if (reasoningEffort !== undefined) body.reasoning = { ...body.reasoning, effort: reasoningEffort }
+              delete body.temperature
+              delete body.top_p
+            }
+            return transport(input, { ...init, body: JSON.stringify(body) })
+          },
+          { preconnect: transport.preconnect }
+        ) as AgentProviderFetch
+        return row.transportKind === 'openai-chat'
+          ? ai({
+              name: 'openai-compatible',
+              apiKey: secret,
+              apiURL: row.baseUrl,
+              config: { model, ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature }) },
+              options: createOptions(scope, configuredFetch)
+            })
+          : ai({
+              name: 'openai-responses',
+              apiKey: secret,
+              apiURL: row.baseUrl,
+              config: {
+                model: model as AxAIOpenAIResponsesModel,
                 store: false,
-                previous_response_id: null,
-                include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])],
-                ...(request.tools == null
-                  ? {}
-                  : {
-                      tools: request.tools.map(tool => (tool.type === 'function' ? { ...tool, strict: false } : tool))
-                    })
-              }
-              delete updated.temperature
-              delete updated.top_p
-              return updated
-            }
-          })
-      )
-    } else if (row.transportKind === 'openai-chat') {
-      service = createRequestScopedService(
-        capabilities.maxOutputTokens,
-        scope =>
-          new AxAIOpenAIBase<string, AxAIOpenAIEmbedModel, string, AxAIOpenAIChatRequest<string>>({
-            apiKey: secret,
-            apiURL: row.baseUrl,
-            config: {
-              ...axAIOpenAIDefaultConfig(),
-              model,
-              ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
-            },
-            options: createOptions(createTransportFetch(scope)),
-            modelInfo: [],
-            supportFor: axFeatures(capabilities),
-            chatReqUpdater: request => {
-              const updated = {
-                ...request,
-                ...(request.tools?.length ? { parallel_tool_calls: capabilities.parallelToolCalls } : {})
-              }
-              // Ax's request type trails the current API, whose reasoning_effort also accepts max.
-              if (reasoningEffort !== undefined) Reflect.set(updated, 'reasoning_effort', reasoningEffort)
-              return updated
-            }
-          })
-      )
+                parallelToolCalls: capabilities.toolCalling === 'native' && capabilities.parallelToolCalls
+              },
+              options: createOptions(scope, configuredFetch)
+            })
+      })
     } else if (row.transportKind === 'anthropic-messages') {
       service = createRequestScopedService(capabilities.maxOutputTokens, scope => {
         const transportFetch = createTransportFetch(scope)
-        const anthropicFetch = createAnthropicEffortFetch(transportFetch, reasoningEffort, automaticAnthropicCaching)
-        return new AxAIAnthropic({
-          apiKey: secret,
-          config: {
-            model: model as AxAIAnthropicModel,
-            ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
+        const configuredFetch = Object.assign(
+          async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
+            const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
+            if (url.href !== 'https://api.anthropic.com/v1/messages')
+              throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Anthropic request destination is not allowlisted', 502)
+            return transportFetch(`${row.baseUrl.replace(/\/$/u, '')}/messages`, init)
           },
-          options: {
-            ...createOptions(transportFetch),
-            fetch: anthropicFetch
-          }
+          { preconnect: transportFetch.preconnect }
+        ) as AgentProviderFetch
+        return ai({
+          name: 'anthropic',
+          apiKey: secret,
+          config: { model: model as AxAIAnthropicModel, ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature }) },
+          options: createOptions(scope, createAnthropicEffortFetch(configuredFetch, reasoningEffort, automaticAnthropicCaching))
         })
       })
     } else if (row.transportKind === 'gemini-api') {
       service = createRequestScopedService(capabilities.maxOutputTokens, scope =>
-        createGeminiInteractionsService({
+        createGeminiAxService({
           apiKey: secret,
           baseUrl: row.baseUrl,
           model,
           fetch: createTransportFetch(scope),
           timeoutMs: adapterConfig.timeoutMs,
-          ...(reasoningEffort === undefined ? {} : { thinkingLevel: geminiThinkingLevel(reasoningEffort) }),
-          ...(loadOptions.purpose === 'utility' || loadOptions.googleSearchEnabled !== true ? {} : { googleSearchEnabled: true })
+          maxOutputTokens: scope.limits.maxOutputTokens,
+          limits: scope.limits,
+          ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature }),
+          ...(reasoningEffort === undefined ? {} : { thinkingLevel: geminiThinkingLevel(reasoningEffort) })
         })
       )
     } else if (row.transportKind === 'legacy-completions') {
@@ -1262,6 +1245,9 @@ export class AgentProviderFactory {
     return {
       service,
       capabilities,
+      get nativeMediaCapabilities() {
+        return service.nativeMediaCapabilities
+      },
       transportKind: row.transportKind,
       continuationDialect: providerContinuationDialect(row.transportKind),
       model,
@@ -1274,7 +1260,7 @@ export class AgentProviderFactory {
         row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
           ? (resultId, block) => (block.encrypted ? openAIReasoningState(resultId, block) : null)
           : row.transportKind === 'gemini-api'
-            ? (_resultId, block) => preserveGeminiInteractionState(block)
+            ? (_resultId, block) => preserveGeminiContinuation(block)
             : row.transportKind === 'openai-chat' || row.transportKind === 'anthropic-messages'
               ? (_resultId, block) => {
                   if (block.encrypted !== true || typeof block.data !== 'string' || Buffer.byteLength(block.data, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES)
