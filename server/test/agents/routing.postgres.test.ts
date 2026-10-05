@@ -38,7 +38,6 @@ const publicDns = (async () => [{ address: '93.184.216.34', family: 4 }]) as unk
 suite('PostgreSQL routing configuration and native Jev decision path', () => {
   let db: Knex, policies: AgentRoutingPolicyRegistry, decisions: DecisionProviderRegistry
   let decisionResponse: 'valid' | 'malformed' | 'unknown-failure'
-  let routingChoice: string | null
   let compatibleUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
   let nativeCalls: number
   beforeAll(async () => {
@@ -115,7 +114,6 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
     policies = new AgentRoutingPolicyRegistry(db)
     nativeCalls = 0
     decisionResponse = 'valid'
-    routingChoice = null
     compatibleUsage = { prompt_tokens: 338, completion_tokens: 31, total_tokens: 369 }
     decisions = new DecisionProviderRegistry(
       db,
@@ -141,8 +139,11 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
               : JSON.parse(legacy ? body.prompt.slice(body.prompt.lastIndexOf('\n\nuser: ') + 8) : body.messages[1].content)
             if (native) expect(request.type).toBe('choice')
             const labels = Object.keys(request.criteria)
-            if (labels.includes('writing:simple')) expect(request.instructions).toContain('# Goal')
-            const choice = routingChoice ?? (labels.includes('writing:simple') ? 'writing:simple' : labels[0])
+            if (labels.includes('writing:simple')) {
+              expect(labels.every(label => /^[a-z_]+:(simple|moderate|complex)$/.test(label))).toBe(true)
+              expect(request.instructions).toContain('# Goal')
+            }
+            const choice = labels.includes('writing:simple') ? 'writing:simple' : labels[0]
             const probabilities = Object.fromEntries(labels.map(label => [label, label === choice ? 1 : 0]))
             const answer = { choice: decisionResponse === 'malformed' ? 'not-an-allowed-task' : choice, probabilities, confidence: 1 }
             return Response.json(
@@ -193,7 +194,7 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
     expect(reopened).toEqual({ policy, models: [declaration] })
     expect(reopened.models[0]).not.toHaveProperty('intelligence')
   })
-  it('reads existing persisted routing policy with delegation opted out, without rewriting its config', async () => {
+  it('defaults missing historical specialist fields without rewriting persisted configuration', async () => {
     const {
       specialistEnabled: _enabled,
       specialistMaxContexts: _contexts,
@@ -301,7 +302,6 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
       ownerId: 7,
       sessionId: randomUUID(),
       runId: randomUUID(),
-      pinned: false,
       current,
       candidates: [current, alternate],
       requirements: { modalities: ['text'], nativeTools: true, nativeExternalMcp: false, nativeSchema: true, minimumOutputTokens: 100 },
@@ -388,46 +388,80 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
     await policies.setModelPolicy(profileId, { ...modelInput, estimatedLatencyMs: 500 }, (await policies.getRuntime()).models[0]!.revision, actor)
     await expect(Promise.resolve(db.transaction(tx => f.router.validateDecision(decision, tx)))).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
   })
-  it('classifies reusable independent work through the same native protocol, retains a pinned root and fences child version changes', async () => {
-    const f = await routingFixture()
-    await policies.updateAdmin({ ...DEFAULT_ROUTING_POLICY, enabled: true, specialistEnabled: true }, (await policies.getRuntime()).policy.revision, actor)
-    const contextId = randomUUID()
-    routingChoice = `REUSE(${contextId}):writing:simple`
-    const input: RoutingTurnInput = {
-      ...f.input,
-      pinned: true,
-      estimatedRootWorkTurns: 3,
-      fullHistoryInputTokens: 150_000,
-      specialists: [
-        {
-          contextId,
-          contextVersion: 4,
-          candidate: f.input.candidates[1]!,
-          taskClass: 'writing',
-          complexity: 'simple',
-          inputTokens: 100,
-          description: 'Continue an independently assigned greeting revision.'
+  for (const { fullHistoryInputTokens, strategy } of [
+    { fullHistoryInputTokens: 12_000, strategy: 'swap' },
+    { fullHistoryInputTokens: 150_000, strategy: 'stay' }
+  ] as const)
+    it(`uses direct ${strategy} routing for saved specialist-enabled policy ${strategy === 'swap' ? 'with exactly-once native usage' : 'without paid classification when cold replay cannot save cost'}`, async () => {
+      const f = await routingFixture()
+      await policies.updateAdmin({ ...DEFAULT_ROUTING_POLICY, enabled: true, specialistEnabled: true }, (await policies.getRuntime()).policy.revision, actor)
+      const savedConfig = (await db('agentRoutingPolicy').where({ id: 1 }).first('config')).config
+      const input: RoutingTurnInput = {
+        ...f.input,
+        estimatedRootWorkTurns: 3,
+        fullHistoryInputTokens,
+        specialists: [
+          {
+            contextId: randomUUID(),
+            contextVersion: 4,
+            candidate: f.input.candidates[1]!,
+            taskClass: 'writing',
+            complexity: 'simple',
+            inputTokens: 100,
+            description: 'Historical independently assigned greeting revision.'
+          }
+        ]
+      }
+      const decision = await f.router.routeTurn(input, f.hooks)
+      expect(decision).toMatchObject({
+        strategy,
+        switched: strategy === 'swap',
+        profileId: strategy === 'swap' ? profileId : anotherProfileId,
+        profileVersionId: strategy === 'swap' ? versionId : anotherVersionId,
+        specialist: null,
+        strategyCosts: {
+          basis: 'host-token-estimates-no-cache-discount',
+          rootWorkTurns: 3,
+          childWorkTurns: 0,
+          reportTokens: 0,
+          handoffInputTokens: 0,
+          delegateMicros: null
         }
-      ]
-    }
-    const decision = await f.router.routeTurn(input, f.hooks)
-    expect(decision).toMatchObject({
-      strategy: 'delegate',
-      switched: false,
-      profileId: anotherProfileId,
-      profileVersionId: anotherVersionId,
-      specialist: { contextId, contextVersion: 4, profileId, profileVersionId: versionId },
-      classification: { choice: routingChoice, usage: { totalTokens: 369, totalTokensSource: 'derived' } }
+      })
+      if (strategy === 'swap')
+        expect(decision.classification).toMatchObject({
+          choice: 'writing:simple',
+          model: 'jev-1.13.0',
+          usage: { totalTokens: 369, totalTokensSource: 'derived' }
+        })
+      else
+        expect(decision).toMatchObject({
+          reason: 'classifier-overhead',
+          classification: null,
+          classifierReservation: null,
+          classifierFailure: null,
+          unknownExposure: null
+        })
+      await db.transaction(tx => f.router.validateDecision(decision, tx))
+      expect(await f.router.routeTurn({ ...input, recordedDecision: JSON.parse(JSON.stringify(decision)) }, f.hooks)).toEqual(decision)
+      expect(nativeCalls).toBe(strategy === 'swap' ? 1 : 0)
+      expect(f.checkpoints).toHaveLength(1)
+      expect(f.measured).toEqual(strategy === 'swap' ? [{ inputTokens: 338, outputTokens: 31, totalTokens: 369, costMicros: 15 }] : [])
+      expect((await db('agentRoutingPolicy').where({ id: 1 }).first('config')).config).toBe(savedConfig)
+      if (strategy === 'swap') {
+        const replacement = randomUUID()
+        await db('agentProviderProfileVersions').insert({ id: replacement, profileId })
+        await db('agentProviderProfiles').where({ id: profileId }).update({ currentVersionId: replacement })
+        await expect(Promise.resolve(db.transaction(tx => f.router.validateDecision(decision, tx)))).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
+      } else {
+        await policies.updateAdmin(
+          { ...DEFAULT_ROUTING_POLICY, enabled: true, specialistEnabled: true, minimumConfidence: 0.98 },
+          (await policies.getRuntime()).policy.revision,
+          actor
+        )
+        await expect(Promise.resolve(db.transaction(tx => f.router.validateDecision(decision, tx)))).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
+      }
     })
-    await db.transaction(tx => f.router.validateDecision(decision, tx))
-    expect(await f.router.routeTurn({ ...input, recordedDecision: JSON.parse(JSON.stringify(decision)) }, f.hooks)).toEqual(decision)
-    expect(nativeCalls).toBe(1)
-    expect(f.measured).toEqual([{ inputTokens: 338, outputTokens: 31, totalTokens: 369, costMicros: 15 }])
-    const replacement = randomUUID()
-    await db('agentProviderProfileVersions').insert({ id: replacement, profileId })
-    await db('agentProviderProfiles').where({ id: profileId }).update({ currentVersionId: replacement })
-    await expect(Promise.resolve(db.transaction(tx => f.router.validateDecision(decision, tx)))).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
-  })
 
   it('accounts billed malformed native responses before retaining the authorized incumbent', async () => {
     const f = await routingFixture()

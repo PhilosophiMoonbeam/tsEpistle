@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
+import { DEFAULT_ROUTING_POLICY } from '../../../shared/agents/routing.ts'
 import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 
@@ -120,8 +121,40 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.string('id')
     table.string('sessionId')
+    table.string('goalId').nullable()
     table.string('status')
     table.string('providerProfileVersionId').nullable()
+    table.integer('ownerId')
+    table.string('executionMode')
+    table.integer('profilePolicyVersion')
+    table.integer('defaultGeneration')
+    table.string('transportKind')
+    table.string('model')
+    table.string('capabilityRevision')
+    table.string('pricingRevision')
+    table.integer('promptVersion')
+    table.dateTime('queuedAt')
+  })
+  await knex.schema.createTable('agentEvents', table => {
+    table.string('id').primary()
+    table.string('runId')
+    table.string('type')
+    table.text('data')
+    table.string('dataSha256')
+  })
+  await knex.schema.createTable('agentRoutingPolicy', table => {
+    table.integer('id').primary()
+    table.integer('revision')
+    table.text('config')
+    table.dateTime('updatedAt').nullable()
+  })
+  await knex('agentRoutingPolicy').insert({ id: 1, revision: 1, config: JSON.stringify(DEFAULT_ROUTING_POLICY), updatedAt: null })
+  await knex.schema.createTable('agentRoutingModelPolicies', table => {
+    table.string('profileId').primary()
+    table.string('profileVersionId')
+    table.integer('revision')
+    table.text('config')
+    table.dateTime('updatedAt')
   })
 }
 const currentSettingsId = async (knex: Knex, profileId: string): Promise<string> => {
@@ -153,14 +186,111 @@ describe('agent provider profile registry', () => {
   })
   afterEach(async () => knex.destroy())
 
-  it('lists only currently granted credential-ready primary models and independently resolves alternates without changing session preference', async () => {
-    const createReady = async (name: string, exposureMode: 'all_agent_users' | 'groups', groupIds: number[] = []) => {
-      const profile = await registry.create({ ...profileInput, displayName: name, exposureMode, groupIds, actorId: 1 })
-      const versionId = await currentSettingsId(knex, profile.id)
-      await registry.setConformed(profile.id, versionId, true, 1)
-      await registry.setEnabled(profile.id, true, 1, versionId)
-      return { profile, versionId }
+  const createReadyProfile = async (displayName: string, exposureMode: 'all_agent_users' | 'groups' = 'all_agent_users', groupIds: number[] = []) => {
+    const profile = await registry.create({ ...profileInput, displayName, exposureMode, groupIds, actorId: 1 })
+    const versionId = await currentSettingsId(knex, profile.id)
+    await registry.setConformed(profile.id, versionId, true, 1)
+    await registry.setEnabled(profile.id, true, 1, versionId)
+    return { profile, versionId }
+  }
+
+  it('uses the administrator default instead of a historical session pin without changing the session row', async () => {
+    const historical = await createReadyProfile('Alpha historical choice')
+    const automatic = await createReadyProfile('Zulu administrator default')
+    await registry.setDefault(automatic.profile.id, 1)
+    await knex('agentSessions').insert({
+      id: 'historical-session',
+      ownerId: 7,
+      version: 9,
+      providerProfileId: historical.profile.id,
+      executionMode: 'agent',
+      updatedAt: '2026-08-17T00:00:00.000Z'
+    })
+    const before = await knex('agentSessions').where({ id: 'historical-session' }).first()
+    const token = await registry.issueResolutionToken(7, 'historical-session')
+    expect(await knex.transaction(transaction => registry.resolveCurrent(transaction, { ownerId: 7, sessionId: 'historical-session' }))).toMatchObject({
+      providerProfileVersionId: automatic.versionId
+    })
+    expect(
+      await knex.transaction(transaction => registry.resolve(transaction, { ownerId: 7, sessionId: 'historical-session', profileResolutionToken: token }))
+    ).toMatchObject({ providerProfileVersionId: automatic.versionId })
+    expect(await knex('agentSessions').where({ id: 'historical-session' }).first()).toEqual(before)
+  })
+
+  it('falls back by eligible display name then UUID and invalidates a token when live fallback authority changes', async () => {
+    const unavailable = await createReadyProfile('Global default')
+    await registry.setDefault(unavailable.profile.id, 1)
+    const zulu = await createReadyProfile('Zulu fallback')
+    const alpha = await createReadyProfile('Alpha fallback', 'groups', [101])
+    await knex('groups').insert({ id: 101, permissions: '[]' })
+    await knex('userGroups').insert({ userId: 7, groupId: 101 })
+    await registry.setEnabled(unavailable.profile.id, false, 1, unavailable.versionId)
+    await knex('agentSessions').insert({ id: 'fallback-session', ownerId: 7, version: 1, providerProfileId: unavailable.profile.id, executionMode: 'agent' })
+    const token = await registry.issueResolutionToken(7, 'fallback-session')
+    expect(await knex.transaction(transaction => registry.resolveCurrent(transaction, { ownerId: 7, sessionId: 'fallback-session' }))).toMatchObject({
+      providerProfileVersionId: alpha.versionId
+    })
+    await knex('userGroups').where({ userId: 7, groupId: 101 }).delete()
+    expect(await knex.transaction(transaction => registry.resolveCurrent(transaction, { ownerId: 7, sessionId: 'fallback-session' }))).toMatchObject({
+      providerProfileVersionId: zulu.versionId
+    })
+    await expect(
+      Promise.resolve(
+        knex.transaction(transaction => registry.resolve(transaction, { ownerId: 7, sessionId: 'fallback-session', profileResolutionToken: token }))
+      )
+    ).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED' })
+    await knex('userGroups').insert({ userId: 7, groupId: 101 })
+    // Exercise deterministic tie-breaking independently of today's active-name uniqueness constraint.
+    await knex.raw('DROP INDEX agent_provider_profiles_active_name_unique')
+    await knex('agentProviderProfiles').whereIn('id', [alpha.profile.id, zulu.profile.id]).update({ displayName: 'Same fallback' })
+    const first = alpha.profile.id < zulu.profile.id ? alpha : zulu
+    expect(await knex.transaction(transaction => registry.resolveCurrent(transaction, { ownerId: 7, sessionId: 'fallback-session' }))).toMatchObject({
+      providerProfileVersionId: first.versionId
+    })
+    expect(await knex('agentSessions').where({ id: 'fallback-session' }).first('providerProfileId', 'version')).toEqual({
+      providerProfileId: unavailable.profile.id,
+      version: 1
+    })
+  })
+
+  it.each(['grant', 'secret', 'profile-conformance', 'version-conformance', 'status', 'deleted', 'mode'] as const)(
+    'rechecks current %s eligibility when issuing tokens and resolving automatic admission',
+    async revocation => {
+      const ready = await createReadyProfile('Only eligible profile', 'groups', [101])
+      await knex('groups').insert({ id: 101, permissions: '[]' })
+      await knex('userGroups').insert({ userId: 7, groupId: 101 })
+      await knex('agentSessions').insert({ id: 'live-session', ownerId: 7, version: 1, providerProfileId: ready.profile.id, executionMode: 'agent' })
+      const token = await registry.issueResolutionToken(7, 'live-session')
+      expect(await knex.transaction(transaction => registry.resolveCurrent(transaction, { ownerId: 7, sessionId: 'live-session' }))).toMatchObject({
+        providerProfileVersionId: ready.versionId
+      })
+      if (revocation === 'grant') await knex('userGroups').where({ userId: 7, groupId: 101 }).delete()
+      if (revocation === 'secret') secretAvailable = false
+      if (revocation === 'profile-conformance') await knex('agentProviderProfiles').where({ id: ready.profile.id }).update({ conformed: false })
+      if (revocation === 'version-conformance') await knex('agentProviderProfileVersions').where({ id: ready.versionId }).update({ conformed: false })
+      if (revocation === 'status') await knex('agentProviderProfiles').where({ id: ready.profile.id }).update({ status: 'disabled' })
+      if (revocation === 'deleted') await knex('agentProviderProfiles').where({ id: ready.profile.id }).update({ deletedAt: new Date() })
+      if (revocation === 'mode')
+        await knex('agentProviderProfileVersions')
+          .where({ id: ready.versionId })
+          .update({ policies: JSON.stringify({ ...profileInput.policies, allowedModes: ['generation-only'] }) })
+      await expect(registry.issueResolutionToken(7, 'live-session')).rejects.toMatchObject({ code: 'PROFILE_UNAVAILABLE' })
+      await expect(
+        Promise.resolve(knex.transaction(transaction => registry.resolveCurrent(transaction, { ownerId: 7, sessionId: 'live-session' })))
+      ).rejects.toMatchObject({ code: 'PROFILE_UNAVAILABLE' })
+      await expect(
+        Promise.resolve(
+          knex.transaction(transaction => registry.resolve(transaction, { ownerId: 7, sessionId: 'live-session', profileResolutionToken: token }))
+        )
+      ).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED' })
+      expect(await knex('agentSessions').where({ id: 'live-session' }).first('providerProfileId', 'version')).toEqual({
+        providerProfileId: ready.profile.id,
+        version: 1
+      })
     }
+  )
+
+  it('lists only currently granted credential-ready primary models and independently resolves alternates without changing session preference', async () => {
     await knex('groups').insert([
       { id: 101, permissions: '[]' },
       { id: 102, permissions: '[]' }
@@ -169,9 +299,9 @@ describe('agent provider profile registry', () => {
       { userId: 7, groupId: 100 },
       { userId: 7, groupId: 101 }
     ])
-    const incumbent = await createReady('Default', 'all_agent_users')
-    const alternate = await createReady('Accessible group', 'groups', [101])
-    const denied = await createReady('Other group', 'groups', [102])
+    const incumbent = await createReadyProfile('Default')
+    const alternate = await createReadyProfile('Accessible group', 'groups', [101])
+    const denied = await createReadyProfile('Other group', 'groups', [102])
     await registry.setDefault(incumbent.profile.id, 1)
     await knex('agentSessions').insert([
       { id: 'automatic', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent' },
@@ -399,19 +529,6 @@ describe('agent provider profile registry', () => {
     expect(await knex('agentProviderConfiguration').where({ id: 1 }).first('defaultGeneration')).toMatchObject({ defaultGeneration: 2 })
   })
 
-  it('omits enabled profiles whose configured secret is unavailable', async () => {
-    const created = await registry.create({ ...profileInput, displayName: 'Unavailable secret', exposureMode: 'all_agent_users', actorId: 1 })
-    const settingsId = await currentSettingsId(knex, created.id)
-    await registry.setConformed(created.id, settingsId, true, 1)
-    await registry.setEnabled(created.id, true, 1, settingsId)
-    expect(await registry.listVisible(7)).toHaveLength(1)
-
-    secretAvailable = false
-
-    expect(await registry.listVisible(7)).toEqual([])
-    await expect(Promise.resolve(registry.assertProfileAvailable(7, created.id))).rejects.toMatchObject({ code: 'PROFILE_UNAVAILABLE' })
-  })
-
   it('stores a UI-supplied credential as an encrypted managed reference in the profile transaction', async () => {
     const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 7) } })
     const managedRegistry = new AgentProviderRegistry(knex, vault, {
@@ -630,7 +747,7 @@ describe('agent provider profile registry', () => {
     expect((await registry.getAdmin(textOnly.id)).adapterConfig.media).toBeUndefined()
   })
 
-  it('fails closed for private endpoints, forbidden headers, incompatible modes, and group visibility', async () => {
+  it('fails closed for private endpoints, forbidden headers, incompatible modes, and invalid credentials', async () => {
     await expect(
       Promise.resolve(
         registry.create({ ...profileInput, baseUrl: 'https://127.0.0.1/v1', displayName: 'Private', exposureMode: 'all_agent_users', actorId: 1 })
@@ -672,34 +789,5 @@ describe('agent provider profile registry', () => {
         actorId: 1
       })
     ).toMatchObject({ transportKind: 'legacy-completions', capabilities: { toolCalling: 'prompt', parallelToolCalls: false } })
-
-    const grouped = await registry.create({ ...profileInput, displayName: 'Grouped', exposureMode: 'groups', groupIds: [4], actorId: 1 })
-    await registry.setConformed(grouped.id, await currentSettingsId(knex, grouped.id), true, 1)
-    await registry.setEnabled(grouped.id, true, 1, await currentSettingsId(knex, grouped.id))
-    expect(await registry.listVisible(7)).toEqual([])
-    await knex('userGroups').insert({ userId: 7, groupId: 4 })
-    const [visible] = await registry.listVisible(7)
-    expect(visible).toMatchObject({ id: grouped.id, name: 'Grouped', transport: 'openai-responses', model: 'gpt-test', isGlobalDefault: false })
-    expect(visible).not.toHaveProperty('versionId')
-    await knex('agentSessions').insert({
-      id: 'session-2',
-      ownerId: 7,
-      version: 1,
-      providerProfileId: null,
-      executionMode: 'agent',
-      deletedAt: null,
-      updatedAt: new Date()
-    })
-    await registry.setSessionProfile({ ownerId: 7, sessionId: 'session-2', expectedSessionVersion: 1, profileId: grouped.id })
-    expect(await knex('agentSessions').where({ id: 'session-2' }).first('providerProfileId', 'version')).toMatchObject({
-      providerProfileId: grouped.id,
-      version: 2
-    })
-    expect(await registry.getAdmin(grouped.id)).toMatchObject({ exposureMode: 'groups', groupIds: [4] })
-    await knex('agentSessions').where({ id: 'session-2' }).update({ providerProfileId: null, version: 3 })
-    const token = await registry.issueResolutionToken(7, 'session-2')
-    expect(
-      await knex.transaction(transaction => registry.resolve(transaction, { ownerId: 7, sessionId: 'session-2', profileResolutionToken: token }))
-    ).toMatchObject({ executionMode: 'agent' })
   })
 })

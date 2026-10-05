@@ -7,14 +7,12 @@ import {
   AGENT_GOAL_STATUSES,
   AGENT_GOAL_TOKEN_TIERS,
   AGENT_PROPOSAL_STATUSES,
-  AGENT_PROVIDER_TRANSPORTS,
   AGENT_TASK_KINDS,
   AGENT_TERMINAL_RUN_STATUSES,
   AGENT_TOOL_CALL_NAMES,
   type AgentConversationFolderView,
   type AgentEventType,
   type AgentMediaView,
-  type AgentProviderProfileView,
   type AgentThreadState,
   type CancelAgentGoalRequest,
   type CreateAgentGoalRequest,
@@ -27,7 +25,6 @@ import {
   type ResumeAgentGoalRequest,
   type SubmitAgentMessageRequest,
   type UpdateAgentSessionFolderRequest,
-  type UpdateAgentSessionProfileRequest,
   type UpdateAgentSessionRequest,
   type UpdateAgentSkillPreferencesRequest
 } from '../../shared/agents/contracts.ts'
@@ -132,6 +129,15 @@ const Session = z.object({
   version: z.number().int().positive(),
   providerProfileId: Uuid.nullable(),
   profileResolutionToken: z.string(),
+  mediaCapabilities: z
+    .strictObject({
+      attachments: z.boolean(),
+      imageGeneration: z.boolean(),
+      videoGeneration: z.boolean(),
+      musicGeneration: z.boolean(),
+      transcription: z.boolean()
+    })
+    .nullable(),
   skills: z.array(Skill),
   currentRun: Run.nullable(),
   createdAt: Iso,
@@ -309,36 +315,6 @@ const SessionSummary = z.object({
   deletedAt: Iso.nullable()
 })
 const ConversationFolder = z.object({ id: Uuid, name: z.string(), version: z.number().int().positive(), createdAt: Iso, updatedAt: Iso })
-const Profile = z.object({
-  media: z
-    .object({
-      attachments: z.boolean(),
-      imageGeneration: z.boolean(),
-      videoGeneration: z.boolean().default(false),
-      musicGeneration: z.boolean().default(false),
-      transcription: z.boolean()
-    })
-    .optional(),
-  id: Uuid,
-  name: z.string(),
-  transport: z.enum(AGENT_PROVIDER_TRANSPORTS),
-  model: z.string(),
-  utilityModel: z.string().nullable(),
-  destinationHost: z.string(),
-  capabilities: z.object({
-    streaming: z.boolean(),
-    toolCalling: z.enum(['native', 'prompt']),
-    parallelToolCalls: z.boolean(),
-    structuredOutput: z.enum(['native-json-schema', 'tool-result', 'prompt-only']),
-    usage: z.enum(['stream', 'terminal', 'estimated']),
-    cancellation: z.literal(true),
-    maxContextTokens: z.number(),
-    maxOutputTokens: z.number()
-  }),
-  capabilityRevision: z.string(),
-  policyVersion: z.number().int().positive(),
-  isGlobalDefault: z.boolean()
-})
 const VisibleSkill = z.object({
   id: Uuid,
   versionId: Uuid,
@@ -558,8 +534,10 @@ export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfT
 }
 
 export const createAgentThread = (fetcher: typeof fetch, csrfToken: string, input: CreateAgentSessionRequest): Promise<CreatedAgentThread> => {
-  if (input.providerProfileId !== null) assertUuid(input.providerProfileId, 'Provider profile ID')
-  return requestJson(fetcher, csrfToken, '/_api/agents/sessions', CreatedThread, { method: 'POST', body: JSON.stringify(input) }) as Promise<CreatedAgentThread>
+  return requestJson(fetcher, csrfToken, '/_api/agents/sessions', CreatedThread, {
+    method: 'POST',
+    body: JSON.stringify({ retention: input.retention })
+  }) as Promise<CreatedAgentThread>
 }
 
 export const getAgentThread = (fetcher: typeof fetch, csrfToken: string, sessionId: string, signal?: AbortSignal): Promise<AgentThreadState> => {
@@ -725,24 +703,6 @@ export const decideAgentProposal = async (
 export const getMcpAgentProposal = async (fetcher: typeof fetch, csrfToken: string, proposalId: string, signal?: AbortSignal): Promise<McpAgentProposal> =>
   (await requestJson(fetcher, csrfToken, `/_api/agents/mcp-proposals/${encodeURIComponent(proposalId)}`, z.object({ proposal: McpProposal }), { signal }))
     .proposal
-
-export const listAgentProfiles = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentProviderProfileView[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/profiles', z.object({ profiles: z.array(Profile) }), { signal })).profiles as AgentProviderProfileView[]
-
-export const updateAgentProfile = (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  sessionId: string,
-  input: UpdateAgentSessionProfileRequest
-): Promise<AgentThreadState> => {
-  assertUuid(sessionId, 'Session ID')
-  assertPositiveVersion(input.expectedSessionVersion)
-  if (input.providerProfileId !== null) assertUuid(input.providerProfileId, 'Provider profile ID')
-  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/profile`, Thread, {
-    method: 'PUT',
-    body: JSON.stringify({ expectedSessionVersion: input.expectedSessionVersion, profileId: input.providerProfileId })
-  }) as Promise<AgentThreadState>
-}
 
 export const listAgentSkills = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<VisibleAgentSkill[]> =>
   (await requestJson(fetcher, csrfToken, '/_api/agents/skills', z.object({ skills: z.array(VisibleSkill) }), { signal })).skills

@@ -1,12 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 
-import type { AgentConversationFolderView, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
+import type { AgentConversationFolderView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { AGENT_CHAT_PIN_STORAGE_KEY, clearAgentChatPin, writeAgentChatPin } from '../helpers/agent-chat-pin.ts'
 import { isAgentSessionId, useAgentsStore } from './agents.ts'
 
 // Fixture-only envelope: server signature verification is not exercised by these store tests.
-const admissionToken = (sessionId: string, ownerId: number): string => {
+const admissionToken = (sessionId: string, ownerId: number, overrides: Record<string, unknown> = {}): string => {
   const kid = 'polling-test'
   const payload = {
     v: 1,
@@ -20,7 +20,8 @@ const admissionToken = (sessionId: string, ownerId: number): string => {
     profilePolicyVersion: 1,
     defaultGeneration: 1,
     executionMode: 'agent',
-    exp: 4_000_000_000
+    exp: 4_000_000_000,
+    ...overrides
   }
   return `${kid}.${btoa(JSON.stringify(payload)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')}.fixture-signature`
 }
@@ -36,6 +37,7 @@ const activeThread = (ownerId = 1, sessionId = '00000000-0000-4000-8000-00000000
     version: 1,
     providerProfileId: null,
     profileResolutionToken: admissionToken(sessionId, ownerId),
+    mediaCapabilities: null,
     skills: [],
     currentRun: {
       id: '00000000-0000-4000-8000-000000000002',
@@ -397,7 +399,7 @@ describe('Agent store initialization', () => {
     vi.restoreAllMocks()
   })
 
-  it('stores the supplied CSRF token before creating the fallback session', async () => {
+  it('creates the fallback session with CSRF and retention only, without requesting a profile inventory', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     const created = threadForSession('00000000-0000-4000-8000-000000000060', '00000000-0000-4000-8000-000000000061')
@@ -414,9 +416,6 @@ describe('Agent store initialization', () => {
       if (path === '/_api/agents/conversation-folders' && method === 'GET') {
         return Promise.resolve(new Response(JSON.stringify({ folders: [] }), { status: 200, ...json }))
       }
-      if (path === '/_api/agents/profiles' && method === 'GET') {
-        return Promise.resolve(new Response(JSON.stringify({ profiles: [] }), { status: 200, ...json }))
-      }
       if (path === '/_api/agents/skills' && method === 'GET') {
         return Promise.resolve(new Response(JSON.stringify({ skills: [] }), { status: 200, ...json }))
       }
@@ -427,49 +426,16 @@ describe('Agent store initialization', () => {
     })
     store.connectCurrentRun = vi.fn()
 
-    await store.initialize('initialized-csrf', { ownerId: 1, routeSync: false })
+    await expect(store.initialize('initialized-csrf', { ownerId: 1, routeSync: false })).resolves.toBe(true)
 
     const createCall = fetcher.mock.calls.find(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')
     expect(store.csrfToken).toBe('initialized-csrf')
     expect(new Headers(createCall?.[1]?.headers).get('x-wiki-csrf')).toBe('initialized-csrf')
+    expect(createCall).toBeDefined()
+    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({ retention: 'saved' })
+    expect(store.thread?.session.id).toBe(created.session.id)
+    expect(fetcher.mock.calls.some(call => String(call[0]) === '/_api/agents/profiles')).toBe(false)
     store.closeWorkspace()
-  })
-
-  it('clears stale profiles when a new workspace fails to initialize or closes', async () => {
-    setActivePinia(createPinia())
-    const store = useAgentsStore()
-    const staleProfile: AgentProviderProfileView = {
-      id: '00000000-0000-4000-8000-000000000064',
-      name: 'Stale provider',
-      transport: 'openai-responses',
-      model: 'gpt-stale',
-      utilityModel: null,
-      destinationHost: 'api.example.test',
-      capabilities: {
-        streaming: true,
-        toolCalling: 'native',
-        parallelToolCalls: false,
-        structuredOutput: 'native-json-schema',
-        usage: 'terminal',
-        cancellation: true,
-        maxContextTokens: 32_000,
-        maxOutputTokens: 4_000
-      },
-      capabilityRevision: 'stale-v1',
-      policyVersion: 1,
-      isGlobalDefault: true
-    }
-    store.profiles = [staleProfile]
-    vi.spyOn(window, 'fetch').mockRejectedValue(new TypeError('Workspace unavailable'))
-
-    const initializing = store.initialize('csrf-token', { ownerId: 1, routeSync: false })
-    expect(store.profiles).toEqual([])
-    await initializing
-    expect(store.profiles).toEqual([])
-
-    store.profiles = [staleProfile]
-    store.closeWorkspace()
-    expect(store.profiles).toEqual([])
   })
 
   it('blocks folder mutations until the initial authoritative folders have loaded', async () => {
@@ -484,7 +450,6 @@ describe('Agent store initialization', () => {
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return baseline.promise
       if (path.startsWith(`/_api/agents/conversation-folders/${existing.id}?`) && method === 'DELETE') return deleteResponse.promise
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
@@ -541,7 +506,6 @@ describe('Agent store initialization', () => {
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       if (path === `/_api/agents/sessions/${resumeId}` && method === 'GET') return Promise.resolve(Response.json({ message: 'Gone' }, { status: 410 }))
       if (path === `/_api/agents/sessions/${pinnedId}` && method === 'GET') return Promise.resolve(Response.json(pinned))
@@ -573,7 +537,6 @@ describe('Agent store initialization', () => {
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       if (path === `/_api/agents/sessions/${missingId}` && method === 'GET') return Promise.resolve(Response.json({ message: 'Not found' }, { status: 404 }))
       if (path === '/_api/agents/sessions' && method === 'POST') return Promise.resolve(Response.json(created, { status: 201 }))
@@ -602,7 +565,6 @@ describe('Agent store initialization', () => {
         const method = init?.method ?? 'GET'
         if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
         if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-        if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
         if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
         if (path === `/_api/agents/sessions/${resumeId}` && method === 'GET') return Promise.resolve(Response.json({ message: 'Unavailable' }, { status }))
         return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
@@ -638,7 +600,6 @@ describe('Agent store initialization', () => {
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       if (path === `/_api/agents/sessions/${pinnedId}` && method === 'GET') return Promise.resolve(Response.json(pinned))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
@@ -666,7 +627,6 @@ describe('Agent store initialization', () => {
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       if (path === '/_api/agents/sessions' && method === 'POST') return Promise.resolve(Response.json(created, { status: 201 }))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
@@ -1102,13 +1062,12 @@ describe('Agent session mutations', () => {
       const retention = store.setSessionRetention(current.session.id, 'temporary')
       expect(store.sessionMutationBusy).toBe(true)
       const blocked = await Promise.all([
-        store.setProfile(null),
         store.send('Must wait for retention'),
         store.moveSessionToFolder(current.session.id, '00000000-0000-4000-8000-000000000090'),
         store.renameSession(current.session.id, 'Must also wait')
       ])
 
-      expect(blocked).toEqual([undefined, false, undefined, undefined])
+      expect(blocked).toEqual([false, undefined, undefined])
       expect(requestBodies).toEqual([{ expectedSessionVersion: 1, retention: 'temporary' }])
 
       if (outcome === 'success') {
@@ -1157,7 +1116,6 @@ describe('Agent session mutations', () => {
       if (path === '/_api/agents/sessions' && method === 'GET')
         return Promise.resolve(Response.json({ sessions: [summaryForThread(accountB)], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       if (path === `/_api/agents/sessions/${accountB.session.id}` && method === 'GET') return Promise.resolve(Response.json(accountB))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
@@ -1285,29 +1243,6 @@ describe('Agent session mutations', () => {
     store.routeSync = false
     store.thread = current
     store.sessions = [summaryForThread(current), summaryForThread(filed)]
-    store.profiles = [
-      {
-        id: '00000000-0000-4000-8000-000000000108',
-        name: 'Default provider',
-        transport: 'openai-responses',
-        model: 'gpt-test',
-        utilityModel: null,
-        destinationHost: 'api.example.test',
-        capabilities: {
-          streaming: true,
-          toolCalling: 'native',
-          parallelToolCalls: false,
-          structuredOutput: 'native-json-schema',
-          usage: 'terminal',
-          cancellation: true,
-          maxContextTokens: 32_000,
-          maxOutputTokens: 4_000
-        },
-        capabilityRevision: 'test-v1',
-        policyVersion: 1,
-        isGlobalDefault: true
-      }
-    ]
     markWorkspaceReady(store)
     store.connectCurrentRun = vi.fn()
     const requestBodies: unknown[] = []
@@ -1326,7 +1261,7 @@ describe('Agent session mutations', () => {
     await store.clearUnfiledHistory()
 
     expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['DELETE', 'POST', 'GET'])
-    expect(requestBodies).toEqual([{ retention: 'saved', providerProfileId: null }])
+    expect(requestBodies).toEqual([{ retention: 'saved' }])
     expect(store.thread?.session.id).toBe(created.session.id)
     expect(store.sessions).toEqual([summaryForThread(created), summaryForThread(filed)])
     expect(store.sessions.some(session => session.id === current.session.id)).toBe(false)
@@ -1372,6 +1307,8 @@ describe('Agent session mutations', () => {
             requestIssued = true
             return request.promise
           }
+          if (actionName === 'clearUnfiledHistory' && path === '/_api/agents/sessions' && method === 'POST')
+            return Promise.resolve(Response.json(created, { status: 201 }))
           if (path === '/_api/agents/sessions' && method === 'GET')
             return Promise.resolve(Response.json({ sessions: actionName === 'clearUnfiledHistory' ? [] : [summaryForThread(current)], nextCursor: null }))
           return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
@@ -1850,7 +1787,6 @@ describe('Agent chat pin availability', () => {
       if (path === `/_api/agents/sessions/${selected.session.id}` && method === 'GET') return pendingSelection.promise
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
@@ -1928,7 +1864,6 @@ describe('Agent chat pin availability', () => {
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return pendingHistory.promise
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
@@ -2003,6 +1938,118 @@ describe('Agent chat pin availability', () => {
     store.setCurrentChatPinned(false)
     expect(store.pinnedSessionId).toBeNull()
     expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBeNull()
+  })
+})
+
+describe('Automatic agent send admission', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('sends a historical session using fresh automatic admission without a profile inventory request', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const active = activeThread()
+    const sessionId = active.session.id
+    const historicalProfileId = '00000000-0000-4000-8000-000000000099'
+    const origin: AgentThreadState = {
+      ...active,
+      session: { ...active.session, providerProfileId: historicalProfileId, currentRun: null }
+    }
+    const freshToken = admissionToken(sessionId, 1, { exp: 4_000_000_001 })
+    const fresh: AgentThreadState = { ...origin, session: { ...origin.session, profileResolutionToken: freshToken } }
+    const accepted: AgentThreadState = { ...fresh, session: { ...fresh.session, currentRun: active.session.currentRun } }
+    store.csrfToken = 'csrf-token'
+    store.pinOwnerId = 1
+    store.routeSync = false
+    store.thread = origin
+    markWorkspaceReady(store)
+    store.connectCurrentRun = vi.fn()
+    store.setDraft(sessionId, 'Continue this historical conversation')
+    store.setDraft('00000000-0000-4000-8000-000000000098', 'Another conversation draft')
+    let posted = false
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${sessionId}` && method === 'GET') return Promise.resolve(Response.json(posted ? accepted : fresh))
+      if (path === `/_api/agents/sessions/${sessionId}/messages` && method === 'POST') {
+        posted = true
+        return Promise.resolve(Response.json({ run: active.session.currentRun, replayed: false }, { status: 202 }))
+      }
+      if (path === '/_api/agents/sessions' && method === 'GET')
+        return Promise.resolve(Response.json({ sessions: [summaryForThread(accepted)], nextCursor: null }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    await expect(store.send('Continue this historical conversation')).resolves.toBe(true)
+
+    const postCalls = fetcher.mock.calls.filter(call => call[1]?.method === 'POST')
+    expect(postCalls).toHaveLength(1)
+    const request = JSON.parse(String(postCalls[0]?.[1]?.body))
+    expect(request).toMatchObject({
+      expectedSessionVersion: 1,
+      profileResolutionToken: freshToken,
+      content: 'Continue this historical conversation'
+    })
+    expect(request).not.toHaveProperty('providerProfileId')
+    expect(fetcher.mock.calls.some(call => String(call[0]) === '/_api/agents/profiles')).toBe(false)
+    expect(store.thread?.session).toMatchObject({ providerProfileId: historicalProfileId, currentRun: { id: active.session.currentRun!.id } })
+    expect(store.drafts[sessionId]?.text).toBe('')
+    expect(store.drafts['00000000-0000-4000-8000-000000000098']?.text).toBe('Another conversation draft')
+    store.closeWorkspace()
+  })
+
+  it.each([
+    ['the resolved profile changes', { profileId: '00000000-0000-4000-8000-000000000020' }, {}, 1],
+    ['the resolved profile version identity changes', { profileVersionId: '00000000-0000-4000-8000-000000000021' }, {}, 1],
+    ['the resolved profile version changes', { profileVersion: 2 }, {}, 1],
+    ['the admission policy changes', { profilePolicyVersion: 2 }, {}, 1],
+    ['the admin default generation changes', { defaultGeneration: 2 }, {}, 1],
+    ['the session version changes with its token', { sessionVersion: 2 }, {}, 2],
+    ['the refreshed token envelope is malformed', null, {}, 1],
+    ['the captured token envelope is malformed', {}, null, 1],
+    ['both tokens belong to another owner', { ownerId: 2 }, { ownerId: 2 }, 1],
+    ['both tokens belong to another session', { sessionId: '00000000-0000-4000-8000-000000000030' }, { sessionId: '00000000-0000-4000-8000-000000000030' }, 1],
+    ['both tokens disagree with the session version', { sessionVersion: 2 }, { sessionVersion: 2 }, 1]
+  ] as const)('retains historical drafts and posts nothing when %s', async (_boundary, freshPins, capturedPins, freshVersion) => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const active = activeThread()
+    const initialToken = capturedPins === null ? 'not-a-signed-token' : admissionToken(active.session.id, 1, capturedPins)
+    const freshToken = freshPins === null ? 'not-a-signed-token' : admissionToken(active.session.id, 1, freshPins)
+    const origin: AgentThreadState = {
+      ...active,
+      session: {
+        ...active.session,
+        providerProfileId: '00000000-0000-4000-8000-000000000099',
+        profileResolutionToken: initialToken,
+        currentRun: null
+      }
+    }
+    const fresh: AgentThreadState = { ...origin, session: { ...origin.session, version: freshVersion, profileResolutionToken: freshToken } }
+    store.csrfToken = 'csrf-token'
+    store.pinOwnerId = 1
+    store.routeSync = false
+    store.thread = origin
+    markWorkspaceReady(store)
+    store.connectCurrentRun = vi.fn()
+    store.setDraft(origin.session.id, 'Keep this unsent draft')
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      if (String(input) === `/_api/agents/sessions/${origin.session.id}` && (init?.method ?? 'GET') === 'GET') return Promise.resolve(Response.json(fresh))
+      if (String(input) === `/_api/agents/sessions/${origin.session.id}/messages` && init?.method === 'POST')
+        return Promise.resolve(Response.json({ run: active.session.currentRun, replayed: false }, { status: 202 }))
+      return Promise.reject(new Error(`Unexpected request: ${init?.method ?? 'GET'} ${String(input)}`))
+    })
+
+    await expect(store.send('Keep this unsent draft')).resolves.toBe(false)
+
+    expect(fetcher.mock.calls.map(call => [String(call[0]), call[1]?.method ?? 'GET'])).toEqual([[`/_api/agents/sessions/${origin.session.id}`, 'GET']])
+    expect(store.drafts[origin.session.id]?.text).toBe('Keep this unsent draft')
+    expect(store.thread?.session.id).toBe(origin.session.id)
+    expect(store.error).not.toBe('')
+    expect(store.sending).toBe(false)
+    expect(store.sessionMutationBusy).toBe(false)
+    store.closeWorkspace()
   })
 })
 
@@ -2154,7 +2201,6 @@ describe('Agent session mutation transitions', () => {
         return pending.promise
       }
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
-      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
       if (path === `/_api/agents/sessions/${active.session.id}` && method === 'GET') return Promise.resolve(Response.json(accepted ? active : empty))
@@ -2482,29 +2528,15 @@ describe('Agent unfiled history clearing', () => {
     FakeEventSource.instances = []
   })
 
-  it('clears and reloads history without creating a replacement session when no provider profile is available', async () => {
+  it('clears history and its drafts without creating a replacement when no conversation is open', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
-    store.thread = activeThread()
-    store.sessions = [
-      {
-        id: '00000000-0000-4000-8000-000000000001',
-        title: 'Clear verification',
-        retention: 'saved',
-        folderId: null,
-        executionMode: 'agent',
-        version: 1,
-        providerProfileId: null,
-        createdAt: '2026-08-23T00:00:00.000Z',
-        updatedAt: '2026-08-23T00:00:00.000Z',
-        lastActivityAt: '2026-08-23T00:00:00.000Z',
-        expiresAt: null,
-        deletedAt: null
-      }
-    ]
+    const listed = activeThread()
+    store.sessions = [summaryForThread(listed)]
+    store.setDraft(listed.session.id, 'Discard this cleared draft')
     markWorkspaceReady(store)
-    store.error = 'No default provider profile is configured for your groups.'
+    store.error = 'History temporarily unavailable'
     const fetcher = vi
       .spyOn(window, 'fetch')
       .mockImplementation((_input, init) =>
@@ -2516,6 +2548,7 @@ describe('Agent unfiled history clearing', () => {
     expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['DELETE', 'GET'])
     expect(store.thread).toBeNull()
     expect(store.sessions).toEqual([])
+    expect(store.drafts[listed.session.id]).toBeUndefined()
     expect(store.error).toBe('')
   })
 

@@ -10,8 +10,10 @@ import { z } from 'zod'
 import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
 import { selectAgentGoalTokenBudget } from '../../agents/goals.ts'
 import { storeAgentMedia } from '../../agents/media.ts'
+import { projectAgentThread } from '../../agents/projection.ts'
 import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError } from '../../agents/providers/factory.ts'
+import { AgentProviderAdapterConfigSchema, type AgentRoutingCandidate } from '../../agents/providers/registry.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import {
   type AgentEngine,
@@ -368,13 +370,6 @@ describe('ordinary-origin agent session API', () => {
   let agentsEnabled = true
   let mediaAuthorized = true
   let mediaUploadEnabled = false
-  let visibleMediaCapabilities: {
-    attachments: boolean
-    imageGeneration: boolean
-    transcription: boolean
-    videoGeneration?: boolean
-    musicGeneration?: boolean
-  } = { attachments: true, imageGeneration: true, transcription: true }
   let assetAccessAllowed = true
   const assetAccessPaths: string[] = []
   let revokeMediaInEngine: 'permission' | 'profile' | 'grant' | null = null
@@ -389,7 +384,6 @@ describe('ordinary-origin agent session API', () => {
   let engineMemory: AgentEngineRequest['memory'] | undefined
   let engineRunId: string | undefined
   let engineFailure: unknown = null
-  let generatedOutput: { payload: Buffer; mimeType: string; filename: string; kind: 'generated-video' | 'generated-audio' } | null = null
   let engineContextLimit: AgentEngineResult['contextLimit']
   const runtimeLogs: unknown[] = []
   const auxiliaryRuntimes = new Set<AgentProductRuntime>()
@@ -608,7 +602,6 @@ describe('ordinary-origin agent session API', () => {
     agentsEnabled = true
     mediaAuthorized = true
     mediaUploadEnabled = false
-    visibleMediaCapabilities = { attachments: true, imageGeneration: true, transcription: true }
     assetAccessAllowed = true
     assetAccessPaths.length = 0
     revokeMediaInEngine = null
@@ -622,7 +615,6 @@ describe('ordinary-origin agent session API', () => {
     engineMemory = undefined
     engineRunId = undefined
     engineFailure = null
-    generatedOutput = null
     engineContextLimit = undefined
     runtimeLogs.length = 0
     ;({ db, destroy: destroyDatabase } = await createAgentMediaTestDatabase(postgresConnection))
@@ -658,7 +650,6 @@ describe('ordinary-origin agent session API', () => {
           await request.authorizeMedia!()
         }
         if (engineFailure !== null) throw engineFailure
-        if (generatedOutput) await sink.media!([generatedOutput])
         await sink.text('Hello ')
         await sink.text('from the deterministic engine.')
         return {
@@ -772,8 +763,54 @@ describe('ordinary-origin agent session API', () => {
         get providerRegistry() {
           if (!mediaUploadEnabled) return undefined
           return {
-            listVisible: async () => [{ id: '00000000-0000-4000-8000-000000000070', isGlobalDefault: true, media: visibleMediaCapabilities }],
-            issueResolutionToken: async () => 'test-profile-resolution'
+            issueResolutionToken: async () => 'test-profile-resolution',
+            resolve: async () => resolvedAdmission,
+            listRoutingCandidates: async (transaction: Knex.Transaction, input: { ownerId: number; sessionId: string }): Promise<AgentRoutingCandidate[]> => {
+              const session = await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').first('id')
+              if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found.', 404)
+              if (!agentsEnabled || !mediaAuthorized || currentMediaGrantRevoked || currentMediaProfileChanged) return []
+              const version = await transaction('agentProviderProfileVersions')
+                .where({ id: resolvedAdmission.providerProfileVersionId })
+                .first('transportKind', 'baseUrl', 'adapterConfig')
+              if (!version) return []
+              const config = AgentProviderAdapterConfigSchema.parse(JSON.parse(version.adapterConfig))
+              const nativeMedia = version.transportKind === 'gemini-api' && new URL(version.baseUrl).origin === 'https://generativelanguage.googleapis.com'
+              const media = {
+                attachments: nativeMedia && config.media?.attachments === true,
+                imageGeneration: nativeMedia && config.media?.imageGeneration !== undefined,
+                videoGeneration: false,
+                musicGeneration: false,
+                transcription: nativeMedia && config.media?.transcription !== undefined
+              }
+              return [
+                {
+                  profileId: resolvedAdmission.providerProfileVersionId,
+                  profileVersionId: resolvedAdmission.providerProfileVersionId,
+                  model: resolvedAdmission.model,
+                  transportKind: version.transportKind,
+                  enabled: true,
+                  authorized: true,
+                  credentialReady: true,
+                  conformed: true,
+                  modalities: media.attachments ? ['text', 'image', 'audio', 'video', 'file'] : ['text'],
+                  generationTools: media.imageGeneration ? ['image'] : [],
+                  transcription: media.transcription,
+                  capabilities: {
+                    streaming: true,
+                    toolCalling: 'native',
+                    parallelToolCalls: true,
+                    structuredOutput: 'native-json-schema',
+                    usage: 'terminal',
+                    cancellation: true,
+                    maxContextTokens: 32_000,
+                    maxOutputTokens: 4_000
+                  },
+                  pricing: null,
+                  media,
+                  admission: resolvedAdmission
+                }
+              ]
+            }
           } as unknown as NonNullable<Parameters<typeof createAgentsHostController>[0]['providerRegistry']>
         },
         agentRuntime: runtime
@@ -1031,15 +1068,8 @@ describe('ordinary-origin agent session API', () => {
       expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
     }
   )
-  it('forwards and canonicalizes normal-chat generation tools with bound attachments and distinct replay identity', async () => {
+  it('binds supported image generation and attachments with distinct replay identity', async () => {
     await enableTestMedia()
-    const versionId = '00000000-0000-4000-8000-000000000070'
-    const profile = await db('agentProviderProfileVersions').where({ id: versionId }).first('adapterConfig')
-    const config = JSON.parse(profile.adapterConfig)
-    config.media.musicGeneration = { model: 'lyria-3.5', costMicrosPerSong: 80000, usagePolicy: 'reported-or-estimated' }
-    await db('agentProviderProfileVersions')
-      .where({ id: versionId })
-      .update({ adapterConfig: JSON.stringify(config) })
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
     const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
@@ -1048,7 +1078,7 @@ describe('ordinary-origin agent session API', () => {
       expectedSessionVersion: 1,
       profileResolutionToken: 'test',
       content: 'Answer using these options.',
-      generationTools: ['music', 'image'],
+      generationTools: ['image'],
       attachmentIds: [media.id]
     }
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
@@ -1057,17 +1087,17 @@ describe('ordinary-origin agent session API', () => {
     expect(response.status).toBe(202)
     const admission = (await response.json()) as { run: { id: string } }
     const queued = await db('agentEvents').where({ runId: admission.run.id, type: 'run.queued' }).first('data', 'dataSha256')
-    expect(JSON.parse(queued.data).generationTools).toEqual(['image', 'music'])
+    expect(JSON.parse(queued.data).generationTools).toEqual(['image'])
     expect(queued.dataSha256).toBe(createHash('sha256').update(queued.data).digest('hex'))
     expect((await db('agentMedia').where({ id: media.id }).first('runId')).runId).toBe(admission.run.id)
-    expect((await (await post({ ...input, generationTools: ['image', 'music'] })).json()) as unknown).toMatchObject({
+    expect((await (await post(input)).json()) as unknown).toMatchObject({
       replayed: true,
       run: { id: admission.run.id }
     })
     expect((await post({ ...input, generationTools: [] })).status).toBe(409)
     expect((await post({ ...input, generationTools: undefined })).status).toBe(409)
     await runtime.runOnce()
-    expect(engineGenerationTools).toEqual(['image', 'music'])
+    expect(engineGenerationTools).toEqual(['image'])
     expect(engineMessages.flatMap(message => message.attachments ?? []).map(file => file.id)).toContain(media.id)
   })
   it.each([{ generationTools: undefined }, { generationTools: [] }] as const)(
@@ -1096,7 +1126,8 @@ describe('ordinary-origin agent session API', () => {
     await insertAccountingSession(sessionId)
     const input = { ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Normal chat' }
     await expect(runtime.submit({ ...input, generationTools: ['image', 'image'] })).rejects.toMatchObject({ code: 'INVALID_GENERATION_TOOLS' })
-    await expect(runtime.submit({ ...input, generationTools: ['video'] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    for (const tool of ['video', 'music'] as const)
+      await expect(runtime.submit({ ...input, generationTools: [tool] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
     const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
@@ -1233,10 +1264,13 @@ describe('ordinary-origin agent session API', () => {
     expect(queries.some(sql => /select \*/.test(sql) && sql.includes('agentMedia'))).toBe(false)
     expect(engineMessages.some(message => message.content.includes('Attachment content is unavailable'))).toBe(false)
   })
-  it.each(['video', 'music'] as const)('admits configured %s generation, preserves replay identity, and privately serves playback byte ranges', async mode => {
+  it.each(['video', 'music'] as const)('rejects unsupported %s generation before admission or attachment storage', async mode => {
     await enableTestMedia()
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
+    await db('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000070' })
+      .update({ adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, media: { attachments: false } }) })
     const input = {
       ownerId: 7,
       sessionId,
@@ -1247,70 +1281,69 @@ describe('ordinary-origin agent session API', () => {
       responseMode: mode
     }
     await expect(runtime.submit(input)).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
-    const config = {
-      timeoutMs: 30000,
-      maxRetries: 0,
-      media: {
-        attachments: true,
-        videoGeneration: {
-          model: 'gemini-omni-1.1-flash',
-          pricingRevision: 'USD|1|1',
-          textOutputMicrosPerMillionTokens: 1,
-          usagePolicy: 'reported-or-estimated'
-        },
-        musicGeneration: { model: 'lyria-3.5', costMicrosPerSong: 1, usagePolicy: 'reported-or-estimated' }
-      }
-    }
-    await db('agentProviderProfileVersions')
-      .where({ id: '00000000-0000-4000-8000-000000000070' })
-      .update({ adapterConfig: JSON.stringify(config) })
-    visibleMediaCapabilities = {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const { ownerId: _ownerId, sessionId: _sessionId, ...request } = input
+    const rejected = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, { method: 'POST', headers, body: JSON.stringify(request) })
+    expect(rejected.status).toBe(403)
+    expect(await rejected.json()).toMatchObject({ error: 'AGENT_MEDIA_DISABLED' })
+    const threadResponse = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(threadResponse.status).toBe(200)
+    expect((await threadResponse.json()).session.mediaCapabilities).toEqual({
       attachments: false,
       imageGeneration: false,
-      transcription: false,
-      videoGeneration: mode === 'video',
-      musicGeneration: mode === 'music'
-    }
-    const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'red' } })
-      .png()
-      .toBuffer()
-    const imageForm = new FormData()
-    imageForm.append('file', new Blob([image], { type: 'image/png' }), 'reference.png')
-    const imageUpload = await uploadForm(sessionId, imageForm)
-    expect(imageUpload.status).toBe(201)
-    const imageId = ((await imageUpload.json()) as { media: { id: string } }).media.id
+      videoGeneration: false,
+      musicGeneration: false,
+      transcription: false
+    })
     const pdfForm = new FormData()
     pdfForm.append('file', new Blob(['%PDF-1.7'], { type: 'application/pdf' }), 'brief.pdf')
     expect((await uploadForm(sessionId, pdfForm)).status).toBe(404)
-    const videoForm = new FormData()
-    videoForm.append('file', new Blob(['0000ftypisom'], { type: 'video/mp4' }), 'input.mp4')
-    expect((await uploadForm(sessionId, videoForm)).status).toBe(404)
-    const pdf = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
-    await expect(runtime.submit({ ...input, attachmentIds: [pdf.id] })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
-    const generationInput = { ...input, attachmentIds: [imageId] }
-    const admitted = await runtime.submit(generationInput)
-    expect(JSON.parse(admitted.run.mediaRequest!)).toEqual({ kind: mode })
-    expect((await runtime.submit(generationInput)).replayed).toBe(true)
-    await expect(runtime.submit({ ...generationInput, responseMode: mode === 'video' ? 'music' : 'video' })).rejects.toMatchObject({
-      code: 'RUN_IDEMPOTENCY_MISMATCH'
-    })
+    expect(normalizeAccountingRow(await db('agentRuns').count({ count: '*' }).first())).toMatchObject({ count: 0 })
+    expect(normalizeAccountingRow(await db('agentQuotaReservations').count({ count: '*' }).first())).toMatchObject({ count: 0 })
+    expect(normalizeAccountingRow(await db('agentMedia').count({ count: '*' }).first())).toMatchObject({ count: 0 })
+    expect(engineRunId).toBeUndefined()
+  })
+
+  it.each(['video', 'music'] as const)('preserves historical %s playback byte ranges without enabling new generation', async mode => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const input = {
+      ownerId: 7,
+      sessionId,
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test',
+      clientRequestId: randomUUID(),
+      content: 'Historical conversation.'
+    }
+    const admitted = await runtime.submit(input)
+    await runtime.runOnce()
     const payload = Buffer.from(mode === 'video' ? '\0\0\0\x18ftypisom0000000000000000' : 'ID3generated music bytes')
-    generatedOutput = {
-      payload,
+    const kind = mode === 'video' ? 'generated-video' : 'generated-audio'
+    const stored = { id: randomUUID(), byteLength: payload.length }
+    // This is a persisted historical receipt, not a claim that today's native provider can generate these formats.
+    await db('agentMedia').insert({
+      ...stored,
+      ownerId: 7,
+      sessionId,
+      messageId: admitted.run.assistantMessageId,
+      runId: admitted.run.id,
+      kind,
       mimeType: mode === 'video' ? 'video/mp4' : 'audio/mpeg',
       filename: mode === 'video' ? 'clip.mp4' : 'song.mp3',
-      kind: mode === 'video' ? 'generated-video' : 'generated-audio'
-    }
-    await runtime.runOnce()
-    const stored = await db('agentMedia').where({ runId: admitted.run.id, kind: generatedOutput.kind }).first('id', 'byteLength')
-    expect(stored?.byteLength).toBe(payload.length)
+      payload,
+      sha256: createHash('sha256').update(payload).digest('hex'),
+      createdAt: new Date(),
+      expiresAt: null,
+      promptTokens: null,
+      detachedAt: null,
+      metadata: '{}'
+    })
     const threadResponse = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
-    expect(await threadResponse.json()).toMatchObject({ messages: [{}, { media: [{ id: stored.id, kind: generatedOutput.kind }] }] })
-    generatedOutput = null
-    // Past playback remains available when administrators disable generation.
-    await db('agentProviderProfileVersions')
-      .where({ id: '00000000-0000-4000-8000-000000000070' })
-      .update({ adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, media: { attachments: true } }) })
+    expect(await threadResponse.json()).toMatchObject({
+      session: { mediaCapabilities: { videoGeneration: false, musicGeneration: false } },
+      messages: [{}, { media: [{ id: stored.id, kind }] }]
+    })
     const mediaUrl = `${baseUrl}/_api/agents/media/${stored.id}/content`
     const queries: string[] = []
     const record = (query: { sql: string }) => queries.push(query.sql)
@@ -1391,7 +1424,7 @@ describe('ordinary-origin agent session API', () => {
   })
 
   it('requires same-origin metadata and CSRF for session mutations', async () => {
-    const body = JSON.stringify({ retention: 'saved', providerProfileId: null })
+    const body = JSON.stringify({ retention: 'saved' })
     const denied = await fetch(`${baseUrl}/_api/agents/sessions`, {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin' },
@@ -1406,6 +1439,7 @@ describe('ordinary-origin agent session API', () => {
     expect(accepted.status).toBe(201)
     const state = (await accepted.json()) as { session: { id: string; profileResolutionToken: string } }
     expect(state.session.profileResolutionToken).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(state.session).toHaveProperty('mediaCapabilities', null)
     const own = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(own.status).toBe(200)
     expect(await own.json()).toMatchObject({
@@ -1429,6 +1463,78 @@ describe('ordinary-origin agent session API', () => {
     authContextOwnerId = null
     expect(inconsistentIdentity.status).toBe(401)
     ownerId = 7
+  })
+
+  it('rejects model choices on session creation and exposes no ordinary model-selection routes', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    for (const providerProfileId of [null, randomUUID()]) {
+      const rejected = await fetch(`${baseUrl}/_api/agents/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ retention: 'saved', providerProfileId })
+      })
+      expect(rejected.status).toBe(400)
+      expect(await rejected.json()).toMatchObject({ error: 'INVALID_REQUEST' })
+    }
+    expect(normalizeAccountingRow(await db('agentSessions').count({ count: '*' }).first())).toMatchObject({ count: 0 })
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const before = await db('agentSessions').where({ id: sessionId }).first()
+    expect((await fetch(`${baseUrl}/_api/agents/profiles`, { headers: { cookie } })).status).toBe(404)
+    const rejected = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/profile`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expectedSessionVersion: 1, providerProfileId: randomUUID() })
+    })
+    expect(rejected.status).toBe(404)
+    expect(await db('agentSessions').where({ id: sessionId }).first()).toEqual(before)
+  })
+
+  it('projects current admin media capabilities without a model inventory and defaults standalone projection to null', async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const standalone = await projectAgentThread(db, 7, sessionId, { profileResolutionToken: () => 'standalone-resolution' })
+    expect(standalone.session.mediaCapabilities).toBeNull()
+    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(response.status).toBe(200)
+    const thread = await response.json()
+    expect(thread.session.mediaCapabilities).toEqual({
+      attachments: true,
+      imageGeneration: true,
+      videoGeneration: false,
+      musicGeneration: false,
+      transcription: true
+    })
+    expect(thread).not.toHaveProperty('profiles')
+    expect(thread).not.toHaveProperty('models')
+    expect(thread.session).not.toHaveProperty('model')
+    expect(thread.session).not.toHaveProperty('transportKind')
+    await db('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000070' })
+      .update({ adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, media: { attachments: false } }) })
+    const disabled = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(disabled.status).toBe(200)
+    expect((await disabled.json()).session.mediaCapabilities).toEqual({
+      attachments: false,
+      imageGeneration: false,
+      videoGeneration: false,
+      musicGeneration: false,
+      transcription: false
+    })
+  })
+
+  it.each([
+    { transportKind: 'openai-responses', baseUrl: 'https://api.example.test/v1' },
+    { transportKind: 'gemini-api', baseUrl: 'https://gemini-proxy.example.test/v1beta' }
+  ])('does not advertise Gemini media for $transportKind at $baseUrl', async configuration => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000070' }).update(configuration)
+    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(response.status).toBe(200)
+    expect((await response.json()).session.mediaCapabilities).toBeNull()
   })
 
   it('projects safe terminal assistant outcomes without treating terminal runs as current or crossing run ownership', async () => {
@@ -1917,7 +2023,7 @@ describe('ordinary-origin agent session API', () => {
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      body: JSON.stringify({ retention: 'saved' })
     })
     const state = (await created.json()) as {
       session: { id: string; version: number; profileResolutionToken: string }
@@ -2433,7 +2539,7 @@ describe('ordinary-origin agent session API', () => {
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      body: JSON.stringify({ retention: 'saved' })
     })
     const state = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
     const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, {
@@ -2496,7 +2602,7 @@ describe('ordinary-origin agent session API', () => {
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      body: JSON.stringify({ retention: 'saved' })
     })
     const state = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
     const goalId = '00000000-0000-4000-8000-000000000074'
@@ -3514,7 +3620,7 @@ describe('ordinary-origin agent session API', () => {
     const firstSessionResponse = await fetch(`${baseUrl}/_api/agents/sessions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      body: JSON.stringify({ retention: 'saved' })
     })
     const firstThread = (await firstSessionResponse.json()) as {
       session: { id: string; version: number; profileResolutionToken: string; skills: Array<{ skillId: string; versionId: string }> }
@@ -3557,7 +3663,7 @@ describe('ordinary-origin agent session API', () => {
     expect(await db('agentSkillVersions').where({ skillId: created.id }).orderBy('createdAt').pluck('id')).toEqual([created.versionId, updated.versionId])
 
     const secondSession = (await (
-      await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })
+      await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved' }) })
     ).json()) as typeof firstThread
     expect(secondSession.session.skills).toMatchObject([{ skillId: created.id, versionId: updated.versionId }])
 
@@ -3636,7 +3742,7 @@ describe('ordinary-origin agent session API', () => {
       await fetch(`${baseUrl}/_api/agents/sessions`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+        body: JSON.stringify({ retention: 'saved' })
       })
     ).json()) as { session: { id: string; version: number } }
     const folderResponse = await fetch(`${baseUrl}/_api/agents/conversation-folders`, {
@@ -3686,7 +3792,7 @@ describe('ordinary-origin agent session API', () => {
       await fetch(`${baseUrl}/_api/agents/sessions`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+        body: JSON.stringify({ retention: 'saved' })
       })
     ).json()) as { session: { id: string; version: number } }
     const folderedFiled = await fetch(`${baseUrl}/_api/agents/sessions/${foldered.session.id}/folder`, {
@@ -4100,7 +4206,7 @@ describe('ordinary-origin agent session API', () => {
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      body: JSON.stringify({ retention: 'saved' })
     })
     expect(created.status).toBe(201)
     const { session } = z.object({ session: z.object({ id: z.string(), version: z.number() }) }).parse(await created.json())
@@ -4132,7 +4238,7 @@ describe('ordinary-origin agent session API', () => {
         await fetch(`${baseUrl}/_api/agents/sessions`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+          body: JSON.stringify({ retention: 'saved' })
         })
       ).json()
     )
@@ -4146,7 +4252,7 @@ describe('ordinary-origin agent session API', () => {
         await fetch(`${baseUrl}/_api/agents/sessions`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+          body: JSON.stringify({ retention: 'saved' })
         })
       ).json()
     )
@@ -4179,7 +4285,7 @@ describe('ordinary-origin agent session API', () => {
         await fetch(`${baseUrl}/_api/agents/sessions`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+          body: JSON.stringify({ retention: 'saved' })
         })
       ).json()
     )
@@ -4283,7 +4389,7 @@ describe('ordinary-origin agent API routing', () => {
   })
 
   it('uses ordinary user auth and session CSRF for same-origin mutations', async () => {
-    const body = JSON.stringify({ retention: 'saved', providerProfileId: null })
+    const body = JSON.stringify({ retention: 'saved' })
     const headers = {
       cookie,
       'content-type': 'application/json',
@@ -4313,7 +4419,7 @@ describe('ordinary-origin agent API routing', () => {
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      body: JSON.stringify({ retention: 'saved' })
     })
     const thread = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
     const disabled = await fetch(`${baseUrl}/_api/agents/sessions/${thread.session.id}/messages`, {

@@ -63,18 +63,26 @@ describe('provider connection reuse', () => {
       await delay(6_100)
       const second = createGuardedProviderFetch(
         'https://provider.example.test/v1',
-        '/interactions',
+        '/responses',
         { authorization: 'Bearer second-fixture' },
         implementation,
         resolve as never
       )
-      expect(await (await second('https://provider.example.test/v1/interactions')).text()).toBe('{}')
+      expect(await (await second('https://provider.example.test/v1/responses')).text()).toBe('{}')
       expect(dispatchers[0]).toBe(dispatchers[1])
       expect(sockets.size).toBe(1)
       expect(credentials).toEqual(['Bearer first-fixture', 'Bearer second-fixture'])
       expect(resolutions).toBe(2)
+      for (const destination of [
+        'https://provider.example.test/v1/chat/completions',
+        'https://provider.example.test/v1/responses?redirect=elsewhere',
+        'https://other.example.test/v1/responses'
+      ])
+        await expect(Promise.resolve(second(destination))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+      expect(resolutions).toBe(2)
+      expect(dispatchers).toHaveLength(2)
       privateAddress = true
-      await expect(Promise.resolve(second('https://provider.example.test/v1/interactions'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+      await expect(Promise.resolve(second('https://provider.example.test/v1/responses'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
       expect(resolutions).toBe(3)
       expect(dispatchers).toHaveLength(2)
       privateAddress = false
@@ -88,7 +96,7 @@ describe('provider connection reuse', () => {
       controller.abort()
       await expect(reader.read()).rejects.toMatchObject({ name: 'AbortError' })
       reader.releaseLock()
-      expect(await (await second('https://provider.example.test/v1/interactions')).text()).toBe('{}')
+      expect(await (await second('https://provider.example.test/v1/responses')).text()).toBe('{}')
       expect(sockets.size).toBe(2)
       await expect(
         Promise.resolve(

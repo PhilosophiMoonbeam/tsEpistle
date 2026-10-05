@@ -6,7 +6,7 @@ import type { AgentRunRecord } from '../../agents/coordinator.ts'
 import type { DecisionProviderRuntime } from '../../agents/decision-providers.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
-import { createAgentSession } from '../../agents/repository.ts'
+import { AgentRepositoryError, createAgentSession } from '../../agents/repository.ts'
 import { AgentTurnRouter } from '../../agents/routing.ts'
 import { type AgentEngine, type AgentEngineRequest, AgentProductRuntime } from '../../agents/runtime.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
@@ -339,7 +339,21 @@ export const createRoutingTables = async (knex: Knex): Promise<void> => {
   await addAgentMediaContextState(knex)
   await knex.schema.createTable('agentRoutingPolicy', table => {
     table.integer('id').primary()
+    table.integer('revision').notNullable().defaultTo(1)
     table.text('config').notNullable()
+    table.integer('updatedBy').nullable().references('id').inTable('users').onDelete('SET NULL')
+    table.timestamp('updatedAt', { useTz: true }).nullable()
+    table.check('"revision" > 0')
+  })
+  await knex('agentRoutingPolicy').insert({ id: 1, revision: 1, config: JSON.stringify(DEFAULT_ROUTING_POLICY) })
+  await knex.schema.createTable('agentRoutingModelPolicies', table => {
+    table.uuid('profileId').primary().references('id').inTable('agentProviderProfiles').onDelete('CASCADE')
+    table.uuid('profileVersionId').notNullable().references('id').inTable('agentProviderProfileVersions').onDelete('CASCADE')
+    table.integer('revision').notNullable()
+    table.text('config').notNullable()
+    table.integer('updatedBy').nullable().references('id').inTable('users').onDelete('SET NULL')
+    table.timestamp('updatedAt', { useTz: true }).notNullable()
+    table.check('"revision" > 0')
   })
   await addAgentSpecialists(knex)
   await knex('users').insert([{ id: 1 }, { id: 7 }, { id: 8 }])
@@ -394,7 +408,7 @@ export interface RoutingFixture {
   readonly current: { readonly profileId: string; readonly versionId: string }
   readonly alternate: { readonly profileId: string; readonly versionId: string }
   readonly requests: AgentEngineRequest[]
-  readonly session: (pinned?: boolean, ownerId?: number) => Promise<string>
+  readonly session: (historicalPreference?: boolean, ownerId?: number) => Promise<string>
   readonly submit: (sessionId: string, ownerId?: number) => Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }>
   readonly classifications: () => number
   readonly failClassifier: (value: unknown) => void
@@ -446,6 +460,24 @@ export const routingFixture = async (db: Knex): Promise<RoutingFixture> => {
       }
     ]
   }
+  const { revision, updatedAt, ...policyConfig } = view.policy
+  await db('agentRoutingPolicy')
+    .where({ id: 1 })
+    .update({ revision, config: JSON.stringify(policyConfig), updatedBy: null, updatedAt })
+  await db('agentRoutingModelPolicies').insert(
+    view.models.map(model => ({
+      profileId: model.profileId,
+      profileVersionId: model.profileVersionId,
+      revision: model.revision,
+      config: JSON.stringify({
+        profileVersionId: model.profileVersionId,
+        acceptableTasks: model.acceptableTasks,
+        estimatedLatencyMs: model.estimatedLatencyMs
+      }),
+      updatedBy: null,
+      updatedAt: new Date(model.updatedAt)
+    }))
+  )
   const provider: DecisionProviderRuntime = {
     id: randomUUID(),
     revision: 1,
@@ -499,20 +531,30 @@ export const routingFixture = async (db: Knex): Promise<RoutingFixture> => {
   }
   const runtime = new AgentProductRuntime(db, registry, engine, {
     router,
+    authorizeMedia: async ownerId => {
+      const user = await db('users').where({ id: ownerId }).first('isActive')
+      if (!user || (user.isActive !== true && user.isActive !== 1)) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Agent user is unavailable', 401)
+      const groups = await db('groups').join('userGroups', 'groups.id', 'userGroups.groupId').where('userGroups.userId', ownerId).select('groups.permissions')
+      const permitted = groups.some(group => {
+        const permissions: unknown = typeof group.permissions === 'string' ? JSON.parse(group.permissions) : group.permissions
+        return Array.isArray(permissions) && (permissions.includes('use:agents') || permissions.includes('manage:system'))
+      })
+      if (!permitted) throw new AgentRepositoryError('AGENT_PERMISSION_REVOKED', 'Wiki Agent access is no longer permitted.', 403)
+    },
     workerId: `routing-${randomUUID()}`,
     globalConcurrency: 4,
     perUserConcurrency: 4,
     orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false },
     goals: { enabled: true, maxContinuations: 2, maxTokens: 100_000, maxToolCalls: 32, maxDurationMilliseconds: 60_000 }
   })
-  const session = async (pinned = false, ownerId = 7) => {
+  const session = async (historicalPreference = false, ownerId = 7) => {
     const id = randomUUID()
     await createAgentSession(db, {
       id,
       ownerId,
       title: 'Routing',
       retention: 'saved',
-      providerProfileId: pinned ? current.profileId : null,
+      providerProfileId: historicalPreference ? current.profileId : null,
       executionMode: 'agent'
     })
     return id

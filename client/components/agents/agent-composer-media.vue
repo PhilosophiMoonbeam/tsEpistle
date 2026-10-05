@@ -18,7 +18,7 @@
 </template>
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
-import type { AgentMediaView, AgentProviderProfileView, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentMediaView, AgentMediaCapabilities, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from '../../helpers/agents-api.ts'
 import AgentAssetPicker from './agent-asset-picker.vue'
 import type { Asset } from '../../helpers/assets-api.ts'
@@ -29,7 +29,7 @@ const t = useTranslate()
 const props = defineProps<{
   csrfToken: string
   session: AgentThreadState['session'] | null
-  capabilities?: AgentProviderProfileView['media']
+  capabilities?: AgentMediaCapabilities
   generationToolsEnabled?: boolean
   disabled: boolean
   networkBlocked: boolean

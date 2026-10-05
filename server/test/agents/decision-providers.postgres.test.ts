@@ -142,6 +142,9 @@ suite('PostgreSQL decision provider persistence and current authorization', () =
       usage: { inputTokens: 100, outputTokens: 3, totalTokens: 103, totalTokensSource: 'derived' }
     })
     expect(usedCredentials).toEqual(['Bearer fixture-environment-key'])
+    environmentKey = 'fixture unusable'
+    await expect(registry.selectRuntime()).rejects.toMatchObject({ code: 'DECISION_CREDENTIAL_UNAVAILABLE' })
+    expect(usedCredentials).toEqual(['Bearer fixture-environment-key'])
     environmentKey = null
     await expect(registry.selectRuntime()).rejects.toMatchObject({ code: 'DECISION_CREDENTIAL_UNAVAILABLE' })
   })
@@ -171,6 +174,26 @@ suite('PostgreSQL decision provider persistence and current authorization', () =
     expect(usedCredentials.every(value => value === 'Bearer fixture-managed-key')).toBe(true)
     expect(await db('agentDecisionProviders').where({ isDefault: true })).toHaveLength(1)
     await expect(removeDecisionProviders(db)).rejects.toThrow('refuse destructive rollback')
+  })
+
+  it('does not mark an absent pinned version ready when inference answers with a different Jev model', async () => {
+    const view = await registry.create({ ...config, config: { ...config.config, model: 'jev-9.99.0' }, secretValue: 'fixture-pin' }, actor)
+    await expect(registry.check(view.id, view.revision, actor)).rejects.toMatchObject({
+      code: 'DECISION_MODEL_MISMATCH',
+      providerId: view.id,
+      providerRevision: view.revision,
+      usage: { inputTokens: 100, outputTokens: 3, totalTokens: 103, totalTokensSource: 'derived' }
+    })
+    expect(await registry.get(view.id, actor)).toMatchObject({ checkedAt: null, enabled: false, isDefault: false })
+    await expect(registry.setEnabled(view.id, true, view.revision, actor)).rejects.toMatchObject({ code: 'DECISION_PROVIDER_NOT_READY' })
+  })
+
+  it('rejects unusable managed bearer values without changing configuration or storing a secret', async () => {
+    for (const secretValue of ['fixture key', 'fixture\nkey', 'fixtureékey']) {
+      await expect(registry.create({ ...config, secretValue }, actor)).rejects.toMatchObject({ code: 'INVALID_DECISION_PROVIDER_CONFIG' })
+    }
+    expect(await db('agentProviderSecrets')).toHaveLength(0)
+    expect(await db('agentDecisionProviders')).toHaveLength(1)
   })
 
   it('retains omitted managed secrets, explicitly clears them, and never falls through a broken managed credential', async () => {

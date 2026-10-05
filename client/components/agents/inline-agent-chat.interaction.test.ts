@@ -5,7 +5,7 @@ import path from 'node:path'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { createPinia, type StoreGeneric, storeToRefs } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
-import type { AgentProviderProfileView, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import { type AgentDraft, emptyAgentDraft } from '../../helpers/agent-draft.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
@@ -65,6 +65,8 @@ Bun.plugin({
 })
 const skillMenuComponent = (await import('./agent-composer-skill-menu.vue')).default
 const mediaComposerComponent = (await import('./agent-composer-media.vue')).default
+// The real transcript must load after the SFC plugin; a static import bypasses that boundary.
+const threadComponent = (await import('./agent-thread.vue')).default
 const testPwaState = Vue.reactive({ connectionState: 'online' as 'online' | 'offline' | 'server-unavailable' })
 
 const compiledTemplate = compileTemplate({
@@ -175,7 +177,6 @@ interface LockState {
   offlineComposerDraft: ValueRef<string>
   resolveDraftDiscard: (discard: boolean) => void
   agentCalls: {
-    setProfile: (...args: unknown[]) => unknown
     drafts: Record<string, AgentDraft>
     clearUnfiledHistory: (...args: unknown[]) => unknown
     initialize: (...args: unknown[]) => unknown
@@ -328,7 +329,8 @@ const loadGoalLockState = (
       title: 'Release planning',
       skills: [],
       currentRun: runStatus ? { canCancel: true, status: runStatus } : null,
-      folderId: null
+      folderId: null,
+      mediaCapabilities: null
     },
     messages: [],
     tools: [],
@@ -346,7 +348,6 @@ const loadGoalLockState = (
     loading: ref(false),
     pinnedSessionId: ref<string | null>(null),
     pinStorageAvailable: ref(true),
-    profiles: ref([{ id: 'profile-1', name: 'Test provider', model: 'test', isGlobalDefault: true }]),
     sending: ref(false),
     networkPaused: ref(workspaceClosed),
     workspaceDisposed: ref(workspaceClosed),
@@ -360,7 +361,6 @@ const loadGoalLockState = (
   }
   const props = Vue.reactive({
     csrfToken: 'csrf',
-    mediaProfile: undefined,
     mediaRefreshing: false,
     refreshAfterMedia: () => {},
     ownerId: 2,
@@ -382,7 +382,6 @@ const loadGoalLockState = (
     sessions: [] as Array<{ id: string; deletedAt: string | null }>,
     send: vi.fn(() => Promise.resolve(true)),
     setCurrentChatPinned: vi.fn(),
-    setProfile: vi.fn(() => Promise.resolve()),
     drafts: Vue.reactive<Record<string, AgentDraft>>({}),
     setDraft: vi.fn(),
     updateDraft: vi.fn(),
@@ -598,7 +597,7 @@ const controlTranscriptFrames = () => {
 const sessionId = '00000000-0000-4000-8000-000000000001'
 const timestamp = '2026-09-15T10:00:00.000Z'
 // Fixture-only signing material; this harness exercises client continuity, not server authorization.
-const profileResolutionToken = (id: string, version: number, profileId = profileFixture.id): string => {
+const profileResolutionToken = (id: string, version: number): string => {
   const kid = 'inline-agent-interaction'
   const payload = Buffer.from(
     JSON.stringify({
@@ -607,10 +606,10 @@ const profileResolutionToken = (id: string, version: number, profileId = profile
       ownerId: 2,
       sessionId: id,
       sessionVersion: version,
-      profileId,
+      profileId: '00000000-0000-4000-8000-000000000010',
       profileVersionId: '00000000-0000-4000-8000-000000000011',
       profileVersion: 1,
-      profilePolicyVersion: profileFixture.policyVersion,
+      profilePolicyVersion: 1,
       defaultGeneration: 1,
       executionMode: 'agent',
       exp: 4_000_000_000
@@ -629,6 +628,7 @@ const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved
     version: 1,
     providerProfileId: null,
     profileResolutionToken: profileResolutionToken(id, 1),
+    mediaCapabilities: null,
     skills: [],
     currentRun: null,
     createdAt: timestamp,
@@ -647,34 +647,13 @@ const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved
   suggestions: [],
   historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
 })
-const profileFixture: AgentProviderProfileView = {
-  id: '00000000-0000-4000-8000-000000000010',
-  name: 'Test provider',
-  transport: 'openai-chat',
-  model: 'test',
-  utilityModel: null,
-  destinationHost: 'provider.test',
-  capabilities: {
-    streaming: true,
-    toolCalling: 'native',
-    parallelToolCalls: false,
-    structuredOutput: 'native-json-schema',
-    usage: 'terminal',
-    cancellation: true,
-    maxContextTokens: 4096,
-    maxOutputTokens: 1024
-  },
-  capabilityRevision: 'test',
-  policyVersion: 1,
-  isGlobalDefault: true
-}
-const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPageHint | null = null) => {
+const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPageHint | null = null, initialThread?: AgentThreadState) => {
   const store = useAgentsStore(createPinia())
-  let serverThread = threadFixture(sessionId, retention)
+  let serverThread = initialThread ?? threadFixture(sessionId, retention)
   const creations: Array<{ retention: 'saved' | 'temporary'; thread: AgentThreadState }> = []
-  const authorization = { pending: null as Promise<Response> | null, profiles: [profileFixture] as AgentProviderProfileView[] }
+  const authorization = { pending: null as Promise<Response> | null }
   const mediaUpload = { pending: null as Promise<Response> | null }
-  const profileChanges: Array<{ expectedSessionVersion: number; profileId: string | null }> = []
+  const sendResponse = { pending: null as Promise<Response> | null }
   const requests: Array<{ method: string; path: string }> = []
   const summary = () => {
     const { session } = serverThread
@@ -686,13 +665,13 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     const method = init?.method ?? 'GET'
     requests.push({ method, path })
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {}
-    if (path === '/_api/agents/profiles') return authorization.pending ?? Response.json({ profiles: authorization.profiles })
     if (path === '/_api/agents/skills') return Response.json({ skills: [] })
     if (path === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
-    if (path === '/_api/agents/sessions' && method === 'GET') return Response.json({ sessions: [summary()], nextCursor: null })
+    if (path === '/_api/agents/sessions' && method === 'GET') return authorization.pending ?? Response.json({ sessions: [summary()], nextCursor: null })
     if (path === '/_api/agents/sessions' && method === 'POST') {
       const next = creations.shift()
-      if (!next || body.retention !== next.retention) throw new Error('Unexpected session creation retention')
+      if (!next || body.retention !== next.retention || Object.keys(body).some(key => key !== 'retention'))
+        throw new Error('Unexpected session creation payload')
       serverThread = next.thread
       return Response.json({ ...serverThread, launchPage: null })
     }
@@ -716,30 +695,6 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
         })
       )
     }
-    if (path === `/_api/agents/sessions/${serverThread.session.id}/profile` && method === 'PUT') {
-      if (
-        body.expectedSessionVersion !== serverThread.session.version ||
-        !(body.profileId === null || authorization.profiles.some(profile => profile.id === body.profileId))
-      )
-        throw new Error('Unexpected provider mutation')
-      const profileId = body.profileId as string | null
-      const version = serverThread.session.version + 1
-      profileChanges.push({ expectedSessionVersion: serverThread.session.version, profileId })
-      serverThread = {
-        ...serverThread,
-        session: {
-          ...serverThread.session,
-          providerProfileId: profileId,
-          version,
-          profileResolutionToken: profileResolutionToken(
-            serverThread.session.id,
-            version,
-            profileId ?? authorization.profiles.find(profile => profile.isGlobalDefault)?.id
-          )
-        }
-      }
-      return Response.json(serverThread)
-    }
     if (path === `/_api/agents/sessions/${serverThread.session.id}` && method === 'PATCH') {
       if (body.retention !== 'saved' || body.expectedSessionVersion !== serverThread.session.version) throw new Error('Unexpected retention mutation')
       const version = serverThread.session.version + 1
@@ -757,6 +712,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     }
     if (path === `/_api/agents/sessions/${serverThread.session.id}` && method === 'GET') return Response.json(serverThread)
     if (path === `/_api/agents/sessions/${serverThread.session.id}/messages` && method === 'POST') {
+      if (sendResponse.pending) return sendResponse.pending
       const run: NonNullable<AgentThreadState['session']['currentRun']> = {
         id: '00000000-0000-4000-8000-000000000020',
         sessionId: serverThread.session.id,
@@ -784,7 +740,6 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     connection: 'connected',
     initializedWorkspaceVersion: store.workspaceVersion,
     thread: serverThread,
-    profiles: [profileFixture],
     contextPage: page,
     continuitySessionId: serverThread.session.id,
     conversationPage: page ? { id: page.id, locale: page.locale } : null
@@ -794,7 +749,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     store.closeWorkspace()
     store.$dispose()
   })
-  return { store, state, creations, authorization, mediaUpload, requests, profileChanges }
+  return { store, state, creations, authorization, mediaUpload, sendResponse, requests }
 }
 
 const menuAction = (items: HTMLElement[], name: string): HTMLElement => {
@@ -803,20 +758,13 @@ const menuAction = (items: HTMLElement[], name: string): HTMLElement => {
   return item
 }
 
-const openProviderMenu = async (mounted: MountedInlineAgent): Promise<HTMLElement[]> => {
-  const trigger = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__provider-trigger')
-  if (!trigger) throw new Error('Conversation provider trigger missing')
-  if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
-  await settle()
-  return Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__provider-option'))
-}
-
 const mountInlineAgent = (
   lockState: LockState = loadGoalLockState(null),
   options: {
     readonly viewportWidth?: number
     readonly approvalJumpVisible?: boolean
     readonly followJumpVisible?: boolean
+    readonly realThread?: boolean
   } = {}
 ): MountedInlineAgent => {
   installBrowserSurface()
@@ -916,6 +864,7 @@ const mountInlineAgent = (
     'WikiSourcePreview'
   ])
     app.component(name, componentStub)
+  if (options.realThread) app.component('AgentThread', threadComponent)
   app.component(
     'AgentHistoryPanel',
     Vue.defineComponent({
@@ -1237,12 +1186,14 @@ describe('Inline Agent workspace actions', () => {
     it(`protects a pending attachment-only draft when starting ${retention} chat and blocks replacement until upload settles`, async () => {
       vi.useFakeTimers()
       const workspace = realWorkspace()
-      workspace.store.profiles = [
-        {
-          ...profileFixture,
-          media: { attachments: true, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false }
+      const initial = workspace.store.thread!
+      workspace.store.thread = {
+        ...initial,
+        session: {
+          ...initial.session,
+          mediaCapabilities: { attachments: true, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false }
         }
-      ]
+      }
       let completeUpload: (response: Response) => void = () => {
         throw new Error('Upload response was not initialized')
       }
@@ -1336,12 +1287,14 @@ describe('Inline Agent workspace actions', () => {
 
   it('starts a pristine chat without prompting when generation capabilities are available', async () => {
     const workspace = realWorkspace()
-    workspace.store.profiles = [
-      {
-        ...profileFixture,
-        media: { attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false }
+    const initial = workspace.store.thread!
+    workspace.store.thread = {
+      ...initial,
+      session: {
+        ...initial.session,
+        mediaCapabilities: { attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false }
       }
-    ]
+    }
     const state = workspace.state()
     const mounted = mountInlineAgent(state)
     await settle()
@@ -1487,6 +1440,7 @@ describe('Inline Agent workspace actions', () => {
     await settle()
     expect(workspace.store.thread?.session.currentRun).toMatchObject({ sessionId, status: 'succeeded' })
     expect(workspace.store.error).toBe('')
+    expect(workspace.requests.some(request => /\/profiles(?:\/|$)|\/profile$/.test(request.path))).toBe(false)
   })
   it('keeps the Included page synchronized with Wiki navigation across a send and reopen', async () => {
     const firstPage: TestPageHint = {
@@ -1584,17 +1538,42 @@ describe('Inline Agent workspace actions', () => {
     expect(lockState.agentCalls.send).toHaveBeenCalledTimes(2)
   })
 
-  it('changes an allowed conversation provider once, preserves the full draft and resets to workspace default without inference', async () => {
-    vi.useFakeTimers()
+  for (const viewportWidth of [1440, 390]) {
+    it(`keeps a historical pinned conversation model-free at ${viewportWidth}px`, async () => {
+      const historical = threadFixture()
+      const historicalProfile = '00000000-0000-4000-8000-000000000099'
+      const workspace = realWorkspace('saved', null, {
+        ...historical,
+        session: { ...historical.session, providerProfileId: historicalProfile }
+      })
+      workspace.store.pinnedSessionId = sessionId
+      workspace.store.initializedWorkspaceVersion = null
+      const state = workspace.state()
+      state.componentProps.resumeSessionId = sessionId
+      const mounted = mountInlineAgent(state, { viewportWidth })
+      await settle()
+      expect(workspace.store.isWorkspaceReady()).toBe(true)
+      expect(mounted.root.querySelector('.inline-agent__session-title')?.textContent).toContain('Release planning')
+      expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false)
+      expect(mounted.root.querySelector('[role="radiogroup"]')).toBeNull()
+      expect(
+        Array.from(mounted.root.querySelectorAll('button, [role="menuitem"], [role="radio"]')).some(control =>
+          /model|provider/i.test(`${control.textContent} ${control.getAttribute('aria-label') ?? ''}`)
+        )
+      ).toBe(false)
+      expect(mounted.root.textContent).not.toContain(historicalProfile)
+      expect(workspace.store.thread?.session.providerProfileId).toBe(historicalProfile)
+      expect(workspace.requests.some(request => /\/profiles(?:\/|$)|\/profile$/.test(request.path))).toBe(false)
+    })
+  }
+
+  it('retains the complete draft after send admission fails without requesting model inventory or selection', async () => {
     const workspace = realWorkspace()
-    const second = { ...profileFixture, id: '00000000-0000-4000-8000-000000000012', name: 'Review provider', model: 'review-model', isGlobalDefault: false }
-    workspace.authorization.profiles = [profileFixture, second]
-    workspace.store.profiles = workspace.authorization.profiles
     const draft: AgentDraft = {
       ...emptyAgentDraft(),
       text: 'Keep this research draft',
-      mode: 'goal',
-      skillVersionIds: ['skill-version-1'],
+      scope: { kind: 'selected' },
+      includeCurrentPage: false,
       sources: [
         {
           id: 41,
@@ -1608,184 +1587,102 @@ describe('Inline Agent workspace actions', () => {
           excerpt: '',
           excerptTruncated: false
         }
-      ],
-      scope: { kind: 'selected' },
-      includeCurrentPage: false
+      ]
     }
     workspace.store.drafts[sessionId] = structuredClone(draft)
-    const state = workspace.state()
-    const mounted = mountInlineAgent(state)
-    const options = await openProviderMenu(mounted)
-    const defaultOption = menuAction(options, translateEnglish('common:inlineAgentChat.workspaceDefaultProvider'))
-    expect(defaultOption.getAttribute('aria-checked')).toBe('true')
-    const selected = menuAction(options, second.name)
-    expect(selected.getAttribute('aria-checked')).toBe('false')
-    expect(selected.querySelector('.v-list-item-subtitle')?.textContent).toBe(second.model)
-    selected.click()
-    selected.click()
+    let completeSend!: (response: Response) => void
+    workspace.sendResponse.pending = new Promise<Response>(resolve => {
+      completeSend = resolve
+    })
+    const mounted = mountInlineAgent(workspace.state())
     await settle()
-    expect(workspace.profileChanges).toEqual([{ expectedSessionVersion: 1, profileId: second.id }])
-    expect(workspace.store.thread?.session.providerProfileId).toBe(second.id)
-    expect(workspace.store.drafts[sessionId]).toEqual(draft)
-    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(draft.text)
-    expect(mounted.root.querySelector('.inline-agent__provider-identity')?.textContent).toContain(second.model)
-    expect(state.sessionNotice.value).toBe(
-      translateEnglish('common:inlineAgentChat.providerChanged', {
-        identity: translateEnglish('common:inlineAgentChat.providerIdentity', { name: second.name, model: second.model })
-      })
-    )
-    await vi.advanceTimersByTimeAsync(50)
-    const updatedOptions = await openProviderMenu(mounted)
-    expect(menuAction(updatedOptions, second.name).getAttribute('aria-checked')).toBe('true')
-    menuAction(updatedOptions, translateEnglish('common:inlineAgentChat.workspaceDefaultProvider')).click()
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+    const send = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    if (!textarea || !send) throw new Error('Composer send controls missing')
+    expect(textarea.value).toBe(draft.text)
+    send.click()
     await settle()
-    expect(workspace.profileChanges).toEqual([
-      { expectedSessionVersion: 1, profileId: second.id },
-      { expectedSessionVersion: 2, profileId: null }
-    ])
-    expect(workspace.store.thread?.session.providerProfileId).toBeNull()
+    expect(workspace.requests.filter(request => request.path.endsWith('/messages') && request.method === 'POST')).toHaveLength(1)
+    expect(textarea.value).toBe(draft.text)
     expect(workspace.store.drafts[sessionId]).toEqual(draft)
-    expect(workspace.requests.filter(request => request.path.endsWith('/messages') || request.path.endsWith('/google-search'))).toHaveLength(0)
+    completeSend(Response.json({ error: 'The Agent cannot start this request right now.' }, { status: 409 }))
+    await settle()
+    expect(textarea.value).toBe(draft.text)
+    expect(workspace.store.drafts[sessionId]).toEqual(draft)
+    expect(workspace.store.sending).toBe(false)
+    expect(workspace.requests.some(request => /\/profiles(?:\/|$)|\/profile$/.test(request.path))).toBe(false)
   })
 
-  for (const invalidation of ['session', 'workspace'] as const) {
-    it(`closes provider choices when the ${invalidation} changes`, async () => {
-      const workspace = realWorkspace()
-      const state = workspace.state()
-      const mounted = mountInlineAgent(state)
-      expect(await openProviderMenu(mounted)).not.toHaveLength(0)
-      expect((state.providerMenuOpen as ValueRef<boolean>).value).toBe(true)
-      if (invalidation === 'session') workspace.store.thread = threadFixture('00000000-0000-4000-8000-000000000004')
-      else workspace.store.workspaceVersion += 1
-      await settle()
-      expect((state.providerMenuOpen as ValueRef<boolean>).value).toBe(false)
-      expect(mounted.root.querySelector('.inline-agent__provider-trigger')?.getAttribute('aria-expanded')).toBe('false')
-      expect(workspace.profileChanges).toHaveLength(0)
+  it('updates attachment and image-edit controls from the current conversation capabilities', async () => {
+    const initial = threadFixture()
+    const workspace = realWorkspace('saved', null, {
+      ...initial,
+      messages: [
+        {
+          id: 'image-answer',
+          runId: 'image-run',
+          ordinal: 1,
+          role: 'assistant',
+          status: 'complete',
+          content: '',
+          citations: [],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          media: [
+            {
+              id: '00000000-0000-4000-8000-000000000051',
+              kind: 'generated-image',
+              filename: 'release.png',
+              mimeType: 'image/png',
+              byteLength: 42,
+              available: true,
+              detached: false
+            }
+          ]
+        }
+      ]
     })
-  }
-
-  for (const blocker of ['run', 'active-goal', 'paused-goal', 'blocked-goal', 'mutation', 'offline'] as const) {
-    it(`disables provider choices with a visible reason during ${blocker}`, async () => {
-      const state = loadGoalLockState(
-        blocker === 'active-goal' ? 'active' : blocker === 'paused-goal' ? 'paused' : null,
-        blocker === 'mutation',
-        blocker === 'run' ? 'running' : null
+    const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+    await settle()
+    const attach = () => mounted.root.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')
+    const edit = () =>
+      Array.from(mounted.root.querySelectorAll<HTMLButtonElement>('.agent-message__media button')).find(
+        button => button.textContent?.trim() === translateEnglish('common:agentThread.editImage')
       )
-      if (blocker === 'blocked-goal' && state.thread.value) state.thread.value = { ...state.thread.value, goal: { id: 'goal-1', status: 'blocked' } }
-      if (blocker === 'offline') testPwaState.connectionState = 'offline'
-      const mounted = mountInlineAgent(state)
-      const options = await openProviderMenu(mounted)
-      expect(options.length).toBeGreaterThan(0)
-      expect(options.every(option => option.classList.contains('v-list-item--disabled'))).toBe(true)
-      const reason = mounted.root.querySelector<HTMLElement>('.inline-agent__provider-help[role="status"]')
-      expect(reason?.textContent?.trim()).not.toBe('')
-      options.at(-1)?.click()
-      await (state.selectProvider as (id: string) => Promise<void>)('profile-1')
-      expect(state.agentCalls.setProfile).not.toHaveBeenCalled()
-    })
-  }
-
-  it('blocks provider changes during real uploads and while attachments remain, then re-enables choices after removal', async () => {
-    vi.useFakeTimers()
-    const workspace = realWorkspace()
-    const withMedia = {
-      ...profileFixture,
-      media: { attachments: true, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false }
+    const setCapabilities = async (capabilities: AgentThreadState['session']['mediaCapabilities']): Promise<void> => {
+      const thread = workspace.store.thread!
+      workspace.store.thread = { ...thread, session: { ...thread.session, mediaCapabilities: capabilities } }
+      await settle()
     }
-    const second = { ...withMedia, id: '00000000-0000-4000-8000-000000000012', name: 'Review provider', model: 'review-model', isGlobalDefault: false }
-    workspace.authorization.profiles = [withMedia, second]
-    workspace.store.profiles = workspace.authorization.profiles
-    let completeUpload!: (response: Response) => void
-    workspace.mediaUpload.pending = new Promise<Response>(resolve => {
-      completeUpload = resolve
-    })
-    const state = workspace.state()
-    const mounted = mountInlineAgent(state)
+    expect(attach()).toBeNull()
+    expect(edit()).toBeUndefined()
+    await setCapabilities({ attachments: true, imageGeneration: false, videoGeneration: false, musicGeneration: false, transcription: false })
+    expect(attach()?.disabled).toBe(false)
+    expect(edit()).toBeUndefined()
+    await setCapabilities({ attachments: true, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false })
+    expect(attach()?.disabled).toBe(false)
+    expect(edit()?.disabled).toBe(false)
     const input = mounted.root.querySelector<HTMLInputElement>('input[type="file"]')
     if (!input) throw new Error('Real media upload input missing')
-    const file = new File(['%PDF-1.4\nreport\n%%EOF\n'], 'provider-draft.pdf', { type: 'application/pdf' })
+    const file = new File(['%PDF-1.4\nreport\n%%EOF\n'], 'draft-report.pdf', { type: 'application/pdf' })
     Object.defineProperty(input, 'files', { configurable: true, value: [file] })
     input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
     await settle()
-    await openProviderMenu(mounted)
-    expect(mounted.root.querySelector('.inline-agent__provider-help[role="status"]')?.textContent).toBe(
-      translateEnglish('common:inlineAgentChat.providerWaitForMedia')
-    )
-    await (state.selectProvider as (id: string) => Promise<void>)(second.id)
-    expect(workspace.profileChanges).toHaveLength(0)
-    completeUpload(
-      Response.json({
-        media: {
-          id: '00000000-0000-4000-8000-000000000050',
-          kind: 'attachment',
-          filename: file.name,
-          mimeType: file.type,
-          byteLength: file.size,
-          available: true,
-          detached: false
-        }
-      })
-    )
-    await settle()
     expect(mounted.root.querySelector('.agent-composer__media-attachments')?.textContent).toContain(file.name)
-    expect(mounted.root.querySelector('.inline-agent__provider-help[role="status"]')?.textContent).toBe(
-      translateEnglish('common:inlineAgentChat.providerRemoveAttachments')
-    )
-    await (state.selectProvider as (id: string) => Promise<void>)(second.id)
-    expect(workspace.profileChanges).toHaveLength(0)
     const remove = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__media-attachments button')
     if (!remove) throw new Error('Attachment removal control missing')
     remove.click()
     await settle()
-    expect(mounted.root.querySelector('.inline-agent__provider-help[role="status"]')).toBeNull()
-    const options = await openProviderMenu(mounted)
-    expect(options.every(option => !option.classList.contains('v-list-item--disabled'))).toBe(true)
-    menuAction(options, second.name).click()
-    await settle()
-    expect(workspace.profileChanges).toHaveLength(1)
+    expect(mounted.root.querySelector('.agent-composer__media-attachments')).toBeNull()
+    expect(workspace.requests).toContainEqual({ method: 'DELETE', path: '/_api/agents/media/00000000-0000-4000-8000-000000000050' })
+    await setCapabilities({ attachments: false, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false })
+    expect(attach()).toBeNull()
+    expect(edit()).toBeUndefined()
+    await setCapabilities(null)
+    expect(attach()).toBeNull()
+    expect(edit()).toBeUndefined()
+    expect(workspace.requests.some(request => /\/profiles(?:\/|$)|\/profile$/.test(request.path))).toBe(false)
   })
-
-  for (const viewportWidth of [1440, 390]) {
-    it(`shows the resolved provider and model with full accessible text at ${viewportWidth}px`, async () => {
-      const state = loadGoalLockState(null)
-      const profiles = state.profiles as ValueRef<AgentProviderProfileView[]>
-      const first = { ...profileFixture, name: 'Research profile with a deliberately long accessible name', model: 'research-model-long-name' }
-      const second = { ...profileFixture, id: 'profile-2', name: 'Review provider', model: 'review-model', isGlobalDefault: false }
-      profiles.value = [first, second]
-      const mounted = mountInlineAgent(state, { viewportWidth })
-      const expectIdentity = (root: HTMLElement, profile: AgentProviderProfileView) => {
-        const identity = root.querySelector<HTMLElement>('.inline-agent__provider-identity')
-        const fullText = translateEnglish('common:inlineAgentChat.providerIdentity', { name: profile.name, model: profile.model })
-        expect(identity?.textContent).toBe(fullText)
-        expect(identity?.getAttribute('title')).toBe(fullText)
-        expect(identity?.closest('.inline-agent__session-line')?.querySelector('.inline-agent__session-title')?.textContent).toContain('Release planning')
-      }
-      expectIdentity(mounted.root, first)
-      const thread = state.thread.value
-      if (!thread) throw new Error('Conversation missing')
-      state.thread.value = { ...thread, session: { ...(thread.session as Record<string, unknown>), providerProfileId: second.id } }
-      await settle()
-      expectIdentity(mounted.root, second)
-
-      profiles.value = [
-        { ...first, isGlobalDefault: false },
-        { ...second, isGlobalDefault: true }
-      ]
-      await settle()
-      expectIdentity(mounted.root, second)
-      state.thread.value = { ...state.thread.value, session: { ...(state.thread.value?.session as Record<string, unknown>), providerProfileId: null } }
-      await settle()
-      expectIdentity(mounted.root, second)
-      mounted.unmount()
-      const reopenedState = loadGoalLockState(null)
-      ;(reopenedState.profiles as ValueRef<AgentProviderProfileView[]>).value = profiles.value
-      const reopened = mountInlineAgent(reopenedState, { viewportWidth })
-      expectIdentity(reopened.root, second)
-      ;(reopenedState.profiles as ValueRef<AgentProviderProfileView[]>).value = [{ ...first, isGlobalDefault: true }]
-      await settle()
-      expectIdentity(reopened.root, first)
-    })
-  }
 
   it('coalesces scroll measurements while preserving manual reading, follow and approval navigation', async () => {
     installBrowserSurface()
@@ -2233,7 +2130,6 @@ describe('Agent workspace action semantics', () => {
       networkPaused: false,
       loading: false,
       connection: 'connected',
-      profiles: [profileFixture],
       initializedWorkspaceVersion: workspace.store.workspaceVersion,
       thread: {
         ...threadFixture(),
@@ -2263,8 +2159,7 @@ describe('Agent workspace action semantics', () => {
       networkPaused: false,
       loading: false,
       connection: 'connected',
-      initializedWorkspaceVersion: workspace.store.workspaceVersion,
-      profiles: [profileFixture]
+      initializedWorkspaceVersion: workspace.store.workspaceVersion
     })
     const activeThread = workspace.store.thread
     if (!activeThread) throw new Error('Active conversation missing')

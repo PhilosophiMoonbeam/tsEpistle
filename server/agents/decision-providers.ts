@@ -37,6 +37,14 @@ const invalid = (code = 'INVALID_DECISION_RESPONSE', status = 502): AgentReposit
   new AgentRepositoryError(code, code === 'INVALID_DECISION_REQUEST' ? 'Decision request is invalid' : 'Decision provider returned an invalid response', status)
 const plain = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value))
+const usableCredential = (value: unknown): value is string => typeof value === 'string' && /^[\x21-\x7e]{1,65536}$/u.test(value)
+const hasControlCharacters = (value: string): boolean => {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x1f || code === 0x7f) return true
+  }
+  return false
+}
 
 export const validateDecisionProviderConfig = (value: unknown): DecisionProviderConfig => {
   const parsed = DecisionProviderConfigSchema.safeParse(value)
@@ -94,7 +102,7 @@ const validateRequest = (request: DecisionRequest): void => {
   if (
     labels.length < 1 ||
     labels.length > 255 ||
-    labels.some(label => !label || label.length > 255 || /[\x00-\x1f\x7f]/u.test(label) || ['__proto__', 'constructor', 'prototype'].includes(label))
+    labels.some(label => !label || label.length > 255 || hasControlCharacters(label) || ['__proto__', 'constructor', 'prototype'].includes(label))
   )
     throw invalid('INVALID_DECISION_REQUEST', 400)
   let count = 0
@@ -303,6 +311,10 @@ export class DecisionProviderClient {
     const started = performance.now()
     let usage: DecisionResult['usage'] | null = null
     let responseModel: string | undefined
+    // These identifiers cross the server boundary in checks/results. A custom
+    // service must not turn a write-only bearer token into a public model name.
+    const safeModelId = (value: unknown): value is string =>
+      typeof value === 'string' && value.length > 0 && value.length <= 255 && value.trim() === value && !hasControlCharacters(value) && !value.includes(key)
     const base = new URL(config.kind === 'typesafe' ? 'https://api.typesafe.ai' : config.baseUrl)
     const resolve = this.#options.resolve ?? lookup
     const implementation = this.#options.fetch ?? (undiciFetch as unknown as typeof fetch)
@@ -426,8 +438,7 @@ export class DecisionProviderClient {
       }
     ) as typeof fetch
     try {
-      if (!key || key.trim() !== key || /[\x00-\x1f\x7f]/u.test(key))
-        throw new AgentRepositoryError('DECISION_CREDENTIAL_UNAVAILABLE', 'Decision provider credential is unavailable', 503)
+      if (!usableCredential(key)) throw new AgentRepositoryError('DECISION_CREDENTIAL_UNAVAILABLE', 'Decision provider credential is unavailable', 503)
       let answer: unknown
       let model: string
       let availableModels: readonly string[] = []
@@ -445,11 +456,14 @@ export class DecisionProviderClient {
           }
         })
         if (options.check) {
-          availableModels = (await client.listModels()).map(card => card.name)
+          const models = await client.listModels()
+          if (models.length > 2_048 || models.some(card => !safeModelId(card.name))) throw invalid()
+          availableModels = models.map(card => card.name)
           if (!availableModels.includes(config.model) && !/^jev-\d+\.\d+\.\d+$/u.test(config.model))
             throw new AgentRepositoryError('DECISION_MODEL_UNAVAILABLE', 'Configured decision model is unavailable to this account', 409)
         }
-        // A pinned Jev version can be accepted even when discovery returns aliases only.
+        // Discovery currently lists aliases, not every accepted version. Only a
+        // successful inference reporting the exact requested pin proves a pin.
         const response = await client.systemOne({
           state: request.state,
           model: config.model,
@@ -460,12 +474,7 @@ export class DecisionProviderClient {
       } else {
         if (options.check) {
           const models = await fetchJson(new URL(`${config.baseUrl}/models`), { method: 'GET' })
-          if (
-            !plain(models) ||
-            !Array.isArray(models.data) ||
-            models.data.length > 2_048 ||
-            models.data.some(card => !plain(card) || typeof card.id !== 'string' || !card.id || card.id.length > 255)
-          )
+          if (!plain(models) || !Array.isArray(models.data) || models.data.length > 2_048 || models.data.some(card => !plain(card) || !safeModelId(card.id)))
             throw invalid()
           availableModels = models.data.map(card => String(card.id))
           if (!availableModels.includes(config.model))
@@ -537,7 +546,9 @@ export class DecisionProviderClient {
         answer = JSON.parse(result.content) as unknown
         model = responseModel ?? config.model
       }
-      if (!usage || !model || model.length > 255 || /[\x00-\x1f\x7f]/u.test(model)) throw invalid()
+      if (!usage || !safeModelId(model)) throw invalid()
+      if (config.kind === 'typesafe' && (/^jev-\d+\.\d+\.\d+$/u.test(config.model) ? model !== config.model : !/^jev-\d+\.\d+\.\d+$/u.test(model)))
+        throw new AgentRepositoryError('DECISION_MODEL_MISMATCH', 'Decision provider did not report the configured model', 502)
       const normalized = normalizeDecisionAnswer(answer, request.criteria)
       const estimatedCost = estimateDecisionCost(config.pricing, usage)
       return {
@@ -562,7 +573,13 @@ export class DecisionProviderClient {
           : failure instanceof AgentRepositoryError
             ? failure.code
             : 'DECISION_PROVIDER_FAILED'
-      throw new DecisionProviderFailure(code, snapshot, usage, Math.max(0, performance.now() - started))
+      throw new DecisionProviderFailure(
+        code,
+        snapshot,
+        usage,
+        Math.max(0, performance.now() - started),
+        failure instanceof AgentRepositoryError && code === failure.code ? failure.status : undefined
+      )
     }
   }
 }
@@ -629,8 +646,9 @@ export class DecisionProviderRegistry {
   }
   async #key(row: ProviderRow): Promise<string | null> {
     // A configured managed reference never falls through to another account's environment key.
-    if (row.secretReference !== null) return this.#secrets.get(row.secretReference)
-    return this.#config(row).kind === 'typesafe' ? this.#environmentKey() : null
+    const key =
+      row.secretReference !== null ? await this.#secrets.get(row.secretReference) : this.#config(row).kind === 'typesafe' ? this.#environmentKey() : null
+    return usableCredential(key) ? key : null
   }
   async #view(row: ProviderRow): Promise<DecisionProviderView> {
     const configured =

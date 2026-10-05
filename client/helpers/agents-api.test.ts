@@ -43,7 +43,68 @@ describe('agents client boundary', () => {
       async () =>
         new Response(JSON.stringify({ session: { id: 'not-a-uuid' }, messages: '<script>' }), { status: 201, headers: { 'content-type': 'application/json' } })
     ) as unknown as typeof fetch
-    await expect(Promise.resolve(createAgentThread(fetcher, 'csrf', { retention: 'saved', providerProfileId: null }))).rejects.toThrow()
+    await expect(Promise.resolve(createAgentThread(fetcher, 'csrf', { retention: 'saved' }))).rejects.toThrow()
+  })
+
+  it('creates retention-only sessions and validates nullable media capabilities without coercing flags', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000080'
+    const now = '2026-08-17T00:00:00.000Z'
+    const mediaCapabilities = {
+      attachments: true,
+      imageGeneration: false,
+      videoGeneration: false,
+      musicGeneration: true,
+      transcription: false
+    }
+    const thread = {
+      session: {
+        id: sessionId,
+        title: '',
+        retention: 'saved',
+        folderId: null,
+        status: 'active',
+        executionMode: 'agent',
+        version: 1,
+        providerProfileId: null,
+        profileResolutionToken: 'token',
+        mediaCapabilities,
+        skills: [],
+        currentRun: null,
+        createdAt: now,
+        updatedAt: now,
+        lastActivityAt: now,
+        expiresAt: null
+      },
+      messages: [],
+      tools: [],
+      tasks: [],
+      goal: null,
+      proposals: [],
+      artifacts: [],
+      routingDecisions: [],
+      specialistInvocations: [],
+      historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
+      suggestions: []
+    }
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json(thread))
+
+    expect((await createAgentThread(fetcher as typeof fetch, 'csrf', { retention: 'saved' })).session.mediaCapabilities).toEqual(mediaCapabilities)
+    expect(fetcher).toHaveBeenCalledWith(
+      '/_api/agents/sessions',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin', body: JSON.stringify({ retention: 'saved' }) })
+    )
+
+    fetcher.mockImplementation(async () => Response.json({ ...thread, session: { ...thread.session, mediaCapabilities: null } }))
+    expect((await getAgentThread(fetcher as typeof fetch, 'csrf', sessionId)).session.mediaCapabilities).toBeNull()
+
+    const invalidCapabilities: unknown[] = [undefined, [], true, { ...mediaCapabilities, unknownGeneration: true }]
+    for (const flag of Object.keys(mediaCapabilities)) {
+      for (const value of [undefined, null, 'true', 1]) invalidCapabilities.push({ ...mediaCapabilities, [flag]: value })
+    }
+    for (const invalid of invalidCapabilities) {
+      fetcher.mockImplementation(async () => Response.json({ ...thread, session: { ...thread.session, mediaCapabilities: invalid } }))
+      await expect(getAgentThread(fetcher as typeof fetch, 'csrf', sessionId)).rejects.toMatchObject({ status: 502 })
+    }
   })
   it('accepts projected discovery and action activity for every terminal outcome', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000081'
@@ -137,6 +198,7 @@ describe('agents client boundary', () => {
         version: 1,
         providerProfileId: null,
         profileResolutionToken: 'profile-token',
+        mediaCapabilities: null,
         skills: [],
         currentRun: null,
         createdAt: startedAt,
@@ -199,6 +261,7 @@ describe('agents client boundary', () => {
         version: 1,
         providerProfileId: null,
         profileResolutionToken: 'profile-token',
+        mediaCapabilities: null,
         skills: [],
         currentRun: null,
         createdAt: now,
@@ -697,6 +760,7 @@ describe('agents client boundary', () => {
         version: 1,
         providerProfileId: null,
         profileResolutionToken: 'token',
+        mediaCapabilities: null,
         skills: [],
         currentRun: null,
         createdAt: now,
@@ -786,6 +850,7 @@ describe('agents client boundary', () => {
         version: 3,
         providerProfileId: null,
         profileResolutionToken: 'token',
+        mediaCapabilities: null,
         skills: [],
         currentRun: null,
         createdAt: '2026-08-30T00:00:00.000Z',
