@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
-import { createRoutingTables, routingFixture, type RoutingFixture } from './runtime-routing.fixture.ts'
+import { createRoutingTables, type RoutingFixture, routingFixture } from './runtime-routing.fixture.ts'
 
 const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -35,6 +35,69 @@ suite('PostgreSQL claimed-run routing fences', () => {
     } finally {
       await admin.destroy()
     }
+  })
+
+  it('continues a specialist with PostgreSQL bigint quota credits without changing the root binding or charging a child twice', async () => {
+    const report = 'Independent draft: Good morning, everyone.'
+    const usage = { inputTokens: 5, outputTokens: 3, totalTokens: 8, costMicros: 10 }
+    f.engine.preflight = async request => ({
+      admissible: true,
+      inputExposureTokens: request.specialist ? 20 : 20_000,
+      outputExposureTokens: 3,
+      totalExposureTokens: request.specialist ? 23 : 20_003
+    })
+    f.router.decisionProviders.decide = async request => {
+      const choice = Object.keys(request.criteria).find(label => label.startsWith('REUSE(') && label.endsWith(':writing:simple')) ?? 'NEW:writing:simple'
+      return { ...f.answer, choice, probabilities: Object.fromEntries(Object.keys(request.criteria).map(label => [label, label === choice ? 1 : 0])) }
+    }
+    f.engine.execute = async (request, sink) => {
+      await request.authorizeDispatch?.()
+      const child = request.specialist !== undefined
+      const turns = child ? 3 : request.specialistHandoff ? 1 : 3
+      for (let turn = 0; turn < turns; turn += 1) {
+        const reservation = await request.dispatchBudget!.reserve({ tokens: 8, costMicros: 10 })
+        await request.dispatchBudget!.reconcile(reservation, usage)
+        await sink.event('model.turn', {
+          usageVersion: 2,
+          ...usage,
+          content: child ? report : 'Good morning, everyone!',
+          contentTruncated: false,
+          actionCallIds: [],
+          finishReason: 'stop',
+          outcome: 'answer_accepted'
+        })
+      }
+      await sink.text(child ? report : 'Good morning, everyone!')
+      return {
+        inputTokens: 5 * turns,
+        outputTokens: 3 * turns,
+        totalTokens: 8 * turns,
+        costMicros: 10 * turns,
+        ...(child ? { specialistState: { retained: 'private child continuation' }, specialistAuthoritySha256: 'a'.repeat(64), specialistEvidence: [] } : {})
+      }
+    }
+    const sessionId = await f.session(true)
+    await f.submit(sessionId)
+    await f.runtime.runOnce()
+    await db('agentQuotaDaily').where({ ownerId: 7 }).update({ tokenResetCredit: '1000' })
+    Object.assign(f.view.policy, { specialistEnabled: true })
+    const first = await f.submit(sessionId)
+    await f.runtime.runOnce()
+    const second = await f.submit(sessionId)
+    await f.runtime.runOnce()
+    expect(await db('agentRuns').whereIn('id', [first.run.id, second.run.id]).select('status', 'providerProfileVersionId')).toEqual([
+      { status: 'succeeded', providerProfileVersionId: f.current.versionId },
+      { status: 'succeeded', providerProfileVersionId: f.current.versionId }
+    ])
+    const contexts = await db('agentSpecialistContexts').select('id', 'turnCount')
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0]?.turnCount).toBe(2)
+    const daily = await db('agentQuotaDaily').where({ ownerId: 7 }).first()
+    expect(Number(daily.tokenResetCredit)).toBe(1000)
+    expect(Number(daily.consumedTokens)).toBe(468)
+    expect(Number(daily.consumedCostMicros)).toBe(136)
+    expect(Number(daily.reservedTokens)).toBe(0)
+    expect(Number(daily.reservedCostMicros)).toBe(0)
   })
 
   it('retains billed classifier usage but forbids retarget after concurrent candidate grant revocation', async () => {
