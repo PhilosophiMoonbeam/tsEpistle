@@ -128,6 +128,8 @@ Selection chooses **stay**, **swap**, or optional **delegate** between durable t
 
 Enable **Allow specialist delegation** in the routing policy panel to opt in, then edit the four specialist limits and save through the existing revision-checked policy API. Disabled is the default. Specialists cannot nest delegation, use external MCP or browser tools, or perform writes. Their report is untrusted task context, not an instruction or authority grant.
 
+The root can retain its authorized outbound MCP catalog while delegating independent Wiki-only work. That root access is never inherited by the specialist.
+
 Reusable contexts are bound to the same owner/root session, immutable provider/model version, capabilities and policy/authorization versions, task/complexity, and source scope. Evidence and current tool authority are revalidated before reuse. Expiry cannot exceed root retention or host source expiry; expired or incompatible contexts are not reused, and expired reports are omitted from the browser view. Reuse preserves a separate prefix-compatible provider continuation only: it does **not** guarantee a provider prompt-cache hit, and estimates assume no cache discount.
 
 The chat activity surface shows each routing strategy, separate root and specialist model-version bindings, and available host estimates for stay, cold swap, and delegate plus handoff. Estimates are not billing, measured savings, or cache-hit evidence; unavailable costs are shown as unknown. Specialist handoffs show status, new/reused context, model/task, root run, and bounded plain-text report. No specialist history, engine state, credentials, or provider keys are exposed.
