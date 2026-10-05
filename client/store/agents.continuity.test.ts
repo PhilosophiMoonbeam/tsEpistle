@@ -39,6 +39,7 @@ const thread = (n: number): AgentThreadState => ({
     version: 1,
     providerProfileId: null,
     profileResolutionToken: 'token',
+    mediaCapabilities: null,
     skills: [],
     currentRun: null,
     createdAt: '2026-09-18T00:00:00Z',
@@ -81,7 +82,6 @@ const fixture = () => {
       return Response.json({ sessions: [], nextCursor: null })
     }
     if (path === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
-    if (path === '/_api/agents/profiles') return Response.json({ profiles: [] })
     if (path === '/_api/agents/skills') return Response.json({ skills: [] })
     if (path.startsWith('/_api/pages/preview?')) {
       const n = Number(new URL(path, 'http://localhost').searchParams.get('id'))

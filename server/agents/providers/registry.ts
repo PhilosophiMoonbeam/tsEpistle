@@ -2,18 +2,14 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { isIP } from 'node:net'
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import {
-  AGENT_REASONING_EFFORTS,
-  agentProviderReasoningEfforts,
-  type AgentExecutionMode,
-  type AgentProviderProfileView as AgentProviderSelectionView
-} from '../../../shared/agents/contracts.ts'
-import type { RoutingCandidate } from '../../../shared/agents/routing.ts'
+import { AGENT_REASONING_EFFORTS, agentProviderReasoningEfforts, type AgentExecutionMode } from '../../../shared/agents/contracts.ts'
+import type { RoutingCandidate, RoutingTurnDecision } from '../../../shared/agents/routing.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { sessionVersion } from '../../helpers/account-session.ts'
 import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { lockSkillAdmissionPrincipal } from '../skills/runtime.ts'
+import { AgentRoutingPolicyRegistry, validateRoutingDecision } from '../routing.ts'
 import type { AgentSecretRegistry } from './secrets.ts'
 import { isGeminiChatModel } from './gemini.ts'
 
@@ -452,6 +448,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
   readonly #knex: Knex
   readonly #secrets: AgentSecretRegistry
   readonly #keys: AgentProfileTokenKeys
+  readonly #routingPolicies: AgentRoutingPolicyRegistry
 
   constructor(knex: Knex, secrets: AgentSecretRegistry, keys: AgentProfileTokenKeys) {
     const secret = keys.keys[keys.currentKeyId]
@@ -459,6 +456,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     this.#knex = knex
     this.#secrets = secrets
     this.#keys = keys
+    this.#routingPolicies = new AgentRoutingPolicyRegistry(knex)
   }
 
   #sign(payload: string, keyId: string): string {
@@ -513,7 +511,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     if (reference && !(await this.#credentialIsReferenced(transaction, reference))) await this.#secrets.delete(reference, transaction)
   }
   #profileUnavailable(): never {
-    throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
+    throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Agent configuration is unavailable; retry or contact an administrator', 409)
   }
 
   async #availableProfileVersion(
@@ -570,6 +568,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       )
       .orderBy('agentProviderProfiles.isGlobalDefault', 'desc')
       .orderBy('agentProviderProfiles.displayName')
+      .orderBy('agentProviderProfiles.id')
       .select(
         'agentProviderProfiles.id',
         'agentProviderProfileVersions.secretReference',
@@ -592,7 +591,109 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       .map(row => row.id)
   }
 
-  async #implicitProfileId(database: Knex | Knex.Transaction, ownerId: number, lockProfiles = false): Promise<string | null> {
+  async #priorRoutedProfileId(
+    database: Knex | Knex.Transaction,
+    ownerId: number,
+    sessionId: string,
+    defaultGeneration: number,
+    eligibleIds: readonly string[]
+  ): Promise<string | null> {
+    const prior = await database('agentRuns')
+      .where({ ownerId, sessionId, executionMode: 'agent' })
+      .whereNull('goalId')
+      .whereIn('status', ['succeeded', 'partial'])
+      .orderBy('queuedAt', 'desc')
+      .orderBy('id', 'desc')
+      .first(
+        'id',
+        'providerProfileVersionId',
+        'profilePolicyVersion',
+        'defaultGeneration',
+        'transportKind',
+        'model',
+        'capabilityRevision',
+        'pricingRevision',
+        'promptVersion'
+      )
+    if (!prior || Number(prior.defaultGeneration) !== defaultGeneration) return null
+    const rows = await database('agentEvents').where({ runId: prior.id, type: 'model.turn' }).select('data', 'dataSha256')
+    let receipt: Record<string, unknown> | null = null
+    for (const row of rows) {
+      if (typeof row.data !== 'string' || digest(row.data) !== row.dataSha256)
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing binding hash is invalid', 500)
+      let data: Record<string, unknown>
+      try {
+        data = JSON.parse(row.data)
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid event')
+      } catch {
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing binding is invalid', 500)
+      }
+      if (data.purpose !== 'routing') continue
+      if (receipt !== null) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing binding is duplicated', 500)
+      receipt = data
+    }
+    if (receipt === null) return null
+    const decision = receipt.routingDecision as RoutingTurnDecision | undefined
+    const selected = receipt.routingSelected as AgentResolvedAdmission | undefined
+    if (
+      !decision ||
+      !selected ||
+      decision.version !== 1 ||
+      decision.ownerId !== ownerId ||
+      decision.sessionId !== sessionId ||
+      decision.runId !== prior.id ||
+      decision.profileVersionId !== prior.providerProfileVersionId ||
+      selected.providerProfileVersionId !== prior.providerProfileVersionId ||
+      selected.model !== prior.model ||
+      selected.transportKind !== prior.transportKind ||
+      selected.capabilityRevision !== prior.capabilityRevision ||
+      selected.pricingRevision !== prior.pricingRevision ||
+      selected.promptVersion !== Number(prior.promptVersion) ||
+      selected.profilePolicyVersion !== Number(prior.profilePolicyVersion) ||
+      selected.defaultGeneration !== Number(prior.defaultGeneration)
+    )
+      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing binding does not match its admitted run', 500)
+    const strategy = decision.strategy ?? (decision.switched ? 'swap' : 'stay')
+    // Historical explicit user pins produced stays; only an actual admin swap
+    // or a host-marked automatic receipt can establish the next incumbent.
+    if (strategy === 'delegate' || (receipt.routingAutomatic !== true && strategy !== 'swap')) return null
+    if (!eligibleIds.includes(decision.profileId)) return null
+    const { profile, version } = await this.#availableProfileVersion(database, ownerId, decision.profileId)
+    const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
+    if (
+      version.id !== prior.providerProfileVersionId ||
+      Number(profile.policyVersion) !== Number(prior.profilePolicyVersion) ||
+      version.transportKind !== prior.transportKind ||
+      version.model !== prior.model ||
+      version.capabilityRevision !== prior.capabilityRevision ||
+      version.pricingRevision !== prior.pricingRevision ||
+      policies.promptVersion !== Number(prior.promptVersion)
+    )
+      return null
+    const configuration = await this.#routingPolicies.getRuntime(database)
+    if (!configuration.policy.enabled || configuration.policy.revision !== decision.policyRevision) return null
+    if (
+      decision.profileId !== eligibleIds[0] &&
+      !configuration.models.some(model => model.profileId === decision.profileId && model.profileVersionId === version.id)
+    )
+      return null
+    try {
+      await validateRoutingDecision(decision, database, configuration)
+    } catch (error) {
+      if (error instanceof AgentRepositoryError && error.code === 'ROUTING_REVISION_CHANGED') return null
+      throw error
+    }
+    return profile.id
+  }
+
+  async #implicitProfileId(
+    database: Knex | Knex.Transaction,
+    ownerId: number,
+    sessionId: string,
+    defaultGeneration: number,
+    lockProfiles = false,
+    reusePrior = true
+  ): Promise<string | null> {
     let ids = await this.#visibleAgentProfileIds(database, ownerId)
     if (lockProfiles && ids.length > 0) {
       await database('agentProviderProfiles')
@@ -602,12 +703,10 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         .select('id')
       ids = await this.#visibleAgentProfileIds(database, ownerId)
     }
-    if (ids.length === 0) return null
-    const defaultProfile = (await database('agentProviderProfiles').whereIn('id', ids).andWhere({ isGlobalDefault: true }).first('id')) as
-      | { id: string }
-      | undefined
-    if (defaultProfile) return defaultProfile.id
-    return ids.length === 1 ? ids[0]! : null
+    const incumbent = reusePrior && ids.length ? await this.#priorRoutedProfileId(database, ownerId, sessionId, defaultGeneration, ids) : null
+    // A trusted current routed incumbent retains its binding; otherwise use
+    // the eligible global default, then administrator-controlled name and UUID.
+    return incumbent ?? ids[0] ?? null
   }
 
   async create(input: CreateAgentProviderProfileInput): Promise<AgentProviderProfileView> {
@@ -941,90 +1040,18 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     })
   }
 
-  async setSessionProfile(input: {
-    readonly ownerId: number
-    readonly sessionId: string
-    readonly expectedSessionVersion: number
-    readonly profileId: string | null
-  }): Promise<void> {
-    await this.#knex.transaction(async transaction => {
-      const session = (await transaction('agentSessions')
-        .where({ id: input.sessionId, ownerId: input.ownerId, version: input.expectedSessionVersion })
-        .whereNull('deletedAt')
-        .forUpdate()
-        .first('id')) as { id: string } | undefined
-      if (!session) throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
-      const active = await transaction('agentRuns')
-        .where({ sessionId: input.sessionId })
-        .whereIn('status', ['queued', 'running', 'awaiting_approval'])
-        .first('id')
-      if (active) throw new AgentRepositoryError('SESSION_RUN_ACTIVE', 'Agent session already has an active run', 409)
-      const resolvedProfileId = input.profileId ?? (await this.#implicitProfileId(transaction, input.ownerId))
-      if (!resolvedProfileId) return this.#profileUnavailable()
-      const { version } = await this.#availableProfileVersion(transaction, input.ownerId, resolvedProfileId)
-      const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
-      const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
-      if (!supportsAgentExecution(capabilities, policies))
-        throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
-      await transaction('agentSessions')
-        .where({ id: input.sessionId, ownerId: input.ownerId, version: input.expectedSessionVersion })
-        .update({
-          providerProfileId: input.profileId,
-          executionMode: 'agent',
-          googleSearchEnabled: false,
-          version: input.expectedSessionVersion + 1,
-          updatedAt: new Date()
-        })
-    })
-  }
-  async assertProfileAvailable(ownerId: number, profileId: string, database: Knex | Knex.Transaction = this.#knex): Promise<void> {
-    const { version } = await this.#availableProfileVersion(database, ownerId, profileId)
-    const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
-    const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
-    if (!supportsAgentExecution(capabilities, policies))
-      throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
-  }
-
-  async listVisible(ownerId: number, limit = 100): Promise<AgentProviderSelectionView[]> {
-    const profileIds = await this.#visibleAgentProfileIds(this.#knex, ownerId, limit)
-    const profiles = await Promise.all(profileIds.map(id => this.getAdmin(id)))
-    return profiles.map(profile => ({
-      id: profile.id,
-      name: profile.displayName,
-      transport: profile.transportKind,
-      model: profile.model,
-      utilityModel: profile.utilityModel,
-      destinationHost: profile.destinationHost,
-      capabilities: profile.capabilities,
-      capabilityRevision: profile.capabilityRevision,
-      policyVersion: profile.policyVersion,
-      isGlobalDefault: profile.isGlobalDefault,
-      ...(profile.transportKind === 'gemini-api' && profile.adapterConfig.media
-        ? {
-            media: {
-              attachments: profile.adapterConfig.media.attachments,
-              imageGeneration: profile.adapterConfig.media.imageGeneration !== undefined,
-              videoGeneration: false,
-              musicGeneration: false,
-              transcription: profile.adapterConfig.media.transcription !== undefined
-            }
-          }
-        : {})
-    }))
-  }
-
   async issueResolutionToken(ownerId: number, sessionId: string, ttlSeconds = 300): Promise<string> {
     const payload = await this.#knex.transaction(async transaction => {
       const session = (await transaction('agentSessions')
         .where({ id: sessionId, ownerId })
         .whereNull('deletedAt')
         .forUpdate()
-        .first('id', 'version', 'providerProfileId', 'executionMode', 'googleSearchEnabled')) as
-        | { id: string; version: number; providerProfileId: string | null; executionMode: AgentExecutionMode; googleSearchEnabled: boolean | number }
+        .first('id', 'version', 'executionMode', 'googleSearchEnabled')) as
+        | { id: string; version: number; executionMode: AgentExecutionMode; googleSearchEnabled: boolean | number }
         | undefined
       if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const configuration = await this.#lockConfiguration(transaction)
-      const resolvedProfileId = session.providerProfileId ?? (await this.#implicitProfileId(transaction, ownerId, true))
+      const resolvedProfileId = await this.#implicitProfileId(transaction, ownerId, sessionId, configuration.defaultGeneration, true)
       if (!resolvedProfileId) return this.#profileUnavailable()
       const { profile, version } = await this.#availableProfileVersion(transaction, ownerId, resolvedProfileId)
       const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
@@ -1054,12 +1081,13 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     transaction: Knex.Transaction,
     input: { readonly ownerId: number; readonly sessionId: string },
     payload: TokenPayload | null,
-    routingCandidate?: { readonly profileId: string; readonly profileVersionId: string }
+    routingCandidate?: { readonly profileId: string; readonly profileVersionId: string },
+    reusePrior = true
   ): Promise<AgentResolvedAdmission> {
     const sessionQuery = transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt')
     if (payload !== null) sessionQuery.andWhere({ version: payload.sessionVersion, executionMode: payload.executionMode })
-    const session = (await sessionQuery.forUpdate().first('version', 'providerProfileId', 'executionMode', 'googleSearchEnabled')) as
-      | { version: number | string; providerProfileId: string | null; executionMode: AgentExecutionMode; googleSearchEnabled: boolean | number }
+    const session = (await sessionQuery.forUpdate().first('version', 'executionMode', 'googleSearchEnabled')) as
+      | { version: number | string; executionMode: AgentExecutionMode; googleSearchEnabled: boolean | number }
       | undefined
     if (!session)
       throw new AgentRepositoryError(
@@ -1069,8 +1097,10 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       )
     const configuration = await this.#lockConfiguration(transaction)
     const implicitProfileId =
-      routingCandidate === undefined && session.providerProfileId === null ? await this.#implicitProfileId(transaction, input.ownerId, true) : null
-    const selectedProfileId = routingCandidate?.profileId ?? payload?.profileId ?? session.providerProfileId ?? implicitProfileId ?? undefined
+      routingCandidate === undefined
+        ? await this.#implicitProfileId(transaction, input.ownerId, input.sessionId, configuration.defaultGeneration, true, reusePrior)
+        : null
+    const selectedProfileId = routingCandidate?.profileId ?? payload?.profileId ?? implicitProfileId ?? undefined
     if (!selectedProfileId) return this.#profileUnavailable()
     const profileQuery = transaction<ProfileRow>('agentProviderProfiles')
       .where({ id: selectedProfileId, status: 'enabled', conformed: true })
@@ -1087,7 +1117,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
           .where({ id: profile.currentVersionId, profileId: selectedProfileId, conformed: true })
           .first()
       : undefined
-    const expectedProfileId = session.providerProfileId ?? implicitProfileId
+    const expectedProfileId = implicitProfileId
     if (
       !profile ||
       !version ||
@@ -1180,6 +1210,13 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
 
   async resolveCurrent(transaction: Knex.Transaction, input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission> {
     return this.#resolveInTransaction(transaction, input, null)
+  }
+
+  async resolveConfiguredDefault(
+    transaction: Knex.Transaction,
+    input: { readonly ownerId: number; readonly sessionId: string }
+  ): Promise<AgentResolvedAdmission> {
+    return this.#resolveInTransaction(transaction, input, null, undefined, false)
   }
 
   async #lockRoutingOwner(transaction: Knex.Transaction, ownerId: number): Promise<number> {

@@ -78,7 +78,7 @@ const evaluateAgentThread = new Function(
   'agentMediaContentUrl',
   'placeAgentArtifacts',
   `${executableScript}
-return { artifactPlacement, artifactTimeLabel, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, activityOpen, markActivityToggle, handleActivityToggle, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
+return { artifactPlacement, artifactTimeLabel, temporalMetadataFor, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, activityOpen, markActivityToggle, handleActivityToggle, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const NullStub = Vue.defineComponent({
@@ -166,6 +166,7 @@ const makeSession = (id: string): AgentSessionView => ({
   version: 1,
   providerProfileId: null,
   profileResolutionToken: 'profile-token',
+  mediaCapabilities: null,
   skills: [],
   currentRun: null,
   createdAt: '2026-09-03T10:00:00.000Z',
@@ -393,6 +394,81 @@ describe('AgentThread identity presentation', () => {
 })
 
 describe('AgentThread live status and interaction behavior', () => {
+  it('keeps historical task status and reports useful while hiding routing and specialist provider details', async () => {
+    const receipt: AgentThreadState['specialistInvocations'][number] = {
+      id: '00000000-0000-4000-8000-000000000041',
+      contextId: '00000000-0000-4000-8000-000000000042',
+      rootRunId: '00000000-0000-4000-8000-000000000043',
+      profileVersionId: '00000000-0000-4000-8000-000000000044',
+      model: 'private-specialist-model',
+      taskClass: 'analysis',
+      status: 'running',
+      reused: true,
+      contextVersion: 7,
+      report: null,
+      errorCode: null,
+      startedAt: '2026-09-03T10:00:00.000Z',
+      completedAt: null
+    }
+    const routing: AgentThreadState['routingDecisions'][number] = {
+      runId: receipt.rootRunId,
+      strategy: 'delegate',
+      rootProfileVersionId: '00000000-0000-4000-8000-000000000045',
+      specialistProfileVersionId: receipt.profileVersionId,
+      reason: 'private routing reason',
+      costs: { stayMicros: 123456789, coldSwapMicros: 234567891, delegateMicros: 345678912 }
+    }
+    const mounted = await mountThread(
+      makeThread('historical-session', {
+        specialistInvocations: [receipt],
+        routingDecisions: [routing]
+      })
+    )
+    const expectPrivateDetailsHidden = (): void => {
+      for (const detail of [
+        receipt.model,
+        receipt.contextId,
+        receipt.rootRunId,
+        receipt.profileVersionId,
+        routing.rootProfileVersionId,
+        routing.reason,
+        'PRIVATE_PROVIDER_FAILURE',
+        '123456789',
+        '234567891',
+        '345678912'
+      ])
+        expect(mounted.host.innerHTML).not.toContain(detail)
+    }
+    const activity = mounted.host.querySelector<HTMLElement>('[aria-label="Agent task activity"]')
+    if (!activity) throw new Error('Historical task activity did not render')
+    expect(activity.querySelector('summary')?.textContent).toContain('analysis')
+    expect(activity.querySelector('summary')?.textContent).toContain('Agent working')
+    expect(activity.querySelector<HTMLDetailsElement>('details')?.open).toBe(true)
+    expect(activity.querySelector('p')?.textContent?.trim()).not.toBe('')
+    expect(activity.textContent).toContain('report pending')
+    expectPrivateDetailsHidden()
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      specialistInvocations: [
+        { ...receipt, status: 'completed', report: 'The release checklist is ready for review.', completedAt: '2026-09-03T10:01:00.000Z' }
+      ]
+    }
+    await settle()
+    expect(activity.querySelector('summary')?.textContent).toContain('Task complete')
+    expect(activity.textContent).toContain('Task report')
+    expect(activity.textContent).toContain('The release checklist is ready for review.')
+    expectPrivateDetailsHidden()
+    mounted.thread.value = {
+      ...mounted.thread.value,
+      specialistInvocations: [{ ...receipt, status: 'failed', errorCode: 'PRIVATE_PROVIDER_FAILURE', completedAt: '2026-09-03T10:01:00.000Z' }]
+    }
+    await settle()
+    expect(activity.querySelector('summary')?.textContent).toContain('Task failed')
+    expect(activity.querySelector('[role="status"]')?.textContent).toContain('could not complete this task')
+    expect(activity.textContent).toContain('No report returned.')
+    expectPrivateDetailsHidden()
+  })
+
   it('explains matching public failures without leaking provider details or borrowing a different run failure', async () => {
     const session = makeSession('session-recovery')
     const runOutcome = { status: 'failed' as const, errorCode: 'AGENT_QUOTA_EXHAUSTED' }

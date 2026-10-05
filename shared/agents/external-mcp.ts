@@ -6,7 +6,13 @@ export const ExternalMcpServerInputSchema = z.strictObject({
     .trim()
     .min(1)
     .max(100)
-    .regex(/^[^\u0000-\u001f\u007f]+$/u),
+    .refine(value => {
+      for (let index = 0; index < value.length; index++) {
+        const code = value.charCodeAt(index)
+        if (code <= 0x1f || code === 0x7f) return false
+      }
+      return true
+    }),
   endpointUrl: z.string().max(2_048).url(),
   status: z.enum(['enabled', 'disabled']),
   authMode: z.enum(['none', 'bearer']),

@@ -737,6 +737,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     version: session.version,
     providerProfileId: session.providerProfileId,
     profileResolutionToken: options.profileResolutionToken(session),
+    mediaCapabilities: null,
     skills: skillRows.map(skillView),
     currentRun,
     createdAt: session.createdAt,

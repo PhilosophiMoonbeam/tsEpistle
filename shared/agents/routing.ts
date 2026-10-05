@@ -79,6 +79,8 @@ export interface RoutingCandidate {
   readonly credentialReady: boolean
   readonly conformed: boolean
   readonly capabilities: AgentProviderCapabilities
+  /** False when the host's current-request framing/schema preflight rejects this otherwise conformed model. */
+  readonly admissible?: boolean
   readonly modalities: readonly ('text' | 'image' | 'audio' | 'video' | 'file')[]
   readonly generationTools?: readonly ('image' | 'video' | 'music')[]
   readonly transcription?: boolean
@@ -130,8 +132,9 @@ export interface RoutingTurnInput {
   readonly ownerId: number
   readonly sessionId: string
   readonly runId: string
-  readonly pinned: boolean
   readonly current: RoutingCandidate
+  /** Live administrative default/authorized fallback, not a user preference; absent when current already is that binding. */
+  readonly safeDefault?: RoutingCandidate
   readonly candidates: readonly RoutingCandidate[]
   readonly specialists?: readonly RoutingSpecialistCandidate[]
   /** Host estimate from prior actual root-run model work (including specialists), not observed usage for this turn (1..12). */
@@ -159,6 +162,10 @@ export interface RoutingTurnDecision {
   readonly strategy?: 'stay' | 'swap' | 'delegate'
   readonly specialist?: RoutingSpecialistSelection | null
   readonly strategyCosts?: RoutingStrategyCosts
+  /** Absent on historical receipts; new selections distinguish task proof from administrative fallback. */
+  readonly selectionBasis?: 'incumbent' | 'task-declaration' | 'configured-safe-default'
+  /** Administrator estimates, never observed provider latency or an assumed comparison with unknown latency. */
+  readonly latencyEstimates?: { readonly basis: 'administrator-estimates'; readonly currentMs: number | null; readonly selectedMs: number | null }
   readonly reason: string
   readonly taskClass: RoutingTaskClass | null
   readonly complexity: RoutingComplexity | null

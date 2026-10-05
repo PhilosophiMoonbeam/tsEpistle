@@ -6,7 +6,13 @@ const Model = z
   .trim()
   .min(1)
   .max(255)
-  .refine(value => !/[\x00-\x1f\x7f]/u.test(value))
+  .refine(value => {
+    for (let index = 0; index < value.length; index++) {
+      const code = value.charCodeAt(index)
+      if (code <= 0x1f || code === 0x7f) return false
+    }
+    return true
+  })
 export const DecisionProviderPricingSchema = z.strictObject({
   currency: z.literal('USD'),
   inputPerMillion: z.number().finite().nonnegative().max(1_000_000),
@@ -22,7 +28,7 @@ export type DecisionProviderPricing = z.infer<typeof DecisionProviderPricingSche
 export const DecisionProviderConfigSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('typesafe'),
-    model: Model.default('jev-latest'),
+    model: Model.refine(value => /^jev-(?:latest|preview|\d+\.\d+\.\d+)$/u.test(value)).default('jev-latest'),
     timeoutMs: z.number().int().min(100).max(30_000).default(5_000),
     pricing: DecisionProviderPricingSchema.nullable().default(null)
   }),
@@ -41,7 +47,13 @@ export const DecisionProviderWriteSchema = z.strictObject({
   displayName: Name,
   config: DecisionProviderConfigSchema,
   // Values are write-only. Null explicitly clears managed credentials; omission retains them on update.
-  secretValue: z.string().min(1).max(65_536).nullable().optional()
+  secretValue: z
+    .string()
+    .min(1)
+    .max(65_536)
+    .regex(/^[\x21-\x7e]+$/u)
+    .nullable()
+    .optional()
 })
 export type DecisionProviderWrite = z.input<typeof DecisionProviderWriteSchema>
 export interface DecisionProviderView {

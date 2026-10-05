@@ -19,13 +19,7 @@ import type { WikiSource } from '../../shared/wiki-source.ts'
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import { translate } from '../modules/localization.ts'
-import type {
-  AgentConversationFolderView,
-  AgentCurrentPageHint,
-  AgentEventType,
-  AgentProviderProfileView,
-  AgentThreadState
-} from '../../shared/agents/contracts.ts'
+import type { AgentConversationFolderView, AgentCurrentPageHint, AgentEventType, AgentThreadState } from '../../shared/agents/contracts.ts'
 import {
   AgentApiError,
   cancelAgentGoal,
@@ -39,7 +33,6 @@ import {
   deleteAgentSession,
   getAgentThread,
   listAgentConversationFolders,
-  listAgentProfiles,
   listAgentSessions,
   listAgentSkills,
   moveAgentSessionToFolder,
@@ -49,7 +42,6 @@ import {
   resumeAgentGoal,
   subscribeAgentRun,
   submitAgentMessage,
-  updateAgentProfile,
   updateAgentSession,
   updateAgentSkillPreferences,
   type AgentSessionSummary,
@@ -185,9 +177,6 @@ export const useAgentsStore = defineStore('agents', {
     skillsPartial: false,
     skillsLoadGeneration: 0,
     skillsLoadController: null as AbortController | null,
-    profiles: [] as AgentProviderProfileView[],
-    profilesLoadGeneration: 0,
-    profilesLoadController: null as AbortController | null,
     launchPage: null as AgentCurrentPageHint | null,
     contextPage: null as AgentCurrentPageHint | null,
     routeSync: true,
@@ -303,14 +292,10 @@ export const useAgentsStore = defineStore('agents', {
       this.cancelSessionTransition()
       this.networkPaused = true
       this.initializationAdmissionFailure = null
-      this.profilesLoadGeneration += 1
-      this.profilesLoadController?.abort()
-      this.profilesLoadController = null
       this.skillsLoadGeneration += 1
       this.skillsLoadController?.abort()
       this.skillsLoadController = null
       this.closeStream()
-      this.profiles = []
       this.skills = []
       this.skillsLoadError = ''
       this.skillsPartial = true
@@ -353,13 +338,11 @@ export const useAgentsStore = defineStore('agents', {
         this.initializationController === initializationController
       try {
         const pathMatch = this.routeSync ? /^\/sessions\/([^/]+)$/.exec(window.location.pathname) : null
-        const [sessionPage, folders, profiles] = await Promise.all([
+        const [sessionPage, folders] = await Promise.all([
           listAgentSessions(fetchFromWindow, csrfToken, { signal: initializationController.signal }),
-          listAgentConversationFolders(fetchFromWindow, csrfToken, initializationController.signal),
-          listAgentProfiles(fetchFromWindow, csrfToken, initializationController.signal)
+          listAgentConversationFolders(fetchFromWindow, csrfToken, initializationController.signal)
         ])
         if (!isCurrent()) return false
-        this.profiles = markRaw(profiles)
         if (this.sessionListVersion === sessionListVersion) {
           this.sessions = markRaw(sessionPage.sessions)
           this.sessionsNextCursor = sessionPage.nextCursor
@@ -642,13 +625,9 @@ export const useAgentsStore = defineStore('agents', {
       this.workspaceDisposed = true
       this.networkPaused = true
       this.initializationAdmissionFailure = null
-      this.profilesLoadGeneration += 1
-      this.profilesLoadController?.abort()
-      this.profilesLoadController = null
       this.skillsLoadGeneration += 1
       this.skillsLoadController?.abort()
       this.skillsLoadController = null
-      this.profiles = []
       this.skills = []
       this.skillsLoading = false
       this.skillsLoadError = ''
@@ -730,7 +709,7 @@ export const useAgentsStore = defineStore('agents', {
             ? previous.session.id
             : null
         // Keep the current conversation and its draft intact until creation succeeds.
-        const created = await createAgentThread(fetchFromWindow, this.csrfToken, { retention, providerProfileId: null })
+        const created = await createAgentThread(fetchFromWindow, this.csrfToken, { retention })
         const selectsCreated = this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && this.isSessionTransitionCurrent(version)
         if (!selectsCreated) return false
         this.error = ''
@@ -1194,7 +1173,6 @@ export const useAgentsStore = defineStore('agents', {
       const ownerGeneration = this.ownerGeneration
       const capturedPins = readAdmissionPins(thread.session.profileResolutionToken)
       const capturedSessionVersion = thread.session.version
-      const capturedProfileId = thread.session.providerProfileId
       const capturedExecutionMode = thread.session.executionMode
       const mutationToken = this.beginSessionMutation()
       if (mutationToken === null) return false
@@ -1233,14 +1211,10 @@ export const useAgentsStore = defineStore('agents', {
             freshPins?.sessionId !== sessionId ||
             freshPins?.sessionVersion !== freshThread.session.version ||
             freshThread.session.version !== capturedSessionVersion ||
-            freshThread.session.providerProfileId !== capturedProfileId ||
-            (freshThread.session.providerProfileId !== null && freshPins?.profileId !== freshThread.session.providerProfileId) ||
             freshThread.session.executionMode !== capturedExecutionMode ||
             freshPins?.executionMode !== freshThread.session.executionMode
           ) {
-            this.error = freshPins
-              ? `Agent settings changed (profile ${freshPins.profileId}, revision ${freshPins.profileVersion}). Review the current settings before sending again. Nothing was sent.`
-              : 'Agent admission metadata changed. Review the current settings before sending again. Nothing was sent.'
+            this.error = 'Agent settings changed. Review the conversation before sending again. Nothing was sent.'
             return false
           }
           const request = {
@@ -1560,46 +1534,6 @@ export const useAgentsStore = defineStore('agents', {
         this.endSessionMutation(mutationToken)
       }
     },
-    async setProfile(providerProfileId: string | null) {
-      if (!this.isWorkspaceReady()) return
-      const thread = this.thread
-      if (!thread || thread.session.currentRun?.canCancel || (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))) return
-      const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
-      const ownerGeneration = this.ownerGeneration
-      const sessionId = thread.session.id
-      const mutationToken = this.beginSessionMutation()
-      if (mutationToken === null) return
-      try {
-        const projected = await updateAgentProfile(fetchFromWindow, this.csrfToken, sessionId, {
-          expectedSessionVersion: thread.session.version,
-          providerProfileId
-        })
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
-          this.thread = markRaw(projected)
-        return projected
-      } catch (error) {
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
-        await Promise.allSettled([this.refreshThread(), this.reloadProfiles()])
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
-          this.error = error instanceof Error ? error.message : 'Provider selection changed concurrently.'
-      } finally {
-        this.endSessionMutation(mutationToken)
-      }
-    },
     async setSkillPreferences(skillIds: readonly string[]) {
       if (!this.isWorkspaceReady()) return
       const sessionId = this.thread?.session.id
@@ -1634,28 +1568,6 @@ export const useAgentsStore = defineStore('agents', {
           this.error = error instanceof Error ? error.message : 'Skill preferences could not be updated.'
       } finally {
         this.endSessionMutation(mutationToken)
-      }
-    },
-    async reloadProfiles() {
-      if (this.workspaceDisposed) return
-      const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
-      const ownerGeneration = this.ownerGeneration
-      const generation = this.profilesLoadGeneration + 1
-      this.profilesLoadGeneration = generation
-      this.profilesLoadController?.abort()
-      const controller = markRaw(new AbortController())
-      this.profilesLoadController = controller
-      try {
-        const profiles = await listAgentProfiles(fetchFromWindow, this.csrfToken, controller.signal)
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.profilesLoadGeneration === generation &&
-          this.profilesLoadController === controller
-        )
-          this.profiles = markRaw(profiles)
-      } finally {
-        if (this.profilesLoadGeneration === generation && this.profilesLoadController === controller) this.profilesLoadController = null
       }
     },
     async reloadSkills(): Promise<boolean> {
@@ -1810,15 +1722,14 @@ export const useAgentsStore = defineStore('agents', {
             this.invalidateRefresh()
             this.thread = null
             this.launchPage = null
-            if (this.profiles.length > 0) creationFailed = !(await this.newSession('saved', mutationToken))
-            else refreshResult = await this.reloadSessions()
+            creationFailed = !(await this.newSession('saved', mutationToken))
           } else {
             refreshResult = await this.reloadSessions()
           }
         } catch (error) {
           if (this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration))
             this.error = `${
-              replacingCurrentSession && this.profiles.length > 0 && !this.thread
+              replacingCurrentSession && !this.thread
                 ? 'Unfiled conversations were cleared, but a new conversation could not be created.'
                 : 'Unfiled conversations were cleared, but history could not be refreshed.'
             } ${error instanceof Error ? error.message : ''}`.trim()
@@ -1826,7 +1737,7 @@ export const useAgentsStore = defineStore('agents', {
         if (refreshResult && !refreshResult.accepted && refreshResult.current && this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration)) {
           const detail = refreshResult.error instanceof Error ? refreshResult.error.message : 'Refresh the conversation.'
           this.error = `${
-            replacingCurrentSession && this.profiles.length > 0 && !this.thread
+            replacingCurrentSession && !this.thread
               ? 'Unfiled conversations were cleared, but a new conversation could not be created.'
               : 'Unfiled conversations were cleared, but history could not be refreshed.'
           } ${detail}`.trim()

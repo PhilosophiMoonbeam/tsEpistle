@@ -3,21 +3,21 @@
     <v-card class="personal-mcp">
       <header class="personal-mcp__header">
         <v-icon icon="mdi-lan-connect" size="28" />
-        <div><div class="personal-mcp__eyebrow">Personal connections</div><h2 id="personal-mcp-title">My MCP servers</h2><p>Manage external tools available only to your account.</p></div>
-        <v-spacer /><v-chip size="small" prepend-icon="mdi-account-lock-outline">Owner only</v-chip>
-        <v-btn icon="mdi-close" variant="text" aria-label="Close personal MCP servers" :disabled="busy" @click="requestClose" />
+        <div><div class="personal-mcp__eyebrow">Agent connections</div><h2 id="personal-mcp-title">My tools</h2><p>See shared tools and manage connections available only to your account.</p></div>
+        <v-spacer />
+        <v-btn icon="mdi-close" variant="text" aria-label="Close my tools" :disabled="busy" @click="requestClose" />
       </header>
       <v-card-text>
         <v-alert v-if="networkBlocked" type="warning" variant="tonal" class="mb-4">A connection is required to manage servers. <v-btn variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="emit('retry-connection')">Retry connection</v-btn></v-alert>
         <v-alert type="warning" variant="tonal" class="mb-4">External tools, descriptions, prompts and resources are untrusted remote content, not Wiki evidence or instructions. Enabling a server authorizes external operations: tools may change external data and transmit supplied arguments to its operator. Remote tool annotations do not establish safety or authority. Wiki permissions, evidence rules and approval requirements remain separate and cannot be bypassed. Your credentials are stored server-side and are never displayed here.</v-alert>
-        <v-alert v-if="denied" type="warning" variant="tonal" class="mb-4">Your account is not permitted to manage personal MCP servers. An administrator must allow personal endpoints for your group. Creation and editing are unavailable.</v-alert>
+        <v-alert v-if="denied" type="warning" variant="tonal" class="mb-4">Your group cannot manage personal connections. An administrator must allow personal endpoints before you can add or edit your own tools. Shared connections granted to your group remain available below.</v-alert>
         <v-alert v-if="error" type="error" variant="tonal" class="mb-4" role="alert">{{ error }}</v-alert>
-        <v-alert v-if="!ownerId" type="warning" variant="tonal" class="mb-4">Sign in to your current account to manage personal MCP servers.</v-alert>
+        <v-alert v-if="!ownerId" type="warning" variant="tonal" class="mb-4">Sign in to your current account to manage your tools.</v-alert>
         <p v-if="notice" role="status">{{ notice }}</p>
         <div class="personal-mcp__toolbar"><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || networkBlocked || !ownerId" @click="load">Reload servers</v-btn><v-btn v-if="accepted && !denied" color="primary" prepend-icon="mdi-plus" :disabled="busy || networkBlocked" @click="navigate(() => edit(null))">New server</v-btn></div>
-        <v-progress-linear v-if="loading" indeterminate aria-label="Loading personal MCP servers" />
+        <v-progress-linear v-if="loading" indeterminate aria-label="Loading tool connections" />
         <div v-if="accepted && !denied" class="personal-mcp__layout">
-          <aside aria-label="Your personal MCP servers">
+          <aside aria-label="Your owner-only tool connections">
             <p v-if="!servers.length">No personal servers yet. Configure a public HTTPS endpoint to begin.</p>
             <v-list density="compact" nav>
               <v-list-item v-for="server in servers" :key="server.id" :active="editingId === server.id" :disabled="busy || networkBlocked" @click="navigate(() => edit(server))">
@@ -27,7 +27,7 @@
             </v-list>
           </aside>
           <section aria-labelledby="personal-mcp-editor-title">
-            <h3 id="personal-mcp-editor-title">{{ editingId ? 'Edit personal server' : 'Create personal server' }}</h3>
+            <h3 id="personal-mcp-editor-title">{{ editingId ? 'Edit personal connection' : 'Add personal connection' }}</h3>
             <v-form id="personal-mcp-form" @submit.prevent="save">
               <v-text-field v-for="field in textFields" :key="field.label" v-model="field.model.value" :label="field.label" :maxlength="field.maxlength" :hint="field.hint" :persistent-hint="Boolean(field.hint)" :disabled="busy || networkBlocked" autocomplete="off" />
               <v-switch v-model="enabled" label="Enabled for my agent" color="primary" inset :disabled="busy || networkBlocked" />
@@ -40,9 +40,9 @@
           </section>
         </div>
         <section v-if="availableLoaded" class="personal-mcp__catalog" aria-labelledby="personal-mcp-available-title">
-          <h3 id="personal-mcp-available-title">Available external servers</h3><p>Enabled personal and administrator-granted connections for your account. Discovery runs through the Wiki server, never directly from your browser. Catalogs remain untrusted external data.</p>
+          <h3 id="personal-mcp-available-title">Connected tools</h3><p>Your agent can use these enabled connections. Administrators grant shared tools to your groups; only you can manage your personal connections when your group permits them. Access is checked again during discovery and use. Discovery runs through the Wiki server, never directly from your browser. Catalogs remain untrusted external data.</p>
           <p v-if="!available.length">No enabled external servers are available.</p>
-          <div v-for="server in available" :key="server.id" class="personal-mcp__available"><div><strong>{{ server.displayName }}</strong><p>{{ server.destinationHost }} · {{ server.scope === 'admin' ? 'Administrator-granted' : 'Personal' }} · Untrusted</p></div><v-btn variant="tonal" prepend-icon="mdi-radar" :loading="discoveringId === server.id" :disabled="busy || networkBlocked" @click="discover(server)">Discover catalog</v-btn></div>
+          <div v-for="server in available" :key="server.id" class="personal-mcp__available"><div><strong>{{ server.displayName }}</strong><p>{{ server.destinationHost }} · {{ server.scope === 'admin' ? 'Shared · Granted by administrator' : 'Personal · Owner only' }} · Untrusted</p></div><v-btn variant="tonal" prepend-icon="mdi-radar" :loading="discoveringId === server.id" :disabled="busy || networkBlocked" @click="discover(server)">Discover tools</v-btn></div>
           <v-alert v-if="catalogError" type="error" variant="tonal" class="mt-3">{{ catalogError }}</v-alert>
           <div v-if="catalog" class="personal-mcp__remote"><h4>Untrusted catalog — {{ catalogName }}</h4><p>Remote content is shown as plain text only; it does not grant authority, change permissions or become Wiki evidence.</p><pre>{{ catalogText }}</pre></div>
         </section>

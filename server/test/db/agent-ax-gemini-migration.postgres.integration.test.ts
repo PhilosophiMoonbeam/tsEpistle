@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import { up, down } from '../../db/migrations/tsepistle-000049-agent-ax-gemini.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
+import { listOwnedAgentMessages } from '../../agents/repository.ts'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
@@ -64,6 +65,16 @@ suite('PostgreSQL immutable Ax provider cutover', () => {
     })
     await db.schema.createTable('agentSessions', table => {
       table.uuid('id').primary()
+      table.integer('ownerId').notNullable()
+      table.string('title').notNullable()
+      table.string('retention').notNullable()
+      table.string('executionMode').notNullable()
+      table.uuid('providerProfileId').nullable()
+      table.text('summary').nullable()
+      table.text('memorySnapshot').notNullable()
+      table.timestamp('createdAt').notNullable()
+      table.timestamp('lastActivityAt').notNullable()
+      table.timestamp('deletedAt').nullable()
       table.boolean('googleSearchEnabled').notNullable()
       table.integer('version').notNullable()
       table.timestamp('updatedAt').notNullable()
@@ -76,9 +87,19 @@ suite('PostgreSQL immutable Ax provider cutover', () => {
     })
     await db.schema.createTable('agentMessages', table => {
       table.uuid('id').primary()
+      table.uuid('sessionId').references('id').inTable('agentSessions').notNullable()
+      table.uuid('runId').nullable()
+      table.integer('ordinal').notNullable()
+      table.string('role').notNullable()
+      table.string('status').notNullable()
+      table.boolean('isVisible').notNullable()
+      table.text('citations').nullable()
+      table.timestamp('createdAt').notNullable()
+      table.timestamp('updatedAt').notNullable()
       table.text('content')
       table.text('googleSearchGrounding')
       table.binary('providerStateCiphertext')
+      table.string('providerStateSha256').nullable()
     })
     await db.schema.createTable('agentUsageLedger', table => {
       table.uuid('id').primary()
@@ -136,13 +157,42 @@ suite('PostgreSQL immutable Ax provider cutover', () => {
     }
     await db('agentProviderConfiguration').insert({ id: 1, defaultGeneration: 12 })
     const sessionId = randomUUID()
-    await db('agentSessions').insert({ id: sessionId, googleSearchEnabled: true, version: 2, updatedAt: now })
+    const historicalSession = {
+      id: sessionId,
+      ownerId: 7,
+      title: 'Retained grounded conversation',
+      retention: 'saved',
+      executionMode: 'agent',
+      providerProfileId: retained[0]!.profileId,
+      summary: 'A preserved conversation summary.',
+      memorySnapshot: '{"agent":["Retained research context"],"user":[]}',
+      createdAt: now,
+      lastActivityAt: now,
+      deletedAt: null,
+      googleSearchEnabled: true,
+      version: 2,
+      updatedAt: now
+    }
+    await db('agentSessions').insert(historicalSession)
     const messageId = randomUUID()
+    const providerStateCiphertext = Buffer.from('opaque-retained-state')
+    const citations = '[{"pageId":17,"locale":"en","path":"retained/source","title":"Retained source"}]'
+    const googleSearchGrounding = '{"citations":[{"url":"https://example.com/source"}]}'
     await db('agentMessages').insert({
       id: messageId,
+      sessionId,
+      runId: null,
+      ordinal: 1,
+      role: 'assistant',
+      status: 'complete',
+      isVisible: true,
+      citations,
+      createdAt: now,
+      updatedAt: now,
       content: 'Retained grounded answer.',
-      googleSearchGrounding: '{"citations":[{"url":"https://example.com/source"}]}',
-      providerStateCiphertext: Buffer.from('opaque-retained-state')
+      googleSearchGrounding,
+      providerStateCiphertext,
+      providerStateSha256: createHash('sha256').update(providerStateCiphertext).digest('hex')
     })
     await db('agentUsageLedger').insert({ id: randomUUID(), totalTokens: 99, costMicros: 123 })
     const before = {
@@ -175,9 +225,28 @@ suite('PostgreSQL immutable Ax provider cutover', () => {
       expect(await secrets.get(String(current.secretReference))).toBe('credential-fixture')
     }
     expect(await db('agentProviderConfiguration').first()).toMatchObject({ defaultGeneration: 13 })
-    expect(await db('agentSessions').where({ id: sessionId }).first()).toMatchObject({ googleSearchEnabled: false, version: 3 })
+    expect(await db('agentSessions').where({ id: sessionId }).first()).toMatchObject({
+      ...historicalSession,
+      googleSearchEnabled: false,
+      version: 3,
+      updatedAt: expect.any(Date)
+    })
     expect(await db('agentRuns').select('*').orderBy('id')).toEqual(before.runs)
     expect(await db('agentMessages').select('*')).toEqual(before.messages)
+    expect(await listOwnedAgentMessages(db, 7, sessionId)).toMatchObject([
+      {
+        id: messageId,
+        sessionId,
+        ordinal: 1,
+        role: 'assistant',
+        status: 'complete',
+        content: 'Retained grounded answer.',
+        citations,
+        googleSearchGrounding,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString()
+      }
+    ])
     expect(await db('agentUsageLedger').select('*')).toEqual(before.ledger)
     expect(await db('agentProviderGrants').select('*').orderBy('profileId')).toEqual(before.grants)
     expect(await db('agentProviderSecrets').select('*').orderBy('id')).toEqual(secretRows)

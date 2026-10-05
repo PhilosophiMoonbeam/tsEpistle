@@ -126,6 +126,33 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
     expect(await db('agentExternalMcpGrants').where('serverId', server.id).select('groupId')).toEqual([{ groupId: 20 }])
   })
 
+  it('separates configuration discovery authority from runtime grants and sees revocation across connections', async () => {
+    const second = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [schema], pool: { min: 0, max: 2 } })
+    const server = await service.createAdmin(admin, { ...input(), groupIds: [20] })
+    const lease = await service.openForUser(owner.id, { serverIds: [server.id] })
+    try {
+      await lease.inspectCatalog(server.id)
+      expect((await service.discoverForUser(admin, server.id)).catalog.tools[0]?.name).toBe('research')
+      const before = networkCalls
+      await expect(service.openForUser(admin.id, { serverIds: [server.id] })).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+      await new ExternalMcpService(dependencies(second)).setAdminGrants(admin, server.id, server.revision, { groupIds: [] })
+      await expect(lease.inspectCatalog(server.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+      await expect(lease.clients[0]!.callTool('research', {})).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+      expect(networkCalls).toBe(before)
+      // Removing runtime grants does not remove the administrator's configuration authority.
+      expect((await service.discoverForUser(admin, server.id)).catalog.tools[0]?.name).toBe('research')
+      const after = networkCalls
+      await second('groups')
+        .where('id', 10)
+        .update({ permissions: JSON.stringify(['use:agents']) })
+      await expect(service.discoverForUser(admin, server.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+      expect(networkCalls).toBe(after)
+    } finally {
+      await lease.close()
+      await second.destroy()
+    }
+  })
+
   it('persists personal group permission with owner isolation and encrypted endpoint-only credentials', async () => {
     await expect(service.createPersonal(owner, input())).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
     const policy = await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: true }, 0)

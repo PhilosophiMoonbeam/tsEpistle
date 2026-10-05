@@ -154,6 +154,13 @@ const assertPublicAddresses = (addresses: readonly LookupAddress[]): void => {
       return egressDenied()
   }
 }
+const hasUnsafeRequestCharacters = (value: string, endpoint = false): boolean => {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code <= (endpoint ? 32 : 31) || code === 127 || (endpoint && code === 92)) return true
+  }
+  return false
+}
 export const normalizeExternalMcpEndpoint = (input: string): string => {
   let url: URL
   try {
@@ -164,7 +171,7 @@ export const normalizeExternalMcpEndpoint = (input: string): string => {
   const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase()
   if (
     input.length > 2_048 ||
-    /[\u0000-\u0020\u007f\\]/u.test(input) ||
+    hasUnsafeRequestCharacters(input, true) ||
     url.protocol !== 'https:' ||
     url.username ||
     url.password ||
@@ -210,6 +217,21 @@ const cancelBody = async (cancel: () => PromiseLike<unknown>): Promise<void> => 
     await abortable(cancel, deadline.signal).catch(() => {})
   } finally {
     clearTimeout(timer)
+  }
+}
+
+/** Scan decoded JSON strings too: a remote operator may reflect an escaped token. */
+const assertNoCredentialReflection = (text: string, credential: string): void => {
+  const reflected = (): never => fail('EXTERNAL_MCP_CREDENTIAL_REFLECTED', 'External MCP response reflected a protected credential', 502)
+  if (text.includes(credential)) return reflected()
+  for (const match of text.matchAll(/"(?:[^"\\]|\\.)*"/gu)) {
+    let decoded: unknown
+    try {
+      decoded = JSON.parse(match[0])
+    } catch {
+      continue
+    }
+    if (typeof decoded === 'string' && decoded.includes(credential)) return reflected()
   }
 }
 
@@ -268,14 +290,16 @@ export const createExternalMcpEndpointGuard = (options: {
       try {
         const request: unknown = JSON.parse(init.body)
         taskCancellation = !!request && typeof request === 'object' && 'method' in request && request.method === 'tasks/cancel'
-      } catch { /* The SDK owns JSON-RPC validation. */ }
+      } catch {
+        /* The SDK owns JSON-RPC validation. */
+      }
     }
     if (!['POST', 'GET', 'DELETE'].includes(method) || (init?.body != null && typeof init.body !== 'string')) return egressDenied()
     if (typeof init?.body === 'string' && Buffer.byteLength(init.body) > EXTERNAL_MCP_LIMITS.requestBytes)
       fail('EXTERNAL_MCP_REQUEST_TOO_LARGE', 'External MCP request exceeds its byte limit', 400)
     const headers = new Headers(init?.headers)
     for (const [key, value] of headers)
-      if (!Object.hasOwn(requestHeaders, key) || value.length > 2_048 || /[\u0000-\u001f\u007f]/u.test(value)) return egressDenied()
+      if (!Object.hasOwn(requestHeaders, key) || value.length > 2_048 || hasUnsafeRequestCharacters(value)) return egressDenied()
     const timeout = new AbortController()
     const timer = setTimeout(
       () => timeout.abort(new AgentRepositoryError('EXTERNAL_MCP_TIMEOUT', 'External MCP request timed out', 504)),
@@ -316,6 +340,18 @@ export const createExternalMcpEndpointGuard = (options: {
           }),
         signal
       )
+      if (credential !== null) {
+        try {
+          assertNoCredentialReflection(response.statusText, credential)
+          for (const [name, value] of response.headers) {
+            assertNoCredentialReflection(name, credential)
+            assertNoCredentialReflection(value, credential)
+          }
+        } catch (error) {
+          if (response.body) await cancelBody(() => response.body!.cancel())
+          throw error
+        }
+      }
       if (response.status >= 300 && response.status < 400) {
         if (response.body) await cancelBody(() => response.body!.cancel())
         fail('EXTERNAL_MCP_REDIRECT_DENIED', 'External MCP redirects are not allowed', 502)
@@ -329,6 +365,13 @@ export const createExternalMcpEndpointGuard = (options: {
       let total = 0,
         chunks = 0,
         finished = false
+      const protectedSse = credential !== null && response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'text/event-stream'
+      const decoder = protectedSse ? new TextDecoder('utf-8', { fatal: true }) : undefined
+      const encoder = protectedSse ? new TextEncoder() : undefined
+      let pendingFrame = '',
+        scanAt = 0,
+        lineStart = 0,
+        frames = 0
       let controller: ReadableStreamDefaultController<Uint8Array>
       const finish = (): void => {
         finished = true
@@ -349,6 +392,42 @@ export const createExternalMcpEndpointGuard = (options: {
         void cancel(signal.reason)
         controller.error(signal.reason)
       }
+      // Release only complete, inspected SSE messages. A ping or task handle may
+      // precede EOF, so buffering the whole stream would deadlock native MCP.
+      const releaseSseFrames = (text: string, final = false): boolean => {
+        pendingFrame += text
+        let emitted = false
+        while (scanAt < pendingFrame.length) {
+          const code = pendingFrame.charCodeAt(scanAt)
+          if (code !== 10 && code !== 13) {
+            scanAt++
+            continue
+          }
+          if (code === 13 && scanAt + 1 === pendingFrame.length && !final) break
+          const end = scanAt + (code === 13 && pendingFrame.charCodeAt(scanAt + 1) === 10 ? 2 : 1)
+          if (scanAt === lineStart) {
+            const frame = pendingFrame.slice(0, end)
+            if (++frames > 8_192) fail('EXTERNAL_MCP_RESPONSE_TOO_LARGE', 'External MCP response exceeds its frame limit', 502)
+            assertNoCredentialReflection(frame, credential!)
+            controller.enqueue(encoder!.encode(frame))
+            pendingFrame = pendingFrame.slice(end)
+            scanAt = 0
+            lineStart = 0
+            emitted = true
+          } else {
+            scanAt = end
+            lineStart = end
+          }
+        }
+        if (final && pendingFrame) {
+          if (++frames > 8_192) fail('EXTERNAL_MCP_RESPONSE_TOO_LARGE', 'External MCP response exceeds its frame limit', 502)
+          assertNoCredentialReflection(pendingFrame, credential!)
+          controller.enqueue(encoder!.encode(pendingFrame))
+          pendingFrame = ''
+          emitted = true
+        }
+        return emitted
+      }
       const body = new ReadableStream<Uint8Array>({
         start(value) {
           controller = value
@@ -358,29 +437,48 @@ export const createExternalMcpEndpointGuard = (options: {
         async pull(value) {
           if (finished) return
           try {
-            const item = await abortable(() => reader.read(), signal)
-            if (finished) return
-            if (item.done) {
-              finish()
-              reader.releaseLock()
-              value.close()
-              return
+            while (!finished) {
+              const item = await abortable(() => reader.read(), signal)
+              if (finished) return
+              if (item.done) {
+                if (protectedSse) releaseSseFrames(decoder!.decode(), true)
+                finish()
+                reader.releaseLock()
+                value.close()
+                return
+              }
+              total += item.value.byteLength
+              if (total > EXTERNAL_MCP_LIMITS.responseBytes || ++chunks > 8_192)
+                fail('EXTERNAL_MCP_RESPONSE_TOO_LARGE', 'External MCP response exceeds its byte limit', 502)
+              if (!protectedSse) {
+                value.enqueue(item.value)
+                return
+              }
+              if (releaseSseFrames(decoder!.decode(item.value, { stream: true }))) return
             }
-            total += item.value.byteLength
-            if (total > EXTERNAL_MCP_LIMITS.responseBytes || ++chunks > 8_192)
-              fail('EXTERNAL_MCP_RESPONSE_TOO_LARGE', 'External MCP response exceeds its byte limit', 502)
-            value.enqueue(item.value)
           } catch (error) {
             if (!finished) {
-              await cancel(error)
-              value.error(error)
+              const safeError =
+                error instanceof AgentRepositoryError
+                  ? error
+                  : signal.aborted
+                    ? signal.reason
+                    : new AgentRepositoryError('EXTERNAL_MCP_CONNECTION_FAILED', 'External MCP connection failed', 502)
+              await cancel(safeError)
+              value.error(safeError)
             }
           }
         },
         cancel
       })
       returnedBody = true
-      return new Response(body, { status: response.status, statusText: response.statusText, headers: [...response.headers] })
+      const guardedResponse = new Response(body, { status: response.status, statusText: response.statusText, headers: [...response.headers] })
+      if (credential === null || protectedSse) return guardedResponse
+      // JSON responses are checked in full; SSE messages are checked incrementally
+      // above. Neither path releases an uninspected fragment to native Ax.
+      const bytes = await abortable(() => guardedResponse.arrayBuffer(), signal)
+      assertNoCredentialReflection(new TextDecoder().decode(bytes), credential)
+      return new Response(bytes, { status: response.status, statusText: response.statusText, headers: [...response.headers] })
     } catch (error) {
       if (error instanceof AgentRepositoryError || signal.aborted) throw signal.aborted ? signal.reason : error
       return fail('EXTERNAL_MCP_CONNECTION_FAILED', 'External MCP connection failed', 502)
@@ -538,9 +636,11 @@ class OwnerScopedMcpClient extends AxMCPClient {
       try {
         // Native creation records handles before callbacks return. Cancel only this
         // owner's still-running tasks, with fresh authority and a bounded HTTP lane.
-        await Promise.all(this.getKnownTasks()
-          .filter(task => task.status === 'working' || task.status === 'input_required')
-          .map(task => this.cancelTask(task.taskId).catch(() => {})))
+        await Promise.all(
+          this.getKnownTasks()
+            .filter(task => task.status === 'working' || task.status === 'input_required')
+            .map(task => this.cancelTask(task.taskId).catch(() => {}))
+        )
         await super.close()
       } finally {
         await this.#guard.close()
@@ -857,11 +957,27 @@ export class ExternalMcpService {
     return Promise.all((await this.#available(db, actor)).map(({ row }) => this.#view(db, row)))
   }
   async openForUser(ownerId: number, options: { serverIds?: readonly string[]; signal?: AbortSignal; authVersion?: number } = {}): Promise<ExternalMcpLease> {
+    return this.#open(ownerId, options)
+  }
+  async #open(
+    ownerId: number,
+    options: { serverIds?: readonly string[]; signal?: AbortSignal; authVersion?: number },
+    adminDiscovery = false
+  ): Promise<ExternalMcpLease> {
     this.#enabled()
     options.signal?.throwIfAborted()
     const db = this.#dependencies.knex
     const actor = await this.#actor(db, { id: ownerId, ...(options.authVersion === undefined ? {} : { authVersion: options.authVersion }) }, false, true)
-    const available = await this.#available(db, actor)
+    let available: AllowedServer[]
+    if (adminDiscovery) {
+      const serverId = options.serverIds?.[0]
+      if (!actor.permissions.includes('manage:system') || !serverId || options.serverIds?.length !== 1) return denied()
+      const row = await db<ServerRow>('agentExternalMcpServers')
+        .where({ id: idValue(serverId), scope: 'admin', ownerId: null })
+        .first()
+      if (!row || row.status !== 'enabled') return denied()
+      available = [{ row, stamp: 'admin-discovery' }]
+    } else available = await this.#available(db, actor)
     let selected = available
     if (options.serverIds) {
       if (new Set(options.serverIds).size !== options.serverIds.length) fail('INVALID_EXTERNAL_MCP_SELECTION', 'Choose unique external MCP endpoints', 400)
@@ -887,7 +1003,9 @@ export class ExternalMcpService {
             current.ownerId !== row.ownerId
           )
             return denied()
-          if ((await this.#allowed(db, currentActor, current)).stamp !== stamp) return denied()
+          if (adminDiscovery) {
+            if (!currentActor.permissions.includes('manage:system') || current.status !== 'enabled') return denied()
+          } else if ((await this.#allowed(db, currentActor, current)).stamp !== stamp) return denied()
         }
         const guard = createExternalMcpEndpointGuard({
           endpointUrl: row.endpointUrl,
@@ -968,13 +1086,20 @@ export class ExternalMcpService {
     }
   }
   async discoverForUser(requester: ExternalMcpRequester, serverId: string, options: { signal?: AbortSignal } = {}): Promise<ExternalMcpDiscovery> {
-    // Authenticate the actual session before opening the internal owner-scoped runtime lifecycle.
-    await this.#actor(this.#dependencies.knex, requester)
-    const lease = await this.openForUser(requester.id, {
-      serverIds: [serverId],
-      ...options,
-      ...(requester.authVersion === undefined ? {} : { authVersion: requester.authVersion })
-    })
+    // Configuration discovery may use live administrator authority, but runtime
+    // leases still require ordinary group grants, including for administrators.
+    const actor = await this.#actor(this.#dependencies.knex, requester)
+    const row = await this.#dependencies.knex<ServerRow>('agentExternalMcpServers').where('id', idValue(serverId)).first('scope')
+    const adminDiscovery = actor.permissions.includes('manage:system') && row?.scope === 'admin'
+    const lease = await this.#open(
+      requester.id,
+      {
+        serverIds: [serverId],
+        ...options,
+        authVersion: actor.authVersion
+      },
+      adminDiscovery
+    )
     try {
       return await lease.inspectCatalog(serverId)
     } finally {

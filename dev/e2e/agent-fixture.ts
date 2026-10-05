@@ -1,9 +1,9 @@
 import type { Page, Response, Route } from '@playwright/test'
-import type { AgentMediaView, AgentProposalView, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
+import type { AgentMediaCapabilities, AgentMediaView, AgentProposalView, AgentThreadState } from '../../shared/agents/contracts.ts'
 export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin'
 
 export interface AgentFixtureOptions {
-  readonly media?: AgentProviderProfileView['media']
+  readonly media?: AgentMediaCapabilities
   readonly firstMessageMedia?: readonly AgentMediaView[]
   readonly mode?: AgentFixtureMode
   readonly archivePartialFailure?: boolean
@@ -130,27 +130,6 @@ const resourceNotFound = (route: Route): Promise<void> => json(route, { error: '
 
 const emptyHistoryWindow = () => ({ messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false })
 
-const profile = () => ({
-  id: PROFILE_ID,
-  name: 'Deterministic Wiki provider',
-  transport: 'openai-chat',
-  model: 'fixture-model',
-  utilityModel: null,
-  destinationHost: 'fixture.invalid',
-  capabilities: {
-    streaming: true,
-    toolCalling: 'native',
-    parallelToolCalls: true,
-    structuredOutput: 'native-json-schema',
-    usage: 'stream',
-    cancellation: true,
-    maxContextTokens: 32_000,
-    maxOutputTokens: 4_096
-  },
-  capabilityRevision: 'fixture-capabilities-v1',
-  policyVersion: PROFILE_POLICY_VERSION,
-  isGlobalDefault: true
-})
 const sessionFor = (sessionId: string): AgentSession => ({
   id: sessionId,
   title: 'Release evidence review',
@@ -159,7 +138,7 @@ const sessionFor = (sessionId: string): AgentSession => ({
   status: 'active',
   executionMode: 'agent',
   version: 1,
-  providerProfileId: PROFILE_ID,
+  providerProfileId: null,
   googleSearchEnabled: false,
   skills: [],
   currentRun: null,
@@ -181,7 +160,7 @@ const issueFixtureResolutionToken = (
     ownerId,
     sessionId: session.id,
     sessionVersion: session.version,
-    profileId: session.providerProfileId ?? PROFILE_ID,
+    profileId: PROFILE_ID,
     profileVersionId: PROFILE_VERSION_ID,
     profileVersion: PROFILE_VERSION,
     profilePolicyVersion: PROFILE_POLICY_VERSION,
@@ -536,7 +515,17 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     const thread = copy(state.thread)
     return {
       ...thread,
-      session: { ...thread.session, profileResolutionToken: issueFixtureResolutionToken(ownerId, thread.session) }
+      session: {
+        ...thread.session,
+        mediaCapabilities: {
+          attachments: options.media?.attachments === true,
+          imageGeneration: options.media?.imageGeneration === true,
+          videoGeneration: options.media?.videoGeneration === true,
+          musicGeneration: options.media?.musicGeneration === true,
+          transcription: options.media?.transcription === true
+        },
+        profileResolutionToken: issueFixtureResolutionToken(ownerId, thread.session)
+      }
     }
   }
 
@@ -629,8 +618,6 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       }
       return json(route, { deleted: true, movedSessions })
     }
-    if (path === '/_api/agents/profiles' && request.method() === 'GET')
-      return json(route, { profiles: [{ ...profile(), ...(options.media ? { media: options.media } : {}) }] })
     if (path === '/_api/agents/skills' && request.method() === 'GET') return json(route, { skills: [] })
     if (path === '/_api/agents/memories' && request.method() === 'GET') {
       const userCharacters = state.memoryEntries.filter(entry => entry.target === 'user').reduce((sum, entry) => sum + entry.content.length, 0)
@@ -686,12 +673,12 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       return json(route, { changed: true, message: 'Memory removed.', target: 'user', entries: [], characters: 0, limit: 1_375 })
     }
     if (path === '/_api/agents/sessions' && request.method() === 'POST') {
-      const body = (request.postDataJSON() ?? {}) as { retention?: 'saved' | 'temporary'; providerProfileId?: string | null }
+      const body = (request.postDataJSON() ?? {}) as { retention?: 'saved' | 'temporary' }
+      if (Object.keys(body).some(key => key !== 'retention')) return invalidRequest(route)
       state.sessionVersion = 1
       state.sessionCreates += 1
       const sessionId = state.distinctSessionIds ? uuidAt(SESSION_ID, state.sessionCreates) : SESSION_ID
       state.thread = threadFor(sessionId)
-      if (Object.hasOwn(body, 'providerProfileId')) state.thread.session.providerProfileId = body.providerProfileId ?? null
       state.thread.session.retention = body.retention === 'temporary' ? 'temporary' : 'saved'
       state.thread.session.expiresAt = body.retention === 'temporary' ? '2026-09-02T12:00:00.000Z' : null
       state.activeRunId = null

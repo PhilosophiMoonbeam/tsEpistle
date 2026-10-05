@@ -43,7 +43,12 @@ import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../agents/orchestration.ts'
 import { exportAgentSessionDiagnostics } from '../agents/diagnostics.ts'
 import { DEFAULT_AGENT_GOAL_LIMITS, projectAgentGoal, type AgentGoalRecord } from '../agents/goals.ts'
 import { AgentMemoryRepository, encodeAgentMemorySnapshot } from '../agents/memory.ts'
-import { CreateAgentProviderProfileSchema, UpdateAgentProviderProfileSchema, type AgentProviderRegistry } from '../agents/providers/registry.ts'
+import {
+  AgentProviderAdapterConfigSchema,
+  CreateAgentProviderProfileSchema,
+  UpdateAgentProviderProfileSchema,
+  type AgentProviderRegistry
+} from '../agents/providers/registry.ts'
 import type { AgentProviderConformanceRunner } from '../agents/providers/conformance.ts'
 import type { AgentProductRuntime } from '../agents/runtime.ts'
 import { projectAgentRun, projectAgentThread } from '../agents/projection.ts'
@@ -112,15 +117,14 @@ interface AgentHostWiki extends AgentControlServices {
     AgentProviderRegistry,
     | 'create'
     | 'getAdmin'
-    | 'assertProfileAvailable'
     | 'issueResolutionToken'
     | 'listAll'
-    | 'listVisible'
+    | 'listRoutingCandidates'
     | 'remove'
+    | 'resolve'
     | 'setDefault'
     | 'setEnabled'
     | 'setGrants'
-    | 'setSessionProfile'
     | 'update'
   >
   readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'latest' | 'list' | 'listLatest' | 'run'>
@@ -186,8 +190,7 @@ const providerAdminUnavailable = (): AgentRepositoryError =>
   )
 
 const CreateSessionSchema = z.strictObject({
-  retention: z.enum(['temporary', 'saved']),
-  providerProfileId: z.uuid().nullable()
+  retention: z.enum(['temporary', 'saved'])
 })
 const ListSessionsQuerySchema = z.strictObject({
   cursor: z.string().min(1).max(2_048).optional(),
@@ -353,23 +356,49 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   const apiPrefix = '/_api/agents'
 
   const sseConnections = new Map<number, number>()
-  const fallbackProfileResolutionToken = (session: {
-    readonly id: string
-    readonly version: number
-    readonly providerProfileId: string | null
-    readonly executionMode: string
-  }): string =>
+  const fallbackProfileResolutionToken = (session: { readonly id: string; readonly version: number; readonly executionMode: string }): string =>
     createHmac('sha256', wiki.config.sessionSecret)
-      .update(JSON.stringify([session.id, session.version, session.providerProfileId, session.executionMode]))
+      .update(JSON.stringify([session.id, session.version, session.executionMode]))
       .digest('base64url')
+  const resolveSessionConfiguration = async (ownerId: number, sessionId: string, signal?: AbortSignal) => {
+    signal?.throwIfAborted()
+    await getOwnedAgentSession(wiki.models.knex, ownerId, sessionId)
+    const registry = wiki.providerRegistry
+    if (!wiki.config.agents.provider.enabled || !registry) return { profileResolutionToken: null, mediaCapabilities: null }
+    const profileResolutionToken = await registry.issueResolutionToken(ownerId, sessionId)
+    const mediaCapabilities = await wiki.models.knex.transaction(async transaction => {
+      const admission = await registry.resolve(transaction, { ownerId, sessionId, profileResolutionToken })
+      const candidates = registry.listRoutingCandidates ? await registry.listRoutingCandidates(transaction, { ownerId, sessionId }) : []
+      const versionIds = [...new Set([admission.providerProfileVersionId, ...candidates.map(candidate => candidate.profileVersionId)])]
+      const versions = await transaction('agentProviderProfileVersions').whereIn('id', versionIds).select('id', 'transportKind', 'baseUrl', 'adapterConfig')
+      if (!versions.some(version => version.id === admission.providerProfileVersionId))
+        throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Automatic provider configuration changed', 409)
+      let mediaEnabled = false
+      let attachments = false
+      let imageGeneration = false
+      let transcription = false
+      for (const version of versions) {
+        const config = AgentProviderAdapterConfigSchema.parse(
+          typeof version.adapterConfig === 'string' ? JSON.parse(version.adapterConfig) : version.adapterConfig
+        )
+        if (version.transportKind !== 'gemini-api' || new URL(version.baseUrl).origin !== 'https://generativelanguage.googleapis.com' || !config.media) continue
+        mediaEnabled = true
+        attachments ||= Boolean(config.media.attachments)
+        imageGeneration ||= Boolean(config.media.imageGeneration)
+        transcription ||= Boolean(config.media.transcription)
+      }
+      return mediaEnabled ? { attachments, imageGeneration, transcription, videoGeneration: false, musicGeneration: false } : null
+    })
+    signal?.throwIfAborted()
+    return { profileResolutionToken, mediaCapabilities }
+  }
   const projectSession = async (ownerId: number, sessionId: string, signal?: AbortSignal) => {
-    signal?.throwIfAborted()
-    const issued = wiki.providerRegistry ? await wiki.providerRegistry.issueResolutionToken(ownerId, sessionId) : null
-    signal?.throwIfAborted()
-    return projectAgentThread(wiki.models.knex, ownerId, sessionId, {
-      profileResolutionToken: session => issued ?? fallbackProfileResolutionToken(session),
+    const configuration = await resolveSessionConfiguration(ownerId, sessionId, signal)
+    const thread = await projectAgentThread(wiki.models.knex, ownerId, sessionId, {
+      profileResolutionToken: session => configuration.profileResolutionToken ?? fallbackProfileResolutionToken(session),
       ...(signal === undefined ? {} : { signal })
     })
+    return { ...thread, session: { ...thread.session, mediaCapabilities: configuration.mediaCapabilities } }
   }
   const projectGoal = async (goal: AgentGoalRecord) => {
     const latestRun = (await wiki.models.knex('agentRuns').where({ goalId: goal.id, ownerId: goal.ownerId }).orderBy('goalContinuation', 'desc').first('id')) as
@@ -438,14 +467,10 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const ownerId = requestSkillPrincipal(req).userId
       const memorySnapshot = encodeAgentMemorySnapshot(await memoryRepository.snapshot(ownerId))
       const session = await wiki.models.knex.transaction(async transaction => {
-        if (input.providerProfileId !== null) {
-          if (!wiki.providerRegistry) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
-          await wiki.providerRegistry.assertProfileAvailable(ownerId, input.providerProfileId, transaction)
-        }
         return createAgentSession(transaction, {
           ownerId,
           retention: input.retention,
-          providerProfileId: input.providerProfileId,
+          providerProfileId: null,
           executionMode: 'agent',
           memorySnapshot,
           expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
@@ -518,12 +543,8 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const { assetId } = z.strictObject({ assetId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId
-      const session = await getOwnedAgentSession(wiki.models.knex, ownerId, sessionId)
-      const profiles = await wiki.providerRegistry.listVisible(ownerId)
-      const profile = session.providerProfileId
-        ? profiles.find(item => item.id === session.providerProfileId)
-        : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
-      if (!profile?.media?.attachments && !profile?.media?.imageGeneration && !profile?.media?.videoGeneration && !profile?.media?.musicGeneration)
+      const { mediaCapabilities } = await resolveSessionConfiguration(ownerId, sessionId, signal)
+      if (!mediaCapabilities?.attachments && !mediaCapabilities?.imageGeneration && !mediaCapabilities?.videoGeneration && !mediaCapabilities?.musicGeneration)
         return disabledRoute(res)
       return mediaUploads.run(ownerId, async () => {
         const source = await readAgentWikiAsset(wiki.models.knex, {
@@ -540,7 +561,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
               throw new AgentRepositoryError('AGENT_ASSET_LOCKED', 'Unlock the page that protects this asset before attaching it.', 403)
           }
         })
-        if (source.mimeType === 'application/pdf' && !profile.media?.attachments) return disabledRoute(res)
+        if (source.mimeType === 'application/pdf' && !mediaCapabilities.attachments) return disabledRoute(res)
         signal.throwIfAborted()
         const media = await storeAgentMedia(wiki.models.knex, { ownerId, sessionId, ...source })
         return res.status(201).json({ media: projectAgentMedia(media) })
@@ -553,12 +574,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const ownerId = requestSkillPrincipal(req).userId
-      const session = await getOwnedAgentSession(wiki.models.knex, ownerId, sessionId)
-      const profiles = await wiki.providerRegistry.listVisible(ownerId)
-      const profile = session.providerProfileId
-        ? profiles.find(item => item.id === session.providerProfileId)
-        : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
-      const mediaCapabilities = profile?.media
+      const { mediaCapabilities } = await resolveSessionConfiguration(ownerId, sessionId, signal)
       if (
         !mediaCapabilities ||
         (!mediaCapabilities.attachments &&
@@ -865,24 +881,6 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         }
       })
       return res.json({ proposalId: result.proposal.id, approvalId: result.approval.id, status: result.approval.status, decidedAt: result.approval.decidedAt })
-    })
-  )
-  router.get(
-    `${apiPrefix}/profiles`,
-    asyncRoute(async (req, res) => {
-      if (!wiki.config.agents.provider.enabled || !wiki.providerRegistry) return res.json({ profiles: [] })
-      return res.json({ profiles: await wiki.providerRegistry.listVisible(requestSkillPrincipal(req).userId) })
-    })
-  )
-  router.put(
-    `${apiPrefix}/sessions/:sessionId/profile`,
-    asyncRoute(async (req, res, signal) => {
-      if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
-      const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
-      const input = z.strictObject({ expectedSessionVersion: z.number().int().positive(), profileId: z.uuid().nullable() }).parse(req.body)
-      const ownerId = requestSkillPrincipal(req).userId
-      await wiki.providerRegistry.setSessionProfile({ ownerId, sessionId, ...input })
-      return res.json(await projectSession(ownerId, sessionId, signal))
     })
   )
   router.get(

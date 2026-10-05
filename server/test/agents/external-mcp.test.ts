@@ -35,7 +35,16 @@ const protocolFixture = (era: 'legacy' | 'modern' = 'modern', tasks = false): Pr
   const calls: { method: string; headers: Headers; params?: unknown }[] = []
   let toolCount = 1
   let taskStatus: 'working' | 'completed' = 'working'
-  const task = { taskId: 'owned-task', status: 'working', createdAt: '2026-08-17T00:00:00Z', lastUpdatedAt: '2026-08-17T00:00:00Z', ttl: 30_000, ttlMs: 30_000, pollInterval: 1, pollIntervalMs: 1 }
+  const task = {
+    taskId: 'owned-task',
+    status: 'working',
+    createdAt: '2026-08-17T00:00:00Z',
+    lastUpdatedAt: '2026-08-17T00:00:00Z',
+    ttl: 30_000,
+    ttlMs: 30_000,
+    pollInterval: 1,
+    pollIntervalMs: 1
+  }
   const fetch: ExternalMcpFetchImplementation = async (_url, init) => {
     if (init.method === 'DELETE') {
       calls.push({ method: 'session/terminate', headers: new Headers(init.headers) })
@@ -109,7 +118,12 @@ const protocolFixture = (era: 'legacy' | 'modern' = 'modern', tasks = false): Pr
         result = { ...task, status: taskStatus }
         break
       case 'tasks/result':
-        result = { content: [{ type: 'text', text: 'Final task result' }, { type: 'image', mimeType: 'image/png', data: 'AA==' }] }
+        result = {
+          content: [
+            { type: 'text', text: 'Final task result' },
+            { type: 'image', mimeType: 'image/png', data: 'AA==' }
+          ]
+        }
         break
       case 'tasks/cancel':
         result = { ...task, status: 'cancelled' }
@@ -125,7 +139,9 @@ const protocolFixture = (era: 'legacy' | 'modern' = 'modern', tasks = false): Pr
   return {
     calls,
     fetch,
-    setTaskStatus: status => { taskStatus = status },
+    setTaskStatus: status => {
+      taskStatus = status
+    },
     setToolCount: (count: number) => {
       toolCount = count
     }
@@ -187,7 +203,7 @@ describe('external MCP owner-scoped native clients', () => {
 
   it.each(['legacy', 'modern'] as const)('discovers %s catalogs natively and retains attributed raw multimodal results', async era => {
     protocol = protocolFixture(era)
-    const server = await service.createAdmin(admin, { ...input(), groupIds: [20] })
+    const server = await service.createAdmin(admin, { ...input(), authMode: 'bearer', secretValue: 'fixture-mcp-credential', groupIds: [20] })
     const lease = await service.openForUser(owner.id, { serverIds: [server.id] })
     leases.push(lease)
     expect(lease.clients[0]).toBeInstanceOf(AxMCPClient)
@@ -211,6 +227,144 @@ describe('external MCP owner-scoped native clients', () => {
     const requestsAfterClose = protocol.calls.length
     await expect(lease.clients[0]!.inspectCatalog()).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
     expect(protocol.calls).toHaveLength(requestsAfterClose)
+  })
+
+  it('streams inspected bearer SSE ping and task-handle frames through native Ax before EOF', async () => {
+    protocol = protocolFixture('modern', true)
+    const encoder = new TextEncoder()
+    const cancelled = Promise.withResolvers<void>()
+    let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+    let taskResponse = ''
+    let pongReceived = false
+    const streaming = new ExternalMcpService({
+      knex: db,
+      secrets: vault,
+      enabled: () => true,
+      resolve: publicResolver,
+      fetch: async (url, init) => {
+        const message = JSON.parse(String(init.body)) as { id?: string; method?: string; result?: unknown }
+        if (message.id === 'fixture-server-ping' && message.method === undefined) {
+          expect(message.result).toEqual({})
+          pongReceived = true
+          stream!.enqueue(encoder.encode(`data: ${taskResponse}\r\n\r\n`))
+          return new Response(null, { status: 202 })
+        }
+        if (message.method !== 'tools/call') return protocol.fetch(url, init)
+        taskResponse = await (await protocol.fetch(url, init)).text()
+        const ping = encoder.encode(`data: ${JSON.stringify({ jsonrpc: '2.0', id: 'fixture-server-ping', method: 'ping', _meta: { note: 'café' } })}\r\n\r\n`)
+        const unicodeSplit = ping.indexOf(0xc3) + 1
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              stream = controller
+              controller.enqueue(ping.slice(0, unicodeSplit))
+              controller.enqueue(ping.slice(unicodeSplit, -3))
+              controller.enqueue(ping.slice(-3))
+              // Remain open: only the native result consumer may cancel this stream.
+            },
+            cancel() {
+              cancelled.resolve()
+            }
+          }),
+          { headers: { 'content-type': 'text/event-stream; charset=utf-8' } }
+        )
+      }
+    })
+    const server = await streaming.createAdmin(admin, { ...input(), authMode: 'bearer', secretValue: 'fixture-only-mcp-secret', groupIds: [20] })
+    const lease = await streaming.openForUser(owner.id, { serverIds: [server.id] })
+    leases.push(lease)
+    await lease.inspectCatalog(server.id)
+    const outcome = await lease.clients[0]!.callToolOutcome('web_search', {})
+    expect(pongReceived).toBe(true)
+    expect(outcome).toMatchObject({ kind: 'task', task: { taskId: 'owned-task' } })
+    expect(lease.clients[0]!.getKnownTasks()).toMatchObject([{ taskId: 'owned-task', status: 'working' }])
+    await cancelled.promise
+    await lease.close()
+    expect(protocol.calls.filter(call => call.method === 'tasks/cancel')).toHaveLength(1)
+    expect(protocol.calls.filter(call => call.method === 'tools/call')).toHaveLength(1)
+  })
+
+  it('cancels a native bearer SSE invocation while withholding an incomplete credential frame', async () => {
+    const abort = new AbortController()
+    const started = Promise.withResolvers<void>()
+    const cancelled = Promise.withResolvers<void>()
+    const streaming = new ExternalMcpService({
+      knex: db,
+      secrets: vault,
+      enabled: () => true,
+      resolve: publicResolver,
+      fetch: async (url, init) => {
+        const message = JSON.parse(String(init.body)) as { method: string }
+        if (message.method !== 'tools/call') return protocol.fetch(url, init)
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: {"jsonrpc":"2.0","result":{"text":"fixture-only-mcp-'))
+            },
+            pull() {
+              started.resolve()
+            },
+            cancel() {
+              cancelled.resolve()
+            }
+          }),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    })
+    const server = await streaming.createAdmin(admin, { ...input(), authMode: 'bearer', secretValue: 'fixture-only-mcp-secret', groupIds: [20] })
+    const lease = await streaming.openForUser(owner.id, { serverIds: [server.id], signal: abort.signal })
+    leases.push(lease)
+    await lease.inspectCatalog(server.id)
+    const pending = lease.clients[0]!.callTool('web_search', {}).catch((caught: unknown) => caught)
+    await started.promise
+    abort.abort(new DOMException('User cancelled', 'AbortError'))
+    expect(await pending).toHaveProperty('name', 'AbortError')
+    await cancelled.promise
+    await lease.close()
+  })
+
+  it.each(['legacy', 'modern'] as const)('administrators inspect %s shared catalogs without granting themselves runtime access', async era => {
+    protocol = protocolFixture(era)
+    const server = await service.createAdmin(admin, { ...input(), groupIds: [20] })
+    const discovery = await service.discoverForUser(admin, server.id)
+    expect(discovery.catalog.tools[0]?.name).toBe('web_search')
+    expect(discovery.attribution).toMatchObject({ serverId: server.id, trust: 'untrusted', authority: 'external' })
+    expect(await service.listForUser(admin)).toEqual([])
+    const count = protocol.calls.length
+    await expect(service.openForUser(admin.id, { serverIds: [server.id] })).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    await expect(service.discoverForUser({ ...other, permissions: ['manage:system'] } as never, server.id)).rejects.toMatchObject({
+      code: 'EXTERNAL_MCP_ACCESS_DENIED'
+    })
+    await db('groups')
+      .where('id', 10)
+      .update({ permissions: JSON.stringify(['use:agents']) })
+    await expect(service.discoverForUser(admin, server.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    expect(protocol.calls).toHaveLength(count)
+  })
+
+  it('reauthorizes administrator discovery while the remote catalog is arriving', async () => {
+    const server = await service.createAdmin(admin, { ...input(), groupIds: [] })
+    let revoked = false
+    const revocable = new ExternalMcpService({
+      knex: db,
+      secrets: vault,
+      enabled: () => true,
+      resolve: publicResolver,
+      fetch: async (url, init) => {
+        const message = JSON.parse(String(init.body)) as { method: string }
+        if (message.method === 'tools/list') {
+          await db('groups')
+            .where('id', 10)
+            .update({ permissions: JSON.stringify(['use:agents']) })
+          revoked = true
+        }
+        return protocol.fetch(url, init)
+      }
+    })
+    await expect(revocable.discoverForUser(admin, server.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    expect(revoked).toBe(true)
+    expect(protocol.calls.some(call => call.method === 'tools/call')).toBe(false)
   })
 
   it.each(['legacy', 'modern'] as const)('admin grants deny %s discovery, invocation, cached reads and cleanup after revocation', async era => {
@@ -249,6 +403,8 @@ describe('external MCP owner-scoped native clients', () => {
     const count = protocol.calls.length
     await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: false }, 1)
     await expect(lease.clients[0]!.callTool('web_search', {})).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    await expect(lease.inspectCatalog(server.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    await expect(service.discoverForUser(owner, server.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
     expect(protocol.calls).toHaveLength(count)
   })
 
@@ -339,9 +495,7 @@ describe('external MCP owner-scoped native clients', () => {
       protocol = protocolFixture('legacy', true)
       await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: true }, 0)
       const personal = change === 'personal-policy'
-      const server = personal
-        ? await service.createPersonal(owner, input())
-        : await service.createAdmin(admin, { ...input(), groupIds: [20] })
+      const server = personal ? await service.createPersonal(owner, input()) : await service.createAdmin(admin, { ...input(), groupIds: [20] })
       const controller = new AbortController()
       const lease = await service.openForUser(owner.id, { serverIds: [server.id], signal: controller.signal })
       leases.push(lease)
@@ -362,7 +516,8 @@ describe('external MCP owner-scoped native clients', () => {
       if (change === 'switch') enabled = false
       if (change === 'grants') await service.setAdminGrants(admin, server.id, server.revision, { groupIds: [30] })
       if (change === 'personal-policy') await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: false }, 1)
-      if (change === 'endpoint') await db('agentExternalMcpServers').where('id', server.id).update({ endpointUrl: 'https://other.example.com/mcp', revision: 2 })
+      if (change === 'endpoint')
+        await db('agentExternalMcpServers').where('id', server.id).update({ endpointUrl: 'https://other.example.com/mcp', revision: 2 })
       const denial = change === 'switch' ? 'EXTERNAL_MCP_DISABLED' : 'EXTERNAL_MCP_ACCESS_DENIED'
       await expect(client.getTask('owned-task')).rejects.toMatchObject({ code: denial })
       await expect(client.getTaskResult('owned-task')).rejects.toMatchObject({ code: denial })
@@ -567,6 +722,89 @@ describe('external MCP untrusted endpoint boundary', () => {
       ).rejects.toMatchObject({ code: 'EXTERNAL_MCP_EGRESS_DENIED' })
       await expect(guard.fetch('https://elsewhere.example.com/mcp')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_EGRESS_DENIED' })
       expect(calls).toBe(1)
+    } finally {
+      await guard.close()
+    }
+  })
+
+  it.each(['body', 'escaped-json', 'sse', 'header'] as const)(
+    'fails closed on %s credential reflection before exposing any remote response',
+    async location => {
+      const token = 'fixture-only-mcp-secret'
+      const escaped = [...token].map(character => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`).join('')
+      const guard = createExternalMcpEndpointGuard({
+        endpointUrl: 'https://public.example.com/mcp',
+        authorize: async () => {},
+        credential: async () => token,
+        resolve: publicResolver,
+        fetch: async () => {
+          const text =
+            location === 'body'
+              ? JSON.stringify({ result: { content: [{ type: 'text', text: token }] } })
+              : location === 'escaped-json'
+                ? `{"error":{"message":"${escaped}"}}`
+                : location === 'sse'
+                  ? `data: {"result":{"description":"${escaped}"}}\n\n`
+                  : '{}'
+          const bytes = new TextEncoder().encode(text)
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                // Neither a chunk boundary nor JSON Unicode escapes may hide a token.
+                controller.enqueue(bytes.slice(0, 13))
+                controller.enqueue(bytes.slice(13))
+                controller.close()
+              }
+            }),
+            { headers: location === 'header' ? { 'mcp-session-id': token } : location === 'sse' ? { 'content-type': 'text/event-stream' } : {} }
+          )
+        }
+      })
+      try {
+        const error = await guard
+          .fetch('https://public.example.com/mcp', { method: 'POST', body: '{}' })
+          .then(response => response.text())
+          .catch((caught: unknown) => caught)
+        expect(error).toMatchObject({ code: 'EXTERNAL_MCP_CREDENTIAL_REFLECTED', status: 502 })
+        expect(String(error)).not.toContain(token)
+        expect(JSON.stringify(error)).not.toContain(token)
+      } finally {
+        await guard.close()
+      }
+    }
+  )
+
+  it('cancels credential-bearing response inspection without exposing a partial body', async () => {
+    const abort = new AbortController()
+    const started = Promise.withResolvers<void>()
+    const cancelled = Promise.withResolvers<void>()
+    const guard = createExternalMcpEndpointGuard({
+      endpointUrl: 'https://public.example.com/mcp',
+      authorize: async () => {},
+      credential: async () => 'fixture-only-mcp-secret',
+      resolve: publicResolver,
+      signal: abort.signal,
+      fetch: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"result":{"content":['))
+            },
+            pull() {
+              started.resolve()
+            },
+            cancel() {
+              cancelled.resolve()
+            }
+          })
+        )
+    })
+    try {
+      const pending = guard.fetch('https://public.example.com/mcp').catch((caught: unknown) => caught)
+      await started.promise
+      abort.abort(new DOMException('User cancelled', 'AbortError'))
+      expect(await pending).toHaveProperty('name', 'AbortError')
+      await cancelled.promise
     } finally {
       await guard.close()
     }

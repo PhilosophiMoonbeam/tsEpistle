@@ -16,7 +16,7 @@ import {
 } from '../../shared/agents/contracts.ts'
 import { type DecisionUsage, DecisionUsageSchema } from '../../shared/agents/decision-providers.ts'
 import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
-import type { RoutingRequirements, RoutingSpecialistCandidate, RoutingTurnDecision } from '../../shared/agents/routing.ts'
+import type { RoutingRequirements, RoutingTurnDecision } from '../../shared/agents/routing.ts'
 import type { SpecialistContext, SpecialistProviderBinding } from '../../shared/agents/specialists.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
@@ -617,6 +617,7 @@ export interface AgentAdmissionResolver {
     input: { readonly ownerId: number; readonly sessionId: string; readonly profileResolutionToken: string }
   ): Promise<AgentResolvedAdmission>
   resolveCurrent(transaction: Knex.Transaction, input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission>
+  resolveConfiguredDefault?(transaction: Knex.Transaction, input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission>
   listRoutingCandidates?(
     transaction: Knex.Transaction,
     input: { readonly ownerId: number; readonly sessionId: string }
@@ -1475,6 +1476,21 @@ export class AgentProductRuntime {
         }
   }
 
+  async #resolveAdmittedBinding(
+    transaction: Knex.Transaction,
+    input: { readonly ownerId: number; readonly sessionId: string; readonly providerProfileVersionId: string }
+  ): Promise<AgentResolvedAdmission> {
+    if (!this.#resolver.resolveRoutingCandidate) return this.#resolver.resolveCurrent(transaction, { ownerId: input.ownerId, sessionId: input.sessionId })
+    const version = await transaction('agentProviderProfileVersions').where({ id: input.providerProfileVersionId }).first('profileId')
+    if (!version) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider settings are unavailable', 409)
+    return this.#resolver.resolveRoutingCandidate(transaction, {
+      ownerId: input.ownerId,
+      sessionId: input.sessionId,
+      profileId: version.profileId,
+      profileVersionId: input.providerProfileVersionId
+    })
+  }
+
   async #authorizeClaim(claim: AgentRunClaim): Promise<void> {
     const record = await this.#routingRecord(claim)
     await this.#knex.transaction(async transaction => {
@@ -1499,24 +1515,18 @@ export class AgentProductRuntime {
         const goal = await getOwnedAgentGoal(transaction, claim.ownerId, claim.goalId, true)
         if (new Date(goal.deadlineAt).valueOf() <= Date.now()) throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal deadline was reached', 409)
       }
-      const current =
-        record !== null && this.#resolver.resolveRoutingCandidate
-          ? await this.#resolver.resolveRoutingCandidate(transaction, {
-              ownerId: claim.ownerId,
-              sessionId: claim.sessionId,
-              profileId: record.decision.profileId,
-              profileVersionId: record.decision.profileVersionId
-            })
-          : await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
-      if (record === null && this.#resolver.resolveRoutingCandidate) {
-        const version = await transaction('agentProviderProfileVersions').where({ id: current.providerProfileVersionId }).first('profileId')
-        if (!version) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider settings are unavailable', 409)
-        await this.#resolver.resolveRoutingCandidate(transaction, {
+      let current: AgentResolvedAdmission
+      if (record !== null && this.#resolver.resolveRoutingCandidate) {
+        current = await this.#resolver.resolveRoutingCandidate(transaction, {
           ownerId: claim.ownerId,
           sessionId: claim.sessionId,
-          profileId: version.profileId,
-          profileVersionId: current.providerProfileVersionId
+          profileId: record.decision.profileId,
+          profileVersionId: record.decision.profileVersionId
         })
+      } else {
+        // An already-admitted continuation owns its exact authorized binding,
+        // not the conversation's obsolete preference or a fresh selection.
+        current = await this.#resolveAdmittedBinding(transaction, claim)
       }
       if (
         current.providerProfileVersionId !== claim.providerProfileVersionId ||
@@ -1544,6 +1554,11 @@ export class AgentProductRuntime {
           throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Routing profile authority changed before dispatch', 409)
       }
     })
+  }
+
+  async #authorizeExternalTool(claim: AgentRunClaim): Promise<void> {
+    await this.#authorizeClaim(claim)
+    await markAgentRunSideEffectsStarted(this.#knex, claim)
   }
 
   #specialistScope(currentPage: AgentCurrentPageHint | undefined, knowledgeContext: AgentKnowledgeContext | undefined): string {
@@ -1779,20 +1794,31 @@ export class AgentProductRuntime {
       const snapshot = await this.#knex.transaction(async transaction => {
         await acquireAgentCoordinatorAdvisoryLocks(transaction, [claim.ownerId])
         await this.#lockAdmissionContext(transaction, claim.ownerId, claim.sessionId, input.sessionVersion)
-        const session = await transaction('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).first('providerProfileId', 'expiresAt')
-        const incumbent = await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+        const incumbent =
+          claim.goalId === null && claim.mediaRequest === null && input.media.length === 0 && !input.generationTools?.length
+            ? await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+            : await this.#resolveAdmittedBinding(transaction, claim)
         if (incumbent.providerProfileVersionId !== claim.providerProfileVersionId)
           throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Default profile changed before routing', 409)
         const candidates = await list.call(this.#resolver, transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
         const liveIncumbent = candidates.find(candidate => candidate.profileVersionId === incumbent.providerProfileVersionId)
+        const configuredDefault =
+          claim.goalId === null &&
+          claim.mediaRequest === null &&
+          input.media.length === 0 &&
+          !input.generationTools?.length &&
+          this.#resolver.resolveConfiguredDefault
+            ? await this.#resolver.resolveConfiguredDefault(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+            : incumbent
+        const safeDefault = candidates.find(candidate => candidate.profileVersionId === configuredDefault.providerProfileVersionId)
+        if (!safeDefault) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Configured default provider is no longer eligible', 409)
         return {
           incumbent: {
             ...incumbent,
             ...(liveIncumbent?.admission.ownerAuthVersion === undefined ? {} : { ownerAuthVersion: liveIncumbent.admission.ownerAuthVersion })
           },
-          pinned: session.providerProfileId !== null,
-          expiresAt: session.expiresAt,
-          candidates
+          candidates,
+          safeDefault
         }
       })
       if (snapshot === null) return claim
@@ -1872,7 +1898,12 @@ export class AgentProductRuntime {
         const checked: AgentRoutingCandidate[] = []
         for (const candidate of candidates) {
           const incumbent = candidate.profileVersionId === current.profileVersionId
-          if (!incumbent && !declared.models.some(model => model.profileId === candidate.profileId && model.profileVersionId === candidate.profileVersionId))
+          const configuredFallback = candidate.profileVersionId === snapshot.safeDefault.profileVersionId
+          if (
+            !incumbent &&
+            !configuredFallback &&
+            !declared.models.some(model => model.profileId === candidate.profileId && model.profileVersionId === candidate.profileVersionId)
+          )
             continue
           if (external?.externalMcp && (candidate.capabilities.toolCalling !== 'native' || candidate.capabilities.structuredOutput !== 'native-json-schema'))
             continue
@@ -1952,87 +1983,21 @@ export class AgentProductRuntime {
         // A concurrent enable must not dispatch a classifier against un-preflighted alternatives.
         candidates = [current]
       }
-      const specialists: RoutingSpecialistCandidate[] = []
-      const scopeSha256 = this.#specialistScope(input.currentPage, input.knowledgeContext)
-      const specialistExpiresAt = new Date(
-        Math.min(Date.now() + 7 * 86_400_000, snapshot.expiresAt === null ? Infinity : new Date(snapshot.expiresAt).valueOf())
-      ).toISOString()
-      if (
-        declared.policy.enabled &&
-        declared.policy.specialistEnabled &&
-        claim.executionMode === 'agent' &&
-        mediaRequest === null &&
-        requiredModalities.size === 1 &&
-        !input.generationTools?.length
-      ) {
-        const contexts = await this.#specialists.list({
-          ownerId: claim.ownerId,
-          rootSessionId: claim.sessionId,
-          scopeSha256,
-          maximumContexts: declared.policy.specialistMaxContexts
-        })
-        const retained = await this.#knex('agentSpecialistContexts')
-          .where({ ownerId: claim.ownerId, rootSessionId: claim.sessionId })
-          .where(query =>
-            query.where('expiresAt', '>', new Date()).orWhereExists(function activeContext() {
-              this.select(1)
-                .from('agentSpecialistInvocations')
-                .join('agentRuns', 'agentRuns.id', 'agentSpecialistInvocations.rootRunId')
-                .whereRaw('?? = ??', ['agentSpecialistInvocations.contextId', 'agentSpecialistContexts.id'])
-                .where('agentSpecialistInvocations.status', 'running')
-                .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
-            })
-          )
-          .count<{ count: number | string }[]>({ count: '*' })
-        const choices: { candidate: AgentRoutingCandidate; context: SpecialistContext | null }[] = []
-        for (const candidate of candidates) {
-          if (!declared.models.some(model => model.profileId === candidate.profileId && model.profileVersionId === candidate.profileVersionId)) continue
-          if (Number(retained[0]?.count ?? 0) < declared.policy.specialistMaxContexts) choices.push({ candidate, context: null })
-          for (const context of contexts) {
-            if (canonicalJson(context.binding) === canonicalJson(this.#specialistBinding(candidate))) choices.push({ candidate, context })
-          }
-        }
-        for (const { candidate, context } of choices) {
-          try {
-            const preview = this.#specialistRequest(claim, candidate, context, {
-              message: currentMessage,
-              taskClass: context?.taskClass ?? 'analysis',
-              maximumContextBytes: declared.policy.specialistMaxContextBytes,
-              maximumReportTokens: declared.policy.specialistMaxReportTokens,
-              maximumTurns: declared.policy.specialistMaxTurns,
-              signal: input.signal,
-              ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
-              ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext })
-            })
-            const proof = await this.#engine.preflight(preview)
-            if (!proof.admissible) continue
-            specialists.push({
-              contextId: context?.id ?? null,
-              contextVersion: context?.version ?? null,
-              candidate,
-              taskClass: context?.taskClass ?? null,
-              complexity: context?.complexity ?? null,
-              inputTokens: nonNegativeUsage(proof.inputExposureTokens, 'Specialist input estimate'),
-              description:
-                context === null
-                  ? 'New independent specialist context for the current request.'
-                  : `Existing ${context.taskClass}/${context.complexity} context; ${context.turnCount} completed tasks. Last report (untrusted data): ${context.lastReport}`
-            })
-          } catch {
-            input.signal.throwIfAborted()
-            // Stale authority, source evidence or an oversized retained child must not become a reuse candidate.
-          }
-        }
-      }
       const decision = await router.routeTurn(
         {
           ownerId: claim.ownerId,
           sessionId: claim.sessionId,
           runId: claim.id,
-          pinned: snapshot.pinned,
           current,
+          ...(claim.goalId === null
+            ? {
+                safeDefault: candidates.find(candidate => candidate.profileVersionId === snapshot.safeDefault.profileVersionId) ?? {
+                  ...snapshot.safeDefault,
+                  admissible: false
+                }
+              }
+            : {}),
           candidates,
-          specialists,
           estimatedRootWorkTurns: Math.max(1, Math.min(12, input.priorActivity.at(-1)?.modelTurns ?? 1)),
           requirements: {
             modalities: [...requiredModalities],
@@ -2063,6 +2028,7 @@ export class AgentProductRuntime {
             )
             await this.#appendPresentationEvent(claim, 'model.turn', {
               purpose: 'routing',
+              routingAutomatic: claim.goalId === null,
               usageVersion: 2,
               inputTokens,
               outputTokens,
@@ -2077,12 +2043,6 @@ export class AgentProductRuntime {
               routingDecision: decision,
               routingSessionVersion: input.sessionVersion,
               routingIncumbent: snapshot.incumbent,
-              routingSpecialistScopeSha256: scopeSha256,
-              routingSpecialistExpiresAt: specialistExpiresAt,
-              routingSpecialistAdmission:
-                decision.specialist === null || decision.specialist === undefined
-                  ? null
-                  : snapshot.candidates.find(candidate => candidate.profileVersionId === decision.specialist!.profileVersionId)?.admission,
               routingSelected: snapshot.candidates.find(candidate => candidate.profileVersionId === decision.profileVersionId)?.admission
             } as unknown as AgentEventData)
           }
@@ -2123,7 +2083,14 @@ export class AgentProductRuntime {
       if (paidEvents.some(event => event.type !== 'model.turn' || parsedObject(event.data, 'AGENT_EVENT_CORRUPT').purpose !== 'routing'))
         throw new AgentRepositoryError('ROUTING_RUN_STARTED', 'Run has already started paid root or task operations', 409)
       await router.validateDecision(recorded.decision, transaction)
-      const incumbent = await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+      const incumbent =
+        claim.goalId === null && claim.mediaRequest === null && input.media.length === 0 && !input.generationTools?.length
+          ? await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+          : await this.#resolveAdmittedBinding(transaction, {
+              ownerId: claim.ownerId,
+              sessionId: claim.sessionId,
+              providerProfileVersionId: recorded.incumbent.providerProfileVersionId
+            })
       if (
         incumbent.providerProfileVersionId !== recorded.incumbent.providerProfileVersionId ||
         incumbent.defaultGeneration !== recorded.incumbent.defaultGeneration ||
@@ -2388,6 +2355,51 @@ export class AgentProductRuntime {
     }
   }
 
+  async #assertSubmissionCapabilities(
+    transaction: Knex.Transaction,
+    resolved: AgentResolvedAdmission,
+    input: Pick<SubmitAgentMessageInput, 'responseMode' | 'attachmentIds' | 'transcription'>,
+    generationTools: readonly AgentGenerationTool[] | undefined
+  ): Promise<void> {
+    await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
+    if (input.transcription) {
+      if (input.attachmentIds?.length !== 1) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one audio recording.', 400)
+      await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'transcription')
+    } else {
+      if (input.attachmentIds?.length && (!input.responseMode || input.responseMode === 'text'))
+        await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'attachments')
+      if (input.responseMode === 'image') await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'imageGeneration')
+    }
+  }
+
+  async #resolveSubmissionCapabilities(
+    transaction: Knex.Transaction,
+    resolved: AgentResolvedAdmission,
+    input: Pick<SubmitAgentMessageInput, 'ownerId' | 'sessionId' | 'responseMode' | 'attachmentIds' | 'transcription'>,
+    generationTools: readonly AgentGenerationTool[] | undefined
+  ): Promise<AgentResolvedAdmission> {
+    if (input.responseMode === 'video' || input.responseMode === 'music' || generationTools?.some(tool => tool === 'video' || tool === 'music'))
+      throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Video and music generation are unavailable.', 403)
+    try {
+      await this.#assertSubmissionCapabilities(transaction, resolved, input, generationTools)
+      return resolved
+    } catch (error) {
+      if (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_MEDIA_DISABLED' || !this.#resolver.listRoutingCandidates) throw error
+      const candidates = await this.#resolver.listRoutingCandidates(transaction, { ownerId: input.ownerId, sessionId: input.sessionId })
+      for (const candidate of candidates) {
+        if (candidate.profileVersionId === resolved.providerProfileVersionId) continue
+        try {
+          this.#assertResolvedAdmission(candidate.admission)
+          await this.#assertSubmissionCapabilities(transaction, candidate.admission, input, generationTools)
+          return candidate.admission
+        } catch (candidateError) {
+          if (!(candidateError instanceof AgentRepositoryError) || candidateError.code !== 'AGENT_MEDIA_DISABLED') throw candidateError
+        }
+      }
+      throw error
+    }
+  }
+
   async submit(input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> {
     if (!input.content.trim() && input.attachmentIds?.length)
       input = {
@@ -2402,34 +2414,20 @@ export class AgentProductRuntime {
     return this.#knex.transaction(async transaction => {
       await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
       const context = await this.#lockAdmissionContext(transaction, input.ownerId, input.sessionId, input.expectedSessionVersion)
-      const resolved = await this.#resolver.resolve(transaction, {
+      let resolved = await this.#resolver.resolve(transaction, {
         ownerId: input.ownerId,
         sessionId: input.sessionId,
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
-      await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
-      if (input.transcription) {
-        if (input.attachmentIds?.length !== 1) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one audio recording.', 400)
-        await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'transcription')
-      } else {
-        if (input.attachmentIds?.length && (!input.responseMode || input.responseMode === 'text'))
-          await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'attachments')
-        if (input.responseMode && input.responseMode !== 'text') {
-          await assertAgentMediaCapability(
-            transaction,
-            resolved.providerProfileVersionId,
-            input.responseMode === 'image' ? 'imageGeneration' : input.responseMode === 'video' ? 'videoGeneration' : 'musicGeneration'
-          )
-          if (input.attachmentIds?.length) {
-            const files = (await transaction('agentMedia')
-              .where({ ownerId: input.ownerId, sessionId: input.sessionId })
-              .whereIn('id', input.attachmentIds)
-              .select('mimeType')) as { mimeType: string }[]
-            if (files.some(file => !file.mimeType.startsWith('image/')))
-              throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Media generation accepts image attachments only.', 400)
-          }
-        }
+      resolved = await this.#resolveSubmissionCapabilities(transaction, resolved, input, generationTools)
+      if (input.responseMode === 'image' && input.attachmentIds?.length) {
+        const files = (await transaction('agentMedia')
+          .where({ ownerId: input.ownerId, sessionId: input.sessionId })
+          .whereIn('id', input.attachmentIds)
+          .select('mimeType')) as { mimeType: string }[]
+        if (files.some(file => !file.mimeType.startsWith('image/')))
+          throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Media generation accepts image attachments only.', 400)
       }
       const skillVersionIds = await this.#skillVersionIds(transaction, input.ownerId, context.groupIds, input.invokedSkillVersionIds ?? [])
       return admitAgentRunInTransaction(transaction, {
@@ -2462,13 +2460,13 @@ export class AgentProductRuntime {
     const created = await this.#knex.transaction(async transaction => {
       await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
       const context = await this.#lockAdmissionContext(transaction, input.ownerId, input.sessionId, input.expectedSessionVersion)
-      const resolved = await this.#resolver.resolve(transaction, {
+      let resolved = await this.#resolver.resolve(transaction, {
         ownerId: input.ownerId,
         sessionId: input.sessionId,
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
-      await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
+      resolved = await this.#resolveSubmissionCapabilities(transaction, resolved, input, generationTools)
       const skillVersionIds = await this.#skillVersionIds(transaction, input.ownerId, context.groupIds, input.invokedSkillVersionIds ?? [])
       const goal = await insertAgentGoal(transaction, {
         id: input.goalId,
@@ -2624,7 +2622,7 @@ export class AgentProductRuntime {
           run: claim,
           purpose: 'planner',
           authorizeDispatch: () => this.#authorizeClaim(claim),
-          beforeExternalTool: () => markAgentRunSideEffectsStarted(this.#knex, claim),
+          beforeExternalTool: () => this.#authorizeExternalTool(claim),
           ...(currentPage === undefined ? {} : { currentPage }),
           ...(knowledgeContext === undefined ? {} : { knowledgeContext }),
           actionAllowlist: [],
@@ -2918,7 +2916,7 @@ export class AgentProductRuntime {
     return {
       run: input.claim,
       authorizeDispatch: () => this.#authorizeClaim(input.claim),
-      beforeExternalTool: () => markAgentRunSideEffectsStarted(this.#knex, input.claim),
+      beforeExternalTool: () => this.#authorizeExternalTool(input.claim),
       purpose: 'subagent',
       task: input.task,
       ...(input.subagentRunId === undefined ? {} : { subagentRunId: input.subagentRunId }),
@@ -3516,7 +3514,7 @@ export class AgentProductRuntime {
           413
         )
       if (!includeMediaBytes && mediaIndex.some(row => row.messageId === claim.userMessageId && row.kind === 'attachment'))
-        throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Attachments are disabled for this provider. Select a provider with attachments enabled.', 403)
+        throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Attachments are unavailable for the current authorized Agent configuration.', 403)
       const retainedMediaIds = attachedRows.map(row => row.id)
       // Attachments dropped from context by history compaction are excluded from prompts; their
       // canonical sources stay intact so stored compaction digests keep validating.
@@ -3669,7 +3667,7 @@ export class AgentProductRuntime {
         run: claim,
         purpose: 'root',
         authorizeDispatch: () => this.#authorizeClaim(claim),
-        beforeExternalTool: () => markAgentRunSideEffectsStarted(this.#knex, claim),
+        beforeExternalTool: () => this.#authorizeExternalTool(claim),
         messages,
         memory,
         skills,
@@ -3866,6 +3864,8 @@ export class AgentProductRuntime {
         }
       }
       if (mediaRequest || attachedRows.length) await authorizeMedia()
+      // A restored native action can mutate before the engine's next inference.
+      if (continuation !== null) await this.#authorizeClaim(claim)
       const result =
         continuation === null
           ? await this.#engine.execute(engineRequest, sink)
@@ -4486,7 +4486,7 @@ export class AgentProductRuntime {
         })
         return { goal: limitedGoal, run: null, replayed: false }
       }
-      let firstRun = (await transaction('agentRuns')
+      const firstRun = (await transaction('agentRuns')
         .where({ goalId: locked.id, goalContinuation: 0, ownerId: locked.ownerId })
         .first(
           'id',
@@ -4515,8 +4515,13 @@ export class AgentProductRuntime {
         | undefined
       if (!firstRun) throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Agent goal has no initial run', 500)
       const originalRouting = await this.#routingRecord({ id: firstRun.id, ownerId: locked.ownerId, sessionId: locked.sessionId }, transaction)
-      if (originalRouting !== null) firstRun = { ...firstRun, ...originalRouting.incumbent }
-      const resolved = await this.#resolver.resolveCurrent(transaction, { ownerId: locked.ownerId, sessionId: locked.sessionId })
+      if (originalRouting !== null && originalRouting.selected.providerProfileVersionId !== firstRun.providerProfileVersionId)
+        throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Goal initial run does not match its routed binding', 500)
+      const resolved = await this.#resolveAdmittedBinding(transaction, {
+        ownerId: locked.ownerId,
+        sessionId: locked.sessionId,
+        providerProfileVersionId: firstRun.providerProfileVersionId
+      })
       this.#assertResolvedAdmission(resolved)
       const configurationMatches =
         firstRun.providerProfileVersionId === resolved.providerProfileVersionId &&
@@ -4768,7 +4773,7 @@ export class AgentProductRuntime {
         throw new AgentRepositoryError('GOAL_DURATION_EXHAUSTED', 'Goal duration budget is exhausted', 409)
       if (usage.tokens < locked.maxTokens && !tokenFence)
         throw new AgentRepositoryError('GOAL_TOKEN_RENEWAL_UNAVAILABLE', 'Goal token budget has not been exhausted', 409)
-      let firstRun = (await transaction('agentRuns')
+      const firstRun = (await transaction('agentRuns')
         .where({ goalId: locked.id, goalContinuation: 0, ownerId: locked.ownerId })
         .first(
           'id',
@@ -4797,8 +4802,13 @@ export class AgentProductRuntime {
         | undefined
       if (!firstRun) throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Agent goal has no initial run', 500)
       const originalRouting = await this.#routingRecord({ id: firstRun.id, ownerId: locked.ownerId, sessionId: locked.sessionId }, transaction)
-      if (originalRouting !== null) firstRun = { ...firstRun, ...originalRouting.incumbent }
-      const resolved = await this.#resolver.resolveCurrent(transaction, { ownerId: locked.ownerId, sessionId: locked.sessionId })
+      if (originalRouting !== null && originalRouting.selected.providerProfileVersionId !== firstRun.providerProfileVersionId)
+        throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Goal initial run does not match its routed binding', 500)
+      const resolved = await this.#resolveAdmittedBinding(transaction, {
+        ownerId: locked.ownerId,
+        sessionId: locked.sessionId,
+        providerProfileVersionId: firstRun.providerProfileVersionId
+      })
       this.#assertResolvedAdmission(resolved)
       const configurationMatches =
         firstRun.providerProfileVersionId === resolved.providerProfileVersionId &&

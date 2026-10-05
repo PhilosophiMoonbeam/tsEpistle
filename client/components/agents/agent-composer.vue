@@ -442,7 +442,7 @@ import AgentComposerMedia from './agent-composer-media.vue'
 import AgentComposerSkillMenu from './agent-composer-skill-menu.vue'
 import AgentDictationWaveform from './agent-dictation-waveform.vue'
 import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
-import type { AgentMediaView, AgentProviderProfileView, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
+import type { AgentMediaView, AgentMediaCapabilities, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
@@ -452,7 +452,7 @@ const t = useTranslate()
 const props = defineProps<{
   csrfToken?: string
   mediaSession?: AgentThreadState['session'] | null
-  mediaCapabilities?: AgentProviderProfileView['media']
+  mediaCapabilities?: AgentMediaCapabilities
   generationToolsEnabled?: boolean
   disabled: boolean
   sending: boolean

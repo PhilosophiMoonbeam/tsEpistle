@@ -308,20 +308,6 @@ const AGENT_REASONING_EFFORTS_BY_TRANSPORT = {
 export const agentProviderReasoningEfforts = (transport: AgentProviderTransport): readonly AgentReasoningEffort[] =>
   AGENT_REASONING_EFFORTS_BY_TRANSPORT[transport]
 
-export interface AgentProviderProfileView {
-  readonly media?: AgentMediaCapabilities
-  readonly id: string
-  readonly name: string
-  readonly transport: AgentProviderTransport
-  readonly model: string
-  readonly utilityModel: string | null
-  readonly destinationHost: string
-  readonly capabilities: AgentProviderCapabilities
-  readonly capabilityRevision: string
-  readonly policyVersion: number
-  readonly isGlobalDefault: boolean
-}
-
 export interface AgentSkillMetadataView {
   readonly skillId: string
   readonly versionId: string
@@ -357,6 +343,8 @@ export interface AgentSessionView {
   readonly version: number
   readonly providerProfileId: string | null
   readonly profileResolutionToken: string
+  /** Current administrator-resolved media capabilities; never a model-selection control. */
+  readonly mediaCapabilities: Required<AgentMediaCapabilities> | null
   readonly skills: readonly AgentSessionSkillView[]
   readonly currentRun: AgentRunView | null
   readonly createdAt: string
@@ -592,7 +580,6 @@ export interface AgentRunState {
 
 export interface CreateAgentSessionRequest {
   readonly retention: AgentSessionRetention
-  readonly providerProfileId: string | null
 }
 
 export interface UpdateAgentSessionRequest {
@@ -607,11 +594,6 @@ export interface UpdateAgentSessionFolderRequest {
 
 export interface UpdateAgentSkillPreferencesRequest {
   readonly skillIds: readonly string[]
-}
-
-export interface UpdateAgentSessionProfileRequest {
-  readonly expectedSessionVersion: number
-  readonly providerProfileId: string | null
 }
 
 export const AGENT_GENERATION_TOOLS = ['image', 'video', 'music'] as const

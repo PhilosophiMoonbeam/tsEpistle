@@ -89,50 +89,6 @@
                     :aria-label="$t('common:agentWorkspace.pinned')"
                   />
                 </span>
-                <v-menu v-if="providerIdentity" v-model="providerMenuOpen" content-class="agent-owned-overlay" location="bottom start" attach=".inline-agent">
-                  <template #activator="{ props: providerMenuProps }">
-                    <v-btn
-                      v-bind="providerMenuProps"
-                      class="inline-agent__provider-trigger"
-                      variant="text"
-                      size="small"
-                      :title="providerIdentity"
-                      :aria-label="$t('common:inlineAgentChat.chooseProviderLabel', { identity: providerIdentity, interpolation: { escapeValue: false } })"
-                      :aria-expanded="providerMenuOpen"
-                    >
-                      <span class="inline-agent__provider-identity" :title="providerIdentity">{{ providerIdentity }}</span>
-                      <v-icon icon="mdi-chevron-down" size="14" aria-hidden="true" />
-                    </v-btn>
-                  </template>
-                  <v-list class="inline-agent__provider-menu" density="compact" role="menu" :aria-label="$t('common:inlineAgentChat.chooseProvider')">
-                    <v-list-item
-                      class="inline-agent__provider-option"
-                      role="menuitemradio"
-                      :aria-checked="!thread?.session.providerProfileId"
-                      :aria-disabled="Boolean(providerSelectionUnavailableReason)"
-                      :active="!thread?.session.providerProfileId"
-                      :prepend-icon="!thread?.session.providerProfileId ? 'mdi-check' : undefined"
-                      :title="$t('common:inlineAgentChat.workspaceDefaultProvider')"
-                      :disabled="Boolean(providerSelectionUnavailableReason)"
-                      @click="selectProvider(null)"
-                    />
-                    <v-list-item
-                      v-for="profile in profiles"
-                      :key="profile.id"
-                      class="inline-agent__provider-option"
-                      role="menuitemradio"
-                      :aria-checked="thread?.session.providerProfileId === profile.id"
-                      :aria-disabled="Boolean(providerSelectionUnavailableReason)"
-                      :active="thread?.session.providerProfileId === profile.id"
-                      :prepend-icon="thread?.session.providerProfileId === profile.id ? 'mdi-check' : undefined"
-                      :title="profile.name"
-                      :subtitle="profile.model"
-                      :disabled="Boolean(providerSelectionUnavailableReason)"
-                      @click="selectProvider(profile.id)"
-                    />
-                    <p v-if="providerSelectionUnavailableReason" class="inline-agent__provider-help" role="status">{{ providerSelectionUnavailableReason }}</p>
-                  </v-list>
-                </v-menu>
               </div>
             </div>
           </div>
@@ -182,7 +138,7 @@
                 class="inline-agent__panel-menu-item"
                 link
                 prepend-icon="mdi-connection"
-                title="My MCP servers"
+                title="My tools"
                 @click="personalMcpOpen = true"
               />
               <v-list-item
@@ -400,7 +356,7 @@
                 v-else-if="thread"
                 :thread="thread"
                 :user-picture="userPicture"
-                :image-editing-enabled="providerEnabled && mediaProfile?.media?.imageGeneration === true && mediaProfile?.media?.attachments === true && thread?.session.executionMode === 'agent'"
+                :image-editing-enabled="providerEnabled && mediaCapabilities?.imageGeneration === true && mediaCapabilities?.attachments === true && thread?.session.executionMode === 'agent'"
                 :connection="connection"
                 :deciding-approval-id="decidingApprovalId"
                 :can-submit="canSubmit"
@@ -489,11 +445,11 @@
                       <span>{{ agents.contextTransferNotice }}</span>
                     </p>
                     <AgentComposer
-                      :key="`${ownerId}:${thread?.session.id ?? 'opening'}:${mediaProfile?.id ?? 'none'}:${mediaProfile?.policyVersion ?? 0}`"
+                      :key="`${ownerId}:${thread?.session.id ?? 'opening'}`"
                       ref="composer"
                       :csrf-token="csrfToken"
                       :media-session="thread?.session"
-                      :media-capabilities="providerEnabled ? mediaProfile?.media : undefined"
+                      :media-capabilities="providerEnabled ? mediaCapabilities : undefined"
                       :generation-tools-enabled="thread?.session.executionMode === 'agent'"
                       @media-settled="refreshAfterMedia"
                       :session-id="thread?.session.id ?? offlineSessionId"
@@ -729,7 +685,7 @@ const emit = defineEmits<{
 }>()
 const agents = useAgentsStore()
 const userPicture = computed(() => resolveUserPicture(wikiStore.user))
-const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, initializationAdmissionFailure, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
+const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, initializationAdmissionFailure, loading, networkPaused, pinStorageAvailable, pinnedSessionId, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
@@ -785,9 +741,6 @@ const setSessionNotice = (message: string): void => {
 const historyOpen = ref(false)
 const memoryOpen = ref(false)
 const panelMenuOpen = ref(false)
-const providerMenuOpen = ref(false)
-const providerSelectionPending = ref(false)
-let providerSelectionGeneration = 0
 const memoryMutationBusy = ref(false)
 const initializationError = ref('')
 const connectionRetrying = ref(false)
@@ -857,16 +810,13 @@ const openGoal = computed(() => {
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length || thread.value.goal)))
 const followJumpVisible = computed(() => Boolean(hasConversation.value && transcriptBottomDistance.value > 24 && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
-const mediaProfile = computed(() => thread.value?.session.providerProfileId ? profiles.value.find(profile => profile.id === thread.value?.session.providerProfileId) : profiles.value.find(profile => profile.isGlobalDefault) ?? (profiles.value.length === 1 ? profiles.value[0] : undefined))
-const providerIdentity = computed(() => mediaProfile.value
-  ? t('common:inlineAgentChat.providerIdentity', { name: mediaProfile.value.name, model: mediaProfile.value.model, interpolation: { escapeValue: false } })
-  : '')
+const mediaCapabilities = computed(() => thread.value?.session.mediaCapabilities ?? undefined)
 const mediaRefreshing = ref(false)
 const refreshAfterMedia = async () => {
   mediaRefreshing.value = true
   try { await agents.refreshThread() } finally { mediaRefreshing.value = false }
 }
-const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
+const providerAvailable = computed(() => props.providerEnabled)
 const workspaceReady = computed(() => agents.isWorkspaceReady())
 const admissionBlocked = computed(() => initializationAdmissionFailure.value !== null)
 const admissionRequiredMessage = computed(() => t(initializationAdmissionFailure.value === 'authentication'
@@ -962,52 +912,6 @@ const submitUnavailableReason = computed(() => admissionBlocked.value
 const starterUnavailableReason = computed(() => promptSubmissionPending.value
   ? t('common:inlineAgentChat.sendingMessage')
   : !canSubmit.value ? submitUnavailableReason.value : '')
-const providerSelectionUnavailableReason = computed(() => {
-  if (composer.value?.isMediaBusy() || mediaRefreshing.value) return t('common:inlineAgentChat.providerWaitForMedia')
-  if (composer.value?.hasUnsentMedia()) return t('common:inlineAgentChat.providerRemoveAttachments')
-  if (providerSelectionPending.value) return t('common:inlineAgentChat.providerChanging')
-  if (promptSubmissionPending.value) return t('common:inlineAgentChat.sendingMessage')
-  if (creatingRetention.value || keepingConversation.value) return t('common:inlineAgentChat.waitCurrentConversationUpdate')
-  return canSubmit.value ? '' : submitUnavailableReason.value || t('common:inlineAgentChat.providerConversationRequired')
-})
-const selectProvider = async (providerProfileId: string | null): Promise<void> => {
-  if (!networkActionAllowed() || providerSelectionUnavailableReason.value || !thread.value) return
-  if (providerProfileId !== null && !profiles.value.some(profile => profile.id === providerProfileId)) return
-  if ((thread.value.session.providerProfileId ?? null) === providerProfileId) { providerMenuOpen.value = false; return }
-  const generation = componentGeneration
-  const selectionGeneration = ++providerSelectionGeneration
-  const ownerId = props.ownerId
-  const sessionId = thread.value.session.id
-  const workspaceVersion = agents.workspaceVersion
-  const ownerGeneration = agents.ownerGeneration
-  const isSelectionCurrent = (): boolean => isComponentCurrent(generation, ownerId) &&
-    providerSelectionGeneration === selectionGeneration && thread.value?.session.id === sessionId &&
-    agents.workspaceVersion === workspaceVersion && agents.ownerGeneration === ownerGeneration
-  providerSelectionPending.value = true
-  providerMenuOpen.value = false
-  try {
-    const updated = await agents.setProfile(providerProfileId)
-    if (!isSelectionCurrent() || !updated || (thread.value?.session.providerProfileId ?? null) !== providerProfileId) return
-    setSessionNotice(t('common:inlineAgentChat.providerChanged', { identity: providerIdentity.value, interpolation: { escapeValue: false } }))
-  } catch (value) {
-    if (isSelectionCurrent()) agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.providerChangeFailed')
-  } finally {
-    if (providerSelectionGeneration === selectionGeneration) providerSelectionPending.value = false
-  }
-}
-watch([
-  () => props.ownerId,
-  () => currentPage.value?.id,
-  () => currentPage.value?.locale,
-  () => thread.value?.session.id,
-  () => agents.workspaceVersion,
-  () => agents.ownerGeneration,
-  () => workspaceDisposed.value
-], () => {
-  providerMenuOpen.value = false
-  providerSelectionPending.value = false
-  providerSelectionGeneration += 1
-}, { flush: 'sync' })
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const isTemporary = computed(() => thread.value?.session.retention === 'temporary' && !thread.value.session.folderId)
@@ -2027,7 +1931,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   min-width: 0;
 }
 
-.inline-agent__provider-identity,
 .inline-agent__session-title {
   overflow: hidden;
   margin: 0;
@@ -2037,7 +1940,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 
 /* The brand name remains the workspace's accessible label; the header shows
-   the conversation title beside its resolved provider. */
+   the conversation title. */
 .inline-agent__heading h2 {
   position: absolute;
   width: 1px;
@@ -2062,39 +1965,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   line-height: 1.2;
 }
 
-.inline-agent__provider-identity {
-  min-width: 0;
-  max-width: 24rem;
-  flex: 0 1 auto;
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  line-height: 1.4;
-}
-
-.inline-agent__provider-trigger {
-  min-width: 0;
-  max-width: 24rem;
-  height: auto !important;
-  flex: 0 1 auto;
-  padding: var(--wiki-space-1) var(--wiki-space-2);
-  color: var(--wiki-text-muted);
-  text-transform: none;
-  letter-spacing: normal;
-}
-.inline-agent__provider-trigger :deep(.v-btn__content) {
-  min-width: 0;
-  max-width: 100%;
-  gap: var(--wiki-space-1);
-}
-.inline-agent__provider-help {
-  max-width: 24rem;
-  margin: 0;
-  padding: var(--wiki-space-2) var(--wiki-space-4);
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  line-height: 1.4;
-}
 
 .inline-agent__panel-actions {
   display: flex;
@@ -3117,13 +2987,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     align-items: flex-start;
     gap: 0;
   }
-  .inline-agent__session-title,
-  .inline-agent__provider-identity,
-  .inline-agent__provider-trigger {
+  .inline-agent__session-title {
     max-width: 100%;
-  }
-  .inline-agent__provider-trigger {
-    padding: 0;
   }
 
   .inline-agent__panel-actions {

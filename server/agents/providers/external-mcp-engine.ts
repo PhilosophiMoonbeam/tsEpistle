@@ -59,6 +59,7 @@ const contentFor = (result: AxMCPToolCallResult): AxFunctionResultContent =>
           ? { type: 'text', text: content.resource.text }
           : { type: 'file', data: content.resource.blob, filename: content.resource.uri, mimeType: content.resource.mimeType ?? 'application/octet-stream' }
     }
+    throw new AgentRepositoryError('EXTERNAL_MCP_RESULT_INVALID', 'External MCP returned unsupported content', 502)
   })
 
 /** Reject unsupported remote media rather than dropping content or switching a paid run. */
@@ -88,14 +89,14 @@ export const assertExternalMcpResultMedia = (
     )
       throw new AgentRepositoryError(
         'EXTERNAL_MCP_MODALITY_UNSUPPORTED',
-        'The selected model cannot consume this external MCP media result; the operation was not retried.',
+        'The agent cannot consume this external MCP media result; the operation was not retried.',
         409
       )
     const data = part.type === 'image' ? part.image : part.data
     if ('maxSize' in capability && typeof capability.maxSize === 'number' && Buffer.byteLength(data, 'base64') > capability.maxSize)
       throw new AgentRepositoryError(
         'EXTERNAL_MCP_MODALITY_UNSUPPORTED',
-        'External MCP media exceeds the selected model input limit; the operation was not retried.',
+        'External MCP media exceeds the agent input limit; the operation was not retried.',
         409
       )
   }
@@ -176,36 +177,39 @@ export class ExternalMcpEngineContext {
       const client = this.#lease.clients.find(client => client.getNamespace() === server.namespace)
       const tool = client?.getTools().find(tool => tool.name === native.name)
       if (!client || !tool) fail('EXTERNAL_MCP_ACCESS_DENIED')
-      const blocking: AxFunction = tool.execution?.taskSupport !== 'required' ? native : {
-        ...native,
-        func: async (args, extra) => {
-          // The native required-task binding creates and records the task, including
-          // callbacks/continuation context. Never repeat that side-effecting call.
-          const signal = AbortSignal.any([
-            this.#signal, this.#lifetime.signal, AbortSignal.timeout(EXTERNAL_MCP_LIMITS.timeoutMs),
-            ...(extra?.abortSignal ? [extra.abortSignal] : [])
-          ])
-          const outcome: unknown = await native.func(args, { ...extra, abortSignal: signal })
-          const handle = client.getEra() === 'legacy' && outcome && typeof outcome === 'object' && 'task' in outcome
-            ? outcome.task
-            : outcome
-          if (handle && typeof handle === 'object' && 'taskId' in handle && typeof handle.taskId === 'string') {
-            const taskId = handle.taskId
-            if (!client.getKnownTasks().some(task => task.taskId === taskId)) fail('EXTERNAL_MCP_CALL_FAILED')
-            try {
-              return await client.waitForTask<AxMCPToolCallResult>(taskId, {
-                signal,
-                timeoutMs: EXTERNAL_MCP_LIMITS.timeoutMs
-              })
-            } catch {
-              this.#signal.throwIfAborted()
-              throw new AgentRepositoryError('EXTERNAL_MCP_CALL_FAILED', 'External MCP task did not complete; the operation was not retried', 502)
+      const blocking: AxFunction =
+        tool.execution?.taskSupport !== 'required'
+          ? native
+          : {
+              ...native,
+              func: async (args, extra) => {
+                // The native required-task binding creates and records the task, including
+                // callbacks/continuation context. Never repeat that side-effecting call.
+                const signal = AbortSignal.any([
+                  this.#signal,
+                  this.#lifetime.signal,
+                  AbortSignal.timeout(EXTERNAL_MCP_LIMITS.timeoutMs),
+                  ...(extra?.abortSignal ? [extra.abortSignal] : [])
+                ])
+                const outcome: unknown = await native.func(args, { ...extra, abortSignal: signal })
+                const handle = client.getEra() === 'legacy' && outcome && typeof outcome === 'object' && 'task' in outcome ? outcome.task : outcome
+                if (handle && typeof handle === 'object' && 'taskId' in handle && typeof handle.taskId === 'string') {
+                  const taskId = handle.taskId
+                  if (!client.getKnownTasks().some(task => task.taskId === taskId)) fail('EXTERNAL_MCP_CALL_FAILED')
+                  try {
+                    return await client.waitForTask<AxMCPToolCallResult>(taskId, {
+                      signal,
+                      timeoutMs: EXTERNAL_MCP_LIMITS.timeoutMs
+                    })
+                  } catch {
+                    this.#signal.throwIfAborted()
+                    throw new AgentRepositoryError('EXTERNAL_MCP_CALL_FAILED', 'External MCP task did not complete; the operation was not retried', 502)
+                  }
+                }
+                if (client.getEra() === 'legacy') fail('EXTERNAL_MCP_CALL_FAILED')
+                return outcome // A modern required binding may complete synchronously.
+              }
             }
-          }
-          if (client.getEra() === 'legacy') fail('EXTERNAL_MCP_CALL_FAILED')
-          return outcome // A modern required binding may complete synchronously.
-        }
-      }
       bindings.set(providerName, {
         providerName,
         actionName,

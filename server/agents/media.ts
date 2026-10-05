@@ -4,7 +4,12 @@ import { chmod, mkdtemp, open, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prepareAgentPdfFromPath, type PreparedAgentPdf } from './pdf-preparation.ts'
-import { AGENT_ATTACHMENT_MAX_BYTES, AGENT_PDF_ATTACHMENT_MAX_BYTES, AGENT_GENERATED_VIDEO_MAX_BYTES, AGENT_GENERATED_AUDIO_MAX_BYTES } from '../../shared/agents/media-limits.ts'
+import {
+  AGENT_ATTACHMENT_MAX_BYTES,
+  AGENT_PDF_ATTACHMENT_MAX_BYTES,
+  AGENT_GENERATED_VIDEO_MAX_BYTES,
+  AGENT_GENERATED_AUDIO_MAX_BYTES
+} from '../../shared/agents/media-limits.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { AgentMediaView } from '../../shared/agents/contracts.ts'
@@ -34,9 +39,11 @@ export interface AgentMediaSource extends Omit<AgentMediaPayload, 'payload'> {
 }
 export const loadAgentMediaPayload = async (source: AgentMediaSource, signal: AbortSignal): Promise<Buffer> => {
   signal.throwIfAborted()
-  if (source.byteLength > AGENT_ATTACHMENT_MAX_BYTES) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'This media operation accepts files up to 10 MB.', 413)
-  const payload = source.payload ?? await source.loadPayload?.(signal)
-  if (!payload || payload.length !== Number(source.byteLength ?? payload.length)) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+  if (source.byteLength > AGENT_ATTACHMENT_MAX_BYTES)
+    throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'This media operation accepts files up to 10 MB.', 413)
+  const payload = source.payload ?? (await source.loadPayload?.(signal))
+  if (!payload || payload.length !== Number(source.byteLength ?? payload.length))
+    throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
   return payload
 }
 export interface AgentMediaRow extends AgentMediaPayload {
@@ -50,7 +57,9 @@ export interface AgentMediaRow extends AgentMediaPayload {
   readonly promptTokens: number | null
   readonly detachedAt: Date | string | null
 }
-export const projectAgentMedia = (row: Pick<AgentMediaRow, 'id' | 'kind' | 'filename' | 'mimeType' | 'byteLength' | 'expiresAt' | 'detachedAt'>): AgentMediaView => ({
+export const projectAgentMedia = (
+  row: Pick<AgentMediaRow, 'id' | 'kind' | 'filename' | 'mimeType' | 'byteLength' | 'expiresAt' | 'detachedAt'>
+): AgentMediaView => ({
   id: row.id,
   kind: row.kind,
   filename: row.filename,
@@ -117,7 +126,7 @@ export const assertAgentMediaCapability = async (
     /* fail closed */
   }
   if (!row || row.transportKind !== 'gemini-api' || !official || !config?.media?.[kind])
-    throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'This media feature is not enabled for the selected provider.', 403)
+    throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'This media feature is not enabled for your Agent.', 403)
 }
 export const storeAgentMedia = async (
   db: Knex,
@@ -188,7 +197,7 @@ export const storeAgentMedia = async (
         'Your saved chat attachments have reached the storage limit. Delete unused conversations to free space.',
         413
       )
-    const globalUsage = await tx('agentMedia').sum('byteLength as bytes').first() as { bytes: string | number | null }
+    const globalUsage = (await tx('agentMedia').sum('byteLength as bytes').first()) as { bytes: string | number | null }
     if (Number(globalUsage.bytes ?? 0) + input.payload.length > AGENT_MEDIA_GLOBAL_MAX_BYTES)
       throw new AgentRepositoryError('AGENT_MEDIA_QUOTA', 'The wiki attachment storage limit has been reached. Ask an administrator to free storage.', 413)
     const row = {
@@ -256,23 +265,46 @@ export const bindAgentMedia = async (
 }
 
 export type AgentMediaMetadata = Omit<AgentMediaRow, 'payload'>
-export const AGENT_MEDIA_METADATA_COLUMNS = ['id', 'ownerId', 'sessionId', 'messageId', 'runId', 'kind', 'mimeType', 'filename', 'byteLength', 'sha256', 'expiresAt', 'promptTokens', 'detachedAt'] as const
+export const AGENT_MEDIA_METADATA_COLUMNS = [
+  'id',
+  'ownerId',
+  'sessionId',
+  'messageId',
+  'runId',
+  'kind',
+  'mimeType',
+  'filename',
+  'byteLength',
+  'sha256',
+  'expiresAt',
+  'promptTokens',
+  'detachedAt'
+] as const
 export const getOwnedAgentMediaMetadata = async (db: Knex, ownerId: number, id: string): Promise<AgentMediaMetadata> => {
-  const row = await db('agentMedia').where({ id, ownerId }).first(...AGENT_MEDIA_METADATA_COLUMNS) as AgentMediaMetadata | undefined
-  if (!row || (row.expiresAt !== null && new Date(row.expiresAt).valueOf() <= Date.now())) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Attachment was not found.', 404)
+  const row = (await db('agentMedia')
+    .where({ id, ownerId })
+    .first(...AGENT_MEDIA_METADATA_COLUMNS)) as AgentMediaMetadata | undefined
+  if (!row || (row.expiresAt !== null && new Date(row.expiresAt).valueOf() <= Date.now()))
+    throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Attachment was not found.', 404)
   await getOwnedAgentSession(db, ownerId, row.sessionId)
   return row
 }
 
 /** Chunked bytea access prevents a large document from becoming an application-sized buffer. */
-export const stageOwnedAgentMedia = async (db: Knex, ownerId: number, id: string, signal: AbortSignal): Promise<{ path: string; media: AgentMediaMetadata; cleanup: () => Promise<void> }> => {
+export const stageOwnedAgentMedia = async (
+  db: Knex,
+  ownerId: number,
+  id: string,
+  signal: AbortSignal
+): Promise<{ path: string; media: AgentMediaMetadata; cleanup: () => Promise<void> }> => {
   signal.throwIfAborted()
   const media = await getOwnedAgentMediaMetadata(db, ownerId, id)
-  if (Number(media.byteLength) < 1 || Number(media.byteLength) > AGENT_MEDIA_MAX_BYTES) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+  if (Number(media.byteLength) < 1 || Number(media.byteLength) > AGENT_MEDIA_MAX_BYTES)
+    throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
   const directory = await mkdtemp(join(tmpdir(), 'wiki-agent-original-'))
   await chmod(directory, 0o700)
   let cleanupPromise: Promise<void> | undefined
-  const cleanup = () => cleanupPromise ??= rm(directory, { recursive: true, force: true })
+  const cleanup = () => (cleanupPromise ??= rm(directory, { recursive: true, force: true }))
   const path = join(directory, 'input.pdf')
   try {
     const file = await open(path, 'wx', 0o600)
@@ -282,58 +314,100 @@ export const stageOwnedAgentMedia = async (db: Knex, ownerId: number, id: string
         signal.throwIfAborted()
         const length = Math.min(1024 * 1024, Number(media.byteLength) - offset)
         const expression = db.client.config.client === 'pg' ? 'substring(?? from ? for ?) as chunk' : 'substr(??, ?, ?) as chunk'
-        const row = await db('agentMedia').where({ id, ownerId, sessionId: media.sessionId, sha256: media.sha256, byteLength: media.byteLength }).first(db.raw(expression, ['payload', offset + 1, length])) as { chunk: Uint8Array } | undefined
-        if (!row || !(row.chunk instanceof Uint8Array) || row.chunk.length !== length) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+        const row = (await db('agentMedia')
+          .where({ id, ownerId, sessionId: media.sessionId, sha256: media.sha256, byteLength: media.byteLength })
+          .first(db.raw(expression, ['payload', offset + 1, length]))) as { chunk: Uint8Array } | undefined
+        if (!row || !(row.chunk instanceof Uint8Array) || row.chunk.length !== length)
+          throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
         digest.update(row.chunk)
         await file.writeFile(row.chunk)
       }
       if (digest.digest('hex') !== media.sha256) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
-    } finally { await file.close() }
+    } finally {
+      await file.close()
+    }
     signal.throwIfAborted()
     await getOwnedAgentMediaMetadata(db, ownerId, id)
     return { path, media, cleanup }
-  } catch (error) { await cleanup(); throw error }
+  } catch (error) {
+    await cleanup()
+    throw error
+  }
 }
 
 export const ownedAgentMediaSource = (db: Knex, ownerId: number, sessionId: string, row: AgentMediaMetadata): AgentMediaSource => ({
-  id: row.id, filename: row.filename, mimeType: row.mimeType, byteLength: Number(row.byteLength),
+  id: row.id,
+  filename: row.filename,
+  mimeType: row.mimeType,
+  byteLength: Number(row.byteLength),
   promptTokens: row.promptTokens === null ? undefined : Number(row.promptTokens),
   recordPromptTokens: async tokens => {
     if (!Number.isSafeInteger(tokens) || tokens < 1 || Number(row.byteLength) < 1) return
-    await db('agentMedia').where({ id: row.id, ownerId, sessionId, sha256: row.sha256, byteLength: Number(row.byteLength) }).update({ promptTokens: tokens })
+    await db('agentMedia')
+      .where({ id: row.id, ownerId, sessionId, sha256: row.sha256, byteLength: Number(row.byteLength) })
+      .update({ promptTokens: tokens })
   },
   loadPayload: async signal => {
     signal.throwIfAborted()
-    if (Number(row.byteLength) > AGENT_ATTACHMENT_MAX_BYTES) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Use document preparation for large PDFs.', 413)
+    if (Number(row.byteLength) > AGENT_ATTACHMENT_MAX_BYTES)
+      throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Use document preparation for large PDFs.', 413)
     const fresh = await getOwnedAgentMedia(db, ownerId, row.id)
-    if (fresh.sessionId !== sessionId || fresh.sha256 !== row.sha256) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+    if (fresh.sessionId !== sessionId || fresh.sha256 !== row.sha256)
+      throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
     signal.throwIfAborted()
     return fresh.payload
   },
-  ...(row.mimeType === 'application/pdf' ? { preparePdf: async (signal: AbortSignal) => getCachedAgentPdf(db, { id: row.id, ownerId, sessionId, sha256: row.sha256, byteLength: Number(row.byteLength) }, signal, async () => {
-    const staged = await stageOwnedAgentMedia(db, ownerId, row.id, signal)
-    try {
-      if (staged.media.sessionId !== sessionId || staged.media.sha256 !== row.sha256) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
-      return await prepareAgentPdfFromPath(staged.path, signal)
-    } finally { await staged.cleanup() }
-  }) } : {})
+  ...(row.mimeType === 'application/pdf'
+    ? {
+        preparePdf: async (signal: AbortSignal) =>
+          getCachedAgentPdf(db, { id: row.id, ownerId, sessionId, sha256: row.sha256, byteLength: Number(row.byteLength) }, signal, async () => {
+            const staged = await stageOwnedAgentMedia(db, ownerId, row.id, signal)
+            try {
+              if (staged.media.sessionId !== sessionId || staged.media.sha256 !== row.sha256)
+                throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+              return await prepareAgentPdfFromPath(staged.path, signal)
+            } finally {
+              await staged.cleanup()
+            }
+          })
+      }
+    : {})
 })
 
 /** Reads only the requested immutable bytea range, never a full video-sized Buffer. */
-export async function* readOwnedAgentMediaRange(db: Knex, ownerId: number, media: AgentMediaMetadata, start: number, end: number, signal: AbortSignal): AsyncGenerator<Buffer> {
+export async function* readOwnedAgentMediaRange(
+  db: Knex,
+  ownerId: number,
+  media: AgentMediaMetadata,
+  start: number,
+  end: number,
+  signal: AbortSignal
+): AsyncGenerator<Buffer> {
   const fresh = await getOwnedAgentMediaMetadata(db, ownerId, media.id)
-  if (fresh.sha256 !== media.sha256 || Number(fresh.byteLength) !== Number(media.byteLength) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end >= Number(media.byteLength))
+  if (
+    fresh.sha256 !== media.sha256 ||
+    Number(fresh.byteLength) !== Number(media.byteLength) ||
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 0 ||
+    end < start ||
+    end >= Number(media.byteLength)
+  )
     throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
   const digest = start === 0 && end === Number(media.byteLength) - 1 ? createHash('sha256') : null
   for (let offset = start; offset <= end; offset += 1024 * 1024) {
     signal.throwIfAborted()
     const length = Math.min(1024 * 1024, end - offset + 1)
     const expression = db.client.config.client === 'pg' ? 'substring(?? from ? for ?) as chunk' : 'substr(??, ?, ?) as chunk'
-    const row = await db('agentMedia').where({ id: media.id, ownerId, sessionId: media.sessionId, sha256: media.sha256, byteLength: media.byteLength }).first(db.raw(expression, ['payload', offset + 1, length])) as { chunk: Uint8Array } | undefined
-    if (!row || !(row.chunk instanceof Uint8Array) || row.chunk.byteLength !== length) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+    const row = (await db('agentMedia')
+      .where({ id: media.id, ownerId, sessionId: media.sessionId, sha256: media.sha256, byteLength: media.byteLength })
+      .first(db.raw(expression, ['payload', offset + 1, length]))) as { chunk: Uint8Array } | undefined
+    if (!row || !(row.chunk instanceof Uint8Array) || row.chunk.byteLength !== length)
+      throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
     signal.throwIfAborted()
     digest?.update(row.chunk)
-    if (digest && offset + length > end && digest.digest('hex') !== media.sha256) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+    if (digest && offset + length > end && digest.digest('hex') !== media.sha256)
+      throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
     yield Buffer.isBuffer(row.chunk) ? row.chunk : Buffer.from(row.chunk)
   }
 }

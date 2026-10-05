@@ -9,7 +9,7 @@ import {
   validateDecisionProviderConfig,
   type DecisionProviderRuntime
 } from '../../agents/decision-providers.ts'
-import { DecisionUsageSchema, TYPESAFE_JEV_PRICING, type DecisionRequest } from '../../../shared/agents/decision-providers.ts'
+import { DecisionProviderWriteSchema, DecisionUsageSchema, TYPESAFE_JEV_PRICING, type DecisionRequest } from '../../../shared/agents/decision-providers.ts'
 
 const publicDns = (async () => [{ address: '93.184.216.34', family: 4 }]) as unknown as typeof lookup
 const request: DecisionRequest = {
@@ -103,6 +103,43 @@ describe('decision provider protocols', () => {
     })
   })
 
+  for (const check of [false, true]) {
+    it(`rejects an undiscovered Jev pin when inference reports a different version (check=${check})`, async () => {
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(url =>
+          Response.json(
+            url.pathname.endsWith('/models') ? { models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] } : nativePayload()
+          )
+        )
+      })
+      const error = await client
+        .execute({ ...native, config: { ...native.config, model: 'jev-9.99.0' } }, 'fixture-secret', request, { check })
+        .catch(value => value)
+      expect(error).toBeInstanceOf(DecisionProviderFailure)
+      expect(error).toMatchObject({
+        code: 'DECISION_MODEL_MISMATCH',
+        providerRevision: 3,
+        usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105, totalTokensSource: 'derived' },
+        estimatedCostMicros: 5
+      })
+      expect(JSON.stringify(error)).not.toContain('fixture-secret')
+    })
+  }
+
+  for (const model of ['jev-latest', 'jev-preview', 'unrelated-model']) {
+    it(`rejects a native alias that does not report a concrete Jev version: ${model}`, async () => {
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => Response.json({ ...nativePayload(), model }))
+      })
+      await expect(client.execute(native, 'fixture', request)).rejects.toMatchObject({
+        code: 'DECISION_MODEL_MISMATCH',
+        usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105, totalTokensSource: 'derived' }
+      })
+    })
+  }
+
   for (const dialect of ['chat-completions', 'completions'] as const) {
     it(`supports the administrator-selected ${dialect} contract without requiring sampling parameters`, async () => {
       const paths: string[] = []
@@ -154,6 +191,87 @@ describe('decision provider protocols', () => {
         estimatedCost: null,
         estimatedCostMicros: null
       })
+    })
+  }
+
+  it('preserves custom alias resolution as observed model identity without assigning a price', async () => {
+    const client = new DecisionProviderClient({
+      resolve: publicDns,
+      fetch: fakeFetch((url, init) => {
+        if (url.pathname.endsWith('/models')) return Response.json({ data: [{ id: 'decision-model' }] })
+        expect(JSON.parse(String(init.body)).model).toBe('decision-model')
+        return Response.json({
+          id: 'alias-fixture',
+          object: 'chat.completion',
+          created: 0,
+          model: 'decision-model-2026-09-10',
+          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(answer) } }],
+          usage: { prompt_tokens: 100, completion_tokens: 10 }
+        })
+      })
+    })
+    expect(await client.execute(custom('chat-completions'), 'fixture', request, { check: true })).toMatchObject({
+      model: 'decision-model-2026-09-10',
+      availableModels: ['decision-model'],
+      estimatedCost: null
+    })
+  })
+
+  for (const model of ['', ' decision-model', 'decision-model\ninjected', 'decision-fixture-secret']) {
+    it(`rejects unsafe observed custom model identity ${JSON.stringify(model)} while retaining usage`, async () => {
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() =>
+          Response.json({
+            id: 'invalid-model',
+            object: 'chat.completion',
+            created: 0,
+            model,
+            choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(answer) } }],
+            usage: { prompt_tokens: 100, completion_tokens: 10 }
+          })
+        )
+      })
+      const error = await client.execute(custom('chat-completions'), 'fixture-secret', request).catch(value => value)
+      expect(error).toBeInstanceOf(DecisionProviderFailure)
+      expect(error).toMatchObject({ usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110, totalTokensSource: 'derived' } })
+      expect(JSON.stringify(error)).not.toContain('fixture-secret')
+    })
+  }
+
+  for (const snapshot of [native, custom('chat-completions')]) {
+    it(`does not publish credential-reflecting ${snapshot.config.kind} model catalogs`, async () => {
+      let calls = 0
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => {
+          calls++
+          return Response.json(
+            snapshot.config.kind === 'typesafe'
+              ? { models: [{ name: 'fixture-secret', description: 'Reflected token', release_date: '2026-09-10' }] }
+              : { data: [{ id: 'fixture-secret' }] }
+          )
+        })
+      })
+      const error = await client.execute(snapshot, 'fixture-secret', request, { check: true }).catch(value => value)
+      expect(error).toMatchObject({ code: 'INVALID_DECISION_RESPONSE', usage: null })
+      expect(JSON.stringify(error)).not.toContain('fixture-secret')
+      expect(calls).toBe(1)
+    })
+  }
+
+  for (const credential of [' fixture', 'fixture ', 'fixture\nkey', 'fixture key', 'fixtureékey', 'x'.repeat(65_537)]) {
+    it(`rejects an unusable bearer credential before DNS or network (length=${credential.length})`, async () => {
+      let calls = 0
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => {
+          calls++
+          return Response.json(nativePayload())
+        })
+      })
+      await expect(client.execute(native, credential, request)).rejects.toMatchObject({ code: 'DECISION_CREDENTIAL_UNAVAILABLE', status: 503, usage: null })
+      expect(calls).toBe(0)
     })
   }
 
@@ -242,9 +360,10 @@ describe('decision provider protocols', () => {
         return Response.json({ models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] })
       })
     })
-    await expect(
-      client.execute({ ...native, config: { ...native.config, model: 'unavailable-alias' } }, 'fixture', request, { check: true })
-    ).rejects.toMatchObject({ code: 'DECISION_MODEL_UNAVAILABLE', usage: null })
+    await expect(client.execute({ ...native, config: { ...native.config, model: 'jev-preview' } }, 'fixture', request, { check: true })).rejects.toMatchObject({
+      code: 'DECISION_MODEL_UNAVAILABLE',
+      usage: null
+    })
     expect(requests).toBe(1)
   })
 
@@ -401,6 +520,12 @@ describe('decision validation and cost semantics', () => {
     }
     expect(() => validateDecisionProviderConfig({ kind: 'typesafe', model: 'jev-latest', baseUrl: 'https://evil.example' })).toThrow()
     expect(() => validateDecisionProviderConfig({ ...custom('chat-completions').config, dialect: 'automatic' })).toThrow()
+    for (const model of ['gpt-4.1', 'jev', 'jev-1.13', 'jev-future', 'jev-latest/other']) {
+      expect(() => validateDecisionProviderConfig({ kind: 'typesafe', model })).toThrow()
+    }
+    for (const secretValue of ['fixture key', 'fixture\nkey', 'fixtureékey']) {
+      expect(DecisionProviderWriteSchema.safeParse({ displayName: 'Invalid credential', config: native.config, secretValue }).success).toBe(false)
+    }
   })
   it('never assumes a price for unpriced providers and safely rounds estimated USD up to micros', () => {
     expect(estimateDecisionCost(null, { inputTokens: 100, outputTokens: 10, totalTokens: 110, totalTokensSource: 'derived' })).toBeNull()
