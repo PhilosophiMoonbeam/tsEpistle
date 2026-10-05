@@ -760,6 +760,70 @@ describe('inline Ask mode contract', () => {
       else globalThis.window = originalWindow
     }
   })
+  test('removes a downloaded result after a committed corpus change without editing its query', async () => {
+    const scheduler = useSearchScheduler()
+    window.location = { origin: 'https://wiki.example.test' }
+    try {
+      let revision = 1
+      let snapshots = [{
+        schemaVersion: 1, siteId: window.location.origin, pageId: 1,
+        locale: 'en', path: 'downloaded', canonicalPath: '/en/downloaded',
+        title: 'Saved specimen', description: '', searchText: 'downloaded',
+        byteSize: 128, capturedAt: '2026-01-01T00:00:00.000Z',
+        snapshot: { expiresAt: null }
+      }]
+      const replacementFinished = deferred()
+      const methods = compileSearchMethods(search, ['handleOfflineStorageChange', 'queueSearch', 'runSearch', 'runOfflineSearch'], {
+        openOfflineStorage: async () => ({
+          readSnapshotCorpus: async () => ({ snapshots, corpusRevision: revision, sessionGeneration: 1 }),
+          currentCorpusRevision: async () => revision,
+          currentSessionGeneration: async () => 1,
+          close: () => {}
+        }),
+        emptySearchResponse: () => ({ results: [], suggestions: [], totalHits: 0 }),
+        getErrorMessage: value => String(value),
+        currentOfflineReadingHandle: () => null,
+        currentOfflineReadingEpoch: () => 0,
+        isOfflineSnapshotRecord: () => true,
+        isOfflineSnapshotExpired: () => false,
+        toOfflineSearchDocument: ({ snapshot: _snapshot, ...value }) => value,
+        prepareOfflineSearchCorpus,
+        searchPreparedOfflineDocumentsAsync,
+        OFFLINE_SEARCH_RESULT_LIMIT: 50
+      })
+      const state = {
+        search: 'downloaded', searchMode: 'search', offlineSearchActive: true,
+        offlineSearchCorpus: null, offlineSearchCorpusRevision: null,
+        offlineSearchCorpusSessionGeneration: null, offlineSearchCorpusExpiresAt: null,
+        response: { results: [], suggestions: [], totalHits: 0 }, responseKey: '',
+        searchRequestId: 1, searchRequestKey: 'same-query',
+        searchAbortController: null, moreAbortController: null, searchTimer: null,
+        searchIsLoading: false, searchError: '', cursor: -1,
+        queueSearch(query) { return methods.queueSearch.call(this, query) },
+        async runSearch(...args) {
+          await methods.runSearch.apply(this, args)
+          replacementFinished.resolve()
+        },
+        runOfflineSearch(...args) { return methods.runOfflineSearch.apply(this, args) }
+      }
+      await state.runOfflineSearch(state.search, state.searchRequestKey, state.searchRequestId)
+      expect(state.response.results.map(result => result.id)).toEqual([1])
+      snapshots = []
+      revision += 1
+      methods.handleOfflineStorageChange.call(state, { kind: 'corpus', corpusRevision: revision, sessionGeneration: 1 })
+      expect(state.response.results).toEqual([])
+      scheduler.runNext()
+      await replacementFinished.promise
+      expect(state.search).toBe('downloaded')
+      expect(state.responseQuery).toBe('downloaded')
+      expect(state.responseKey).toBe('same-query')
+      expect(state.response.results).toEqual([])
+      expect(state.offlineCorpusCount).toBe(0)
+      expect(state.searchError).toBe('')
+    } finally {
+      scheduler.restore()
+    }
+  })
   test.each(['corpus', 'query', 'session', 'reading epoch', 'mode'])('replaces a deferred stale corpus only under current authority: %s', async change => {
     const scheduler = useSearchScheduler()
     window.location = { origin: 'https://wiki.example.test' }
