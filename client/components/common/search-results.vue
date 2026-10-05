@@ -302,7 +302,7 @@ import { emitSearchFocus, onSearchEnter, onSearchExit, onSearchMove, offSearchEn
 import { useAgentsStore } from '../../store/agents.ts'
 import { isAgentSessionId } from '../../helpers/agent-chat-pin.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
-import { openOfflineStorage } from '../../helpers/offline-storage.ts'
+import { openOfflineStorage, subscribeOfflineStorageChanges } from '../../helpers/offline-storage.ts'
 import { readPrivateCorpus } from '../../helpers/offline-crypto.ts'
 import {
   OFFLINE_SEARCH_RESULT_LIMIT,
@@ -318,6 +318,7 @@ import {
   OFFLINE_READING_STATE_EVENT,
   type OfflineReadingHandleV1
 } from '../../helpers/offline-session.ts'
+import type { OfflineCorpusNotice } from '../../../shared/offline.ts'
 import {
   OfflinePrivateSearchDocumentV1Schema,
   type OfflineSearchDocumentV1,
@@ -455,6 +456,7 @@ export default defineComponent({
       agentResumeSessionId: null as string | null,
       agentOpeningPage: null as AgentCurrentPageHint | null,
       agentOpeningPageCaptured: false,
+      offlineStorageChangesUnsubscribe: null as (() => void) | null,
       searchAbortController: null as AbortController | null
     }
   },
@@ -772,8 +774,11 @@ export default defineComponent({
     document.addEventListener('keydown', this.handleSearchPreviewShortcut, true)
     if (this.searchIsFocused) void this.activateAgentModal()
     window.addEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
+    this.offlineStorageChangesUnsubscribe = subscribeOfflineStorageChanges(this.handleOfflineStorageChange)
   },
   beforeUnmount() {
+    this.offlineStorageChangesUnsubscribe?.()
+    this.offlineStorageChangesUnsubscribe = null
     this.searchRequestId += 1
     this.searchRetryId += 1
     this.directPromptHandoffId += 1
@@ -988,6 +993,17 @@ export default defineComponent({
       this.pendingAskRestoreTarget = this.activeModalOpener()
       this.searchIsFocused = true
       this.searchMode = 'ask'
+    },
+    handleOfflineStorageChange(notice: OfflineCorpusNotice): void {
+      if (notice.kind !== 'corpus' || !this.offlineSearchActive || this.searchMode !== 'search') return
+      this.response = emptySearchResponse()
+      this.responseKey = ''
+      this.responseQuery = ''
+      this.responseScopeLabel = ''
+      this.cursor = -1
+      this.offlineCorpusCount = null
+      this.offlineResultsTruncated = false
+      this.queueSearch(this.search)
     },
     handleOfflineReadingStateChange(): void {
       this.searchRequestId += 1
