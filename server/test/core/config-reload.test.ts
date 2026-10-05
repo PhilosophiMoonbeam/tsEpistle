@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const signingConfiguration = {
   certs: { private: 'fixture-private-key', public: 'fixture-public-key' },
-  sessionSecret: 'fixture-session-secret'
+  sessionSecret: 'fixture-session-secret',
+  offlineDraftSecret: 'fixture-offline-draft-secret'
 }
 
 const configured = (value: Record<string, unknown>): Record<string, unknown> => ({ ...signingConfiguration, ...value })

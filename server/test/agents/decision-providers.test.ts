@@ -104,7 +104,7 @@ describe('decision provider protocols', () => {
   })
 
   for (const dialect of ['chat-completions', 'completions'] as const) {
-    it(`supports the administrator-selected ${dialect} contract without confusing native TypeSafe`, async () => {
+    it(`supports the administrator-selected ${dialect} contract without requiring sampling parameters`, async () => {
       const paths: string[] = []
       const client = new DecisionProviderClient({
         resolve: publicDns,
@@ -112,6 +112,10 @@ describe('decision provider protocols', () => {
           paths.push(url.pathname)
           if (url.pathname === '/v1/models') return Response.json({ data: [{ id: 'decision-model' }] })
           const body = JSON.parse(String(init.body))
+          // A compatible provider may reject sampling controls (for example,
+          // a reasoning model); both dialects must work without assuming support.
+          if (Object.hasOwn(body, 'temperature') || Object.hasOwn(body, 'top_p'))
+            return Response.json({ error: { code: 'unsupported_parameter' } }, { status: 400 })
           expect(body.model).toBe('decision-model')
           // Chat Completions defaults to nonstreaming when stream is omitted.
           expect(body.stream ?? false).toBe(false)

@@ -390,8 +390,7 @@ export class DecisionProviderClient {
               model: config.model,
               prompt: body.messages.map(message => `${String(message.role)}: ${String(message.content)}`).join('\n\n'),
               stream: false,
-              max_tokens: config.maxOutputTokens,
-              temperature: 0
+              max_tokens: config.maxOutputTokens
             })
           }
         }
@@ -487,11 +486,15 @@ export class DecisionProviderClient {
             confidence: { type: 'number', minimum: 0, maximum: 1 }
           }
         }
+        // Explicit undefined clears Ax's default sampling controls. Its exact-
+        // optional config types omit this runtime reset, so narrow only those
+        // two keys at the SDK boundary; all other config fields remain checked.
+        const nativeConfig = { model: config.model, stream: false, maxTokens: config.maxOutputTokens, temperature: undefined, topP: undefined }
         const service = ai({
           name: 'openai-compatible',
           apiKey: key,
           apiURL: config.baseUrl,
-          config: { model: config.model, stream: false, maxTokens: config.maxOutputTokens, temperature: 0 },
+          config: nativeConfig as Omit<typeof nativeConfig, 'temperature' | 'topP'>,
           // This explicit chat dialect requires native JSON Schema. Ax's generic
           // compatible profile is conservative; opt in only this configured model.
           ...(config.dialect === 'chat-completions'

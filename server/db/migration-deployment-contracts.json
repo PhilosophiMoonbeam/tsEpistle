@@ -122,6 +122,83 @@
       "runtimePostconditions": [
         "native-page-ratings-and-recovery"
       ]
+    },
+    "tsepistle-000049-agent-ax-gemini.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "native-gemini-profile-reconformance",
+        "historical-agent-content-retained"
+      ],
+      "runtimePostconditions": [
+        "native-gemini-generate-content",
+        "retired-live-google-search-disabled"
+      ]
+    },
+    "tsepistle-000050-agent-external-mcp.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "external-mcp-owner-isolation-and-grants"
+      ],
+      "runtimePostconditions": [
+        "guarded-native-external-mcp-discovery-and-invocation"
+      ]
+    },
+    "tsepistle-000051-agent-decision-providers.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "independent-decision-provider-configuration"
+      ],
+      "runtimePostconditions": [
+        "native-typesafe-environment-fallback-and-validated-usage"
+      ]
+    },
+    "tsepistle-000052-agent-routing.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "immutable-model-task-declarations-and-routing-policy"
+      ],
+      "runtimePostconditions": [
+        "eligible-owner-routing-and-accounted-safe-fallback"
+      ]
+    },
+    "tsepistle-000053-offline-draft-secret.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "independent-draft-root-preserves-legacy-ciphertext"
+      ],
+      "runtimePostconditions": [
+        "offline-draft-key-survives-session-protection-rotation"
+      ]
     }
   }
 }

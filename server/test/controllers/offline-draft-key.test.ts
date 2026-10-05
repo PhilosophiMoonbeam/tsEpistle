@@ -1,3 +1,4 @@
+import { createCipheriv, createDecipheriv } from 'node:crypto'
 import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { createOriginMiddleware } from '../../middlewares/origin.ts'
 import type * as OfflineDraftKeys from '../../helpers/offline-draft-keys.ts'
@@ -22,7 +23,8 @@ const runtime = {
   config: {
     host: 'https://wiki.example.test',
     offlineDraftSiteId: 'site-fixture',
-    sessionSecret: 'configured-session-secret'
+    offlineDraftSecret: 'configured-session-secret',
+    sessionSecret: 'session-protection-secret'
   },
   models: {
     users: {
@@ -202,7 +204,7 @@ describe('offline draft-key transport boundary', () => {
       }
     }
     const baseRuntime = {
-      config: { host: 'https://wiki.example.test', sessionSecret: 'configured-session-secret' },
+      config: { host: 'https://wiki.example.test', offlineDraftSecret: 'configured-session-secret' },
       models: { users }
     }
     const first = await actualOfflineDraftKeys.resolveOfflineDraftKeyContext(request as never, { ...baseRuntime, INSTANCE_ID: 'process-a' } as never)
@@ -289,6 +291,60 @@ describe('offline draft-key transport boundary', () => {
     })
     expect(decoded.keyBytes.byteLength).toBe(32)
     expect(next).not.toHaveBeenCalled()
+  })
+
+  it('decrypts a legacy offline draft with endpoint keys before and after session protection rotates', async () => {
+    resolveOfflineDraftKeyContext.mockImplementation(actualOfflineDraftKeys.resolveOfflineDraftKeyContext)
+    createOfflineDraftKeyFrame.mockImplementation(actualOfflineDraftKeys.createOfflineDraftKeyFrame)
+    const legacyKey = Buffer.from('63098f7357e0fe53824c85ccfc51a58e97ee2c4db1cfc16efb07af2e38986829', 'hex')
+    const nonce = Buffer.alloc(12, 1)
+    const plaintext = Buffer.from('A draft saved before the session protection secret changed.', 'utf8')
+    const cipher = createCipheriv('aes-256-gcm', legacyKey, nonce)
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
+    const authenticationTag = cipher.getAuthTag()
+    legacyKey.fill(0)
+    const request = {
+      authContext: { kind: 'user', userId: 7, principal: { id: 7, authVersion: 3 } },
+      get: vi.fn((name: string) => (name === 'origin' ? runtime.config.host : 'same-origin')),
+      method: 'POST',
+      path: '/_api/offline/draft-key'
+    }
+    const originalSessionSecret = runtime.config.sessionSecret
+    const origin = createOriginMiddleware(() => runtime.config.host)
+
+    try {
+      for (const sessionSecret of [runtime.config.offlineDraftSecret, 'rotated-session-protection-secret']) {
+        runtime.config.sessionSecret = sessionSecret
+        const res = response()
+        const admitted = vi.fn()
+        const next = vi.fn()
+
+        privacyHeaders(request, res, vi.fn())
+        origin(request as never, res as never, admitted)
+        sameOriginFetchSite(request, res, admitted)
+        expect(admitted).toHaveBeenCalledTimes(2)
+        await issueDraftKey(request, res, next)
+
+        expect(res.status).toHaveBeenCalledWith(200)
+        expect(next).not.toHaveBeenCalled()
+        const frame = res.send.mock.calls[0]?.[0]
+        expect(Buffer.isBuffer(frame)).toBe(true)
+        const decoded = decodeKeyFrame(frame)
+        expect(decoded.magic).toBe('TSODK1')
+        expect(decoded.context).toEqual({
+          canonicalOrigin: vectorContext.canonicalOrigin,
+          siteId: vectorContext.siteId,
+          accountId: BigInt(vectorContext.accountId),
+          authVersion: BigInt(vectorContext.authVersion),
+          keyVersion: vectorContext.keyVersion
+        })
+        const decipher = createDecipheriv('aes-256-gcm', decoded.keyBytes, nonce)
+        decipher.setAuthTag(authenticationTag)
+        expect(Buffer.concat([decipher.update(ciphertext), decipher.final()])).toEqual(plaintext)
+      }
+    } finally {
+      runtime.config.sessionSecret = originalSessionSecret
+    }
   })
 
   it('forwards authentication failures instead of manufacturing a key response', async () => {
