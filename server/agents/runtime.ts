@@ -1600,7 +1600,8 @@ export class AgentProductRuntime {
           const daily = reservation && (await transaction('agentQuotaDaily').where({ ownerId: claim.ownerId, day: reservation.day }).first())
           if (
             !daily ||
-            Number(daily.consumedTokens) + Number(daily.reservedTokens) > live.quotaLimits.dailyTokens ||
+            Number(daily.consumedTokens) + Number(daily.reservedTokens) >
+              safeUsageSum(live.quotaLimits.dailyTokens, nonNegativeUsage(daily.tokenResetCredit, 'Stored token reset credit'), 'Specialist daily quota') ||
             Number(daily.consumedCostMicros) + Number(daily.reservedCostMicros) > live.quotaLimits.dailyCostMicros
           )
             throw new AgentRepositoryError('AGENT_QUOTA_EXCEEDED', 'Specialist profile daily quota is exhausted', 429)
@@ -1619,7 +1620,12 @@ export class AgentProductRuntime {
       skills: [],
       priorActivity: [],
       signal: input.signal,
-      limits: { maxTokens: candidate.admission.quota.tokens, maxTurns: input.maximumTurns, maxToolCalls: 16, maxOutputTokens: input.maximumReportTokens },
+      limits: {
+        maxTokens: candidate.admission.quotaLimits.dailyTokens,
+        maxTurns: input.maximumTurns,
+        maxToolCalls: 16,
+        maxOutputTokens: input.maximumReportTokens
+      },
       ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
       ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
       ...(input.dispatchBudget === undefined ? {} : { dispatchBudget: input.dispatchBudget })
