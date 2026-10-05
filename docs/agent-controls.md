@@ -130,7 +130,7 @@ Enable **Allow specialist delegation** in the routing policy panel to opt in, th
 
 The root can retain its authorized outbound MCP catalog while delegating independent Wiki-only work. That root access is never inherited by the specialist.
 
-Initial quota reservations are replenishable holds, not execution budgets. Specialist calls share the root's funded dispatch budget and remain subject to the specialist profile's live daily limits.
+Initial quota reservations are replenishable holds, not execution budgets. Specialist calls share the root's funded dispatch budget and remain subject to the specialist profile's live daily token and cost limits, including the owner's existing authorized token-reset credit.
 
 Reusable contexts are bound to the same owner/root session, immutable provider/model version, capabilities and policy/authorization versions, task/complexity, and source scope. Evidence and current tool authority are revalidated before reuse. Expiry cannot exceed root retention or host source expiry; expired or incompatible contexts are not reused, and expired reports are omitted from the browser view. Reuse preserves a separate prefix-compatible provider continuation only: it does **not** guarantee a provider prompt-cache hit, and estimates assume no cache discount.
 

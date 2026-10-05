@@ -1601,7 +1601,11 @@ export class AgentProductRuntime {
           if (
             !daily ||
             Number(daily.consumedTokens) + Number(daily.reservedTokens) >
-              safeUsageSum(live.quotaLimits.dailyTokens, nonNegativeUsage(daily.tokenResetCredit, 'Stored token reset credit'), 'Specialist daily quota') ||
+              safeUsageSum(
+                live.quotaLimits.dailyTokens,
+                nonNegativeUsage(Number(daily.tokenResetCredit), 'Stored token reset credit'),
+                'Specialist daily quota'
+              ) ||
             Number(daily.consumedCostMicros) + Number(daily.reservedCostMicros) > live.quotaLimits.dailyCostMicros
           )
             throw new AgentRepositoryError('AGENT_QUOTA_EXCEEDED', 'Specialist profile daily quota is exhausted', 429)
