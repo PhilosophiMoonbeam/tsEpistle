@@ -1,8 +1,4 @@
-import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
-import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
 import { z } from 'zod'
-import { sameOriginJsonFetch } from './json-transport.ts'
-import { translate } from '../modules/localization.ts'
 import {
   AGENT_ACTION_NAMES,
   AGENT_EVENT_TYPES,
@@ -15,17 +11,17 @@ import {
   AGENT_TASK_KINDS,
   AGENT_TERMINAL_RUN_STATUSES,
   AGENT_TOOL_CALL_NAMES,
-  isExternalMcpToolCallName,
-  type ExternalMcpToolCallName,
   type AgentConversationFolderView,
   type AgentEventType,
   type AgentMediaView,
   type AgentProviderProfileView,
   type AgentThreadState,
   type CancelAgentGoalRequest,
-  type DecideAgentApprovalRequest,
   type CreateAgentGoalRequest,
   type CreateAgentSessionRequest,
+  type DecideAgentApprovalRequest,
+  type ExternalMcpToolCallName,
+  isExternalMcpToolCallName,
   type PauseAgentGoalRequest,
   type RenewAgentGoalBudgetRequest,
   type ResumeAgentGoalRequest,
@@ -35,6 +31,11 @@ import {
   type UpdateAgentSessionRequest,
   type UpdateAgentSkillPreferencesRequest
 } from '../../shared/agents/contracts.ts'
+import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
+import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { SpecialistInvocationViewSchema } from '../../shared/agents/specialists.ts'
+import { translate } from '../modules/localization.ts'
+import { sameOriginJsonFetch } from './json-transport.ts'
 
 const Iso = z.iso.datetime()
 const Uuid = z.uuid()
@@ -262,11 +263,27 @@ const HistoryWindow = z.object({
   runLimit: z.number().int().positive(),
   hasOlderRuns: z.boolean()
 })
+const RoutingDecision = z.strictObject({
+  runId: Uuid,
+  strategy: z.enum(['stay', 'swap', 'delegate']),
+  rootProfileVersionId: Uuid,
+  specialistProfileVersionId: Uuid.nullable(),
+  reason: z.string(),
+  costs: z
+    .strictObject({
+      stayMicros: z.number().finite().nonnegative().nullable(),
+      coldSwapMicros: z.number().finite().nonnegative().nullable(),
+      delegateMicros: z.number().finite().nonnegative().nullable()
+    })
+    .nullable()
+})
 const Thread = z.object({
   session: Session,
   messages: z.array(Message),
   tools: z.array(Tool),
   tasks: z.array(Task),
+  specialistInvocations: z.array(SpecialistInvocationViewSchema),
+  routingDecisions: z.array(RoutingDecision),
   goal: Goal.nullable(),
   proposals: z.array(Proposal),
   artifacts: z.array(Artifact),

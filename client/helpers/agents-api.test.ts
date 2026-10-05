@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { z } from 'zod'
+import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import {
   AGENT_ACTION_NAMES,
   AGENT_TOOL_CALL_NAMES,
   AGENT_TOOL_NAMES,
-  TOOL_DISCOVERY_CONTROL_NAME,
-  type DecideAgentApprovalRequest
+  type DecideAgentApprovalRequest,
+  TOOL_DISCOVERY_CONTROL_NAME
 } from '../../shared/agents/contracts.ts'
 import {
   AgentApiError,
@@ -26,8 +26,8 @@ import {
   listPersonalAgentSkills,
   removePersonalAgentSkill,
   renameAgentConversationFolder,
-  subscribeAgentRun,
   submitAgentMessage,
+  subscribeAgentRun,
   updateAgentSession,
   updateAgentSkillPreferences,
   updatePersonalAgentSkill
@@ -150,6 +150,8 @@ describe('agents client boundary', () => {
       goal: null,
       proposals: [],
       artifacts: [],
+      routingDecisions: [],
+      specialistInvocations: [],
       historyWindow: { messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false },
       suggestions: []
     }
@@ -235,6 +237,8 @@ describe('agents client boundary', () => {
       goal: null,
       proposals: [],
       artifacts: [],
+      routingDecisions: [],
+      specialistInvocations: [],
       historyWindow: { messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false },
       suggestions: []
     }
@@ -706,6 +710,8 @@ describe('agents client boundary', () => {
       goal: null,
       proposals: [proposal],
       artifacts: [],
+      routingDecisions: [],
+      specialistInvocations: [],
       historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
       suggestions: []
     }
@@ -792,6 +798,8 @@ describe('agents client boundary', () => {
       tools: [],
       tasks: [],
       artifacts: [],
+      routingDecisions: [],
+      specialistInvocations: [],
       goal: null,
       historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
       suggestions: []

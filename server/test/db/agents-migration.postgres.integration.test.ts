@@ -1,4 +1,3 @@
-import { up as upAgentMedia, down as downAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { randomUUID } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import { projectAgentThread } from '../../agents/projection.ts'
@@ -14,6 +13,8 @@ import { down as downAgentMemory, up as upAgentMemory } from '../../db/migration
 import { down as downAgentTasks, up as upAgentTasks } from '../../db/migrations/2.5.156.ts'
 import { down as downAgentGoals, up as upAgentGoals } from '../../db/migrations/2.5.157.ts'
 import { up as upAgentTotalTokens } from '../../db/migrations/tsepistle-000031-agent-total-token-accounting.ts'
+import { down as downAgentMedia, up as upAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
+import { down as downAgentSpecialists, up as upAgentSpecialists } from '../../db/migrations/tsepistle-000054-agent-specialists.ts'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
@@ -77,6 +78,11 @@ suite('PostgreSQL first-class agent migration', () => {
     await upAgentGoals(db)
     await upAgentTotalTokens(db)
     await upAgentMedia(db)
+    await db.schema.createTable('agentRoutingPolicy', table => {
+      table.integer('id').primary()
+      table.text('config').notNullable()
+    })
+    await upAgentSpecialists(db)
   })
 
   afterAll(async () => {
@@ -307,22 +313,31 @@ suite('PostgreSQL first-class agent migration', () => {
     })
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: db.fn.now() })
     const removedProfile = await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).first()
-    const tablesBeforeRollback = await db('information_schema.tables').where({ table_schema: 'public', table_type: 'BASE TABLE' }).orderBy('table_name').pluck('table_name')
+    const tablesBeforeRollback = await db('information_schema.tables')
+      .where({ table_schema: 'public', table_type: 'BASE TABLE' })
+      .orderBy('table_name')
+      .pluck('table_name')
     await expect(Promise.resolve(downProviderProfileLifecycle(db))).rejects.toThrow()
-    expect(await db('information_schema.tables').where({ table_schema: 'public', table_type: 'BASE TABLE' }).orderBy('table_name').pluck('table_name')).toEqual(tablesBeforeRollback)
+    expect(await db('information_schema.tables').where({ table_schema: 'public', table_type: 'BASE TABLE' }).orderBy('table_name').pluck('table_name')).toEqual(
+      tablesBeforeRollback
+    )
     expect(await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).first()).toEqual(removedProfile)
     expect(await db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).toBe(true)
     expect(await db.schema.hasTable('agentSessions')).toBe(true)
     expect(await db.schema.hasColumn('pages', 'sourceRevision')).toBe(true)
     expect(await db.schema.hasColumn('pageHistory', 'sourceRevision')).toBe(true)
     await expect(Promise.resolve(downAgentLedger(db))).rejects.toThrow()
-    expect(await db('information_schema.tables').where({ table_schema: 'public', table_type: 'BASE TABLE' }).orderBy('table_name').pluck('table_name')).toEqual(tablesBeforeRollback)
+    expect(await db('information_schema.tables').where({ table_schema: 'public', table_type: 'BASE TABLE' }).orderBy('table_name').pluck('table_name')).toEqual(
+      tablesBeforeRollback
+    )
     expect(await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).first()).toEqual(removedProfile)
     expect(await db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).toBe(true)
     expect(await db.schema.hasTable('agentSessions')).toBe(true)
     expect(await db.schema.hasColumn('pages', 'sourceRevision')).toBe(true)
     expect(await db.schema.hasColumn('pageHistory', 'sourceRevision')).toBe(true)
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
+    await downAgentSpecialists(db)
+    await db.schema.dropTable('agentRoutingPolicy')
     await downAgentMedia(db)
     await downAgentGoals(db)
     await downAgentTasks(db)

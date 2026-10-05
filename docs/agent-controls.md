@@ -96,6 +96,11 @@ Task classes are `conversation`, `retrieval`, `writing`, `coding`, `analysis`, a
 | `minimumSavingsMicros` | 1,000 | 1–1,000,000,000 µUSD |
 | `switchCostMicros` | 1,000 | 0–1,000,000,000 µUSD estimated switching-loss allowance |
 | `classifierMaxStateBytes` | 4,096 | 256–16,384 bytes of bounded classification state |
+| `specialistEnabled` | false | Optional bounded delegation; automatic routing must also be enabled |
+| `specialistMaxContexts` | 4 | 1–8 separate reusable contexts per root session |
+| `specialistMaxContextBytes` | 65,536 | 4,096–262,144 bytes of retained specialist context |
+| `specialistMaxReportTokens` | 1,024 | 128–4,096 tokens in the bounded handoff report |
+| `specialistMaxTurns` | 3 | 1–8 specialist work turns |
 
 The classifier sees bounded current-message/summary state and fixed task criteria, not an unrestricted copy of conversation history. Oversized current messages skip classification rather than silently truncating the requested work. User/history content cannot directly grant a model or override host selection rules.
 
@@ -119,7 +124,13 @@ After a response, validated **full totals**, including independent reported resi
 
 Choosing the workspace **default** conversation provider leaves the session eligible for automatic routing when policy permits. Explicitly choosing a conversation provider pins that session; routing records the pin and does not classify it. Return to the default choice to restore automatic eligibility. Conversation pinning in History is a separate organizational action, not a model pin.
 
-Selection is a direct switch **between durable turns/runs**, before any paid root/task inference, tool, or approval activity. It never changes the model midway through a run or approval replay. Eligible new durable-goal continuations may route at that same pre-dispatch boundary while preserving the goal's quotas, tool limits, deadlines, and authorization. Existing durable goals and background research continue to operate; these controls do not introduce a new asynchronous worker/delegation system or claim unmeasured delegation savings.
+Selection chooses **stay**, **swap**, or optional **delegate** between durable turns/runs, before paid root/task inference, tools, or approval activity. Stay retains the root binding. Swap changes the root model at that boundary and accounts for cold canonical-history replay. Delegate leaves the root provider, canonical conversation, and continuation unchanged: a specialist works in its own provider-bound context, then the root synthesizes a bounded report. No model changes occur midway through approval replay. Eligible new durable-goal continuations retain existing quotas, tool limits, deadlines, and authorization; this does not create an asynchronous worker system.
+
+Enable **Allow specialist delegation** in the routing policy panel to opt in, then edit the four specialist limits and save through the existing revision-checked policy API. Disabled is the default. Specialists cannot nest delegation, use external MCP or browser tools, or perform writes. Their report is untrusted task context, not an instruction or authority grant.
+
+Reusable contexts are bound to the same owner/root session, immutable provider/model version, capabilities and policy/authorization versions, task/complexity, and source scope. Evidence and current tool authority are revalidated before reuse. Expiry cannot exceed root retention or host source expiry; expired or incompatible contexts are not reused, and expired reports are omitted from the browser view. Reuse preserves a separate prefix-compatible provider continuation only: it does **not** guarantee a provider prompt-cache hit, and estimates assume no cache discount.
+
+The chat activity surface shows each routing strategy, separate root and specialist model-version bindings, and available host estimates for stay, cold swap, and delegate plus handoff. Estimates are not billing, measured savings, or cache-hit evidence; unavailable costs are shown as unknown. Specialist handoffs show status, new/reused context, model/task, root run, and bounded plain-text report. No specialist history, engine state, credentials, or provider keys are exposed.
 
 ## Control API and conflict handling
 

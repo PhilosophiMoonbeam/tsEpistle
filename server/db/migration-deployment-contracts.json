@@ -199,6 +199,21 @@
       "runtimePostconditions": [
         "offline-draft-key-survives-session-protection-rotation"
       ]
+    },
+    "tsepistle-000054-agent-specialists.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "owner-root-bound-specialist-context-and-idempotent-invocation"
+      ],
+      "runtimePostconditions": [
+        "delegated-context-reuse-preserves-incumbent-root-and-accounting"
+      ]
     }
   }
 }

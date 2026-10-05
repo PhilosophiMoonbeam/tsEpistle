@@ -1,10 +1,8 @@
 import { createHash } from 'node:crypto'
-import { sweepAgentPdfCache } from './pdf-cache.ts'
 import type { Knex } from 'knex'
 import { AGENT_TERMINAL_RUN_STATUSES } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AGENT_GROUNDED_HISTORY_DAYS } from './compaction.ts'
-import { AgentRepositoryError } from './repository.ts'
 import {
   AgentQuotaSettlementError,
   acquireAgentCoordinatorAdvisoryLocks,
@@ -13,6 +11,9 @@ import {
   reconcileAgentRunQuota,
   terminalizeAgentRunInTransaction
 } from './coordinator.ts'
+import { sweepAgentPdfCache } from './pdf-cache.ts'
+import { AgentRepositoryError } from './repository.ts'
+import { expireAgentSpecialistContexts } from './specialists.ts'
 
 const TERMINAL_PROPOSAL_STATUSES = ['denied', 'expired', 'applied', 'failed', 'cancelled'] as const
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -507,6 +508,7 @@ export const runAgentMaintenance = async (
 ): Promise<AgentMaintenanceResult> => {
   const policy = boundedPolicy(inputPolicy)
   await deleteExpiredRows(knex, 'agentMedia', 'expiresAt', now, policy.batchSize)
+  await expireAgentSpecialistContexts(knex, now)
   const recovered = await recoverRuns(knex, now, policy.batchSize)
   const recoveredProposalExecutions = await recoverProposalExecutions(knex, now, policy.batchSize)
   const expiredApprovals = await expireApprovals(knex, now, policy.batchSize)

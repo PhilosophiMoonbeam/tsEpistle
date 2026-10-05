@@ -1,4 +1,4 @@
-import { AxJSRuntime, type AxCodeSession } from '@ax-llm/ax'
+import { type AxCodeSession, AxJSRuntime } from '@ax-llm/ax'
 import { z } from 'zod'
 import type { AgentActionName } from '../../../shared/agents/contracts.ts'
 import type { ActionCapability, ActionGroup } from '../actions/catalog.ts'
@@ -24,6 +24,8 @@ export interface AxHarnessFunction {
 
 export interface AxActionSession {
   readonly authoritySha256: string | null
+  /** Exact reusable authority, excluding the root run's ephemeral request identity. */
+  readonly specialistAuthoritySha256?: string
   readonly functions: readonly AxHarnessFunction[]
   /** Effective request and loaded-skill restriction; absent means no action-name restriction. */
   readonly allowedActions?: readonly AgentActionName[]

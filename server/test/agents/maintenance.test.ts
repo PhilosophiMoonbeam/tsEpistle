@@ -1,13 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { requestUnfiledAgentHistoryClear, runAgentMaintenance } from '../../agents/maintenance.ts'
+import { up as addAgentSpecialists } from '../../db/migrations/tsepistle-000054-agent-specialists.ts'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const now = new Date('2026-08-17T12:00:00.000Z')
 const old = new Date('2026-05-01T00:00:00.000Z')
 const expired = new Date('2026-08-10T00:00:00.000Z')
 
 const createTables = async (knex: Knex): Promise<void> => {
+  await knex.schema.createTable('users', table => {
+    table.integer('id').primary()
+  })
+  await knex.schema.createTable('agentRoutingPolicy', table => {
+    table.integer('id').primary()
+    table.text('config').notNullable()
+  })
   await knex.schema.createTable('agentSessions', table => {
     table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.string('id').primary()
@@ -151,6 +159,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.string('id').primary()
     table.dateTime('createdAt')
   })
+  await addAgentSpecialists(knex)
 }
 
 describe('agent retention maintenance', () => {

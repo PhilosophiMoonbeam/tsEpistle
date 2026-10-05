@@ -3,20 +3,20 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
+import { createPinia, type StoreGeneric, storeToRefs } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
-import { calculateComposerSizing, caretBoundsFromMirror, scrollTopForCaret } from './agent-composer-sizing.ts'
-import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
-import { resolveUserPicture } from '../../helpers/user-picture.ts'
-import { createPinia, storeToRefs, type StoreGeneric } from 'pinia'
-import { useAgentsStore } from '../../store/agents.ts'
+import type { AgentProviderProfileView, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
+import { type AgentDraft, emptyAgentDraft } from '../../helpers/agent-draft.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
-import { emptyAgentDraft, type AgentDraft } from '../../helpers/agent-draft.ts'
 import { searchPages } from '../../helpers/pages-api.ts'
+import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
 import { fallbackLocalizationLabel } from '../../modules/localization.ts'
-import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
-import type { AgentProviderProfileView, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import { useAgentsStore } from '../../store/agents.ts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
+import { calculateComposerSizing, caretBoundsFromMirror, scrollTopForCaret } from './agent-composer-sizing.ts'
+import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/inline-agent-chat.vue')
@@ -35,6 +35,7 @@ if (!composerDescriptor.template || !composerDescriptor.scriptSetup) throw new E
 
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+
 globalThis.useTranslate = () => translateEnglish
 
 resetBody()
@@ -639,6 +640,8 @@ const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved
   tools: [],
   tasks: [],
   artifacts: [],
+  routingDecisions: [],
+  specialistInvocations: [],
   proposals: [],
   goal: null,
   suggestions: [],

@@ -1,19 +1,20 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import { expect } from '../bun-test.mts'
+import { type DecisionResult, TYPESAFE_JEV_PRICING } from '../../../shared/agents/decision-providers.ts'
+import { DEFAULT_ROUTING_POLICY, ROUTING_COMPLEXITIES, ROUTING_TASK_CLASSES, type RoutingAdminView } from '../../../shared/agents/routing.ts'
+import type { AgentRunRecord } from '../../agents/coordinator.ts'
+import type { DecisionProviderRuntime } from '../../agents/decision-providers.ts'
+import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
+import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
+import { createAgentSession } from '../../agents/repository.ts'
+import { AgentTurnRouter } from '../../agents/routing.ts'
+import { type AgentEngine, type AgentEngineRequest, AgentProductRuntime } from '../../agents/runtime.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
-import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
-import { AgentProductRuntime, type AgentEngineRequest, type AgentEngine } from '../../agents/runtime.ts'
-import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
-import { AgentTurnRouter } from '../../agents/routing.ts'
-import type { DecisionProviderRuntime } from '../../agents/decision-providers.ts'
-import { createAgentSession } from '../../agents/repository.ts'
-import type { AgentRunRecord } from '../../agents/coordinator.ts'
-import { TYPESAFE_JEV_PRICING, type DecisionResult } from '../../../shared/agents/decision-providers.ts'
-import { DEFAULT_ROUTING_POLICY, ROUTING_TASK_CLASSES, ROUTING_COMPLEXITIES, type RoutingAdminView } from '../../../shared/agents/routing.ts'
+import { up as addAgentSpecialists } from '../../db/migrations/tsepistle-000054-agent-specialists.ts'
+import { expect } from '../bun-test.mts'
 
 export const createRoutingTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('users', table => {
@@ -336,6 +337,11 @@ export const createRoutingTables = async (knex: Knex): Promise<void> => {
   await addAgentGoalBudgetTiers(knex)
   await addAgentMedia(knex)
   await addAgentMediaContextState(knex)
+  await knex.schema.createTable('agentRoutingPolicy', table => {
+    table.integer('id').primary()
+    table.text('config').notNullable()
+  })
+  await addAgentSpecialists(knex)
   await knex('users').insert([{ id: 1 }, { id: 7 }, { id: 8 }])
   await knex('groups').insert([{ id: 1 }, { id: 2 }])
   await knex('userGroups').insert([

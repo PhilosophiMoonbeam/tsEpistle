@@ -42,6 +42,16 @@ Native image generation/editing (`gemini-3.1-flash-image`) uses Ax chat; transcr
 
 See [Agent controls](./agent-controls.md) for separate decision-provider, outbound MCP and routing configuration. Inbound Wiki `/mcp` remains a separate API-key authority boundary. Conformance receipts are profile/version-specific, not proof of completed integrated gates, production deployment or every configured media operation.
 
+### Optional independent specialists
+
+Automatic routing can compare continuing the incumbent, cold replay on another root binding, and a separate specialist followed by incumbent synthesis. Delegation does not change the root provider or transfer its opaque runtime state. The child receives the current request, its own retained history, current source scope, and the fixed read-only actions intersected with live owner and selected-skill authority. It cannot delegate, mutate, browse externally, or use outbound MCP.
+
+Specialist reuse requires the same owner/root conversation, immutable provider binding, task class/complexity, source scope, tool authority, and currently valid source receipts. Context and report byte limits fail closed without truncating retained history. Contexts expire within seven days and never beyond root retention; maintenance scrubs content while preserving invocation identities, statuses, accounting and no-redispatch receipts. An ambiguous or failed invocation is not retry permission.
+
+Migration `tsepistle-000054-agent-specialists.ts` adds context/receipt tables and disabled-by-default policy fields. The prior application's strict routing parser is not compatible with the new policy keys: drain affected application writers, retain a paired protected recovery point and rehearse the migration before replacement; use fix-forward after writes rather than an older routing writer. No provider credentials, signing roots, profile versions, saved conversations or usage ledgers are migrated.
+
+Cost comparisons use configured rates and prior root-run model-work estimates, including child work, bounded handoff/report, classifier overhead and incumbent synthesis. Retained prefixes are eligible for provider caching only under the exact supported binding; neither cache hits, provider billing nor measured savings are guaranteed.
+
 ### Bounds, genuine EOF, and cancellation
 
 Every provider turn derives its limits through `deriveAgentProviderResourceLimits(maxOutputTokens)`; `maxOutputTokens` must be a positive safe integer. The helper centrally bounds retained response bytes (64 KiB minimum, 4 MiB maximum), content bytes (at most 384,000), argument bytes (at most 65,536), continuation bytes (at most 262,144), fragment bytes (1,024 minimum, 65,536 maximum), raw response bodies (at most 32 MiB), raw chunks (4 KiB minimum, 512 KiB maximum), cumulative incoming work, 32 action calls, 128 continuation blocks, response/result/argument/thought fragments, and structured input at depth 64, 16,384 values, and 65,536 bytes. These are host/provider bounds, not permission grants or a transport chunk-count guarantee.

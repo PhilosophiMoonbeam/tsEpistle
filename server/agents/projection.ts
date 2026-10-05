@@ -1,5 +1,3 @@
-import { projectAgentMedia, type AgentMediaRow } from './media.ts'
-import { AgentKnowledgeContextSchema, type AgentKnowledgeContext } from '../../shared/agents/knowledge-context.ts'
 import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
@@ -7,8 +5,6 @@ import {
   AGENT_PROPOSAL_STATUSES,
   AGENT_TOOL_CALL_NAMES,
   AGENT_TOOL_CONTROL_NAMES,
-  isTerminalAgentRunStatus,
-  isExternalMcpToolCallName,
   type AgentActionName,
   type AgentActionRisk,
   type AgentApprovalView,
@@ -16,10 +12,10 @@ import {
   type AgentCitation,
   type AgentEvent,
   type AgentFollowUpSuggestion,
-  type AgentMessageView,
   type AgentGoogleSearchGrounding,
-  type AgentProposalView,
+  type AgentMessageView,
   type AgentPageActionLink,
+  type AgentProposalView,
   type AgentRunView,
   type AgentRunWorkingPhase,
   type AgentSessionSkillView,
@@ -28,18 +24,22 @@ import {
   type AgentToolCallName,
   type AgentToolCallView,
   type AgentToolContextExclusion,
-  type AgentToolState
+  type AgentToolState,
+  isExternalMcpToolCallName,
+  isTerminalAgentRunStatus
 } from '../../shared/agents/contracts.ts'
-
+import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { latestAgentGoalForSession, projectAgentGoal } from './goals.ts'
+import { type AgentMediaRow, projectAgentMedia } from './media.ts'
 import {
   AgentRepositoryError,
   getOwnedAgentSession,
-  listOwnedAgentProjectionEvents,
   listOwnedAgentMessages,
+  listOwnedAgentProjectionEvents,
   validateAgentGoogleSearchGrounding
 } from './repository.ts'
+import { AgentSpecialistStore } from './specialists.ts'
 import { listAgentTaskViews } from './tasks.ts'
-import { latestAgentGoalForSession, projectAgentGoal } from './goals.ts'
 
 const actionNames = new Set<string>(AGENT_ACTION_NAMES)
 const toolCallNames = new Set<string>(AGENT_TOOL_CALL_NAMES)
@@ -586,10 +586,11 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   else runQuery.whereIn('id', selectedRunIds)
   const olderRunQuery = knex('agentRuns').where({ sessionId, ownerId })
   if (selectedRunIds.length > 0) olderRunQuery.whereNotIn('id', selectedRunIds)
-  const [runRows, omittedRun, taskViews] = await Promise.all([
+  const [runRows, omittedRun, taskViews, specialistInvocations] = await Promise.all([
     runQuery,
     olderRunQuery.first('id'),
-    listAgentTaskViews(knex, ownerId, sessionId, selectedRunIds, THREAD_TASK_LIMIT)
+    listAgentTaskViews(knex, ownerId, sessionId, selectedRunIds, THREAD_TASK_LIMIT),
+    new AgentSpecialistStore(knex).listInvocations(ownerId, sessionId, selectedRunIds)
   ])
   options.signal?.throwIfAborted()
 
@@ -656,6 +657,28 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   options.signal?.throwIfAborted()
 
   const events = eventPages.flat()
+  const routingDecisions: AgentThreadState['routingDecisions'][number][] = []
+  for (const event of events) {
+    if (event.type !== 'model.turn' || event.data.purpose !== 'routing') continue
+    const decision = event.data.routingDecision as import('../../shared/agents/routing.ts').RoutingTurnDecision | undefined
+    if (!decision || decision.version !== 1 || decision.ownerId !== ownerId || decision.sessionId !== sessionId || decision.runId !== event.runId)
+      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored routing projection binding is invalid', 500)
+    routingDecisions.push({
+      runId: decision.runId,
+      strategy: decision.strategy ?? (decision.switched ? 'swap' : 'stay'),
+      rootProfileVersionId: decision.profileVersionId,
+      specialistProfileVersionId: decision.specialist?.profileVersionId ?? null,
+      reason: decision.reason,
+      costs:
+        decision.strategyCosts === undefined
+          ? null
+          : {
+              stayMicros: decision.strategyCosts.stayMicros,
+              coldSwapMicros: decision.strategyCosts.coldSwapMicros,
+              delegateMicros: decision.strategyCosts.delegateMicros
+            }
+    })
+  }
   const runs = runRows.map(row => projectAgentRun(row, agentRunWorkingPhase(events, row)))
   const runsById = new Map(runs.map(run => [run.id, run]))
   const currentRun = runs.find(run => run.canCancel) ?? null
@@ -726,6 +749,8 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     messages,
     tools: reduced.tools,
     tasks: taskViews,
+    specialistInvocations,
+    routingDecisions,
     goal,
     proposals: proposalRows.map(row => proposalView(row, approvals.get(row.id) ?? null)),
     artifacts: artifactRows.map(row => artifactView(row, now)),
