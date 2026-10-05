@@ -28,6 +28,7 @@ interface SetupConfig extends Record<string, unknown> {
   dataPath: string
   db: { type: string }
   port: number
+  offlineDraftSecret: string
   sessionSecret: string
   setup: boolean
   site: { path: string; title: string }
@@ -71,6 +72,7 @@ interface SetupModels {
     ): {
       insert(values: Record<string, unknown>[]): Promise<unknown>
       truncate(): Promise<unknown>
+      where(column: string, operator: string, value: unknown): MutationQuery
     }
     raw(statement: string): Promise<unknown>
     transaction<T>(operation: (transaction: Knex.Transaction) => Promise<T>): Promise<T>
@@ -160,7 +162,14 @@ export default function startSetup(): Promise<void> {
     res.render('setup')
   })
 
+  let finalizing = false
   app.post('/finalize', async (req, res) => {
+    if (finalizing || !wiki.config.setup) {
+      res.status(409).json({ ok: false, error: 'Setup is already being finalized or has completed.' })
+      return
+    }
+    finalizing = true
+    let configurationWriteStarted = false
     try {
       const body = bodyRecord(req.body as unknown)
       const siteUrl = requiredString(body, 'siteUrl')
@@ -170,6 +179,11 @@ export default function startSetup(): Promise<void> {
       if (passwordIssue) {
         res.json({ ok: false, error: passwordIssue })
         return
+      }
+      for (const key of ['sessionSecret', 'offlineDraftSecret'] as const) {
+        if (Object.hasOwn(wiki.config, key) && (typeof wiki.config[key] !== 'string' || wiki.config[key].length === 0)) {
+          throw new Error(`Setup configuration contains invalid ${key}.`)
+        }
       }
       const adminPasswordHash = await bcrypt.hash(adminPassword, 12)
 
@@ -205,6 +219,9 @@ export default function startSetup(): Promise<void> {
       })
       _.set(wiki.config, 'seo', { description: '', robots: ['index', 'follow'], analyticsService: '', analyticsId: '' })
       _.set(wiki.config, 'sessionSecret', (await randomBytesAsync(32)).toString('hex'))
+      if (!Object.hasOwn(wiki.config, 'offlineDraftSecret')) {
+        _.set(wiki.config, 'offlineDraftSecret', (await randomBytesAsync(32)).toString('hex'))
+      }
       _.set(wiki.config, 'telemetry', { isEnabled: body.telemetry === true, clientId: randomUUID() })
       _.set(wiki.config, 'theming', {
         theme: 'default',
@@ -235,6 +252,7 @@ export default function startSetup(): Promise<void> {
         private: certs.privateKey
       })
 
+      configurationWriteStarted = true
       const configSaved = await wiki.configSvc.saveToDb(
         [
           'auth',
@@ -248,6 +266,7 @@ export default function startSetup(): Promise<void> {
           'mail',
           'seo',
           'sessionSecret',
+          'offlineDraftSecret',
           'telemetry',
           'theming',
           'uploads',
@@ -370,14 +389,19 @@ export default function startSetup(): Promise<void> {
       if (wiki.config.telemetry.isEnabled) await wiki.telemetry.sendInstanceEvent('INSTALL')
       wiki.config.setup = false
     } catch (error: unknown) {
-      try {
-        await wiki.models.knex('settings').truncate()
-      } catch {
-        // A failed first-time setup may not have a usable settings table yet.
+      if (configurationWriteStarted) {
+        try {
+          // Keep the stable draft root for retry; validation failures own no rows.
+          await wiki.models.knex('settings').where('key', '!=', 'offlineDraftSecret').del()
+        } catch {
+          // A failed first-time setup may not have a usable settings table yet.
+        }
       }
       wiki.telemetry.sendError(error)
       res.json({ ok: false, error: errorMessage(error) })
       return
+    } finally {
+      finalizing = false
     }
 
     wiki.logger.info('Setup is complete!')

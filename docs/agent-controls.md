@@ -29,6 +29,8 @@ A decision provider returns a structured choice, probabilities, confidence, and 
 
 Custom chat dialects use messages and `choices[].message.content`; legacy completions use a prompt and `choices[].text`. Choose the dialect explicitly, not by guessing from the model name. Custom destinations are guarded server-side: no embedded credentials, query or fragment, private/local destinations, unsafe URL paths, or redirects. Do not use an internal proxy address to bypass the public-egress policy.
 
+Sampling controls (`temperature` and `top_p`) are intentionally omitted for custom decision models: the selected model has no declared sampling contract, and reasoning models may reject those parameters. The native Ax client still owns chat structured output and response/usage handling. A legacy completions configuration requires an endpoint and model that actually support `/completions`; model-list availability alone does not imply that compatibility.
+
 ### Credentials and readiness
 
 Enter credentials only in the write-only password field or protected server secret configuration. Never put a key in a URL, example request, browser storage, screenshots, logs, or this documentation. Responses disclose readiness and `credentialSource` (`managed`, `environment`, or `none`), not the key or secret reference.

@@ -3,6 +3,7 @@ import path from 'node:path'
 import chalk from 'chalk'
 import * as yaml from 'js-yaml'
 import _ from 'lodash'
+import type { Knex } from 'knex'
 import type { ProductMetadata } from '../../shared/product.ts'
 import regex from '../app/regex.ts'
 import cfgHelper from '../helpers/config.ts'
@@ -14,10 +15,12 @@ interface AppConfig {
   flags: { ldapdebug: boolean; sqllog: boolean }
   security?: { securityTrustProxy?: boolean }
   port: number | string
+  sessionSecret?: string
   setup?: boolean
   title?: string
   logoUrl?: string
   offlineDraftSiteId?: string
+  offlineDraftSecret?: string
   allowGitSyncWhileOffline?: boolean
 }
 
@@ -28,6 +31,7 @@ interface AppData {
 }
 
 interface SettingsQuery {
+  onBuildKnex(callback: (query: Knex.QueryBuilder) => void): SettingsQuery
   patch(value: { value: unknown }): SettingsQuery
   where(column: string, value: string): Promise<number>
   insert(value: { key: string; value: unknown }): Promise<unknown>
@@ -74,6 +78,10 @@ interface ConfigService {
 
 const getWiki = (): WikiContext => WIKI as unknown as WikiContext
 
+const disableSecretQueryDebug = (query: Knex.QueryBuilder): void => {
+  query.debug(false)
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -119,6 +127,9 @@ function hasSigningConfiguration(config: Record<string, unknown>): boolean {
 
 function isAppConfig(value: unknown): value is AppConfig {
   if (!isRecord(value) || !isRecord(value.db) || !isRecord(value.flags)) return false
+  for (const key of ['sessionSecret', 'offlineDraftSecret'] as const) {
+    if (Object.hasOwn(value, key) && (typeof value[key] !== 'string' || value[key].length === 0)) return false
+  }
   if (Object.hasOwn(value, 'allowGitSyncWhileOffline') && typeof value.allowGitSyncWhileOffline !== 'boolean') return false
   if (
     Object.hasOwn(value, OFFLINE_DRAFT_SITE_ID_CONFIG_KEY) &&
@@ -238,6 +249,9 @@ const configService: ConfigService = {
       if (!hasSigningConfiguration(conf)) {
         throw new Error('Database configuration is incomplete: authentication signing material is missing.')
       }
+      if (typeof conf.offlineDraftSecret !== 'string' || conf.offlineDraftSecret.length === 0) {
+        throw new Error('Database configuration is incomplete: offline draft encryption material is missing or invalid.')
+      }
       const canonicalConfig = wiki.config
       const reloadedConfig = mergeSavedConfiguration(conf, canonicalConfig) as AppConfig
       // An omitted publication-window field means no schedule, not the previous notice’s window.
@@ -251,6 +265,12 @@ const configService: ConfigService = {
       }
       if (migratedKeys.length > 0) await this.saveToDb(migratedKeys, false)
     } else {
+      if (conf && Object.hasOwn(conf, 'offlineDraftSecret')) {
+        if (typeof conf.offlineDraftSecret !== 'string' || conf.offlineDraftSecret.length === 0) {
+          throw new Error('Database configuration is incomplete: offline draft encryption material is missing or invalid.')
+        }
+        wiki.config.offlineDraftSecret = conf.offlineDraftSecret
+      }
       wiki.logger.warn('DB Configuration is empty or incomplete. Switching to Setup mode...')
       wiki.config.setup = true
       if (!Object.hasOwn(wiki.config, OFFLINE_DRAFT_SITE_ID_CONFIG_KEY)) {
@@ -286,14 +306,20 @@ const configService: ConfigService = {
       for (const key of persistedKeys) {
         let value = _.get(wiki.config, key, null)
         if (!_.isPlainObject(value)) value = { v: value }
-        const affectedRows = await wiki.models.settings.query().patch({ value }).where('key', key)
+        const patchQuery = wiki.models.settings.query()
+        if (key === 'offlineDraftSecret') patchQuery.onBuildKnex(disableSecretQueryDebug)
+        const affectedRows = await patchQuery.patch({ value }).where('key', key)
         if (affectedRows === 0 && value) {
-          await wiki.models.settings.query().insert({ key, value })
+          const insertQuery = wiki.models.settings.query()
+          if (key === 'offlineDraftSecret') insertQuery.onBuildKnex(disableSecretQueryDebug)
+          await insertQuery.insert({ key, value })
         }
       }
       if (propagate) wiki.events.outbound.emit('reloadConfig')
     } catch (error) {
-      wiki.logger.error(`Failed to save configuration to DB: ${errorMessage(error)}`)
+      wiki.logger.error(
+        persistedKeys.includes('offlineDraftSecret') ? 'Failed to save private configuration to DB.' : `Failed to save configuration to DB: ${errorMessage(error)}`
+      )
       return false
     }
     return true

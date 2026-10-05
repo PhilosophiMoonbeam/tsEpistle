@@ -31,7 +31,7 @@ export interface OfflineDraftKeyRuntime {
     readonly host: string
     /** Installation identity; fresh installs may use the canonical origin until persisted. */
     readonly offlineDraftSiteId?: string
-    readonly sessionSecret: string
+    readonly offlineDraftSecret: string
   }
   readonly models: {
     readonly users: {
@@ -42,7 +42,7 @@ export interface OfflineDraftKeyRuntime {
   }
 }
 export type OfflineReadingKeyRuntime = Omit<OfflineDraftKeyRuntime, 'config'> & {
-  readonly config: Omit<OfflineDraftKeyRuntime['config'], 'sessionSecret'>
+  readonly config: Omit<OfflineDraftKeyRuntime['config'], 'offlineDraftSecret'>
 }
 
 const propertyValue = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined)
@@ -97,9 +97,9 @@ export const encodeOfflineDraftKeyInfo = (context: DraftKeyContext): Buffer => {
   ])
 }
 
-export const deriveOfflineDraftKey = (context: DraftKeyContext, sessionSecret: string): Buffer => {
-  if (typeof sessionSecret !== 'string' || sessionSecret.length === 0) throw new Error('Configured session secret is unavailable')
-  const secret = Buffer.from(sessionSecret, 'utf8')
+export const deriveOfflineDraftKey = (context: DraftKeyContext, encryptionRoot: string): Buffer => {
+  if (typeof encryptionRoot !== 'string' || encryptionRoot.length === 0) throw new Error('Configured offline draft encryption root is unavailable')
+  const secret = Buffer.from(encryptionRoot, 'utf8')
   const salt = createHash('sha256').update(Buffer.from(OFFLINE_DRAFT_KEY_LABEL, 'ascii')).digest()
   let prk: Buffer | undefined
   let info: Buffer | undefined
@@ -134,8 +134,8 @@ export const encodeOfflineDraftKeyFrame = (context: DraftKeyContext, key: Uint8A
   ])
 }
 
-export const createOfflineDraftKeyFrame = (context: DraftKeyContext, sessionSecret: string): Buffer => {
-  const key = deriveOfflineDraftKey(context, sessionSecret)
+export const createOfflineDraftKeyFrame = (context: DraftKeyContext, encryptionRoot: string): Buffer => {
+  const key = deriveOfflineDraftKey(context, encryptionRoot)
   try {
     return encodeOfflineDraftKeyFrame(context, key)
   } finally {

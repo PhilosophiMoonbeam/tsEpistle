@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 import type * as SetupModule from '../../setup.ts'
+import type * as ConfigModule from '../../core/config.ts'
 import type * as EditorModule from '../../models/editors.ts'
 import type * as SearchEngineModule from '../../models/searchEngines.ts'
 import { BUILTIN_CONTENT_EXTENSIONS } from '../../../shared/content-extensions.ts'
@@ -29,17 +30,11 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
   }))
   vi.mockModule('../../core/system.ts', import.meta.url, () => ({ default: {} }))
 
-  const settingsTruncate = vi.fn().mockResolvedValue(undefined)
+  const settingsTruncate = vi.fn(async () => selectionDb('settings').del())
   const extensionInsert = vi.fn().mockResolvedValue(undefined)
   const tableQuery = (table: string) => {
     if (table === 'settings') {
-      return {
-        where: vi.fn().mockReturnThis(),
-        forShare: vi.fn().mockReturnThis(),
-        first: vi.fn().mockResolvedValue(undefined),
-        insert: vi.fn().mockResolvedValue(undefined),
-        truncate: settingsTruncate
-      }
+      return Object.assign(selectionDb('settings'), { truncate: settingsTruncate })
     }
     return {
       insert: table === 'contentExtensions' ? extensionInsert : vi.fn().mockResolvedValue(undefined),
@@ -85,6 +80,10 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
       table.boolean('isEnabled').notNullable()
     })
   }
+  await selectionDb.schema.createTable('settings', table => {
+    table.string('key').primary()
+    table.text('value').notNullable()
+  })
   await selectionDb('editors').insert(['markdown', 'visual-markdown', 'code'].map(key => ({ key, isEnabled: false })))
   await selectionDb('searchEngines').insert(['postgres', 'legacy'].map(key => ({ key, isEnabled: false })))
   const editors = (await vi.importFresh<typeof EditorModule>('../../models/editors.ts', import.meta.url)).default.bindKnex(selectionDb)
@@ -95,7 +94,14 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
     if (searchFailure) throw new Error('injected reconciliation failure')
   })
   const searchInit = vi.spyOn(searchProviders, 'initEngine').mockResolvedValue(undefined)
-  const saveToDb = vi.fn().mockResolvedValue(configSaved)
+  const saveToDb = vi.fn(async (keys: string[]) => {
+    if (!configSaved) return false
+    await selectionDb('settings')
+      .insert(keys.map(key => ({ key, value: JSON.stringify(globalThis.WIKI.config[key] ?? null) })))
+      .onConflict('key')
+      .merge()
+    return true
+  })
   const wiki: SetupTestWiki = {
     IS_DEBUG: false,
     ROOTPATH: process.cwd(),
@@ -112,7 +118,7 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
     },
     configSvc: { saveToDb },
     data: {},
-    logger: { error: vi.fn(), info: vi.fn() },
+    logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
     product: { name: 'tsEpistle' },
     models: {
       authentication: { query: vi.fn(() => ({ insert: authenticationInsert })) },
@@ -151,6 +157,7 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
     searchRefresh,
     server,
     settingsTruncate,
+    settingsDb: selectionDb,
     userInsert
   }
 }
@@ -200,10 +207,76 @@ describe('setup finalization', () => {
     const password = await bcrypt.hash('unrelated credential', 4)
     expect(await finalize(harness.server, password)).toMatchObject({ ok: true })
     await harness.completion
+    expect(globalThis.WIKI.config.offlineDraftSecret).toEqual(expect.any(String))
+    expect(globalThis.WIKI.config.offlineDraftSecret).not.toBe('')
+    expect(globalThis.WIKI.config.offlineDraftSecret).not.toBe(globalThis.WIKI.config.sessionSecret)
     const stored = harness.userInsert.mock.calls[0]?.[0].password
     expect(stored).not.toBe(password)
     expect(await bcrypt.compare(password, stored)).toBe(true)
     expect(await bcrypt.compare('unrelated credential', stored)).toBe(false)
+  })
+
+  it('does not erase a retained draft root when a finalize request is malformed', async () => {
+    const harness = await startSetupHarness(true)
+    const retainedRoot = 'retained-encryption-root-before-setup'
+    await harness.settingsDb('settings').insert({ key: 'offlineDraftSecret', value: JSON.stringify(retainedRoot) })
+    const address = harness.server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${address.port}/finalize`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+    })
+    const result = await response.json()
+    const persisted = await harness.settingsDb('settings').where('key', 'offlineDraftSecret').first()
+    harness.controller.abort(new DOMException('test shutdown', 'AbortError'))
+    await expect(harness.completion).rejects.toMatchObject({ name: 'AbortError' })
+    expect(result).toMatchObject({ ok: false })
+    expect(persisted?.value).toBe(JSON.stringify(retainedRoot))
+    // A fresh process must resume setup with the retained root, not generate one.
+    delete globalThis.WIKI.config.offlineDraftSecret
+    globalThis.WIKI.models.settings = {
+      getConfig: async () => Object.fromEntries((await harness.settingsDb('settings')).map(row => [row.key, JSON.parse(row.value)]))
+    }
+    const { default: configService } = await vi.importFresh<typeof ConfigModule>('../../core/config.ts', import.meta.url)
+    await configService.loadFromDb()
+    expect(globalThis.WIKI.config.setup).toBe(true)
+    const retryController = new AbortController()
+    globalThis.WIKI.shutdownSignal = retryController.signal
+    const { default: startSetup } = await vi.importFresh<typeof SetupModule>('../../setup.ts', import.meta.url)
+    const retryCompletion = startSetup()
+    const retryServer = globalThis.WIKI.server
+    if (!retryServer.listening) await once(retryServer, 'listening')
+    expect(await finalize(retryServer)).toMatchObject({ ok: true })
+    await retryCompletion
+    const retained = await harness.settingsDb('settings').where('key', 'offlineDraftSecret').first()
+    expect(retained.value).toBe(JSON.stringify(retainedRoot))
+  })
+
+  it('rejects overlapping finalization without deleting the successful installation root', async () => {
+    const harness = await startSetupHarness(true)
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const persist = harness.saveToDb.getMockImplementation()!
+    harness.saveToDb.mockImplementationOnce(async (keys: string[]) => {
+      const result = await persist(keys)
+      entered.resolve()
+      await release.promise
+      return result
+    })
+    const successful = finalize(harness.server)
+    await entered.promise
+    const address = harness.server.address() as AddressInfo
+    const rejected = await fetch(`http://127.0.0.1:${address.port}/finalize`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+    })
+    const rejection = await rejected.json()
+    release.resolve()
+    const success = await successful
+    await harness.completion
+    expect(success).toMatchObject({ ok: true })
+    expect(rejection).toMatchObject({ ok: false })
+    expect(rejected.status).toBe(409)
+    const persisted = await harness.settingsDb('settings').where('key', 'offlineDraftSecret').first()
+    expect(persisted?.value).toBe(JSON.stringify(globalThis.WIKI.config.offlineDraftSecret))
+    expect(await harness.settingsDb('settings').where('key', 'certs').first()).toBeDefined()
   })
 
   it('keeps setup active and domain data untouched when config persistence returns false', async () => {
@@ -224,7 +297,6 @@ describe('setup finalization', () => {
     expect(harness.saveToDb).toHaveBeenCalledTimes(1)
     for (const mutation of harness.domainMutations) expect(mutation).not.toHaveBeenCalled()
     expect(harness.extensionInsert).not.toHaveBeenCalled()
-    expect(harness.settingsTruncate).toHaveBeenCalledTimes(1)
     expect(globalThis.WIKI.config).toMatchObject({ setup: true })
     expect(harness.server.listening).toBe(true)
     expect(settled).toBe(false)

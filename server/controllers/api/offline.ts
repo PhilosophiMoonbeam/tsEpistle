@@ -40,7 +40,7 @@ router.post('/draft-key', offlineDraftKeyPrivacyHeaders, requireSameOriginFetchS
   try {
     const runtime = getTransportRuntime<OfflineDraftKeyRuntime>()
     const context = await resolveOfflineDraftKeyContext(req, runtime)
-    const frame = createOfflineDraftKeyFrame(context, runtime.config.sessionSecret)
+    const frame = createOfflineDraftKeyFrame(context, runtime.config.offlineDraftSecret)
     res.set('Content-Type', 'application/octet-stream')
     res.status(200).send(frame)
   } catch (error) {

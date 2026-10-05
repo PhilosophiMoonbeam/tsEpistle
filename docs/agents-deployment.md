@@ -157,6 +157,14 @@ For rollback, preserve current volumes and database state and use the prior imag
 
 Escalate to the comprehensive procedure below only for an explicitly activated Enterprise Release or for a destructive/irreversible migration or material persistent-state, storage, key, or writer-compatibility change. Risk-based escalation adds the relevant recovery safeguards; it does not activate release attestation.
 
+### Session protection and the stable offline-draft root
+
+`offlineDraftSecret` is a private persisted encryption root, separate from `sessionSecret`. Migration `tsepistle-000053-offline-draft-secret.ts` copies the exact existing configured session root once so previously encrypted browser drafts retain their keys. New installations generate independent roots. Root-only state after a failed first-time setup remains retryable; malformed or overlapping finalization requests cannot erase the retained root.
+
+Session-secret rotation is a material key-handling change: gate and drain application writers, retain a fresh paired protected recovery point, and rehearse against an isolated restore. Before rotation, apply migration 53 and verify the independent root. In one database transaction, replace `sessionSecret`, re-encrypt the **same RSA private key** under the new passphrase, and re-encrypt each existing webhook secret without changing its plaintext. Keep `offlineDraftSecret`, signing public/JWK identity, provider keyrings, site identity and user `authVersion` unchanged. Never log key material, SQL values, decrypted webhook secrets or recovery configuration.
+
+Changing the wrapping passphrase does not revoke the unchanged RSA JWT/API-key signing identity. Do not bump `authVersion` merely to rotate this root: it is part of draft-key context. After rotation, exercise the authenticated draft-key endpoint and decrypt ciphertext created before rotation; also verify provider readiness and webhook decryption. Old-code rollback after rotation is unsafe because it derives draft keys from the changed session root; fix forward or use an explicitly authorized paired restore. Recovery copies and any prior trace containing the retained draft root remain sensitive.
+
 ### Enterprise Release or material-state cutover and rollback
 
 The recovery inventory below introduces **no new database migration**. Retain `tsepistle-000031-agent-total-token-accounting.ts` and its writer-drain/backfill guidance for installations that have not applied migration 31; do not rerun it on an installation that already has the column. This comprehensive path does not require migration down, schema reset, profile reconformance, provider-secret changes, or PostgreSQL recreation unless the named change explicitly requires them.
