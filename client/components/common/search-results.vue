@@ -1462,8 +1462,8 @@ export default defineComponent({
       const controller = new AbortController()
       this.searchAbortController?.abort()
       this.searchAbortController = controller
-      const getReadingHandle = typeof currentOfflineReadingHandle === 'function' ? currentOfflineReadingHandle : (() => null)
-      const getReadingEpoch = typeof currentOfflineReadingEpoch === 'function' ? currentOfflineReadingEpoch : (() => 0)
+      const getReadingHandle = currentOfflineReadingHandle
+      const getReadingEpoch = currentOfflineReadingEpoch
       const readingHandle: OfflineReadingHandleV1 | null = getReadingHandle()
       const readingEpoch = getReadingEpoch()
       const documentIdentity = (document: Pick<OfflineSearchDocumentV1, 'siteId' | 'pageId' | 'locale'>): string =>
@@ -1546,10 +1546,7 @@ export default defineComponent({
         }
         const preparedPublic = this.offlineSearchCorpus
         if (!preparedPublic) throw new Error(this.$t('common:searchResults.downloadedSearchCorpusUnavailable'))
-        const mergeCorpora = typeof mergeOfflineSearchCorpora === 'function'
-          ? mergeOfflineSearchCorpora
-          : (publicCorpus: OfflineSearchCorpus, _privateCorpus: OfflineSearchCorpus | null): OfflineSearchCorpus => publicCorpus
-        const preparedCorpus = mergeCorpora(preparedPublic, readingHandle ? this.offlinePrivateSearchCorpus : null)
+        const preparedCorpus = mergeOfflineSearchCorpora(preparedPublic, readingHandle ? this.offlinePrivateSearchCorpus : null)
         if (!isCurrent()) return
         const ranked = await searchPreparedOfflineDocumentsAsync(preparedCorpus, query, {
           limit: OFFLINE_SEARCH_RESULT_LIMIT,
@@ -1560,9 +1557,20 @@ export default defineComponent({
         const currentSessionGeneration = await storage.currentSessionGeneration?.()
         if (
           !isCurrent() ||
-          (currentRevision !== undefined && currentRevision !== corpusRevision) ||
           (currentSessionGeneration !== undefined && currentSessionGeneration !== sessionGeneration)
         ) return
+        if (currentRevision !== undefined && currentRevision !== corpusRevision) {
+          this.offlineSearchCorpus = null
+          this.offlineSearchCorpusRevision = null
+          this.offlineSearchCorpusSessionGeneration = null
+          this.offlineSearchCorpusExpiresAt = null
+          this.offlinePrivateSearchCorpus = null
+          this.offlinePrivateSearchCorpusRevision = null
+          this.offlinePrivateSearchCorpusSessionGeneration = null
+          this.responseKey = ''
+          this.queueSearch(query)
+          return
+        }
 
         const privateIdentities = new Set(privateDocuments.map(documentIdentity))
         const resultDocuments = new Set<string>()

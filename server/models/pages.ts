@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
 import { CollaborationRoomStore } from '../core/collaboration-store.ts'
 import { verifyPageMoveReviewToken } from '../helpers/page-move-review-token.ts'
-import { rewriteMovedPageLinks, type PageMoveLinkRewriteResult } from '../helpers/page-move-link-rewrite.ts'
+import { rewriteMovedPageLinks } from '../helpers/page-move-link-rewrite.ts'
+import type { PageMoveLinkRewriteResult } from '../helpers/page-move-link-rewrite.ts'
 import { z } from 'zod'
-import { Model, type StaticHookArguments } from 'objection'
+import { Model } from 'objection'
+import type { StaticHookArguments } from 'objection'
 import type { Knex } from 'knex'
 import type { EventEmitter } from 'node:events'
 import _ from 'lodash'
@@ -16,10 +18,9 @@ import {
   canWritePage,
   managesSystem,
   pageAuthorizationContext,
-  principalId,
-  type PageAuthorizationContext,
-  type PageVisibility
+  principalId
 } from '../helpers/page-access.ts'
+import type { PageAuthorizationContext, PageVisibility } from '../helpers/page-access.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { localeRelationMovePatch } from '../helpers/page-locale-relations.ts'
 import path from 'node:path'
@@ -39,11 +40,16 @@ import Locale from './locales.ts'
 import type Comment from './comments.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import errors from '../operations/errors.ts'
-import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/page-mutation-outbox.ts'
+import { admitPageRenderEffect, enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
+import type { PageProjectionPayload, PageRenderPublicationFence } from '../core/page-mutation-outbox.ts'
+import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
-import { mutateOkfMetadata, OkfDocumentError, type OkfMetadata } from '../okf/format.ts'
-import { PageBrandingAssignmentSchema, type PageBrandingAssignment } from '../../shared/page-branding.ts'
-import { DEFAULT_PAGE_FEATURES, PageFeaturesSchema, normalizePageFeatures, parsePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
+import { mutateOkfMetadata, OkfDocumentError } from '../okf/format.ts'
+import type { OkfMetadata } from '../okf/format.ts'
+import { PageBrandingAssignmentSchema } from '../../shared/page-branding.ts'
+import type { PageBrandingAssignment } from '../../shared/page-branding.ts'
+import { DEFAULT_PAGE_FEATURES, PageFeaturesSchema, normalizePageFeatures, parsePageFeatures } from '../../shared/page-features.ts'
+import type { PageFeatures } from '../../shared/page-features.ts'
 import { authorizePageBrandingAssignment } from '../helpers/asset-branding.ts'
 import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
 import { pageRequiresUnlock } from '../operations/page-protection.ts'
@@ -129,6 +135,9 @@ interface PageCacheIdentityMarker {
   id: number
   hash: string
   sourceRevision: string | number
+  renderedSourceRevision: string | number | null
+  render: string
+  toc: string
   path: string
   localeCode: string
   visibility: PageVisibility
@@ -341,6 +350,7 @@ interface PageVersionOptions {
   versionDate: string
   isSearchable?: boolean | number
   sourceRevision?: string | number | bigint
+  historyTagIds?: readonly number[]
   transaction?: Knex.Transaction
 }
 
@@ -437,7 +447,7 @@ interface PagesWikiContext {
     tags: typeof Tag
   }
   scheduler: {
-    registerJob(definition: SchedulerJobDefinition, pageId?: number): Promise<SchedulerJob>
+    registerJob(definition: SchedulerJobDefinition, data?: number | (PageRenderPublicationFence & { pageId: number })): Promise<SchedulerJob>
   }
 }
 
@@ -457,20 +467,6 @@ const deliverAfterPageCommit = async (label: string, action: () => Promise<unkno
   }
 }
 
-/**
- * Queue a fresh pipeline render after an invalidating page write commits.
- * The invalidating write clears renderedSourceRevision; only the render job's
- * source-revision CAS may certify the replacement bytes.
- */
-const schedulePageRerenders = (pageIds: readonly number[]): void => {
-  for (const pageId of new Set(pageIds)) {
-    try {
-      void Promise.resolve(wiki.models.pages.renderPage({ id: pageId } as Page)).catch(error => wiki.logger.warn(error))
-    } catch (error) {
-      wiki.logger.warn(error)
-    }
-  }
-}
 
 const pageUpdateConflict = (): Error & { status: number } =>
   Object.assign(new Error('The page changed after history was opened. Reload history before restoring.'), {
@@ -592,6 +588,8 @@ const pageAccessContext = (
   })
 
 const lockPageForMutation = async (transaction: Knex.Transaction, page: Page): Promise<Tag[] | undefined> => {
+  await lockSearchIndex(transaction, false)
+  await lockSearchPage(transaction, page.id)
   const locked = (await transaction('pages').where({ id: page.id }).forUpdate().first()) as
     | { sourceRevision?: string | number; updatedAt?: string | Date }
     | undefined
@@ -784,31 +782,34 @@ interface MigratedPageIdentity {
 
 const PAGE_TREE_REBUILD_LOCK_ID = 0x574b5452
 
-const rewriteLinkedPageRenders = async (
+const admitLinkedPageRenders = async (
   transaction: Knex.Transaction,
   locale: string,
-  pagePath: string,
-  from: string,
-  to: string
+  pagePath: string
 ): Promise<readonly Pick<Page, 'id' | 'hash'>[]> => {
-  const linkedPages = await transaction<Pick<Page, 'id' | 'hash'>>('pages')
-    .select('id', 'hash')
+  await lockSearchIndex(transaction, false)
+  const linkedPages = await transaction<Pick<Page, 'id'>>('pages')
+    .select('id')
     .whereIn('id', builder => {
       builder.select('pageId').from('pageLinks').where({ localeCode: locale, path: pagePath })
     })
-    .forUpdate()
-  if (linkedPages.length > 0) {
-    await transaction('pages')
-      .whereIn(
-        'id',
-        linkedPages.map(page => page.id)
-      )
-      .update({
-        render: transaction.raw('REPLACE(??, ?, ?)', ['render', from, to]),
-        renderedSourceRevision: null
-      })
+    .orderBy('id')
+  const admittedPages: Array<Pick<Page, 'id' | 'hash'>> = []
+  for (const { id } of linkedPages) {
+    await lockSearchPage(transaction, id)
+    const page = await transaction<ProjectionPageRow & { hash: string }>('pages')
+      .select('id', 'hash', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
+      .where({ id }).forUpdate().first()
+    if (!page) continue
+    await admitPageRenderEffect(transaction, {
+      pageId: page.id,
+      sourceRevision: page.sourceRevision,
+      source: page.content,
+      location: projectionLocation(page)
+    })
+    admittedPages.push({ id: page.id, hash: page.hash })
   }
-  return linkedPages
+  return admittedPages
 }
 
 
@@ -1155,6 +1156,7 @@ export default class Page extends Model {
     await authorizeBrandingAssignment(branding, opts)
 
     await wiki.models.knex.transaction(async transaction => {
+      await lockSearchIndex(transaction, false)
       const inserted = await wiki.models.pages.query(transaction).insert({
         authorId: opts.user.id,
         content: opts.content,
@@ -1214,9 +1216,8 @@ export default class Page extends Model {
     if (!page) {
       throw new wiki.Error.PageNotFound()
     }
-
-    // -> Render page to HTML
-    await wiki.models.pages.renderPage(page)
+    await wiki.models.pages.deletePageFromCache(page.hash)
+    wiki.events.outbound.emit('deletePageFromCache', page.hash)
 
     // -> Rebuild page tree
     await wiki.models.pages.rebuildTree()
@@ -1409,6 +1410,7 @@ export default class Page extends Model {
         throw new wiki.Error.PageUpdateForbidden()
       }
       const originalTags = [...authorizationTags]
+      const historyTagIds = originalTags.map(tag => tag.id)
       let tagsChanged = false
       if (opts.tags !== undefined) {
         tagsChanged = await wiki.models.tags.associateTags({ tags: opts.tags, page: ogPage, transaction })
@@ -1473,6 +1475,7 @@ export default class Page extends Model {
       const historyPage = {
         ...ogPage,
         tags: authorizationTags,
+        historyTagIds,
         isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
         isSearchable: ogPage.isSearchable !== false && ogPage.isSearchable !== 0
       }
@@ -1565,8 +1568,6 @@ export default class Page extends Model {
 
     // Tags are changed inside the page transaction so restore cannot expose mixed content and metadata.
     if (willMove) {
-      await deliverAfterPageCommit('move render', () => wiki.models.pages.renderPage(page!))
-      schedulePageRerenders([page.id])
       if (ogPage.hash !== page.hash) {
         await deliverAfterPageCommit('old-page cache eviction', () => wiki.models.pages.deletePageFromCache(ogPage.hash))
       }
@@ -1579,7 +1580,7 @@ export default class Page extends Model {
         }
       }
     } else {
-      await wiki.models.pages.renderPage(page)
+      await wiki.models.pages.deletePageFromCache(page.hash)
       wiki.events.outbound.emit('deletePageFromCache', page.hash)
     }
 
@@ -1721,7 +1722,6 @@ export default class Page extends Model {
 
     const updated = await wiki.models.pages.getPageFromDb(page.id)
     if (!updated) throw new wiki.Error.PageNotFound()
-    schedulePageRerenders([updated.id])
 
     if (updated.visibility === 'public') {
       if (!opts.skipStorage) {
@@ -1761,6 +1761,8 @@ export default class Page extends Model {
     if (collision) throw new wiki.Error.PagePathCollision()
 
     await wiki.models.knex.transaction(async transaction => {
+      await lockSearchIndex(transaction, false)
+      await lockSearchPage(transaction, page.id)
       await wiki.models.pageHistory.addVersion({
         ...page,
         action: 'ownership-transferred',
@@ -1787,7 +1789,6 @@ export default class Page extends Model {
     await wiki.models.pages.rebuildTree()
     const updated = await wiki.models.pages.getPageFromDb(page.id)
     if (!updated) throw new wiki.Error.PageNotFound()
-    schedulePageRerenders([updated.id])
     await notifyCollaboration(updated.id)
     return updated
   }
@@ -2002,7 +2003,6 @@ export default class Page extends Model {
     if (!page) {
       throw new wiki.Error.PageNotFound()
     }
-    schedulePageRerenders([page.id])
 
     await wiki.models.pages.deletePageFromCache(page.hash)
     wiki.events.outbound.emit('deletePageFromCache', page.hash)
@@ -2161,7 +2161,6 @@ export default class Page extends Model {
       if (!current) throw new wiki.Error.PageNotFound()
       movedPage = current
     })
-    schedulePageRerenders([page.id])
     for (const hash of new Set([page.hash, destinationHash])) {
       await deliverAfterPageCommit('cache eviction', () => wiki.models.pages.deletePageFromCache(hash))
       try {
@@ -2331,6 +2330,8 @@ export default class Page extends Model {
     let restoredOwnerId: number | null = null
     try {
       await wiki.models.knex.transaction(async transaction => {
+        await lockSearchIndex(transaction, false)
+        await lockSearchPage(transaction, opts.pageId)
         if (transaction.client.config.client === 'pg') {
           await transaction.raw('SELECT pg_advisory_xact_lock(?, hashtext(?))', [0x57505243, String(opts.pageId)])
           await transaction.raw('SELECT pg_advisory_xact_lock(?, hashtext(?))', [
@@ -2601,7 +2602,6 @@ export default class Page extends Model {
       ownerId: restoredOwnerId
     })
     if (!page || page.id !== opts.pageId) throw pageRecoveryConflict()
-    await wiki.models.pages.renderPage(page)
     await wiki.models.pages.deletePageFromCache(oldHash)
     await wiki.models.pages.deletePageFromCache(page.hash)
     wiki.events.outbound.emit('deletePageFromCache', oldHash)
@@ -2617,69 +2617,13 @@ export default class Page extends Model {
 
 
   static async reconnectLinks(opts: ReconnectLinksOptions): Promise<void | false> {
-    const pageHref = `/${opts.locale}/${opts.path}`
-    const replaceArgs = {
-      from: '',
-      to: ''
-    }
-    switch (opts.mode) {
-      case 'create':
-        replaceArgs.from = `<a href="${pageHref}" class="is-internal-link is-invalid-page">`
-        replaceArgs.to = `<a href="${pageHref}" class="is-internal-link is-valid-page">`
-        break
-      case 'delete':
-        replaceArgs.from = `<a href="${pageHref}" class="is-internal-link is-valid-page">`
-        replaceArgs.to = `<a href="${pageHref}" class="is-internal-link is-invalid-page">`
-        break
-      default:
-        return false
-    }
-
-    let affectedPages: Array<Pick<Page, 'id' | 'hash'>>
-    if (wiki.config.db.type === 'postgres') {
-      const queryPages = await wiki.models.pages
-        .query()
-        .returning(['id', 'hash'])
-        .patch({
-          render: wiki.models.knex.raw('REPLACE(??, ?, ?)', ['render', replaceArgs.from, replaceArgs.to]),
-          renderedSourceRevision: null
-        })
-        .whereIn('pages.id', builder => {
-          builder.select('pageLinks.pageId').from('pageLinks').where({
-            'pageLinks.path': opts.path,
-            'pageLinks.localeCode': opts.locale
-          })
-        })
-        .castTo<Array<Pick<Page, 'id' | 'hash'>>>()
-      affectedPages = queryPages
-    } else {
-      await wiki.models.pages
-        .query()
-        .patch({
-          render: wiki.models.knex.raw('REPLACE(??, ?, ?)', ['render', replaceArgs.from, replaceArgs.to]),
-          renderedSourceRevision: null
-        })
-        .whereIn('pages.id', builder => {
-          builder.select('pageLinks.pageId').from('pageLinks').where({
-            'pageLinks.path': opts.path,
-            'pageLinks.localeCode': opts.locale
-          })
-        })
-      affectedPages = await wiki.models.pages
-        .query()
-        .select('id', 'hash')
-        .whereIn('pages.id', builder => {
-          builder.select('pageLinks.pageId').from('pageLinks').where({
-            'pageLinks.path': opts.path,
-            'pageLinks.localeCode': opts.locale
-          })
-        })
-    }
+    if (opts.mode !== 'create' && opts.mode !== 'delete') return false
+    const affectedPages = await wiki.models.knex.transaction(transaction =>
+      admitLinkedPageRenders(transaction, opts.locale, opts.path))
     for (const page of affectedPages) {
       await wiki.models.pages.deletePageFromCache(page.hash)
       wiki.events.outbound.emit('deletePageFromCache', page.hash)
     }
-    schedulePageRerenders(affectedPages.map(page => page.id))
   }
 
   static async rebuildTree(): Promise<unknown> {
@@ -2691,14 +2635,15 @@ export default class Page extends Model {
     return rebuildJob.finished
   }
 
-  static async renderPage(page: Page): Promise<unknown> {
+  static async renderPage(page: Pick<Page, 'id'>, fence: PageRenderPublicationFence): Promise<unknown> {
+    if (!fence) throw new Error('A durable render publication fence is required.')
     const renderJob = await wiki.scheduler.registerJob(
       {
         name: 'render-page',
         immediate: true,
         worker: true
       },
-      page.id
+      { pageId: page.id, ...fence }
     )
     return renderJob.finished
   }
@@ -2716,10 +2661,13 @@ export default class Page extends Model {
     if (!page) {
       page = await wiki.models.pages.getPageFromDb(opts)
       if (page) {
-        if (page.render) {
+        if (page.renderedSourceRevision !== null && String(page.renderedSourceRevision) === String(page.sourceRevision)) {
           await wiki.models.pages.savePageToCache(page)
         } else {
-          throw new Error('Page has no rendered version. Looks like the Last page render failed. Try to edit the page and save it again.')
+          throw new errors.ApplicationError('The page render is pending for its current source revision. Retry shortly.', {
+            code: 'PAGE_RENDER_PENDING',
+            status: 503
+          })
         }
       }
     }
@@ -2841,7 +2789,7 @@ export default class Page extends Model {
       }
       const marker = await wiki.models
         .knex<PageCacheIdentityMarker>('pages')
-        .select('id', 'hash', 'sourceRevision', 'path', 'localeCode', 'visibility', 'ownerId', 'isSearchable', 'extra')
+        .select('id', 'hash', 'sourceRevision', 'renderedSourceRevision', 'render', 'toc', 'path', 'localeCode', 'visibility', 'ownerId', 'isSearchable', 'extra')
         .where({
           path: opts.path,
           localeCode: opts.locale,
@@ -2854,6 +2802,10 @@ export default class Page extends Model {
         marker.hash !== pageHash ||
         marker.id !== page.id ||
         String(marker.sourceRevision) !== page.sourceRevision ||
+        marker.renderedSourceRevision === null ||
+        String(marker.renderedSourceRevision) !== String(marker.sourceRevision) ||
+        marker.render !== page.render ||
+        marker.toc !== page.toc ||
         marker.visibility !== page.visibility ||
         marker.ownerId !== (page.ownerId === 0 ? null : page.ownerId) ||
         marker.isSearchable !== page.isSearchable
@@ -2887,6 +2839,8 @@ export default class Page extends Model {
   }
 
   static async acquireLocaleMigrationLocks(transaction: Knex.Transaction): Promise<void> {
+    // Drain projection workers before the batch's table lock and dependent-page admissions.
+    await lockSearchIndex(transaction, true)
     await transaction.raw('SELECT pg_advisory_xact_lock(?)', [PAGE_TREE_REBUILD_LOCK_ID])
     await transaction.raw('LOCK TABLE "pages" IN SHARE ROW EXCLUSIVE MODE')
   }
@@ -2903,11 +2857,10 @@ export default class Page extends Model {
         })
         .forUpdate()
         .withGraphFetched('tags')
-      if (pages.length === 0) return { pages: [] as MigratedPageIdentity[], cacheHashes: [] as string[], rerenderPageIds: [] as number[] }
+      if (pages.length === 0) return { pages: [] as MigratedPageIdentity[], cacheHashes: [] as string[] }
 
       const migratedPages: MigratedPageIdentity[] = []
       const cacheHashes = new Set<string>()
-      const rerenderPageIds = new Set<number>()
       for (const page of pages) {
         const destinationHash = pageHelper.generateHash({
           path: page.path,
@@ -2951,46 +2904,35 @@ export default class Page extends Model {
             })
         }
 
-        const sourceHref = `/${sourceLocale}/${page.path}`
-        const destinationHref = `/${targetLocale}/${page.path}`
-        for (const linkedPage of await rewriteLinkedPageRenders(
+        for (const linkedPage of await admitLinkedPageRenders(
           transaction,
           sourceLocale,
-          page.path,
-          `<a href="${sourceHref}" class="is-internal-link is-valid-page">`,
-          `<a href="${destinationHref}" class="is-internal-link is-valid-page">`
+          page.path
         )) {
           cacheHashes.add(linkedPage.hash)
-          rerenderPageIds.add(linkedPage.id)
         }
-        await transaction('pageLinks').where({ localeCode: sourceLocale, path: page.path }).update({ localeCode: targetLocale })
-        for (const linkedPage of await rewriteLinkedPageRenders(
+        for (const linkedPage of await admitLinkedPageRenders(
           transaction,
           targetLocale,
-          page.path,
-          `<a href="${destinationHref}" class="is-internal-link is-invalid-page">`,
-          `<a href="${destinationHref}" class="is-internal-link is-valid-page">`
+          page.path
         )) {
           cacheHashes.add(linkedPage.hash)
-          rerenderPageIds.add(linkedPage.id)
         }
 
         await writePageOutboxEvent(transaction, 'page.moved', { ...page, localeCode: targetLocale }, user)
         await enqueueCurrentPageProjections(transaction, page.id, 'move', projectionLocation(page))
         cacheHashes.add(page.hash)
-        rerenderPageIds.add(page.id)
         cacheHashes.add(destinationHash)
         migratedPages.push({ previous: page, destinationHash })
       }
       await replacePageTree(transaction)
-      return { pages: migratedPages, cacheHashes: [...cacheHashes], rerenderPageIds: [...rerenderPageIds] }
+      return { pages: migratedPages, cacheHashes: [...cacheHashes] }
     })
 
     for (const hash of migration.cacheHashes) {
       await wiki.models.pages.deletePageFromCache(hash)
       wiki.events.outbound.emit('deletePageFromCache', hash)
     }
-    schedulePageRerenders(migration.rerenderPageIds)
     for (const { previous, destinationHash } of migration.pages) {
       const updated = await wiki.models.pages.getPageFromDb(previous.id)
       if (!updated) throw new wiki.Error.PageNotFound()
@@ -3167,6 +3109,8 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
   const collaboration = new CollaborationRoomStore(wiki.models.knex)
   const committed = await wiki.models.knex.transaction(async transaction => {
     const pageIds = [...new Set([opts.id!, ...token.selected.map(selected => selected.id)])].sort((left, right) => left - right)
+    await lockSearchIndex(transaction, false)
+    for (const pageId of pageIds) await lockSearchPage(transaction, pageId)
     const lockedRows = await transaction('pages').select('id').whereIn('id', pageIds).orderBy('id', 'asc').forUpdate()
     if (lockedRows.length !== pageIds.length) throw pageMoveReviewStale()
     const pages = new Map<number, Page>()
@@ -3381,7 +3325,6 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
       destinationHash: movedHash,
       oldTarget,
       newTarget,
-      pageIds: [currentTarget.id, ...referrerChanges.map(change => change.page.id)],
       pageHashes: [currentTarget.hash, ...referrerChanges.map(change => change.page.hash)]
     }
   })
@@ -3393,7 +3336,6 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
       wiki.logger.warn(`Page move committed; ${label} remains pending: ${String(error)}`)
     }
   }
-  schedulePageRerenders(committed.pageIds)
   await deliver('page-tree rebuild', () => wiki.models.pages.rebuildTree())
   for (const hash of new Set([...committed.pageHashes, committed.previousHash, committed.destinationHash])) {
     await deliver('cache eviction', () => wiki.models.pages.deletePageFromCache(hash))
@@ -3435,7 +3377,8 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
     wiki.models.pages.reconnectLinks({ locale: committed.oldTarget.locale, path: committed.oldTarget.path, mode: 'delete' }))
   await deliver('new-route link-state refresh', () =>
     wiki.models.pages.reconnectLinks({ locale: committed.newTarget.locale, path: committed.newTarget.path, mode: 'create' }))
-  for (const pageId of committed.pageIds) await deliver('collaboration notification', () => notifyCollaboration(pageId, pageId === committed.pageId))
+  await deliver('collaboration notification', () => notifyCollaboration(committed.pageId, true))
+  for (const item of committed.updated) await deliver('collaboration notification', () => notifyCollaboration(item.id, false))
   return {
     message: 'Page has been moved.',
     pageId: committed.pageId,

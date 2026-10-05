@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
-import createKnex, { type Knex } from 'knex'
+import createKnex from 'knex'
+import type { Knex } from 'knex'
+import { projectPageKnowledge } from '../../knowledge/projection.ts'
+import type { KnowledgePageSource } from '../../knowledge/projection.ts'
 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
 const originalWiki = wikiGlobal.WIKI
@@ -192,6 +195,87 @@ describe('page history restore metadata contract', () => {
       tags: ['release', 'docs'],
       visibility: 'public'
     })
+  })
+
+  it('keeps revision N tags authoritative after current relations become revision N+1', async () => {
+    const source: KnowledgePageSource = {
+      pageId: 42,
+      sourceRevision: '1',
+      locale: 'en',
+      path: 'release',
+      visibility: 'public',
+      contentType: 'markdown',
+      content: '# Release\n',
+      title: 'Release',
+      description: 'Release notes',
+      tags: ['release'],
+      updatedAt: '2026-08-15T00:00:00.000Z',
+      authorId: 7
+    }
+    const expectedDigest = projectPageKnowledge(source).source.sha256
+    const version = await db.transaction(async transaction => {
+      await transaction('pageTags').where({ pageId: 42 }).delete()
+      await transaction('pageTags').insert({ pageId: 42, tagId: 3 })
+      return PageHistory.addVersion({
+        id: source.pageId,
+        authorId: source.authorId,
+        content: source.content,
+        contentType: source.contentType,
+        extra: {},
+        description: source.description!,
+        editorKey: 'markdown',
+        hash: 'public:en:release',
+        visibility: source.visibility,
+        ownerId: null,
+        isPublished: true,
+        localeCode: source.locale,
+        path: source.path,
+        title: source.title,
+        versionDate: String(source.updatedAt),
+        sourceRevision: source.sourceRevision,
+        historyTagIds: [2],
+        transaction
+      })
+    })
+    expect(await db('pageTags').where({ pageId: 42 }).pluck('tagId')).toEqual([3])
+    expect(await db('pageHistoryTags').where({ pageId: version.id }).pluck('tagId')).toEqual([2])
+
+    // A delayed projection reads the committed historical source, not today's relations.
+    const restored = await PageHistory.getVersion({
+      pageId: 42,
+      versionId: version.id,
+      requester: { id: 7, permissions: ['manage:system'] } as Express.User
+    })
+    expect(restored).not.toBeNull()
+    expect(restored!.tags).toEqual(['release'])
+    const delayed = projectPageKnowledge({ ...source, tags: restored!.tags })
+    expect(delayed.concept.tags).toEqual(['release'])
+    expect(delayed.source.sha256).toBe(expectedDigest)
+    expect(delayed.source.sha256).not.toBe(projectPageKnowledge({ ...source, tags: ['docs'] }).source.sha256)
+  })
+
+  it('does not replace an authoritative empty tag snapshot with current tags', async () => {
+    const version = await PageHistory.addVersion({
+      id: 42,
+      authorId: 7,
+      content: '# Release\n',
+      contentType: 'markdown',
+      extra: {},
+      description: 'Release notes',
+      editorKey: 'markdown',
+      hash: 'public:en:release',
+      visibility: 'public',
+      ownerId: null,
+      isPublished: true,
+      localeCode: 'en',
+      path: 'release',
+      title: 'Release',
+      versionDate: '2026-08-15T00:00:00.000Z',
+      sourceRevision: '1',
+      historyTagIds: []
+    })
+    expect(await db('pageHistoryTags').where({ pageId: version.id })).toEqual([])
+    expect(await db('pageTags').where({ pageId: 42 }).orderBy('tagId').pluck('tagId')).toEqual([2, 3])
   })
   it('filters historical rows by their own path, locale and tags before pagination and move labels', async () => {
     const requester = { id: 8, permissions: ['read:history'] } as Express.User

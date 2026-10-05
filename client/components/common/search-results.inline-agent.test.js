@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import * as ts from 'typescript'
 import { OFFLINE_CONTENT_TYPE, OFFLINE_HTML_SANITIZER_VERSION, OfflineSnapshotRecordSchema } from '../../../shared/offline.ts'
+import { currentOfflineReadingEpoch, currentOfflineReadingHandle } from '../../helpers/offline-session.ts'
+import { mergeOfflineSearchCorpora, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync } from '../../helpers/offline-search.ts'
 
 const compileSearchMethods = (source, names, dependencies) => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
@@ -22,7 +24,7 @@ const compileSearchMethods = (source, names, dependencies) => {
   const declarations = methods.properties.filter(node => ts.isMethodDeclaration(node) && selected.has(node.name.getText(sourceFile)))
   if (declarations.length !== selected.size) throw new Error('A requested search method was not found.')
 
-  const factorySource = `(searchPages, getErrorMessage, wikiStore, useAgentsStore, isAgentSessionId, emptySearchResponse, retryServerConnection, openOfflineStorage, isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync, OFFLINE_SEARCH_RESULT_LIMIT) => ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`
+  const factorySource = `(searchPages, getErrorMessage, wikiStore, useAgentsStore, isAgentSessionId, emptySearchResponse, retryServerConnection, openOfflineStorage, isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync, OFFLINE_SEARCH_RESULT_LIMIT, currentOfflineReadingHandle, currentOfflineReadingEpoch, mergeOfflineSearchCorpora) => ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`
   const compiled = ts.transpileModule(`const factory = ${factorySource}`, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -44,7 +46,10 @@ const compileSearchMethods = (source, names, dependencies) => {
     dependencies.toOfflineSearchDocument,
     dependencies.prepareOfflineSearchCorpus,
     dependencies.searchPreparedOfflineDocumentsAsync,
-    dependencies.OFFLINE_SEARCH_RESULT_LIMIT
+    dependencies.OFFLINE_SEARCH_RESULT_LIMIT,
+    dependencies.currentOfflineReadingHandle ?? currentOfflineReadingHandle,
+    dependencies.currentOfflineReadingEpoch ?? currentOfflineReadingEpoch,
+    dependencies.mergeOfflineSearchCorpora ?? mergeOfflineSearchCorpora
   )
 }
 
@@ -551,6 +556,7 @@ describe('inline Ask mode contract', () => {
     })
     try {
       const pendingByQuery = new Map()
+      const rankingStarted = new Map([['stale', deferred()], ['latest', deferred()]])
       const adapters = compileSnapshotAdapters(search)
       const snapshots = [
         [1, 'stale', 'Stale'],
@@ -590,13 +596,14 @@ describe('inline Ask mode contract', () => {
         wikiStore: { page: { locale: 'en', path: 'guide' } },
         openOfflineStorage: async () => storage,
         ...adapters,
-        prepareOfflineSearchCorpus: documents => documents,
+        prepareOfflineSearchCorpus,
         // Deliberately complete ranking after abort to exercise the component's publication fence.
         searchPreparedOfflineDocumentsAsync: (documents, query) => {
           const request = deferred()
-          const document = documents.find(candidate => candidate.path === query)
+          const document = snapshots.map(adapters.toOfflineSearchDocument).find(candidate => candidate.path === query)
           if (!document) throw new Error(`No admitted snapshot matches ${query}.`)
           pendingByQuery.set(query, { ...request, document })
+          rankingStarted.get(query).resolve()
           return request.promise
         },
         OFFLINE_SEARCH_RESULT_LIMIT: 50
@@ -626,7 +633,7 @@ describe('inline Ask mode contract', () => {
       }
 
       const stale = methods.runOfflineSearch.call(state, 'stale', 'old-key', 1)
-      for (let turn = 0; turn < 4; turn += 1) await Promise.resolve()
+      await rankingStarted.get('stale').promise
       expect(pendingByQuery.has('stale')).toBe(true)
       const staleController = state.searchAbortController
 
@@ -635,7 +642,7 @@ describe('inline Ask mode contract', () => {
       staleController.abort()
       state.searchAbortController = null
       const latest = methods.runOfflineSearch.call(state, 'latest', 'new-key', 2)
-      for (let turn = 0; turn < 4; turn += 1) await Promise.resolve()
+      await rankingStarted.get('latest').promise
       expect(pendingByQuery.has('latest')).toBe(true)
 
       const latestResponse = { results: [{ document: pendingByQuery.get('latest').document, score: 1 }], hasMore: false }
@@ -666,6 +673,12 @@ describe('inline Ask mode contract', () => {
       const pendingByQuery = new Map()
       const document = {
         pageId: 1,
+        schemaVersion: 1,
+        siteId: 'https://wiki.example.test',
+        canonicalPath: '/en/downloaded',
+        searchText: 'Downloaded',
+        capturedAt: '2026-01-01T00:00:00.000Z',
+        byteSize: 128,
         title: 'Downloaded',
         description: '',
         path: 'downloaded',
@@ -683,7 +696,7 @@ describe('inline Ask mode contract', () => {
         openOfflineStorage: async () => storage,
         isOfflineSnapshotRecord: () => true,
         isOfflineSnapshotExpired: () => false,
-        toOfflineSearchDocument: value => value,
+        toOfflineSearchDocument: ({ snapshot: _snapshot, ...value }) => value,
         prepareOfflineSearchCorpus: () => {
           const request = deferred()
           pendingPreparations.push(request)
@@ -727,7 +740,8 @@ describe('inline Ask mode contract', () => {
       for (let turn = 0; turn < 4; turn += 1) await Promise.resolve()
       expect(pendingPreparations).toHaveLength(2)
 
-      const latestCorpus = { revision: 'latest' }
+      const { snapshot: _snapshot, ...searchDocument } = document
+      const latestCorpus = await prepareOfflineSearchCorpus([searchDocument])
       pendingPreparations[1].resolve(latestCorpus)
       for (let turn = 0; turn < 4; turn += 1) await Promise.resolve()
       expect(pendingByQuery.has('latest')).toBe(true)
@@ -737,13 +751,109 @@ describe('inline Ask mode contract', () => {
       expect(state.response.results[0].id).toBe(1)
       expect(state.responseKey).toBe('new-key')
 
-      pendingPreparations[0].resolve({ revision: 'stale' })
+      pendingPreparations[0].resolve(await prepareOfflineSearchCorpus([searchDocument]))
       await stale
       expect(state.offlineSearchCorpus).toBe(latestCorpus)
       expect(state.responseKey).toBe('new-key')
     } finally {
       if (originalWindow === undefined) delete globalThis.window
       else globalThis.window = originalWindow
+    }
+  })
+  test.each(['corpus', 'query', 'session', 'reading epoch', 'mode'])('replaces a deferred stale corpus only under current authority: %s', async change => {
+    const scheduler = useSearchScheduler()
+    window.location = { origin: 'https://wiki.example.test' }
+    try {
+      let revision = 1
+      let sessionGeneration = 1
+      let readingEpoch = 0
+      const ranked = deferred()
+      const rankingStarted = deferred()
+      const replacementFinished = deferred()
+      let rankings = 0
+      let reads = 0
+      const document = title => ({
+        schemaVersion: 1, siteId: window.location.origin, pageId: revision,
+        locale: 'en', path: 'downloaded', canonicalPath: '/en/downloaded',
+        title, description: '', searchText: 'downloaded', byteSize: 128,
+        capturedAt: '2026-01-01T00:00:00.000Z', snapshot: { expiresAt: null }
+      })
+      const storage = {
+        readSnapshotCorpus: async () => {
+          reads += 1
+          return { snapshots: [document(`Revision ${revision}`)], corpusRevision: revision, sessionGeneration }
+        },
+        currentCorpusRevision: async () => revision,
+        currentSessionGeneration: async () => sessionGeneration,
+        close: () => {}
+      }
+      const methods = compileSearchMethods(search, ['queueSearch', 'runSearch', 'runOfflineSearch'], {
+        openOfflineStorage: async () => storage,
+        getErrorMessage: value => String(value),
+        currentOfflineReadingHandle: () => null,
+        currentOfflineReadingEpoch: () => readingEpoch,
+        isOfflineSnapshotRecord: () => true,
+        isOfflineSnapshotExpired: () => false,
+        toOfflineSearchDocument: ({ snapshot: _snapshot, ...value }) => value,
+        prepareOfflineSearchCorpus,
+        searchPreparedOfflineDocumentsAsync: async (corpus, query, options) => {
+          const response = await searchPreparedOfflineDocumentsAsync(corpus, query, options)
+          rankings += 1
+          if (rankings === 1) {
+            rankingStarted.resolve()
+            await ranked.promise
+          }
+          return response
+        },
+        OFFLINE_SEARCH_RESULT_LIMIT: 50
+      })
+      const retained = { results: [{ id: 9, title: 'Retained' }], suggestions: [], totalHits: 1 }
+      const state = {
+        offlineSearchActive: true, offlineSearchCorpus: null,
+        offlineSearchCorpusRevision: null, offlineSearchCorpusSessionGeneration: null,
+        offlineSearchCorpusExpiresAt: null, response: retained, responseKey: 'same-key',
+        searchRequestId: 1, searchRequestKey: 'same-key', searchMode: 'search',
+        searchAbortController: null, moreAbortController: null, searchTimer: null,
+        searchIsLoading: true, searchError: '', cursor: -1,
+        queueSearch(query) { return methods.queueSearch.call(this, query) },
+        async runSearch(...args) {
+          await methods.runSearch.apply(this, args)
+          replacementFinished.resolve()
+        },
+        runOfflineSearch(...args) { return methods.runOfflineSearch.apply(this, args) }
+      }
+      const first = state.runOfflineSearch('downloaded', 'same-key', 1)
+      await rankingStarted.promise
+      revision = 2
+      if (change === 'query') {
+        state.searchRequestId += 1
+        state.searchRequestKey = 'new-query'
+      }
+      if (change === 'session') sessionGeneration = 2
+      if (change === 'reading epoch') readingEpoch += 1
+      if (change === 'mode') state.searchMode = 'ask'
+      ranked.resolve()
+      await first
+      expect(state.response).toBe(retained)
+      if (change !== 'corpus') {
+        expect(scheduler.pending()).toBe(0)
+        expect(reads).toBe(1)
+        return
+      }
+      expect(state.responseKey).toBe('')
+      expect(state.offlineSearchCorpus).toBeNull()
+      expect(scheduler.pending()).toBe(1)
+      scheduler.runNext()
+      await replacementFinished.promise
+      expect(state.response.results.map(result => result.title)).toEqual(['Revision 2'])
+      expect(state.responseKey).toBe('same-key')
+      expect(state.responseQuery).toBe('downloaded')
+      expect(state.searchIsLoading).toBe(false)
+      expect(reads).toBe(2)
+      expect(rankings).toBe(2)
+      expect(scheduler.pending()).toBe(0)
+    } finally {
+      scheduler.restore()
     }
   })
 })

@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs-then'
 import type { Knex } from 'knex'
-import { canReadPage, canWritePage, managesSystem, principalId, type PagePrincipal, type PageVisibilityRecord } from '../helpers/page-access.ts'
+import { canReadPage, canWritePage, managesSystem, principalId } from '../helpers/page-access.ts'
+import type { PagePrincipal, PageVisibilityRecord } from '../helpers/page-access.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import errors from './errors.ts'
 import assetHelper from '../helpers/asset.ts'
+import { admitPageSearchEffect } from '../core/page-mutation-outbox.ts'
+import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
 
 const { ApplicationError } = errors
 const BCRYPT_COST = 12
@@ -156,6 +159,8 @@ export const setPageProtection = async (input: {
   let page: ProtectedPage | undefined
   const loadedPage = await wiki.models.pages.getPageFromDb(input.pageId)
   await wiki.models.knex.transaction(async transaction => {
+    await lockSearchIndex(transaction, false)
+    await lockSearchPage(transaction, input.pageId)
     const currentPage = await transaction<ProtectedPage>('pages').where({ id: input.pageId }).forUpdate().first()
     if (!currentPage) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
     page = (loadedPage ? { ...loadedPage, ...currentPage } : currentPage) as ProtectedPage
@@ -180,6 +185,10 @@ export const setPageProtection = async (input: {
       createdAt: now,
       expiresAt: new Date(now.valueOf() + GRANT_LIFETIME_MS)
     })
+    await admitPageSearchEffect(transaction, { pageId: page.id, now })
+    // Protection and body-index withdrawal commit together, even when the post-commit refresh fails.
+    await transaction('pagesVector').where({ pageId: page.id }).delete()
+    await transaction('pagesWords').where({ pageId: page.id }).delete()
   })
   if (!page) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   Reflect.set(page, 'safeContent', '')
@@ -189,6 +198,8 @@ export const setPageProtection = async (input: {
 export const removePageProtection = async (input: { requester: PagePrincipal; pageId: number }): Promise<{ protected: false }> => {
   const loadedPage = await wiki.models.pages.getPageFromDb(input.pageId)
   const page = await wiki.models.knex.transaction(async transaction => {
+    await lockSearchIndex(transaction, false)
+    await lockSearchPage(transaction, input.pageId)
     const current = await transaction<ProtectedPage>('pages').where({ id: input.pageId }).forUpdate().first()
     if (!current) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
     const page = (loadedPage ? { ...loadedPage, ...current } : current) as ProtectedPage
@@ -196,6 +207,7 @@ export const removePageProtection = async (input: { requester: PagePrincipal; pa
     const authority = await wiki.auth.loadPageRuleAuthority(input.requester, transaction)
     if (!canWritePage(input.requester, page, authority)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
     await transaction('pageAccessPasswords').where({ pageId: page.id }).delete()
+    await admitPageSearchEffect(transaction, { pageId: page.id })
     return page
   })
   Reflect.set(page, 'safeContent', wiki.models.pages.cleanHTML(String(page.render ?? '')))

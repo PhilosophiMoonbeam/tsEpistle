@@ -2,6 +2,7 @@ import _ from 'lodash'
 
 import configuration, { validateRows } from './configuration.ts'
 import errors from './errors.ts'
+import type { SearchIndexInspection } from '../../shared/search-admin.ts'
 
 const { parseConfig, serializeConfig } = configuration
 
@@ -17,25 +18,18 @@ interface SearchEngineRow {
   [key: string]: unknown
 }
 
-interface SearchEngineQuery {
-  patch(data: Record<string, unknown>): { where(column: string, value: unknown): Promise<unknown> }
-}
-
 interface SearchEngineModel {
   getSearchEngines(): Promise<SearchEngineRow[]>
-  query(): SearchEngineQuery
-  initEngine(options: { activate: boolean }): Promise<unknown>
+  configure(config: { dictLanguage: string }): Promise<void>
 }
 
 interface ActiveSearchEngine {
   key: string
-  deactivate(): Promise<unknown>
   rebuild(): unknown
-  inspectIndex?(): Promise<import('../../shared/search-admin.ts').SearchIndexInspection>
+  inspectIndex?(): Promise<SearchIndexInspection>
 }
 
 const searchEngineModel = (WIKI.models as { searchEngines: SearchEngineModel }).searchEngines
-const logger = WIKI.logger as { warn(message: string, error: unknown): void }
 
 const validEngine = (engine: unknown): engine is SearchEngineRow => Boolean(
   engine &&
@@ -63,36 +57,20 @@ const listEngines = async (orderBy?: string): Promise<Array<Record<string, unkno
 
 const updateEngines = async (engines: unknown): Promise<void> => {
   validateRows(engines, validEngine, 'Invalid search engines payload')
-  const updates = engines.map(engine => ({
-    key: engine.key,
-    isEnabled: engine.isEnabled,
-    config: parseConfig(engine.config, { errorMessage: 'Invalid search engines payload' })
-  }))
+  if (engines.length !== 1 || engines[0]?.key !== 'postgres' || engines[0].isEnabled !== true) {
+    throw new errors.ApplicationError('Exactly one enabled postgres search provider is required', { code: 'INVALID_CONFIGURATION' })
+  }
+  const engine = engines[0]
+  if (!Array.isArray(engine.config) || engine.config.length !== 1 || engine.config[0]?.key !== 'dictLanguage') {
+    throw new errors.ApplicationError('Search dictionary configuration is required', { code: 'INVALID_CONFIGURATION' })
+  }
+  const config = parseConfig(engine.config, { errorMessage: 'Invalid search engines payload' })
   const definitions = (WIKI.data as { searchEngines: Array<{ key: string; props?: Record<string, { enum?: unknown[] }> }> }).searchEngines
-  for (const update of updates) {
-    const definition = definitions.find(item => item.key === update.key)
-    for (const [key, value] of Object.entries(update.config)) {
-      const choices = definition?.props?.[key]?.enum
-      if (choices && !choices.includes(value)) throw new errors.ApplicationError(`Invalid value for search setting ${key}`, { code: 'INVALID_CONFIGURATION' })
-    }
+  const choices = definitions.find(item => item.key === 'postgres')?.props?.dictLanguage?.enum
+  if (typeof config.dictLanguage !== 'string' || !Array.isArray(choices) || !choices.includes(config.dictLanguage)) {
+    throw new errors.ApplicationError('Invalid value for search setting dictLanguage', { code: 'INVALID_CONFIGURATION' })
   }
-  let newActiveEngine = ''
-  const activeSearchEngine = (WIKI.data as { searchEngine: ActiveSearchEngine }).searchEngine
-  for (const engine of updates) {
-    if (engine.isEnabled) newActiveEngine = engine.key
-    await searchEngineModel.query().patch({
-      isEnabled: engine.isEnabled,
-      config: engine.config
-    }).where('key', engine.key)
-  }
-  if (newActiveEngine !== activeSearchEngine.key) {
-    try {
-      await activeSearchEngine.deactivate()
-    } catch (error) {
-      logger.warn('Failed to deactivate previous search engine:', error)
-    }
-  }
-  await searchEngineModel.initEngine({ activate: true })
+  await searchEngineModel.configure({ dictLanguage: config.dictLanguage })
 }
 
 const rebuildIndex = (): unknown => (WIKI.data as { searchEngine: ActiveSearchEngine }).searchEngine.rebuild()

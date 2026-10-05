@@ -3,7 +3,8 @@ import type { MarkdownIt, MarkdownItOptions, Token } from 'markdown-it'
 import * as markdownItModule from 'markdown-it'
 import { z } from 'zod'
 import { canonicalJson } from '../helpers/canonical-json.ts'
-import { validateStoredOkfMetadata, type OkfMetadata, type OkfTrustSummary } from '../okf/format.ts'
+import { validateStoredOkfMetadata } from '../okf/format.ts'
+import type { OkfMetadata, OkfTrustSummary } from '../okf/format.ts'
 
 export const KNOWLEDGE_SCHEMA_VERSION = 2 as const
 export const KNOWLEDGE_DETERMINISTIC_VERSION = 'wiki-knowledge-v2' as const
@@ -202,11 +203,11 @@ const titleSearchTerms = (title: string): string[] => {
   )
   return acronym.length >= 2 ? [acronym] : []
 }
-const sourceSha256 = (input: KnowledgePageSource, sourceRevision: string): string =>
+export const knowledgeSourceSha256 = (input: KnowledgePageSource): string =>
   sha256(
     canonicalJson({
       pageId: input.pageId,
-      sourceRevision,
+      sourceRevision: String(input.sourceRevision),
       locale: input.locale,
       path: input.path,
       visibility: input.visibility,
@@ -506,7 +507,7 @@ export const projectPageKnowledge = (input: KnowledgePageSource): KnowledgeProje
     source: {
       pageId: input.pageId,
       sourceRevision,
-      sha256: sourceSha256(input, sourceRevision),
+      sha256: knowledgeSourceSha256(input),
       locale: input.locale,
       path: input.path,
       visibility: input.visibility,

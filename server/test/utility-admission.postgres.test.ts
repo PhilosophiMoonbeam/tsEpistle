@@ -1,15 +1,21 @@
 import { randomUUID } from 'node:crypto'
 
-import knexModule, { type Knex } from 'knex'
+import knexModule from 'knex'
+import type { Knex } from 'knex'
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import {
   claimPageMutationEffects,
   enqueuePageMutationEffects,
-  executePageMutationEffect,
-  type ClaimedPageProjectionEffect
+  executePageMutationEffect
 } from '../core/page-mutation-outbox.ts'
+import type { ClaimedPageProjectionEffect } from '../core/page-mutation-outbox.ts'
 import { getPostgresTestConnection } from './postgres-test-connection.mts'
+import { up as createKnowledgeProjectionStore } from '../db/migrations/2.5.152.ts'
+import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
+import { up as createKnowledgeMaintenanceStore } from '../db/migrations/tsfranki-000006-knowledge-maintenance.ts'
+import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
+import { PageKnowledgeLifecycle, PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 
 const connection = getPostgresTestConnection('_utility_admission_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -19,6 +25,27 @@ suite('Utility admission on PostgreSQL', () => {
   let db: Knex
 
   const enqueueKnowledge = async (pageId: number): Promise<void> => {
+    await db('pages').insert({
+      id: pageId,
+      sourceRevision: '1',
+      content: `# Knowledge ${pageId}\n`,
+      render: `<article>Knowledge ${pageId}</article>`,
+      renderedSourceRevision: '1',
+      localeCode: 'en',
+      path: `knowledge/${pageId}`,
+      visibility: 'public',
+      ownerId: null,
+      isPublished: true,
+      isSearchable: true,
+      publishStartDate: null,
+      publishEndDate: null,
+      contentType: 'markdown',
+      title: `Knowledge ${pageId}`,
+      description: null,
+      authorId: 1,
+      updatedAt: '2026-09-09T00:00:00.000Z',
+      extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } })
+    })
     await enqueuePageMutationEffects(db, {
       pageId,
       sourceRevision: '1',
@@ -67,7 +94,56 @@ suite('Utility admission on PostgreSQL', () => {
     await db.schema.createTable('pages', table => {
       table.integer('id').primary()
       table.bigInteger('sourceRevision').notNullable()
+      table.text('content').notNullable()
+      table.text('render').notNullable()
+      table.text('toc').notNullable().defaultTo('[]')
+      table.bigInteger('renderedSourceRevision').nullable()
+      table.string('localeCode').notNullable()
+      table.string('path').notNullable()
+      table.string('visibility').notNullable()
+      table.integer('ownerId').nullable()
+      table.boolean('isPublished').notNullable()
+      table.boolean('isSearchable').notNullable()
+      table.string('publishStartDate').nullable()
+      table.string('publishEndDate').nullable()
+      table.string('contentType').notNullable()
+      table.string('title').notNullable()
+      table.text('description').nullable()
+      table.integer('authorId').notNullable()
+      table.timestamp('updatedAt', { useTz: true }).notNullable()
+      table.jsonb('extra').notNullable()
     })
+    await db.schema.createTable('pageAccessPasswords', table => {
+      table.integer('pageId').primary()
+    })
+    await db.schema.createTable('tags', table => {
+      table.increments('id').primary()
+      table.string('tag').notNullable()
+    })
+    await db.schema.createTable('pageTags', table => {
+      table.integer('pageId').notNullable()
+      table.integer('tagId').notNullable()
+    })
+    await db.schema.createTable('pagesSearchMetadata', table => {
+      table.specificType('contractId', 'smallint').primary()
+      table.integer('schemaVersion').notNullable()
+      table.text('dictionary').notNullable()
+    })
+    await db.schema.createTable('agentProviderProfiles', table => {
+      table.uuid('id').primary()
+      table.string('status').notNullable()
+      table.boolean('isGlobalDefault').notNullable()
+      table.boolean('conformed').notNullable()
+      table.uuid('currentVersionId').nullable()
+      table.timestamp('deletedAt', { useTz: true }).nullable()
+    })
+    await db.schema.createTable('agentProviderProfileVersions', table => {
+      table.uuid('id').primary()
+      table.boolean('conformed').notNullable()
+    })
+    await createKnowledgeProjectionStore(db)
+    await createKnowledgeSearchStore(db)
+    await createKnowledgeMaintenanceStore(db)
   })
 
   afterAll(async () => {
@@ -81,6 +157,15 @@ suite('Utility admission on PostgreSQL', () => {
   })
 
   beforeEach(async () => {
+    await db('pageKnowledgeProjections').delete()
+    await db('pageAccessPasswords').delete()
+    await db('pageTags').delete()
+    await db('tags').delete()
+    await db('agentProviderProfiles').delete()
+    await db('agentProviderProfileVersions').delete()
+    await db('pageKnowledgeMaintenance').delete()
+    await db('pageKnowledgeMaintenance').insert({ id: 1 })
+    await db('pagesSearchMetadata').insert({ contractId: 1, schemaVersion: 2, dictionary: 'english' }).onConflict('contractId').merge()
     await db('pageMutationOutbox').delete()
     await db('pages').delete()
   })
@@ -257,4 +342,195 @@ suite('Utility admission on PostgreSQL', () => {
       await claimant.destroy()
     }
   })
+
+  it('preserves a competing lease acquired after utility requeue selects its candidate', async () => {
+    await enqueueKnowledge(1)
+    const profileVersionId = '00000000-0000-4000-8000-000000000001'
+    await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
+    await db('agentProviderProfiles').insert({
+      id: '00000000-0000-4000-8000-000000000002',
+      status: 'enabled',
+      isGlobalDefault: true,
+      conformed: true,
+      currentVersionId: profileVersionId,
+      deletedAt: null
+    })
+    await new PageKnowledgeLifecycle(db, 'initial-unavailable-worker').runOnce()
+    const immutableEffect = await db('pageMutationOutbox').where({ pageId: 1, effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')
+    // Keep the maintenance epoch leased elsewhere so this worker reaches utility
+    // requeue before waiting on the canonical page held by the competing scheduler.
+    await db('pageKnowledgeMaintenance').where({ id: 1 }).update({
+      status: 'running',
+      epochId: 1,
+      highWaterPageId: 1,
+      cursorPageId: 0,
+      leaseOwner: 'other-maintenance-worker',
+      leaseToken: randomUUID(),
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString()
+    })
+    const retryDb = knexModule({
+      client: 'pg', connection: connection ?? undefined, searchPath: [schema], pool: { min: 0, max: 1 }
+    })
+    const ready = Promise.withResolvers<number>()
+    const acquireClaim = Promise.withResolvers<void>()
+    const competingScheduler = db.transaction(async transaction => {
+      await lockSearchIndex(transaction, false)
+      await lockSearchPage(transaction, 1)
+      await transaction('pages').where({ id: 1 }).forUpdate().first('id')
+      const backend = await transaction.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')
+      if (!backend.rows[0]) throw new Error('competing scheduler backend missing')
+      ready.resolve(backend.rows[0].pid)
+      await acquireClaim.promise
+      await transaction('pageMutationOutbox').where({ id: immutableEffect.id, status: 'succeeded' }).update({ status: 'pending' })
+      const [claim] = await claimPageMutationEffects(transaction, {
+        leaseOwner: 'competing-worker', limit: 1, maxActive: 1, leaseMs: 60_000, effects: ['knowledge']
+      })
+      if (!claim) throw new Error('competing knowledge claim missing')
+      return claim
+    })
+    void competingScheduler.catch(ready.reject)
+    const enrichKnowledge = vi.fn(async () => ({
+      value: { type: null, summary: null, tags: ['unaccepted'], entities: [], relationships: [], openQuestions: [], searchTerms: [] },
+      model: 'utility-small',
+      inputSha256: 'a'.repeat(64),
+      outputSha256: 'b'.repeat(64),
+      inputTokens: 1,
+      outputTokens: 1
+    }))
+    let retry: Promise<{ backfilled: number; requeued: number; processed: number }> | undefined
+    try {
+      const holderPid = await ready.promise
+      await retryDb.raw("SET statement_timeout = '5s'")
+      const backend = await retryDb.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')
+      if (!backend.rows[0]) throw new Error('utility retry backend missing')
+      const retryPid = backend.rows[0].pid
+      retry = new PageKnowledgeLifecycle(retryDb, 'retry-worker', { enrichKnowledge }).runOnce()
+      const settledRetry = Promise.allSettled([retry])
+      const deadline = process.hrtime.bigint() + 2_000_000_000n
+      while (true) {
+        const observation = await db.raw<{ rows: Array<{ blocked: boolean }> }>(
+          'SELECT ?::integer = ANY(pg_blocking_pids(?::integer)) AS blocked', [holderPid, retryPid]
+        )
+        if (observation.rows[0]?.blocked) break
+        if (process.hrtime.bigint() >= deadline) throw new Error('utility requeue did not wait for the competing scheduler')
+        await db.raw('SELECT pg_sleep(0.01)')
+      }
+      acquireClaim.resolve()
+      const claim = await competingScheduler
+      const [outcome] = await settledRetry
+      if (!outcome) throw new Error('utility retry outcome missing')
+      if (outcome.status === 'rejected') throw outcome.reason
+      expect(outcome.value).toMatchObject({ requeued: 0, processed: 0 })
+      expect(enrichKnowledge).not.toHaveBeenCalled()
+      expect(await db('pageMutationOutbox').where({ id: claim.id }).first('status', 'leaseOwner', 'leaseToken')).toEqual({
+        status: 'running', leaseOwner: 'competing-worker', leaseToken: claim.leaseToken
+      })
+      expect(await db('pageMutationOutbox').where({ id: claim.id }).first('id', 'payload', 'payloadSha256')).toEqual(immutableEffect)
+      expect(await db('pageKnowledgeProjections').where({ pageId: 1 }).first('enrichmentState', 'utilityModel')).toEqual({
+        enrichmentState: 'unavailable', utilityModel: null
+      })
+    } finally {
+      acquireClaim.resolve()
+      await Promise.allSettled([competingScheduler, ...(retry ? [retry] : [])])
+      await retryDb.destroy()
+    }
+  }, 15_000)
+
+  it('overlaps canonical-page maintenance and utility requeue without an effect-to-page deadlock', async () => {
+    await enqueueKnowledge(1)
+    const profileVersionId = '00000000-0000-4000-8000-000000000001'
+    await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
+    await db('agentProviderProfiles').insert({
+      id: '00000000-0000-4000-8000-000000000002',
+      status: 'enabled',
+      isGlobalDefault: true,
+      conformed: true,
+      currentVersionId: profileVersionId,
+      deletedAt: null
+    })
+    await new PageKnowledgeLifecycle(db, 'initial-unavailable-worker').runOnce()
+    const healthy = await db('pageKnowledgeProjections').where({ pageId: 1 }).first('projection', 'sourceSha256', 'enrichmentState')
+    expect(healthy.enrichmentState).toBe('unavailable')
+    const projection = JSON.parse(String(healthy.projection))
+    projection.source.sha256 = '0'.repeat(64)
+    await db('pageKnowledgeProjections').where({ pageId: 1 }).update({
+      sourceSha256: projection.source.sha256,
+      projection: JSON.stringify(projection)
+    })
+    const immutableEffect = await db('pageMutationOutbox').where({ pageId: 1, effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')
+    await db('pageKnowledgeMaintenance').where({ id: 1 }).update({
+      status: 'running',
+      epochId: 1,
+      highWaterPageId: 1,
+      cursorPageId: 0,
+      leaseOwner: 'maintenance-worker',
+      leaseToken: randomUUID(),
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString()
+    })
+    const retryDb = knexModule({
+      client: 'pg', connection: connection ?? undefined, searchPath: [schema], pool: { min: 0, max: 1 }
+    })
+    const ready = Promise.withResolvers<number>()
+    const repair = Promise.withResolvers<void>()
+    const maintenance = db.transaction(async transaction => {
+      await transaction.raw("SET LOCAL lock_timeout = '3s'")
+      await lockSearchIndex(transaction, false)
+      await lockSearchPage(transaction, 1)
+      await transaction('pages').where({ id: 1 }).forUpdate().first('id')
+      const backend = await transaction.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')
+      if (!backend.rows[0]) throw new Error('maintenance backend missing')
+      ready.resolve(backend.rows[0].pid)
+      await repair.promise
+      return new PageKnowledgeLifecycle(transaction, 'maintenance-worker').runOnce()
+    })
+    void maintenance.catch(ready.reject)
+    const enrichKnowledge = vi.fn(async () => ({
+      value: { type: null, summary: null, tags: ['requeued'], entities: [], relationships: [], openQuestions: [], searchTerms: ['lockrepairtoken'] },
+      model: 'utility-small',
+      inputSha256: 'a'.repeat(64),
+      outputSha256: 'b'.repeat(64),
+      inputTokens: 1,
+      outputTokens: 1
+    }))
+    let retry: Promise<{ backfilled: number; requeued: number; processed: number }> | undefined
+    try {
+      const maintenancePid = await ready.promise
+      await retryDb.raw("SET statement_timeout = '5s'")
+      const backend = await retryDb.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')
+      if (!backend.rows[0]) throw new Error('utility retry backend missing')
+      const retryPid = backend.rows[0].pid
+      retry = new PageKnowledgeLifecycle(retryDb, 'retry-worker', { enrichKnowledge }).runOnce()
+      const settledRetry = Promise.allSettled([retry])
+      const deadline = process.hrtime.bigint() + 2_000_000_000n
+      while (true) {
+        const observation = await db.raw<{ rows: Array<{ blocked: boolean }> }>(
+          'SELECT ?::integer = ANY(pg_blocking_pids(?::integer)) AS blocked', [maintenancePid, retryPid]
+        )
+        if (observation.rows[0]?.blocked) break
+        if (process.hrtime.bigint() >= deadline) throw new Error('utility requeue did not overlap the held canonical page')
+        await db.raw('SELECT pg_sleep(0.01)')
+      }
+      repair.resolve()
+      expect(await maintenance).toMatchObject({ backfilled: 1, processed: 1 })
+      const [outcome] = await settledRetry
+      if (!outcome) throw new Error('utility retry outcome missing')
+      if (outcome.status === 'rejected') throw outcome.reason
+      expect(outcome.value).toMatchObject({ requeued: 1, processed: 1 })
+      expect(enrichKnowledge).toHaveBeenCalledOnce()
+      expect(await db('pageMutationOutbox').where({ pageId: 1, effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')).toEqual(immutableEffect)
+      expect(await db('pageMutationOutbox').where({ pageId: 1, effectKind: 'knowledge' }).first('status')).toEqual({ status: 'succeeded' })
+      expect(await db('pageKnowledgeProjections').where({ pageId: 1 }).first('sourceSha256', 'enrichmentState')).toEqual({
+        sourceSha256: healthy.sourceSha256,
+        enrichmentState: 'succeeded'
+      })
+      expect(await new PageKnowledgeRepository(db).getCurrent(1)).toMatchObject({ sourceRevision: '1' })
+      expect(await db('pages').where({ id: 1 }).first('content', 'sourceRevision')).toEqual({
+        content: '# Knowledge 1\n', sourceRevision: '1'
+      })
+    } finally {
+      repair.resolve()
+      await Promise.allSettled([maintenance, ...(retry ? [retry] : [])])
+      await retryDb.destroy()
+    }
+  }, 15_000)
 })

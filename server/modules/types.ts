@@ -1,5 +1,7 @@
 import type { StorageFileHandle, StorageFileIdentityExpectation } from './storage/local-filesystem.ts'
 import type { Readable, Writable } from 'node:stream'
+import type { Knex as DatabaseKnex } from 'knex'
+import type { SearchIndexInspection } from '../../shared/search-admin.ts'
 
 export type UnknownRecord = Record<string, unknown>
 
@@ -29,6 +31,7 @@ export interface WikiPage {
   moveAuthorName: string
   moveAuthorEmail: string
   sourceRevision: string | number | bigint
+  renderedSourceRevision?: string | number | bigint | null
   createdAt: Date | string
   updatedAt: Date | string
   extra: UnknownRecord
@@ -521,11 +524,10 @@ export interface SearchResult {
 }
 
 export interface SearchPlugin<C extends SearchConfig = SearchConfig, Context extends SearchContext<C> = SearchContext<C>> {
-  inspectIndex?(this: Context): Promise<import('../../shared/search-admin.ts').SearchIndexInspection>
+  inspectIndex?(this: Context): Promise<SearchIndexInspection>
   supportsPageFilters?: boolean
   activate(this: Context): Promise<void>
-  deactivate(this: Context): Promise<void>
-  init(this: Context): Promise<void>
+  init(this: Context, trx?: DatabaseKnex.Transaction): Promise<void>
   query(this: Context, query: string, options: SearchOptions): Promise<SearchResult>
   created(this: Context, page: WikiPage): Promise<void>
   updated(this: Context, page: WikiPage): Promise<void>

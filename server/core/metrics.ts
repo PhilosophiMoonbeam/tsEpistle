@@ -18,7 +18,7 @@ const wiki = WIKI as unknown as WikiContext
 const RUN_STATUSES = ['queued', 'running', 'awaiting_approval', 'succeeded', 'failed', 'cancelled', 'recovery_required'] as const
 const PROPOSAL_STATUSES = ['pending', 'approved', 'denied', 'applying', 'applied', 'expired', 'cancelled', 'failed', 'recovery_required'] as const
 const PAGE_EFFECTS = ['render', 'links', 'search', 'knowledge'] as const
-const PAGE_EFFECT_STATUSES = ['pending', 'retry', 'running', 'succeeded', 'failed'] as const
+const PAGE_EFFECT_STATUSES = ['pending', 'retry', 'running', 'succeeded', 'failed', 'superseded'] as const
 const KNOWLEDGE_ENRICHMENT_STATES = ['not-needed', 'pending', 'unavailable', 'withheld-private', 'succeeded', 'failed', 'superseded'] as const
 const MAINTENANCE_STATUSES = ['pending', 'running', 'complete'] as const
 const ELIGIBLE_EFFECT_STATUSES = ['pending', 'retry'] as const
@@ -118,7 +118,7 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
         SELECT "effectKind" AS effect, status, COUNT(*) AS total
         FROM "pageMutationOutbox"
         WHERE "effectKind" IN ('render', 'links', 'search', 'knowledge')
-          AND status IN ('pending', 'retry', 'running', 'succeeded', 'failed')
+          AND status IN ('pending', 'retry', 'running', 'succeeded', 'failed', 'superseded')
         GROUP BY "effectKind", status
       `
       )
@@ -144,6 +144,48 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
         WHERE status IN ('pending', 'retry')
           AND "availableAt" <= CURRENT_TIMESTAMP
           AND ("leaseToken" IS NULL OR "leaseExpiresAt" <= CURRENT_TIMESTAMP)
+          AND (
+            "effectKind" NOT IN ('links', 'search')
+            OR "desiredState" <> 'present'
+            OR NOT EXISTS (
+              SELECT 1
+              FROM pages "currentPage"
+              WHERE "currentPage".id = "pageMutationOutbox"."pageId"
+                AND "currentPage"."sourceRevision" = "pageMutationOutbox"."sourceRevision"
+                AND (
+                  "pageMutationOutbox"."effectKind" = 'links'
+                  OR (
+                    "currentPage".visibility = 'public'
+                    AND "currentPage"."isPublished" = true
+                    AND "currentPage"."isSearchable" = true
+                    AND (
+                      NULLIF("currentPage"."publishStartDate", '')::timestamptz IS NULL
+                      OR NULLIF("currentPage"."publishStartDate", '')::timestamptz <= statement_timestamp()
+                    )
+                    AND (
+                      NULLIF("currentPage"."publishEndDate", '')::timestamptz IS NULL
+                      OR NULLIF("currentPage"."publishEndDate", '')::timestamptz >= statement_timestamp()
+                    )
+                    AND NOT EXISTS (
+                      SELECT 1 FROM "pageAccessPasswords" protection
+                      WHERE protection."pageId" = "currentPage".id
+                    )
+                  )
+                )
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM pages "currentPage"
+              JOIN "pageMutationOutbox" "renderDependency"
+                ON "renderDependency"."pageId" = "currentPage".id
+                AND "renderDependency"."sourceRevision" = "currentPage"."sourceRevision"
+                AND "renderDependency"."effectKind" = 'render'
+                AND "renderDependency".status = 'succeeded'
+              WHERE "currentPage".id = "pageMutationOutbox"."pageId"
+                AND "currentPage"."sourceRevision" = "pageMutationOutbox"."sourceRevision"
+                AND "currentPage"."renderedSourceRevision" = "currentPage"."sourceRevision"
+            )
+          )
         GROUP BY status
       `
       )
@@ -169,7 +211,7 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
   })
   target.pageSearchDocuments = new Gauge({
     name: 'wiki_page_search_documents',
-    help: 'Authoritative published-public pages and derived search vectors',
+    help: 'Authoritative currently readable searchable published-public pages and derived search vectors',
     labelNames: ['kind'],
     async collect() {
       this.reset()
@@ -180,6 +222,11 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
         FROM pages
         WHERE visibility = 'public'
           AND "isPublished" = true
+          AND "isSearchable" = true
+          AND (NULLIF("publishStartDate", '')::timestamptz IS NULL
+            OR NULLIF("publishStartDate", '')::timestamptz <= statement_timestamp())
+          AND (NULLIF("publishEndDate", '')::timestamptz IS NULL
+            OR NULLIF("publishEndDate", '')::timestamptz >= statement_timestamp())
       `
       )
       const indexed = await rawRows<{ total: unknown }>(
@@ -210,12 +257,20 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
             WHERE page.id IS NOT NULL
               AND page.visibility = 'public'
               AND page."isPublished" = true
+              AND page."isSearchable" = true
+              AND (NULLIF(page."publishStartDate", '')::timestamptz IS NULL
+                OR NULLIF(page."publishStartDate", '')::timestamptz <= statement_timestamp())
+              AND (NULLIF(page."publishEndDate", '')::timestamptz IS NULL
+                OR NULLIF(page."publishEndDate", '')::timestamptz >= statement_timestamp())
               AND vector."sourceRevision" IS DISTINCT FROM page."sourceRevision"
           ) AS "revisionMismatch",
           COUNT(*) FILTER (
             WHERE page.id IS NULL
               OR page.visibility IS DISTINCT FROM 'public'
               OR page."isPublished" IS DISTINCT FROM true
+              OR page."isSearchable" IS DISTINCT FROM true
+              OR NULLIF(page."publishStartDate", '')::timestamptz > statement_timestamp()
+              OR NULLIF(page."publishEndDate", '')::timestamptz < statement_timestamp()
           ) AS orphan
         FROM "pagesVector" vector
         LEFT JOIN pages page ON page.id = vector."pageId"

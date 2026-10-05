@@ -32,6 +32,7 @@ interface RecentPageEvidenceResult {
   pages: RecentPageEvidence[]
 }
 interface PageTagOperations {
+  listTags(input: { requester?: Express.User; agentScope?: { kind: 'selected'; pageIds: number[] } }): Promise<Array<{ tag: string }>>
   list(input: {
     requester?: Express.User
     tags?: string[]
@@ -42,7 +43,12 @@ interface PageTagOperations {
     offset?: number
   }): Promise<ListedPage[]>
   listRecent(input: { requester?: Express.User; locale?: string; limit?: number }): Promise<RecentPageEvidenceResult>
-  searchTags(input: { requester?: Express.User; query: string; limit?: number }): Promise<string[]>
+  searchTags(input: {
+    requester?: Express.User
+    query: string
+    limit?: number
+    agentScope?: { kind: 'selected'; pageIds: number[] }
+  }): Promise<string[]>
 }
 
 suite('PostgreSQL page tag authorization candidates', () => {
@@ -97,6 +103,13 @@ suite('PostgreSQL page tag authorization candidates', () => {
       updatedAt: page.updatedAt ?? now
     })
     await db('pageTags').insert(tags.map(tag => ({ pageId: page.id, tagId: tagIds[tag] })))
+  }
+
+  const assignTags = async (pageId: number, names: string[]): Promise<void> => {
+    const maximum = await db('tags').max<{ maximum: number | null }>('id as maximum').first()
+    const tags = names.map((tag, index) => ({ id: (maximum?.maximum ?? 0) + index + 1, tag }))
+    await db('tags').insert(tags)
+    await db('pageTags').insert(tags.map(tag => ({ pageId, tagId: tag.id })))
   }
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection, pool: { min: 0, max: 8 } })
@@ -347,6 +360,85 @@ suite('PostgreSQL page tag authorization candidates', () => {
     const observedPaths = accessCalls.map(call => call.path)
     expect(observedPaths).toEqual(expect.arrayContaining(['docs/topic-denied', 'docs/topic-allow-needed']))
     expect(observedPaths).not.toContain('docs/unrelated')
+  })
+
+  it('returns selected-page taxonomy from real joined rows without admitting sibling or denied tags', async () => {
+    const agentScope = { kind: 'selected' as const, pageIds: [2] }
+    expect(await operations.searchTags({ requester, query: 'topic', limit: 20, agentScope })).toEqual(['topic', 'topic-zulu'])
+    expect((await operations.listTags({ requester, agentScope })).map(tag => tag.tag)).toEqual(['allow-access', 'topic', 'topic-zulu'])
+    expect(await operations.searchTags({ requester, query: 'topic', agentScope: { kind: 'selected', pageIds: [1] } })).toEqual([])
+    expect(await operations.listTags({ requester, agentScope: { kind: 'selected', pageIds: [1] } })).toEqual([])
+    expect(await operations.searchTags({ requester, query: 'topic', agentScope: { kind: 'selected', pageIds: [] } })).toEqual([])
+  })
+
+  it('includes another owner private taxonomy only for a system manager and still enforces selected IDs', async () => {
+    await assignTags(6, ['manager-only'])
+    expect(await operations.searchTags({ requester, query: 'manager-only' })).toEqual([])
+    expect((await operations.listTags({ requester })).map(tag => tag.tag)).not.toContain('manager-only')
+    const manager = { id: 1, permissions: ['manage:system'] } as Express.User
+    expect(await operations.searchTags({ requester: manager, query: 'manager-only' })).toEqual(['manager-only'])
+    expect((await operations.listTags({ requester: manager })).map(tag => tag.tag)).toContain('manager-only')
+    const agentScope = { kind: 'selected' as const, pageIds: [5] }
+    expect(await operations.searchTags({ requester: manager, query: 'manager-only', agentScope })).toEqual([])
+    expect((await operations.listTags({ requester: manager, agentScope })).map(tag => tag.tag)).not.toContain('manager-only')
+  })
+
+  it('excludes public drafts and closed windows while applying current private ownership and searchability policy', async () => {
+    const states = [
+      { isPublished: false },
+      { publishStartDate: '2099-01-01T00:00:00.000Z' },
+      { publishEndDate: '2000-01-01T00:00:00.000Z' }
+    ]
+    for (const [index, state] of states.entries()) {
+      const publicId = 20 + index
+      const privateId = 30 + index
+      await seedPage({ id: publicId, path: `docs/publication-${index}` }, ['allow-access'])
+      await seedPage({ id: privateId, path: `private/publication-${index}`, visibility: 'private', ownerId: 7 }, ['allow-access'])
+      await db('pages').whereIn('id', [publicId, privateId]).update(state)
+      await assignTags(publicId, [`publication-public-${index}`])
+      await assignTags(privateId, [`publication-private-${index}`])
+    }
+    await seedPage({ id: 40, path: 'docs/publication-live' }, ['allow-access'])
+    await assignTags(40, ['publication-live'])
+    await db('pages').where('id', 40).update({
+      publishStartDate: '2000-01-01T00:00:00.000Z',
+      publishEndDate: '2099-01-01T00:00:00.000Z'
+    })
+    const expected = ['publication-live', 'publication-private-0', 'publication-private-1', 'publication-private-2']
+    expect(await operations.searchTags({ requester, query: 'publication-', limit: 20 })).toEqual(expected)
+    expect((await operations.listTags({ requester })).map(tag => tag.tag).filter(tag => tag.startsWith('publication-'))).toEqual(expected)
+
+    await db('pages').where('id', 30).update({ ownerId: 8 })
+    await db('pages').where('id', 31).update({ isSearchable: false })
+    const current = ['publication-live', 'publication-private-2']
+    expect(await operations.searchTags({ requester, query: 'publication-', limit: 20 })).toEqual(current)
+    expect((await operations.listTags({ requester })).map(tag => tag.tag).filter(tag => tag.startsWith('publication-'))).toEqual(current)
+    const manager = { id: 1, permissions: ['manage:system'] } as Express.User
+    const managerExpected = ['publication-live', 'publication-private-0', 'publication-private-2']
+    expect(await operations.searchTags({ requester: manager, query: 'publication-', limit: 20 })).toEqual(managerExpected)
+    expect((await operations.listTags({ requester: manager })).map(tag => tag.tag).filter(tag => tag.startsWith('publication-'))).toEqual(managerExpected)
+  })
+
+  it('matches backslashes, trailing backslashes, percent and underscore literally in PostgreSQL candidates', async () => {
+    const literalTags = ['ops\\runbook', 'ops\\', 'ops%rate', 'ops_rate']
+    for (const [index, tag] of literalTags.entries()) {
+      const id = 50 + index
+      await seedPage({ id, path: `docs/literal-${index}` }, ['allow-access'])
+      await assignTags(id, [tag])
+    }
+    await seedPage({ id: 60, path: 'docs/literal-decoy' }, ['allow-access'])
+    await assignTags(60, ['opsrunbook', 'opsXrate'])
+    const searches = [
+      { query: 'ops\\runbook', expected: ['ops\\runbook'] },
+      { query: 'ops\\', expected: ['ops\\', 'ops\\runbook'] },
+      { query: '%', expected: ['ops%rate'] },
+      { query: '_', expected: ['ops_rate'] }
+    ]
+    for (const { query, expected } of searches) {
+      accessCalls.length = 0
+      expect(await operations.searchTags({ requester, query, limit: 20 })).toEqual(expected)
+      expect(accessCalls.map(call => call.path)).not.toContain('docs/literal-decoy')
+    }
   })
 
   it('keeps creator and author alternatives inside locale, ownership, and tag scope', async () => {

@@ -1,4 +1,5 @@
 import { load } from 'cheerio'
+import { visibleQueryTerms } from '../../shared/search-query.ts'
 
 /** Plain text only; callers must authorize the current page before invoking this helper. */
 export const searchExcerpt = (render: string, query: string, limit = 2400): { excerpt: string; excerptTruncated: boolean } => {
@@ -6,9 +7,10 @@ export const searchExcerpt = (render: string, query: string, limit = 2400): { ex
   $('script, style, template, noscript, [hidden], [aria-hidden="true"], a.toc-anchor').remove()
   $('p, div, section, article, li, tr, h1, h2, h3, h4, h5, h6, br, pre').before('\n').after('\n')
   const text = $.root().text().replace(/[\t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim()
-  const terms = query.toLocaleLowerCase().match(/[\p{L}\p{N}]{2,}/gu)?.slice(0, 12) ?? []
-  const positions = terms.map(term => text.toLocaleLowerCase().indexOf(term)).filter(position => position >= 0)
-  let start = positions.length ? Math.max(0, Math.min(...positions) - 160) : 0
+  const terms = visibleQueryTerms(query).slice(0, 12)
+  const pattern = terms.length ? new RegExp(terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|'), 'giu') : null
+  const position = pattern?.exec(text)?.index
+  let start = position === undefined ? 0 : Math.max(0, position - 160)
   if (start > 0) {
     const word = text.indexOf(' ', start)
     if (word >= start && word < start + 80) start = word + 1

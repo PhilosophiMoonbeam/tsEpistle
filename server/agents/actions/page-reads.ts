@@ -5,12 +5,14 @@ import type { RequestAuthContext, AgentActionName } from '../../../shared/agents
 import type { AgentKnowledgeContext } from '../../../shared/agents/knowledge-context.ts'
 import type { PageOperationScope } from '../../operations/pages.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
-import { type ActionAuthority, ActionKernel, ActionKernelError } from './kernel.ts'
+import { ActionKernel, ActionKernelError } from './kernel.ts'
+import type { ActionAuthority } from './kernel.ts'
 import { actionDefinition } from './catalog.ts'
 import { issueWikiLineSnapshot, inspectWikiLineSnapshotToken, validateWikiMarkdownSource } from '../patch/wiki-line-patch.ts'
 import type { KnowledgeProjectionView } from '../../knowledge/projection.ts'
 import type { KnowledgeDiscoveryFilter } from '../../knowledge/lifecycle.ts'
-import { okfResourceUri, pageAuthority, serializeCanonicalOkfPage, type CanonicalOkfPageDocument, type PageAuthority } from '../okf.ts'
+import { okfResourceUri, pageAuthority, serializeCanonicalOkfPage } from '../okf.ts'
+import type { CanonicalOkfPageDocument, PageAuthority } from '../okf.ts'
 const SEARCH_CANDIDATE_WINDOW_LIMIT = 100
 const SearchMatchFieldSchema = z.enum(['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'])
 const PageRowSchema = z.looseObject({
@@ -56,12 +58,13 @@ const DiscoveryResponseSchema = z.strictObject({
     .array(
       z.looseObject({
         id: z.coerce.number().int().positive(),
+        sourceRevision: z.union([z.string(), z.number()]),
         locale: z.string(),
         path: z.string(),
         title: z.string(),
         description: z.string().nullish(),
         updatedAt: z.union([z.string(), z.date()]),
-        tags: z.array(z.string()).max(50)
+        tags: z.array(z.string()).max(100)
       })
     )
     .max(100),
@@ -115,7 +118,7 @@ const RelatedResponseSchema = z.strictObject({
   pages: z
     .array(
       PageRowSchema.extend({
-        distance: z.coerce.number().int().positive().max(32),
+        distance: z.coerce.number().int().positive(),
         direction: z.enum(['incoming', 'outgoing', 'bidirectional']),
         viaPageId: z.coerce.number().int().positive()
       })
@@ -459,7 +462,7 @@ const readRelatedCursor = (token: string, secret: Uint8Array): RelatedCursorPayl
   }
 }
 
-const normalizedPageTags = (value: unknown): string[] => {
+const canonicalPageTags = (value: unknown): string[] => {
   if (!Array.isArray(value)) return []
   const tags = value
     .flatMap(item => {
@@ -469,8 +472,9 @@ const normalizedPageTags = (value: unknown): string[] => {
     })
     .map(tag => tag.trim().toLocaleLowerCase())
     .filter(Boolean)
-  return [...new Set(tags)].sort().slice(0, 50)
+  return [...new Set(tags)].sort()
 }
+const normalizedPageTags = (value: unknown): string[] => canonicalPageTags(value).slice(0, 50)
 const safeWikiLinkTarget = (target: string, scope: PageOperationScope | undefined): boolean => {
   if (target.length < 4 || target.length > 1_024) return false
   for (let index = 0; index < target.length; index += 1) {
@@ -632,6 +636,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     const scope = hostPageScope(context.knowledgeContext)
     const { knowledge: knowledgeFilter, ...discoveryInput } = input
+    const requestedTags = canonicalPageTags(input.tags)
     const response = DiscoveryResponseSchema.safeParse(
       await operations.discover({
         ...discoveryInput,
@@ -647,15 +652,27 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
           if (!withinPageScope(scope, item)) return null
           try {
             const rawPage = await operations.get({ id: item.id, requester })
-            const page = parsePage(rawPage, false)
-            if (page.id !== item.id || page.locale !== item.locale || page.path !== item.path || page.title !== item.title || !withinPageScope(scope, page))
+            const parsed = PageRowSchema.safeParse(rawPage)
+            if (!parsed.success) throw operationFailure('Page operation returned an invalid bounded result')
+            const raw = parsed.data
+            const tags = canonicalPageTags(raw.tags)
+            if (
+              (raw.id ?? raw.pageId) !== item.id ||
+              String(raw.sourceRevision) !== String(item.sourceRevision) ||
+              (raw.locale ?? raw.localeCode) !== item.locale ||
+              raw.path !== item.path ||
+              raw.title !== item.title ||
+              raw.isSearchable !== true ||
+              !requestedTags.every(tag => tags.includes(tag)) ||
+              !withinPageScope(scope, { id: item.id, locale: item.locale, path: raw.path })
+            )
               return null
-            const raw = rawPage as Record<string, unknown>
             const updatedAt = raw.updatedAt instanceof Date ? raw.updatedAt.toISOString() : raw.updatedAt
             if (typeof updatedAt !== 'string') return null
+            const page = parsePage(raw, false)
             return {
               ...page,
-              tags: normalizedPageTags(raw.tags),
+              tags: tags.slice(0, 50),
               updatedAt
             }
           } catch (error: unknown) {
@@ -1471,6 +1488,7 @@ export const registerWikiPageReadActions = async (
   resolveRequester: PageReadActionDependencies['resolveRequester'],
   snapshotSigningSecret: Uint8Array
 ): Promise<void> => {
+  // Page operations capture the initialized WIKI runtime; defer loading until action registration.
   const operations = (await import('../../operations/pages.ts')).default
   registerPageReadActions(kernel, { operations, resolveRequester, snapshotSigningSecret })
 }

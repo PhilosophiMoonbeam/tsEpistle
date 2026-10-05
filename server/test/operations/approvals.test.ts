@@ -1,4 +1,5 @@
-import createKnex, { type Knex } from 'knex'
+import createKnex from 'knex'
+import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { up as upOutbox } from '../../db/migrations/2.5.131.ts'
 import { up as upApprovals } from '../../db/migrations/2.5.133.ts'
@@ -48,6 +49,11 @@ beforeEach(async () => {
     table.integer('authorId').notNullable()
     table.bigInteger('sourceRevision').notNullable()
     table.text('content').notNullable()
+    table.text('toc').notNullable().defaultTo('[]')
+    table.bigInteger('renderedSourceRevision').nullable()
+    table.boolean('isSearchable').notNullable().defaultTo(true)
+    table.string('publishStartDate').nullable()
+    table.string('publishEndDate').nullable()
     table.string('localeCode').notNullable()
     table.string('path').notNullable()
     table.string('visibility').notNullable()
@@ -118,6 +124,15 @@ beforeEach(async () => {
     table.dateTime('createdAt').notNullable()
     table.dateTime('updatedAt').notNullable()
     table.unique(['pageId', 'sourceRevision', 'effectKind'])
+  })
+  await knex.schema.createTable('pagesVector', table => {
+    table.integer('pageId').primary()
+    table.bigInteger('sourceRevision').notNullable()
+  })
+  await knex.schema.createTable('pagesWords', table => {
+    table.integer('pageId').notNullable()
+    table.string('word').notNullable()
+    table.primary(['pageId', 'word'])
   })
   page = {
     id: 42,

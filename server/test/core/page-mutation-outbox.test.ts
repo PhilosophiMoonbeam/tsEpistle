@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import createKnex, { type Knex } from 'knex'
+import createKnex from 'knex'
+import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 import {
@@ -48,10 +49,14 @@ beforeEach(async () => {
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
     table.bigInteger('sourceRevision').notNullable()
+    table.bigInteger('renderedSourceRevision').nullable()
     table.text('content').notNullable()
     table.text('render').notNullable()
+    table.text('toc').notNullable().defaultTo('[]')
     table.boolean('isPublished').notNullable().defaultTo(true)
     table.boolean('isSearchable').notNullable().defaultTo(true)
+    table.dateTime('publishStartDate').nullable()
+    table.dateTime('publishEndDate').nullable()
     table.string('localeCode').notNullable()
     table.string('path').notNullable()
     table.string('visibility').notNullable()
@@ -73,9 +78,13 @@ beforeEach(async () => {
     table.string('word').notNullable()
     table.primary(['pageId', 'word'])
   })
+  await knex.schema.createTable('pageAccessPasswords', table => {
+    table.integer('pageId').primary()
+  })
 })
 
 afterEach(async () => {
+  vi.useRealTimers()
   await knex.destroy()
 })
 
@@ -89,6 +98,36 @@ const enqueue = (overrides: Partial<Parameters<typeof enqueuePageMutationEffects
     location,
     ...overrides
   })
+
+const deferred = () => {
+  let release!: () => void
+  const promise = new Promise<void>(resolve => {
+    release = resolve
+  })
+  return { promise, release }
+}
+
+const waitForProjectionStart = (started: Promise<void>, running: Promise<unknown>) => Promise.race([
+  started,
+  running.then(() => { throw new Error('Lifecycle completed without starting the required projection') })
+])
+
+const projectionPage = (overrides: Record<string, unknown> = {}) => ({
+  id: 42,
+  sourceRevision: 8,
+  renderedSourceRevision: 8,
+  content: '# Start\n',
+  render: '<p>currentbody</p>',
+  isPublished: true,
+  isSearchable: true,
+  publishStartDate: null,
+  publishEndDate: null,
+  localeCode: 'en',
+  path: 'docs/start',
+  visibility: 'public',
+  ownerId: null,
+  ...overrides
+})
 
 describe('page mutation projection outbox', () => {
   it('commits immutable render, link, search, and knowledge intent atomically with the source transaction', async () => {
@@ -127,6 +166,17 @@ describe('page mutation projection outbox', () => {
     await expect(Promise.resolve(enqueue({ source: '# Changed\n' }))).rejects.toMatchObject({ code: 'OUTBOX_IDEMPOTENCY_CONFLICT' })
   })
   it('coalesces same-revision render admission and rearms terminal work without changing immutable payload', async () => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      renderedSourceRevision: 8,
+      content: '# Start\n',
+      render: '<p>Start</p>',
+      localeCode: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      ownerId: null
+    })
     const first = await knex.transaction(transaction => admitPageRenderEffect(transaction, { pageId: 42, sourceRevision: '8', source: '# Start\n', location }))
     const original = await knex('pageMutationOutbox').where({ id: first.effectId }).first()
     if (!original) throw new Error('effect missing')
@@ -155,6 +205,7 @@ describe('page mutation projection outbox', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 9,
+      renderedSourceRevision: 8,
       content: '# Changed\n',
       render: '<p>old render</p>',
       localeCode: 'en',
@@ -362,7 +413,7 @@ describe('page mutation projection outbox', () => {
     await executePageMutationEffect(knex, claim, new Map([['render', { kind: 'render' as const, reconcile }]]), new AbortController().signal)
 
     expect(reconcile).toHaveBeenCalledTimes(1)
-    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ pageId: 43 }), expect.any(AbortSignal))
+    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ pageId: 43 }), expect.any(AbortSignal), claim)
     const poison = await knex('pageMutationOutbox').where({ id: poisonId }).first()
     expect(poison).toMatchObject({ status: 'failed', attempts: 0, leaseToken: null })
     expect(JSON.parse(poison.result)).toMatchObject({ quarantined: true, code: 'INVALID_OUTBOX_PAYLOAD' })
@@ -373,6 +424,7 @@ describe('page mutation projection outbox', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 7,
       content: '# Start\n',
       render: '<p>old render</p>',
       localeCode: 'en',
@@ -411,6 +463,7 @@ describe('page mutation projection outbox', () => {
     expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('attempts')).toMatchObject({ attempts: 0 })
 
     await knex('pageMutationOutbox').where({ id: renderClaim.id }).update({ status: 'succeeded' })
+    await knex('pages').where({ id: 42 }).update({ renderedSourceRevision: 8 })
     const [linkClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'links-ready', effects: ['links'], now })
     expect(linkClaim).toMatchObject({ attempts: 1, payload: { effectKind: 'links' } })
   })
@@ -447,6 +500,7 @@ describe('page mutation projection outbox', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 7,
       content: '# Start\n',
       render: '<p>old render</p>',
       localeCode: 'en',
@@ -466,6 +520,7 @@ describe('page mutation projection outbox', () => {
     })
 
     await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'succeeded' })
+    await knex('pages').where({ id: 42 }).update({ renderedSourceRevision: 8 })
     const [searchClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'search-ready', effects: ['search'], now })
     expect(searchClaim).toMatchObject({ attempts: 1, payload: { effectKind: 'search', sourceRevision: '8' } })
   })
@@ -524,7 +579,7 @@ describe('page mutation projection outbox', () => {
     }))
     const sink: PageProjectionSink = { kind: 'render', reconcile }
     await executePageMutationEffect(knex, claim, new Map([['render', sink]]), new AbortController().signal)
-    expect(reconcile).toHaveBeenCalledWith(claim.payload, expect.any(AbortSignal))
+    expect(reconcile).toHaveBeenCalledWith(claim.payload, expect.any(AbortSignal), claim)
     expect(await knex('pageMutationOutbox').first()).toMatchObject({
       status: 'succeeded',
       leaseToken: null,
@@ -583,13 +638,15 @@ describe('page mutation projection outbox', () => {
     await expect(Promise.resolve(executePageMutationEffect(knex, claim, new Map([['links', sink]]), new AbortController().signal))).rejects.toThrow('temporary')
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'retry', attempts: 1, leaseToken: null })
     await knex('pageMutationOutbox').update({ status: 'running', leaseToken: '00000000-0000-4000-8000-000000000099' })
-    const goodSink = {
-      kind: 'links' as const,
-      reconcile: async () => ({ result: {}, postcondition: { satisfied: true, observedSourceRevision: '8', detail: 'ok' } })
-    }
+    const reconcile = vi.fn(async () => ({
+      result: {},
+      postcondition: { satisfied: true, observedSourceRevision: '8', detail: 'ok' }
+    }))
+    const goodSink = { kind: 'links' as const, reconcile }
     await expect(Promise.resolve(executePageMutationEffect(knex, claim, new Map([['links', goodSink]]), new AbortController().signal))).rejects.toMatchObject({
       code: 'PROJECTION_LEASE_LOST'
     })
+    expect(reconcile).not.toHaveBeenCalled()
     vi.useRealTimers()
   })
 })
@@ -597,15 +654,22 @@ describe('page mutation projection outbox', () => {
 const projectionRuntime = (
   overrides: Partial<ConstructorParameters<typeof PageProjectionLifecycle>[2]> = {}
 ): ConstructorParameters<typeof PageProjectionLifecycle>[2] => ({
-  renderPage: async () => undefined,
+  renderPage: async pageId => {
+    const page = await knex('pages').where({ id: pageId }).first('sourceRevision', 'render', 'content')
+    if (page) await knex('pages').where({ id: pageId }).update({
+      render: page.render || `<p>${page.content}</p>`,
+      renderedSourceRevision: page.sourceRevision
+    })
+  },
   evictLocation: async () => undefined,
   reconcileSearchPage: async pageId => {
-    const page = await knex('pages').where({ id: pageId }).first('sourceRevision')
+    const page = await knex('pages').where({ id: pageId }).first('sourceRevision', 'render')
     if (!page) return
     await knex.transaction(async transaction => {
       await transaction('pagesWords').where({ pageId }).delete()
       await transaction('pagesVector').insert({ pageId, sourceRevision: page.sourceRevision }).onConflict('pageId').merge()
-      await transaction('pagesWords').insert({ pageId, word: 'indexed' })
+      const words = [...new Set(String(page.render).replace(/<[^>]*>/g, ' ').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])]
+      if (words.length > 0) await transaction('pagesWords').insert(words.map(word => ({ pageId, word })))
     })
   },
   removeSearchPage: async pageId => {
@@ -622,6 +686,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 7,
       content: '# Start\n',
       render: '<p>old render</p>',
       localeCode: 'en',
@@ -634,7 +699,7 @@ describe('production page projection lifecycle', () => {
     const renderPage = vi.fn(async (pageId: number) => {
       await knex('pages')
         .where({ id: pageId, sourceRevision: 8 })
-        .update({ render: '<p><a class="is-internal-link is-valid-page" href="/en/target">target</a></p>' })
+        .update({ render: '<p><a class="is-internal-link is-valid-page" href="/en/target">target</a></p>', renderedSourceRevision: 8 })
     })
     const lifecycle = new PageProjectionLifecycle(
       knex,
@@ -647,10 +712,14 @@ describe('production page projection lifecycle', () => {
       })
     )
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
+    await lifecycle.runOnce()
 
-    expect(renderPage).toHaveBeenCalledWith(42)
+    expect(renderPage).toHaveBeenCalledWith(42, expect.objectContaining({
+      effectId: expect.any(String),
+      leaseToken: expect.any(String),
+      sourceRevision: '8',
+      sourceSha256: createHash('sha256').update('# Start\n').digest('hex')
+    }))
     expect(evicted).toContain('en/docs/old/public')
     expect(evicted.every(identity => identity === 'en/docs/old/public')).toBe(true)
     expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'target' }])
@@ -666,6 +735,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 8,
       content: '# Start\n',
       render: '<p><a class="is-internal-link" href="/en/recovered">recovered</a></p>',
       localeCode: 'en',
@@ -703,6 +773,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 8,
       content: '# Fax directory\n',
       render: [
         '<a class="is-internal-link" href="/fr/fax/%5Bbureau%5D_01.23.45.67.89">bureau</a>',
@@ -754,6 +825,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 8,
       content: '# Fax directory\n',
       render:
         '<a class="is-internal-link" href="/en/fax/%5Bdraft%5D_212.555.0199">draft</a>' + '<a class="is-internal-link" href="/en/fax_212/555/0199">digits</a>',
@@ -777,10 +849,11 @@ describe('production page projection lifecycle', () => {
     })
   })
 
-  it('fences superseded revisions without rendering or overwriting current links', async () => {
+  it('fences superseded revisions while reconciling only the current rendered source', async () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 8,
       content: '# Start\n',
       render: '<a class="is-internal-link" href="/en/old">old</a>',
       localeCode: 'en',
@@ -792,17 +865,22 @@ describe('production page projection lifecycle', () => {
     await enqueue({ effects: ['render', 'links', 'search'] })
     await knex('pages').where({ id: 42 }).update({
       sourceRevision: 9,
+      renderedSourceRevision: 9,
       content: '# New\n',
       render: '<a class="is-internal-link" href="/en/current">current</a>'
     })
-    const renderPage = vi.fn(async () => undefined)
+    const renderPage = vi.fn(async (pageId: number) => {
+      await knex('pages').where({ id: pageId, sourceRevision: 9 }).update({
+        render: '<a class="is-internal-link" href="/en/current">current</a>',
+        renderedSourceRevision: 9
+      })
+    })
     const lifecycle = new PageProjectionLifecycle(knex, 'fence-worker', projectionRuntime({ renderPage }))
 
     await lifecycle.runOnce()
 
-    expect(renderPage).toHaveBeenCalledWith(42)
+    expect(renderPage).toHaveBeenCalledWith(42, expect.objectContaining({ sourceRevision: '9' }))
     expect(await knex('pageLinks').select('localeCode', 'path')).toEqual([{ localeCode: 'en', path: 'current' }])
-    expect(await knex('pagesVector')).toEqual([])
     expect(await knex('pageMutationOutbox').where({ sourceRevision: 8 }).whereNot({ status: 'succeeded' })).toHaveLength(0)
 
     await lifecycle.runOnce()
@@ -823,6 +901,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 7,
       content: '# Start\n',
       render: '<a class="is-internal-link" href="/en/target">target</a>',
       localeCode: 'en',
@@ -830,17 +909,26 @@ describe('production page projection lifecycle', () => {
       visibility: 'public',
       ownerId: null
     })
-    await enqueue({ effects: ['links'] })
-    const lifecycle = new PageProjectionLifecycle(knex, 'retry-worker', projectionRuntime())
+    await enqueue({ effects: ['render', 'links', 'search'] })
+    await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'failed', attempts: 5 })
+    const renderPage = vi.fn(projectionRuntime().renderPage)
+    const reconcileSearchPage = vi.fn(projectionRuntime().reconcileSearchPage)
+    const lifecycle = new PageProjectionLifecycle(knex, 'retry-worker', projectionRuntime({ renderPage, reconcileSearchPage }))
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
-    expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'attempts')).toMatchObject({ status: 'pending', attempts: 0 })
-    expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('status')).toEqual({ status: 'succeeded' })
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 0 })
+    expect(renderPage).not.toHaveBeenCalled()
+    expect(reconcileSearchPage).not.toHaveBeenCalled()
+    expect(await knex('pageMutationOutbox').whereIn('effectKind', ['links', 'search']).select('effectKind', 'status', 'attempts').orderBy('effectKind')).toEqual([
+      { effectKind: 'links', status: 'pending', attempts: 0 },
+      { effectKind: 'search', status: 'pending', attempts: 0 }
+    ])
     expect(await knex('pageLinks')).toHaveLength(0)
+    expect(await knex('pagesVector')).toEqual([])
+    expect(await knex('pagesWords')).toEqual([])
 
-    await enqueue({ effects: ['render'] })
+    await knex('pages').where({ id: 42 }).update({ renderedSourceRevision: 8 })
     await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'succeeded' })
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    await lifecycle.runOnce()
     expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'attempts')).toMatchObject({ status: 'succeeded', attempts: 1 })
     expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'target' }])
   })
@@ -850,6 +938,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 8,
       content: '# Start\n',
       render: '<p>private</p>',
       localeCode: 'en',
@@ -871,6 +960,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 43,
       sourceRevision: 9,
+      renderedSourceRevision: 9,
       content: '# Start\n',
       render: '<p>draft</p>',
       isPublished: false,
@@ -913,6 +1003,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 8,
       content: '# Start\n',
       render: '<p>rendered</p>',
       localeCode: 'en',
@@ -941,6 +1032,7 @@ describe('production page projection lifecycle', () => {
       {
         id: 42,
         sourceRevision: 8,
+        renderedSourceRevision: 8,
         content: '# Start\n',
         render: '<p>rendered</p>',
         localeCode: 'en',
@@ -951,6 +1043,7 @@ describe('production page projection lifecycle', () => {
       {
         id: 43,
         sourceRevision: 9,
+        renderedSourceRevision: 9,
         content: '# Start\n',
         render: '<p>rendered next</p>',
         localeCode: 'en',
@@ -970,12 +1063,10 @@ describe('production page projection lifecycle', () => {
     await knex('pageMutationOutbox').where({ pageId: 43, effectKind: 'search' }).update({ status: 'succeeded', attempts: 1 })
     await knex('pagesVector').insert({ pageId: 43, sourceRevision: 7 })
     await knex('pagesWords').insert({ pageId: 43, word: 'stale' })
-    const reconcileSearchPage = vi.fn(projectionRuntime().reconcileSearchPage)
-    const lifecycle = new PageProjectionLifecycle(knex, 'maintenance-worker', projectionRuntime({ reconcileSearchPage }))
+    const lifecycle = new PageProjectionLifecycle(knex, 'maintenance-worker', projectionRuntime())
 
     await lifecycle.runOnce()
 
-    expect(reconcileSearchPage.mock.calls.map(([pageId]) => pageId)).toEqual([42, 43])
     expect(await knex('pagesVector').select('pageId', 'sourceRevision').orderBy('pageId')).toEqual([
       { pageId: 42, sourceRevision: 8 },
       { pageId: 43, sourceRevision: 9 }
@@ -989,6 +1080,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 8,
       content: '# Opted out\n',
       render: '<p><a class="is-internal-link" href="/en/target">target</a></p>',
       isSearchable: false,
@@ -1001,7 +1093,12 @@ describe('production page projection lifecycle', () => {
     await knex('pagesWords').insert({ pageId: 42, word: 'stale' })
 
     const runtime = projectionRuntime()
-    const renderPage = vi.fn(runtime.renderPage)
+    const renderPage = vi.fn(async (pageId: number) => {
+      await knex('pages').where({ id: pageId }).update({
+        render: '<p><a class="is-internal-link" href="/en/target">target</a></p>',
+        renderedSourceRevision: 8
+      })
+    })
     const reconcileSearchPage = vi.fn(runtime.reconcileSearchPage)
     const removeSearchPage = vi.fn(runtime.removeSearchPage)
     const lifecycle = new PageProjectionLifecycle(
@@ -1010,10 +1107,9 @@ describe('production page projection lifecycle', () => {
       projectionRuntime({ renderPage, reconcileSearchPage, removeSearchPage })
     )
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
+    await lifecycle.runOnce()
 
-    expect(renderPage).toHaveBeenCalledWith(42)
+    expect(renderPage).toHaveBeenCalledWith(42, expect.objectContaining({ sourceRevision: '8' }))
     expect(reconcileSearchPage).not.toHaveBeenCalled()
     expect(removeSearchPage).toHaveBeenCalledWith(42)
     expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'target' }])
@@ -1026,6 +1122,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 70,
       sourceRevision: 69,
+      renderedSourceRevision: 69,
       content: '# Tail\n',
       render: '<p><a class="is-internal-link" href="/en/tail69">tail</a></p>',
       localeCode: 'en',
@@ -1071,6 +1168,7 @@ describe('production page projection lifecycle', () => {
       {
         id: 70,
         sourceRevision: 69,
+        renderedSourceRevision: 69,
         content: '# Corrupt\n',
         render: '<p>corrupt</p>',
         localeCode: 'en',
@@ -1081,6 +1179,7 @@ describe('production page projection lifecycle', () => {
       {
         id: 71,
         sourceRevision: 70,
+        renderedSourceRevision: 70,
         content: '# Healthy\n',
         render: '<p><a class="is-internal-link" href="/en/healthy">healthy</a></p>',
         localeCode: 'en',
@@ -1100,18 +1199,24 @@ describe('production page projection lifecycle', () => {
     })
     const corruptRender = await knex('pageMutationOutbox').where({ pageId: 70, effectKind: 'render' }).first('payload', 'payloadSha256')
     await knex('pageMutationOutbox').where({ pageId: 70, effectKind: 'render' }).update({ status: 'failed', attempts: 5, payload: '{' })
-    const lifecycle = new PageProjectionLifecycle(knex, 'tail-recovery-worker', projectionRuntime())
+    const lifecycle = new PageProjectionLifecycle(knex, 'tail-recovery-worker', projectionRuntime({
+      renderPage: async pageId => {
+        await knex('pages').where({ id: pageId }).update({
+          render: '<p><a class="is-internal-link" href="/en/healthy">healthy</a></p>',
+          renderedSourceRevision: 70
+        })
+      }
+    }))
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    await lifecycle.runOnce()
     expect(await knex('pageMutationOutbox').where({ pageId: 71, effectKind: 'render' }).first('status')).toEqual({ status: 'succeeded' })
-    expect(await knex('pageMutationOutbox').where({ pageId: 71, effectKind: 'links' }).first('status')).toEqual({ status: 'pending' })
+    expect(await knex('pageMutationOutbox').where({ pageId: 71, effectKind: 'links' }).first('status')).toEqual({ status: 'succeeded' })
     expect(await knex('pageMutationOutbox').where({ pageId: 70, effectKind: 'links' })).toHaveLength(0)
     expect(await knex('pageMutationOutbox').where({ pageId: 70, effectKind: 'render' }).first('payload', 'payloadSha256')).toEqual({
       payload: '{',
       payloadSha256: corruptRender?.payloadSha256
     })
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
     expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 71, localeCode: 'en', path: 'healthy' }])
   })
 
@@ -1119,6 +1224,7 @@ describe('production page projection lifecycle', () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
+      renderedSourceRevision: 8,
       content: '# Legacy\n',
       render: '<p>legacy render</p>',
       localeCode: 'en',
@@ -1129,20 +1235,343 @@ describe('production page projection lifecycle', () => {
     const reconcileSearchPage = vi.fn(projectionRuntime().reconcileSearchPage)
     const lifecycle = new PageProjectionLifecycle(knex, 'legacy-maintenance-worker', projectionRuntime({ reconcileSearchPage }))
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
-    expect(reconcileSearchPage).not.toHaveBeenCalled()
-    expect(await knex('pageMutationOutbox').select('effectKind', 'status').orderBy('effectKind')).toEqual([
-      { effectKind: 'links', status: 'pending' },
-      { effectKind: 'render', status: 'succeeded' },
-      { effectKind: 'search', status: 'pending' }
-    ])
-
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
+    await lifecycle.runOnce()
     expect(reconcileSearchPage).toHaveBeenCalledWith(42)
     expect(await knex('pageMutationOutbox').select('effectKind', 'status').orderBy('effectKind')).toEqual([
       { effectKind: 'links', status: 'succeeded' },
       { effectKind: 'render', status: 'succeeded' },
       { effectKind: 'search', status: 'succeeded' }
     ])
+  })
+
+  it.each(['missing', 'stale succeeded'] as const)('rearms a %s render dependency before exposing uncertified body bytes', async dependency => {
+    await knex('pages').insert(projectionPage({ renderedSourceRevision: 7, render: '<p>stalebody</p>' }))
+    await enqueue({ effects: dependency === 'missing' ? ['links', 'search'] : ['render', 'links', 'search'] })
+    await knex('pageMutationOutbox').whereIn('effectKind', ['render', 'links']).update({ status: 'succeeded', attempts: 3 })
+    const original = await knex('pageMutationOutbox').where({ effectKind: 'render' }).first('id', 'payload', 'payloadSha256', 'effectKey')
+    expect(await claimPageMutationEffects(knex, { leaseOwner: 'uncertified-body', effects: ['search'] })).toEqual([])
+    const entered = deferred()
+    const resume = deferred()
+    const reconcileSearchPage = vi.fn(projectionRuntime().reconcileSearchPage)
+    const lifecycle = new PageProjectionLifecycle(knex, 'provenance-worker', projectionRuntime({
+      reconcileSearchPage,
+      renderPage: async pageId => {
+        entered.release()
+        await resume.promise
+        await knex('pages').where({ id: pageId }).update({
+          render: '<p>freshbody <a class="is-internal-link" href="/en/fresh-link">fresh</a></p>',
+          renderedSourceRevision: 8
+        })
+      }
+    }))
+    const running = lifecycle.runOnce()
+    await waitForProjectionStart(entered.promise, running)
+    try {
+      expect(await knex('pageMutationOutbox').where({ effectKind: 'render' }).first('status', 'attempts')).toMatchObject({ status: 'running', attempts: 1 })
+      expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts')).toMatchObject({ status: 'pending', attempts: 0 })
+      expect(reconcileSearchPage).not.toHaveBeenCalled()
+      expect(await knex('pagesVector')).toEqual([])
+      expect(await knex('pagesWords')).toEqual([])
+    } finally {
+      resume.release()
+      await running
+    }
+    expect(await knex('pagesVector')).toEqual([{ pageId: 42, sourceRevision: 8 }])
+    expect(await knex('pagesWords').where({ pageId: 42, word: 'freshbody' })).toHaveLength(1)
+    expect(await knex('pagesWords').where({ pageId: 42, word: 'stalebody' })).toEqual([])
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts')).toMatchObject({ status: 'succeeded', attempts: 1 })
+    if (original) expect(await knex('pageMutationOutbox').where({ id: original.id }).first('id', 'payload', 'payloadSha256', 'effectKey')).toEqual(original)
+  })
+
+  it.each([
+    { reason: 'opted out', overrides: { isSearchable: false } },
+    { reason: 'private', overrides: { visibility: 'private', ownerId: 7 } },
+    { reason: 'unpublished', overrides: { isPublished: false } },
+    { reason: 'future publication', overrides: { publishStartDate: '2100-01-02T00:00:00.000Z' } },
+    { reason: 'expired publication', overrides: { publishEndDate: '2099-12-31T00:00:00.000Z' } }
+  ])('cleans $reason search state despite a terminal render failure', async ({ overrides }) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2100-01-01T00:00:00.000Z'))
+    const page = projectionPage({ ...overrides, renderedSourceRevision: 7 })
+    await knex('pages').insert(page)
+    await enqueue({
+      effects: ['render', 'links', 'search'],
+      location: { ...location, visibility: page.visibility as 'public' | 'private', ownerId: page.ownerId as number | null }
+    })
+    await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'failed', attempts: 5 })
+    await knex('pageMutationOutbox').where({ effectKind: 'links' }).update({ status: 'succeeded' })
+    await knex('pagesVector').insert({ pageId: 42, sourceRevision: 7 })
+    await knex('pagesWords').insert({ pageId: 42, word: 'stalebody' })
+    const renderPage = vi.fn(projectionRuntime().renderPage)
+    const reconcileSearchPage = vi.fn(projectionRuntime().reconcileSearchPage)
+    const lifecycle = new PageProjectionLifecycle(knex, 'ineligible-cleanup-worker', projectionRuntime({ renderPage, reconcileSearchPage }))
+
+    await lifecycle.runOnce()
+
+    expect(renderPage).not.toHaveBeenCalled()
+    expect(reconcileSearchPage).not.toHaveBeenCalled()
+    expect(await knex('pagesVector').where({ pageId: 42 })).toEqual([])
+    expect(await knex('pagesWords').where({ pageId: 42 })).toEqual([])
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'render' }).first('status', 'attempts')).toEqual({ status: 'failed', attempts: 5 })
+    const effect = await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts', 'result')
+    expect(effect).toMatchObject({ status: 'succeeded', attempts: 1 })
+    expect(JSON.parse(effect.result)).toMatchObject({ removed: true })
+  })
+
+  it.each(['opted-out revision', 'absent cleanup'] as const)('supersedes queued %s without removing a newer eligible projection', async state => {
+    await knex('pages').insert(projectionPage({ id: 41, path: 'docs/barrier' }))
+    await enqueue({ pageId: 41, effects: ['render', 'links', 'search'], location: { ...location, path: 'docs/barrier' } })
+    await knex('pageMutationOutbox').where({ pageId: 41 }).whereIn('effectKind', ['links', 'search']).update({ status: 'succeeded' })
+    await knex('pagesVector').insert({ pageId: 41, sourceRevision: 8 })
+    if (state === 'opted-out revision') await knex('pages').insert(projectionPage({ isSearchable: false }))
+    const [oldEffectId] = await enqueue(state === 'absent cleanup'
+      ? { effects: ['search'], desiredState: 'absent', action: 'delete', source: undefined, location: undefined, previousLocation: location }
+      : { effects: ['search'] })
+    await knex('pageMutationOutbox').where({ pageId: 41, effectKind: 'render' }).update({
+      availableAt: '2000-01-01T00:00:00.000Z',
+      createdAt: '2000-01-01T00:00:00.000Z'
+    })
+    const entered = deferred()
+    const resume = deferred()
+    const runtime = projectionRuntime()
+    const removeSearchPage = vi.fn(runtime.removeSearchPage)
+    const lifecycle = new PageProjectionLifecycle(knex, 'queued-cleanup-worker', projectionRuntime({
+      removeSearchPage,
+      renderPage: async pageId => {
+        if (pageId === 41) {
+          entered.release()
+          await resume.promise
+        }
+        await runtime.renderPage(pageId)
+      }
+    }))
+    const running = lifecycle.runOnce()
+    await waitForProjectionStart(entered.promise, running)
+    try {
+      await knex('pages').insert(projectionPage({ sourceRevision: 9, renderedSourceRevision: 9, content: '# New\n', render: '<p>newerbody</p>' })).onConflict('id').merge()
+      await enqueue({ sourceRevision: 9, source: '# New\n', effects: ['render', 'links', 'search'] })
+      await knex('pageMutationOutbox').where({ pageId: 42, sourceRevision: 9 }).update({ status: 'succeeded' })
+      await knex('pagesVector').insert({ pageId: 42, sourceRevision: 9 })
+      await knex('pagesWords').insert({ pageId: 42, word: 'newerbody' })
+    } finally {
+      resume.release()
+      await running
+    }
+    expect(removeSearchPage).not.toHaveBeenCalledWith(42)
+    expect(await knex('pagesVector').where({ pageId: 42 })).toEqual([{ pageId: 42, sourceRevision: 9 }])
+    expect(await knex('pagesWords').where({ pageId: 42 })).toEqual([{ pageId: 42, word: 'newerbody' }])
+    const settled = await knex('pageMutationOutbox').where({ id: oldEffectId }).first('status', 'result')
+    expect(settled.status).toBe('succeeded')
+    expect(JSON.parse(settled.result)).toMatchObject({ superseded: true })
+  })
+
+  it('replaces same-revision links and body projections while preserving immutable coalesced receipts', async () => {
+    const oldRender = '<p>oldbody <a class="is-internal-link" href="/en/old-link">old</a></p>'
+    await knex('pages').insert(projectionPage({ render: oldRender }))
+    await enqueue({ effects: ['render', 'links', 'search'] })
+    await knex('pageMutationOutbox').update({ status: 'succeeded', attempts: 3, result: '{}', postcondition: '{"satisfied":true}' })
+    await knex('pageLinks').insert({ pageId: 42, localeCode: 'en', path: 'old-link' })
+    await knex('pagesVector').insert({ pageId: 42, sourceRevision: 8 })
+    await knex('pagesWords').insert({ pageId: 42, word: 'oldbody' })
+    const immutable = await knex('pageMutationOutbox').select('id', 'effectKind', 'effectKey', 'payload', 'payloadSha256').orderBy('effectKind')
+    const admission = await knex.transaction(transaction => admitPageRenderEffect(transaction, { pageId: 42, sourceRevision: 8, source: '# Start\n', location }))
+    expect(await knex.transaction(transaction => admitPageRenderEffect(transaction, { pageId: 42, sourceRevision: 8, source: '# Start\n', location }))).toEqual(admission)
+    expect(await knex('pages').where({ id: 42 }).first('renderedSourceRevision')).toEqual({ renderedSourceRevision: null })
+    expect(await knex('pageLinks')).toEqual([])
+    expect(await knex('pagesVector')).toEqual([])
+    expect(await knex('pagesWords')).toEqual([])
+    const entered = deferred()
+    const resume = deferred()
+    const lifecycle = new PageProjectionLifecycle(knex, 'same-revision-render-worker', projectionRuntime({
+      renderPage: async pageId => {
+        entered.release()
+        await resume.promise
+        await knex('pages').where({ id: pageId }).update({
+          render: '<p>replacementbody <a class="is-internal-link" href="/en/new-link">new</a></p>',
+          renderedSourceRevision: 8
+        })
+      }
+    }))
+    const running = lifecycle.runOnce()
+    await waitForProjectionStart(entered.promise, running)
+    try {
+      expect(await knex('pageMutationOutbox').whereIn('effectKind', ['links', 'search']).select('effectKind', 'status', 'attempts').orderBy('effectKind')).toEqual([
+        { effectKind: 'links', status: 'retry', attempts: 0 },
+        { effectKind: 'search', status: 'retry', attempts: 0 }
+      ])
+      expect(await knex('pagesWords')).toEqual([])
+      expect(await knex('pageLinks')).toEqual([])
+    } finally {
+      resume.release()
+      await running
+    }
+    expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'new-link' }])
+    expect(await knex('pagesWords').where({ word: 'replacementbody' })).toHaveLength(1)
+    expect(await knex('pagesWords').where({ word: 'oldbody' })).toEqual([])
+    expect(await knex('pageMutationOutbox').select('id', 'effectKind', 'effectKey', 'payload', 'payloadSha256').orderBy('effectKind')).toEqual(immutable)
+    expect(await knex('pageMutationOutbox').select('status', 'attempts')).toEqual([
+      { status: 'succeeded', attempts: 1 },
+      { status: 'succeeded', attempts: 1 },
+      { status: 'succeeded', attempts: 1 }
+    ])
+  })
+
+  it('revokes preclaimed running dependent tokens when the same revision is readmitted', async () => {
+    await knex('pages').insert(projectionPage())
+    await enqueue({ effects: ['render', 'links', 'search'] })
+    await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'succeeded' })
+    const claims = await claimPageMutationEffects(knex, { leaseOwner: 'old-dependents', effects: ['links', 'search'], limit: 2 })
+    expect(claims).toHaveLength(2)
+    await knex.transaction(transaction => admitPageRenderEffect(transaction, { pageId: 42, sourceRevision: 8, source: '# Start\n', location }))
+    const reconcile = vi.fn(async () => {
+      await knex('pagesWords').insert({ pageId: 42, word: 'oldtokenbody' })
+      return { result: {}, postcondition: { satisfied: true, observedSourceRevision: '8', detail: 'stale publication' } }
+    })
+    for (const claim of claims) {
+      await expect(executePageMutationEffect(knex, claim, {
+        links: { kind: 'links', reconcile },
+        search: { kind: 'search', reconcile }
+      }, new AbortController().signal)).rejects.toMatchObject({ code: 'PROJECTION_LEASE_LOST' })
+    }
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(await knex('pagesWords')).toEqual([])
+    expect(await knex('pageLinks')).toEqual([])
+    expect(await knex('pageMutationOutbox').whereIn('effectKind', ['links', 'search']).select('status', 'attempts', 'leaseToken')).toEqual([
+      { status: 'retry', attempts: 0, leaseToken: null },
+      { status: 'retry', attempts: 0, leaseToken: null }
+    ])
+  })
+
+  it('fences an already-started link projection while same-revision replacement is uncertified', async () => {
+    await knex('pages').insert(projectionPage({ render: '<a class="is-internal-link" href="/en/old-link">oldbody</a>' }))
+    await enqueue({ effects: ['render', 'links', 'search'], previousLocation: { ...location, path: 'docs/former' } })
+    await knex('pageMutationOutbox').whereIn('effectKind', ['render', 'search']).update({ status: 'succeeded' })
+    await knex('pageMutationOutbox').where({ effectKind: 'links' }).update({ availableAt: '2000-01-01T00:00:00.000Z' })
+    await knex('pagesVector').insert({ pageId: 42, sourceRevision: 8 })
+    await knex('pagesWords').insert({ pageId: 42, word: 'oldbody' })
+    const linksEntered = deferred()
+    const resumeLinks = deferred()
+    const renderEntered = deferred()
+    const resumeRender = deferred()
+    let firstEviction = true
+    const lifecycle = new PageProjectionLifecycle(knex, 'running-link-fence-worker', projectionRuntime({
+      evictLocation: async () => {
+        if (!firstEviction) return
+        firstEviction = false
+        linksEntered.release()
+        await resumeLinks.promise
+      },
+      renderPage: async pageId => {
+        renderEntered.release()
+        await resumeRender.promise
+        await knex('pages').where({ id: pageId }).update({
+          render: '<a class="is-internal-link" href="/en/replacement-link">replacementbody</a>',
+          renderedSourceRevision: 8
+        })
+      }
+    }))
+    const running = lifecycle.runOnce()
+    await waitForProjectionStart(linksEntered.promise, running)
+    try {
+      const oldLease = await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'leaseToken')
+      expect(oldLease).toMatchObject({ status: 'running', leaseToken: expect.any(String) })
+      await knex.transaction(transaction => admitPageRenderEffect(transaction, { pageId: 42, sourceRevision: 8, source: '# Start\n', location }))
+      resumeLinks.release()
+      await waitForProjectionStart(renderEntered.promise, running)
+      expect(await knex('pageLinks')).toEqual([])
+      expect(await knex('pagesVector')).toEqual([])
+      expect(await knex('pagesWords')).toEqual([])
+      expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'attempts', 'leaseToken')).toEqual({
+        status: 'retry',
+        attempts: 0,
+        leaseToken: null
+      })
+    } finally {
+      resumeLinks.release()
+      resumeRender.release()
+      await running
+    }
+    expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'replacement-link' }])
+    expect(await knex('pagesWords').where({ word: 'oldbody' })).toEqual([])
+    expect(await knex('pagesWords').where({ word: 'replacementbody' })).toHaveLength(1)
+  })
+
+  it('advances past ten immutable corrupt search receipts to repair page eleven and absent cleanup', async () => {
+    for (let pageId = 1; pageId <= 11; pageId += 1) {
+      const path = `docs/repair-${pageId}`
+      await knex('pages').insert(projectionPage({ id: pageId, path, render: `<p>body${pageId}</p>` }))
+      await enqueue({ pageId, location: { ...location, path }, effects: ['render', 'links', 'search'] })
+    }
+    await knex('pageMutationOutbox').update({ status: 'succeeded', attempts: 2 })
+    await knex('pageMutationOutbox').where('pageId', '<=', 10).where({ effectKind: 'search' }).update({ payloadSha256: '0'.repeat(64) })
+    const corrupt = await knex('pageMutationOutbox').where('pageId', '<=', 10).where({ effectKind: 'search' }).select('id', 'payload', 'payloadSha256', 'status', 'attempts').orderBy('pageId')
+    await enqueue({ pageId: 12, desiredState: 'absent', action: 'delete', source: undefined, location: undefined, previousLocation: { ...location, path: 'docs/deleted' }, effects: ['search'] })
+    await knex('pageMutationOutbox').where({ pageId: 12 }).update({ status: 'succeeded', attempts: 2 })
+    await knex('pagesVector').insert({ pageId: 12, sourceRevision: 8 })
+    await knex('pagesWords').insert({ pageId: 12, word: 'deletedbody' })
+    const lifecycle = new PageProjectionLifecycle(knex, 'search-repair-cursor-worker', projectionRuntime())
+
+    for (let tick = 0; tick < 3; tick += 1) await lifecycle.runOnce()
+
+    expect(await knex('pagesVector').where({ pageId: 11 })).toEqual([{ pageId: 11, sourceRevision: 8 }])
+    expect(await knex('pagesWords').where({ pageId: 11, word: 'body11' })).toHaveLength(1)
+    expect(await knex('pageMutationOutbox').where({ pageId: 11, effectKind: 'search' }).first('status', 'attempts')).toEqual({ status: 'succeeded', attempts: 1 })
+    expect(await knex('pagesVector').where({ pageId: 12 })).toEqual([])
+    expect(await knex('pagesWords').where({ pageId: 12 })).toEqual([])
+    expect(await knex('pageMutationOutbox').where('pageId', '<=', 10).where({ effectKind: 'search' }).select('id', 'payload', 'payloadSha256', 'status', 'attempts').orderBy('pageId')).toEqual(corrupt)
+    expect(await knex('pagesVector').where('pageId', '<=', 10)).toEqual([])
+  })
+
+  it('never starts a queued render with an old token after a long first sink and a competing claim', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2100-01-01T00:00:00.000Z'))
+    for (const pageId of [42, 43]) {
+      const path = pageId === 42 ? 'docs/start' : 'docs/next'
+      await knex('pages').insert(projectionPage({ id: pageId, path }))
+      await enqueue({ pageId, location: { ...location, path }, effects: ['render', 'links', 'search'] })
+      await knex('pageMutationOutbox').where({ pageId }).whereIn('effectKind', ['links', 'search']).update({ status: 'succeeded' })
+      await knex('pagesVector').insert({ pageId, sourceRevision: 8 })
+    }
+    await knex('pageMutationOutbox').where({ pageId: 42, effectKind: 'render' }).update({ availableAt: '2099-12-31T00:00:00.000Z', createdAt: '2099-12-31T00:00:00.000Z' })
+    const entered = deferred()
+    const resume = deferred()
+    const renderPage = vi.fn(async (pageId: number) => {
+      if (pageId === 42) {
+        entered.release()
+        await resume.promise
+      }
+      await knex('pages').where({ id: pageId }).update({ render: '<p>originalworkerbody</p>', renderedSourceRevision: 8 })
+    })
+    const lifecycle = new PageProjectionLifecycle(knex, 'serial-worker', projectionRuntime({ renderPage }))
+    const running = lifecycle.runOnce()
+    await waitForProjectionStart(entered.promise, running)
+    try {
+      for (let heartbeat = 0; heartbeat < 3; heartbeat += 1) {
+        await vi.advanceTimersByTimeAsync(20_000)
+        await knex('pageMutationOutbox').where({ pageId: 42, effectKind: 'render' }).first('leaseExpiresAt')
+      }
+      vi.setSystemTime(new Date('2100-01-01T00:01:01.001Z'))
+      const activeFirst = await knex('pageMutationOutbox').where({ pageId: 42, effectKind: 'render' }).first('status', 'leaseExpiresAt')
+      expect(activeFirst.status).toBe('running')
+      expect(Date.parse(activeFirst.leaseExpiresAt)).toBeGreaterThan(Date.now())
+      const [competingClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'competing-worker', effects: ['render'], limit: 1 })
+      if (!competingClaim) throw new Error('competing claim missing')
+      expect(competingClaim.payload.pageId).toBe(43)
+      await executePageMutationEffect(knex, competingClaim, {
+        render: {
+          kind: 'render',
+          reconcile: async () => {
+            await knex('pages').where({ id: 43 }).update({ render: '<p>competingworkerbody</p>', renderedSourceRevision: 8 })
+            return { result: { rendered: true }, postcondition: { satisfied: true, observedSourceRevision: '8', detail: 'competing renderer persisted its output' } }
+          }
+        }
+      }, new AbortController().signal)
+    } finally {
+      resume.release()
+      await running
+    }
+    expect(renderPage.mock.calls.map(([pageId]) => pageId)).toEqual([42])
+    expect(await knex('pages').where({ id: 43 }).first('render')).toEqual({ render: '<p>competingworkerbody</p>' })
+    expect(await knex('pageMutationOutbox').where({ pageId: 43, effectKind: 'render' }).first('status', 'leaseToken')).toEqual({ status: 'succeeded', leaseToken: null })
   })
 })

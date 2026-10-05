@@ -2,9 +2,9 @@
   <section class="search-evaluate" aria-labelledby="search-evaluate-title">
     <header><div class="search-kicker">{{ $t('admin:searchEvaluate.queryEvaluation') }}</div><h2 id="search-evaluate-title">{{ $t('admin:searchEvaluate.findOutWhatComes') }}</h2><p>{{ $t('admin:searchEvaluate.runSameSearchReaders') }}</p></header>
     <v-form class="query-form" @submit.prevent="evaluate()">
-      <v-text-field v-model="query" :label="$t('admin:searchEvaluate.searchQuery')" prepend-inner-icon="mdi-magnify" maxlength="1000" hide-details clearable />
+      <v-text-field v-model="query" :label="$t('admin:searchEvaluate.searchQuery')" prepend-inner-icon="mdi-magnify" maxlength="256" hide-details clearable />
       <div class="query-scope"><v-text-field v-model="locale" :label="$t('admin:searchEvaluate.localeOptional')" :hint="$t('admin:searchEvaluate.exampleEn')" persistent-hint maxlength="35" /><v-text-field v-model="path" :label="$t('admin:searchEvaluate.pagePathOptional')" :hint="$t('admin:searchEvaluate.limitSearchPageTree')" persistent-hint maxlength="1024" /></div>
-      <div class="query-actions"><span>{{ $t('admin:searchEvaluate.usesSavedConfigurationCurrent') }}</span><v-btn type="submit" color="primary" prepend-icon="mdi-play-outline" :disabled="!query?.trim() || loading" :loading="loading">{{ $t('admin:searchEvaluate.evaluateQuery') }}</v-btn></div>
+      <div class="query-actions"><span>{{ $t('admin:searchEvaluate.usesSavedConfigurationCurrent') }}</span><v-btn type="submit" color="primary" prepend-icon="mdi-play-outline" :disabled="!canEvaluate || loading" :loading="loading">{{ $t('admin:searchEvaluate.evaluateQuery') }}</v-btn></div>
     </v-form>
     <v-alert v-if="error" type="error" variant="tonal" class="mt-4" role="alert">{{ error }}</v-alert>
     <v-skeleton-loader v-if="loading && !result" type="list-item-three-line, list-item-three-line" class="mt-4" />
@@ -26,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api.ts'
 import { pageHref } from '../../helpers/admin-pages.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
@@ -35,6 +35,10 @@ const t = useTranslate()
 const query = ref<string | null>('')
 const locale = ref('')
 const path = ref('')
+const canEvaluate = computed(() => {
+  const value = query.value?.trim() || ''
+  return value.length > 0 && value.length <= 256
+})
 const submitted = shallowRef({ query: '', locale: '', path: '' })
 const loading = ref(false)
 const error = ref('')
@@ -46,7 +50,7 @@ const matchFieldLabel = (field: PageSearchRow['matchedFields'][number]): string 
 async function evaluate(cursor?: string | null) {
   if (loading.value) return
   const input = cursor ? submitted.value : { query: query.value?.trim() || '', locale: locale.value.trim(), path: path.value.trim() }
-  if (!input.query) return
+  if (!input.query || input.query.length > 256) return
   controller?.abort()
   const request = new AbortController()
   controller = request

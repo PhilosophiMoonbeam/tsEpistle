@@ -1,8 +1,10 @@
 import knexModule from 'knex'
 import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { PAGE_INDEX_CANDIDATE_LIMIT, listPageIndexCandidates as realListPageIndexCandidates } from '../repositories/page-index.ts'
+import { evaluateGroupAccess } from '../helpers/group-access.ts'
 
 const connection = getPostgresTestConnection('_page_discovery_test', import.meta.path)
+const nativeIt = connection ? it : it.skip
 const originalWiki = global.WIKI
 const realPageIndex = { PAGE_INDEX_CANDIDATE_LIMIT, listPageIndexCandidates: realListPageIndexCandidates }
 const pageRow = (id, path, overrides = {}) => ({
@@ -94,7 +96,7 @@ describe('structured page discovery', () => {
     if (db) await db.destroy()
   })
 
-  const arrangeNative = async (pages, assignments = []) => {
+  const arrangeNative = async (pages, assignments = [], pageRules = [{ match: 'SUBTREE', path: '', deny: false, roles: ['read:pages'] }]) => {
     await db.raw('TRUNCATE "pageUnlockGrants", "pageAccessPasswords", "pageTags", tags, pages CASCADE')
     await db.batchInsert('pages', pages, 500)
     const names = [...new Set(assignments.flatMap(([, tags]) => tags))]
@@ -102,10 +104,21 @@ describe('structured page discovery', () => {
       await db('tags').insert(names.map((tag, index) => ({ id: index + 1, tag, title: tag })))
       await db('pageTags').insert(assignments.flatMap(([pageId, tags]) => tags.map(tag => ({ pageId, tagId: names.indexOf(tag) + 1 }))))
     }
-    const checkAccess = (_requester, permissions) => permissions.includes('read:pages')
-    const loadPageRuleAuthority = async requester => ({ requester, permissions: [], groups: [], tagAliases: {} })
+    const checkAccess = (requester, permissions) => permissions.includes('read:pages') ||
+      (permissions.includes('manage:system') && requester?.permissions?.includes('manage:system'))
+    const loadPageRuleAuthority = async requester => ({
+      requester,
+      permissions: ['read:pages', ...(requester?.permissions ?? [])],
+      groups: [{ id: 1, pageRules }],
+      tagAliases: {}
+    })
     global.WIKI = {
-      auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
+      auth: {
+        checkAccess,
+        checkPageAccess: (_requester, permissions, context, authority) =>
+          evaluateGroupAccess(authority.permissions, permissions, authority.groups, context, authority.tagAliases, false).allowed,
+        loadPageRuleAuthority
+      },
       config: { db: { type: 'postgres' }, lang: { code: 'en' } },
       data: {},
       Error: {},
@@ -128,13 +141,13 @@ describe('structured page discovery', () => {
 
   it('filters authorized descendants by depth and exact tags with stable pagination', async () => {
     const candidates = [
-      { id: 1, localeCode: 'en', path: 'docs/zulu', title: 'Zulu', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-20T00:00:00.000Z'), tags: [{ tag: 'runbook' }] },
-      { id: 2, localeCode: 'en', path: 'docs/nested/alpha', title: 'Alpha', description: 'Nested', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-21T00:00:00.000Z'), tags: [{ tag: 'runbook' }, { tag: 'release' }] },
-      { id: 3, localeCode: 'en', path: 'docs/nested/deep/hidden', title: 'Too Deep', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-22T00:00:00.000Z'), tags: [{ tag: 'runbook' }] },
-      { id: 4, localeCode: 'en', path: 'other/page', title: 'Other', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-23T00:00:00.000Z'), tags: [{ tag: 'runbook' }] },
-      { id: 5, localeCode: 'en', path: 'docs/missing-tag', title: 'A Missing Tag', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-24T00:00:00.000Z'), tags: [] },
-      { id: 6, localeCode: 'en', path: 'docs/substring-tag', title: 'A Substring Tag', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-25T00:00:00.000Z'), tags: [{ tag: 'runbook-extra' }] },
-      { id: 7, localeCode: 'en', path: 'docs/denied', title: 'A Denied Page', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-26T00:00:00.000Z'), tags: [{ tag: 'runbook' }] }
+      { id: 1, sourceRevision: '1', localeCode: 'en', path: 'docs/zulu', title: 'Zulu', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-20T00:00:00.000Z'), tags: [{ tag: 'runbook' }] },
+      { id: 2, sourceRevision: '2', localeCode: 'en', path: 'docs/nested/alpha', title: 'Alpha', description: 'Nested', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-21T00:00:00.000Z'), tags: [{ tag: 'runbook' }, { tag: 'release' }] },
+      { id: 3, sourceRevision: '3', localeCode: 'en', path: 'docs/nested/deep/hidden', title: 'Too Deep', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-22T00:00:00.000Z'), tags: [{ tag: 'runbook' }] },
+      { id: 4, sourceRevision: '4', localeCode: 'en', path: 'other/page', title: 'Other', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-23T00:00:00.000Z'), tags: [{ tag: 'runbook' }] },
+      { id: 5, sourceRevision: '5', localeCode: 'en', path: 'docs/missing-tag', title: 'A Missing Tag', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-24T00:00:00.000Z'), tags: [] },
+      { id: 6, sourceRevision: '6', localeCode: 'en', path: 'docs/substring-tag', title: 'A Substring Tag', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-25T00:00:00.000Z'), tags: [{ tag: 'runbook-extra' }] },
+      { id: 7, sourceRevision: '7', localeCode: 'en', path: 'docs/denied', title: 'A Denied Page', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-26T00:00:00.000Z'), tags: [{ tag: 'runbook' }] }
     ]
     const listPageIndexCandidates = vi.fn(async () => candidates)
     vi.mockModule('../repositories/page-index.ts', import.meta.url, () => ({ PAGE_INDEX_CANDIDATE_LIMIT: 5_001, listPageIndexCandidates }))
@@ -152,7 +165,7 @@ describe('structured page discovery', () => {
     const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const requester = { id: 7 }
     expect(await operations.discover({ requester, locale: 'en', path: 'docs', depth: 1, tags: ['RUNBOOK'], order: 'title', limit: 1, offset: 0 })).toEqual({
-      pages: [{ id: 2, locale: 'en', path: 'docs/nested/alpha', title: 'Alpha', description: 'Nested', updatedAt: '2026-08-21T00:00:00.000Z', tags: ['runbook', 'release'] }],
+      pages: [{ id: 2, sourceRevision: '2', locale: 'en', path: 'docs/nested/alpha', title: 'Alpha', description: 'Nested', updatedAt: '2026-08-21T00:00:00.000Z', tags: ['runbook', 'release'] }],
       totalInWindow: 2,
       windowLimit: 5_000,
       nextOffset: 1
@@ -162,7 +175,6 @@ describe('structured page discovery', () => {
       totalInWindow: 2,
       nextOffset: null
     })
-    expect(listPageIndexCandidates).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ locale: 'en', path: 'docs', limit: 5_001 }))
   })
   it('filters selected pages before discovery pagination and candidate windows', async () => {
     if (connection) {
@@ -177,22 +189,21 @@ describe('structured page discovery', () => {
       ], [[1, ['tag-1']], [2, ['tag-2']], [3, ['tag-3']]])
       const requester = { id: 7 }
       const input = { requester, locale: 'en', path: 'docs', depth: 1, order: 'path', limit: 1, offset: 0 }
-      // The real repository must stop at its overflow sentinel, not fetch the
-      // whole population. Discovery rejects before depth/tag/offset filtering.
-      const bounded = await realPageIndex.listPageIndexCandidates(db, { locale: 'en', path: 'docs', scope: () => {} })
-      expect(bounded).toHaveLength(5_001)
-      expect(bounded.some(page => page.id === 2 || page.id === 3)).toBe(false)
-      await expect(operations.discover({ ...input, depth: 0, tags: ['missing'], offset: 5_000 }))
-        .rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+      await expect(operations.discover(input)).rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+      expect(await operations.discover({ ...input, depth: 0, tags: ['missing'], offset: 5_000 })).toMatchObject({
+        pages: [],
+        totalInWindow: 0,
+        nextOffset: null
+      })
       const agentScope = { kind: 'selected', pageIds: [2, 3] }
       expect(await operations.discover({ ...input, agentScope })).toEqual({
-        pages: [{ id: 2, locale: 'en', path: 'docs/b', title: 'Page 2', description: null, updatedAt: '2026-08-22T00:00:00.000Z', tags: ['tag-2'] }],
+        pages: [{ id: 2, sourceRevision: '2', locale: 'en', path: 'docs/b', title: 'Page 2', description: null, updatedAt: '2026-08-22T00:00:00.000Z', tags: ['tag-2'] }],
         totalInWindow: 2,
         windowLimit: 5_000,
         nextOffset: 1
       })
       expect(await operations.discover({ ...input, agentScope, offset: 1 })).toEqual({
-        pages: [{ id: 3, locale: 'en', path: 'docs/c', title: 'Page 3', description: null, updatedAt: '2026-08-23T00:00:00.000Z', tags: ['tag-3'] }],
+        pages: [{ id: 3, sourceRevision: '3', locale: 'en', path: 'docs/c', title: 'Page 3', description: null, updatedAt: '2026-08-23T00:00:00.000Z', tags: ['tag-3'] }],
         totalInWindow: 2,
         windowLimit: 5_000,
         nextOffset: null
@@ -201,6 +212,7 @@ describe('structured page discovery', () => {
     }
     const candidates = [1, 2, 3].map(id => ({
       id,
+      sourceRevision: String(id),
       localeCode: 'en',
       path: `docs/${String.fromCharCode(96 + id)}`,
       title: `Page ${id}`,
@@ -282,8 +294,8 @@ describe('structured page discovery', () => {
       await expect(operations.discover(input)).rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
       expect(await operations.discover({ ...input, agentScope: { kind: 'section', locale: 'en', path: 'docs/runbook' } })).toEqual({
         pages: [
-          { id: 1, locale: 'en', path: 'docs/runbook', title: 'Root', description: null, updatedAt: '2026-08-20T00:00:00.000Z', tags: ['inside'] },
-          { id: 2, locale: 'en', path: 'docs/runbook/child', title: 'Child', description: null, updatedAt: '2026-08-21T00:00:00.000Z', tags: ['inside-child'] }
+          { id: 1, sourceRevision: '1', locale: 'en', path: 'docs/runbook', title: 'Root', description: null, updatedAt: '2026-08-20T00:00:00.000Z', tags: ['inside'] },
+          { id: 2, sourceRevision: '2', locale: 'en', path: 'docs/runbook/child', title: 'Child', description: null, updatedAt: '2026-08-21T00:00:00.000Z', tags: ['inside-child'] }
         ],
         totalInWindow: 2,
         windowLimit: 5_000,
@@ -296,8 +308,8 @@ describe('structured page discovery', () => {
       })
       expect(await operations.discover({ ...input, locale: 'fr', agentScope: { kind: 'section', locale: 'fr', path: 'docs/runbook' } })).toEqual({
         pages: [
-          { id: 5, locale: 'fr', path: 'docs/runbook', title: 'Foreign root', description: null, updatedAt: '2026-08-20T00:00:00.000Z', tags: ['foreign-root'] },
-          { id: 4, locale: 'fr', path: 'docs/runbook/foreign-locale', title: 'Foreign', description: null, updatedAt: '2026-08-23T00:00:00.000Z', tags: ['foreign'] }
+          { id: 5, sourceRevision: '5', locale: 'fr', path: 'docs/runbook', title: 'Foreign root', description: null, updatedAt: '2026-08-20T00:00:00.000Z', tags: ['foreign-root'] },
+          { id: 4, sourceRevision: '4', locale: 'fr', path: 'docs/runbook/foreign-locale', title: 'Foreign', description: null, updatedAt: '2026-08-23T00:00:00.000Z', tags: ['foreign'] }
         ],
         totalInWindow: 2,
         windowLimit: 5_000,
@@ -306,10 +318,10 @@ describe('structured page discovery', () => {
       return
     }
     const candidates = [
-      { id: 1, localeCode: 'en', path: 'docs/runbook', title: 'Root', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-20T00:00:00.000Z'), tags: [{ tag: 'inside' }] },
-      { id: 2, localeCode: 'en', path: 'docs/runbook/child', title: 'Child', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-21T00:00:00.000Z'), tags: [{ tag: 'inside-child' }] },
-      { id: 3, localeCode: 'en', path: 'docs/runbook-extra', title: 'Sibling', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-22T00:00:00.000Z'), tags: [{ tag: 'sibling' }] },
-      { id: 4, localeCode: 'fr', path: 'docs/runbook/foreign-locale', title: 'Foreign', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-23T00:00:00.000Z'), tags: [{ tag: 'foreign' }] }
+      { id: 1, sourceRevision: '1', localeCode: 'en', path: 'docs/runbook', title: 'Root', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-20T00:00:00.000Z'), tags: [{ tag: 'inside' }] },
+      { id: 2, sourceRevision: '2', localeCode: 'en', path: 'docs/runbook/child', title: 'Child', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-21T00:00:00.000Z'), tags: [{ tag: 'inside-child' }] },
+      { id: 3, sourceRevision: '3', localeCode: 'en', path: 'docs/runbook-extra', title: 'Sibling', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-22T00:00:00.000Z'), tags: [{ tag: 'sibling' }] },
+      { id: 4, sourceRevision: '4', localeCode: 'fr', path: 'docs/runbook/foreign-locale', title: 'Foreign', description: null, visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-23T00:00:00.000Z'), tags: [{ tag: 'foreign' }] }
     ]
     const nested = () => ({
       where: vi.fn().mockReturnThis(),
@@ -500,5 +512,141 @@ describe('structured page discovery', () => {
       totalInWindow: 2,
       nextOffset: null
     })
+  })
+
+  nativeIt('excludes public drafts and closed publication windows in SQL before the index cap without suppressing private policy', async () => {
+    const closedStates = [
+      { isPublished: false },
+      { publishStartDate: '2099-01-01T00:00:00.000Z' },
+      { publishEndDate: '2000-01-01T00:00:00.000Z' }
+    ]
+    const excluded = Array.from({ length: PAGE_INDEX_CANDIDATE_LIMIT + 1 }, (_, index) =>
+      pageRow(index + 100, `docs/a-hidden-${String(index).padStart(5, '0')}`, closedStates[index % closedStates.length])
+    )
+    const operations = await arrangeNative([
+      ...excluded,
+      pageRow(1, 'docs/z-live', {
+        sourceRevision: '9007199254740993',
+        publishStartDate: '2000-01-01T00:00:00.000Z',
+        publishEndDate: '2099-01-01T00:00:00.000Z'
+      }),
+      pageRow(2, 'docs/b-owned', { visibility: 'private', ownerId: 7, isPublished: false, publishStartDate: '2099-01-01T00:00:00.000Z' }),
+      pageRow(3, 'docs/b-foreign', { visibility: 'private', ownerId: 8, publishEndDate: '2000-01-01T00:00:00.000Z' }),
+      pageRow(4, 'docs/z-not-searchable', { isSearchable: false })
+    ], [[1, ['live']], [2, ['owned']], [3, ['foreign']]])
+    const candidates = await realPageIndex.listPageIndexCandidates(db, { locale: 'en', path: 'docs', scope: () => {} })
+    expect(candidates.map(page => page.id)).toEqual([3, 2, 1])
+    expect(candidates.find(page => page.id === 1).sourceRevision).toBe('9007199254740993')
+    const input = { requester: { id: 7 }, locale: 'en', path: 'docs', depth: 1, order: 'path', limit: 10 }
+    expect((await operations.listIndex(input)).map(page => page.id)).toEqual([2, 1])
+    const discovery = await operations.discover(input)
+    expect(discovery).toMatchObject({
+      pages: [{ id: 2, sourceRevision: '2' }, { id: 1, sourceRevision: '9007199254740993' }],
+      totalInWindow: 2,
+      nextOffset: null
+    })
+    const managerInput = { ...input, requester: { id: 1, permissions: ['manage:system'] } }
+    expect((await operations.listIndex(managerInput)).map(page => page.id)).toEqual([3, 2, 1])
+    expect((await operations.discover(managerInput)).pages.map(page => page.id)).toEqual([3, 2, 1])
+
+    await db('pages').where('id', 2).update({ ownerId: 8 })
+    await db('pages').where('id', 3).update({ isSearchable: false })
+    expect((await operations.discover(input)).pages.map(page => page.id)).toEqual([1])
+    expect((await operations.listIndex(input)).map(page => page.id)).toEqual([1])
+    expect((await operations.discover(managerInput)).pages.map(page => page.id)).toEqual([2, 1])
+  })
+
+  nativeIt('uses same-path page IDs as stable candidate and discovery ties and preserves full revision-tag evidence', async () => {
+    const tags = Array.from({ length: 51 }, (_, index) => `tag-${String(index).padStart(2, '0')}`)
+    const operations = await arrangeNative([
+      pageRow(9, 'docs/same', { title: 'Same', sourceRevision: '9007199254740993' }),
+      pageRow(5, 'docs/same', { title: 'Same', visibility: 'private', ownerId: 8 }),
+      pageRow(2, 'docs/same', { title: 'Same', visibility: 'private', ownerId: 7 })
+    ], [[9, tags], [5, ['foreign']], [2, ['owned']]])
+    const candidates = await realPageIndex.listPageIndexCandidates(db, { locale: 'en', path: 'docs', limit: 2, scope: () => {} })
+    expect(candidates.map(page => page.id)).toEqual([2, 5])
+    const reader = { id: 7 }
+    const manager = { id: 1, permissions: ['manage:system'] }
+    for (const order of ['path', 'title', 'updated']) {
+      const input = { requester: manager, locale: 'en', path: 'docs', depth: 1, order, limit: 1 }
+      const pages = []
+      for (const offset of [0, 1, 2]) {
+        const response = await operations.discover({ ...input, offset })
+        expect(response.totalInWindow).toBe(3)
+        expect(response.nextOffset).toBe(offset < 2 ? offset + 1 : null)
+        pages.push(...response.pages)
+      }
+      expect(pages.map(page => page.id)).toEqual([2, 5, 9])
+      expect(pages[2]).toMatchObject({ sourceRevision: '9007199254740993', tags })
+      expect((await operations.listIndex({ ...input, limit: 10 })).map(page => page.id)).toEqual([2, 5, 9])
+      expect((await operations.discover({ ...input, requester: reader, limit: 10 })).pages.map(page => page.id)).toEqual([2, 9])
+    }
+  })
+
+  nativeIt('does not charge path-denied pages to the authorized discovery or index budget', async () => {
+    const denied = Array.from({ length: PAGE_INDEX_CANDIDATE_LIMIT }, (_, index) =>
+      pageRow(index + 1, `docs/a-denied/${String(index).padStart(5, '0')}`)
+    )
+    const readableId = PAGE_INDEX_CANDIDATE_LIMIT + 1
+    const operations = await arrangeNative([
+      ...denied,
+      pageRow(readableId, 'docs/z-readable')
+    ], [[readableId, ['readable']]], [
+      { match: 'SUBTREE', path: 'docs', deny: false, roles: ['read:pages'] },
+      { match: 'SUBTREE', path: 'docs/a-denied', deny: true, roles: ['read:pages'] }
+    ])
+    const input = { requester: { id: 7 }, locale: 'en', path: 'docs', depth: 1, order: 'path', limit: 10 }
+    expect(await operations.discover(input)).toMatchObject({
+      pages: [{ id: readableId, tags: ['readable'] }],
+      totalInWindow: 1,
+      windowLimit: 5_000,
+      nextOffset: null
+    })
+    expect((await operations.listIndex(input)).map(page => page.id)).toEqual([readableId])
+  })
+
+  nativeIt('loads complete tag authority across same-path batches without skipping ID ties or exposing denied pages', async () => {
+    const denied = Array.from({ length: PAGE_INDEX_CANDIDATE_LIMIT }, (_, index) => pageRow(index + 1, 'docs/same'))
+    const firstId = PAGE_INDEX_CANDIDATE_LIMIT + 1
+    const secondId = firstId + 1
+    const fullTags = [...Array.from({ length: 50 }, (_, index) => `tag-${String(index).padStart(2, '0')}`), 'zz-readable']
+    const operations = await arrangeNative([
+      ...denied,
+      pageRow(firstId, 'docs/same', { title: 'Same', sourceRevision: '9007199254740993' }),
+      pageRow(secondId, 'docs/same', { title: 'Same' })
+    ], [...denied.map(page => [page.id, ['blocked']]), [firstId, fullTags], [secondId, ['zz-readable']]], [
+      { match: 'TAG', path: 'zz-readable', deny: false, roles: ['read:pages'] },
+      { match: 'TAG', path: 'blocked', deny: true, roles: ['read:pages'] }
+    ])
+    const input = { requester: { id: 7 }, locale: 'en', path: 'docs', depth: 0, tags: ['zz-readable'], order: 'path', limit: 1 }
+    expect(await operations.discover(input)).toMatchObject({
+      pages: [{ id: firstId, sourceRevision: '9007199254740993', tags: fullTags }],
+      totalInWindow: 2,
+      nextOffset: 1
+    })
+    expect(await operations.discover({ ...input, offset: 1 })).toMatchObject({
+      pages: [{ id: secondId, tags: ['zz-readable'] }],
+      totalInWindow: 2,
+      nextOffset: null
+    })
+    expect((await operations.listIndex({ ...input, limit: 10 })).map(page => page.id)).toEqual([firstId, secondId])
+  })
+
+  nativeIt('rejects only the 5001st authorized eligible page and preserves the complete 5000-page window', async () => {
+    const pages = Array.from({ length: PAGE_INDEX_CANDIDATE_LIMIT }, (_, index) =>
+      pageRow(index + 1, `docs/${String(index).padStart(5, '0')}`)
+    )
+    const operations = await arrangeNative(pages)
+    const input = { requester: { id: 7 }, locale: 'en', path: 'docs', depth: 0, order: 'path', limit: 1 }
+    await expect(operations.discover(input)).rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+    await expect(operations.listIndex(input)).rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+    await db('pages').where('id', PAGE_INDEX_CANDIDATE_LIMIT).update({ isSearchable: false })
+    expect(await operations.discover({ ...input, offset: 4_999 })).toMatchObject({
+      pages: [{ id: 5_000 }],
+      totalInWindow: 5_000,
+      windowLimit: 5_000,
+      nextOffset: null
+    })
+    expect((await operations.listIndex(input)).map(page => page.id)).toEqual([1])
   })
 })

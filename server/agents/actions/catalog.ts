@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
-import { AGENT_TOOL_NAMES, type AgentActionDescriptor, type AgentActionName, type AgentFeatureFlagKey } from '../../../shared/agents/contracts.ts'
+import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
+import type { AgentActionDescriptor, AgentActionName, AgentFeatureFlagKey } from '../../../shared/agents/contracts.ts'
 import { WikiLinePatchV1Schema, WikiLineSnapshotV1Schema } from '../patch/wiki-line-patch.ts'
 import { KnowledgeProjectionViewSchema } from '../../knowledge/projection.ts'
 
@@ -203,7 +204,7 @@ const DiscoveryPageSummary = PageSummary.extend({
 const TagSummary = strict({ tag: z.string().min(1).max(255), title: BoundedTitle.nullable() })
 const RelatedPageSummary = PageSummary.extend({
   tags: z.array(z.string().min(1).max(255)).max(50),
-  distance: z.number().int().positive().max(32),
+  distance: z.number().int().positive(),
   direction: z.enum(['incoming', 'outgoing', 'bidirectional']),
   viaPageId: PositiveId
 })

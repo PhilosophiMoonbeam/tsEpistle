@@ -16,7 +16,10 @@ const protectedAssetRequiresUnlock = vi.fn(async () => false)
 
 vi.mockModule('../../helpers/page-locale-relations.ts', import.meta.url, () => ({ localeRelationMovePatch }))
 vi.mockModule('../../core/outbox.ts', import.meta.url, () => ({ writeOutboxEvent }))
-vi.mockModule('../../core/page-mutation-outbox.ts', import.meta.url, () => ({ enqueuePageMutationEffects }))
+vi.mockModule('../../core/page-mutation-outbox.ts', import.meta.url, () => ({
+  enqueuePageMutationEffects,
+  admitPageRenderEffect: vi.fn(async () => ({ effectId: 'render-effect', sourceRevision: '1' }))
+}))
 vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({
   redactProtectedPageForSearch,
   syncProtectedPageAssets,
@@ -30,7 +33,19 @@ let tempRoot: string
 let Page: typeof PageModel
 let transactionPageProjection: Record<string, unknown> | undefined
 let cacheIdentityMarker:
-  | { id: number; hash: string; sourceRevision: string | number; path: string; localeCode: string; visibility: 'public' | 'private'; ownerId: number | null; isSearchable: boolean }
+  | {
+      id: number
+      hash: string
+      sourceRevision: string | number
+      renderedSourceRevision: string | number | null
+      render: string
+      toc: string
+      path: string
+      localeCode: string
+      visibility: 'public' | 'private'
+      ownerId: number | null
+      isSearchable: boolean
+    }
   | undefined
 
 beforeEach(async () => {
@@ -51,7 +66,7 @@ beforeEach(async () => {
       if (table !== 'pages') throw new Error(`Unexpected transaction table ${table}`)
       return projectionQuery
     }),
-    { raw: vi.fn() }
+    { raw: vi.fn(), client: { config: { client: 'pg' } } }
   )
   const markerQuery = {
     select: vi.fn(),
@@ -155,6 +170,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       publishStartDate: '',
       render: '<p>stale old-path render</p>',
       sourceRevision: '1',
+      renderedSourceRevision: '1',
       tags: oldTags,
       $relatedQuery: vi.fn(async (relation: string) => relation === 'tags' ? oldTags : []),
       title: 'Moved page',
@@ -205,10 +221,6 @@ describe('models/pages.updatePage cache invalidation', () => {
       throw new Error(`Unexpected page query ${readQueryCount}`)
     }) as never)
     vi.spyOn(Page, 'getPageFromDb').mockImplementation(async opts => (typeof opts === 'number' ? (movedPage as never) : undefined))
-    vi.spyOn(Page, 'renderPage').mockImplementation(async page => {
-      cacheIdentityMarker = page
-      await Page.savePageToCache(page)
-    })
     vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
 
     await Page.updatePage({
@@ -224,7 +236,8 @@ describe('models/pages.updatePage cache invalidation', () => {
     expect(await fs.pathExists(oldCachePath)).toBe(false)
     expect(await fs.pathExists(newCachePath)).toBe(false)
 
-    await Page.renderPage(movedPage as never)
+    cacheIdentityMarker = movedPage
+    await Page.savePageToCache(movedPage as never)
     expect(await Page.getPageFromCache(newLookup)).toMatchObject({
       path: newPath,
       render: '<p>fresh new-path render</p>'
@@ -239,6 +252,7 @@ describe('models/pages.updatePage cache invalidation', () => {
     const publicPage = {
       id: 77,
       sourceRevision: '4',
+      renderedSourceRevision: '4',
       authorId: 7,
       authorName: 'Owner',
       creatorId: 7,
@@ -277,5 +291,63 @@ describe('models/pages.updatePage cache invalidation', () => {
 
     await expect(Page.getPageFromCache(publicIdentity)).resolves.toBe(false)
     await expect(fs.pathExists(path.join(tempRoot, 'data', 'cache', `${publicHash}.bin`))).resolves.toBe(false)
+  })
+
+  it('rejects a delayed cache during same-revision invalidation and after replacement publication', async () => {
+    // The helper captures WIKI at evaluation; static import would bind the pre-fixture global.
+    const pageHelper = (await import('../../helpers/page.ts')).default
+    const identity = { path: 'render/same-revision', locale: 'en', visibility: 'public' as const, ownerId: null }
+    const hash = pageHelper.generateHash(identity)
+    const certifiedPage = {
+      id: 88,
+      hash,
+      sourceRevision: '7',
+      renderedSourceRevision: '7' as string | null,
+      authorId: 7,
+      authorName: 'Owner',
+      creatorId: 7,
+      creatorName: 'Owner',
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-29T01:00:00.000Z',
+      description: 'Same source, changing render',
+      editorKey: 'markdown',
+      extra: {},
+      isPublished: true,
+      isSearchable: true,
+      localeCode: 'en',
+      ownerId: null,
+      path: identity.path,
+      publishEndDate: '',
+      publishStartDate: '',
+      contentType: 'markdown',
+      render: '<p>old certified publication</p>',
+      content: 'unchanged source',
+      tags: [],
+      title: 'Same revision',
+      toc: '[]',
+      visibility: 'public' as const
+    }
+    cacheIdentityMarker = certifiedPage
+    await Page.savePageToCache(certifiedPage as never)
+    await expect(Page.getPage(identity)).resolves.toMatchObject({ render: certifiedPage.render })
+
+    const pendingPage = { ...certifiedPage, renderedSourceRevision: null, render: '', toc: '[]' }
+    cacheIdentityMarker = pendingPage
+    const canonicalRead = vi.spyOn(Page, 'getPageFromDb').mockResolvedValue(pendingPage as never)
+    // A worker that started earlier writes its old bytes after invalidation committed.
+    await Page.savePageToCache(certifiedPage as never)
+    await expect(Page.getPage(identity)).rejects.toMatchObject({ name: 'PAGE_RENDER_PENDING', status: 503 })
+    await expect(fs.pathExists(path.join(tempRoot, 'data', 'cache', `${hash}.bin`))).resolves.toBe(false)
+
+    const replacementPage = { ...certifiedPage, render: '<p>new certified publication</p>', toc: '[{"title":"New"}]' }
+    cacheIdentityMarker = replacementPage
+    canonicalRead.mockResolvedValue(replacementPage as never)
+    await Page.savePageToCache(certifiedPage as never)
+    await expect(Page.getPage(identity)).resolves.toMatchObject({ render: replacementPage.render, toc: replacementPage.toc })
+    await expect(Page.getPageFromCache(identity)).resolves.toMatchObject({ render: replacementPage.render, toc: replacementPage.toc })
+
+    // TOC alone is part of the publication identity, even when HTML is unchanged.
+    await Page.savePageToCache({ ...replacementPage, toc: certifiedPage.toc } as never)
+    await expect(Page.getPageFromCache(identity)).resolves.toBe(false)
   })
 })

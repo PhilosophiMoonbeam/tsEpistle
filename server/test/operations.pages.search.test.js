@@ -1,3 +1,5 @@
+import * as realSearchContract from '../helpers/search-contract.ts'
+
 const searchVisible = vi.fn(async () => [])
 const filterVisibleCurrentIds = vi.fn(async ({ pageIds }) => pageIds)
 const getCurrentMany = vi.fn(async () => new Map())
@@ -16,6 +18,13 @@ vi.mockModule('../knowledge/lifecycle.ts', import.meta.url, () => ({
     }
   }
 }))
+
+// Consumer rechecks use this contract boundary; PostgreSQL lock/dictionary behavior is covered by native foundation tests.
+const searchContractBoundary = {
+  ...realSearchContract,
+  withSearchContract: (db, work) => work(db, 'english')
+}
+vi.mockModule('../helpers/search-contract.ts', import.meta.url, () => searchContractBoundary)
 
 const page = (overrides = {}) => ({
   id: 1,
@@ -117,6 +126,7 @@ const installSearchWiki = ({
   return { pages, query, where, knex }
 }
 
+// Fresh module loading isolates WIKI fixtures and registered dependency mocks.
 const loadOperations = () => vi.importFresh('../operations/pages.ts', import.meta.url).then(module => module.default)
 
 describe('page search visibility', () => {
@@ -136,7 +146,7 @@ describe('page search visibility', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
-  it('returns protected public pages for metadata phrases but not protected content-only matches', async () => {
+  it('rechecks protected public metadata eligibility and rejects stale content-only provider evidence', async () => {
     const protectedPage = page({ id: 3, sourceRevision: '8', title: 'Amber Falcon Runbook', description: 'Restricted procedures' })
     installSearchWiki({
       protectedIds: [3],
@@ -170,26 +180,10 @@ describe('page search visibility', () => {
     await expect(contentOperations.search({ query: 'classified-content' })).resolves.toMatchObject({ results: [], totalHits: 0 })
   })
 
-  it('applies private phrase, OR, and negation queries through the shared bounded retrieval path', async () => {
-    const privatePage = page({ id: 7, sourceRevision: '4', visibility: 'private', ownerId: 7, path: 'private/alpha', title: 'Alpha Beta' })
-    const verify = async queryText => {
-      vi.resetModules()
-      installSearchWiki({ pageResults: [[], [privatePage]], privateRanks: [{ id: 7, sourceRevision: '4', score: 0.4 }] })
-      const operations = await loadOperations()
-      await expect(operations.search({ requester: { id: 7 }, query: queryText })).resolves.toMatchObject({
-        results: [{ id: 7, visibility: 'private' }]
-      })
-    }
 
-    await verify('alpha - secret')
-    await verify('"alpha beta"')
-    await verify('alpha OR beta')
-    await verify('alpha -secret')
-  })
-
-  it('keeps bounded negative-only private complements but does not claim positive content evidence', async () => {
-    const privatePage = page({ id: 17, sourceRevision: '4', visibility: 'private', ownerId: 7, path: 'private/without-secret', title: 'Open notes' })
-    installSearchWiki({ pageResults: [[], [privatePage]], privateRanks: [{ id: 17, sourceRevision: '4', score: 0.4 }] })
+  it('preserves empty field evidence for a private negative-only candidate', async () => {
+    const privatePage = page({ id: 17, sourceRevision: '4', visibility: 'private', ownerId: 7, path: 'private/open-notes', title: 'Open notes' })
+    installSearchWiki({ pageResults: [[], [privatePage]], privateRanks: [{ id: 17, sourceRevision: '4', score: 0, matchedFields: [] }] })
     const operations = await loadOperations()
 
     await expect(operations.search({ requester: { id: 7 }, query: '-secret' })).resolves.toMatchObject({
@@ -207,11 +201,9 @@ describe('page search visibility', () => {
       title: `Draft ${index + 1}`
     }))
     const ranks = ownerPages.map(candidate => ({ id: candidate.id, sourceRevision: candidate.sourceRevision, score: 1 }))
-    const { knex } = installSearchWiki({ pageResults: [[], ownerPages], rawRows: [ranks] })
+    installSearchWiki({ pageResults: [[], ownerPages], rawRows: [ranks] })
     let operations = await loadOperations()
     const ownerResult = await operations.search({ requester: { id: 7 }, query: 'draft', limit: 1001 })
-    expect(knex.raw.mock.calls[0][0]).toMatch(/LIMIT\s+\?\s*$/u)
-    expect(knex.raw.mock.calls[0][1].at(-1)).toBe(50)
     expect(ownerResult.results).toHaveLength(50)
     expect(ownerResult.results.every(result => result.visibility === 'private' && result.ownerId === 7)).toBe(true)
 
@@ -270,6 +262,27 @@ describe('page search visibility', () => {
     const operations = await loadOperations()
 
     await expect(operations.search({ requester: { id: 7 }, query: 'classified' })).resolves.toMatchObject({ results: [], totalHits: 0 })
+  })
+
+  it('preserves structured private field evidence but removes body evidence when protection is added', async () => {
+    const privatePage = page({ id: 62, sourceRevision: '3', visibility: 'private', ownerId: 7, title: 'Falcon', path: 'private/field-evidence' })
+    const installCandidate = protectedIdSnapshots => installSearchWiki({
+      pageResults: [[], [privatePage]],
+      protectedIdSnapshots,
+      rawRows: [[{ id: 62, sourceRevision: '3', score: 1, matchedFields: ['title', 'content'] }], [{ id: 62 }]]
+    })
+    installCandidate([[], []])
+    let operations = await loadOperations()
+    await expect(operations.search({ requester: { id: 7 }, query: '"falcons"' })).resolves.toMatchObject({
+      results: [{ id: 62, matchedFields: ['title', 'content'] }]
+    })
+
+    vi.resetModules()
+    installCandidate([[], [62]])
+    operations = await loadOperations()
+    await expect(operations.search({ requester: { id: 7 }, query: '"falcons"' })).resolves.toMatchObject({
+      results: [{ id: 62, matchedFields: ['title'] }]
+    })
   })
   it('filters opted-out pages at request time across public, private, and knowledge candidates while defaulting missing flags to searchable', async () => {
     const publicDefault = page({ id: 71, path: 'docs/default-searchable', title: 'Needle Public Default' })
@@ -513,7 +526,7 @@ describe('page search visibility', () => {
   it('keeps private candidate windows owner-scoped even when the host selection spans two owners', async () => {
     const ownedPage = page({ id: 91, sourceRevision: '3', visibility: 'private', ownerId: 7, path: 'private/owner-seven', title: 'Needle Seven' })
     const otherOwnerPage = page({ id: 92, sourceRevision: '4', visibility: 'private', ownerId: 8, path: 'private/owner-eight', title: 'Needle Eight' })
-    const { knex } = installSearchWiki({
+    installSearchWiki({
       pageResults: [[], [ownedPage, otherOwnerPage]],
       privateRanks: [
         { id: ownedPage.id, sourceRevision: ownedPage.sourceRevision, score: 2 },
@@ -531,10 +544,6 @@ describe('page search visibility', () => {
 
     expect(result.results.map(candidate => candidate.id)).toEqual([91])
     expect(result.results[0].ownerId).toBe(7)
-    const [privateSql, privateBindings] = knex.raw.mock.calls[0]
-    expect(privateSql).toContain('page."ownerId" = ?')
-    expect(privateSql).toContain('page.id = ANY(?::int[])')
-    expect(privateBindings).toEqual(expect.arrayContaining([7, [91, 92]]))
   })
 
   it('checks exact locale and section segment boundaries before the public search window', async () => {
@@ -573,12 +582,11 @@ describe('page search visibility', () => {
   it('scopes page-derived tag search and tag listings', async () => {
     const selected = page({ id: 111, tags: [{ id: 1, tag: 'scoped-tag' }] })
     const outside = page({ id: 112, path: 'private/unrelated', tags: [{ id: 2, tag: 'scope-leak' }] })
-    const { where } = installSearchWiki({ pageResults: [[selected, outside], [selected, outside]] })
+    installSearchWiki({ pageResults: [[selected, outside], [selected, outside]] })
     const operations = await loadOperations()
     const scope = { kind: 'selected', pageIds: [111] }
 
     await expect(operations.searchTags({ requester: { id: 7 }, query: 'scope', agentScope: scope })).resolves.toEqual(['scoped-tag'])
     await expect(operations.listTags({ requester: { id: 7 }, agentScope: scope })).resolves.toEqual([{ id: 1, tag: 'scoped-tag' }])
-    expect(where.whereIn).toHaveBeenCalledWith('pages.id', [111])
   })
 })

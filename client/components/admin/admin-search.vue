@@ -164,6 +164,12 @@ export default {
       this.selectedEngine = this.engines.find(engine => engine.isEnabled)?.key || ''
       this.operationError = ''
     },
+    cancelInspection() {
+      this.inspectController?.abort()
+      this.inspectController = null
+      this.inspecting = false
+      this.inspectionError = ''
+    },
     async inspect() {
       if (this.inspecting || this.saving || this.rebuilding) return
       const controller = new AbortController()
@@ -172,13 +178,18 @@ export default {
       this.inspectionError = ''
       try {
         const status = await inspectSearchIndex(createAbortableFetch(controller.signal))
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted || this.inspectController !== controller || this.isUnmounted) return
         this.inspection = status.inspection
         this.inspectedEngine = status.engine
         this.inspectionUnsupported = !status.inspection
       } catch (error) {
-        if (!controller.signal.aborted) this.inspectionError = getErrorMessage(error)
-      } finally { if (this.inspectController === controller) this.inspecting = false }
+        if (!controller.signal.aborted && this.inspectController === controller && !this.isUnmounted) this.inspectionError = getErrorMessage(error)
+      } finally {
+        if (this.inspectController === controller) {
+          this.inspectController = null
+          if (!this.isUnmounted) this.inspecting = false
+        }
+      }
     },
     async loadEngines({ notifyError = true }: { notifyError?: boolean } = {}) {
       if (this.enginesLoading) return false
@@ -250,6 +261,7 @@ export default {
     },
     async save() {
       if (!this.canSave) return
+      this.cancelInspection()
       let saveAccepted = false
       const controller = new AbortController()
       this.saveController = controller
@@ -295,6 +307,7 @@ export default {
     async rebuild () {
       if (this.dirty || !this.enginesLoaded) return
       if (this.saving || this.rebuilding || this.enginesLoading) return
+      this.cancelInspection()
       const controller = new AbortController()
       this.rebuildController = controller
       this.rebuilding = true

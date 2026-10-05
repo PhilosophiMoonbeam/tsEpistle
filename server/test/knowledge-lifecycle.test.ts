@@ -1,4 +1,5 @@
-import createKnex, { type Knex } from 'knex'
+import createKnex from 'knex'
+import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import type { AgentKnowledgeEnricher } from '../agents/providers/utility.ts'
 import { claimPageMutationEffects, enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
@@ -23,6 +24,8 @@ const createSchema = async (): Promise<void> => {
     table.boolean('isSearchable').notNullable().defaultTo(true)
     table.dateTime('publishStartDate').nullable()
     table.dateTime('publishEndDate').nullable()
+    table.bigInteger('renderedSourceRevision').nullable()
+    table.text('render').notNullable().defaultTo('')
     table.string('contentType').notNullable()
     table.string('title').notNullable()
     table.text('description').nullable()
@@ -251,8 +254,8 @@ describe('page knowledge lifecycle', () => {
     const healthy = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('sourceSha256')
     const healthySourceSha256 = healthy.sourceSha256
 
-    const expectRepair = async () => {
-      await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
+    const expectRepair = async (backfilled = 1) => {
+      await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled, processed: 1 })
       const stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('sourceSha256', 'projection')
       const projection = JSON.parse(String(stored.projection))
       expect(stored.sourceSha256).toBe(projection.source.sha256)
@@ -289,7 +292,12 @@ describe('page knowledge lifecycle', () => {
     await db('pageKnowledgeProjections')
       .where({ pageId: 42, sourceRevision: '1' })
       .update({ sourceSha256: '0'.repeat(64), projection: JSON.stringify(projection) })
-    await expectRepair()
+    const repository = new PageKnowledgeRepository(db)
+    await expect(repository.getCurrent(42)).resolves.toBeNull()
+    expect((await repository.getCurrentMany([42])).has(42)).toBe(false)
+    await expect(repository.getRevision(42, '1')).resolves.toBeNull()
+    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status')).toEqual({ status: 'retry' })
+    await expectRepair(0)
 
     stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('projection')
     projection = JSON.parse(String(stored.projection))
@@ -329,6 +337,88 @@ describe('page knowledge lifecycle', () => {
       sourceRevision: '1',
       provenance: { deterministicVersion: 'wiki-knowledge-v2' }
     })
+  })
+
+  it('rejects a self-consistent historical digest against its exact immutable source without falling back to current', async () => {
+    const first = page()
+    await db('pages').insert(first)
+    await enqueueKnowledge('1', String(first.content), 'create')
+    const { updatedAt: versionDate, ...snapshot } = first
+    const [historyId] = await db('pageHistory').insert({ ...snapshot, pageId: 42, versionDate })
+    const [historicalTagId] = await db('tags').insert({ tag: 'historical-source-tag' })
+    await db('pageHistoryTags').insert({ pageId: historyId, tagId: historicalTagId })
+    const second = page({
+      sourceRevision: '2',
+      content: '# Runbook\n\nCurrent source content.\n',
+      extra: JSON.stringify({ okf: { type: 'Reference', status: 'draft' } })
+    })
+    await db('pages').where({ id: 42 }).update(second)
+    await enqueueKnowledge('2', String(second.content), 'update')
+    await new PageKnowledgeLifecycle(db, 'historical-digest-worker').runOnce()
+    const repository = new PageKnowledgeRepository(db)
+    expect(await repository.getRevision(42, '1')).toMatchObject({
+      sourceRevision: '1',
+      conceptType: 'Procedure',
+      tags: ['historical-source-tag']
+    })
+    const stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('projection')
+    const projection = JSON.parse(String(stored.projection))
+    projection.source.sha256 = '0'.repeat(64)
+    await db('pageKnowledgeProjections')
+      .where({ pageId: 42, sourceRevision: '1' })
+      .update({ sourceSha256: projection.source.sha256, projection: JSON.stringify(projection) })
+
+    await expect(repository.getRevision(42, '1')).resolves.toBeNull()
+    expect(await repository.getCurrent(42)).toMatchObject({ sourceRevision: '2', conceptType: 'Reference' })
+    expect((await repository.getCurrentMany([42])).get(42)).toMatchObject({ sourceRevision: '2' })
+  })
+
+  it('repairs corrupted searchable and filter columns without replaying validated paid utility output', async () => {
+    await enableUtilityEnrichment()
+    const current = page()
+    await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const enrichKnowledge = vi.fn(async () => utilityResult('quasarrepairtoken'))
+    const lifecycle = new PageKnowledgeLifecycle(db, 'derived-repair-worker', { enrichKnowledge })
+    await lifecycle.runOnce()
+    const columns = ['sourceSha256', 'schemaVersion', 'deterministicVersion', 'state', 'conceptType', 'summary', 'searchText', 'lifecycleStatus', 'trustTier', 'verification', 'staleAfter']
+    const healthy = await db('pageKnowledgeProjections').first(...columns)
+    const paid = await db('pageKnowledgeProjections').first(
+      'projection', 'enrichmentState', 'utilityProfileVersionId', 'utilityModel', 'utilityInputSha256', 'utilityOutputSha256', 'utilityGeneratedAt'
+    )
+    const immutableEffect = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256', 'attempts')
+    await db('pageKnowledgeProjections').update({
+      schemaVersion: 1,
+      state: 'partial',
+      conceptType: 'CorruptedType',
+      summary: 'Corrupted summary',
+      searchText: '',
+      lifecycleStatus: 'deprecated',
+      trustTier: 'human-reviewed',
+      verification: 'current',
+      staleAfter: '2000-01-01T00:00:00.000Z'
+    })
+
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
+    expect(await db('pageKnowledgeProjections').first(...columns)).toEqual(healthy)
+    expect(await db('pageKnowledgeProjections').first(...Object.keys(paid))).toEqual(paid)
+    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256', 'attempts')).toEqual(immutableEffect)
+    expect(enrichKnowledge).toHaveBeenCalledOnce()
+    const requester = { id: 9 } as Express.User
+    vi.stubGlobal('WIKI', { auth: { checkAccess: () => true, checkPageAccess: () => true } })
+    try {
+      const repository = new PageKnowledgeRepository(db)
+      expect(await repository.searchVisible({
+        query: 'quasarrepairtoken',
+        requester,
+        authority: pageRuleAuthority(requester),
+        authorizedPageIds: [42],
+        filter: { trustTier: 'unverified', conceptType: 'Procedure' },
+        limit: 1
+      })).toEqual([expect.objectContaining({ id: 42, sourceRevision: '1' })])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('enqueues missing effects, avoids healthy requeues, leaves pending work singular, and rearms failed work', async () => {
@@ -449,7 +539,7 @@ describe('page knowledge lifecycle', () => {
         outputTokens: 20
       }
     })
-    const enricher = { enrichKnowledge } as AgentKnowledgeEnricher
+    const enricher: AgentKnowledgeEnricher = { enrichKnowledge }
 
     await new PageKnowledgeLifecycle(db, 'utility-worker', enricher).runOnce()
 
@@ -464,6 +554,10 @@ describe('page knowledge lifecycle', () => {
       utilityProfileVersionId: profileVersionId,
       utilityModel: 'utility-small'
     })
+    const receipt = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status', 'result')
+    const result: unknown = JSON.parse(String(receipt.result))
+    expect(receipt.status).toBe('succeeded')
+    expect(result).toMatchObject({ enrichmentState: 'succeeded' })
   })
 
   it('withholds enrichment for unpublished sources and requeues it only when publication becomes eligible', async () => {
@@ -548,44 +642,36 @@ describe('page knowledge lifecycle', () => {
     expect(await lifecycle.runOnce()).toMatchObject({ requeued: 0, processed: 0 })
   })
 
-  it('does not overwrite a competing active lease after selecting a retryable utility effect', async () => {
+  it('does not requeue or overwrite a competing active utility lease', async () => {
     await enableUtilityEnrichment()
     const current = page()
     await db('pages').insert(current)
     await enqueueKnowledge('1', String(current.content), 'create')
     await new PageKnowledgeLifecycle(db, 'unavailable-worker').runOnce()
-    const effect = (await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id')) as { id: string } | undefined
+    const effect = await db<{ id: string; effectKind: string; payload: string; payloadSha256: string }>('pageMutationOutbox')
+      .where({ effectKind: 'knowledge' })
+      .first('id', 'payload', 'payloadSha256')
     if (!effect) throw new Error('Expected knowledge effect')
+    const leaseExpiresAt = new Date(Date.now() + 60_000).toISOString()
+    await db('pageMutationOutbox').where({ id: effect.id, status: 'succeeded' }).update({
+      status: 'running',
+      leaseOwner: 'competing-worker',
+      leaseToken: 'competing-lease',
+      leaseExpiresAt
+    })
+    const enrichKnowledge = vi.fn(async () => utilityResult('requeued'))
+    const lifecycle = new PageKnowledgeLifecycle(db, 'requeue-worker', { enrichKnowledge })
 
-    let raced = false
-    let competingClaim: Promise<void> | undefined
-    const onResponse = (_response: unknown, query: { sql?: string }) => {
-      if (raced || !query.sql?.includes('pageKnowledgeProjections') || !query.sql.includes('pageMutationOutbox') || !query.sql.includes('effects')) return
-      raced = true
-      competingClaim = db('pageMutationOutbox')
-        .where({ id: effect.id, status: 'succeeded' })
-        .update({
-          status: 'running',
-          leaseOwner: 'competing-worker',
-          leaseToken: 'competing-lease',
-          leaseExpiresAt: new Date(Date.now() + 60_000).toISOString()
-        })
-        .then(() => undefined)
-    }
-    db.on('query-response', onResponse)
-    try {
-      const lifecycle = new PageKnowledgeLifecycle(db, 'requeue-worker', { enrichKnowledge: vi.fn(async () => utilityResult('requeued')) })
-      await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
-      await competingClaim
-    } finally {
-      db.off('query-response', onResponse)
-    }
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
 
-    expect(raced).toBe(true)
-    const preserved = (await db('pageMutationOutbox').where({ id: effect.id }).first('status', 'leaseOwner', 'leaseToken')) as
-      | { status: string; leaseOwner: string | null; leaseToken: string | null }
-      | undefined
-    expect(preserved).toEqual({ status: 'running', leaseOwner: 'competing-worker', leaseToken: 'competing-lease' })
+    expect(enrichKnowledge).not.toHaveBeenCalled()
+    expect(await db('pageMutationOutbox').where({ id: effect.id }).first('status', 'leaseOwner', 'leaseToken', 'leaseExpiresAt')).toEqual({
+      status: 'running',
+      leaseOwner: 'competing-worker',
+      leaseToken: 'competing-lease',
+      leaseExpiresAt
+    })
+    expect(await db('pageMutationOutbox').where({ id: effect.id }).first('id', 'payload', 'payloadSha256')).toEqual(effect)
   })
 
   it('does not requeue unavailable utility gaps when no enricher is configured', async () => {
@@ -644,7 +730,11 @@ describe('page knowledge lifecycle', () => {
     })
     const current = page()
     await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const immutableEffect = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')
     const enrichKnowledge = vi.fn(async () => {
+      const { updatedAt: versionDate, ...historySnapshot } = current
+      await db('pageHistory').insert({ ...historySnapshot, pageId: 42, versionDate })
       await db('pages').where({ id: 42 }).update({ sourceRevision: '2', content: '# Replaced\n' })
       return utilityResult('discarded-hint')
     })
@@ -665,6 +755,44 @@ describe('page knowledge lifecycle', () => {
       status: 'succeeded',
       result: expect.stringContaining('superseded')
     })
+    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')).toEqual(immutableEffect)
+    expect(await new PageKnowledgeRepository(db).getRevision(42, '1')).toMatchObject({
+      sourceRevision: '1',
+      provenance: { utility: null }
+    })
+  })
+
+  it('terminates admitted enrichment when its source disappears without certifying unavailable history', async () => {
+    await enableUtilityEnrichment()
+    const current = page()
+    await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const immutableEffect = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')
+    let admittedProjection: { projection: string; sourceSha256: string } | undefined
+    const enrichKnowledge = vi.fn(async () => {
+      admittedProjection = await db<{ projection: string; sourceSha256: string }>('pageKnowledgeProjections')
+        .first('projection', 'sourceSha256')
+      await db('pages').where({ id: 42 }).delete()
+      return utilityResult('discarded-hint')
+    })
+
+    await new PageKnowledgeLifecycle(db, 'missing-source-worker', { enrichKnowledge }).runOnce()
+
+    expect(enrichKnowledge).toHaveBeenCalledOnce()
+    expect(admittedProjection).toBeDefined()
+    expect(await db('pageKnowledgeProjections').first('projection', 'sourceSha256')).toEqual(admittedProjection)
+    expect(await db('pageKnowledgeProjections').first('enrichmentState', 'utilityModel', 'utilityInputSha256', 'utilityOutputSha256')).toEqual({
+      enrichmentState: 'superseded',
+      utilityModel: null,
+      utilityInputSha256: null,
+      utilityOutputSha256: null
+    })
+    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status', 'result')).toMatchObject({
+      status: 'succeeded',
+      result: expect.stringContaining('superseded')
+    })
+    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')).toEqual(immutableEffect)
+    expect(await new PageKnowledgeRepository(db).getRevision(42, '1')).toBeNull()
   })
 
   it('renews a healthy lease throughout long utility enrichment and releases its heartbeat', async () => {
