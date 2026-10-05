@@ -1953,8 +1953,7 @@ export class AgentProductRuntime {
         claim.executionMode === 'agent' &&
         mediaRequest === null &&
         requiredModalities.size === 1 &&
-        !input.generationTools?.length &&
-        !external?.externalMcp
+        !input.generationTools?.length
       ) {
         const contexts = await this.#specialists.list({
           ownerId: claim.ownerId,

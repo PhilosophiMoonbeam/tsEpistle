@@ -107,6 +107,7 @@ describe('optional independent specialist runtime', () => {
   })
 
   it('selects NEW then REUSE without changing the pinned provider or publishing the child as the answer', async () => {
+    f.engine.routingRequirements = async () => ({ externalMcp: true })
     const sessionId = await warmup()
     const first = await f.submit(sessionId)
     rootBoundary = async () => {
