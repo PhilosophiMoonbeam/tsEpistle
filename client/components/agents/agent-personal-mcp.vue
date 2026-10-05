@@ -29,8 +29,7 @@
           <section aria-labelledby="personal-mcp-editor-title">
             <h3 id="personal-mcp-editor-title">{{ editingId ? 'Edit personal server' : 'Create personal server' }}</h3>
             <v-form id="personal-mcp-form" @submit.prevent="save">
-              <v-text-field v-model="displayName" label="Server name" maxlength="100" :disabled="busy || networkBlocked" autocomplete="off" />
-              <v-text-field v-model="endpointUrl" label="Public HTTPS MCP endpoint" maxlength="2048" :disabled="busy || networkBlocked" hint="Public HTTPS only. Local/private networks, URL credentials and fragments are not allowed. The server validates the destination." persistent-hint autocomplete="off" />
+              <v-text-field v-for="field in textFields" :key="field.label" v-model="field.model.value" :label="field.label" :maxlength="field.maxlength" :hint="field.hint" :persistent-hint="Boolean(field.hint)" :disabled="busy || networkBlocked" autocomplete="off" />
               <v-switch v-model="enabled" label="Enabled for my agent" color="primary" inset :disabled="busy || networkBlocked" />
               <v-select v-model="authMode" :items="authModes" item-title="title" item-value="value" label="Authentication" :disabled="busy || networkBlocked" />
               <v-alert v-if="editingId && !selected" type="warning" variant="tonal" class="mb-4">This server is no longer available. Select another server or create a new configuration.</v-alert>
@@ -78,6 +77,10 @@ const enabled = ref(false)
 const authMode = ref<'none' | 'bearer'>('none')
 const secretValue = ref('')
 const authModes = [{ title: 'None', value: 'none' }, { title: 'Bearer token', value: 'bearer' }]
+const textFields = [
+  { model: displayName, label: 'Server name', maxlength: 100, hint: undefined },
+  { model: endpointUrl, label: 'Public HTTPS MCP endpoint', maxlength: 2048, hint: 'Public HTTPS only. Local/private networks, URL credentials and fragments are not allowed. The server validates the destination.' }
+]
 const loading = ref(false)
 const saving = ref(false)
 const accepted = ref(false)
