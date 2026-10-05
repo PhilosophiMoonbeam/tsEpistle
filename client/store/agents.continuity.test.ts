@@ -2,15 +2,60 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import type { AgentCurrentPageHint, AgentThreadState } from '../../shared/agents/contracts.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
-import { AGENT_CHAT_PIN_STORAGE_KEY, AGENT_CHAT_RECENT_STORAGE_KEY, AGENT_CHAT_RECENT_MAX_AGE, clearAgentChatPin, readAgentChatPin, readAgentChatRecent, writeAgentChatPin, writeAgentChatRecent } from '../helpers/agent-chat-pin.ts'
+import {
+  AGENT_CHAT_PIN_STORAGE_KEY,
+  AGENT_CHAT_RECENT_MAX_AGE,
+  AGENT_CHAT_RECENT_STORAGE_KEY,
+  clearAgentChatPin,
+  readAgentChatPin,
+  readAgentChatRecent,
+  writeAgentChatPin,
+  writeAgentChatRecent
+} from '../helpers/agent-chat-pin.ts'
 import { useAgentsStore } from './agents.ts'
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const page = (n: number, locale = 'en'): AgentCurrentPageHint => ({ id: n, locale, path: `page-${n}`, observedUpdatedAt: '2026-09-18T00:00:00Z' })
-const source = (n: number): WikiSource => ({ id: n, locale: 'en', path: `page-${n}`, title: `Page ${n}`, description: '', visibility: 'public', updatedAt: '2026-09-18T00:00:00Z', sourceRevision: 'revision', excerpt: `Private excerpt ${n}`, excerptTruncated: false })
+const source = (n: number): WikiSource => ({
+  id: n,
+  locale: 'en',
+  path: `page-${n}`,
+  title: `Page ${n}`,
+  description: '',
+  visibility: 'public',
+  updatedAt: '2026-09-18T00:00:00Z',
+  sourceRevision: 'revision',
+  excerpt: `Private excerpt ${n}`,
+  excerptTruncated: false
+})
 const thread = (n: number): AgentThreadState => ({
-  session: { id: id(n), title: '', retention: 'saved', folderId: null, status: 'active', executionMode: 'agent', version: 1, providerProfileId: null, profileResolutionToken: 'token', skills: [], currentRun: null, createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z', lastActivityAt: '2026-09-18T00:00:00Z', expiresAt: null },
-  messages: [], tools: [], tasks: [], goal: null, proposals: [], artifacts: [], suggestions: [], historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
+  session: {
+    id: id(n),
+    title: '',
+    retention: 'saved',
+    folderId: null,
+    status: 'active',
+    executionMode: 'agent',
+    version: 1,
+    providerProfileId: null,
+    profileResolutionToken: 'token',
+    skills: [],
+    currentRun: null,
+    createdAt: '2026-09-18T00:00:00Z',
+    updatedAt: '2026-09-18T00:00:00Z',
+    lastActivityAt: '2026-09-18T00:00:00Z',
+    expiresAt: null
+  },
+  routingDecisions: [],
+  specialistInvocations: [],
+  messages: [],
+  tools: [],
+  tasks: [],
+  goal: null,
+  proposals: [],
+  artifacts: [],
+  suggestions: [],
+  historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
 })
 const stores: ReturnType<typeof useAgentsStore>[] = []
 const createStore = () => {
@@ -29,7 +74,10 @@ const fixture = () => {
     const path = String(input)
     const method = init?.method ?? 'GET'
     if (path === '/_api/agents/sessions') {
-      if (method === 'POST') return createStatus === 201 ? Response.json(thread(++created), { status: 201 }) : Response.json({ message: 'Create unavailable' }, { status: createStatus })
+      if (method === 'POST')
+        return createStatus === 201
+          ? Response.json(thread(++created), { status: 201 })
+          : Response.json({ message: 'Create unavailable' }, { status: createStatus })
       return Response.json({ sessions: [], nextCursor: null })
     }
     if (path === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
@@ -49,9 +97,23 @@ const fixture = () => {
     }
     throw new Error(`Unexpected ${method} ${path}`)
   })
-  return { fetcher, readStatus, sourceStatus, get created() { return created }, failCreate: () => { createStatus = 503 }, deferPreview: (value: typeof preview) => { preview = value } }
+  return {
+    fetcher,
+    readStatus,
+    sourceStatus,
+    get created() {
+      return created
+    },
+    failCreate: () => {
+      createStatus = 503
+    },
+    deferPreview: (value: typeof preview) => {
+      preview = value
+    }
+  }
 }
-const initialize = (store: ReturnType<typeof useAgentsStore>, currentPage: AgentCurrentPageHint | null = page(1), ownerId = 1, resumeSessionId?: string) => store.initialize('csrf', { ownerId, routeSync: false, currentPage, ...(resumeSessionId ? { resumeSessionId } : {}) })
+const initialize = (store: ReturnType<typeof useAgentsStore>, currentPage: AgentCurrentPageHint | null = page(1), ownerId = 1, resumeSessionId?: string) =>
+  store.initialize('csrf', { ownerId, routeSync: false, currentPage, ...(resumeSessionId ? { resumeSessionId } : {}) })
 afterEach(() => {
   for (const store of stores.splice(0)) store.closeWorkspace()
   clearAgentChatPin()
@@ -269,8 +331,15 @@ describe('Pinned page context', () => {
     store.setCurrentChatPinned(true)
     let resolve!: (response: Response) => void
     let requested!: () => void
-    const requestStarted = new Promise<void>(done => { requested = done })
-    api.deferPreview(() => { requested(); return new Promise(done => { resolve = done }) })
+    const requestStarted = new Promise<void>(done => {
+      requested = done
+    })
+    api.deferPreview(() => {
+      requested()
+      return new Promise(done => {
+        resolve = done
+      })
+    })
     const oldInitialization = initialize(store, page(2))
     await requestStarted
     await initialize(store, page(3), 2)
@@ -288,8 +357,15 @@ describe('Pinned page context', () => {
     store.setCurrentChatPinned(true)
     let resolve!: (response: Response) => void
     let requested!: () => void
-    const requestStarted = new Promise<void>(done => { requested = done })
-    api.deferPreview(() => { requested(); return new Promise(done => { resolve = done }) })
+    const requestStarted = new Promise<void>(done => {
+      requested = done
+    })
+    api.deferPreview(() => {
+      requested()
+      return new Promise(done => {
+        resolve = done
+      })
+    })
     const pending = initialize(store, page(2))
     await requestStarted
     store.closeWorkspace()
@@ -309,7 +385,15 @@ describe('Pinned page context', () => {
     expect(readAgentChatRecent(1, page(1), now)).toBeNull()
     writeAgentChatRecent(1, id(1), page(1), now)
     expect(readAgentChatRecent(2, page(1), now)).toBeNull()
-    window.sessionStorage.setItem(AGENT_CHAT_PIN_STORAGE_KEY, JSON.stringify({ version: 1, ownerId: 1, sessionId: id(1), context: { page: null, includeCurrentPage: true, sources: [{ id: 1, locale: 'en', excerpt: 'Private' }] } }))
+    window.sessionStorage.setItem(
+      AGENT_CHAT_PIN_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        ownerId: 1,
+        sessionId: id(1),
+        context: { page: null, includeCurrentPage: true, sources: [{ id: 1, locale: 'en', excerpt: 'Private' }] }
+      })
+    )
     expect(readAgentChatPin(1).sessionId).toBeNull()
   })
 })

@@ -1,21 +1,22 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import { describe, expect, it } from '../bun-test.mts'
-import { AgentTurnRouter } from '../../agents/routing.ts'
-import { DecisionProviderFailure, type DecisionProviderRuntime } from '../../agents/decision-providers.ts'
+import { type DecisionRequest, type DecisionResult, TYPESAFE_JEV_PRICING } from '../../../shared/agents/decision-providers.ts'
 import {
   DEFAULT_ROUTING_POLICY,
-  ROUTING_TASK_CLASSES,
   ROUTING_COMPLEXITIES,
+  ROUTING_TASK_CLASSES,
+  type RoutingAdminView,
+  type RoutingCandidate,
   RoutingModelPolicyInputSchema,
   RoutingPolicyInputSchema,
-  type RoutingCandidate,
-  type RoutingAdminView,
+  type RoutingSpecialistCandidate,
   type RoutingTurnDecision,
   type RoutingTurnHooks,
   type RoutingTurnInput
 } from '../../../shared/agents/routing.ts'
-import { TYPESAFE_JEV_PRICING, type DecisionRequest, type DecisionResult } from '../../../shared/agents/decision-providers.ts'
+import { DecisionProviderFailure, type DecisionProviderRuntime } from '../../agents/decision-providers.ts'
+import { AgentTurnRouter } from '../../agents/routing.ts'
+import { describe, expect, it } from '../bun-test.mts'
 
 const fixture = () => {
   const candidate = (inputPrice: number): RoutingCandidate => ({
@@ -97,6 +98,7 @@ const fixture = () => {
   let released = 0,
     failure: unknown = null,
     unavailable = false,
+    responseChoice: string | null = null,
     denyBudget = false
   const hooks: RoutingTurnHooks = {
     budget: {
@@ -130,10 +132,48 @@ const fixture = () => {
       async decide(request) {
         requests.push(request)
         if (failure) throw failure
-        return answer
+        return responseChoice === null
+          ? answer
+          : {
+              ...answer,
+              choice: responseChoice,
+              probabilities: Object.fromEntries(Object.keys(request.criteria).map(label => [label, label === responseChoice ? 1 : 0]))
+            }
       }
     }
   )
+  const liveVersions: Record<string, string> = { [current.profileId]: current.profileVersionId, [alternate.profileId]: alternate.profileVersionId }
+  const database = ((table: string) => {
+    let binding: { id: string; profileId?: string }
+    interface Query {
+      where(value: typeof binding): Query
+      whereNull(): Query
+      forShare(): Query
+      first(): Promise<{ currentVersionId: string } | { id: string } | undefined>
+    }
+    const query: Query = {
+      where(value: typeof binding) {
+        binding = value
+        return query
+      },
+      whereNull() {
+        return query
+      },
+      forShare() {
+        return query
+      },
+      async first() {
+        return table === 'agentProviderProfiles'
+          ? liveVersions[binding.id]
+            ? { currentVersionId: liveVersions[binding.id] }
+            : undefined
+          : liveVersions[binding.profileId!] === binding.id
+            ? { id: binding.id }
+            : undefined
+      }
+    }
+    return query
+  }) as unknown as Knex
   return {
     current,
     alternate,
@@ -147,6 +187,11 @@ const fixture = () => {
     reconciliations,
     hooks,
     router,
+    database,
+    liveVersions,
+    choose(label: string) {
+      responseChoice = label
+    },
     setFailure(value: unknown) {
       failure = value
     },
@@ -162,12 +207,249 @@ const fixture = () => {
   }
 }
 
+const specialistFixture = () => {
+  const f = fixture()
+  f.view.policy.specialistEnabled = true
+  const reusable: RoutingSpecialistCandidate = {
+    contextId: randomUUID(),
+    contextVersion: 2,
+    candidate: f.alternate,
+    taskClass: 'writing',
+    complexity: 'simple',
+    inputTokens: 100,
+    description: 'Completed greeting drafts; continue revising the same greeting.'
+  }
+  const fresh: RoutingSpecialistCandidate = {
+    ...reusable,
+    contextId: null,
+    contextVersion: null,
+    taskClass: null,
+    complexity: null,
+    inputTokens: 12_000,
+    description: 'Independent writing task.'
+  }
+  const input: RoutingTurnInput = {
+    ...f.input,
+    fullHistoryInputTokens: 150_000,
+    estimatedRootWorkTurns: 3,
+    specialists: [reusable, fresh],
+    classifierState: { currentMessage: 'Independently revise the prior greeting and report the result.' }
+  }
+  f.choose(`REUSE(${reusable.contextId}):writing:simple`)
+  return { ...f, input, reusable, fresh }
+}
+
+describe('optional stay/swap/delegate arbitration', () => {
+  it('retains the root identity and chooses relevant bounded reuse over a cold canonical swap', async () => {
+    const f = specialistFixture()
+    const result = await f.router.routeTurn(f.input, f.hooks)
+    expect(result).toMatchObject({
+      strategy: 'delegate',
+      switched: false,
+      profileId: f.current.profileId,
+      profileVersionId: f.current.profileVersionId,
+      specialist: { contextId: f.reusable.contextId, contextVersion: 2, profileId: f.alternate.profileId, profileVersionId: f.alternate.profileVersionId },
+      strategyCosts: {
+        basis: 'host-token-estimates-no-cache-discount',
+        rootWorkTurns: 3,
+        childWorkTurns: 3,
+        reportTokens: 1_024,
+        handoffInputTokens: 256,
+        stayMicros: 420_000,
+        coldSwapMicros: 462_000,
+        delegateMicros: 146_156,
+        classifierMicros: 13,
+        handoffMicros: 1_000
+      },
+      estimatedSelectedCostMicros: 146_156,
+      estimatedSavingsMicros: 272_831
+    })
+    expect(f.requests).toHaveLength(1)
+    expect(f.reconciliations).toHaveLength(1)
+    expect(await f.router.routeTurn({ ...f.input, recordedDecision: result }, f.hooks)).toBe(result)
+    expect(f.checkpoints).toHaveLength(1)
+    await f.router.validateDecision(result, f.database)
+  })
+
+  it('allows independently separable NEW work but never delegates ordinary or uncertain-independence labels', async () => {
+    const independent = specialistFixture()
+    independent.choose('NEW:writing:simple')
+    expect(await independent.router.routeTurn(independent.input, independent.hooks)).toMatchObject({
+      strategy: 'delegate',
+      specialist: { contextId: null, contextVersion: null }
+    })
+    for (const pinned of [false, true]) {
+      const f = specialistFixture()
+      f.choose('writing:simple')
+      // A genuinely cheaper cold swap remains allowed only for an unpinned root.
+      const result = await f.router.routeTurn({ ...f.input, pinned, fullHistoryInputTokens: 12_000 }, f.hooks)
+      expect(result.strategy).toBe(pinned ? 'stay' : 'swap')
+      expect(result.specialist).toBeNull()
+    }
+  })
+
+  it('permits a pinned root to delegate without swapping and honors the master opt-out', async () => {
+    const f = specialistFixture()
+    expect(await f.router.routeTurn({ ...f.input, pinned: true }, f.hooks)).toMatchObject({
+      strategy: 'delegate',
+      switched: false,
+      profileId: f.current.profileId,
+      strategyCosts: { coldSwapMicros: null }
+    })
+    for (const flag of ['enabled', 'specialistEnabled'] as const) {
+      const disabled = specialistFixture()
+      disabled.view.policy[flag] = false
+      expect(await disabled.router.routeTurn({ ...disabled.input, pinned: true }, disabled.hooks)).toMatchObject({ strategy: 'stay' })
+      expect(disabled.requests).toHaveLength(0)
+    }
+  })
+
+  it('checks child capacity against independent context rather than an oversized canonical root replay', async () => {
+    const f = specialistFixture()
+    expect(await f.router.routeTurn({ ...f.input, fullHistoryInputTokens: 300_000 }, f.hooks)).toMatchObject({
+      strategy: 'delegate',
+      specialist: { contextId: f.reusable.contextId },
+      strategyCosts: { coldSwapMicros: null }
+    })
+    expect(f.requests).toHaveLength(1)
+  })
+
+  it('allows same-binding delegation when independent child work avoids repeated root context', async () => {
+    const f = specialistFixture()
+    f.view.models.push({ ...f.view.models[0]!, profileId: f.current.profileId, profileVersionId: f.current.profileVersionId })
+    const specialist = { ...f.reusable, candidate: f.current }
+    const result = await f.router.routeTurn({ ...f.input, pinned: true, currentInputTokens: 100_000, specialists: [specialist] }, f.hooks)
+    expect(result).toMatchObject({
+      strategy: 'delegate',
+      switched: false,
+      profileId: f.current.profileId,
+      specialist: { profileId: f.current.profileId, profileVersionId: f.current.profileVersionId }
+    })
+    expect(result.estimatedSavingsMicros!).toBeGreaterThan(0)
+  })
+
+  it('excludes unknown-priced or incompatible children and does not classify economically unviable work', async () => {
+    for (const mode of ['unknown-price', 'unauthorized', 'context-limit', 'no-savings']) {
+      const f = specialistFixture()
+      const candidate = {
+        ...f.alternate,
+        ...(mode === 'unknown-price' ? { pricing: null } : {}),
+        ...(mode === 'unauthorized' ? { authorized: false } : {}),
+        ...(mode === 'context-limit' ? { capabilities: { ...f.alternate.capabilities, maxContextTokens: 2_000 } } : {})
+      }
+      const result = await f.router.routeTurn(
+        { ...f.input, pinned: true, estimatedRootWorkTurns: mode === 'no-savings' ? 1 : 3, specialists: [{ ...f.reusable, candidate }] },
+        f.hooks
+      )
+      expect(result.strategy).toBe('stay')
+      expect(f.requests).toHaveLength(0)
+      expect(f.reservations).toHaveLength(0)
+    }
+  })
+
+  it('keeps delegation confidence, billed failures and budget accounting identical to ordinary routing', async () => {
+    for (const mode of ['low-confidence', 'billed-failure', 'budget', 'actual-overhead']) {
+      const f = specialistFixture()
+      if (mode === 'low-confidence') Object.assign(f.answer, { confidence: 0.94 })
+      if (mode === 'billed-failure') f.setFailure(new DecisionProviderFailure('DECISION_TIMEOUT', f.provider, f.answer.usage, 100))
+      if (mode === 'budget') f.denyBudget()
+      if (mode === 'actual-overhead') Object.assign(f.answer, { estimatedCostMicros: 300_000 })
+      const result = await f.router.routeTurn(f.input, f.hooks)
+      expect(result).toMatchObject({ strategy: 'stay', specialist: null, profileId: f.current.profileId })
+      expect(f.reconciliations).toHaveLength(mode === 'budget' ? 0 : 1)
+      expect(f.getReleased()).toBe(0)
+    }
+  })
+
+  it('rejects forged, foreign, stale, irrelevant or rebound specialist receipts without further paid work', async () => {
+    const f = specialistFixture()
+    const recorded = await f.router.routeTurn(f.input, f.hooks)
+    for (const change of [
+      { ownerId: f.input.ownerId + 1 },
+      { sessionId: randomUUID() },
+      { specialist: { ...recorded.specialist!, contextId: randomUUID() } },
+      { specialist: { ...recorded.specialist!, contextVersion: 3 } },
+      { specialist: { ...recorded.specialist!, profileVersionId: randomUUID() } },
+      { profileId: f.alternate.profileId, profileVersionId: f.alternate.profileVersionId },
+      { switched: true },
+      { classification: { ...recorded.classification!, choice: 'NEW:writing:simple' } }
+    ]) {
+      await expect(f.router.routeTurn({ ...f.input, recordedDecision: { ...recorded, ...change } }, f.hooks)).rejects.toMatchObject({
+        code: 'ROUTING_CHECKPOINT_INVALID'
+      })
+    }
+    for (const specialists of [
+      [],
+      [{ ...f.reusable, taskClass: 'analysis' as const }],
+      [{ ...f.reusable, candidate: { ...f.alternate, authorized: false } }]
+    ]) {
+      await expect(f.router.routeTurn({ ...f.input, specialists, recordedDecision: recorded }, f.hooks)).rejects.toMatchObject({
+        code: 'ROUTING_CHECKPOINT_INVALID'
+      })
+    }
+    f.liveVersions[f.alternate.profileId] = randomUUID()
+    await expect(f.router.validateDecision(recorded, f.database)).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
+    expect(f.requests).toHaveLength(1)
+    expect(f.reconciliations).toHaveLength(1)
+  })
+
+  it('never supplies unvalidated context labels and bounds all supplied context summaries without dropping the current request', async () => {
+    const f = specialistFixture()
+    f.view.policy.specialistMaxContexts = 8
+    f.view.policy.classifierMaxStateBytes = 16_384
+    const contexts = Array.from({ length: 8 }, (_, index) => ({ ...f.reusable, contextId: randomUUID(), description: `Greeting draft ${index}.` }))
+    f.choose(`REUSE(${contexts[0]!.contextId}):writing:simple`)
+    await f.router.routeTurn({ ...f.input, specialists: [...contexts, f.fresh] }, f.hooks)
+    const request = f.requests[0]!
+    expect(Object.keys(request.criteria)).toHaveLength(180)
+    expect(request.state).toMatchObject({ currentMessage: f.input.classifierState.currentMessage })
+    expect(Buffer.byteLength(JSON.stringify(request.state))).toBeLessThanOrEqual(16_384)
+    expect(request.criteria).not.toHaveProperty(`REUSE(${randomUUID()}):writing:simple`)
+    const oversized = specialistFixture()
+    oversized.view.policy.classifierMaxStateBytes = 256
+    expect(await oversized.router.routeTurn(oversized.input, oversized.hooks)).toMatchObject({ reason: 'classifier-state-too-large', strategy: 'stay' })
+    expect(oversized.requests).toHaveLength(0)
+    const forged = specialistFixture()
+    forged.choose(`REUSE(${randomUUID()}):writing:simple`)
+    expect(await forged.router.routeTurn(forged.input, forged.hooks)).toMatchObject({ reason: 'classifier-invalid', strategy: 'stay' })
+    expect(forged.reconciliations).toHaveLength(1)
+  })
+
+  it('decodes historical v1 stay/swap checkpoints without mutating or rewriting their history', async () => {
+    for (const enabled of [false, true]) {
+      const f = fixture()
+      f.view.policy.enabled = enabled
+      const result = await f.router.routeTurn(f.input, f.hooks)
+      const { strategy: _strategy, specialist: _specialist, strategyCosts: _costs, ...historical } = result
+      expect(await f.router.routeTurn({ ...f.input, recordedDecision: historical }, f.hooks)).toBe(historical)
+      expect(historical).not.toHaveProperty('strategy')
+      expect(f.checkpoints).toHaveLength(1)
+    }
+  })
+
+  it('defaults historic policies to disabled delegation and validates specialist bounds', () => {
+    const {
+      specialistEnabled: _enabled,
+      specialistMaxContexts: _contexts,
+      specialistMaxContextBytes: _bytes,
+      specialistMaxReportTokens: _tokens,
+      specialistMaxTurns: _turns,
+      ...historical
+    } = DEFAULT_ROUTING_POLICY
+    expect(RoutingPolicyInputSchema.parse(historical)).toEqual(DEFAULT_ROUTING_POLICY)
+    for (const invalid of [{ specialistMaxContexts: 9 }, { specialistMaxContextBytes: 4_095 }, { specialistMaxReportTokens: 4_097 }, { specialistMaxTurns: 0 }])
+      expect(RoutingPolicyInputSchema.safeParse({ ...DEFAULT_ROUTING_POLICY, ...invalid }).success).toBe(false)
+  })
+})
+
 describe('eligible, confidence-gated per-turn routing', () => {
   it('compares compacted incumbent and canonical alternate input, output, classifier and switching costs', async () => {
     const f = fixture()
     const result = await f.router.routeTurn(f.input, f.hooks)
     expect(result).toMatchObject({
       switched: true,
+      strategy: 'swap',
+      specialist: null,
       profileId: f.alternate.profileId,
       estimatedCurrentCostMicros: 120_000,
       estimatedSelectedCostMicros: 14_000,
@@ -590,12 +872,12 @@ describe('eligible, confidence-gated per-turn routing', () => {
   it('fences retarget and dispatch when policy or selected declaration changes', async () => {
     const f = fixture()
     const decision = await f.router.routeTurn(f.input, f.hooks)
-    await f.router.validateDecision(decision, {} as Knex)
+    await f.router.validateDecision(decision, f.database)
     f.view.models[0]!.revision++
-    await expect(f.router.validateDecision(decision, {} as Knex)).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
+    await expect(f.router.validateDecision(decision, f.database)).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
     f.view.models[0]!.revision--
     f.view.policy.revision++
-    await expect(f.router.validateDecision(decision, {} as Knex)).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
+    await expect(f.router.validateDecision(decision, f.database)).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
   })
 
   it('requires explicit task/version declarations, unique rubrics and conservative persisted thresholds', () => {

@@ -1,15 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { createHmac } from 'node:crypto'
-import { createPinia, disposePinia, getActivePinia, setActivePinia, type Pinia } from 'pinia'
-import { useAgentsStore } from '../../../client/store/agents.ts'
+import { createPinia, disposePinia, getActivePinia, type Pinia, setActivePinia } from 'pinia'
 import type { AgentDraft } from '../../../client/helpers/agent-draft.ts'
-import type {
-  AgentGoalView,
-  AgentRunView,
-  AgentThreadState,
-  CreateAgentGoalRequest,
-  SubmitAgentMessageRequest
-} from '../../../shared/agents/contracts.ts'
+import { useAgentsStore } from '../../../client/store/agents.ts'
+import type { AgentGoalView, AgentRunView, AgentThreadState, CreateAgentGoalRequest, SubmitAgentMessageRequest } from '../../../shared/agents/contracts.ts'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const SESSION = '11111111-1111-4111-8111-111111111111'
 const OTHER_SESSION = '22222222-2222-4222-8222-222222222222'
@@ -32,11 +26,19 @@ type Pins = {
   profilePolicyVersion: number
   defaultGeneration: number
   executionMode: string
-  googleSearchEnabled?: boolean
 }
 const pins = (overrides: Partial<Pins> = {}): Pins => ({
-  v: 1, ownerId: 1, sessionId: SESSION, sessionVersion: 4, profileId: PROFILE, profileVersionId: REVISION,
-  profileVersion: 2, profilePolicyVersion: 3, defaultGeneration: 8, executionMode: 'agent', ...overrides
+  v: 1,
+  ownerId: 1,
+  sessionId: SESSION,
+  sessionVersion: 4,
+  profileId: PROFILE,
+  profileVersionId: REVISION,
+  profileVersion: 2,
+  profilePolicyVersion: 3,
+  defaultGeneration: 8,
+  executionMode: 'agent',
+  ...overrides
 })
 // These keys are fixture-only. Real signature verification stays on the server;
 // the store must use the issued token unchanged, not mint an admission itself.
@@ -46,30 +48,80 @@ const token = (value: Pins, exp = 4_000_000_000, kid = 'renewed'): string => {
   return `${kid}.${encoded}.${createHmac('sha256', key(kid)).update(encoded).digest('base64url')}`
 }
 const run = (sessionId = SESSION, active = false): AgentRunView => ({
-  id: RUN, sessionId, status: active ? 'running' : 'succeeded', attempt: 1, eventSequence: 0, canCancel: active,
-  createdAt: DATE, startedAt: DATE, completedAt: active ? null : DATE, errorCode: null, errorMessage: null
+  id: RUN,
+  sessionId,
+  status: active ? 'running' : 'succeeded',
+  attempt: 1,
+  eventSequence: 0,
+  canCancel: active,
+  createdAt: DATE,
+  startedAt: DATE,
+  completedAt: active ? null : DATE,
+  errorCode: null,
+  errorMessage: null
 })
 const goal = (sessionId = SESSION, status: AgentGoalView['status'] = 'completed'): AgentGoalView => ({
-  id: GOAL, sessionId, objective: 'Accepted objective', status, version: 1, currentRunId: null,
-  continuationCount: 0, maxContinuations: 5, consumedTokens: 0, maxTokens: 100_000, consumedToolCalls: 0,
-  maxToolCalls: 100, budgetPolicyVersion: 1, budgetSelection: 'utility', tokenTier: 'standard', tokenAllowance: 100_000,
-  budgetCycle: 0, budgetLimitReason: null, canRenewTokenBudget: false, startedAt: DATE, deadlineAt: '2026-01-02T00:00:00.000Z',
-  completedAt: status === 'completed' ? DATE : null, errorCode: null, errorMessage: null, completion: null
+  id: GOAL,
+  sessionId,
+  objective: 'Accepted objective',
+  status,
+  version: 1,
+  currentRunId: null,
+  continuationCount: 0,
+  maxContinuations: 5,
+  consumedTokens: 0,
+  maxTokens: 100_000,
+  consumedToolCalls: 0,
+  maxToolCalls: 100,
+  budgetPolicyVersion: 1,
+  budgetSelection: 'utility',
+  tokenTier: 'standard',
+  tokenAllowance: 100_000,
+  budgetCycle: 0,
+  budgetLimitReason: null,
+  canRenewTokenBudget: false,
+  startedAt: DATE,
+  deadlineAt: '2026-01-02T00:00:00.000Z',
+  completedAt: status === 'completed' ? DATE : null,
+  errorCode: null,
+  errorMessage: null,
+  completion: null
 })
 const thread = (value = pins(), exp = 4_000_000_000): AgentThreadState => ({
   session: {
-    id: value.sessionId, title: 'Quantum', retention: 'saved', folderId: null, status: 'active', executionMode: 'agent',
-    version: value.sessionVersion, providerProfileId: null, profileResolutionToken: token(value, exp),
-    googleSearchEnabled: value.googleSearchEnabled ?? false, skills: [], currentRun: null,
-    createdAt: DATE, updatedAt: DATE, lastActivityAt: DATE, expiresAt: null
+    id: value.sessionId,
+    title: 'Quantum',
+    retention: 'saved',
+    folderId: null,
+    status: 'active',
+    executionMode: 'agent',
+    version: value.sessionVersion,
+    providerProfileId: null,
+    profileResolutionToken: token(value, exp),
+    skills: [],
+    currentRun: null,
+    createdAt: DATE,
+    updatedAt: DATE,
+    lastActivityAt: DATE,
+    expiresAt: null
   },
-  messages: [], tools: [], tasks: [], goal: null, proposals: [], artifacts: [], suggestions: [],
+  messages: [],
+  tools: [],
+  tasks: [],
+  goal: null,
+  proposals: [],
+  artifacts: [],
+  suggestions: [],
+  routingDecisions: [],
+  specialistInvocations: [],
   historyWindow: { messageLimit: 50, hasOlderMessages: false, runLimit: 20, hasOlderRuns: false }
 })
 const json = (value: unknown, status = 200): Response => Response.json(value, { status })
 const deferred = <T>() => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(accept => { resolve = accept })
+  const promise = new Promise<T>(accept => {
+    resolve = accept
+  })
   return { promise, resolve }
 }
 
@@ -89,28 +141,18 @@ class AdmissionServer {
   readStatus = 200
   postStatus = 200
   private nextRead: HeldRead | null = null
-  private consentUpdate: HeldRead | null = null
   private heldReads: HeldRead[] = []
 
   holdNextRead() {
     const started = deferred<void>()
     const response = deferred<Response>()
     const held: HeldRead = {
-      started: started.promise, notify: () => started.resolve(undefined),
-      release: (value = json(this.current)) => response.resolve(value), response: response.promise
+      started: started.promise,
+      notify: () => started.resolve(undefined),
+      release: (value = json(this.current)) => response.resolve(value),
+      response: response.promise
     }
     this.nextRead = held
-    this.heldReads.push(held)
-    return held
-  }
-  holdConsentUpdate() {
-    const started = deferred<void>()
-    const response = deferred<Response>()
-    const held: HeldRead = {
-      started: started.promise, notify: () => started.resolve(undefined),
-      release: (value = json(this.current)) => response.resolve(value), response: response.promise
-    }
-    this.consentUpdate = held
     this.heldReads.push(held)
     return held
   }
@@ -138,12 +180,6 @@ class AdmissionServer {
         return this.readStatus === 200 ? json(this.current) : json({ message: 'Read unavailable' }, this.readStatus)
       }
     }
-    if (method === 'PATCH' && path === `/_api/agents/sessions/${this.current.session.id}` && this.consentUpdate) {
-      const held = this.consentUpdate
-      this.consentUpdate = null
-      held.notify()
-      return held.response
-    }
     if (method === 'POST' && /\/(messages|goals)$/.test(path)) {
       const body = JSON.parse(String(init.body)) as Submission
       const mode = path.endsWith('/goals') ? 'goal' : 'message'
@@ -153,7 +189,11 @@ class AdmissionServer {
       if (this.postStatus !== 200) return json({ message: 'Admission rejected' }, this.postStatus)
       this.accepted.push({ mode, body })
       const acceptedRun = run(this.current.session.id)
-      this.current = { ...this.current, session: { ...this.current.session, currentRun: acceptedRun }, goal: mode === 'goal' ? goal(this.current.session.id) : null }
+      this.current = {
+        ...this.current,
+        session: { ...this.current.session, currentRun: acceptedRun },
+        goal: mode === 'goal' ? goal(this.current.session.id) : null
+      }
       return json({ run: acceptedRun, goal: this.current.goal, replayed: false })
     }
     throw new Error(`Unexpected endpoint: ${method} ${path}`)
@@ -163,9 +203,21 @@ class AdmissionServer {
       const [kid, encoded, signature] = body.profileResolutionToken.split('.')
       if (!kid || !encoded || signature !== createHmac('sha256', key(kid)).update(encoded).digest('base64url')) return false
       const value = JSON.parse(Buffer.from(encoded, 'base64url').toString()) as Pins & { exp: number }
-      if (value.exp <= Math.floor(Date.now() / 1000) || value.ownerId !== this.ownerId || body.expectedSessionVersion !== this.current.session.version) return false
-      const fields = ['v', 'ownerId', 'sessionId', 'sessionVersion', 'profileId', 'profileVersionId', 'profileVersion', 'profilePolicyVersion', 'defaultGeneration', 'executionMode'] as const
-      return fields.every(field => value[field] === this.admissionPins[field]) && (value.googleSearchEnabled ?? false) === (this.admissionPins.googleSearchEnabled ?? false)
+      if (value.exp <= Math.floor(Date.now() / 1000) || value.ownerId !== this.ownerId || body.expectedSessionVersion !== this.current.session.version)
+        return false
+      const fields = [
+        'v',
+        'ownerId',
+        'sessionId',
+        'sessionVersion',
+        'profileId',
+        'profileVersionId',
+        'profileVersion',
+        'profilePolicyVersion',
+        'defaultGeneration',
+        'executionMode'
+      ] as const
+      return fields.every(field => value[field] === this.admissionPins[field])
     } catch {
       return false
     }
@@ -179,16 +231,26 @@ const installGlobal = (name: string, value: unknown) => {
 }
 class TestEventSource extends EventTarget {
   closed = false
-  constructor(readonly url: string) { super() }
-  close() { this.closed = true }
+  constructor(readonly url: string) {
+    super()
+  }
+  close() {
+    this.closed = true
+  }
 }
 let server: AdmissionServer
 let pinia: Pinia
 let previousPinia: Pinia | undefined
 let visibility: 'visible' | 'hidden'
-const initialize = (ownerId = 1, sessionId = SESSION) => useAgentsStore(pinia).initialize('test-csrf', { ownerId, resumeSessionId: sessionId, routeSync: false, allowCreate: false })
+const initialize = (ownerId = 1, sessionId = SESSION) =>
+  useAgentsStore(pinia).initialize('test-csrf', { ownerId, resumeSessionId: sessionId, routeSync: false, allowCreate: false })
 const waitForAdmission = async (held: HeldRead, sending: Promise<boolean>) => {
-  await Promise.race([held.started, sending.then(() => { throw new Error('Send settled before the required admission read') })])
+  await Promise.race([
+    held.started,
+    sending.then(() => {
+      throw new Error('Send settled before the required admission read')
+    })
+  ])
 }
 
 beforeEach(() => {
@@ -197,18 +259,27 @@ beforeEach(() => {
   const documentEvents = new EventTarget()
   visibility = 'visible'
   installGlobal('document', {
-    get visibilityState() { return visibility },
+    get visibilityState() {
+      return visibility
+    },
     addEventListener: documentEvents.addEventListener.bind(documentEvents),
     removeEventListener: documentEvents.removeEventListener.bind(documentEvents)
   })
   installGlobal('window', {
-    fetch: server.fetch, atob: globalThis.atob, location: { pathname: '/', origin: 'https://wiki.example.test' },
+    fetch: server.fetch,
+    atob: globalThis.atob,
+    location: { pathname: '/', origin: 'https://wiki.example.test' },
     sessionStorage: {
       getItem: (name: string) => storage.get(name) ?? null,
-      setItem: (name: string, value: string) => { storage.set(name, value) },
-      removeItem: (name: string) => { storage.delete(name) }
+      setItem: (name: string, value: string) => {
+        storage.set(name, value)
+      },
+      removeItem: (name: string) => {
+        storage.delete(name)
+      }
     },
-    clearTimeout: globalThis.clearTimeout, setTimeout: globalThis.setTimeout
+    clearTimeout: globalThis.clearTimeout,
+    setTimeout: globalThis.setTimeout
   })
   installGlobal('EventSource', TestEventSource)
   previousPinia = getActivePinia()
@@ -249,12 +320,12 @@ describe('Wiki Agent fresh admission through the public store', () => {
     expect(store.sessionMutationBusy).toBe(false)
   })
 
-  it('accepts signing-key renewal and omitted-versus-false consent without changing intent', async () => {
+  it('accepts signing-key renewal without changing intent', async () => {
     const store = useAgentsStore(pinia)
     server.current = { ...thread(), session: { ...thread().session, profileResolutionToken: token(pins(), 1, 'old') } }
     expect(await initialize()).toBe(true)
     store.setDraft(SESSION, 'Follow up')
-    server.current = thread(pins({ googleSearchEnabled: false }))
+    server.current = thread()
     expect(await store.send('Follow up')).toBe(true)
     expect(server.accepted).toHaveLength(1)
     expect(store.drafts[SESSION]!.text).toBe('')
@@ -267,7 +338,6 @@ describe('Wiki Agent fresh admission through the public store', () => {
     ['profile policy', { profilePolicyVersion: 4 }, {}],
     ['default generation with unchanged resolved profile', { defaultGeneration: 9 }, {}],
     ['session revision', { sessionVersion: 5 }, {}],
-    ['Web search consent', { googleSearchEnabled: true }, {}],
     ['selected public profile with unchanged resolution', {}, { providerProfileId: PROFILE }]
   ]
   it.each(changes)('retains fresh state and draft for explicit review after %s changes', async (_name, change, publicChange) => {
@@ -304,8 +374,7 @@ describe('Wiki Agent fresh admission through the public store', () => {
   it.each([
     ['owner', pins({ ownerId: 2 })],
     ['session identifier', pins({ sessionId: OTHER_SESSION })],
-    ['session revision', pins({ sessionVersion: 5 })],
-    ['consent', pins({ googleSearchEnabled: true })]
+    ['session revision', pins({ sessionVersion: 5 })]
   ] as const)('refuses a token whose %s disagrees with the authorized public session even if continuity pins match', async (_name, inconsistent) => {
     const store = useAgentsStore(pinia)
     server.current = { ...thread(), session: { ...thread().session, profileResolutionToken: token(inconsistent) } }
@@ -314,26 +383,6 @@ describe('Wiki Agent fresh admission through the public store', () => {
     expect(await store.send('Keep private intent')).toBe(false)
     expect(server.attempts).toEqual([])
     expect(store.drafts[SESSION]!.text).toBe('Keep private intent')
-  })
-
-  it('does not issue an admission while a Web search consent mutation is pending', async () => {
-    const store = useAgentsStore(pinia)
-    server.admissionPins = pins({ googleSearchEnabled: true })
-    server.current = thread(server.admissionPins)
-    expect(await initialize()).toBe(true)
-    store.setDraft(SESSION, 'Wait for consent')
-    const held = server.holdConsentUpdate()
-    const changing = store.setGoogleSearchEnabled(false)
-    await held.started
-    expect(await store.send('Wait for consent')).toBe(false)
-    expect(server.attempts).toEqual([])
-    expect(store.drafts[SESSION]!.text).toBe('Wait for consent')
-    server.admissionPins = pins({ sessionVersion: 5, googleSearchEnabled: false })
-    server.current = thread(server.admissionPins)
-    held.release()
-    await changing
-    expect(await store.send('Wait for consent')).toBe(true)
-    expect(server.accepted).toHaveLength(1)
   })
 
   it.each([503, 401])('never falls back to cached admission after an authenticated GET fails with %s', async status => {

@@ -26,6 +26,7 @@ import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
+import { up as addAgentSpecialists } from '../../db/migrations/tsepistle-000054-agent-specialists.ts'
 import assetHelper from '../../helpers/asset.ts'
 import { createAgentMediaTestDatabase } from '../agents/media-database.ts'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
@@ -347,6 +348,11 @@ const createTables = async (db: Knex): Promise<void> => {
     table.string('baseUrl').nullable()
     table.text('adapterConfig').nullable()
   })
+  await db.schema.createTable('agentRoutingPolicy', table => {
+    table.integer('id').primary()
+    table.text('config').notNullable()
+  })
+  await addAgentSpecialists(db)
 }
 
 describe('ordinary-origin agent session API', () => {

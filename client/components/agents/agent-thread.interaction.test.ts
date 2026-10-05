@@ -2,11 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
-import type { RenderFunction } from 'vue'
-import i18next from 'i18next'
 import type { i18n } from 'i18next'
-import type { Translate } from '../../helpers/use-translate.ts'
+import i18next from 'i18next'
+import type { RenderFunction } from 'vue'
+import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import type {
   AgentArtifactView,
   AgentMediaView,
@@ -16,10 +15,11 @@ import type {
   AgentThreadState,
   AgentToolCallView
 } from '../../../shared/agents/contracts.ts'
-import { agentLiveAnnouncement, buildAgentThreadPresentation, placeAgentArtifacts } from './agent-thread-presentation.ts'
-import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { wikiSourceSelectorFromHref } from '../../../shared/wiki-source.ts'
+import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
+import type { Translate } from '../../helpers/use-translate.ts'
 import { resolveUserPicture, type UserPicture } from '../../helpers/user-picture.ts'
+import { agentLiveAnnouncement, buildAgentThreadPresentation, placeAgentArtifacts } from './agent-thread-presentation.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-thread.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
@@ -27,8 +27,9 @@ const parsedSfc = parse(componentSource, { filename: componentPath })
 if (parsedSfc.errors.length > 0) throw new Error(`Could not parse agent-thread.vue: ${parsedSfc.errors.join(', ')}`)
 if (!parsedSfc.descriptor.template || !parsedSfc.descriptor.scriptSetup) throw new Error('AgentThread template and setup script are required')
 
-import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
+import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+
 globalThis.useTranslate = () => translateEnglish
 setLocation('https://wiki.test/')
 
@@ -233,6 +234,8 @@ const makeThread = (sessionId: string, overrides: Partial<AgentThreadState> = {}
   goal: null,
   proposals: [],
   artifacts: [],
+  routingDecisions: [],
+  specialistInvocations: [],
   suggestions: [],
   historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
   ...overrides

@@ -1,14 +1,17 @@
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
-import type { ActionCapability, ActionCapabilityOutputKind, ActionProviderPresentationFamily } from '../actions/catalog.ts'
+import { z } from 'zod'
 import type { AgentActionName, AgentFeatureFlags, RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
-import { ActionKernel, type ActionAdmissionSnapshot, type ActionAuthority } from '../actions/kernel.ts'
-import type { AgentEngineRequest } from '../runtime.ts'
+import type { ActionCapability, ActionCapabilityOutputKind, ActionProviderPresentationFamily } from '../actions/catalog.ts'
+import { type ActionAdmissionSnapshot, type ActionAuthority, ActionKernel } from '../actions/kernel.ts'
 import { markAgentRunSideEffectsStarted } from '../coordinator.ts'
+import { SUBAGENT_READ_ACTIONS } from '../orchestration.ts'
 import { AgentRepositoryError } from '../repository.ts'
-import { AxSessionHarness, type AxActionSession } from './session-harness.ts'
+import type { AgentEngineRequest } from '../runtime.ts'
 import type { AgentActionSessionProvider } from './engine.ts'
+import { type AxActionSession, AxSessionHarness } from './session-harness.ts'
+import { readSpecialistContinuation, specialistContextSha256 } from './specialist-continuation.ts'
 
 interface RuntimeSnapshotRow {
   runtimeStateCiphertext: Uint8Array | null
@@ -35,12 +38,7 @@ const isAdmissionRejection = (error: unknown): boolean => {
 }
 
 const WIKI_PAGE_SOURCE_CAPABILITIES: Readonly<
-  Partial<
-    Record<
-      AgentActionName,
-      { readonly providerPresentationFamily: ActionProviderPresentationFamily; readonly outputKind: ActionCapabilityOutputKind }
-    >
-  >
+  Partial<Record<AgentActionName, { readonly providerPresentationFamily: ActionProviderPresentationFamily; readonly outputKind: ActionCapabilityOutputKind }>>
 > = {
   'pages.get': { providerPresentationFamily: 'wiki.page', outputKind: 'verified-source' },
   'pages.getOkf': { providerPresentationFamily: 'wiki.okf', outputKind: 'verified-source' },
@@ -75,7 +73,7 @@ const hasRecentPageSourceEvidenceRow = (value: unknown): boolean => {
     Number.isSafeInteger(row.sourceContentCharacters) &&
     row.sourceContentCharacters >= row.content.length &&
     typeof row.contentTruncated === 'boolean' &&
-    row.contentTruncated === (row.content.length < row.sourceContentCharacters) &&
+    row.contentTruncated === row.content.length < row.sourceContentCharacters &&
     typeof citationRow.evidenceId === 'string' &&
     citationRow.evidenceId === `page:${row.id}:revision:${row.sourceRevision}` &&
     typeof citationRow.label === 'string' &&
@@ -84,7 +82,6 @@ const hasRecentPageSourceEvidenceRow = (value: unknown): boolean => {
     citationRow.href.length > 0
   )
 }
-
 
 const hasWikiPageSourceCapability = (actionName: AgentActionName, capability: ActionCapability | undefined): boolean => {
   const expected = WIKI_PAGE_SOURCE_CAPABILITIES[actionName]
@@ -135,13 +132,31 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
   async open(request: AgentEngineRequest): Promise<AxActionSession | null> {
     if (request.purpose === 'subagent' && request.actionAllowlist === undefined)
       throw new AgentRepositoryError('INVALID_SUBAGENT_AUTHORITY', 'Subagent action authority must be explicitly bounded', 500)
+    const continuation = readSpecialistContinuation(request)
     const admission = await this.#dependencies.resolveAdmission(request)
-    const offered = this.#dependencies.kernel.offer(authFor(request), admission, request.run.id)
-    if (offered.length === 0) return null
+    const offered = this.#dependencies.kernel
+      .offer(authFor(request), admission, request.run.id)
+      .filter(
+        action =>
+          request.purpose !== 'subagent' ||
+          (request.actionAllowlist!.includes(action.definition.descriptor.name) &&
+            action.definition.descriptor.risk === 'read' &&
+            (!request.specialist || SUBAGENT_READ_ACTIONS.includes(action.definition.descriptor.name as (typeof SUBAGENT_READ_ACTIONS)[number])))
+      )
+    if (offered.length === 0) {
+      if (
+        continuation &&
+        (continuation.authoritySha256 !== specialistContextSha256([]) ||
+          continuation.evidenceMessages.length > 0 ||
+          Object.keys(continuation.actionSnapshot).length > 0)
+      )
+        throw new AgentRepositoryError('AGENT_SPECIALIST_CONTINUATION_INVALID', 'Specialist tool authority is no longer available', 409)
+      return null
+    }
     const row = (await this.#dependencies
       .knex('agentRuns')
       .where({ id: request.run.id, ownerId: request.run.ownerId, leaseOwner: request.run.leaseOwner, leaseToken: request.run.leaseToken })
-      .first('runtimeStateCiphertext')) as RuntimeSnapshotRow | undefined
+      .first(request.purpose === 'subagent' ? 'id' : 'runtimeStateCiphertext')) as RuntimeSnapshotRow | undefined
     if (!row) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before opening its action session', 409)
     const revalidateObservation = this.#dependencies.validateObservation
       ? async (actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean> => {
@@ -165,12 +180,7 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
             const currentAction = this.#dependencies.kernel
               .offer(authFor(request), currentAdmission, request.run.id)
               .find(action => action.definition.descriptor.name === actionName)
-            if (
-              !currentAction ||
-              signal.aborted ||
-              !hasWikiPageSourceCapability(actionName, currentAction.definition.capability)
-            )
-              return false
+            if (!currentAction || signal.aborted || !hasWikiPageSourceCapability(actionName, currentAction.definition.capability)) return false
             const valid = await this.#dependencies.validateObservation?.(request, currentAction.authority, actionName, output, signal)
             return valid === true && !signal.aborted
           } catch (error: unknown) {
@@ -193,12 +203,38 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
         }),
       ...(revalidateObservation
         ? {
-            validateObservation: (actionName: AgentActionName, output: unknown, signal: AbortSignal) =>
-              revalidateObservation(actionName, output, signal)
+            validateObservation: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => revalidateObservation(actionName, output, signal)
           }
         : {})
     })
-    const session = await harness.open(offered, request.purpose === 'subagent' ? undefined : decodeSnapshot(row.runtimeStateCiphertext))
+    const specialistAuthoritySha256 = createHash('sha256')
+      .update(
+        canonicalJson(
+          offered
+            .map(action => {
+              const { requestId: _requestId, authoritySha256: _authoritySha256, ...authority } = action.authority
+              return {
+                authority,
+                descriptor: action.definition.descriptor,
+                parameters: z.toJSONSchema(action.definition.input),
+                capability: action.definition.capability
+              }
+            })
+            .sort((left, right) => left.descriptor.name.localeCompare(right.descriptor.name))
+        )
+      )
+      .digest('hex')
+    if (continuation) {
+      if (continuation.authoritySha256 !== specialistAuthoritySha256 || !revalidateObservation)
+        throw new AgentRepositoryError('AGENT_SPECIALIST_CONTINUATION_INVALID', 'Specialist tool authority cannot be safely restored', 409)
+      for (const evidence of continuation.evidenceMessages) {
+        for (const receipt of evidence.receipts ?? [evidence]) {
+          if (!(await revalidateObservation(receipt.actionName, receipt.sourceOutput, request.signal)))
+            throw new AgentRepositoryError('AGENT_SPECIALIST_CONTINUATION_INVALID', 'Specialist source evidence is stale or no longer authorized', 409)
+        }
+      }
+    }
+    const session = await harness.open(offered, request.purpose === 'subagent' ? continuation?.actionSnapshot : decodeSnapshot(row.runtimeStateCiphertext))
     const authoritySha256 = createHash('sha256')
       .update(
         canonicalJson(
@@ -211,6 +247,7 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
     return {
       ...session,
       authoritySha256,
+      specialistAuthoritySha256,
       ...(admission.allowedActions === undefined ? {} : { allowedActions: admission.allowedActions }),
       authorizeSyntheticAction: async (name: AgentActionName, signal: AbortSignal): Promise<boolean> => {
         if (signal.aborted) return false

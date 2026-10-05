@@ -61,6 +61,8 @@ const activeThread = (ownerId = 1, sessionId = '00000000-0000-4000-8000-00000000
   goal: null,
   proposals: [],
   artifacts: [],
+  routingDecisions: [],
+  specialistInvocations: [],
   suggestions: [],
   historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
 })

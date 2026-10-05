@@ -1,14 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { lookup } from 'node:dns/promises'
 import knexModule, { type Knex } from 'knex'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
-import { getPostgresTestConnection } from '../postgres-test-connection.mts'
-import { up as addSecrets } from '../../db/migrations/2.5.141.ts'
-import { up as addDecisionProviders } from '../../db/migrations/tsepistle-000051-agent-decision-providers.ts'
-import { up as addRouting, down as removeRouting } from '../../db/migrations/tsepistle-000052-agent-routing.ts'
-import { AgentRoutingPolicyRegistry, AgentTurnRouter } from '../../agents/routing.ts'
-import { DecisionProviderRegistry } from '../../agents/decision-providers.ts'
-import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
+import { TYPESAFE_DECISION_PROVIDER_ID } from '../../../shared/agents/decision-providers.ts'
 import {
   DEFAULT_ROUTING_POLICY,
   type RoutingActor,
@@ -18,7 +11,14 @@ import {
   type RoutingTurnHooks,
   type RoutingTurnInput
 } from '../../../shared/agents/routing.ts'
-import { TYPESAFE_DECISION_PROVIDER_ID } from '../../../shared/agents/decision-providers.ts'
+import { DecisionProviderRegistry } from '../../agents/decision-providers.ts'
+import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
+import { AgentRoutingPolicyRegistry, AgentTurnRouter } from '../../agents/routing.ts'
+import { up as addSecrets } from '../../db/migrations/2.5.141.ts'
+import { up as addDecisionProviders } from '../../db/migrations/tsepistle-000051-agent-decision-providers.ts'
+import { up as addRouting, down as removeRouting } from '../../db/migrations/tsepistle-000052-agent-routing.ts'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
 const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -38,6 +38,7 @@ const publicDns = (async () => [{ address: '93.184.216.34', family: 4 }]) as unk
 suite('PostgreSQL routing configuration and native Jev decision path', () => {
   let db: Knex, policies: AgentRoutingPolicyRegistry, decisions: DecisionProviderRegistry
   let decisionResponse: 'valid' | 'malformed' | 'unknown-failure'
+  let routingChoice: string | null
   let compatibleUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
   let nativeCalls: number
   beforeAll(async () => {
@@ -114,6 +115,7 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
     policies = new AgentRoutingPolicyRegistry(db)
     nativeCalls = 0
     decisionResponse = 'valid'
+    routingChoice = null
     compatibleUsage = { prompt_tokens: 338, completion_tokens: 31, total_tokens: 369 }
     decisions = new DecisionProviderRegistry(
       db,
@@ -140,7 +142,7 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
             if (native) expect(request.type).toBe('choice')
             const labels = Object.keys(request.criteria)
             if (labels.includes('writing:simple')) expect(request.instructions).toContain('# Goal')
-            const choice = labels.includes('writing:simple') ? 'writing:simple' : labels[0]
+            const choice = routingChoice ?? (labels.includes('writing:simple') ? 'writing:simple' : labels[0])
             const probabilities = Object.fromEntries(labels.map(label => [label, label === choice ? 1 : 0]))
             const answer = { choice: decisionResponse === 'malformed' ? 'not-an-allowed-task' : choice, probabilities, confidence: 1 }
             return Response.json(
@@ -190,6 +192,22 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
     const reopened = await new AgentRoutingPolicyRegistry(db).getAdmin(actor)
     expect(reopened).toEqual({ policy, models: [declaration] })
     expect(reopened.models[0]).not.toHaveProperty('intelligence')
+  })
+  it('reads existing persisted routing policy with delegation opted out, without rewriting its config', async () => {
+    const {
+      specialistEnabled: _enabled,
+      specialistMaxContexts: _contexts,
+      specialistMaxContextBytes: _bytes,
+      specialistMaxReportTokens: _tokens,
+      specialistMaxTurns: _turns,
+      ...historical
+    } = DEFAULT_ROUTING_POLICY
+    const config = JSON.stringify(historical)
+    await db('agentRoutingPolicy').where({ id: 1 }).update({ config })
+    expect((await policies.getRuntime()).policy).toMatchObject(DEFAULT_ROUTING_POLICY)
+    expect((await db('agentRoutingPolicy').where({ id: 1 }).first('config')).config).toBe(config)
+    for (const invalid of [{ specialistMaxContexts: 9 }, { specialistMaxContextBytes: 4_095 }, { specialistMaxReportTokens: 4_097 }, { specialistMaxTurns: 0 }])
+      await expect(policies.updateAdmin({ ...DEFAULT_ROUTING_POLICY, ...invalid }, 1, actor)).rejects.toMatchObject({ code: 'INVALID_ROUTING_POLICY' })
   })
 
   it('requires current active account and live manage:system on reads and every write boundary', async () => {
@@ -368,6 +386,46 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
     expect(nativeCalls).toBe(1)
     expect(f.checkpoints).toHaveLength(1)
     await policies.setModelPolicy(profileId, { ...modelInput, estimatedLatencyMs: 500 }, (await policies.getRuntime()).models[0]!.revision, actor)
+    await expect(Promise.resolve(db.transaction(tx => f.router.validateDecision(decision, tx)))).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
+  })
+  it('classifies reusable independent work through the same native protocol, retains a pinned root and fences child version changes', async () => {
+    const f = await routingFixture()
+    await policies.updateAdmin({ ...DEFAULT_ROUTING_POLICY, enabled: true, specialistEnabled: true }, (await policies.getRuntime()).policy.revision, actor)
+    const contextId = randomUUID()
+    routingChoice = `REUSE(${contextId}):writing:simple`
+    const input: RoutingTurnInput = {
+      ...f.input,
+      pinned: true,
+      estimatedRootWorkTurns: 3,
+      fullHistoryInputTokens: 150_000,
+      specialists: [
+        {
+          contextId,
+          contextVersion: 4,
+          candidate: f.input.candidates[1]!,
+          taskClass: 'writing',
+          complexity: 'simple',
+          inputTokens: 100,
+          description: 'Continue an independently assigned greeting revision.'
+        }
+      ]
+    }
+    const decision = await f.router.routeTurn(input, f.hooks)
+    expect(decision).toMatchObject({
+      strategy: 'delegate',
+      switched: false,
+      profileId: anotherProfileId,
+      profileVersionId: anotherVersionId,
+      specialist: { contextId, contextVersion: 4, profileId, profileVersionId: versionId },
+      classification: { choice: routingChoice, usage: { totalTokens: 369, totalTokensSource: 'derived' } }
+    })
+    await db.transaction(tx => f.router.validateDecision(decision, tx))
+    expect(await f.router.routeTurn({ ...input, recordedDecision: JSON.parse(JSON.stringify(decision)) }, f.hooks)).toEqual(decision)
+    expect(nativeCalls).toBe(1)
+    expect(f.measured).toEqual([{ inputTokens: 338, outputTokens: 31, totalTokens: 369, costMicros: 15 }])
+    const replacement = randomUUID()
+    await db('agentProviderProfileVersions').insert({ id: replacement, profileId })
+    await db('agentProviderProfiles').where({ id: profileId }).update({ currentVersionId: replacement })
     await expect(Promise.resolve(db.transaction(tx => f.router.validateDecision(decision, tx)))).rejects.toMatchObject({ code: 'ROUTING_REVISION_CHANGED' })
   })
 

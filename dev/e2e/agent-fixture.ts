@@ -1,5 +1,5 @@
 import type { Page, Response, Route } from '@playwright/test'
-import type { AgentMediaView, AgentProviderProfileView, AgentProposalView, AgentThreadState } from '../../shared/agents/contracts.ts'
+import type { AgentMediaView, AgentProposalView, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
 export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin'
 
 export interface AgentFixtureOptions {
@@ -91,6 +91,8 @@ type FixtureThread = {
   goal: null
   proposals: AgentProposalView[]
   artifacts: never[]
+  routingDecisions: AgentThreadState['routingDecisions']
+  specialistInvocations: AgentThreadState['specialistInvocations']
   historyWindow: { messageLimit: number; hasOlderMessages: boolean; runLimit: number; hasOlderRuns: boolean }
   suggestions: { id: string; label: string; prompt: string }[]
 }
@@ -168,7 +170,10 @@ const sessionFor = (sessionId: string): AgentSession => ({
 })
 
 // Test-only continuity metadata, not a production signature or admission authority.
-const issueFixtureResolutionToken = (ownerId: number, session: Pick<AgentSession, 'id' | 'version' | 'providerProfileId' | 'googleSearchEnabled' | 'executionMode'>): string => {
+const issueFixtureResolutionToken = (
+  ownerId: number,
+  session: Pick<AgentSession, 'id' | 'version' | 'providerProfileId' | 'googleSearchEnabled' | 'executionMode'>
+): string => {
   const kid = 'fixture'
   const payload = {
     v: 1,
@@ -281,6 +286,8 @@ const threadFor = (sessionId = SESSION_ID): FixtureThread => ({
   goal: null,
   proposals: [],
   artifacts: [],
+  routingDecisions: [],
+  specialistInvocations: [],
   historyWindow: emptyHistoryWindow(),
   suggestions: [{ id: 'fixture-follow-up', label: 'Show the evidence', prompt: 'Show the evidence behind that answer.' }]
 })
@@ -514,10 +521,13 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
   let ownerResolution: Promise<number | null> = Promise.resolve(null)
   const observeIdentity = (response: Response): void => {
     if (new URL(response.url()).pathname !== '/_api/users/whoami') return
-    ownerResolution = response.json().then((payload: { authenticated?: unknown; user?: { id?: unknown } }) => {
-      const id = payload?.user?.id
-      return response.ok() && payload?.authenticated === true && isPositiveVersion(id) ? id : null
-    }).catch(() => null)
+    ownerResolution = response
+      .json()
+      .then((payload: { authenticated?: unknown; user?: { id?: unknown } }) => {
+        const id = payload?.user?.id
+        return response.ok() && payload?.authenticated === true && isPositiveVersion(id) ? id : null
+      })
+      .catch(() => null)
   }
   page.on('response', observeIdentity)
   const threadView = async () => {
@@ -530,22 +540,26 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     }
   }
 
-  await page.addInitScript(({ skillsEnabled, goalsEnabled }) => {
-    let captured: Record<string, unknown> | undefined
-    Object.defineProperty(window, 'siteConfig', {
-      configurable: true,
-      get: () => captured ?? {},
-      set: (value: unknown) => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) return
-        captured = value as Record<string, unknown>
-        captured.agentsEnabled = true
-        captured.agentProviderEnabled = true
-        if (skillsEnabled !== undefined) captured.agentSkillsEnabled = skillsEnabled
-        if (goalsEnabled !== undefined) captured.agentGoalsEnabled = goalsEnabled
-        captured.agentCsrfToken = typeof captured.agentCsrfToken === 'string' && captured.agentCsrfToken ? captured.agentCsrfToken : 'fixture-agent-csrf-token'
-      }
-    })
-  }, { skillsEnabled: options.skillsEnabled, goalsEnabled: options.goalsEnabled })
+  await page.addInitScript(
+    ({ skillsEnabled, goalsEnabled }) => {
+      let captured: Record<string, unknown> | undefined
+      Object.defineProperty(window, 'siteConfig', {
+        configurable: true,
+        get: () => captured ?? {},
+        set: (value: unknown) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) return
+          captured = value as Record<string, unknown>
+          captured.agentsEnabled = true
+          captured.agentProviderEnabled = true
+          if (skillsEnabled !== undefined) captured.agentSkillsEnabled = skillsEnabled
+          if (goalsEnabled !== undefined) captured.agentGoalsEnabled = goalsEnabled
+          captured.agentCsrfToken =
+            typeof captured.agentCsrfToken === 'string' && captured.agentCsrfToken ? captured.agentCsrfToken : 'fixture-agent-csrf-token'
+        }
+      })
+    },
+    { skillsEnabled: options.skillsEnabled, goalsEnabled: options.goalsEnabled }
+  )
 
   await page.route(/\/_api\/agents(?:\/|$)/, async route => {
     const request = route.request()
@@ -615,7 +629,8 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       }
       return json(route, { deleted: true, movedSessions })
     }
-    if (path === '/_api/agents/profiles' && request.method() === 'GET') return json(route, { profiles: [{ ...profile(), ...(options.media ? { media: options.media } : {}) }] })
+    if (path === '/_api/agents/profiles' && request.method() === 'GET')
+      return json(route, { profiles: [{ ...profile(), ...(options.media ? { media: options.media } : {}) }] })
     if (path === '/_api/agents/skills' && request.method() === 'GET') return json(route, { skills: [] })
     if (path === '/_api/agents/memories' && request.method() === 'GET') {
       const userCharacters = state.memoryEntries.filter(entry => entry.target === 'user').reduce((sum, entry) => sum + entry.content.length, 0)
@@ -680,7 +695,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       state.thread.session.retention = body.retention === 'temporary' ? 'temporary' : 'saved'
       state.thread.session.expiresAt = body.retention === 'temporary' ? '2026-09-02T12:00:00.000Z' : null
       state.activeRunId = null
-      return json(route, { ...await threadView(), launchPage: null }, 201)
+      return json(route, { ...(await threadView()), launchPage: null }, 201)
     }
     const sessionFolderMatch = path.match(/^\/_api\/agents\/sessions\/([^/]+)\/folder$/)
     if (sessionFolderMatch && request.method() === 'PUT') {
@@ -802,8 +817,14 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     },
     pauseNextResponse() {
       if (responseGate) throw new Error('An Agent fixture response is already paused')
-      responseGate = new Promise<void>(resolve => { releaseResponse = resolve })
-      return () => { releaseResponse?.(); releaseResponse = null; responseGate = null }
+      responseGate = new Promise<void>(resolve => {
+        releaseResponse = resolve
+      })
+      return () => {
+        releaseResponse?.()
+        releaseResponse = null
+        responseGate = null
+      }
     },
     assertNoUnexpectedRequests() {
       if (unexpectedRequests.length) throw new Error(`Unexpected Agent fixture requests: ${unexpectedRequests.join(', ')}`)

@@ -300,6 +300,30 @@
         />
       </template>
     </template>
+    <section v-if="thread.routingDecisions.length" class="agent-activity mt-3" aria-label="Routing decisions">
+      <h3>Routing decisions</h3>
+      <p>Stay keeps the root binding; swap changes it at the turn boundary; delegate keeps the root binding and hands bounded work to a specialist. Costs below are host estimates (µUSD), not billed usage or measured savings. No prompt-cache discount or hit is guaranteed.</p>
+      <details v-for="decision in thread.routingDecisions" :key="decision.runId">
+        <summary>{{ decision.strategy === 'stay' ? 'Stay on root model' : decision.strategy === 'swap' ? 'Swap root model' : 'Delegate to specialist; root unchanged' }}</summary>
+        <p>Root run: <code>{{ decision.runId }}</code> · Root model version: <code>{{ decision.rootProfileVersionId }}</code></p>
+        <p v-if="decision.specialistProfileVersionId">Separate specialist model version: <code>{{ decision.specialistProfileVersionId }}</code></p>
+        <p>Reason: {{ decision.reason }}</p>
+        <p v-if="decision.costs">Estimated stay: {{ decision.costs.stayMicros ?? 'unknown' }} µUSD · Cold swap: {{ decision.costs.coldSwapMicros ?? 'unknown' }} µUSD · Delegate plus handoff: {{ decision.costs.delegateMicros ?? 'unknown' }} µUSD</p>
+        <p v-else>Comparative cost estimates unavailable.</p>
+      </details>
+    </section>
+    <section v-if="thread.specialistInvocations.length" class="agent-activity mt-3" aria-label="Specialist handoffs">
+      <h3>Specialist handoffs · separate from root model swaps</h3>
+      <p>The root conversation and provider remain unchanged during delegation. Context reuse is independent provider-bound continuation, not a guaranteed prompt-cache hit.</p>
+      <details v-for="invocation in thread.specialistInvocations" :key="invocation.id" :open="invocation.status !== 'completed'">
+        <summary>{{ invocation.model }} · {{ invocation.taskClass }} · {{ invocation.status }} · {{ invocation.reused ? 'Reused context' : 'New context' }}</summary>
+        <p>Root run: <code>{{ invocation.rootRunId }}</code> · Specialist model version: <code>{{ invocation.profileVersionId }}</code></p>
+        <p>Specialist context version {{ invocation.contextVersion }} · {{ temporalMetadataFor(invocation.startedAt).timestamp }}</p>
+        <p v-if="invocation.errorCode" role="status">Specialist failure: {{ invocation.errorCode }}</p>
+        <template v-if="invocation.report !== null"><h4>Bounded specialist report · untrusted task context</h4><p style="white-space: pre-wrap; overflow-wrap: anywhere">{{ invocation.report }}</p></template>
+        <p v-else>{{ invocation.status === 'running' ? 'Working in a separate context; report pending.' : 'No report returned.' }}</p>
+      </details>
+    </section>
     <AgentArtifactGrid
       v-if="artifactPlacement.unplaced.length"
       :artifacts="artifactPlacement.unplaced"

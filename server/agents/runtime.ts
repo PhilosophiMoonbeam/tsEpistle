@@ -14,9 +14,10 @@ import {
   type AgentToolContextExclusion,
   isTerminalAgentRunStatus
 } from '../../shared/agents/contracts.ts'
+import { type DecisionUsage, DecisionUsageSchema } from '../../shared/agents/decision-providers.ts'
 import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
-import { DecisionUsageSchema, type DecisionUsage } from '../../shared/agents/decision-providers.ts'
-import type { RoutingRequirements, RoutingTurnDecision } from '../../shared/agents/routing.ts'
+import type { RoutingRequirements, RoutingSpecialistCandidate, RoutingTurnDecision } from '../../shared/agents/routing.ts'
+import type { SpecialistContext, SpecialistProviderBinding } from '../../shared/agents/specialists.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
   type AgentCompactionCanonicalSource,
@@ -46,9 +47,9 @@ import {
   admitAgentRunInTransaction,
   ensureAgentRunQuota,
   getOwnedAgentRun,
+  markAgentRunSideEffectsStarted,
   normalizeAgentGenerationTools,
   persistAgentRunQuotaSettlementIntent,
-  markAgentRunSideEffectsStarted,
   readAgentApprovalContinuation,
   terminalizeAgentRun
 } from './coordinator.ts'
@@ -101,9 +102,8 @@ import {
   agentProviderContinuationDialect,
   decodeAgentProviderContinuation
 } from './providers/factory.ts'
-import { AgentProviderPoliciesSchema, type AgentProviderTransportKind } from './providers/registry.ts'
 import type { AgentRoutingCandidate } from './providers/registry.ts'
-import type { AgentTurnRouter } from './routing.ts'
+import { AgentProviderPoliciesSchema, type AgentProviderTransportKind } from './providers/registry.ts'
 import { assertAgentTokenUsage, readAgentUsageEvent } from './providers/usage.ts'
 import type {
   AgentConversationTitleGenerator,
@@ -112,8 +112,10 @@ import type {
   AgentGoalBudgetClassifier
 } from './providers/utility.ts'
 import { AgentRepositoryError, appendAgentEvent, validateAgentGoogleSearchGrounding } from './repository.ts'
+import type { AgentTurnRouter } from './routing.ts'
 import { SkillValidationError } from './skills/parser.ts'
 import { lockSkillAdmissionPrincipal, resolveSelectedSkillVersionIdsInTransaction, validateSelectedSkillVersionIdsInTransaction } from './skills/runtime.ts'
+import { AgentSpecialistStore } from './specialists.ts'
 import {
   type AgentTaskRecord,
   cancelAgentRunTasks,
@@ -670,6 +672,21 @@ export interface AgentRecoveredAction {
   readonly output: unknown
 }
 
+export interface AgentSpecialistEngineContext {
+  readonly contextId: string
+  readonly taskClass: string
+  readonly binding: SpecialistProviderBinding
+  readonly state: Readonly<Record<string, unknown>> | null
+  readonly maximumContextBytes: number
+}
+
+export interface AgentSpecialistHandoff {
+  readonly contextId: string
+  readonly invocationId: string
+  readonly report: string
+  readonly evidenceSeeds: readonly AgentEvidenceSeed[]
+}
+
 export interface AgentEngineRequest {
   readonly compaction?: AgentCompactionContext
   readonly generationTools?: readonly AgentGenerationTool[]
@@ -683,6 +700,9 @@ export interface AgentEngineRequest {
   readonly task?: AgentResearchTask
   readonly subagentRunId?: string
   readonly research?: AgentResearchSynthesisContext
+  /** Host-owned independent context; the run remains the authoritative root lease. */
+  readonly specialist?: AgentSpecialistEngineContext
+  readonly specialistHandoff?: AgentSpecialistHandoff
   readonly limits?: {
     readonly maxTokens?: number
     readonly maxTurns: number
@@ -725,6 +745,9 @@ export interface AgentEngineResult {
   readonly costMicros: number
   readonly providerState?: AgentProviderContinuationEnvelope
   readonly authoritySha256?: string
+  readonly specialistState?: Readonly<Record<string, unknown>>
+  readonly specialistEvidence?: readonly AgentEvidenceSeed[]
+  readonly specialistAuthoritySha256?: string
   readonly contextLimit?: {
     readonly reason: 'tool_result_capacity'
     readonly omittedActionCallIds: readonly string[]
@@ -1373,6 +1396,7 @@ export class AgentProductRuntime {
   readonly #logger: AgentProductRuntimeOptions['logger']
   readonly #authorizeMedia: AgentProductRuntimeOptions['authorizeMedia']
   readonly #router: AgentTurnRouter | undefined
+  readonly #specialists: AgentSpecialistStore
   constructor(knex: Knex, resolver: AgentAdmissionResolver, engine: AgentEngine, options: AgentProductRuntimeOptions) {
     this.#knex = knex
     this.#resolver = resolver
@@ -1384,6 +1408,7 @@ export class AgentProductRuntime {
     this.#logger = options.logger
     this.#authorizeMedia = options.authorizeMedia
     this.#router = options.router
+    this.#specialists = new AgentSpecialistStore(knex)
   }
 
   async #routingRecord(
@@ -1521,6 +1546,198 @@ export class AgentProductRuntime {
     })
   }
 
+  #specialistScope(currentPage: AgentCurrentPageHint | undefined, knowledgeContext: AgentKnowledgeContext | undefined): string {
+    return sha256(
+      canonicalJson({ version: 1, actionAllowlist: SUBAGENT_READ_ACTIONS, currentPage: currentPage ?? null, knowledgeContext: knowledgeContext ?? null })
+    )
+  }
+
+  #specialistBinding(candidate: AgentRoutingCandidate): SpecialistProviderBinding {
+    if (!Number.isSafeInteger(candidate.admission.ownerAuthVersion))
+      throw new AgentRepositoryError('AGENT_SPECIALIST_BINDING_CHANGED', 'Specialist owner authority is unavailable', 409)
+    return {
+      profileId: candidate.profileId,
+      profileVersionId: candidate.profileVersionId,
+      model: candidate.admission.model,
+      transportKind: candidate.admission.transportKind,
+      capabilityRevision: candidate.admission.capabilityRevision,
+      profilePolicyVersion: candidate.admission.profilePolicyVersion,
+      ownerAuthVersion: candidate.admission.ownerAuthVersion!
+    }
+  }
+
+  #specialistRequest(
+    claim: AgentRunClaim,
+    candidate: AgentRoutingCandidate,
+    context: SpecialistContext | null,
+    input: {
+      readonly message: string
+      readonly taskClass: string
+      readonly maximumContextBytes: number
+      readonly maximumReportTokens: number
+      readonly maximumTurns: number
+      readonly signal: AbortSignal
+      readonly currentPage?: AgentCurrentPageHint
+      readonly knowledgeContext?: AgentKnowledgeContext
+      readonly dispatchBudget?: AgentDispatchBudget
+    }
+  ): AgentEngineRequest {
+    return {
+      run: { ...claim, ...candidate.admission },
+      purpose: 'subagent',
+      authorizeDispatch: async () => {
+        await this.#authorizeClaim(claim)
+        await this.#knex.transaction(async transaction => {
+          const live = await this.#resolver.resolveRoutingCandidate!(transaction, {
+            ownerId: claim.ownerId,
+            sessionId: claim.sessionId,
+            profileId: candidate.profileId,
+            profileVersionId: candidate.profileVersionId
+          })
+          if (live.profilePolicyVersion !== candidate.admission.profilePolicyVersion || live.ownerAuthVersion !== candidate.admission.ownerAuthVersion)
+            throw new AgentRepositoryError('AGENT_SPECIALIST_BINDING_CHANGED', 'Specialist authority changed before dispatch', 409)
+          const reservation = await transaction('agentQuotaReservations').where({ runId: claim.id, ownerId: claim.ownerId, status: 'reserved' }).first('day')
+          const daily = reservation && (await transaction('agentQuotaDaily').where({ ownerId: claim.ownerId, day: reservation.day }).first())
+          if (
+            !daily ||
+            Number(daily.consumedTokens) + Number(daily.reservedTokens) > live.quotaLimits.dailyTokens ||
+            Number(daily.consumedCostMicros) + Number(daily.reservedCostMicros) > live.quotaLimits.dailyCostMicros
+          )
+            throw new AgentRepositoryError('AGENT_QUOTA_EXCEEDED', 'Specialist profile daily quota is exhausted', 429)
+        })
+      },
+      specialist: {
+        contextId: context?.id ?? randomUUID(),
+        taskClass: input.taskClass,
+        binding: this.#specialistBinding(candidate),
+        state: context?.state ?? null,
+        maximumContextBytes: input.maximumContextBytes
+      },
+      actionAllowlist: SUBAGENT_READ_ACTIONS,
+      messages: [...(context?.history ?? []), { role: 'user', content: input.message }],
+      memory: EMPTY_MEMORY,
+      skills: [],
+      priorActivity: [],
+      signal: input.signal,
+      limits: { maxTokens: candidate.admission.quota.tokens, maxTurns: input.maximumTurns, maxToolCalls: 16, maxOutputTokens: input.maximumReportTokens },
+      ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
+      ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
+      ...(input.dispatchBudget === undefined ? {} : { dispatchBudget: input.dispatchBudget })
+    }
+  }
+
+  async #executeSpecialist(
+    claim: AgentRunClaim,
+    input: {
+      readonly message: string
+      readonly currentPage?: AgentCurrentPageHint
+      readonly knowledgeContext?: AgentKnowledgeContext
+      readonly signal: AbortSignal
+      readonly dispatchBudget: AgentRunDispatchBudget
+    }
+  ): Promise<AgentSpecialistHandoff | undefined> {
+    const recorded = await this.#routingRecord(claim)
+    if (recorded?.decision.strategy !== 'delegate') return undefined
+    const selection = recorded.decision.specialist
+    if (!selection || !this.#router || !this.#resolver.listRoutingCandidates)
+      throw new AgentRepositoryError('ROUTING_CHECKPOINT_INVALID', 'Specialist selection is missing', 409)
+    const rows = await this.#knex('agentEvents').where({ runId: claim.id, type: 'model.turn' }).select('data', 'dataSha256')
+    const row = rows.find(row => parsedObject(row.data, 'AGENT_EVENT_CORRUPT').purpose === 'routing')
+    if (!row || sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Specialist routing receipt is invalid', 500)
+    const receipt = parsedObject(row.data, 'AGENT_EVENT_CORRUPT')
+    const scopeSha256 = this.#specialistScope(input.currentPage, input.knowledgeContext)
+    if (receipt.routingSpecialistScopeSha256 !== scopeSha256 || typeof receipt.routingSpecialistExpiresAt !== 'string')
+      throw new AgentRepositoryError('AGENT_SPECIALIST_BINDING_CHANGED', 'Specialist source scope changed', 409)
+    const candidate = await this.#knex.transaction(async transaction => {
+      await acquireAgentCoordinatorAdvisoryLocks(transaction, [claim.ownerId])
+      await this.#router!.validateDecision(recorded.decision, transaction)
+      const choices = await this.#resolver.listRoutingCandidates!(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+      const selected = choices.find(candidate => candidate.profileId === selection.profileId && candidate.profileVersionId === selection.profileVersionId)
+      const admission = receipt.routingSpecialistAdmission as AgentResolvedAdmission | null
+      if (
+        !selected ||
+        !admission ||
+        selected.admission.profilePolicyVersion !== admission.profilePolicyVersion ||
+        selected.admission.ownerAuthVersion !== admission.ownerAuthVersion
+      )
+        throw new AgentRepositoryError('AGENT_SPECIALIST_BINDING_CHANGED', 'Specialist provider authority changed', 409)
+      return selected
+    })
+    const { policy } = await this.#router.policies.getRuntime()
+    if (!policy.enabled || !policy.specialistEnabled || policy.revision !== recorded.decision.policyRevision)
+      throw new AgentRepositoryError('ROUTING_POLICY_CHANGED', 'Specialist policy changed before execution', 409)
+    const started = await this.#specialists.begin(claim, {
+      contextId: selection.contextId,
+      contextVersion: selection.contextVersion,
+      binding: this.#specialistBinding(candidate),
+      scopeSha256,
+      taskClass: selection.taskClass,
+      complexity: selection.complexity,
+      maximumContexts: policy.specialistMaxContexts,
+      maximumContextBytes: policy.specialistMaxContextBytes,
+      expiresAt: receipt.routingSpecialistExpiresAt
+    })
+    if (started.replayed) {
+      if (started.invocation.status !== 'completed' || started.invocation.report === null)
+        throw new AgentRepositoryError('AGENT_SPECIALIST_INVOCATION_UNRESOLVED', 'Specialist invocation cannot be dispatched again', 409)
+      return { contextId: started.context.id, invocationId: started.invocation.id, report: started.invocation.report, evidenceSeeds: [] }
+    }
+    let report = ''
+    try {
+      const request = this.#specialistRequest(claim, candidate, started.context, {
+        ...input,
+        taskClass: selection.taskClass,
+        maximumContextBytes: policy.specialistMaxContextBytes,
+        maximumReportTokens: policy.specialistMaxReportTokens,
+        maximumTurns: policy.specialistMaxTurns
+      })
+      const proof = await this.#engine.preflight(request)
+      if (!proof.admissible) throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Specialist context exceeds provider capacity', 413)
+      const maximumReportBytes = Math.min(65_536, policy.specialistMaxReportTokens * 16)
+      const result = await this.#engine.execute(
+        { ...request, subagentRunId: started.invocation.id },
+        {
+          text: async delta => {
+            input.signal.throwIfAborted()
+            if (typeof delta !== 'string' || Buffer.byteLength(report + delta) > maximumReportBytes)
+              throw new AgentRepositoryError('AGENT_SPECIALIST_REPORT_TOO_LARGE', 'Specialist report exceeds configured bounds', 413)
+            report += delta
+          },
+          event: async (type, data) => {
+            input.signal.throwIfAborted()
+            await this.#appendPresentationEvent(claim, type, {
+              ...data,
+              purpose: 'subagent',
+              specialistInvocationId: started.invocation.id,
+              specialistContextId: started.context.id
+            })
+          }
+        }
+      )
+      if (
+        result.executionLimit ||
+        result.outputLimited ||
+        result.contextLimit ||
+        !report.trim() ||
+        result.specialistState === undefined ||
+        result.specialistAuthoritySha256 === undefined
+      )
+        throw new AgentRepositoryError('AGENT_SPECIALIST_INCOMPLETE', 'Specialist did not complete a reusable bounded report', 409)
+      await this.#specialists.complete(claim, started.invocation.id, {
+        history: [...started.context.history, { role: 'user', content: input.message }, { role: 'assistant', content: report }],
+        state: result.specialistState,
+        report,
+        authoritySha256: result.specialistAuthoritySha256,
+        maximumContextBytes: policy.specialistMaxContextBytes,
+        maximumReportBytes
+      })
+      return { contextId: started.context.id, invocationId: started.invocation.id, report, evidenceSeeds: result.specialistEvidence ?? [] }
+    } catch (error) {
+      await this.#specialists.fail(claim, started.invocation.id, error instanceof AgentRepositoryError ? error.code : 'AGENT_SPECIALIST_FAILED')
+      throw error
+    }
+  }
+
   async #routeClaim(
     claim: AgentRunClaim,
     input: {
@@ -1552,8 +1769,7 @@ export class AgentProductRuntime {
       const snapshot = await this.#knex.transaction(async transaction => {
         await acquireAgentCoordinatorAdvisoryLocks(transaction, [claim.ownerId])
         await this.#lockAdmissionContext(transaction, claim.ownerId, claim.sessionId, input.sessionVersion)
-        const session = await transaction('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).first('providerProfileId')
-        if (session.providerProfileId !== null) return null
+        const session = await transaction('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).first('providerProfileId', 'expiresAt')
         const incumbent = await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
         if (incumbent.providerProfileVersionId !== claim.providerProfileVersionId)
           throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Default profile changed before routing', 409)
@@ -1564,6 +1780,8 @@ export class AgentProductRuntime {
             ...incumbent,
             ...(liveIncumbent?.admission.ownerAuthVersion === undefined ? {} : { ownerAuthVersion: liveIncumbent.admission.ownerAuthVersion })
           },
+          pinned: session.providerProfileId !== null,
+          expiresAt: session.expiresAt,
           candidates
         }
       })
@@ -1724,14 +1942,89 @@ export class AgentProductRuntime {
         // A concurrent enable must not dispatch a classifier against un-preflighted alternatives.
         candidates = [current]
       }
+      const specialists: RoutingSpecialistCandidate[] = []
+      const scopeSha256 = this.#specialistScope(input.currentPage, input.knowledgeContext)
+      const specialistExpiresAt = new Date(
+        Math.min(Date.now() + 7 * 86_400_000, snapshot.expiresAt === null ? Infinity : new Date(snapshot.expiresAt).valueOf())
+      ).toISOString()
+      if (
+        declared.policy.enabled &&
+        declared.policy.specialistEnabled &&
+        claim.executionMode === 'agent' &&
+        mediaRequest === null &&
+        requiredModalities.size === 1 &&
+        !input.generationTools?.length &&
+        !external?.externalMcp
+      ) {
+        const contexts = await this.#specialists.list({
+          ownerId: claim.ownerId,
+          rootSessionId: claim.sessionId,
+          scopeSha256,
+          maximumContexts: declared.policy.specialistMaxContexts
+        })
+        const retained = await this.#knex('agentSpecialistContexts')
+          .where({ ownerId: claim.ownerId, rootSessionId: claim.sessionId })
+          .where(query =>
+            query.where('expiresAt', '>', new Date()).orWhereExists(function activeContext() {
+              this.select(1)
+                .from('agentSpecialistInvocations')
+                .join('agentRuns', 'agentRuns.id', 'agentSpecialistInvocations.rootRunId')
+                .whereRaw('?? = ??', ['agentSpecialistInvocations.contextId', 'agentSpecialistContexts.id'])
+                .where('agentSpecialistInvocations.status', 'running')
+                .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
+            })
+          )
+          .count<{ count: number | string }[]>({ count: '*' })
+        const choices: { candidate: AgentRoutingCandidate; context: SpecialistContext | null }[] = []
+        for (const candidate of candidates) {
+          if (!declared.models.some(model => model.profileId === candidate.profileId && model.profileVersionId === candidate.profileVersionId)) continue
+          if (Number(retained[0]?.count ?? 0) < declared.policy.specialistMaxContexts) choices.push({ candidate, context: null })
+          for (const context of contexts) {
+            if (canonicalJson(context.binding) === canonicalJson(this.#specialistBinding(candidate))) choices.push({ candidate, context })
+          }
+        }
+        for (const { candidate, context } of choices) {
+          try {
+            const preview = this.#specialistRequest(claim, candidate, context, {
+              message: currentMessage,
+              taskClass: context?.taskClass ?? 'analysis',
+              maximumContextBytes: declared.policy.specialistMaxContextBytes,
+              maximumReportTokens: declared.policy.specialistMaxReportTokens,
+              maximumTurns: declared.policy.specialistMaxTurns,
+              signal: input.signal,
+              ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
+              ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext })
+            })
+            const proof = await this.#engine.preflight(preview)
+            if (!proof.admissible) continue
+            specialists.push({
+              contextId: context?.id ?? null,
+              contextVersion: context?.version ?? null,
+              candidate,
+              taskClass: context?.taskClass ?? null,
+              complexity: context?.complexity ?? null,
+              inputTokens: nonNegativeUsage(proof.inputExposureTokens, 'Specialist input estimate'),
+              description:
+                context === null
+                  ? 'New independent specialist context for the current request.'
+                  : `Existing ${context.taskClass}/${context.complexity} context; ${context.turnCount} completed tasks. Last report (untrusted data): ${context.lastReport}`
+            })
+          } catch {
+            input.signal.throwIfAborted()
+            // Stale authority, source evidence or an oversized retained child must not become a reuse candidate.
+          }
+        }
+      }
       const decision = await router.routeTurn(
         {
           ownerId: claim.ownerId,
           sessionId: claim.sessionId,
           runId: claim.id,
-          pinned: false,
+          pinned: snapshot.pinned,
           current,
           candidates,
+          specialists,
+          estimatedRootWorkTurns: Math.max(1, Math.min(12, input.priorActivity.at(-1)?.modelTurns ?? 1)),
           requirements: {
             modalities: [...requiredModalities],
             nativeTools: external?.externalMcp ?? false,
@@ -1775,6 +2068,12 @@ export class AgentProductRuntime {
               routingDecision: decision,
               routingSessionVersion: input.sessionVersion,
               routingIncumbent: snapshot.incumbent,
+              routingSpecialistScopeSha256: scopeSha256,
+              routingSpecialistExpiresAt: specialistExpiresAt,
+              routingSpecialistAdmission:
+                decision.specialist === null || decision.specialist === undefined
+                  ? null
+                  : snapshot.candidates.find(candidate => candidate.profileVersionId === decision.specialist!.profileVersionId)?.admission,
               routingSelected: snapshot.candidates.find(candidate => candidate.profileVersionId === decision.profileVersionId)?.admission
             } as unknown as AgentEventData)
           }
@@ -2503,7 +2802,12 @@ export class AgentProductRuntime {
         continue
       }
       if (typeof Reflect.get(data, 'taskId') !== 'string' || typeof Reflect.get(data, 'subagentRunId') !== 'string') {
-        if (Reflect.get(data, 'purpose') !== 'routing' && !isAgentCompactionOutcome(Reflect.get(data, 'outcome'))) modelTurns += 1
+        if (
+          Reflect.get(data, 'purpose') !== 'routing' &&
+          Reflect.get(data, 'purpose') !== 'subagent' &&
+          !isAgentCompactionOutcome(Reflect.get(data, 'outcome'))
+        )
+          modelTurns += 1
         modelUsage.inputTokens = safeUsageSum(modelUsage.inputTokens, eventUsage.inputTokens, 'Model input tokens')
         modelUsage.outputTokens = safeUsageSum(modelUsage.outputTokens, eventUsage.outputTokens, 'Model output tokens')
         modelUsage.totalTokens = safeUsageSum(modelUsage.totalTokens, eventUsage.totalTokens, 'Model total tokens')
@@ -3265,6 +3569,13 @@ export class AgentProductRuntime {
         )
         await recoverAgentRunTasks(this.#knex, claim)
       }
+      const specialistHandoff = await this.#executeSpecialist(claim, {
+        message: [...messages].reverse().find(message => message.role === 'user')?.content ?? '',
+        signal: executionSignal,
+        dispatchBudget,
+        ...(currentPage === undefined ? {} : { currentPage }),
+        ...(knowledgeContext === undefined ? {} : { knowledgeContext })
+      })
       let tasks = await listAgentRunTasks(this.#knex, claim.id)
       if (continuation === null) {
         if ((!this.#orchestration.enabled || claim.executionMode !== 'agent') && tasks.some(task => task.status === 'pending' || task.status === 'running')) {
@@ -3274,6 +3585,7 @@ export class AgentProductRuntime {
         const latestUserMessage = [...messages].reverse().find(message => message.role === 'user')?.content ?? ''
         if (
           !mediaRequest &&
+          specialistHandoff === undefined &&
           this.#orchestration.enabled &&
           claim.executionMode === 'agent' &&
           tasks.length === 0 &&
@@ -3366,6 +3678,7 @@ export class AgentProductRuntime {
               }
             }),
         ...(research === undefined ? {} : { research }),
+        ...(specialistHandoff === undefined ? {} : { specialistHandoff }),
         ...(currentPage === undefined ? {} : { currentPage }),
         ...(knowledgeContext === undefined ? {} : { knowledgeContext })
       }

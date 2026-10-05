@@ -1,4 +1,5 @@
 import type { AgentKnowledgeContext } from './knowledge-context.ts'
+import type { SpecialistInvocationView } from './specialists.ts'
 export const AGENT_PERMISSION_KEYS = ['use:agents', 'use:agent-browser', 'use:mcp'] as const
 
 export type AgentPermissionKey = (typeof AGENT_PERMISSION_KEYS)[number]
@@ -551,11 +552,26 @@ export interface AgentEvent {
   readonly createdAt: string
 }
 
+export interface AgentRoutingDecisionView {
+  readonly runId: string
+  readonly strategy: 'stay' | 'swap' | 'delegate'
+  readonly rootProfileVersionId: string
+  readonly specialistProfileVersionId: string | null
+  readonly reason: string
+  readonly costs: {
+    readonly stayMicros: number | null
+    readonly coldSwapMicros: number | null
+    readonly delegateMicros: number | null
+  } | null
+}
+
 export interface AgentThreadState {
   readonly session: AgentSessionView
   readonly messages: readonly AgentMessageView[]
   readonly tools: readonly AgentToolCallView[]
   readonly tasks: readonly AgentTaskView[]
+  readonly specialistInvocations: readonly SpecialistInvocationView[]
+  readonly routingDecisions: readonly AgentRoutingDecisionView[]
   readonly goal: AgentGoalView | null
   readonly proposals: readonly AgentProposalView[]
   readonly artifacts: readonly AgentArtifactView[]
