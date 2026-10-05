@@ -8,6 +8,7 @@ import {
   AGENT_TOOL_CALL_NAMES,
   AGENT_TOOL_CONTROL_NAMES,
   isTerminalAgentRunStatus,
+  isExternalMcpToolCallName,
   type AgentActionName,
   type AgentActionRisk,
   type AgentApprovalView,
@@ -48,6 +49,7 @@ const runStatusSchema = z.enum(['queued', 'running', 'awaiting_approval', 'succe
 const proposalStatusSchema = z.enum(AGENT_PROPOSAL_STATUSES)
 const approvalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled'])
 const riskSchema = z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write'])
+const toolRiskSchema = z.union([riskSchema, z.literal('external')])
 
 const iso = (value: Date | string): string => (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
 const nullableIso = (value: Date | string | null): string | null => (value === null ? null : iso(value))
@@ -195,15 +197,17 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
     if (event.type === 'tool.started') {
       if (Object.hasOwn(event.data, 'contextExclusion'))
         throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool start cannot have a context exclusion', 500)
-      const actionName = stringValue(event.data.actionName, 128)
-      const risk = riskSchema.safeParse(event.data.risk)
+      const actionName = stringValue(event.data.actionName, 192)
+      const external = isExternalMcpToolCallName(actionName)
+      const risk = toolRiskSchema.safeParse(event.data.risk)
       const title = stringValue(event.data.title, 255)
       const proposalId = event.data.proposalId
       if (
         actionName === null ||
-        !toolCallNames.has(actionName) ||
+        !(toolCallNames.has(actionName) || external) ||
         !risk.success ||
         title === null ||
+        (external ? risk.data !== 'external' || (proposalId !== undefined && proposalId !== null) : risk.data === 'external') ||
         (toolControlNames.has(actionName) && (risk.data !== 'read' || (proposalId !== undefined && proposalId !== null)))
       )
         throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool start event is invalid', 500)
@@ -234,15 +238,25 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
     if (!tool) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool event has no start boundary', 500)
     if (tool.completedAt !== null) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool activity has multiple terminal events', 500)
     const eventActionName = event.data.actionName
-    if (eventActionName !== undefined && (typeof eventActionName !== 'string' || !toolCallNames.has(eventActionName) || eventActionName !== tool.actionName))
+    if (
+      eventActionName !== undefined &&
+      (typeof eventActionName !== 'string' ||
+        !(toolCallNames.has(eventActionName) || isExternalMcpToolCallName(eventActionName)) ||
+        eventActionName !== tool.actionName)
+    )
       throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool event action is invalid', 500)
-    if (toolControlNames.has(tool.actionName) && event.data.proposalId !== undefined && event.data.proposalId !== null)
-      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool control has an invalid proposal association', 500)
+    if (
+      (toolControlNames.has(tool.actionName) || isExternalMcpToolCallName(tool.actionName)) &&
+      event.data.proposalId !== undefined &&
+      event.data.proposalId !== null
+    )
+      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool has an invalid proposal association', 500)
     if (event.type === 'tool.progress') {
       const summary = stringValue(event.data.summary)
       if (summary !== null) tool.summary = summary
     } else if (event.type === 'proposal.created') {
-      if (toolControlNames.has(tool.actionName)) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool control cannot create a proposal', 500)
+      if (toolControlNames.has(tool.actionName) || isExternalMcpToolCallName(tool.actionName))
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool cannot create a proposal', 500)
       tool.state = 'awaitingApproval'
       tool.proposalId = stringValue(event.data.proposalId, 64)
     } else if (event.type === 'tool.completed') {
@@ -699,7 +713,6 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     executionMode: session.executionMode,
     version: session.version,
     providerProfileId: session.providerProfileId,
-    googleSearchEnabled: session.googleSearchEnabled,
     profileResolutionToken: options.profileResolutionToken(session),
     skills: skillRows.map(skillView),
     currentRun,

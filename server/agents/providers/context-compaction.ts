@@ -1,7 +1,6 @@
 import type { AxChatRequest } from '@ax-llm/ax'
 import { type AgentCompactionExposure, type AgentCompactionPolicy, agentCompactionSha256 } from '../compaction.ts'
 import { AgentRepositoryError } from '../repository.ts'
-import { geminiInteractionCompactionPrefix } from './gemini-interactions.ts'
 
 type Message = AxChatRequest['chatPrompt'][number]
 export interface AgentCompactionPromptState {
@@ -46,13 +45,12 @@ export const agentCompactionContextMessage = (summary: string, scope: 'history' 
 /** Backslashes attain the worst escaping expansion when JSON is nested in a chat string. */
 const maximumSummary = (encodedBytes: number): string => '\\'.repeat(Math.max(0, Math.floor((encodedBytes - 2) / 2)))
 
-const visibleTranscript = (messages: readonly Message[], gemini: boolean): readonly Readonly<Record<string, unknown>>[] =>
+const visibleTranscript = (messages: readonly Message[]): readonly Readonly<Record<string, unknown>>[] =>
   messages.flatMap((message): Readonly<Record<string, unknown>>[] => {
     if (message.role === 'system') return []
     if (message.role === 'function') return [{ role: 'tool', callId: message.functionId, result: message.result, isError: message.isError === true }]
     if (message.role === 'assistant')
       return [
-        ...(gemini ? geminiInteractionCompactionPrefix(message) : []),
         {
           role: 'assistant',
           content: message.content ?? '',
@@ -83,10 +81,9 @@ export const agentCompactionSummaryPrompt = (
   messages: readonly Message[],
   previousSummary: string | null,
   maximumSummaryBytes: number,
-  policy: AgentCompactionPolicy,
-  gemini: boolean
+  policy: AgentCompactionPolicy
 ): { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly sourceSha256: string } => {
-  const source = { previousSummary, transcript: visibleTranscript(messages, gemini) }
+  const source = { previousSummary, transcript: visibleTranscript(messages) }
   return {
     sourceSha256: agentCompactionSha256(JSON.stringify(source)),
     chatPrompt: [
@@ -136,7 +133,6 @@ export const planAgentContextCompaction = (input: {
   readonly policy: AgentCompactionPolicy
   readonly contextTokens: number
   readonly canCompactHistory: boolean
-  readonly gemini: boolean
   readonly force?: boolean
   /** Compact at the relaxed turn-boundary threshold: the agent has finished responding and the user's turn is next. */
   readonly eager?: boolean
@@ -152,9 +148,7 @@ export const planAgentContextCompaction = (input: {
   if (
     !input.force &&
     initial.totalExposureTokens <=
-      (input.eager === true && input.preserveCachePrefix !== true
-        ? input.policy.turnBoundaryTriggerExposureTokens
-        : input.policy.triggerExposureTokens)
+      (input.eager === true && input.preserveCachePrefix !== true ? input.policy.turnBoundaryTriggerExposureTokens : input.policy.triggerExposureTokens)
   )
     return null
   let state = input.state
@@ -213,7 +207,7 @@ export const planAgentContextCompaction = (input: {
         const maximumSummaryBytes = Math.min(input.policy.summaryBytes, Math.floor(removedBytes / 4))
         if (maximumSummaryBytes < 256) continue
         const source = messages.slice(start, end)
-        const prompt = agentCompactionSummaryPrompt(source, previousSummary, maximumSummaryBytes, input.policy, input.gemini)
+        const prompt = agentCompactionSummaryPrompt(source, previousSummary, maximumSummaryBytes, input.policy)
         const exposure = input.summaryExposure(prompt.chatPrompt)
         if (exposure.serializedRequestBytes + input.policy.summaryOutputTokens > input.contextTokens) break
         const window: AgentCompactionWindow = {

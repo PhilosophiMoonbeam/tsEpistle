@@ -19,7 +19,6 @@ import {
   type AgentActionName,
   type AgentCurrentPageHint,
   type AgentEventData,
-  type AgentGoogleSearchGrounding,
   type AgentTokenUsage,
   TOOL_DISCOVERY_CONTROL_NAME
 } from '../../../shared/agents/contracts.ts'
@@ -33,13 +32,14 @@ import {
   agentCompactionPolicy,
   agentCompactionSha256,
   agentCompactionSummaryBytes,
-  agentGroundedExpiry,
   readAgentCompactionCheckpoint
 } from '../compaction.ts'
 import { type AgentApprovalContinuationCheckpoint, withInvokingAgentRunLease } from '../coordinator.ts'
 import { loadAgentMediaPayload } from '../media.ts'
 import { prepareAgentPdf } from '../pdf-preparation.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import type { ExternalMcpService } from '../external-mcp.ts'
+import { assertExternalMcpResultMedia, ExternalMcpEngineContext, type ExternalMcpEngineBinding } from './external-mcp-engine.ts'
 import type {
   AgentDispatchBudgetReservation,
   AgentDispatchBudgetSequence,
@@ -67,12 +67,6 @@ import {
   deriveAgentProviderResourceLimits,
   encodeAgentProviderContinuation
 } from './factory.ts'
-import {
-  combineGeminiInteractionState,
-  type GeminiInteractionStatus,
-  readGeminiGoogleSearchGrounding,
-  readGeminiInteractionStatus
-} from './gemini-interactions.ts'
 import { agentVideoCostMicros } from './media-pricing.ts'
 import { presentDomainObservation } from './action-observations.ts'
 import {
@@ -90,8 +84,6 @@ import { acceptCumulativeAgentProviderUsage, assertAgentTokenUsage, readAgentPro
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
-const MAX_GOOGLE_SEARCH_SUGGESTIONS = 8
-const MAX_GOOGLE_SEARCH_SUGGESTIONS_BYTES = 128 * 1_024
 const MAX_ANSWER_CITATIONS = 64
 const MAX_SUBAGENT_CITATIONS = 20
 const MAX_PRESENTATION_DELTAS = 64
@@ -2847,12 +2839,10 @@ interface TurnResult extends AgentTokenUsage {
   readonly costMicros: number
   readonly deniedToolCall?: true
   readonly finishReason?: AxChatResponseResult['finishReason']
-  readonly providerStatus?: GeminiInteractionStatus
   readonly rootRequestPlan?: readonly RootRequestFacet[]
   readonly rootUnresolvedFacets?: readonly number[]
   readonly rootFramingIssue?: string
   readonly rootMetadataPresent?: true
-  readonly googleSearchGrounding?: AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }
   readonly performance?: {
     readonly serializedRequestBytes: number
     readonly serializationMs: number
@@ -2880,7 +2870,6 @@ const modelTurnData = (turn: number, result: TurnResult, outcome: 'tool_calls' |
   contentTruncated: result.content.length > MAX_DIAGNOSTIC_TURN_CHARACTERS,
   actionCallIds: result.calls.map(call => call.id),
   ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason }),
-  ...(result.providerStatus === undefined ? {} : { providerStatus: result.providerStatus }),
   ...(result.performance === undefined ? {} : { performance: result.performance })
 })
 
@@ -2902,7 +2891,6 @@ interface ProviderResponseAccumulator {
   readonly calls: Map<string, MutableToolCall>
   readonly contentFragments: string[]
   readonly thoughtBlocks: Map<string, { readonly block: NonNullable<AxChatResponseResult['thoughtBlocks']>[number]; readonly bytes: number }>
-  googleSearchGrounding?: AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }
   retainedBytes: number
   contentBytes: number
   incomingBytes: number
@@ -2912,7 +2900,6 @@ interface ProviderResponseAccumulator {
   argumentFragments: number
   thoughtFragments: number
   finishReason?: AxChatResponseResult['finishReason']
-  providerStatus?: GeminiInteractionStatus
 }
 
 const invalidProviderResponse = (message: string): never => {
@@ -3256,6 +3243,7 @@ interface ProviderTools {
   readonly functions: NonNullable<AxChatRequest['functions']>
   readonly actionNames: ReadonlyMap<string, string>
   readonly turn: ToolDiscoveryTurn
+  readonly externalBindings?: ReadonlyMap<string, ExternalMcpEngineBinding>
 }
 
 type ChatPromptMessage = AxChatRequest['chatPrompt'][number]
@@ -3292,6 +3280,7 @@ interface ProviderExposure {
   readonly outputExposureTokens: number
   readonly totalExposureTokens: number
   readonly serializedRequestBytes: number
+  readonly unmeasuredExternalMedia: boolean
 }
 
 const providerExposureFor = (
@@ -3301,7 +3290,16 @@ const providerExposureFor = (
   maxOutputTokens: number
 ): ProviderExposure => {
   const serializedRequestBytes = serializedProviderRequestBytes(provider, tools, chatPrompt, maxOutputTokens)
-  const hasMedia = chatPrompt.some(message => message.role === 'user' && Array.isArray(message.content) && message.content.some(part => part.type === 'file'))
+  const unmeasuredExternalMedia = chatPrompt.some(
+    message =>
+      message.role === 'function' &&
+      message.protocolResult?.protocol.kind === 'mcp' &&
+      message.content?.some(part => part.type === 'image' || part.type === 'audio' || part.type === 'file')
+  )
+  // Remote binary size is not a proven model-token bound; use the existing unmeasured-media context ceiling.
+  const hasMedia =
+    unmeasuredExternalMedia ||
+    chatPrompt.some(message => message.role === 'user' && Array.isArray(message.content) && message.content.some(part => part.type === 'file'))
   const inputExposureTokens = Math.max(
     0,
     hasMedia
@@ -3313,7 +3311,8 @@ const providerExposureFor = (
     inputExposureTokens,
     outputExposureTokens,
     totalExposureTokens: safeUsageAddition(inputExposureTokens, outputExposureTokens, 'Provider exposure'),
-    serializedRequestBytes
+    serializedRequestBytes,
+    unmeasuredExternalMedia
   }
 }
 const boundedAttemptWithinBudget = (
@@ -3400,6 +3399,19 @@ const providerTools = (
     }
   })
   return { mode, functions, actionNames, turn }
+}
+
+const withExternalTools = (tools: ProviderTools | null, context: ExternalMcpEngineContext | undefined): ProviderTools | null => {
+  if (!context || context.bindings.size === 0) return tools
+  if (tools?.mode === 'prompt') throw new AgentRepositoryError('EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED', 'External MCP requires native tool calling', 409)
+  const functions = [...(tools?.functions ?? [])]
+  const actionNames = new Map(tools?.actionNames ?? [])
+  for (const [name, binding] of context.bindings) {
+    if (actionNames.has(name)) throw new AgentRepositoryError('EXTERNAL_MCP_TOOL_COLLISION', 'External MCP tools conflict with host tools', 409)
+    functions.push(binding.definition)
+    actionNames.set(name, binding.actionName)
+  }
+  return { mode: 'native', functions, actionNames, turn: tools?.turn ?? createToolDiscovery([]).beginTurn(), externalBindings: context.bindings }
 }
 
 const promptToolDefinitions = (tools: ProviderTools): readonly PromptToolDefinition[] =>
@@ -3537,7 +3549,7 @@ const fullProviderExposureFor = (
 ): ProviderExposure => {
   const exposure = providerExposureFor(provider, tools, chatPrompt, maxOutputTokens)
   let inputExposureTokens = Math.max(exposure.inputExposureTokens, exposure.serializedRequestBytes)
-  if (measuredMediaTokens !== undefined) {
+  if (measuredMediaTokens !== undefined && !exposure.unmeasuredExternalMedia) {
     // Match the dispatch admission formula exactly once every referenced attachment has a measured count.
     const media = measuredPromptMediaTokens(chatPrompt, measuredMediaTokens)
     if (!media.unmeasured) {
@@ -3571,7 +3583,6 @@ const compactionPlanFor = (
     eager,
     preserveCachePrefix,
     scope,
-    gemini: provider.continuationDialect === 'gemini-interactions-v1',
     ordinaryExposure: current =>
       fullProviderExposureFor(provider, tools, [systemMessage, ...current.conversation, ...current.active], maxOutputTokens, measuredMediaTokens),
     summaryExposure: chatPrompt => fullProviderExposureFor(provider, null, chatPrompt, policy.summaryOutputTokens, measuredMediaTokens),
@@ -3580,11 +3591,7 @@ const compactionPlanFor = (
 }
 
 const compactionContextExpired = (request: AgentEngineRequest): boolean => {
-  const expiresAt = agentCompactionMinimumExpiry(
-    request.compaction?.groundedExpiresAt,
-    request.compaction?.checkpoint?.metadata.groundedExpiresAt,
-    request.googleSearchEnabled ? agentGroundedExpiry(request.run.queuedAt) : null
-  )
+  const expiresAt = agentCompactionMinimumExpiry(request.compaction?.groundedExpiresAt, request.compaction?.checkpoint?.metadata.groundedExpiresAt, null)
   return expiresAt !== null && Date.parse(expiresAt) <= Date.now()
 }
 
@@ -4180,13 +4187,9 @@ const requestEvidenceDisclosure = (facets: readonly RootRequestFacet[] | undefin
   return lines.length === 0 ? '' : `\n\n## Evidence limits\n\n${lines.join('\n\n')}`
 }
 const OUTPUT_LIMIT_DISCLOSURE = 'The provider reached its output limit before completing this response. Submit an explicit follow-up to continue.'
-const THINKING_BUDGET_DISCLOSURE =
-  'The provider ended this response because its internal thinking budget was exhausted. Submit an explicit follow-up to continue.'
 const CONTINUE_SUGGESTION = { id: 'continue-output-limit', label: 'Continue', prompt: 'Continue the response from where it stopped.' } as const
-const outputLimitDisclosureFor = (status: GeminiInteractionStatus | undefined, publishedAny: boolean): string => {
-  if (!publishedAny) return 'The provider stopped before publishing any visible text this turn. Submit an explicit follow-up to continue.'
-  return status === 'budget_exceeded' ? THINKING_BUDGET_DISCLOSURE : OUTPUT_LIMIT_DISCLOSURE
-}
+const outputLimitDisclosureFor = (publishedAny: boolean): string =>
+  publishedAny ? OUTPUT_LIMIT_DISCLOSURE : 'The provider stopped before publishing any visible text this turn. Submit an explicit follow-up to continue.'
 const providerResultChatMessage = (mode: 'native' | 'prompt', callId: string, providerName: string, result: unknown, isError = false): ChatPromptMessage =>
   mode === 'native'
     ? { role: 'function', functionId: callId, result: JSON.stringify(result), ...(isError ? { isError: true } : {}) }
@@ -4262,6 +4265,7 @@ interface PreparedEngineContext {
   readonly discoveryTurn: ToolDiscoveryTurn | null
   readonly tools: ProviderTools | null
   readonly skillCatalog: unknown
+  readonly externalMcp: ExternalMcpEngineContext | undefined
 }
 const fitsSynthesisReserve = (
   provider: AgentProviderService,
@@ -4363,13 +4367,39 @@ export class AxAgentEngine implements AgentEngine {
   readonly #factory: AgentProviderFactory
   readonly #actions: AgentActionSessionProvider | undefined
   readonly #preparePdf: typeof prepareAgentPdf
+  readonly #externalMcp: ExternalMcpService | undefined
   /** Provider-measured prompt tokens per attachment id, kept across runs for compaction planning. */
   readonly #measuredMediaPromptTokens = new Map<string, number>()
 
-  constructor(factory: AgentProviderFactory, actions?: AgentActionSessionProvider, preparePdf: typeof prepareAgentPdf = prepareAgentPdf) {
+  constructor(
+    factory: AgentProviderFactory,
+    actions?: AgentActionSessionProvider,
+    preparePdf: typeof prepareAgentPdf = prepareAgentPdf,
+    options: { readonly externalMcp?: ExternalMcpService } = {}
+  ) {
     this.#factory = factory
     this.#actions = actions
     this.#preparePdf = preparePdf
+    this.#externalMcp = options.externalMcp
+  }
+
+  async routingRequirements(ownerId: number, signal: AbortSignal): Promise<{ externalMcp: boolean }> {
+    signal.throwIfAborted()
+    if (!this.#externalMcp) return { externalMcp: false }
+    try {
+      // The HTTP list API requires an authenticated session authVersion; this hook
+      // owns an admitted internal run, so use the runtime owner-scoped lease API.
+      const lease = await this.#externalMcp.openForUser(ownerId, { signal })
+      try {
+        signal.throwIfAborted()
+        return { externalMcp: lease.servers.length > 0 }
+      } finally {
+        await lease.close()
+      }
+    } catch (error) {
+      if (error instanceof AgentRepositoryError && error.code === 'EXTERNAL_MCP_DISABLED') return { externalMcp: false }
+      throw error
+    }
   }
 
   async #authorizeMedia(request: AgentEngineRequest): Promise<void> {
@@ -4684,11 +4714,10 @@ export class AxAgentEngine implements AgentEngine {
 
   async #prepare(request: AgentEngineRequest, includeSkillCatalog: boolean): Promise<PreparedEngineContext> {
     let actionSession: AxActionSession | null = null
+    let externalMcp: ExternalMcpEngineContext | undefined
     try {
       if (request.signal.aborted) throw request.signal.reason
-      const provider = await this.#factory.create(request.run.providerProfileVersionId, {
-        googleSearchEnabled: (request.purpose ?? 'root') === 'root' && request.googleSearchEnabled === true
-      })
+      const provider = await this.#factory.create(request.run.providerProfileVersionId)
       if (request.purpose !== 'planner' && request.run.executionMode === 'agent' && this.#actions) actionSession = await this.#actions.open(request)
       let skillCatalog: unknown = null
       if (includeSkillCatalog && request.purpose !== 'subagent' && actionSession?.functions.some(action => action.name === 'skills.list')) {
@@ -4764,8 +4793,15 @@ export class AxAgentEngine implements AgentEngine {
         discoveryTurn = discovery.beginTurn()
         tools = providerTools(actionSession, provider.capabilities.toolCalling, discoveryTurn)
       }
-      return { provider, actionSession, discovery, discoveryTurn, tools, skillCatalog }
+      if (this.#externalMcp && request.run.executionMode === 'agent' && (request.purpose ?? 'root') === 'root' && request.actionAllowlist === undefined) {
+        externalMcp = await ExternalMcpEngineContext.open(this.#externalMcp, request.run.ownerId, request.signal)
+        if (externalMcp && provider.capabilities.toolCalling !== 'native')
+          throw new AgentRepositoryError('EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED', 'External MCP requires native tool calling', 409)
+        tools = withExternalTools(tools, externalMcp)
+      }
+      return { provider, actionSession, discovery, discoveryTurn, tools, skillCatalog, externalMcp }
     } catch (error) {
+      await externalMcp?.close()
       if (actionSession !== null) {
         try {
           actionSession.close()
@@ -4831,7 +4867,7 @@ export class AxAgentEngine implements AgentEngine {
         undefined,
         false,
         'all',
-        (request.purpose ?? 'root') === 'root' && provider.continuationDialect === 'gemini-interactions-v1'
+        (request.purpose ?? 'root') === 'root' && provider.transportKind === 'gemini-api'
       )
       const original = fullProviderExposureFor(provider, tools, [systemMessage, ...conversation], requestedMaxOutputTokens)
       const originalFits = original.serializedRequestBytes + requestedMaxOutputTokens <= provider.capabilities.maxContextTokens
@@ -4871,6 +4907,7 @@ export class AxAgentEngine implements AgentEngine {
       primaryFailure = error instanceof AgentExecutionFailure ? error : classifyAgentExecutionFailure(error, 'setup')
     }
     const closeFailure = finalizeActionSession()
+    await prepared.externalMcp?.close()
     if (primaryFailure !== undefined) throw primaryFailure
     if (closeFailure) throw closeFailure
     return result!
@@ -4979,7 +5016,6 @@ export class AxAgentEngine implements AgentEngine {
     let totalTokens = 0
     let completeUsage: AgentProviderUsage | undefined
     let observedUsage: AgentProviderUsage | undefined
-    let terminalPresentationFailure: unknown
     let reportedCachedInputTokens: number | null = null
     let reportedCacheCreationInputTokens: number | null = null
     let responseAccepted = false
@@ -5010,22 +5046,7 @@ export class AxAgentEngine implements AgentEngine {
           if (typeof result.id !== 'string' || hasControlCharacter(result.id)) invalidProviderResponse('Provider returned an invalid result ID')
           boundedProviderStringBytes(result.id, MAX_PROVIDER_IDENTIFIER_BYTES, 'Provider returned an invalid result ID')
         }
-        let googleSearchGrounding: (AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }) | undefined
-        try {
-          googleSearchGrounding = readGeminiGoogleSearchGrounding(result)
-        } catch (error) {
-          if (responseUsage === null) throw error
-          terminalPresentationFailure = error
-          continue
-        }
-        if (googleSearchGrounding !== undefined) {
-          if (accumulator.googleSearchGrounding !== undefined && canonicalJson(accumulator.googleSearchGrounding) !== canonicalJson(googleSearchGrounding))
-            invalidProviderResponse('Provider returned conflicting Google Search grounding metadata')
-          accumulator.googleSearchGrounding = googleSearchGrounding
-        }
         observeFinishReason(result.finishReason)
-        const providerStatus = readGeminiInteractionStatus(result)
-        if (providerStatus !== undefined && accumulator.providerStatus === undefined) accumulator.providerStatus = providerStatus
         if (result.content !== undefined) {
           if (typeof result.content !== 'string') invalidProviderResponse('Provider returned invalid response content')
           const contentLimit = provider.transportKind === 'legacy-completions' ? 128_000 : limits.fragmentBytes
@@ -5050,7 +5071,7 @@ export class AxAgentEngine implements AgentEngine {
     }
     const mediaInputExposure = preliminaryExposure.serializedRequestBytes + (preparedMedia.mediaTokens ?? 0)
     const exposure =
-      preparedMedia.mediaTokens !== null
+      preparedMedia.mediaTokens !== null && !preliminaryExposure.unmeasuredExternalMedia
         ? { ...preliminaryExposure, inputExposureTokens: mediaInputExposure, totalExposureTokens: mediaInputExposure + maxOutputTokens }
         : preliminaryExposure
     const dispatchBudget = request.dispatchBudget
@@ -5111,6 +5132,8 @@ export class AxAgentEngine implements AgentEngine {
       request.signal.throwIfAborted()
       if (preparedMedia.mediaTokens !== null) await this.#authorizeMedia(request)
       assertCompactionContextFresh(request)
+      await request.authorizeDispatch?.()
+      request.signal.throwIfAborted()
       providerDispatched = true
       dispatchedAt = performance.now()
       response = await provider.service.chat(providerRequest, {
@@ -5189,11 +5212,6 @@ export class AxAgentEngine implements AgentEngine {
         totalTokens = exposure.totalExposureTokens
         completeUsage = { inputTokens, outputTokens, totalTokens }
       }
-      if (terminalPresentationFailure !== undefined) {
-        if (streamReleaseFailed) throw classifyAgentExecutionFailure(streamReleaseFailure, 'provider_stream')
-        responseAccepted = true
-        throw classifyAgentExecutionFailure(terminalPresentationFailure, 'provider_response')
-      }
       const rawContent = accumulator.contentFragments.join('')
       const metadata: RootResponseMetadata = metadataContext === undefined ? { content: rawContent } : extractRootRequestMetadata(rawContent, metadataContext)
       const content = metadata.content
@@ -5249,7 +5267,7 @@ export class AxAgentEngine implements AgentEngine {
       const settledAt = performance.now()
       return {
         content: deniedToolCall ? '' : content,
-        ...(metadata.metadataPresent && provider.continuationDialect === 'gemini-interactions-v1' ? { nativeContent: rawContent } : {}),
+        ...(metadata.metadataPresent && provider.continuationDialect === 'gemini-generate-content-v1' ? { nativeContent: rawContent } : {}),
         calls,
         ...(deniedToolCall ? { deniedToolCall: true as const } : {}),
         ...(metadata.metadataPresent ? { rootMetadataPresent: true as const } : {}),
@@ -5274,9 +5292,7 @@ export class AxAgentEngine implements AgentEngine {
           cacheCreationInputTokensReported: estimatedUsage ? null : reportedCacheCreationInputTokens,
           totalTokensReported: estimatedUsage ? null : totalTokens
         },
-        ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason }),
-        ...(accumulator.providerStatus === undefined ? {} : { providerStatus: accumulator.providerStatus }),
-        ...(accumulator.googleSearchGrounding === undefined ? {} : { googleSearchGrounding: accumulator.googleSearchGrounding })
+        ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason })
       }
     } catch (error) {
       const originalFailureStage = failureStage
@@ -5331,6 +5347,17 @@ export class AxAgentEngine implements AgentEngine {
       }
     }
     try {
+      const externalMcp = prepared.externalMcp
+      if (externalMcp) {
+        const authorizeDispatch = request.authorizeDispatch
+        request = {
+          ...request,
+          authorizeDispatch: async () => {
+            await authorizeDispatch?.()
+            await externalMcp.revalidate()
+          }
+        }
+      }
       const cacheAwareRoot = (request.purpose ?? 'root') === 'root' && provider.preserveCachePrefix === true
       const systemMessageFor = (turnTools: ProviderTools | null): ChatPromptMessage => systemMessageForRequest(request, skillCatalog, turnTools, cacheAwareRoot)
       const preparedConversation = conversationFor(request)
@@ -5468,26 +5495,6 @@ export class AxAgentEngine implements AgentEngine {
         activeBatchEnds.push(activePrompt.length)
       }
       let inputTokens = 0
-      const googleSearchSuggestions: string[] = []
-      const collectGoogleSearchSuggestions = (grounding: TurnResult['googleSearchGrounding']): void => {
-        if (grounding === undefined) return
-        for (const suggestion of grounding.searchSuggestions) {
-          const candidate = [...googleSearchSuggestions, suggestion]
-          if (
-            suggestion.length > 32_768 ||
-            candidate.length > MAX_GOOGLE_SEARCH_SUGGESTIONS ||
-            Buffer.byteLength(JSON.stringify({ runId: request.run.id, suggestions: candidate }), 'utf8') > MAX_GOOGLE_SEARCH_SUGGESTIONS_BYTES
-          )
-            invalidProviderResponse('Provider returned too many Google Search suggestions')
-          googleSearchSuggestions.push(suggestion)
-        }
-      }
-      let googleSearchSuggestionsPublished = false
-      const publishGoogleSearchSuggestions = async (): Promise<void> => {
-        if (googleSearchSuggestionsPublished || googleSearchSuggestions.length === 0) return
-        googleSearchSuggestionsPublished = true
-        if ((request.purpose ?? 'root') === 'root') await sink.googleSearchSuggestions?.(Object.freeze([...googleSearchSuggestions]))
-      }
       let outputTokens = 0
       let totalTokens = 0
       let costMicros = 0
@@ -5899,7 +5906,7 @@ export class AxAgentEngine implements AgentEngine {
         let transferred = false
         try {
           request.signal.throwIfAborted()
-          const summarizer = await this.#factory.create(request.run.providerProfileVersionId, { purpose: 'agent', googleSearchEnabled: false })
+          const summarizer = await this.#factory.create(request.run.providerProfileVersionId, { purpose: 'agent' })
           if (
             summarizer.model !== provider.model ||
             summarizer.transportKind !== provider.transportKind ||
@@ -5912,13 +5919,7 @@ export class AxAgentEngine implements AgentEngine {
             request.signal.throwIfAborted()
             const before = contextState()
             const previousSummary = window.scope === 'history' ? historySummary : activeSummary
-            const summaryPrompt = agentCompactionSummaryPrompt(
-              window.messages,
-              previousSummary,
-              window.maximumSummaryBytes,
-              policy,
-              provider.continuationDialect === 'gemini-interactions-v1'
-            )
+            const summaryPrompt = agentCompactionSummaryPrompt(window.messages, previousSummary, window.maximumSummaryBytes, policy)
             if (failedCompactions.has(summaryPrompt.sourceSha256)) {
               if (!currentFits()) throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'This context could not be compacted safely', 413)
               return
@@ -5929,14 +5930,10 @@ export class AxAgentEngine implements AgentEngine {
               null,
               {
                 ...request,
-                googleSearchEnabled: false,
                 compaction: {
                   ...request.compaction,
                   sourcePrefixSha256: request.compaction?.sourcePrefixSha256 ?? [],
-                  groundedExpiresAt: agentCompactionMinimumExpiry(
-                    request.compaction?.groundedExpiresAt,
-                    request.googleSearchEnabled ? agentGroundedExpiry(request.run.queuedAt) : null
-                  )
+                  groundedExpiresAt: agentCompactionMinimumExpiry(request.compaction?.groundedExpiresAt, null)
                 },
                 ...(sequence === undefined ? {} : { dispatchBudget: sequence })
               },
@@ -5959,7 +5956,6 @@ export class AxAgentEngine implements AgentEngine {
               !compactionContextExpired(request) &&
               result.finishReason === 'stop' &&
               result.calls.length === 0 &&
-              result.googleSearchGrounding === undefined &&
               result.content.trim().length > 0 &&
               agentCompactionSummaryBytes(result.content) <= window.maximumSummaryBytes &&
               afterBytes < beforeBytes
@@ -5988,10 +5984,7 @@ export class AxAgentEngine implements AgentEngine {
                       .filter(message => message.content.length > 0 || (message.attachments?.length ?? 0) > 0)
                       .map(message => message.canonicalSource?.groundedExpiresAt)
                   )
-                : agentCompactionMinimumExpiry(
-                    request.compaction?.groundedExpiresAt,
-                    request.googleSearchEnabled ? agentGroundedExpiry(request.run.queuedAt) : null
-                  )
+                : agentCompactionMinimumExpiry(request.compaction?.groundedExpiresAt, null)
             if (groundedExpiresAt !== null && Date.parse(groundedExpiresAt) <= Date.now())
               throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Source context expired while compaction was running', 413)
             const binding = {
@@ -6179,6 +6172,10 @@ export class AxAgentEngine implements AgentEngine {
         } else {
           tools = null
         }
+        if (phase === 'collecting' && !requiredSourceRead && prepared.externalMcp) {
+          await prepared.externalMcp.refresh()
+          tools = withExternalTools(tools, prepared.externalMcp)
+        }
         const systemMessage = systemMessageFor(tools)
         const requestedMaxOutputTokens = Math.min(generationOutputCeiling(request, provider), remainingTokens)
         const promptValidationResults = turn === 0 ? initialValidationResults : new Map<string, Promise<boolean>>()
@@ -6338,7 +6335,6 @@ export class AxAgentEngine implements AgentEngine {
         inputTokens = safeUsageAddition(inputTokens, result.inputTokens, 'Aggregate input token usage')
         outputTokens = safeUsageAddition(outputTokens, result.outputTokens, 'Aggregate output token usage')
         totalTokens = safeUsageAddition(totalTokens, result.totalTokens, 'Aggregate total token usage')
-        collectGoogleSearchSuggestions(result.googleSearchGrounding)
         costMicros = safeUsageAddition(costMicros, result.costMicros, 'Aggregate provider cost')
         assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
         if (compactionContextExpired(request)) {
@@ -6516,7 +6512,7 @@ export class AxAgentEngine implements AgentEngine {
             await requireLiveEvidence(assessment, assessmentEvidence)
             const structured = request.purpose === 'planner' || request.purpose === 'subagent'
             if (!structured) {
-              const disclosure = outputLimitDisclosureFor(result.providerStatus, publishFragment)
+              const disclosure = outputLimitDisclosureFor(publishFragment)
               const publishedContent = publishFragment
                 ? `${result.content}${recentExcerptDisclosure(assessment.citationIds, assessmentEvidence)}${partialCoverageDisclosure(
                     executedOmittedCount(),
@@ -6525,7 +6521,6 @@ export class AxAgentEngine implements AgentEngine {
                 : disclosure
               await presentAcceptedContent(publishedContent, sink)
             }
-            if (publishFragment && !structured) await publishGoogleSearchSuggestions()
             const citations = !structured && publishFragment ? answerCitations(assessment.citationIds, assessmentEvidence) : []
             return {
               inputTokens,
@@ -6536,9 +6531,6 @@ export class AxAgentEngine implements AgentEngine {
               ...(!structured ? { suggestions: [CONTINUE_SUGGESTION] } : {}),
               ...(publishFragment && requestDisclosure.length > 0 ? { executionLimit: { reason: 'evidence' as const, publication: 'partial' as const } } : {}),
               ...(citations.length === 0 ? {} : { citations }),
-              ...(!publishFragment || result.googleSearchGrounding === undefined
-                ? {}
-                : { googleSearchGrounding: { citations: result.googleSearchGrounding.citations } }),
               ...(authoritySha256 === null || authoritySha256 === undefined ? {} : { authoritySha256 }),
               ...(omittedActionCallIds.size === 0
                 ? {}
@@ -6643,11 +6635,7 @@ export class AxAgentEngine implements AgentEngine {
           // Provider replay state must describe the exact durable assistant message.
           const continuationEligible =
             request.purpose !== 'planner' && request.purpose !== 'subagent' && !rootMetadataStripped && acceptedContent === result.content
-          const acceptedThoughtBlocks = !continuationEligible
-            ? []
-            : provider.continuationDialect === 'gemini-interactions-v1' && result.thoughtBlocks.length === 1
-              ? [combineGeminiInteractionState(activeSummary === null ? activePrompt : activePrompt.slice(1), result.thoughtBlocks[0]!)]
-              : result.thoughtBlocks
+          const acceptedThoughtBlocks = continuationEligible ? result.thoughtBlocks : []
           const acceptedProviderState =
             request.purpose !== 'planner' && request.purpose !== 'subagent' && acceptedThoughtBlocks.length > 0
               ? encodeAgentProviderContinuation(provider.continuationDialect, acceptedThoughtBlocks)
@@ -6659,7 +6647,6 @@ export class AxAgentEngine implements AgentEngine {
           if (closeFailure) throw closeFailure
           await requireLiveEvidence(assessment, assessmentEvidence)
           await presentAcceptedContent(acceptedContent, sink)
-          await publishGoogleSearchSuggestions()
           // The agent has finished responding and the user's turn is next: compact eagerly so the
           // next dispatch starts lean. The answer is already delivered, so this pass is best-effort;
           // failures keep the uncompacted history and never fail the completed response.
@@ -6676,7 +6663,6 @@ export class AxAgentEngine implements AgentEngine {
             costMicros,
             ...(requestDisclosure.length === 0 ? {} : { executionLimit: { reason: 'evidence' as const, publication: 'partial' as const } }),
             ...(citations.length === 0 ? {} : { citations }),
-            ...(result.googleSearchGrounding === undefined ? {} : { googleSearchGrounding: { citations: result.googleSearchGrounding.citations } }),
             ...(acceptedProviderState === undefined ? {} : { providerState: acceptedProviderState }),
             ...(authoritySha256 === null || authoritySha256 === undefined ? {} : { authoritySha256 }),
             ...(omittedActionCallIds.size === 0
@@ -6697,7 +6683,7 @@ export class AxAgentEngine implements AgentEngine {
         const activeDiscovery = discovery
         const activeActionSession = actionSession
         const activeDiscoveryTurn = discoveryTurn
-        if (activeTools === null || activeDiscovery === null || activeActionSession === null || activeDiscoveryTurn === null)
+        if (activeTools === null)
           throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider emitted action calls while provider tools were unavailable', 502)
         const mode = activeTools.mode
         await sink.event('model.turn', {
@@ -6817,9 +6803,10 @@ export class AxAgentEngine implements AgentEngine {
           const call = result.calls[callIndex]!
           const actionCallId = actionCallIdFor(request, call.id)
           const logicalName = activeTools.actionNames.get(call.providerName)
+          const externalBinding = activeTools.externalBindings?.get(call.providerName)
           const isControl = logicalName === TOOL_DISCOVERY_CONTROL_NAME
           const actionDescriptor = isControl ? undefined : activeTools.turn.activeFunctions.find(fn => fn.name === logicalName)
-          if (logicalName === undefined || (isControl ? activeTools.turn.control === null : actionDescriptor === undefined))
+          if (logicalName === undefined || (externalBinding === undefined && (isControl ? activeTools.turn.control === null : actionDescriptor === undefined)))
             throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider requested an unavailable action', 502)
           let input: unknown
           let inputJson: string | undefined
@@ -6837,8 +6824,12 @@ export class AxAgentEngine implements AgentEngine {
           await sink.event('tool.started', {
             actionCallId,
             actionName: logicalName,
-            title: isControl ? TOOL_DISCOVERY_TITLE : actionDescriptor!.title,
-            risk: isControl ? 'read' : actionDescriptor!.risk,
+            title: externalBinding
+              ? `External MCP: ${externalBinding.attribution.displayName} / ${externalBinding.native.name}`
+              : isControl
+                ? TOOL_DISCOVERY_TITLE
+                : actionDescriptor!.title,
+            risk: externalBinding ? 'external' : isControl ? 'read' : actionDescriptor!.risk,
             turn: turn + 1,
             ...(inputJson === undefined ? {} : { input: inputJson })
           })
@@ -6883,6 +6874,104 @@ export class AxAgentEngine implements AgentEngine {
             await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: inputErrorCode, summary: 'Action input was invalid.' })
             continue
           }
+          if (externalBinding && prepared.externalMcp) {
+            let externalInvocationStarted = false
+            try {
+              request.signal.throwIfAborted()
+              await prepared.externalMcp.revalidate()
+              if (!request.dispatchBudget)
+                throw new AgentRepositoryError('EXTERNAL_MCP_BUDGET_REQUIRED', 'External operations require an admitted run budget', 409)
+              await request.dispatchBudget.consumeTool()
+              totalToolCalls += 1
+              const candidate = await withInvokingAgentRunLease(request.signal, request.run, async () => {
+                if (!request.beforeExternalTool)
+                  throw new AgentRepositoryError('EXTERNAL_MCP_SIDE_EFFECT_FENCE_REQUIRED', 'External operations require a durable run fence', 409)
+                await request.beforeExternalTool()
+                externalInvocationStarted = true
+                return prepared.externalMcp!.invoke(externalBinding, input, call.id)
+              })
+              assertExternalMcpResultMedia(candidate.content, provider.nativeMediaCapabilities, provider.transportKind)
+              if (
+                limits.maxTokens !== undefined &&
+                candidate.content?.some(part => part.type === 'image' || part.type === 'audio' || part.type === 'file') &&
+                provider.capabilities.maxContextTokens > limits.maxTokens - totalTokens
+              )
+                throw new AgentRepositoryError(
+                  'AGENT_TOKEN_BUDGET_LIMITED',
+                  'External MCP media exceeds the remaining conservative model-context reservation; the operation was not retried.',
+                  409
+                )
+              if (
+                !(await fitsSynthesisWithCandidate(candidate, callIndex + 1, activeTools, systemMessageFor(activeTools))) ||
+                !fitsProviderResult(provider, activeTools, systemMessageFor(activeTools), conversation, activePrompt, candidate, requestedMaxOutputTokens)
+              ) {
+                omittedActionCallIds.add(actionCallId)
+                contextLimitedThisTurn = true
+                providerResultMessage(activePrompt, mode, call.id, call.providerName, {
+                  status: 'external_result_omitted',
+                  attribution: externalBinding.attribution,
+                  reason: 'context_capacity'
+                })
+                await sink.event(candidate.isError ? 'tool.failed' : 'tool.completed', {
+                  actionCallId,
+                  actionName: logicalName,
+                  ...(candidate.isError ? { errorCode: 'EXTERNAL_MCP_TOOL_ERROR' } : { contextExclusion: capacityContextExclusion('omitted') }),
+                  summary: 'External endpoint returned an untrusted result that exceeded response context capacity.'
+                })
+              } else {
+                activePrompt.push(candidate)
+                await sink.event(candidate.isError ? 'tool.failed' : 'tool.completed', {
+                  actionCallId,
+                  actionName: logicalName,
+                  result: candidate.result,
+                  ...(candidate.isError ? { errorCode: 'EXTERNAL_MCP_TOOL_ERROR' } : {}),
+                  cacheHit: false,
+                  reusedActionCallId: null,
+                  summary: candidate.isError ? 'External endpoint reported a tool error.' : 'Untrusted external MCP result received'
+                })
+              }
+            } catch (error) {
+              if (request.signal.aborted)
+                await sink.event('tool.failed', {
+                  actionCallId,
+                  actionName: logicalName,
+                  state: 'cancelled',
+                  errorCode: 'AGENT_RUN_CANCELLED',
+                  summary: 'External MCP operation was cancelled; cancellation does not undo possible external effects.'
+                })
+              request.signal.throwIfAborted()
+              const errorCode = error instanceof AgentRepositoryError ? error.code : 'EXTERNAL_MCP_CALL_FAILED'
+              providerResultMessage(
+                activePrompt,
+                mode,
+                call.id,
+                call.providerName,
+                {
+                  error: { code: errorCode, message: 'External MCP operation was unavailable; do not assume success or retry uncertain side effects.' },
+                  attribution: externalBinding.attribution
+                },
+                true
+              )
+              await sink.event('tool.failed', {
+                actionCallId,
+                actionName: logicalName,
+                errorCode,
+                summary:
+                  errorCode === 'EXTERNAL_MCP_MODALITY_UNSUPPORTED'
+                    ? 'External endpoint returned media that the selected model cannot consume; the operation was not retried.'
+                    : errorCode === 'AGENT_TOKEN_BUDGET_LIMITED'
+                      ? 'External endpoint returned media beyond this run’s remaining token budget; the operation was not retried.'
+                      : 'External MCP operation was unavailable.'
+              })
+              if (error instanceof AgentRepositoryError && (error.code === 'EXTERNAL_MCP_MODALITY_UNSUPPORTED' || error.code === 'AGENT_TOKEN_BUDGET_LIMITED'))
+                throw error
+              if (externalInvocationStarted)
+                throw new AgentRepositoryError('EXTERNAL_MCP_CALL_FAILED', 'External MCP operation could not be confirmed; it was not retried', 502)
+            }
+            continue
+          }
+          if (activeDiscovery === null || activeActionSession === null || activeDiscoveryTurn === null)
+            throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Wiki action session is unavailable', 502)
           const resolved = resolveToolDiscoveryCall(activeDiscoveryTurn, logicalName, input)
           if (resolved === null) {
             providerResultMessage(
@@ -7135,8 +7224,8 @@ export class AxAgentEngine implements AgentEngine {
         activeBatchEnds.push(activePrompt.length)
         if (!contextLimitedThisTurn && !toolBudgetExhausted && turn + 1 < maxTurns) {
           let nextTurnFits = true
-          const nextTurn = activeDiscovery.previewNextTurn()
-          const nextTools = providerTools(activeActionSession, mode, nextTurn)
+          const nextTurn = activeDiscovery?.previewNextTurn() ?? null
+          const nextTools = withExternalTools(providerTools(activeActionSession, mode, nextTurn), prepared.externalMcp)
           if (nextTools === null) nextTurnFits = false
           else {
             await compactContext(turn + 2, nextTools, requestedMaxOutputTokens)
@@ -7193,8 +7282,12 @@ export class AxAgentEngine implements AgentEngine {
       finalizeActionSession()
       throw classifyAgentExecutionFailure(error, 'unknown')
     } finally {
-      await sequenceForNextTurn?.close()
-      await finalizationSequence?.close()
+      try {
+        await prepared.externalMcp?.close()
+      } finally {
+        await sequenceForNextTurn?.close()
+        await finalizationSequence?.close()
+      }
     }
   }
 }

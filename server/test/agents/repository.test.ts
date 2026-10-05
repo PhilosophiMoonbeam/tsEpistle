@@ -1951,7 +1951,7 @@ describe('durable agent repositories', () => {
             costMicros: 13,
             outputLimited: true,
             contextLimit: { reason: 'tool_result_capacity', omittedActionCallIds: ['source-call'] },
-            providerState: { schemaVersion: 1, continuationDialect: 'gemini-interactions-v1', thoughtBlocks: [] }
+            providerState: { schemaVersion: 1, continuationDialect: 'gemini-generate-content-v1', thoughtBlocks: [] }
           }
         }
       },
@@ -3052,7 +3052,7 @@ describe('durable agent repositories', () => {
         totalTokens: 10,
         costMicros: 5,
         executionLimit: { reason: 'tools', publication: 'partial' } as const,
-        providerState: { schemaVersion: 1, continuationDialect: 'gemini-interactions-v1', thoughtBlocks: [] } as const
+        providerState: { schemaVersion: 1, continuationDialect: 'gemini-generate-content-v1', thoughtBlocks: [] } as const
       }
     })
     const runtime = new AgentProductRuntime(
@@ -3148,9 +3148,7 @@ describe('durable agent repositories', () => {
     expect(await runtime.runOnce()).toBe(false)
     expect(execute).toHaveBeenCalledOnce()
     await runtime.shutdown()
-
   })
-
 
   it('titles the first successful exchange with utility usage included in the run', async () => {
     const titledSessionId = '00000000-0000-4000-8000-000000000090'

@@ -145,15 +145,6 @@
     <p :id="composerIds.keyboardHelp" class="agent-composer__keyboard-help" :class="{ 'sr-only': coarseInput }">{{ keyboardHelp }}</p>
 
     <p v-if="composerNotice" class="agent-composer__notice" role="alert">{{ composerNotice }}</p>
-    <p
-      :id="composerIds.webNotice"
-      class="agent-composer__web-notice"
-      :class="{ 'agent-composer__web-notice--clipped': !googleSearchEnabled }"
-      :role="googleSearchEnabled ? 'note' : undefined"
-    >
-      <v-icon v-if="googleSearchEnabled" icon="mdi-web" size="15" aria-hidden="true" />
-      <span>{{ $t(googleSearchEnabled ? 'common:agentComposer.webNotice' : 'common:agentComposer.webAvailableNotice') }}</span>
-    </p>
 
     <AgentComposerMedia
       ref="mediaComposer"
@@ -290,28 +281,6 @@
             <p class="agent-composer__tool-menu-note">{{ $t('common:agentComposer.askNaturallyAssistantCan') }}</p>
           </v-list>
         </v-menu>
-        <v-tooltip v-if="!isControlFolded('web')" location="top" :text="googleSearchAvailable ? $t('common:agentComposer.webTooltip') : $t('common:agentComposer.webUnavailable')">
-          <template #activator="{ props: tooltipProps }">
-            <label
-              v-bind="tooltipProps"
-              class="agent-composer__web-search-toggle wiki-purpose-control"
-              :class="{ 'wiki-purpose-control--selected': googleSearchEnabled }"
-              :data-state="googleSearchEnabled ? 'selected' : undefined"
-            >
-              <input
-                type="checkbox"
-                :checked="googleSearchEnabled"
-                :aria-checked="googleSearchEnabled ? 'true' : 'false'"
-                :disabled="webSearchDisabled"
-                :aria-label="$t('common:agentComposer.useGoogleSearchConversation')"
-                :aria-describedby="composerIds.webNotice"
-                @change="toggleGoogleSearch"
-              >
-              <v-icon icon="mdi-web" size="17" aria-hidden="true" />
-              <span>{{ $t('common:agentComposer.web') }}</span>
-            </label>
-          </template>
-        </v-tooltip>
         <v-tooltip v-if="goalsEnabled && !goalMode && !isControlFolded('goal')" location="top" :text="goalDisabledReason || $t('common:agentComposer.defineDurableOutcomeMulti')">
           <template #activator="{ props: tooltipProps }">
             <span v-bind="tooltipProps" :tabindex="goalDisabledReason ? 0 : undefined" :aria-label="goalDisabledReason || undefined">
@@ -489,9 +458,6 @@ const props = defineProps<{
   sending: boolean
   canStop: boolean
   skillsEnabled: boolean
-  googleSearchAvailable: boolean
-  googleSearchEnabled: boolean
-  googleSearchBusy?: boolean
   goalsEnabled: boolean
   skills: readonly VisibleAgentSkill[]
   skillsLoading: boolean
@@ -511,7 +477,7 @@ const props = defineProps<{
   /** Keep the message field editable while a reply streams; sending still follows `disabled`. */
   draftEditable?: boolean
 }>()
-const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]]; updateGoogleSearch: [enabled: boolean] }>()
+const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const mediaComposer = useTemplateRef<{
   clear: () => void
   addFiles: (files: readonly File[]) => Promise<unknown>
@@ -792,17 +758,6 @@ const attachmentAdmissionError = ref('')
 const composerNotice = computed(() => error.value || attachmentAdmissionError.value)
 watch(attachmentAdmissionReason, () => { attachmentAdmissionError.value = '' })
 const inputDisabled = computed(() => props.draftEditable === true ? false : props.disabled || sendInProgress.value)
-const webSearchDisabled = computed(() =>
-  props.disabled || sendInProgress.value || props.networkBlocked || props.googleSearchBusy || (!props.googleSearchAvailable && !props.googleSearchEnabled)
-)
-const toggleGoogleSearch = (event: Event): void => {
-  const input = event.currentTarget
-  if (!(input instanceof HTMLInputElement)) return
-  const enabled = input.checked
-  input.checked = props.googleSearchEnabled
-  if (webSearchDisabled.value) return
-  emit('updateGoogleSearch', enabled)
-}
 let restoreInputWhenReady = false
 let mounted = false
 const composerId = useId()
@@ -815,7 +770,6 @@ const composerIds = {
   commandPartial: `${composerId}-command-partial`,
   commandEmpty: `${composerId}-command-empty`,
   status: `${composerId}-status`,
-  webNotice: `${composerId}-web-notice`,
   keyboardHelp: `${composerId}-keyboard-help`,
   attachmentReason: `${composerId}-attachment-reason`,
 } as const
@@ -864,20 +818,6 @@ const moreMenuItems = computed(() => {
       }
     })
   }
-  if (isControlFolded('web')) {
-    items.push({
-      key: 'web',
-      icon: 'mdi-web',
-      label: t('common:agentComposer.web'),
-      subtitle: props.googleSearchAvailable ? t('common:agentComposer.useGoogleSearchConversation') : t('common:agentComposer.googleSearchUnavailableProvider'),
-      checked: props.googleSearchEnabled === true,
-      disabled: webSearchDisabled.value,
-      run: () => {
-        if (webSearchDisabled.value) return
-        emit('updateGoogleSearch', !props.googleSearchEnabled)
-      }
-    })
-  }
   if (isControlFolded('create') && createAvailable.value) {
     for (const option of generationOptions.value) {
       items.push({
@@ -896,14 +836,14 @@ const moreMenuItems = computed(() => {
 /**
  * Fit-based folding of low-priority controls into the More menu. There is no
  * device detection: the left control group is measured, and whenever it
- * overflows its one row the lowest-priority inline control (Create, then Web)
+ * overflows its one row the lowest-priority inline control (Create, then Goal)
  * moves into the More menu; when space returns the last folded control is
  * restored. Skills always live inside the More menu, and Goal replaces their
  * former inline slot. Attach, the microphone, and Send/Stop never fold, and
  * the action bar never wraps. The fold state is UI-only.
  */
-type FoldableControl = 'create' | 'web' | 'goal'
-const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['create', 'web', 'goal']
+type FoldableControl = 'create' | 'goal'
+const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['create', 'goal']
 const foldedControls = ref<FoldableControl[]>([])
 const foldMeasureOverride = ref<(() => boolean) | null>(null)
 let foldResizeObserver: ResizeObserver | null = null
@@ -1735,7 +1675,6 @@ onBeforeUnmount(() => {
 .agent-composer__attach,
 .agent-composer__create,
 .agent-composer__goal-toggle,
-.agent-composer__web-search-toggle,
 .agent-composer__mic,
 .agent-composer__dictation-discard,
 .agent-composer__dictation-review,
@@ -1758,7 +1697,6 @@ onBeforeUnmount(() => {
 .agent-composer__attach::before,
 .agent-composer__create::before,
 .agent-composer__goal-toggle::before,
-.agent-composer__web-search-toggle::before,
 .agent-composer__mic::before,
 .agent-composer__dictation-discard::before,
 .agent-composer__dictation-review::before,
@@ -1784,44 +1722,6 @@ onBeforeUnmount(() => {
   padding-inline: var(--agent-composer-control-padding-inline);
 }
 
-.agent-composer__web-search-toggle {
-  position: relative;
-  display: inline-flex;
-  min-height: var(--agent-composer-control-face-height);
-  align-items: center;
-  gap: var(--wiki-space-2);
-  padding-inline: var(--agent-composer-control-padding-inline);
-  border-radius: var(--wiki-radius-pill);
-  color: var(--wiki-text-muted);
-  cursor: pointer;
-  font-size: var(--agent-composer-control-font-size);
-  font-weight: 500;
-  user-select: none;
-}
-
-.agent-composer__web-search-toggle:has(input:checked),
-.agent-composer__web-search-toggle[data-state='selected'] {
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, transparent);
-  color: var(--wiki-primary-ink);
-}
-
-.agent-composer__web-search-toggle:has(input:focus-visible) {
-  outline: 2px solid var(--wiki-focus-color);
-  outline-offset: 2px;
-}
-
-.agent-composer__web-search-toggle:has(input:disabled) {
-  cursor: default;
-  opacity: .45;
-}
-
-.agent-composer__web-search-toggle input {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
 
 .agent-composer__notice {
   margin: 0 var(--wiki-space-1) var(--wiki-space-1);
@@ -1829,28 +1729,6 @@ onBeforeUnmount(() => {
   font-size: var(--wiki-label-size);
 }
 
-.agent-composer__web-notice {
-  display: flex;
-  align-items: center;
-  gap: var(--wiki-space-1);
-  margin: 0 var(--wiki-space-1) var(--wiki-space-1);
-  color: var(--wiki-text-muted);
-  font-size: var(--wiki-label-size);
-  line-height: 1.4;
-}
-
-.agent-composer__web-notice--clipped {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-}
 
 .agent-composer__goal-chip {
   max-width: 100%;

@@ -2,11 +2,7 @@ import type { AxChatResponse } from '@ax-llm/ax'
 import { describe, expect, it } from '../bun-test.mts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentProviderTransportKind } from '../../agents/providers/registry.ts'
-import {
-  acceptCumulativeAgentProviderUsage,
-  readAgentProviderUsage,
-  type AgentProviderUsage
-} from '../../agents/providers/usage.ts'
+import { acceptCumulativeAgentProviderUsage, readAgentProviderUsage, type AgentProviderUsage } from '../../agents/providers/usage.ts'
 
 const usageFor = (transportKind: AgentProviderTransportKind, tokens: Record<string, unknown>): AgentProviderUsage | null =>
   readAgentProviderUsage(transportKind, {
@@ -57,7 +53,7 @@ describe('agent provider usage normalization', () => {
     })
     expect(
       usageFor('gemini-api', {
-        promptTokens: 12,
+        promptTokens: 9,
         completionTokens: 4,
         cacheReadTokens: 3,
         totalTokens: 16
@@ -118,12 +114,8 @@ describe('agent provider usage normalization', () => {
         totalTokens: Number.MAX_SAFE_INTEGER
       })
     )
-    expectInvalidUsage(() =>
-      usageFor('gemini-api', { promptTokens: 4, completionTokens: 2, cacheReadTokens: 5, totalTokens: 6 })
-    )
-    expectInvalidUsage(() =>
-      usageFor('openai-responses', { promptTokens: 4, completionTokens: 2, totalTokens: 5 })
-    )
+    expectInvalidUsage(() => usageFor('gemini-api', { promptTokens: 4, completionTokens: 2, cacheReadTokens: 5, totalTokens: 6 }))
+    expectInvalidUsage(() => usageFor('openai-responses', { promptTokens: 4, completionTokens: 2, totalTokens: 5 }))
   })
 
   it('rejects cumulative regressions and retains only previously known omitted cache counters', () => {

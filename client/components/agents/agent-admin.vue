@@ -110,6 +110,16 @@
           <AgentAdminTools :tools="toolInventory" :loaded="dataLoaded" :loading="loading" :mcp-enabled="Boolean(runtime?.enabled && runtime?.mcpEnabled)" />
         </v-window-item>
 
+        <v-window-item id="agent-panel-decision" value="decision" role="tabpanel" aria-labelledby="agent-tab-decision">
+          <AgentDecisionProviders :csrf-token="csrfToken" />
+        </v-window-item>
+        <v-window-item id="agent-panel-external-mcp" value="external-mcp" role="tabpanel" aria-labelledby="agent-tab-external-mcp">
+          <AgentExternalMcpAdmin :csrf-token="csrfToken" :groups="groups" />
+        </v-window-item>
+        <v-window-item id="agent-panel-routing" value="routing" role="tabpanel" aria-labelledby="agent-tab-routing">
+          <AgentRoutingPolicy :csrf-token="csrfToken" :profiles="profiles" @refresh-profiles="refreshResources(['profiles'])" />
+        </v-window-item>
+
         <v-window-item id="agent-panel-memory" value="memory" role="tabpanel" aria-labelledby="agent-tab-memory">
           <section class="agent-panel">
             <div class="agent-panel__header"><div><div class="agent-panel__eyebrow">{{ $t('admin:agentAdmin.continuitySources') }}</div><h2>{{ $t('admin:agentAdmin.knowledgeMemory') }}</h2><p>{{ $t('admin:agentAdmin.understandWhatAgentKnows') }}</p></div></div>
@@ -625,6 +635,9 @@ import {
 import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
 import SkillAdmin from './skill-admin.vue'
 import AgentAdminTools from './agent-admin-tools.vue'
+import AgentDecisionProviders from './agent-decision-providers.vue'
+import AgentExternalMcpAdmin from './agent-external-mcp-admin.vue'
+import AgentRoutingPolicy from './agent-routing-policy.vue'
 import type { AgentAdminTool } from '../../../shared/agents/admin.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
@@ -666,6 +679,7 @@ interface RuntimePolicy {
 }
 interface ConnectionCheck { status: 'passed' | 'failed'; errorCode: string | null; message: string | null; completedAt: string }
 interface ConnectionHistoryCheck extends ConnectionCheck { id: string; checks: { name: string; passed: boolean; detail?: string }[] }
+interface Profile { profileVersionId: string }
 interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort; media?: { attachments: boolean; imageGeneration?: { model: 'gemini-3.1-flash-image'; pricingRevision: string }; transcription?: { model: 'gemini-3.5-transcribe'; pricingRevision: string }; videoGeneration?: { model: 'gemini-omni-1.1-flash'; pricingRevision: string; textOutputMicrosPerMillionTokens: number; usagePolicy: 'reported-or-estimated' }; musicGeneration?: { model: 'lyria-3.5'; costMicrosPerSong: number; usagePolicy: 'reported-or-estimated' } } }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
 interface GroupOption { id: number; name: string; isSystem: boolean }
@@ -788,7 +802,7 @@ const reasoningSupportHint = computed(() => ({
   'openai-chat': t('admin:agentAdmin.sentChatCompletionsReasoning'),
   'legacy-completions': '',
   'anthropic-messages': t('admin:agentAdmin.sentMessagesApiOutput'),
-  'gemini-api': t('admin:agentAdmin.sentGeminiInteractionsGeneration')
+  'gemini-api': 'Sent through the Ax-native Gemini API using the configured model reasoning controls.'
 })[profileDraft.transportKind])
 const protocolBehaviorRows = computed(() => {
   const structuredOutput = {
@@ -868,6 +882,9 @@ const actionBusyMessage = computed(() => {
 const sectionItems = computed(() => [
   { value: 'overview', title: t('admin:agentAdmin.overview'), description: t('admin:agentAdmin.setupReadiness'), icon: 'mdi-view-dashboard-outline', badge: '' },
   { value: 'profiles', title: t('admin:agentAdmin.providers'), description: t('admin:agentAdmin.modelsAccess'), icon: 'mdi-brain', badge: profiles.value.length ? String(profiles.value.length) : '' },
+  { value: 'decision', title: 'Agent Decision Providers', description: 'Native Jev & custom classification', icon: 'mdi-source-branch', badge: '' },
+  { value: 'external-mcp', title: 'External MCP', description: 'Endpoints & group authorization', icon: 'mdi-connection', badge: '' },
+  { value: 'routing', title: 'Routing policy', description: 'Task sufficiency & cost estimates', icon: 'mdi-routes', badge: '' },
   { value: 'skills', title: t('admin:agentAdmin.skills'), description: t('admin:agentAdmin.approvedExpertise'), icon: 'mdi-book-open-variant-outline', badge: '' },
   { value: 'browser', title: t('admin:agentAdmin.browserAccess'), description: t('admin:agentAdmin.networkBoundaries'), icon: 'mdi-web-check', badge: browserTargets.value.length ? String(browserTargets.value.length) : '' },
   { value: 'tools', title: t('admin:agentAdmin.toolsMcp'), description: t('admin:agentAdmin.capabilityDirectory'), icon: 'mdi-connection', badge: '' },

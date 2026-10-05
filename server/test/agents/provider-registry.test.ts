@@ -36,6 +36,17 @@ const profileInput: AgentProviderSettingsInput = {
 }
 
 const createTables = async (knex: Knex): Promise<void> => {
+  await knex.schema.createTable('users', table => {
+    table.integer('id').primary()
+    table.boolean('isActive').notNullable().defaultTo(true)
+    table.integer('authVersion').notNullable().defaultTo(0)
+  })
+  await knex.schema.createTable('groups', table => {
+    table.integer('id').primary()
+    table.text('permissions').notNullable()
+  })
+  await knex('users').insert({ id: 7, isActive: true })
+  await knex('groups').insert({ id: 100, permissions: JSON.stringify(['use:agents']) })
   await knex.schema.createTable('agentProviderProfiles', table => {
     table.string('id').primary()
     table.string('displayName')
@@ -142,6 +153,63 @@ describe('agent provider profile registry', () => {
   })
   afterEach(async () => knex.destroy())
 
+  it('lists only currently granted credential-ready primary models and independently resolves alternates without changing session preference', async () => {
+    const createReady = async (name: string, exposureMode: 'all_agent_users' | 'groups', groupIds: number[] = []) => {
+      const profile = await registry.create({ ...profileInput, displayName: name, exposureMode, groupIds, actorId: 1 })
+      const versionId = await currentSettingsId(knex, profile.id)
+      await registry.setConformed(profile.id, versionId, true, 1)
+      await registry.setEnabled(profile.id, true, 1, versionId)
+      return { profile, versionId }
+    }
+    await knex('groups').insert([
+      { id: 101, permissions: '[]' },
+      { id: 102, permissions: '[]' }
+    ])
+    await knex('userGroups').insert([
+      { userId: 7, groupId: 100 },
+      { userId: 7, groupId: 101 }
+    ])
+    const incumbent = await createReady('Default', 'all_agent_users')
+    const alternate = await createReady('Accessible group', 'groups', [101])
+    const denied = await createReady('Other group', 'groups', [102])
+    await registry.setDefault(incumbent.profile.id, 1)
+    await knex('agentSessions').insert([
+      { id: 'automatic', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent' },
+      { id: 'same-owner-pinned', ownerId: 7, version: 1, providerProfileId: incumbent.profile.id, executionMode: 'agent' }
+    ])
+    const candidates = await knex.transaction(transaction => registry.listRoutingCandidates(transaction, { ownerId: 7, sessionId: 'automatic' }))
+    expect(candidates.map(candidate => candidate.profileId).sort()).toEqual([incumbent.profile.id, alternate.profile.id].sort())
+    expect(candidates.map(candidate => candidate.profileId)).not.toContain(denied.profile.id)
+    expect(candidates[0]?.pricing).toMatchObject({ inputPerMillion: 1, outputPerMillion: 2 })
+    const selected = await knex.transaction(transaction =>
+      registry.resolveRoutingCandidate(transaction, {
+        ownerId: 7,
+        sessionId: 'automatic',
+        profileId: alternate.profile.id,
+        profileVersionId: alternate.versionId
+      })
+    )
+    expect(selected.providerProfileVersionId).toBe(alternate.versionId)
+    expect(await knex('agentSessions').orderBy('id').select('id', 'providerProfileId', 'version')).toEqual([
+      { id: 'automatic', providerProfileId: null, version: 1 },
+      { id: 'same-owner-pinned', providerProfileId: incumbent.profile.id, version: 1 }
+    ])
+    await knex('userGroups').where({ userId: 7, groupId: 101 }).delete()
+    await expect(
+      (async () =>
+        await knex.transaction(transaction =>
+          registry.resolveRoutingCandidate(transaction, {
+            ownerId: 7,
+            sessionId: 'automatic',
+            profileId: alternate.profile.id,
+            profileVersionId: alternate.versionId
+          })
+        ))()
+    ).rejects.toMatchObject({ code: 'PROFILE_UNAVAILABLE' })
+    secretAvailable = false
+    expect(await knex.transaction(transaction => registry.listRoutingCandidates(transaction, { ownerId: 7, sessionId: 'automatic' }))).toEqual([])
+  })
+
   it('appends immutable settings versions and rejects stale resolution after an admin change', async () => {
     const created = await registry.create({ ...profileInput, displayName: 'Primary', exposureMode: 'all_agent_users', actorId: 1 })
     const settingsId = await currentSettingsId(knex, created.id)
@@ -200,7 +268,7 @@ describe('agent provider profile registry', () => {
       status: 409
     })
   })
-  it('accepts Gemini 3.x Interactions profiles and rejects legacy models or ambiguous credentials', async () => {
+  it('accepts native Gemini chat profiles and rejects non-chat models or ambiguous credentials', async () => {
     const geminiInput: AgentProviderSettingsInput = {
       ...profileInput,
       transportKind: 'gemini-api',
@@ -222,7 +290,7 @@ describe('agent provider profile registry', () => {
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_AUTH' })
     await expect(
       Promise.resolve(
-        registry.create({ ...geminiInput, model: 'gemini-2.5-flash', displayName: 'Legacy Gemini model', exposureMode: 'all_agent_users', actorId: 1 })
+        registry.create({ ...geminiInput, model: 'gemini-3.8-live', displayName: 'Live Gemini model', exposureMode: 'all_agent_users', actorId: 1 })
       )
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
     await expect(
@@ -230,17 +298,15 @@ describe('agent provider profile registry', () => {
         registry.create({ ...geminiInput, model: 'models/gemini-3.7-flash', displayName: 'Gemini model path', exposureMode: 'all_agent_users', actorId: 1 })
       )
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
-    await expect(
-      Promise.resolve(
-        registry.create({
-          ...geminiInput,
-          adapterConfig: { ...geminiInput.adapterConfig, temperature: 0.5 },
-          displayName: 'Gemini temperature',
-          exposureMode: 'all_agent_users',
-          actorId: 1
-        })
-      )
-    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
+    const temperatureProfile = await registry.create({
+      ...geminiInput,
+      adapterConfig: { ...geminiInput.adapterConfig, temperature: 0.5 },
+      displayName: 'Gemini temperature',
+      exposureMode: 'all_agent_users',
+      actorId: 1
+    })
+    expect(temperatureProfile).not.toHaveProperty('adapterConfig')
+    expect(await registry.getAdmin(temperatureProfile.id)).toMatchObject({ adapterConfig: { temperature: 0.5 } })
     await expect(
       Promise.resolve(
         registry.create({
@@ -535,6 +601,18 @@ describe('agent provider profile registry', () => {
     }
     const created = await registry.create(input)
     expect((await registry.getAdmin(created.id)).adapterConfig.media).toEqual(media)
+    const versionId = await currentSettingsId(knex, created.id)
+    await registry.setConformed(created.id, versionId, true, 1)
+    await registry.setEnabled(created.id, true, 1, versionId)
+    await knex('userGroups').insert({ userId: 7, groupId: 100 })
+    await knex('agentSessions').insert({ id: 'media-routing', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent' })
+    const candidates = await knex.transaction(transaction => registry.listRoutingCandidates(transaction, { ownerId: 7, sessionId: 'media-routing' }))
+    expect(candidates[0]).toMatchObject({
+      generationTools: ['image'],
+      transcription: true,
+      media: { attachments: true, imageGeneration: true, transcription: true, videoGeneration: false, musicGeneration: false }
+    })
+    expect(candidates[0]?.modalities).toEqual(['text', 'image', 'audio', 'video', 'file'])
     await expect(registry.create({ ...input, displayName: 'Wrong destination', baseUrl: 'https://api.example.test/v1' })).rejects.toMatchObject({
       code: 'INVALID_PROVIDER_CONFIG'
     })

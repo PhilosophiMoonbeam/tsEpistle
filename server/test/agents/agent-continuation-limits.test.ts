@@ -1,13 +1,14 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
 import { AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, AgentProviderService } from '../../agents/providers/factory.ts'
-import { createGeminiInteractionsService, preserveGeminiInteractionState } from '../../agents/providers/gemini-interactions.ts'
+import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
+import { geminiFixtureService } from './gemini-fixture.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
 const model = 'gemini-3.8-flash'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
-const usage = { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 }
+const usage = { promptTokenCount: 3, candidatesTokenCount: 2, totalTokenCount: 5 }
 
 const run: AgentEngineRequest['run'] = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -45,7 +46,6 @@ const run: AgentEngineRequest['run'] = {
 }
 
 const request = (overrides: Partial<AgentEngineRequest> = {}): AgentEngineRequest => ({
-  googleSearchEnabled: false,
   run,
   messages: [{ role: 'user', content: 'Reply briefly.' }],
   memory: { user: [], agent: [] },
@@ -57,16 +57,21 @@ const request = (overrides: Partial<AgentEngineRequest> = {}): AgentEngineReques
 })
 
 const interaction = (id: string, content: string, signature?: string): Record<string, unknown> => ({
-  id,
-  model,
-  status: 'completed',
-  steps: [...(signature === undefined ? [] : [{ type: 'thought', signature }]), { type: 'model_output', content: [{ type: 'text', text: content }] }],
-  usage
+  responseId: id,
+  modelVersion: model,
+  candidates: [
+    {
+      index: 0,
+      finishReason: 'STOP',
+      content: { role: 'model', parts: [{ text: content, ...(signature === undefined ? {} : { thoughtSignature: signature }) }] }
+    }
+  ],
+  usageMetadata: usage
 })
 
 const adapter = (responses: readonly Record<string, unknown>[], inspectRequest?: (body: unknown) => void) => {
   const pending = [...responses]
-  return createGeminiInteractionsService({
+  return geminiFixtureService({
     apiKey: 'test-key',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     model,
@@ -96,11 +101,11 @@ const factory = (chat: AgentProviderService['service']['chat'], streaming = fals
       },
       transportKind: 'gemini-api',
       model,
-      continuationDialect: 'gemini-interactions-v1',
+      continuationDialect: 'gemini-generate-content-v1',
       capabilityRevision: 'cap-1',
       pricingRevision: 'price-1',
       pricing,
-      preserveThoughtBlock: (_resultId, block) => preserveGeminiInteractionState(block)
+      preserveThoughtBlock: (_resultId, block) => preserveGeminiContinuation(block)
     })
   }) as unknown as AgentProviderFactory
 
@@ -168,10 +173,9 @@ describe('agent continuation resource limits', () => {
     })
     expect(replayRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        input: [
-          expect.objectContaining({ type: 'thought', signature: 's'.repeat(70_000) }),
-          { type: 'model_output', content: [{ type: 'text', text: 'Hello.' }] },
-          { type: 'user_input', content: [{ type: 'text', text: 'Continue.' }] }
+        contents: [
+          { role: 'model', parts: [{ text: 'Hello.', thoughtSignature: 's'.repeat(70_000) }] },
+          { role: 'user', parts: [{ text: 'Continue.' }] }
         ]
       })
     )
@@ -194,7 +198,7 @@ describe('agent continuation resource limits', () => {
         ...response,
         results: response.results.map(result => ({
           ...result,
-          thoughtBlocks: [{ data: 'wiki.gemini.interactions.v1:{', encrypted: true }]
+          thoughtBlocks: [{ data: 'wiki.gemini.generate-content.v1:{', encrypted: true }]
         }))
       }
     }
@@ -212,7 +216,7 @@ describe('agent continuation resource limits', () => {
     expect(text).not.toHaveBeenCalled()
   })
 
-  it('does not carry rejected-answer interaction state into an evidence repair turn', async () => {
+  it('does not carry rejected-answer signature state into an evidence repair turn', async () => {
     const requests: Array<Record<string, unknown>> = []
     const service = adapter(
       [
@@ -229,11 +233,11 @@ describe('agent continuation resource limits', () => {
     expect(text).toHaveBeenCalledOnce()
     expect(text).toHaveBeenCalledWith('The delivered source does not support that claim.')
     expect(requests).toHaveLength(2)
-    const repairInput = requests[1]!['input'] as ReadonlyArray<Record<string, unknown>>
-    expect(repairInput.some(step => step['type'] === 'thought')).toBe(false)
+    const repairInput = requests[1]!['contents'] as ReadonlyArray<{ role: string; parts: readonly Record<string, unknown>[] }>
+    expect(repairInput.flatMap(step => step.parts).some(part => part['thoughtSignature'] !== undefined || part['thought_signature'] !== undefined)).toBe(false)
     expect(repairInput).toHaveLength(3)
-    expect(repairInput.map(step => step['type'])).toEqual(['user_input', 'model_output', 'user_input'])
-    expect(repairInput[1]!['content']).toEqual([{ type: 'text', text: 'Unsupported claim. [[cite:missing]]' }])
+    expect(repairInput.map(step => step.role)).toEqual(['user', 'model', 'user'])
+    expect(repairInput[1]!.parts).toEqual([{ text: 'Unsupported claim. [[cite:missing]]' }])
     expect(accepted).toMatchObject({ inputTokens: 6, outputTokens: 4, totalTokens: 10 })
   })
 })

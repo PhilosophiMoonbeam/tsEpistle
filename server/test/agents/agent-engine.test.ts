@@ -13,8 +13,9 @@ import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
 import { reduceAgentEvents } from '../../agents/projection.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
+import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
-import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
+import { geminiFixtureService } from './gemini-fixture.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -22,7 +23,6 @@ import { describe, expect, it, vi } from '../bun-test.mts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const request = (signal: AbortSignal): AgentEngineRequest => ({
-  googleSearchEnabled: false,
   authorizeMedia: async () => {},
   run: {
     id: '00000000-0000-4000-8000-000000000001',
@@ -455,113 +455,23 @@ describe('Ax agent engine', () => {
     }
   )
 
-  it('settles rejected grounding metadata only after genuine EOF, preserving exposure on a later stream failure', async () => {
-    for (const reachesEof of [true, false]) {
-      const native = createGeminiInteractionsService({
-        apiKey: 'test-key',
-        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-        model: 'gemini-3.8-flash',
-        timeoutMs: 10_000,
-        fetch: (async () =>
-          Response.json({
-            model: 'gemini-3.8-flash',
-            status: 'completed',
-            usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5, total_cached_tokens: 2 },
-            steps: [
-              {
-                type: 'model_output',
-                content: [
-                  {
-                    type: 'text',
-                    text: 'Alpha',
-                    annotations: [{ type: 'url_citation', start_index: 0, end_index: 5, url: 'javascript:alert(1)', title: 'Unsafe source' }]
-                  }
-                ]
-              }
-            ]
-          })) as typeof fetch
-      })
-      let heldTokens = 0
-      let chargedTokens = 0
-      const dispatchBudget = {
-        reserve: async (maximum: { tokens: number; costMicros: number }) => {
-          heldTokens += maximum.tokens
-          return { id: 1, ...maximum }
-        },
-        reconcile: async (reservation: { tokens: number }, actual: { totalTokens: number }) => {
-          heldTokens -= reservation.tokens
-          chargedTokens += actual.totalTokens
-        },
-        release: async (reservation: { tokens: number }) => {
-          heldTokens -= reservation.tokens
-        },
-        consumeTool: async () => {},
-        get unsettledExposure() {
-          return { tokens: heldTokens, costMicros: 0 }
-        }
-      }
-      const factory = {
-        create: async () => ({
-          service: {
-            chat: async (input: AxChatRequest) => {
-              const receipt = await native.chat(input, { stream: false })
-              if (receipt instanceof ReadableStream) throw new Error('Expected buffered fixture receipt')
-              let emitted = false
-              return new ReadableStream<AxChatResponse>(
-                {
-                  pull(controller) {
-                    if (!emitted) {
-                      emitted = true
-                      controller.enqueue(receipt)
-                    } else if (reachesEof) controller.close()
-                    else controller.error(new Error('Connection failed after terminal metadata'))
-                  }
-                },
-                { highWaterMark: 0 }
-              )
-            }
-          },
-          capabilities: {
-            streaming: true,
-            toolCalling: 'native',
-            parallelToolCalls: true,
-            structuredOutput: 'native-json-schema',
-            usage: 'terminal',
-            cancellation: true,
-            maxContextTokens: 100_000,
-            maxOutputTokens: 4_000
-          },
-          transportKind: 'gemini-api',
-          model: 'gemini-3.8-flash',
-          continuationDialect: 'gemini-interactions-v1',
-          capabilityRevision: 'cap-1',
-          pricingRevision: 'price-1',
-          pricing
-        })
-      } as unknown as AgentProviderFactory
-      const event = vi.fn(async () => {})
-      await expect(
-        new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text: async () => {}, event })
-      ).rejects.toThrow()
-      expect(event).not.toHaveBeenCalledWith('model.turn', expect.anything())
-      expect(chargedTokens).toBe(reachesEof ? 5 : 0)
-      if (reachesEof) expect(heldTokens).toBe(0)
-      else expect(heldTokens).toBeGreaterThan(5)
-    }
-  })
   it('records terminal Gemini cached input only as numeric telemetry, not a discount to settled usage', async () => {
     for (const cached of [undefined, 0, 2]) {
-      const native = createGeminiInteractionsService({
+      const native = geminiFixtureService({
         apiKey: 'test-key',
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
         model: 'gemini-3.8-flash',
         timeoutMs: 10_000,
         fetch: (async () =>
           Response.json({
-            model: 'gemini-3.8-flash',
-            status: 'completed',
-            usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5, ...(cached === undefined ? {} : { total_cached_tokens: cached }) },
-            steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Answer.' }] }]
+            modelVersion: 'gemini-3.8-flash',
+            usageMetadata: {
+              promptTokenCount: 3,
+              candidatesTokenCount: 2,
+              totalTokenCount: 5,
+              ...(cached === undefined ? {} : { cachedContentTokenCount: cached })
+            },
+            candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Answer.' }] } }]
           })) as typeof fetch
       })
       const factory = {
@@ -579,7 +489,7 @@ describe('Ax agent engine', () => {
           },
           transportKind: 'gemini-api',
           model: 'gemini-3.8-flash',
-          continuationDialect: 'gemini-interactions-v1',
+          continuationDialect: 'gemini-generate-content-v1',
           capabilityRevision: 'cap-1',
           pricingRevision: 'price-1',
           pricing
@@ -713,22 +623,21 @@ describe('Ax agent engine', () => {
       [[1, 0], 'invalid']
     ] as const) {
       let next = 0
-      const native = createGeminiInteractionsService({
+      const native = geminiFixtureService({
         apiKey: 'test-key',
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
         model: 'gemini-3.8-flash',
         timeoutMs: 10_000,
         fetch: (async () =>
           Response.json({
-            model: 'gemini-3.8-flash',
-            status: 'completed',
-            usage: {
-              total_input_tokens: 3,
-              total_output_tokens: 2,
-              total_tokens: 5,
-              ...(snapshots[next] === undefined ? {} : { total_cached_tokens: snapshots[next] })
+            modelVersion: 'gemini-3.8-flash',
+            usageMetadata: {
+              promptTokenCount: 3,
+              candidatesTokenCount: 2,
+              totalTokenCount: 5,
+              ...(snapshots[next] === undefined ? {} : { cachedContentTokenCount: snapshots[next] })
             },
-            steps: [{ type: 'model_output', content: [{ type: 'text', text: next++ === 0 ? 'A' : 'B' }] }]
+            candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ text: next++ === 0 ? 'A' : 'B' }] } }]
           })) as typeof fetch
       })
       const factory = {
@@ -759,7 +668,7 @@ describe('Ax agent engine', () => {
           },
           transportKind: 'gemini-api',
           model: 'gemini-3.8-flash',
-          continuationDialect: 'gemini-interactions-v1',
+          continuationDialect: 'gemini-generate-content-v1',
           capabilityRevision: 'cap-1',
           pricingRevision: 'price-1',
           pricing
@@ -1756,10 +1665,11 @@ describe('Ax agent engine', () => {
   it.each(['M.', 'M. A.'])('keeps name initials %s inside an immediately cited qualified source claim', async initials => {
     const source = `- **Discount:** Use ***50/20*** for all *(per ${initials} Quinn to promote the range - 8.23.22)*`
     const answer = `${source} [[cite:${adaptableCitation}]]`
-    const fixture = questionFixture('native', [
-      { calls: [{ id: 'read-initial-qualified-discount', name: 'pages.get', arguments: { id: 42 } }] },
-      { answer }
-    ], () => questionReadPage(42, '1', 'Product programs', 'product-programs', 'Pricing', 'pricing', source))
+    const fixture = questionFixture(
+      'native',
+      [{ calls: [{ id: 'read-initial-qualified-discount', name: 'pages.get', arguments: { id: 42 } }] }, { answer }],
+      () => questionReadPage(42, '1', 'Product programs', 'product-programs', 'Pricing', 'pricing', source)
+    )
     const result = await fixture.execute('What discount applies, including its qualification?')
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual([adaptableCitation])
@@ -1773,15 +1683,20 @@ describe('Ax agent engine', () => {
   ])('rejects %s beside a qualified claim containing a name initial', async (_label, change) => {
     const source = 'Discount: Use 50/20 for all (per M. Quinn to promote the range - 8.23.22)'
     const corrected = `${source} [[cite:${adaptableCitation}]]`
-    const fixture = questionFixture('native', [
-      { calls: [{ id: 'read-initial-qualified-discount', name: 'pages.get', arguments: { id: 42 } }] },
-      { answer: `${change(source)} [[cite:${adaptableCitation}]]` },
-      { answer: corrected }
-    ], () => questionReadPage(42, '1', 'Product programs', 'product-programs', 'Pricing', 'pricing', source))
+    const fixture = questionFixture(
+      'native',
+      [
+        { calls: [{ id: 'read-initial-qualified-discount', name: 'pages.get', arguments: { id: 42 } }] },
+        { answer: `${change(source)} [[cite:${adaptableCitation}]]` },
+        { answer: corrected }
+      ],
+      () => questionReadPage(42, '1', 'Product programs', 'product-programs', 'Pricing', 'pricing', source)
+    )
     await fixture.execute('What discount applies, including its qualification?')
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
     expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([
-      { accepted: false }, { accepted: true }
+      { accepted: false },
+      { accepted: true }
     ])
   })
 
@@ -6817,7 +6732,7 @@ describe('Ax agent engine', () => {
           maxOutputTokens: 1_000
         },
         transportKind: 'gemini-api',
-        continuationDialect: 'gemini-interactions-v1',
+        continuationDialect: 'gemini-generate-content-v1',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
         pricingRevision: 'price-1',
@@ -6920,7 +6835,7 @@ describe('Ax agent engine', () => {
             maxOutputTokens: 4_000
           },
           transportKind: 'gemini-api',
-          continuationDialect: 'gemini-interactions-v1',
+          continuationDialect: 'gemini-generate-content-v1',
           model: 'gpt-test',
           capabilityRevision: 'cap-1',
           pricingRevision: 'price-1',
@@ -8459,24 +8374,34 @@ describe('request-derived evidence coverage', () => {
     const fact = 'Alpha requires review before publication.'
     const page = questionReadPage(42, '3', 'Alpha', 'alpha', 'Rules', 'rules', fact)
     let dispatches = 0
-    const native = createGeminiInteractionsService({
+    const nativeRequests: { contents: { role: string; parts: unknown[] }[] }[] = []
+    const native = geminiFixtureService({
       apiKey: 'fixture-key',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       model: 'gemini-3.8-flash',
       timeoutMs: 10_000,
-      fetch: (async () => {
+      fetch: (async (_input, init) => {
+        nativeRequests.push(JSON.parse(String(init?.body)))
         dispatches++
         return Response.json({
-          model: 'gemini-3.8-flash',
-          status: dispatches === 1 ? 'requires_action' : 'completed',
-          usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 },
-          steps:
-            dispatches === 1
-              ? [
-                  { type: 'model_output', content: [{ type: 'text', text: sourcePlan(userRequest) }] },
-                  { type: 'function_call', id: 'read-alpha', name: 'wiki_get_page', arguments: { id: 42 } }
-                ]
-              : [{ type: 'model_output', content: [{ type: 'text', text: `${fact} [[cite:page:42:revision:3:section:1]]` }] }]
+          modelVersion: 'gemini-3.8-flash',
+          usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2, totalTokenCount: 5 },
+          candidates: [
+            {
+              index: 0,
+              finishReason: 'STOP',
+              content: {
+                role: 'model',
+                parts:
+                  dispatches === 1
+                    ? [
+                        { text: sourcePlan(userRequest), thoughtSignature: 'signed-metadata' },
+                        { functionCall: { id: 'read-alpha', name: 'wiki_get_page', args: { id: 42 } }, thoughtSignature: 'signed-call' }
+                      ]
+                    : [{ text: `${fact} [[cite:page:42:revision:3:section:1]]`, thoughtSignature: 'signed-answer' }]
+              }
+            }
+          ]
         })
       }) as typeof fetch
     })
@@ -8495,10 +8420,11 @@ describe('request-derived evidence coverage', () => {
         },
         transportKind: 'gemini-api',
         model: 'gemini-3.8-flash',
-        continuationDialect: 'gemini-interactions-v1',
+        continuationDialect: 'gemini-generate-content-v1',
         capabilityRevision: 'cap-1',
         pricingRevision: 'price-1',
-        pricing
+        pricing,
+        preserveThoughtBlock: (_resultId: string, block: ProviderThoughtBlock) => preserveGeminiContinuation(block)
       })
     } as unknown as AgentProviderFactory
     const actions: AgentActionSessionProvider = {
@@ -8520,6 +8446,10 @@ describe('request-derived evidence coverage', () => {
       { text, event: async () => {} }
     )
     expect(dispatches).toBe(2)
+    expect(nativeRequests[1]?.contents.find(content => content.role === 'model')?.parts).toEqual([
+      { text: sourcePlan(userRequest), thoughtSignature: 'signed-metadata' },
+      { functionCall: { id: 'read-alpha', name: 'wiki_get_page', args: { id: 42 } }, thoughtSignature: 'signed-call' }
+    ])
     expect(result.totalTokens).toBe(10)
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:3:section:1'])
     expect(result.providerState).toBeUndefined()
