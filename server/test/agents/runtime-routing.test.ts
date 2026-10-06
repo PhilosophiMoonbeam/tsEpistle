@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
+import sharp from 'sharp'
+import type { AgentMediaBindings, AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { AgentProductRuntime } from '../../agents/runtime.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
@@ -9,8 +11,24 @@ import { admitAgentRunInTransaction, persistAgentApprovalContinuation } from '..
 import { agentCompactionSha256, type AgentCompactionReceipt } from '../../agents/compaction.ts'
 import { getOwnedAgentGoal, insertAgentGoal } from '../../agents/goals.ts'
 import { storeAgentMedia } from '../../agents/media.ts'
-import { createRoutingTables, routingFixture, type RoutingFixture } from './runtime-routing.fixture.ts'
+import { createRoutingTables, routingFixture, routingImageProviderConfig as imageProviderConfig, type RoutingFixture } from './runtime-routing.fixture.ts'
 import { PdfFixtureDocument } from './pdf-fixture.ts'
+
+const videoProviderConfig: AgentMediaProviderConfig = {
+  ...imageProviderConfig,
+  kind: 'video',
+  api: 'gemini-interactions',
+  model: 'gemini-omni-1.1-flash',
+  pricing: { kind: 'tokens', pricingRevision: 'fixture-video|1000000|2000000', textOutputMicrosPerMillionTokens: 1_000_000 }
+}
+const referenceImage = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'red' } })
+  .png()
+  .toBuffer()
+// Complete 100 ms mono Opus/WebM, encoded by ffmpeg from silence.
+const webmAudio = Buffer.from(
+  'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwH/////////EU2bdKtNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggFA7AEAAAAAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjIuMy4xMDBXQYxMYXZmNjIuMy4xMDBEiYhAWQAAAAAAABZUrmvlrgEAAAAAAABc14EBc8WIvMp9wk61nrKcgQAitZyDdW5kiIEAhoZBX09QVVNWqoNjLqBWu4QExLQAg4EC4ZGfgQG1iEDncAAAAAAAYmSBEGOik09wdXNIZWFkAQE4AYC7AAAAAAASVMNn2HNzn2PAgGfImUWjh0VOQ09ERVJEh4xMYXZmNjIuMy4xMDBzc7NjwItjxYi8yn3CTrWesmfIokWjh0VOQ09ERVJEh5VMYXZjNjIuMTEuMTAwIGxpYm9wdXMfQ7Z1wueBAKOHgQAAgPj//qOHgQAVgPj//qOHgQApgPj//qOHgQA9gPj//qOHgQBRgPj//qCQoYeBAGUA+P/+daKEAM3+YA==',
+  'base64'
+)
 
 describe('admitted automatic conversation routing', () => {
   let db: Knex
@@ -201,7 +219,7 @@ describe('admitted automatic conversation routing', () => {
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       authMode: 'google-api-key',
       secretReference: 'env:TEST_PROVIDER_KEY',
-      adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: {}, media: { attachments: true } },
+      adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: {}, mediaInputs: { documents: true } },
       exposureMode: 'all_agent_users',
       groupIds: [],
       actorId: 1
@@ -255,7 +273,195 @@ describe('admitted automatic conversation routing', () => {
     expect(f.requests[1]?.messages.at(-1)?.attachments?.map(attachment => attachment.id)).toEqual([media.id])
   })
 
-  const seedBoundGoal = async (maximumTokens: number, profile = f.alternate) => {
+  for (const api of ['gemini-generate-content', 'stability-images'] as const) {
+    it(`keeps ordinary OpenAI routing independent of ${api} generation`, async () => {
+      const config =
+        api === 'stability-images'
+          ? { ...imageProviderConfig, api, model: 'stable-image-core', baseUrl: 'https://api.stability.ai/v2beta' }
+          : imageProviderConfig
+      const provider = await f.readyMedia(config)
+      const admitted = await f.submit(await f.session(), 7, { generationTools: ['image'] })
+      await f.runtime.runOnce()
+      expect(await db('agentRuns').where({ id: admitted.run.id }).first('status')).toEqual({ status: 'succeeded' })
+      expect(f.requests[0]?.run).toMatchObject({ transportKind: 'openai-responses', model: 'alternate' })
+      expect(f.requests[0]?.mediaBindings).toEqual({ image: provider.profileVersionId })
+      expect(f.classifications()).toBe(1)
+    })
+  }
+
+  for (const mode of ['tool', 'direct'] as const) {
+    it(`admits image references for video-only ${mode} generation without a vision LLM`, async () => {
+      const provider = await f.readyMedia(videoProviderConfig)
+      const sessionId = await f.session()
+      const reference = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: referenceImage, mimeType: 'image/png', filename: 'reference.png' })
+      const admitted = await f.submit(sessionId, 7, {
+        attachmentIds: [reference.id],
+        generationTools: mode === 'direct' ? [] : ['video'],
+        ...(mode === 'direct' ? { responseMode: 'video' as const } : {})
+      })
+      await f.runtime.runOnce()
+      expect(await db('agentRuns').where({ id: admitted.run.id }).first('status')).toEqual({ status: 'succeeded' })
+      expect(f.requests[0]?.run).toMatchObject({ transportKind: 'openai-responses', model: mode === 'direct' ? 'incumbent' : 'alternate' })
+      expect(f.requests[0]?.mediaBindings).toEqual({ video: provider.profileVersionId })
+      expect(f.requests[0]?.messages.at(-1)?.attachments?.map(file => file.id)).toEqual([reference.id])
+    })
+  }
+
+  for (const denied of ['stability', 'empty-tools', 'wrong-tool', 'direct-stability'] as const) {
+    it(`rejects ${denied} image reference authority before admission or egress`, async () => {
+      const stability = denied === 'stability' || denied === 'direct-stability'
+      await f.readyMedia(
+        stability
+          ? { ...imageProviderConfig, api: 'stability-images', model: 'stable-image-core', baseUrl: 'https://api.stability.ai/v2beta' }
+          : videoProviderConfig
+      )
+      const sessionId = await f.session()
+      const reference = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: referenceImage, mimeType: 'image/png', filename: 'reference.png' })
+      await expect(
+        f.submit(sessionId, 7, {
+          attachmentIds: [reference.id],
+          generationTools: denied === 'empty-tools' ? [] : ['image'],
+          ...(denied === 'direct-stability' ? { responseMode: 'image' as const } : {})
+        })
+      ).rejects.toMatchObject({ code: denied === 'direct-stability' ? 'INVALID_AGENT_MEDIA' : 'AGENT_MEDIA_DISABLED' })
+      expect(await db('agentRuns').select('id')).toEqual([])
+      expect(await db('agentQuotaReservations').select('runId')).toEqual([])
+      expect(f.requests).toEqual([])
+    })
+  }
+
+  for (const fallback of ['authorized', 'unauthorized', 'opted-out'] as const) {
+    it(`routes WebM audio only to an ${fallback} exact-codec-capable input fallback`, async () => {
+      f.view.policy.enabled = false
+      const chat = await f.registry.update(f.current.profileId, {
+        ...(await f.registry.getAdmin(f.current.profileId)),
+        transportKind: 'openai-chat',
+        model: 'gpt-audio',
+        baseUrl: 'https://api.openai.com/v1',
+        adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: {}, mediaInputs: { audio: true } },
+        secretReference: 'env:TEST_PROVIDER_KEY',
+        actorId: 1
+      })
+      const chatVersion = await db('agentProviderProfiles').where({ id: chat.id }).first('currentVersionId')
+      await f.registry.setConformed(chat.id, chatVersion.currentVersionId, true, 1)
+      await f.registry.setEnabled(chat.id, true, 1, chatVersion.currentVersionId)
+      const gemini = await f.registry.create({
+        ...(await f.registry.getAdmin(f.current.profileId)),
+        displayName: 'Audio input fallback',
+        transportKind: 'gemini-api',
+        model: 'gemini-3.5-flash',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        authMode: 'google-api-key',
+        adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: {}, mediaInputs: { audio: fallback !== 'opted-out' } },
+        secretReference: 'env:TEST_PROVIDER_KEY',
+        exposureMode: 'groups',
+        groupIds: [fallback === 'unauthorized' ? 2 : 1],
+        actorId: 1
+      })
+      const version = await db('agentProviderProfiles').where({ id: gemini.id }).first('currentVersionId')
+      await f.registry.setConformed(gemini.id, version.currentVersionId, true, 1)
+      await f.registry.setEnabled(gemini.id, true, 1, version.currentVersionId)
+      const sessionId = await f.session()
+      const audio = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: webmAudio, mimeType: 'audio/webm', filename: 'recording.webm' })
+      if (fallback !== 'authorized') {
+        await expect(f.submit(sessionId, 7, { attachmentIds: [audio.id], generationTools: [] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+        expect(await db('agentRuns').select('id')).toEqual([])
+        expect(await db('agentQuotaReservations').select('runId')).toEqual([])
+        expect(f.requests).toEqual([])
+        return
+      }
+      const admitted = await f.submit(sessionId, 7, { attachmentIds: [audio.id], generationTools: [] })
+      expect(admitted.run.providerProfileVersionId).toBe(version.currentVersionId)
+      await f.runtime.runOnce()
+      expect(await db('agentRuns').where({ id: admitted.run.id }).first('status')).toEqual({ status: 'succeeded' })
+      expect(f.requests[0]?.run.transportKind).toBe('gemini-api')
+      expect(f.requests[0]?.messages.at(-1)?.attachments?.map(file => file.id)).toEqual([audio.id])
+    })
+  }
+
+  for (const change of ['disabled', 'stale', 'revoked'] as const) {
+    it(`rechecks a ${change} media binding immediately before dispatch without substitution`, async () => {
+      const provider = await f.readyMedia(imageProviderConfig, [1])
+      const admitted = await f.submit(await f.session(), 7, { generationTools: ['image'] })
+      f.beforeInference(async () => {
+        if (change === 'disabled') await f.mediaRegistry.setEnabled(provider.id, false, provider.revision, { id: 1, authVersion: 0 })
+        else if (change === 'revoked') await db('agentMediaProviderGrants').where({ providerId: provider.id, groupId: 1 }).delete()
+        else
+          await f.mediaRegistry.update(
+            provider.id,
+            {
+              displayName: provider.displayName,
+              config: provider.config,
+              exposureMode: 'groups',
+              groupIds: [1]
+            },
+            provider.revision,
+            { id: 1, authVersion: 0 }
+          )
+      })
+      await f.runtime.runOnce()
+      expect(f.requests).toEqual([])
+      expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'errorCode')).toEqual({
+        status: 'failed',
+        errorCode: change === 'stale' ? 'MEDIA_PROVIDER_CHANGED' : 'AGENT_MEDIA_DISABLED'
+      })
+      expect(Number((await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()).consumedTokens)).toBe(190)
+    })
+  }
+
+  it('replays an admitted reference request with its exact binding despite a newly configured default', async () => {
+    const provider = await f.readyMedia(videoProviderConfig)
+    const sessionId = await f.session()
+    const reference = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: referenceImage, mimeType: 'image/png', filename: 'reference.png' })
+    const input = {
+      ownerId: 7,
+      sessionId,
+      expectedSessionVersion: 1,
+      profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
+      clientRequestId: randomUUID(),
+      content: 'Write a short greeting',
+      attachmentIds: [reference.id],
+      generationTools: ['video'] as const
+    }
+    const first = await f.runtime.submit(input)
+    const newer = await f.readyMedia({ ...videoProviderConfig, model: 'gemini-omni-flash-preview' })
+    await f.mediaRegistry.setDefault(newer.id, newer.revision, { id: 1, authVersion: 0 })
+    expect(await f.runtime.submit(input)).toMatchObject({ replayed: true, run: { id: first.run.id } })
+    await f.runtime.runOnce()
+    expect(f.requests[0]?.mediaBindings).toEqual({ video: provider.profileVersionId })
+    expect(await db('agentQuotaReservations').select('runId')).toEqual([{ runId: first.run.id }])
+  })
+
+  for (const corruption of ['missing-legacy-map', 'bad-hash', 'legacy-text'] as const) {
+    it(`enforces queued media authority for ${corruption}`, async () => {
+      await f.readyMedia(imageProviderConfig)
+      const admitted = await f.submit(await f.session(), 7, corruption === 'legacy-text' ? {} : { generationTools: ['image'] })
+      const queued = await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('id', 'data')
+      const context = JSON.parse(queued.data)
+      delete context.mediaBindings
+      const data = JSON.stringify(context)
+      await db('agentEvents')
+        .where({ id: queued.id })
+        .update({
+          data,
+          dataSha256: corruption === 'bad-hash' ? 'f'.repeat(64) : createHash('sha256').update(data).digest('hex')
+        })
+      await f.runtime.runOnce()
+      if (corruption === 'legacy-text') {
+        expect(await db('agentRuns').where({ id: admitted.run.id }).first('status')).toEqual({ status: 'succeeded' })
+        expect(f.requests[0]?.mediaBindings).toEqual({})
+        return
+      }
+      expect(f.requests).toEqual([])
+      expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'errorCode')).toEqual({
+        status: 'failed',
+        errorCode: corruption === 'bad-hash' ? 'AGENT_EVENT_CORRUPT' : 'AGENT_MEDIA_DISABLED'
+      })
+      expect(Number((await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()).consumedTokens)).toBe(0)
+    })
+  }
+
+  const seedBoundGoal = async (maximumTokens: number, profile = f.alternate, mediaBindings: AgentMediaBindings = {}) => {
     const sessionId = await f.session()
     await db('agentSessions').where({ id: sessionId }).update({ providerProfileId: profile.profileId })
     return db.transaction(async transaction => {
@@ -279,6 +485,7 @@ describe('admitted automatic conversation routing', () => {
         clientRequestId: randomUUID(),
         expectedSessionVersion: 1,
         content: goal.objective,
+        mediaBindings,
         goalId: goal.id,
         goalContinuation: 0,
         skillVersionIds: [],
@@ -296,9 +503,14 @@ describe('admitted automatic conversation routing', () => {
         ...(await execute(request, sink)),
         executionLimit: { reason: 'evidence', publication: 'partial' }
       })
-      const initial = await seedBoundGoal(100_000, f.current)
+      const mediaProvider = await f.readyMedia(imageProviderConfig)
+      const mediaBindings = { image: mediaProvider.profileVersionId }
+      const initial = await seedBoundGoal(100_000, f.current, mediaBindings)
       await f.runtime.runOnce()
       expect(f.requests[0]?.run.model).toBe('alternate')
+      expect(f.requests[0]?.mediaBindings).toEqual(mediaBindings)
+      const newer = await f.readyMedia({ ...imageProviderConfig, model: 'gemini-3.1-flash-image' })
+      await f.mediaRegistry.setDefault(newer.id, newer.revision, { id: 1, authVersion: 0 })
       expect((await db('agentRuns').where({ id: initial.run.id }).first()).providerProfileVersionId).toBe(f.alternate.versionId)
       const firstAssistant = await db('agentMessages').where({ runId: initial.run.id, role: 'assistant' }).first()
       expect(firstAssistant.runId).toBe(initial.run.id)
@@ -350,9 +562,12 @@ describe('admitted automatic conversation routing', () => {
       const input = { ownerId: 7, goalId: goal.id, expectedVersion: goal.version, runId: randomUUID(), clientRequestId: randomUUID() }
       const continued = operation === 'renew' ? await f.runtime.renewGoalBudget({ ...input, confirmed: true }) : await f.runtime.resumeGoal(input)
       expect(continued.run?.providerProfileVersionId).toBe(f.alternate.versionId)
+      const replay = operation === 'renew' ? await f.runtime.renewGoalBudget({ ...input, confirmed: true }) : await f.runtime.resumeGoal(input)
+      expect(replay).toMatchObject({ replayed: true, run: { id: continued.run!.id } })
       f.engine.execute = execute
       await f.runtime.runOnce()
       expect(f.requests.at(-1)?.run.model).toBe('alternate')
+      expect(f.requests.at(-1)?.mediaBindings).toEqual(mediaBindings)
       expect(f.classifications()).toBe(1)
       const ordinary = await f.submit(initial.sessionId)
       expect(ordinary.run.providerProfileVersionId).toBe(f.current.versionId)
@@ -361,6 +576,54 @@ describe('admitted automatic conversation routing', () => {
         content: firstAssistant.content
       })
     })
+  }
+
+  for (const operation of ['resume', 'renew'] as const) {
+    for (const invalid of ['stale-media-version', 'corrupt-queued-hash'] as const) {
+      it(`rejects ${invalid} during goal ${operation} without a new admission or dispatch`, async () => {
+        const provider = await f.readyMedia(imageProviderConfig)
+        const execute = f.engine.execute
+        f.engine.execute = async (request, sink) => ({
+          ...(await execute(request, sink)),
+          executionLimit: { reason: 'evidence', publication: 'partial' }
+        })
+        const initial = await seedBoundGoal(operation === 'renew' ? 8 : 100_000, f.alternate, { image: provider.profileVersionId })
+        await f.runtime.runOnce()
+        let goal = await getOwnedAgentGoal(db, 7, initial.goal.id)
+        if (operation === 'renew')
+          goal = (
+            await f.runtime.resumeGoal({
+              ownerId: 7,
+              goalId: goal.id,
+              expectedVersion: goal.version,
+              runId: randomUUID(),
+              clientRequestId: randomUUID()
+            })
+          ).goal
+        if (invalid === 'stale-media-version')
+          await f.mediaRegistry.update(
+            provider.id,
+            {
+              displayName: provider.displayName,
+              config: provider.config,
+              exposureMode: 'all_agent_users'
+            },
+            provider.revision,
+            { id: 1, authVersion: 0 }
+          )
+        else
+          await db('agentEvents')
+            .where({ runId: initial.run.id, type: 'run.queued' })
+            .update({ dataSha256: 'f'.repeat(64) })
+        const input = { ownerId: 7, goalId: goal.id, expectedVersion: goal.version, runId: randomUUID(), clientRequestId: randomUUID() }
+        await expect(operation === 'renew' ? f.runtime.renewGoalBudget({ ...input, confirmed: true }) : f.runtime.resumeGoal(input)).rejects.toMatchObject({
+          code: invalid === 'stale-media-version' ? 'MEDIA_PROVIDER_CHANGED' : 'AGENT_EVENT_CORRUPT'
+        })
+        expect(f.requests).toHaveLength(1)
+        expect(await db('agentRuns').select('id')).toEqual([{ id: initial.run.id }])
+        expect(await db('agentQuotaReservations').select('runId')).toEqual([{ runId: initial.run.id }])
+      })
+    }
   }
 
   for (const operation of ['resume', 'renew'] as const) {
@@ -451,9 +714,9 @@ describe('admitted automatic conversation routing', () => {
     }
   }
 
-  for (const tool of ['video', 'music'] as const) {
+  for (const tool of ['image', 'video', 'music'] as const) {
     for (const operation of ['submit', 'create-goal'] as const) {
-      it(`rejects unsupported ${tool} generation before ${operation} admission or reservation`, async () => {
+      it(`rejects unbound ${tool} generation before ${operation} admission or reservation`, async () => {
         const sessionId = await f.session()
         const input = {
           ownerId: 7,
@@ -467,7 +730,7 @@ describe('admitted automatic conversation routing', () => {
           operation === 'submit'
             ? f.runtime.submit({ ...input, responseMode: tool, content: 'Create media.' })
             : f.runtime.createGoal({ ...input, goalId: randomUUID(), objective: 'Create media.' })
-        await expect(submitted).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED', message: 'Video and music generation are unavailable.' })
+        await expect(submitted).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
         expect(await db('agentRuns').select('id')).toEqual([])
         expect(await db('agentGoals').select('id')).toEqual([])
         expect(await db('agentQuotaReservations').select('runId')).toEqual([])
@@ -799,7 +1062,14 @@ describe('admitted automatic conversation routing', () => {
   }
 
   const exerciseApprovalContinuation = async (
-    admissionKind: 'routed' | 'historical-pin' | 'historical-grant-revoked' | 'historical-version-revoked' | 'historical-grant-revoked-during-restore'
+    admissionKind:
+      | 'routed'
+      | 'historical-pin'
+      | 'historical-grant-revoked'
+      | 'historical-version-revoked'
+      | 'historical-grant-revoked-during-restore'
+      | 'media-version-revoked'
+      | 'media-grant-revoked-during-restore'
   ): Promise<void> => {
     await db.schema.alterTable('agentProposals', table => {
       table.uuid('requesterRequestId')
@@ -816,8 +1086,10 @@ describe('admitted automatic conversation routing', () => {
       table.string('authoritySha256')
     })
     const execute = f.engine.execute
+    const mediaProvider = await f.readyMedia(imageProviderConfig, [1])
+    const mediaBindings = { image: mediaProvider.profileVersionId }
     let stopping: Promise<void> | undefined
-    const historical = admissionKind !== 'routed'
+    const historical = admissionKind.startsWith('historical')
     const activeRuntime = historical
       ? new AgentProductRuntime(db, f.registry, f.engine, {
           workerId: 'historical-approval-run',
@@ -918,6 +1190,7 @@ describe('admitted automatic conversation routing', () => {
             clientRequestId: randomUUID(),
             expectedSessionVersion: 1,
             content: 'Write a short greeting',
+            mediaBindings,
             skillVersionIds: [],
             reservationExpiresAt: new Date(Date.now() + legacy.reservationMilliseconds)
           })
@@ -937,6 +1210,22 @@ describe('admitted automatic conversation routing', () => {
       const settings = await f.registry.getAdmin(f.alternate.profileId)
       await f.registry.update(f.alternate.profileId, { ...settings, secretReference: 'env:TEST_PROVIDER_KEY', actorId: 1 })
     }
+    if (admissionKind === 'media-version-revoked')
+      await f.mediaRegistry.update(
+        mediaProvider.id,
+        {
+          displayName: mediaProvider.displayName,
+          config: mediaProvider.config,
+          exposureMode: 'groups',
+          groupIds: [1]
+        },
+        mediaProvider.revision,
+        { id: 1, authVersion: 0 }
+      )
+    else if (admissionKind === 'routed' || admissionKind === 'historical-pin') {
+      const newer = await f.readyMedia({ ...imageProviderConfig, model: 'gemini-3.1-flash-image' })
+      await f.mediaRegistry.setDefault(newer.id, newer.revision, { id: 1, authVersion: 0 })
+    }
     const initialApprovals = await db('agentApprovals').where({ runId: admitted.run.id }).select('id')
     let completedActionEffects = 0
     let resumptions = 0
@@ -944,8 +1233,14 @@ describe('admitted automatic conversation routing', () => {
       resumptions += 1
       expect(checkpoint.runId).toBe(admitted.run.id)
       expect(request.run.model).toBe('alternate')
+      expect(request.mediaBindings).toEqual(mediaBindings)
       if (admissionKind === 'historical-grant-revoked-during-restore') {
         await f.registry.setGrants(f.alternate.profileId, 'groups', [2], 1)
+        await request.beforeExternalTool?.()
+        completedActionEffects += 1
+      }
+      if (admissionKind === 'media-grant-revoked-during-restore') {
+        await db('agentMediaProviderGrants').where({ providerId: mediaProvider.id, groupId: 1 }).delete()
         await request.beforeExternalTool?.()
         completedActionEffects += 1
       }
@@ -967,13 +1262,15 @@ describe('admitted automatic conversation routing', () => {
     if (
       admissionKind === 'historical-grant-revoked' ||
       admissionKind === 'historical-version-revoked' ||
-      admissionKind === 'historical-grant-revoked-during-restore'
+      admissionKind === 'historical-grant-revoked-during-restore' ||
+      admissionKind === 'media-version-revoked' ||
+      admissionKind === 'media-grant-revoked-during-restore'
     ) {
-      expect(resumptions).toBe(admissionKind === 'historical-grant-revoked-during-restore' ? 1 : 0)
+      expect(resumptions).toBe(admissionKind.endsWith('during-restore') ? 1 : 0)
       expect(completedActionEffects).toBe(0)
       expect(f.requests).toHaveLength(1)
       expect(await db('agentRuns').where({ id: admitted.run.id }).first('status')).toEqual({ status: 'failed' })
-      expect(Number((await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()).consumedTokens)).toBe(8)
+      expect(Number((await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()).consumedTokens)).toBe(historical ? 8 : 198)
     } else {
       expect(resumptions).toBe(1)
       expect(Number((await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()).consumedTokens)).toBe(historical ? 16 : 206)
@@ -990,13 +1287,16 @@ describe('admitted automatic conversation routing', () => {
     'historical-pin',
     'historical-grant-revoked',
     'historical-version-revoked',
-    'historical-grant-revoked-during-restore'
+    'historical-grant-revoked-during-restore',
+    'media-version-revoked',
+    'media-grant-revoked-during-restore'
   ] as const) {
     it(`preserves approval continuation binding and accounting for ${admissionKind} admission`, () => exerciseApprovalContinuation(admissionKind))
   }
 
   it('keeps classifier dispatch inside the existing goal token limit and preserves root action/deadline limits', async () => {
     const sessionId = await f.session()
+    const mediaProvider = await f.readyMedia(imageProviderConfig)
     const goal = await f.runtime.createGoal({
       goalId: randomUUID(),
       ownerId: 7,
@@ -1004,12 +1304,14 @@ describe('admitted automatic conversation routing', () => {
       profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
       clientRequestId: randomUUID(),
       expectedSessionVersion: 1,
-      objective: 'Write a short greeting'
+      objective: 'Write a short greeting',
+      generationTools: ['image']
     })
     await db('agentGoals').where({ id: goal.goal.id }).update({ maxTokens: 5_000, maxToolCalls: 2 })
     await f.runtime.runOnce()
     expect(f.classifications()).toBe(0)
     expect(f.requests[0]?.run.model).toBe('incumbent')
+    expect(f.requests[0]?.mediaBindings).toEqual({ image: mediaProvider.profileVersionId })
     expect(f.requests[0]?.limits).toMatchObject({ maxTokens: 5_000, maxToolCalls: 2 })
     expect(Number((await db('agentQuotaReservations').where({ runId: goal.run.id }).first()).consumedTokens)).toBe(8)
     const decision = (await db('agentEvents').where({ runId: goal.run.id, type: 'model.turn' }).select('data'))

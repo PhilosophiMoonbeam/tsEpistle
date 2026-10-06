@@ -6,6 +6,7 @@ import { compileScript, compileStyle, compileTemplate, parse } from '@vue/compil
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
+import { agentAttachmentMimeTypes } from '../../helpers/agent-media.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 globalThis.useTranslate = () => translateEnglish
@@ -78,7 +79,7 @@ for (const statement of compiledScript.scriptSetupAst) {
 scriptParts.push(script.slice(previousImportEnd))
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scriptParts.join(''))
 const evaluateComposer = new Function(
-  '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
+  '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, agentAttachmentMimeTypes, filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
   `${executableScript}
 return { ${setupNames.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
@@ -441,6 +442,7 @@ const loadComposer = (
         }
       },
     defineExpose: () => {},
+    agentAttachmentMimeTypes,
     filterPreferredBuiltInSkills,
     filterSkillsForCommand,
     filterUserSelectableSkills,
@@ -545,6 +547,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
         defineProps: () => props,
         defineEmits: () => emit,
         defineExpose: expose,
+        agentAttachmentMimeTypes,
         filterPreferredBuiltInSkills,
         filterSkillsForCommand,
         filterUserSelectableSkills,

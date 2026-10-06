@@ -337,6 +337,9 @@
             </div>
           </section>
         </v-window-item>
+        <v-window-item id="agent-panel-media" value="media" role="tabpanel" aria-labelledby="agent-tab-media">
+          <AgentMediaProviders :csrf-token="csrfToken" :groups="groups" :groups-loading="resourceState.groups.loading" :groups-error="resourceState.groups.error" @refresh-groups="refreshResources(['groups'])" />
+        </v-window-item>
       </v-window>
     </div>
 
@@ -417,40 +420,11 @@
                   <v-select v-model="profileDraft.utilityReasoningEffort" :items="reasoningEffortOptions" :label="$t('admin:agentAdmin.utilityReasoning')" :hint="$t('admin:agentAdmin.independentDepthBoundedTasks')" persistent-hint />
                 </div>
               </div>
-              <div v-if="profileDraft.transportKind === 'gemini-api'" class="subsection-card">
-                <div class="subsection-card__heading"><div><h4>{{ $t('admin:agentAdmin.mediaAttachments') }}</h4><p>{{ $t('admin:agentAdmin.chooseWhatProviderMakes') }}</p></div><v-icon icon="mdi-image-outline" size="20" aria-hidden="true" /></div>
-                <v-switch v-model="profileDraft.mediaAttachments" :label="$t('admin:agentAdmin.pdfImageAttachments')" color="primary" hide-details />
-                <p class="text-body-2 mb-2">{{ $t('admin:agentAdmin.attachUpFourFiles') }}</p>
-                <details class="media-storage-help mb-3">
-                  <summary>{{ $t('admin:agentAdmin.privacyRetentionStorage') }}</summary>
-                  <dl>
-                    <dt>{{ $t('admin:agentAdmin.privacyLimits') }}</dt><dd>{{ $t('admin:agentAdmin.filesStayPrivateConversation') }}</dd>
-                    <dt>{{ $t('admin:agentAdmin.conversationRetention') }}</dt><dd>{{ $t('admin:agentAdmin.originalsGeneratedMediaFollow') }}</dd>
-                    <dt>{{ $t('admin:agentAdmin.storage') }}</dt><dd>{{ $t('admin:agentAdmin.savedOriginalsLimited1') }}</dd>
-                  </dl>
-                </details>
-                <v-switch v-model="profileDraft.mediaImages" :label="$t('admin:agentAdmin.imageCreationEditing')" color="primary" hide-details />
-                <div v-if="profileDraft.mediaImages" class="form-grid mt-3">
-                  <v-text-field model-value="gemini-3.1-flash-image" :label="$t('admin:agentAdmin.imageModel')" readonly hide-details />
-                  <span class="text-body-2">{{ $t('admin:agentAdmin.generateImagesChatEdit') }}</span>
-                  <v-text-field v-model="profileDraft.imageInputRate" :rules="[mediaRateRule]" :label="$t('admin:agentAdmin.imageInputRate')" :hint="$t('admin:agentAdmin.microdollarsPerMillionTokens')" persistent-hint inputmode="numeric" />
-                  <v-text-field v-model="profileDraft.imageOutputRate" :rules="[mediaRateRule]" :label="$t('admin:agentAdmin.imageOutputRate')" :hint="$t('admin:agentAdmin.microdollarsPerMillionTokens2')" persistent-hint inputmode="numeric" />
-                </div>
-                <v-alert type="info" variant="tonal" density="compact" class="my-3">
-                  Native video and music generation are unavailable in this Ax release. Existing media stays readable. Legacy settings can be disabled, but not newly enabled.
-                </v-alert>
-                <v-switch v-model="profileDraft.mediaVideo" :disabled="!profileDraft.mediaVideo" label="Legacy video generation setting" color="primary" hide-details />
-                <p v-if="profileDraft.mediaVideo" class="text-body-2 mb-3">Stored video configuration and pricing are retained for history; they do not enable new generation.</p>
-                <v-switch v-model="profileDraft.mediaMusic" :disabled="!profileDraft.mediaMusic" label="Legacy music generation setting" color="primary" hide-details />
-                <p v-if="profileDraft.mediaMusic" class="text-body-2 mb-3">Stored music configuration and pricing are retained for history; they do not enable new generation.</p>
-                <v-switch v-model="profileDraft.mediaSpeech" :label="$t('admin:agentAdmin.speechInput')" color="primary" hide-details />
-                <div v-if="profileDraft.mediaSpeech" class="form-grid mt-3">
-                  <v-text-field model-value="gemini-3.5-transcribe" :label="$t('admin:agentAdmin.transcriptionModel')" readonly hide-details />
-                  <span class="text-body-2">{{ $t('admin:agentAdmin.recordShortMessageThen') }}</span>
-                  <v-text-field v-model="profileDraft.speechInputRate" :rules="[mediaRateRule]" :label="$t('admin:agentAdmin.speechInputRate')" :hint="$t('admin:agentAdmin.microdollarsPerMillionAudio')" persistent-hint inputmode="numeric" />
-                  <v-text-field v-model="profileDraft.speechOutputRate" :rules="[mediaRateRule]" :label="$t('admin:agentAdmin.speechOutputRate')" :hint="$t('admin:agentAdmin.microdollarsPerMillionOutput')" persistent-hint inputmode="numeric" />
-                </div>
-                <p class="text-body-2 mt-3">{{ $t('admin:agentAdmin.usesProfilesGoogleCredential') }}</p>
+              <div class="subsection-card">
+                <div class="subsection-card__heading"><div><h4>{{ $t('admin:agentAdmin.modelMediaInputs') }}</h4><p>{{ $t('admin:agentAdmin.modelMediaInputsHelp') }}</p></div></div>
+                <v-switch v-for="kind in inputKinds" :key="kind" v-model="profileDraft.mediaInputs[kind]" :disabled="!inputSupport[kind]" :label="$t(`admin:agentAdmin.input${kind}`)" :hint="!inputSupport[kind] ? $t('admin:agentAdmin.unsupportedMediaInput') : undefined" persistent-hint color="primary" />
+                <p>{{ $t('admin:agentAdmin.independentMediaDestination') }}</p>
+                <v-btn variant="text" @click="requestProfileClose(); tab = 'media'">{{ $t('admin:agentAdmin.mediaProviders') }}</v-btn>
               </div>
               <div class="subsection-card">
                 <div class="subsection-card__heading"><div><h4>{{ $t('admin:agentAdmin.toolCalling') }}</h4><p>{{ $t('admin:agentAdmin.howModelInvokesGoverned') }}</p></div><v-icon icon="mdi-tools" size="20" aria-hidden="true" /></div>
@@ -623,6 +597,8 @@ import AgentAdminTools from './agent-admin-tools.vue'
 import AgentDecisionProviders from './agent-decision-providers.vue'
 import AgentExternalMcpAdmin from './agent-external-mcp-admin.vue'
 import AgentRoutingPolicy from './agent-routing-policy.vue'
+import AgentMediaProviders from './agent-media-providers.vue'
+import { AGENT_PROVIDER_MEDIA_INPUT_SUPPORT, type AgentMediaInputs } from '../../../shared/agents/media-providers.ts'
 import type { DecisionProviderView, ExternalMcpServerView, ExternalMcpGroupPolicyView, RoutingPolicyView, RoutingModelPolicyView } from '../../helpers/agent-control-api.ts'
 import type { AgentAdminTool } from '../../../shared/agents/admin.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
@@ -666,10 +642,10 @@ interface RuntimePolicy {
 interface ConnectionCheck { status: 'passed' | 'failed'; errorCode: string | null; message: string | null; completedAt: string }
 interface ConnectionHistoryCheck extends ConnectionCheck { id: string; checks: { name: string; passed: boolean; detail?: string }[] }
 interface Profile { profileVersionId: string }
-interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort; media?: { attachments: boolean; imageGeneration?: { model: 'gemini-3.1-flash-image'; pricingRevision: string }; transcription?: { model: 'gemini-3.5-transcribe'; pricingRevision: string }; videoGeneration?: { model: 'gemini-omni-1.1-flash'; pricingRevision: string; textOutputMicrosPerMillionTokens: number; usagePolicy: 'reported-or-estimated' }; musicGeneration?: { model: 'lyria-3.5'; costMicrosPerSong: number; usagePolicy: 'reported-or-estimated' } } }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
+interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort; mediaInputs?: AgentMediaInputs; media?: { attachments: boolean } }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
 interface GroupOption { id: number; name: string; isSystem: boolean }
-interface ProfileDraft { mediaAttachments: boolean; mediaImages: boolean; mediaSpeech: boolean; mediaVideo: boolean; mediaMusic: boolean; videoInputRate: string; videoOutputRate: string; videoTextOutputRate: string; musicSongRate: string; imageInputRate: string; imageOutputRate: string; speechInputRate: string; speechOutputRate: string; displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
+interface ProfileDraft { mediaInputs: AgentMediaInputs; displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
 
 const { csrfToken, embedded = false } = defineProps<{ csrfToken: string; embedded?: boolean }>()
 const { smAndDown } = useDisplay()
@@ -762,8 +738,10 @@ const formatConnectionCheckDate = (completedAt: string): string => {
   const completed = new Date(completedAt)
   return Number.isNaN(completed.getTime()) ? t('admin:agentAdmin.unknownTime') : connectionDateFormatter.format(completed)
 }
-const defaults = (): ProfileDraft => ({ mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false, videoInputRate: '', videoOutputRate: '', videoTextOutputRate: '', musicSongRate: '', imageInputRate: '', imageOutputRate: '', speechInputRate: '', speechOutputRate: '', displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
+const defaults = (): ProfileDraft => ({ mediaInputs: { images: false, documents: false, audio: false, video: false }, displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
 const profileDraft = reactive<ProfileDraft>(defaults())
+const inputKinds = ['images', 'documents', 'audio', 'video'] as const
+const inputSupport = computed(() => AGENT_PROVIDER_MEDIA_INPUT_SUPPORT[profileDraft.transportKind])
 const profileDraftFingerprint = (): string => JSON.stringify(profileDraft)
 const profileBaseline = ref(profileDraftFingerprint())
 const profileDirty = computed(() => profileDialog.value && profileDraftFingerprint() !== profileBaseline.value)
@@ -835,7 +813,7 @@ const selectProtocol = (value: unknown) => {
     ...(baseUrl !== previousDefaults.baseUrl ? { baseUrl } : {}),
     ...(value === 'legacy-completions' && (authMode === 'bearer' || authMode === 'api-key-header') ? { authMode } : {}),
     agentReasoningEffort: null, utilityReasoningEffort: null,
-    mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false
+    mediaInputs: { images: false, documents: false, audio: false, video: false }
   })
 }
 const selectToolCalling = () => {
@@ -885,6 +863,7 @@ const actionBusyMessage = computed(() => {
 const sectionItems = computed(() => [
   { value: 'overview', title: t('admin:agentAdmin.overview'), description: t('admin:agentAdmin.setupReadiness'), icon: 'mdi-view-dashboard-outline', badge: '' },
   { value: 'profiles', title: 'Generative models', description: 'Connections, grants & admin default', icon: 'mdi-brain', badge: profiles.value.length ? String(profiles.value.length) : '' },
+  { value: 'media', title: t('admin:agentAdmin.mediaProviders'), description: t('admin:agentAdmin.mediaProvidersDescription'), icon: 'mdi-image-multiple-outline', badge: '' },
   { value: 'decision', title: 'Agent Decision Providers', description: 'Native Jev & custom classification', icon: 'mdi-source-branch', badge: '' },
   { value: 'routing', title: 'Model tasks & routing', description: 'Current versions & eligible selection', icon: 'mdi-routes', badge: '' },
   { value: 'external-mcp', title: 'External MCP', description: 'Tools, resources & group authorization', icon: 'mdi-connection', badge: '' },
@@ -1135,19 +1114,7 @@ const openProfile = (profile?: Profile) => {
     utilityModel: profile.utilityModel ?? '',
     agentReasoningEffort: profile.adapterConfig.agentReasoningEffort ?? null,
     utilityReasoningEffort: profile.adapterConfig.utilityReasoningEffort ?? null,
-    mediaAttachments: profile.adapterConfig.media?.attachments ?? false,
-    mediaImages: Boolean(profile.adapterConfig.media?.imageGeneration),
-    mediaSpeech: Boolean(profile.adapterConfig.media?.transcription),
-    mediaVideo: Boolean(profile.adapterConfig.media?.videoGeneration),
-    mediaMusic: Boolean(profile.adapterConfig.media?.musicGeneration),
-    videoInputRate: profile.adapterConfig.media?.videoGeneration?.pricingRevision.split('|')[1] ?? '1500000',
-    videoOutputRate: profile.adapterConfig.media?.videoGeneration?.pricingRevision.split('|')[2] ?? '17500000',
-    videoTextOutputRate: String(profile.adapterConfig.media?.videoGeneration?.textOutputMicrosPerMillionTokens ?? 9000000),
-    musicSongRate: String(profile.adapterConfig.media?.musicGeneration?.costMicrosPerSong ?? 80000),
-    imageInputRate: profile.adapterConfig.media?.imageGeneration?.pricingRevision.split('|')[1] ?? '',
-    imageOutputRate: profile.adapterConfig.media?.imageGeneration?.pricingRevision.split('|')[2] ?? '',
-    speechInputRate: profile.adapterConfig.media?.transcription?.pricingRevision.split('|')[1] ?? '',
-    speechOutputRate: profile.adapterConfig.media?.transcription?.pricingRevision.split('|')[2] ?? '',
+    mediaInputs: Object.fromEntries(inputKinds.map(kind => [kind, AGENT_PROVIDER_MEDIA_INPUT_SUPPORT[profile.transportKind][kind] && (profile.adapterConfig.mediaInputs?.[kind] ?? ((kind === 'images' || kind === 'documents') && Boolean(profile.adapterConfig.media?.attachments)))])) as unknown as AgentMediaInputs,
     baseUrl: profile.baseUrl,
     authMode: profile.authMode,
     maxContextTokens: profile.capabilities.maxContextTokens,
@@ -1173,24 +1140,8 @@ const openProfile = (profile?: Profile) => {
   profileDialog.value = true
   if (!profile) void refreshResources(['groups'])
 }
-const mediaRateValid = (value: string): boolean => /^[1-9][0-9]{0,14}$/u.test(value) && Number.isSafeInteger(Number(value))
-const mediaRateRule = (value: string): true | string => mediaRateValid(value) || t('admin:agentAdmin.enterPositiveWholeNumber')
-const mediaSettingsValid = computed(() => profileDraft.transportKind !== 'gemini-api' || (
-  (!profileDraft.mediaImages || (mediaRateValid(profileDraft.imageInputRate) && mediaRateValid(profileDraft.imageOutputRate))) &&
-  (!profileDraft.mediaVideo || [profileDraft.videoInputRate, profileDraft.videoOutputRate, profileDraft.videoTextOutputRate].every(mediaRateValid)) &&
-  (!profileDraft.mediaMusic || mediaRateValid(profileDraft.musicSongRate)) &&
-  (!profileDraft.mediaSpeech || (mediaRateValid(profileDraft.speechInputRate) && mediaRateValid(profileDraft.speechOutputRate)))
-))
-const mediaPayload = () => profileDraft.transportKind !== 'gemini-api' || !(profileDraft.mediaAttachments || profileDraft.mediaImages || profileDraft.mediaSpeech || profileDraft.mediaVideo || profileDraft.mediaMusic) ? {} : {
-  media: {
-    attachments: profileDraft.mediaAttachments,
-    ...(profileDraft.mediaVideo ? { videoGeneration: { model: 'gemini-omni-1.1-flash', pricingRevision: `video-v1|${profileDraft.videoInputRate}|${profileDraft.videoOutputRate}`, textOutputMicrosPerMillionTokens: Number(profileDraft.videoTextOutputRate), usagePolicy: 'reported-or-estimated' } } : {}),
-    ...(profileDraft.mediaMusic ? { musicGeneration: { model: 'lyria-3.5', costMicrosPerSong: Number(profileDraft.musicSongRate), usagePolicy: 'reported-or-estimated' } } : {}),
-    ...(profileDraft.mediaImages ? { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: `gemini-image-v1|${profileDraft.imageInputRate}|${profileDraft.imageOutputRate}` } } : {}),
-    ...(profileDraft.mediaSpeech ? { transcription: { model: 'gemini-3.5-transcribe', pricingRevision: `gemini-speech-v1|${profileDraft.speechInputRate}|${profileDraft.speechOutputRate}` } } : {})
-  }
-}
-const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { ...mediaPayload(), timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
+const mediaSettingsValid = computed(() => inputKinds.every(kind => !profileDraft.mediaInputs[kind] || inputSupport.value[kind]))
+const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { mediaInputs: { ...profileDraft.mediaInputs }, timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
 const saveProfile = async (): Promise<void> => {
   if (saving.value || !profileDirty.value) return
   if (!profileDraftValid.value) {

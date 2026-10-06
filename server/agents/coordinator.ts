@@ -2,6 +2,9 @@ import { bindAgentMedia } from './media.ts'
 import type { AgentKnowledgeContext } from '../../shared/agents/knowledge-context.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
+import { z } from 'zod'
+import { AgentMediaKindSchema, type AgentMediaBindings, type AgentMediaKind } from '../../shared/agents/media-providers.ts'
+import { assertAgentMediaBinding, listAgentMediaBindings } from './media-providers.ts'
 import {
   isTerminalAgentRunStatus,
   AGENT_GENERATION_TOOLS,
@@ -673,6 +676,7 @@ export const reconcileAgentRunQuota = async (knex: Knex, input: ReconcileAgentQu
   knex.transaction(transaction => reconcileAgentRunQuotaInTransaction(transaction, input))
 
 export interface AdmitAgentRunInput {
+  readonly mediaBindings?: AgentMediaBindings
   readonly generationTools?: readonly AgentGenerationTool[]
   readonly id?: string
   readonly userMessageId?: string
@@ -722,6 +726,24 @@ export const normalizeAgentGenerationTools = (value: unknown): readonly AgentGen
   return AGENT_GENERATION_TOOLS.filter(tool => value.includes(tool))
 }
 
+const MediaBindingsSchema = z.strictObject({
+  image: z.uuid().optional(),
+  video: z.uuid().optional(),
+  music: z.uuid().optional(),
+  transcription: z.uuid().optional()
+})
+export const normalizeAgentMediaBindings = (value: unknown): AgentMediaBindings | undefined => {
+  if (value === undefined) return undefined
+  const parsed = MediaBindingsSchema.safeParse(value)
+  if (!parsed.success) throw new AgentRepositoryError('INVALID_AGENT_MEDIA_BINDINGS', 'Media provider bindings are invalid.', 400)
+  const bindings: Partial<Record<AgentMediaKind, string>> = {}
+  for (const kind of AgentMediaKindSchema.options) {
+    const versionId = parsed.data[kind]
+    if (versionId !== undefined) bindings[kind] = versionId
+  }
+  return Object.freeze(bindings)
+}
+
 const admissionEnvelope = (input: AdmitAgentRunInput): string =>
   canonicalJson({
     sessionId: input.sessionId,
@@ -733,6 +755,7 @@ const admissionEnvelope = (input: AdmitAgentRunInput): string =>
     userMessageVisible: input.userMessageVisible ?? true,
     ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
     ...(input.mediaRequest ? { mediaRequest: input.mediaRequest } : {}),
+    mediaBindings: input.mediaBindings ?? {},
     content: input.content,
     ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
     currentPage: input.currentPage ?? null,
@@ -760,12 +783,14 @@ const queuedEventData = (
   runId: string,
   currentPage?: Readonly<Record<string, unknown>>,
   knowledgeContext?: AgentKnowledgeContext,
-  generationTools?: readonly AgentGenerationTool[]
+  generationTools?: readonly AgentGenerationTool[],
+  mediaBindings?: AgentMediaBindings
 ): { data: string; dataSha256: string } => {
   const value: AgentEventData = {
     runId,
     status: 'queued',
     ...(generationTools === undefined ? {} : { generationTools }),
+    mediaBindings: mediaBindings ?? {},
     ...(currentPage === undefined ? {} : { currentPage }),
     ...(knowledgeContext === undefined ? {} : { knowledgeContext })
   }
@@ -778,7 +803,19 @@ export const admitAgentRunInTransaction = async (
   input: AdmitAgentRunInput
 ): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> => {
   const generationTools = normalizeAgentGenerationTools(input.generationTools)
-  if (generationTools !== undefined) input = { ...input, generationTools }
+  if (generationTools?.length && input.executionMode !== 'agent')
+    throw new AgentRepositoryError('INVALID_GENERATION_TOOLS', 'This conversation mode cannot use generation tools.', 400)
+  await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
+  const mediaBindings = normalizeAgentMediaBindings(input.mediaBindings) ?? (await listAgentMediaBindings(transaction, input.ownerId))
+  const requiredKinds = new Set<AgentMediaKind>(generationTools ?? [])
+  if (input.mediaRequest) requiredKinds.add(AgentMediaKindSchema.parse(input.mediaRequest.kind))
+  for (const kind of requiredKinds)
+    if (!mediaBindings[kind]) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'The requested media operation is unavailable.', 403)
+  for (const kind of AgentMediaKindSchema.options) {
+    const versionId = mediaBindings[kind]
+    if (versionId !== undefined) await assertAgentMediaBinding(transaction, input.ownerId, kind, versionId)
+  }
+  input = { ...input, mediaBindings, ...(generationTools === undefined ? {} : { generationTools }) }
   if (!/^[a-f0-9]{64}$/.test(input.profileResolutionSha256))
     throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Profile resolution hash is invalid', 400)
   if (input.content.length < 1 || input.content.length > 32_000)
@@ -791,7 +828,6 @@ export const admitAgentRunInTransaction = async (
   }
   const inputHash = sha256(admissionEnvelope(input))
   const now = input.now ?? new Date()
-  await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
   const retry = await transaction<RunRow>('agentRuns')
     .where({ sessionId: input.sessionId, clientRequestId: input.clientRequestId, ownerId: input.ownerId })
     .first()
@@ -915,7 +951,7 @@ export const admitAgentRunInTransaction = async (
   if (input.skillVersionIds.length > 0)
     await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
   await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
-  const event = queuedEventData(runId, input.currentPage, input.knowledgeContext, input.generationTools)
+  const event = queuedEventData(runId, input.currentPage, input.knowledgeContext, input.generationTools, input.mediaBindings)
   await transaction('agentEvents').insert({
     id: input.queuedEventId ?? randomUUID(),
     runId,
@@ -938,6 +974,8 @@ export const admitAgentRun = async (knex: Knex, input: AdmitAgentRunInput): Prom
   knex.transaction(transaction => admitAgentRunInTransaction(transaction, input))
 
 export interface AgentRunClaim extends AgentRunRecord {
+  /** Hydrated only from the canonical queued context; never a separate mutable run column. */
+  readonly mediaBindings?: AgentMediaBindings
   readonly leaseOwner: string
   readonly leaseToken: string
   readonly leaseExpiresAt: string

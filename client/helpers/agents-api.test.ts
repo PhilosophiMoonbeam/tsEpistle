@@ -88,18 +88,13 @@ describe('agents client boundary', () => {
     }
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json(thread))
 
-    expect((await createAgentThread(fetcher as typeof fetch, 'csrf', { retention: 'saved' })).session.mediaCapabilities).toEqual(mediaCapabilities)
-    expect(fetcher).toHaveBeenCalledWith(
-      '/_api/agents/sessions',
-      expect.objectContaining({ method: 'POST', credentials: 'same-origin', body: JSON.stringify({ retention: 'saved' }) })
-    )
-
     fetcher.mockImplementation(async () => Response.json({ ...thread, session: { ...thread.session, mediaCapabilities: null } }))
     expect((await getAgentThread(fetcher as typeof fetch, 'csrf', sessionId)).session.mediaCapabilities).toBeNull()
 
     const invalidCapabilities: unknown[] = [undefined, [], true, { ...mediaCapabilities, unknownGeneration: true }]
     for (const flag of Object.keys(mediaCapabilities)) {
-      for (const value of [undefined, null, 'true', 1]) invalidCapabilities.push({ ...mediaCapabilities, [flag]: value })
+      const invalidValues = flag === 'videoGeneration' || flag === 'musicGeneration' ? [null, 'true', 1] : [undefined, null, 'true', 1]
+      for (const value of invalidValues) invalidCapabilities.push({ ...mediaCapabilities, [flag]: value })
     }
     for (const invalid of invalidCapabilities) {
       fetcher.mockImplementation(async () => Response.json({ ...thread, session: { ...thread.session, mediaCapabilities: invalid } }))

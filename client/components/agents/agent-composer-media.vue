@@ -1,10 +1,10 @@
 <template>
-  <div v-if="error || capabilities?.attachments || generationOptions.length || capabilities?.transcription" class="agent-media-composer">
+  <div v-if="error || attachmentsAvailable || generationOptions.length || capabilities?.transcription" class="agent-media-composer">
     <!-- Recording, upload, and transcription controls live in the composer action bar (agent-composer.vue).
          This component owns the capture/transcription pipeline and renders pending attachments only. -->
-    <input ref="fileInput" class="agent-media-composer__file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple :aria-label="$t('common:agentComposerMedia.chooseImagesPdfs')" :disabled="locked || !session || !capabilities?.attachments || attachments.length >= 4" @change="chooseFiles" />
+    <input ref="fileInput" class="agent-media-composer__file" type="file" :accept="attachmentMimeTypes.join(',')" multiple :aria-label="$t('common:agentComposerMedia.chooseMediaFiles')" :disabled="locked || !session || !attachmentsAvailable || attachments.length >= 4" @change="chooseFiles" />
     <p v-if="generationOptions.length && generationToolsEnabled === false" class="agent-media-composer__hint">{{ $t('common:agentComposerMedia.creationToolsAvailableConversations') }}</p>
-    <p v-else-if="generationOptions.length && !capabilities?.attachments" class="agent-media-composer__hint">{{ $t('common:agentComposerMedia.imageReferencesNeedPdf') }}</p>
+    <p v-if="attachmentsAvailable" class="agent-media-composer__hint">{{ $t(imageReferencesOnly ? 'common:agentComposerMedia.imageToolReferencesOnly' : 'common:agentComposerMedia.modelAnalysisAttachments') }}</p>
     <slot
       name="attachments"
       :attachments="attachments"
@@ -12,7 +12,7 @@
       :locked="locked"
       :remove-attachment="removeAttachment"
     />
-    <AgentAssetPicker v-if="assetPickerOpen" :image-only="false" :busy="uploading" :disabled="disabled || networkBlocked" :attachment-error="error" @close="closeAssetPicker" @select="attachAsset" />
+    <AgentAssetPicker v-if="assetPickerOpen" :image-only="false" :busy="uploading" :disabled="disabled || networkBlocked" :attachment-error="error" :capabilities="capabilities" :generation-tools="admittedGenerationTools" @close="closeAssetPicker" @select="attachAsset" />
     <p v-if="error && !assetPickerOpen" class="agent-media-composer__error" role="alert">{{ error }}</p>
   </div>
 </template>
@@ -22,7 +22,7 @@ import type { AgentMediaView, AgentMediaCapabilities, AgentThreadState } from '.
 import { AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from '../../helpers/agents-api.ts'
 import AgentAssetPicker from './agent-asset-picker.vue'
 import type { Asset } from '../../helpers/assets-api.ts'
-import { validateAgentAttachment, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
+import { agentAttachmentMimeTypes, agentToolAcceptsImages, validateAgentAttachment, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
@@ -40,6 +40,10 @@ const assetPickerOpen = ref(false)
 const attachments = ref<AgentMediaView[]>([])
 type GenerationTool = 'image' | 'video' | 'music'
 const selectedGenerationTools = ref<GenerationTool[]>([])
+const admittedGenerationTools = computed(() => props.generationToolsEnabled === false ? [] : selectedGenerationTools.value)
+const attachmentMimeTypes = computed(() => agentAttachmentMimeTypes(props.capabilities, admittedGenerationTools.value))
+const attachmentsAvailable = computed(() => attachmentMimeTypes.value.length > 0)
+const imageReferencesOnly = computed(() => attachmentMimeTypes.value.length > 0 && agentAttachmentMimeTypes(props.capabilities, []).length === 0)
 const generationOptions = computed(() => [
   { value: 'image' as const, enabled: props.capabilities?.imageGeneration, title: t('common:agentComposerMedia.images'), icon: 'mdi-image-outline' },
   { value: 'video' as const, enabled: props.capabilities?.videoGeneration, title: t('common:agentComposerMedia.video'), icon: 'mdi-movie-open-outline' },
@@ -259,14 +263,14 @@ const removeAttachment = async (item: AgentMediaView) => {
 }
 const addFiles = async (files: readonly File[]): Promise<boolean> => {
   if (disposed || !files.length) return false
-  if (!props.capabilities?.attachments) { error.value = t('common:agentComposerMedia.attachmentsUnavailable'); return false }
+  if (!attachmentsAvailable.value) { error.value = t('common:agentComposerMedia.attachmentsUnavailable'); return false }
   if (!props.session) { error.value = t('common:agentComposerMedia.sessionRequired'); return false }
   if (props.networkBlocked) { error.value = t('common:agentComposerMedia.connectionRequired'); return false }
   if (locked.value) { error.value = t('common:agentComposerMedia.attachmentsBusy'); return false }
   error.value = ''
   if (attachments.value.length + files.length > 4) { error.value = t('common:agentComposerMedia.attachUp4Files'); return false }
   for (const file of files) {
-    const problem = validateAgentAttachment(file)
+    const problem = validateAgentAttachment(file, props.capabilities, admittedGenerationTools.value)
     if (problem) { error.value = t(problem); return false }
   }
   const sessionId = props.session.id
@@ -320,10 +324,10 @@ const addFiles = async (files: readonly File[]): Promise<boolean> => {
   }
 }
 const chooseUpload = () => {
-  if (!locked.value && props.session && props.capabilities?.attachments && attachments.value.length < 4) fileInput.value?.click()
+  if (!locked.value && props.session && attachmentsAvailable.value && attachments.value.length < 4) fileInput.value?.click()
 }
 const browseAssets = () => {
-  if (locked.value || !props.session || attachments.value.length >= 4 || !props.capabilities?.attachments) return
+  if (locked.value || !props.session || attachments.value.length >= 4 || !attachmentsAvailable.value) return
   error.value = ''
   assetPickerOpen.value = true
 }
@@ -334,10 +338,14 @@ const closeAssetPicker = (restoreFocus = true) => {
   if (restoreFocus && !disposed) emit('assetPickerClosed')
 }
 const attachAsset = async (asset: Asset) => {
-  if (!assetPickerOpen.value || locked.value || !props.session || attachments.value.length >= 4 || !props.capabilities?.attachments) return
-  const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf' }
-  const type = mimeTypes[asset.ext.replace(/^\./, '').toLowerCase()] ?? ''
-  const problem = validateAgentAttachment({ type, size: asset.fileSize })
+  if (!assetPickerOpen.value || locked.value || !props.session || attachments.value.length >= 4 || !attachmentsAvailable.value) return
+  const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf', wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac', mp4: 'video/mp4', webm: 'video/webm', weba: 'audio/webm' }
+  let type = mimeTypes[asset.ext.replace(/^\./, '').toLowerCase()] ?? ''
+  if (type === 'video/mp4' || type === 'video/webm') {
+    const audio = type.replace('video/', 'audio/')
+    if (!attachmentMimeTypes.value.includes(type) && attachmentMimeTypes.value.includes(audio)) type = audio
+  }
+  const problem = validateAgentAttachment({ type, size: asset.fileSize }, props.capabilities, admittedGenerationTools.value)
   if (problem) { error.value = t(problem); return }
   const sessionId = props.session.id
   const csrfToken = props.csrfToken
@@ -347,7 +355,7 @@ const attachAsset = async (asset: Asset) => {
   error.value = ''
   try {
     const media = await attachAgentAsset(fetcher, csrfToken, sessionId, asset.id, controller.signal)
-    if (disposed || controller.signal.aborted || props.session?.id !== sessionId || !assetPickerOpen.value) {
+    if (disposed || controller.signal.aborted || uploadController !== controller || props.session?.id !== sessionId || props.csrfToken !== csrfToken || !assetPickerOpen.value) {
       void deleteAgentMedia(fetcher, csrfToken, media.id).catch(() => {})
       return
     }
@@ -360,8 +368,9 @@ const attachAsset = async (asset: Asset) => {
   }
 }
 const editImage = async (media: AgentMediaView): Promise<boolean> => {
-  if (locked.value || !props.capabilities?.imageGeneration || !props.capabilities?.attachments || props.generationToolsEnabled === false || !props.session) return false
+  if (locked.value || !media.mimeType.startsWith('image/') || !agentToolAcceptsImages(props.capabilities, 'image') || props.generationToolsEnabled === false || !props.session || attachments.value.length >= 4) return false
   const sessionId = props.session.id
+  const csrfToken = props.csrfToken
   error.value = ''
   uploading.value = true
   const controller = new AbortController()
@@ -371,7 +380,7 @@ const editImage = async (media: AgentMediaView): Promise<boolean> => {
     const response = await fetcher(agentMediaContentUrl(media.id), { credentials: 'same-origin', signal: controller.signal })
     if (!response.ok) throw new Error(t('common:agentComposerMedia.imageNoLongerAvailable'))
     const blob = await response.blob()
-    if (disposed || controller.signal.aborted || props.session?.id !== sessionId) return false
+    if (disposed || controller.signal.aborted || uploadController !== controller || props.session?.id !== sessionId || props.csrfToken !== csrfToken) return false
     file = new File([blob], media.filename, { type: media.mimeType })
   } catch (value) {
     if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : t('common:agentComposerMedia.imageCouldNotAttached')
@@ -379,15 +388,18 @@ const editImage = async (media: AgentMediaView): Promise<boolean> => {
   } finally {
     if (uploadController === controller) { uploadController = null; uploading.value = false }
   }
+  const previous = selectedGenerationTools.value
+  if (!previous.includes('image')) selectedGenerationTools.value = ['image', ...previous]
   const added = await addFiles([file])
-  if (added && !selectedGenerationTools.value.includes('image')) selectedGenerationTools.value = ['image', ...selectedGenerationTools.value]
+  if (!added) selectedGenerationTools.value = previous
   return added === true
 }
 // Re-attaching a detached attachment downloads the stored copy and re-uploads it as a
 // new pending attachment through the same flow used for freshly chosen files.
 const reattachMedia = async (media: AgentMediaView): Promise<boolean> => {
-  if (locked.value || !props.capabilities?.attachments || !props.session) return false
+  if (locked.value || !attachmentsAvailable.value || !props.session || attachments.value.length >= 4 || !attachmentMimeTypes.value.includes(media.mimeType)) return false
   const sessionId = props.session.id
+  const csrfToken = props.csrfToken
   error.value = ''
   uploading.value = true
   const controller = new AbortController()
@@ -397,7 +409,7 @@ const reattachMedia = async (media: AgentMediaView): Promise<boolean> => {
     const response = await fetcher(agentMediaContentUrl(media.id), { credentials: 'same-origin', signal: controller.signal })
     if (!response.ok) throw new Error(t('common:agentComposerMedia.attachmentCopyNoLonger'))
     const blob = await response.blob()
-    if (disposed || controller.signal.aborted || props.session?.id !== sessionId) return false
+    if (disposed || controller.signal.aborted || uploadController !== controller || props.session?.id !== sessionId || props.csrfToken !== csrfToken) return false
     file = new File([blob], media.filename, { type: media.mimeType })
   } catch (value) {
     if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : t('common:agentComposerMedia.attachmentCouldNotRe')
@@ -556,7 +568,7 @@ const transcribe = async (file: File, session: AgentThreadState['session'], csrf
   let uploadedId: string | null = null
   let admitted = false
   try {
-    const media = await uploadAgentMedia(fetcher, csrfToken, session.id, file, controller.signal)
+    const media = await uploadAgentMedia(fetcher, csrfToken, session.id, file, controller.signal, 'transcription')
     uploadedId = media.id
     if (controller.signal.aborted) return
     const runId = await startAgentTranscription(fetcher, csrfToken, session.id, { clientRequestId: crypto.randomUUID(), expectedSessionVersion: session.version, profileResolutionToken: session.profileResolutionToken, attachmentId: media.id })
@@ -615,6 +627,11 @@ const transcribe = async (file: File, session: AgentThreadState['session'], csrf
     }
   }
 }
+watch(() => props.csrfToken, () => {
+  closeAssetPicker(false)
+  uploadController?.abort()
+  cancelDictation()
+}, { flush: 'sync' })
 watch(() => [props.disabled, props.networkBlocked] as const, ([disabled, blocked]) => { if (disabled || blocked) { closeAssetPicker(false); uploadController?.abort(); if (blocked) cancelDictation() } }, { flush: 'sync' })
 watch(() => props.session?.id, (id, previous) => {
   if (id === previous) return
@@ -624,16 +641,17 @@ watch(() => props.session?.id, (id, previous) => {
   for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
   clear()
 }, { flush: 'sync' })
-watch(() => props.capabilities, () => {
+watch([() => props.capabilities, attachmentMimeTypes], () => {
   closeAssetPicker(false)
   uploadController?.abort()
   if (!props.capabilities?.transcription) cancelDictation()
-  if (!props.capabilities?.attachments && attachments.value.length) {
-    for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
-    attachments.value = []
+  const revoked = attachments.value.filter(item => !attachmentMimeTypes.value.includes(item.mimeType))
+  if (revoked.length) {
+    for (const item of revoked) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
+    attachments.value = attachments.value.filter(item => attachmentMimeTypes.value.includes(item.mimeType))
     error.value = t('common:agentComposerMedia.attachmentsWereRemovedBecause')
   }
-}, { deep: true })
+}, { deep: true, flush: 'sync' })
 onBeforeUnmount(() => {
   disposed = true
   cancelDictation()

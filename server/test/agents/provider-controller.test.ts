@@ -47,7 +47,12 @@ const profile = {
   pricingRevision: 'price-2',
   createdAt: '2026-08-30T00:00:00.000Z',
   baseUrl: 'https://provider.example.test/v1',
-  adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: {} },
+  adapterConfig: {
+    timeoutMs: 30_000,
+    maxRetries: 0,
+    additionalHeaders: {},
+    mediaInputs: { images: true, documents: true, audio: false, video: false }
+  },
   policies: {
     allowedModes: ['agent' as const],
     dailyTokens: 100_000,

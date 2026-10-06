@@ -3,6 +3,7 @@ import createKnex, { type Knex } from 'knex'
 import { ai, type AxAIGoogleGeminiModel } from '@ax-llm/ax'
 import { AgentProviderAttemptError, AgentProviderFactory, type AgentProviderFetch, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
 import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT } from '../../agents/providers/gemini-media.ts'
+import type { AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const origin = 'https://generativelanguage.googleapis.com'
@@ -10,6 +11,20 @@ const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==',
   'base64'
 )
+// Complete mono 8 kHz, 16-bit PCM WAV with eight silence samples.
+const audio = Buffer.alloc(60)
+audio.write('RIFF', 0)
+audio.writeUInt32LE(audio.length - 8, 4)
+audio.write('WAVEfmt ', 8)
+audio.writeUInt32LE(16, 16)
+audio.writeUInt16LE(1, 20)
+audio.writeUInt16LE(1, 22)
+audio.writeUInt32LE(8_000, 24)
+audio.writeUInt32LE(16_000, 28)
+audio.writeUInt16LE(2, 32)
+audio.writeUInt16LE(16, 34)
+audio.write('data', 36)
+audio.writeUInt32LE(16, 40)
 const file = (state = 'ACTIVE') => ({
   name: 'files/abc123',
   uri: `${origin}/v1beta/files/abc123`,
@@ -34,7 +49,11 @@ describe('Gemini media egress guard', () => {
       },
       { preconnect: () => {} }
     ) as AgentProviderFetch
-    const guard = createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, implementation, resolve)
+    const guard = createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, implementation, resolve, undefined, undefined, undefined, {
+      generateModels: ['gemini-3.1-flash-image'],
+      countModels: ['gemini-3.5-transcribe'],
+      files: true
+    })
     await guard(`${origin}/upload/v1beta/files`, {
       method: 'POST',
       body: '{}'
@@ -76,7 +95,11 @@ describe('Gemini media egress guard', () => {
       },
       { preconnect: () => {} }
     ) as AgentProviderFetch
-    const guard = createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, implementation, resolve)
+    const guard = createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, implementation, resolve, undefined, undefined, undefined, {
+      generateModels: ['gemini-3.1-flash-image'],
+      countModels: [],
+      files: true
+    })
     const body = Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1)
     body.write('%PDF-1.7')
     await guard(`${origin}/upload/v1beta/files?upload_id=abc`, { method: 'POST', headers: { 'content-type': 'application/pdf' }, body })
@@ -92,29 +115,87 @@ describe('Gemini media egress guard', () => {
   })
 })
 
-describe('Gemini media factory configuration', () => {
+describe('Gemini independent media and input factory configuration', () => {
   let db: Knex
-  const config = {
+  const mediaVersion = '00000000-0000-4000-8000-000000000101'
+  const secretId = '00000000-0000-4000-8000-000000000102'
+  const mediaConfig: AgentMediaProviderConfig = {
+    kind: 'image',
+    api: 'gemini-generate-content',
+    model: 'gemini-2.5-flash-image',
+    baseUrl: `${origin}/v1beta`,
+    timeoutMs: 5_000,
+    maxInputTokens: 200,
+    maxOutputTokens: 123,
+    pricing: { kind: 'tokens', pricingRevision: 'image-1|1000000|2000000' }
+  }
+  const inputConfig = {
     timeoutMs: 5_000,
     maxRetries: 0,
     additionalHeaders: {},
-    media: {
-      attachments: true,
-      imageGeneration: {
-        model: 'gemini-3.1-flash-image' as const,
-        pricingRevision: 'image-1|1000000|2000000'
-      },
-      transcription: {
-        model: 'gemini-3.5-transcribe' as const,
-        pricingRevision: 'speech-1|2000000|3000000'
-      }
-    }
+    mediaInputs: { images: true, documents: true, audio: false, video: false }
   }
+  const resolve = (async () => [{ address: '142.250.1.1', family: 4 }]) as unknown as typeof lookup
   beforeEach(async () => {
-    db = createKnex({
-      client: 'better-sqlite3',
-      connection: { filename: ':memory:' },
-      useNullAsDefault: true
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    await db.schema.createTable('users', table => {
+      table.integer('id').primary()
+      table.boolean('isActive')
+      table.integer('authVersion')
+    })
+    await db.schema.createTable('groups', table => {
+      table.integer('id').primary()
+      table.text('permissions')
+    })
+    await db.schema.createTable('userGroups', table => {
+      table.integer('userId')
+      table.integer('groupId')
+    })
+    await db.schema.createTable('agentMediaProviderConfiguration', table => {
+      table.integer('id').primary()
+      table.integer('revision')
+    })
+    await db.schema.createTable('agentProviderSecrets', table => {
+      table.string('id').primary()
+      table.string('algorithm')
+      table.binary('nonce')
+      table.binary('authTag')
+      table.binary('ciphertext')
+    })
+    await db.schema.createTable('agentMediaProviders', table => {
+      table.string('id').primary()
+      table.string('currentVersionId')
+      table.boolean('enabled')
+      table.string('exposureMode')
+      table.timestamp('deletedAt').nullable()
+    })
+    await db.schema.createTable('agentMediaProviderVersions', table => {
+      table.string('id').primary()
+      table.string('providerId')
+      table.text('config')
+      table.string('secretReference')
+    })
+    await db.schema.createTable('agentMediaProviderGrants', table => {
+      table.string('providerId')
+      table.integer('groupId')
+    })
+    await db('users').insert({ id: 7, isActive: true, authVersion: 0 })
+    await db('groups').insert({ id: 3, permissions: JSON.stringify(['use:agents']) })
+    await db('userGroups').insert({ userId: 7, groupId: 3 })
+    await db('agentMediaProviderConfiguration').insert({ id: 1, revision: 1 })
+    await db('agentProviderSecrets').insert({
+      id: secretId,
+      algorithm: 'aes-256-gcm',
+      nonce: Buffer.alloc(12),
+      authTag: Buffer.alloc(16),
+      ciphertext: Buffer.from('encrypted')
+    })
+    await db('agentMediaProviders').insert({ id: 'media', currentVersionId: mediaVersion, enabled: true, exposureMode: 'all_agent_users' })
+    await db('agentMediaProviderVersions').insert({
+      id: mediaVersion,
+      providerId: 'media',
+      config: JSON.stringify(mediaConfig),
+      secretReference: `managed:${secretId}`
     })
     await db.schema.createTable('agentProviderProfiles', table => {
       table.string('id').primary()
@@ -138,21 +219,16 @@ describe('Gemini media factory configuration', () => {
       table.string('pricingRevision')
       table.boolean('conformed')
     })
-    await db('agentProviderProfiles').insert({
-      id: 'profile',
-      currentVersionId: 'version',
-      status: 'enabled',
-      conformed: true
-    })
+    await db('agentProviderProfiles').insert({ id: 'profile', currentVersionId: 'version', status: 'enabled', conformed: true })
     await db('agentProviderProfileVersions').insert({
       id: 'version',
       profileId: 'profile',
       transportKind: 'gemini-api',
       authMode: 'google-api-key',
-      secretReference: 'test-secret',
-      model: 'gemini-3.8-flash',
+      secretReference: 'llm-secret',
+      model: 'gemini-2.5-flash',
       baseUrl: `${origin}/v1beta`,
-      adapterConfig: JSON.stringify(config),
+      adapterConfig: JSON.stringify(inputConfig),
       capabilities: JSON.stringify({
         streaming: false,
         toolCalling: 'native',
@@ -168,53 +244,165 @@ describe('Gemini media factory configuration', () => {
       conformed: true
     })
   })
-  afterEach(async () => {
-    await db.destroy()
+  afterEach(async () => db.destroy())
+
+  it('dispatches the independently configured alternate image model with its own credential and immutable pricing', async () => {
+    await db('agentProviderProfiles').update({ status: 'disabled', conformed: false })
+    const requests: { url: string; init: RequestInit }[] = []
+    const factory = new AgentProviderFactory(
+      db,
+      { get: async reference => (reference === `managed:${secretId}` ? 'media-key' : 'llm-key') },
+      Object.assign(
+        async (url: URL | RequestInfo, init?: RequestInit) => {
+          requests.push({ url: String(url), init: init || {} })
+          return String(url).endsWith(':countTokens') ? Response.json({ totalTokens: 4 }) : Response.json(generated())
+        },
+        { preconnect: () => {} }
+      ) as AgentProviderFetch,
+      resolve
+    )
+    const binding = await factory.createMediaBinding(7, 'image', mediaVersion)
+    expect(binding.config).toEqual(mediaConfig)
+    const result = await binding.transport.generate({
+      prompt: 'Draw a sky',
+      beforeDispatch: async exposure => {
+        expect(exposure).toEqual({ inputTokens: 4, outputTokens: 123, totalTokens: 127 })
+      }
+    })
+    expect(result).toEqual({
+      text: '',
+      files: [{ bytes: png, mimeType: 'image/png' }],
+      usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+      usageSource: 'reported'
+    })
+    expect(requests.map(request => request.url)).toEqual([
+      `${origin}/v1beta/models/gemini-2.5-flash-image:countTokens`,
+      `${origin}/v1beta/models/gemini-2.5-flash-image:generateContent`
+    ])
+    expect(new Headers(requests[1]?.init.headers).get('x-goog-api-key')).toBe('media-key')
   })
 
-  it('returns explicitly configured capabilities with separate immutable model pricing', async () => {
-    const factory = new AgentProviderFactory(db, {
-      get: async () => 'test-key'
-    })
-    const media = await factory.createMedia('version')
-    expect(media.config).toEqual(config.media)
-    expect(media.pricing.imageGeneration?.revision).toBe('image-1')
-    expect(media.pricing.transcription?.inputMicrosPerMillionTokens).toBe(2_000_000)
-    expect((await factory.create('version')).mediaConfig).toEqual(config.media)
+  it('rejects unsupported generation models and invalid official bases without egress', async () => {
+    let calls = 0
+    const factory = new AgentProviderFactory(
+      db,
+      { get: async () => 'key' },
+      Object.assign(
+        async () => {
+          calls++
+          return Response.json(generated())
+        },
+        { preconnect: () => {} }
+      ) as AgentProviderFetch,
+      resolve
+    )
+    for (const changed of [
+      { model: 'gemini-2.5-flash' },
+      { model: 'gemini-omni-1.1-flash' },
+      { model: 'gemini-2.5-flash-image/other' },
+      { baseUrl: 'https://proxy.example/v1beta' }
+    ]) {
+      await db('agentMediaProviderVersions')
+        .where({ id: mediaVersion })
+        .update({ config: JSON.stringify({ ...mediaConfig, ...changed }) })
+      await expect(factory.createMediaBinding(7, 'image', mediaVersion)).rejects.toMatchObject({ code: 'MEDIA_PROVIDER_CORRUPT' })
+    }
+    expect(calls).toBe(0)
   })
 
-  it('rejects absent media configuration, disabled/deleted/stale profiles, missing secrets, and custom origins', async () => {
-    const factory = new AgentProviderFactory(db, {
-      get: async () => 'test-key'
+  it('fails closed for stale, disabled, deleted or unauthorized bindings and missing secrets', async () => {
+    const factory = new AgentProviderFactory(db, { get: async () => 'key' })
+    for (const [changed, code] of [
+      [{ enabled: false }, 'AGENT_MEDIA_DISABLED'],
+      [{ currentVersionId: 'old' }, 'MEDIA_PROVIDER_CHANGED'],
+      [{ deletedAt: new Date() }, 'AGENT_MEDIA_DISABLED'],
+      [{ exposureMode: 'groups' }, 'AGENT_MEDIA_DISABLED']
+    ] as const) {
+      await db('agentMediaProviders').update(changed)
+      await expect(factory.createMediaBinding(7, 'image', mediaVersion)).rejects.toMatchObject({ code })
+      await db('agentMediaProviders').update({ enabled: true, currentVersionId: mediaVersion, deletedAt: null, exposureMode: 'all_agent_users' })
+    }
+    await expect(factory.createMediaBinding(7, 'transcription', mediaVersion)).rejects.toMatchObject({ code: 'MEDIA_PROVIDER_CHANGED' })
+    await expect(new AgentProviderFactory(db, { get: async () => null }).createMediaBinding(7, 'image', mediaVersion)).rejects.toMatchObject({
+      code: 'PROFILE_SECRET_UNAVAILABLE'
     })
-    await db('agentProviderProfileVersions').update({
-      adapterConfig: JSON.stringify({ ...config, media: undefined })
-    })
-    await expect(factory.createMedia('version')).rejects.toMatchObject({
-      code: 'AGENT_MEDIA_DISABLED'
-    })
-    await db('agentProviderProfileVersions').update({
-      adapterConfig: JSON.stringify(config)
-    })
+  })
+
+  it('rechecks live media authority after reservation and before paid egress', async () => {
+    const requests: string[] = []
+    const factory = new AgentProviderFactory(
+      db,
+      { get: async () => 'key' },
+      Object.assign(
+        async (url: URL | RequestInfo) => {
+          requests.push(String(url))
+          return String(url).endsWith(':countTokens') ? Response.json({ totalTokens: 4 }) : Response.json(generated())
+        },
+        { preconnect: () => {} }
+      ) as AgentProviderFetch,
+      resolve
+    )
+    const binding = await factory.createMediaBinding(7, 'image', mediaVersion)
+    await expect(
+      binding.transport.generate({
+        prompt: 'Draw',
+        beforeDispatch: async () => {
+          await db('agentMediaProviders').update({ enabled: false })
+        }
+      })
+    ).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    expect(requests).toEqual([`${origin}/v1beta/models/gemini-2.5-flash-image:countTokens`])
+  })
+
+  it('uploads and counts explicitly opted-in LLM context using only the LLM credential', async () => {
+    const requests: { url: string; init: RequestInit }[] = []
+    const factory = new AgentProviderFactory(
+      db,
+      { get: async reference => (reference === 'llm-secret' ? 'llm-key' : 'media-key') },
+      Object.assign(
+        async (input: URL | RequestInfo, init?: RequestInit) => {
+          const url = String(input)
+          requests.push({ url, init: init || {} })
+          if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+          if (url.endsWith(':countTokens')) return Response.json({ totalTokens: 258 })
+          return url.includes('?') ? Response.json({ file: file() }) : start()
+        },
+        { preconnect: () => {} }
+      ) as AgentProviderFetch,
+      resolve
+    )
+    const input = await factory.createMediaInput('version')
+    const remote = await input.transport.upload({ bytes: png, mimeType: 'image/png' })
+    expect(await input.transport.countTokens('gemini-2.5-flash', [{ type: 'image', uri: remote.uri, mime_type: remote.mimeType }])).toBe(258)
+    await input.transport.delete(remote.name)
+    expect(requests.map(request => request.url)).toEqual([
+      `${origin}/upload/v1beta/files`,
+      `${origin}/upload/v1beta/files?upload_id=upload123&upload_protocol=resumable`,
+      `${origin}/v1beta/models/gemini-2.5-flash:countTokens`,
+      remote.uri
+    ])
+    for (const request of requests) expect(new Headers(request.init.headers).get('x-goog-api-key')).toBe('llm-key')
+    await expect(input.transport.upload({ bytes: Buffer.from('audio'), mimeType: 'audio/webm' })).rejects.toMatchObject({ code: 'INVALID_MEDIA_INPUT' })
+    await expect(input.transport.countTokens('gemini-2.5-pro', [{ type: 'text', text: 'Hi' }])).rejects.toMatchObject({ code: 'INVALID_MEDIA_INPUT' })
+    expect(requests).toHaveLength(4)
+    expect(input.transport).not.toHaveProperty('generate')
+  })
+
+  it('rejects absent input opt-ins, disabled/deleted/stale LLM profiles, missing secrets and custom origins', async () => {
+    const factory = new AgentProviderFactory(db, { get: async () => 'test-key' })
+    await db('agentProviderProfileVersions').update({ adapterConfig: JSON.stringify({ ...inputConfig, mediaInputs: undefined }) })
+    await expect(factory.createMediaInput('version')).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    await db('agentProviderProfileVersions').update({ adapterConfig: JSON.stringify(inputConfig) })
     for (const changed of [{ status: 'disabled' }, { conformed: false }, { currentVersionId: 'old' }, { deletedAt: new Date() }]) {
       await db('agentProviderProfiles').update(changed)
-      await expect(factory.createMedia('version')).rejects.toMatchObject({
-        code: 'AGENT_MEDIA_DISABLED'
-      })
-      await db('agentProviderProfiles').update({
-        status: 'enabled',
-        conformed: true,
-        currentVersionId: 'version',
-        deletedAt: null
-      })
+      await expect(factory.createMediaInput('version')).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+      await db('agentProviderProfiles').update({ status: 'enabled', conformed: true, currentVersionId: 'version', deletedAt: null })
     }
-    await expect(new AgentProviderFactory(db, { get: async () => null }).createMedia('version')).rejects.toMatchObject({ code: 'PROFILE_SECRET_UNAVAILABLE' })
-    await db('agentProviderProfileVersions').update({
-      baseUrl: 'https://proxy.example/v1beta'
+    await expect(new AgentProviderFactory(db, { get: async () => null }).createMediaInput('version')).rejects.toMatchObject({
+      code: 'PROFILE_SECRET_UNAVAILABLE'
     })
-    await expect(factory.createMedia('version')).rejects.toMatchObject({
-      code: 'PROVIDER_EGRESS_DENIED'
-    })
+    await db('agentProviderProfileVersions').update({ baseUrl: 'https://proxy.example/v1beta' })
+    await expect(factory.createMediaInput('version')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
   })
 })
 type Handler = (url: string, init: RequestInit) => Promise<Response> | Response
@@ -234,6 +422,9 @@ const setup = (handler: Handler) => {
       apiKey: 'test-key',
       baseUrl: `${origin}/v1beta`,
       timeoutMs: 5_000,
+      imageModel: 'gemini-3.1-flash-image',
+      transcriptionModel: 'gemini-3.5-transcribe',
+      countModels: ['gemini-2.5-flash', 'gemini-3.8-flash'],
       fetch
     })
   }
@@ -242,6 +433,43 @@ const start = (url = `${origin}/upload/v1beta/files?upload_id=upload123&upload_p
   new Response(null, { headers: { 'x-goog-upload-url': url } })
 
 describe('Ax-backed Gemini media transport', () => {
+  it('rejects generation on a context-only transport before counting, uploading, or dispatching', async () => {
+    let calls = 0
+    let hooks = 0
+    const transport = createGeminiMediaTransport({
+      apiKey: 'context-key',
+      baseUrl: `${origin}/v1beta`,
+      timeoutMs: 5_000,
+      countModels: ['gemini-2.5-flash'],
+      fetch: Object.assign(
+        async () => {
+          calls++
+          throw new Error('No generation request is authorized')
+        },
+        { preconnect: () => {} }
+      ) as AgentProviderFetch
+    })
+    const limits = {
+      maxInputTokens: 100,
+      beforeUpload: async () => {
+        hooks++
+      },
+      beforeDispatch: async () => {
+        hooks++
+      },
+      onDispatch: () => {
+        hooks++
+      }
+    }
+    await expect(transport.generateImage({ prompt: 'Draw', images: [{ bytes: png, mimeType: 'image/png' }], ...limits })).rejects.toMatchObject({
+      code: 'INVALID_MEDIA_INPUT'
+    })
+    await expect(transport.transcribe({ bytes: Buffer.from('audio'), mimeType: 'audio/webm', ...limits })).rejects.toMatchObject({
+      code: 'INVALID_MEDIA_INPUT'
+    })
+    expect(calls).toBe(0)
+    expect(hooks).toBe(0)
+  })
   it('generates private raster bytes through GenerateContent with measured usage and no tools', async () => {
     const { requests, transport } = setup(() =>
       Response.json(generated([{ text: 'A blue sky' }, { inlineData: { mimeType: 'image/png', data: png.toString('base64') }, thoughtSignature: 'opaque' }]))
@@ -293,7 +521,7 @@ describe('Ax-backed Gemini media transport', () => {
       await expect(
         kind === 'image'
           ? transport.generateImage({ prompt: 'Edit', images: [{ bytes: png, mimeType: 'image/png' }], beforeUpload })
-          : transport.transcribe({ bytes: Buffer.from('audio'), mimeType: 'audio/webm', beforeUpload })
+          : transport.transcribe({ bytes: audio, mimeType: 'audio/wav', beforeUpload })
       ).rejects.toThrow('Access revoked')
       expect(requests).toHaveLength(0)
     }
@@ -346,6 +574,7 @@ describe('Ax-backed Gemini media transport', () => {
       apiKey: 'test-key',
       baseUrl: `${origin}/v1beta`,
       timeoutMs: 5000,
+      imageModel: 'gemini-3.1-flash-image',
       maxInputTokens: 5,
       maxOutputTokens: 20,
       fetch
@@ -404,8 +633,8 @@ describe('Ax-backed Gemini media transport', () => {
       url.endsWith(':countTokens') ? Response.json({ totalTokens: 4 }) : Response.json(generated([{ audioTranscription: { text: 'Hello world.' } }]))
     )
     const result = await transport.transcribe({
-      bytes: Buffer.from('test'),
-      mimeType: 'audio/webm',
+      bytes: audio,
+      mimeType: 'audio/wav',
       maxOutputTokens: 123,
       beforeDispatch: async exposure => {
         expect(exposure).toEqual({ inputTokens: 4, outputTokens: 123, totalTokens: 127 })
@@ -419,7 +648,7 @@ describe('Ax-backed Gemini media transport', () => {
     const counted = JSON.parse(String(requests[0]?.init.body))
     const inferred = JSON.parse(String(requests[1]?.init.body))
     expect(inferred.contents).toEqual(counted.contents)
-    expect(inferred.contents[0].parts[0]).toEqual({ inlineData: { data: Buffer.from('test').toString('base64'), mimeType: 'audio/webm' } })
+    expect(inferred.contents[0].parts[0]).toMatchObject({ inlineData: { mimeType: 'audio/wav' } })
     expect(inferred.generationConfig).toEqual({ maxOutputTokens: 123 })
   })
 
@@ -467,23 +696,32 @@ describe('Ax-backed Gemini media transport', () => {
 
   for (const finishReason of ['MAX_TOKENS', 'SAFETY'])
     it(`rejects ${finishReason} as incomplete media, including batch transcription`, async () => {
-      for (const audio of [false, true]) {
-        const { transport } = setup(() =>
+      for (const transcription of [false, true]) {
+        let dispatched = 0
+        const { requests, transport } = setup(() =>
           Response.json({
             ...generated(),
             candidates: [
               {
                 finishReason,
                 content: {
-                  parts: audio ? [{ audioTranscription: { text: 'partial' } }] : [{ inlineData: { mimeType: 'image/png', data: png.toString('base64') } }]
+                  parts: transcription
+                    ? [{ audioTranscription: { text: 'partial' } }]
+                    : [{ inlineData: { mimeType: 'image/png', data: png.toString('base64') } }]
                 }
               }
             ]
           })
         )
+        const onDispatch = () => {
+          dispatched++
+        }
         await expect(
-          audio ? transport.transcribe({ bytes: Buffer.from('audio'), mimeType: 'audio/webm' }) : transport.generateImage({ prompt: 'Draw' })
+          transcription ? transport.transcribe({ bytes: audio, mimeType: 'audio/wav', onDispatch }) : transport.generateImage({ prompt: 'Draw', onDispatch })
         ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+        expect(dispatched).toBe(1)
+        expect(requests).toHaveLength(1)
+        expect(requests[0]?.url).toContain(':generateContent')
       }
     })
 
@@ -562,8 +800,7 @@ describe('Gemini Files API application integration', () => {
               ...generated([{ text: 'Attachment read.' }]),
               usageMetadata: { promptTokenCount: 258, candidatesTokenCount: 6, totalTokenCount: 264 }
             })
-          if (url.includes('?'))
-            return Response.json({ file: { ...file(), mimeType: attachment.mimeType, sizeBytes: String(attachment.bytes.length) } })
+          if (url.includes('?')) return Response.json({ file: { ...file(), mimeType: attachment.mimeType, sizeBytes: String(attachment.bytes.length) } })
           return start()
         },
         { preconnect: () => {} }
@@ -573,7 +810,12 @@ describe('Gemini Files API application integration', () => {
         apiKey: 'test-key',
         baseUrl: `${origin}/v1beta`,
         timeoutMs: 5_000,
-        fetch: createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, wire, resolve)
+        countModels: ['gemini-2.5-flash'],
+        fetch: createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, wire, resolve, undefined, undefined, undefined, {
+          generateModels: [],
+          countModels: ['gemini-2.5-flash'],
+          files: true
+        })
       })
       const remote = await transport.upload(attachment)
       try {
@@ -737,33 +979,4 @@ describe('Gemini Files API application integration', () => {
       createGeminiMediaTransport({ apiKey: 'key', baseUrl: 'https://proxy.example/v1beta', timeoutMs: 10, fetch: (() => {}) as unknown as AgentProviderFetch })
     ).toThrow()
   })
-})
-
-describe('Unavailable exact Gemini video/music models', () => {
-  for (const kind of ['video', 'music'] as const)
-    it(`reports ${kind} incompatibility before uploads, admission, or provider dispatch`, async () => {
-      const { requests, transport } = setup(() => {
-        throw new Error('must not fetch')
-      })
-      const callbacks: string[] = []
-      const input = {
-        prompt: 'A peaceful sunset',
-        images: [{ bytes: png, mimeType: 'image/png' }],
-        beforeUpload: async () => {
-          callbacks.push('upload')
-        },
-        beforeDispatch: async () => {
-          callbacks.push('admit')
-        },
-        onDispatch: () => {
-          callbacks.push('dispatch')
-        }
-      }
-      await expect(kind === 'video' ? transport.generateVideo(input) : transport.generateMusic(input)).rejects.toMatchObject({
-        code: 'AGENT_MEDIA_UNSUPPORTED',
-        status: 409
-      })
-      expect(callbacks).toEqual([])
-      expect(requests).toHaveLength(0)
-    })
 })

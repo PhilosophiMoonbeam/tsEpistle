@@ -288,6 +288,8 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
       credentialReady: true,
       conformed: true,
       modalities: ['text'],
+      mediaInputs: { images: false, documents: false, audio: false, video: false },
+      inputMimeTypes: [],
       capabilities,
       pricing: { inputPerMillion: 10, outputPerMillion: 20, revision: 'current-price' }
     }

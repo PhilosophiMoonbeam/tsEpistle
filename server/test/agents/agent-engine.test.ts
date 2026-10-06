@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
@@ -16,6 +16,7 @@ import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/pr
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
+import { PdfFixtureDocument } from './pdf-fixture.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -7374,19 +7375,26 @@ describe('Memory action side-effect fencing', () => {
   })
 })
 
-describe('Agent media execution', () => {
-  const capabilities = {
-    streaming: false,
-    toolCalling: 'native' as const,
-    parallelToolCalls: false,
-    structuredOutput: 'native-json-schema' as const,
-    usage: 'terminal' as const,
-    cancellation: true,
-    maxContextTokens: 100_000,
-    maxOutputTokens: 4_000
+describe('Independent Agent media execution', () => {
+  const bindingId = '00000000-0000-4000-8000-000000000099'
+  const image = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==',
+    'base64'
+  )
+  const config = {
+    kind: 'image' as const,
+    api: 'openai-images' as const,
+    model: 'gpt-image-1',
+    baseUrl: 'https://api.openai.com/v1',
+    timeoutMs: 5000,
+    maxInputTokens: 100000,
+    maxOutputTokens: 4000,
+    pricing: { kind: 'tokens' as const, pricingRevision: 'image-v1|1000000|2000000' }
   }
   const mediaRequest = (): AgentEngineRequest => ({
     ...request(new AbortController().signal),
+    authorizeMedia: async () => {},
+    mediaBindings: { image: bindingId },
     mediaRequest: { kind: 'image' },
     messages: [{ role: 'user', content: 'A copper observatory at dusk' }]
   })
@@ -7397,496 +7405,496 @@ describe('Agent media execution', () => {
     consumeTool: vi.fn(async () => {}),
     unsettledExposure: { tokens: 0, costMicros: 0 }
   })
-  const image = Buffer.from('generated raster')
-  const mediaResult = { text: '', images: [{ bytes: image, mimeType: 'image/png' }], usage: { inputTokens: 100, outputTokens: 500, totalTokens: 600 } }
-  for (const kind of ['video', 'music'] as const) {
-    it(`reserves and settles ${kind} independently and publishes a private playable output`, async () => {
-      const dispatchBudget = budget()
-      const media = vi.fn(async () => {})
-      const event = vi.fn(async () => {})
-      const usage = { inputTokens: 100, outputTokens: 1000, totalTokens: 1100 }
-      const generate = async (input: {
-        beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
-        onDispatch: () => void
-      }) => {
-        await input.beforeDispatch({ inputTokens: 100, outputTokens: 65536, totalTokens: 65636 })
-        input.onDispatch()
-        return {
-          text: '',
-          files: [{ bytes: image, mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg' }],
-          usage,
-          usageSource: 'reported' as const,
-          ...(kind === 'video' ? { outputTokensByModality: { text: 100, video: 900 } } : {})
-        }
-      }
-      const createMedia = async () => ({
-        config: {},
-        capabilities,
-        pricing: {
-          videoGeneration: {
-            revision: 'video-v1',
-            inputMicrosPerMillionTokens: 1500000,
-            outputMicrosPerMillionTokens: 17500000,
-            textOutputMicrosPerMillionTokens: 9000000
-          },
-          musicGeneration: { costMicrosPerSong: 80000 }
-        },
-        transport: { generateVideo: generate, generateMusic: generate }
-      })
-      const engine = new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory)
-      const result = await engine.execute({ ...mediaRequest(), mediaRequest: { kind }, dispatchBudget }, { media, event, text: async () => {} })
-      expect(result.costMicros).toBe(kind === 'music' ? 80000 : 16800)
-      expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 65636, costMicros: kind === 'music' ? 80000 : 1147030 })
-      expect(dispatchBudget.reconcile).toHaveBeenCalledWith(expect.anything(), { ...usage, costMicros: result.costMicros })
-      expect(media).toHaveBeenCalledWith([
-        {
-          payload: image,
-          mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg',
-          kind: kind === 'video' ? 'generated-video' : 'generated-audio',
-          filename: kind === 'video' ? 'generated-video.mp4' : 'generated-music.mp3'
-        }
-      ])
-      expect(event).toHaveBeenCalledWith('media.usage', { kind, usageSource: 'reported', priceBasis: kind === 'music' ? 'song' : 'tokens' })
-    })
-    it(`keeps uncertain ${kind} charges reserved after dispatch cancellation`, async () => {
-      const dispatchBudget = budget()
-      const generate = async (input: {
-        beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
-        onDispatch: () => void
-      }) => {
-        await input.beforeDispatch({ inputTokens: 1, outputTokens: 65536, totalTokens: 65537 })
-        input.onDispatch()
-        throw new Error('cancelled after dispatch')
-      }
-      const createMedia = async () => ({
-        config: {},
-        capabilities,
-        pricing: { videoGeneration: { ...pricing, textOutputMicrosPerMillionTokens: 1 }, musicGeneration: { costMicrosPerSong: 80000 } },
-        transport: { generateVideo: generate, generateMusic: generate }
-      })
-      await expect(
-        new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-          { ...mediaRequest(), mediaRequest: { kind }, dispatchBudget },
-          { media: async () => {}, text: async () => {}, event: async () => {} }
-        )
-      ).rejects.toThrow('cancelled after dispatch')
-      expect(dispatchBudget.release).not.toHaveBeenCalled()
-      expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
-    })
+  type Hooks = {
+    beforeUpload: () => Promise<void>
+    beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
+    onDispatch: () => void
   }
-  it('fails closed when a media request lacks current authorization', async () => {
-    const createMedia = vi.fn(async () => {
-      throw new Error('must not load provider')
+  const receipt = {
+    text: '',
+    files: [{ bytes: image, mimeType: 'image/png' }],
+    usage: { inputTokens: 100, outputTokens: 500, totalTokens: 600 },
+    usageSource: 'reported' as const
+  }
+  const factoryFor = (generate: (input: Hooks) => Promise<unknown>, boundConfig = config) =>
+    ({ createMediaBinding: async () => ({ config: boundConfig, transport: { generate } }) }) as unknown as AgentProviderFactory
+  const sink = () => ({ media: vi.fn(async () => {}), text: vi.fn(async () => {}), event: vi.fn(async () => {}) })
+
+  it('settles independent token prices before private artifact publication', async () => {
+    const dispatchBudget = budget()
+    const output = sink()
+    const order: string[] = []
+    dispatchBudget.reconcile.mockImplementation(async () => {
+      order.push('settle')
     })
-    await expect(
-      new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-        { ...mediaRequest(), authorizeMedia: undefined, dispatchBudget: budget() },
-        { media: async () => {}, text: async () => {}, event: async () => {} }
-      )
-    ).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
-    expect(createMedia).not.toHaveBeenCalled()
-  })
-  for (const revokeAt of ['upload', 'dispatch'] as const)
-    it(`rechecks current authorization before media ${revokeAt}`, async () => {
-      let revoked = false
-      let uploads = 0
-      let paidDispatches = 0
-      const dispatchBudget = budget()
-      const authorizeMedia = vi.fn(async () => {
-        if (revoked) throw new Error('permission revoked')
+    output.media.mockImplementation(async () => {
+      order.push('publish')
+    })
+    const engine = new AxAgentEngine(
+      factoryFor(async input => {
+        await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+        input.onDispatch()
+        return receipt
       })
-      const createMedia = async () => ({
-        config: {},
-        capabilities,
-        pricing: { imageGeneration: pricing },
+    )
+    const result = await engine.execute({ ...mediaRequest(), generationTools: [], dispatchBudget }, output)
+    expect(result.costMicros).toBe(1100)
+    expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 4100, costMicros: 8100 })
+    expect(dispatchBudget.reconcile).toHaveBeenCalledWith(expect.anything(), { ...receipt.usage, costMicros: 1100 })
+    expect(order).toEqual(['settle', 'publish'])
+    expect(output.media).toHaveBeenCalledWith([{ payload: image, mimeType: 'image/png', kind: 'generated-image', filename: 'generated-image-1.png' }])
+    expect(dispatchBudget.release).not.toHaveBeenCalled()
+  })
+
+  it('charges fixed-priced zero-token receipts without inventing token usage', async () => {
+    const dispatchBudget = budget()
+    const factory = {
+      createMediaBinding: async () => ({
+        config: { ...config, api: 'stability-images', model: 'stable-image-core', pricing: { kind: 'fixed', pricingRevision: 'fixed-v1', costMicros: 30000 } },
         transport: {
-          generateImage: async (input: {
-            beforeUpload: () => Promise<void>
-            beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
-          }) => {
-            if (revokeAt === 'upload') revoked = true
-            await input.beforeUpload()
-            uploads += 1
-            revoked = true
-            await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
-            paidDispatches += 1
-            return mediaResult
+          generate: async (input: Hooks) => {
+            await input.beforeDispatch({ inputTokens: 0, outputTokens: 0, totalTokens: 0 })
+            input.onDispatch()
+            return { ...receipt, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } }
           }
         }
       })
-      await expect(
-        new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-          { ...mediaRequest(), authorizeMedia, dispatchBudget },
-          { media: async () => {}, text: async () => {}, event: async () => {} }
-        )
-      ).rejects.toThrow('permission revoked')
-      expect(uploads).toBe(revokeAt === 'upload' ? 0 : 1)
-      expect(paidDispatches).toBe(0)
-      expect(dispatchBudget.release).toHaveBeenCalledTimes(revokeAt === 'upload' ? 0 : 1)
-    })
-  it('meters image generation and publishes private image bytes through the run sink', async () => {
-    const dispatchBudget = budget()
-    const generateImage = vi.fn(
-      async (input: {
-        beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
-        onDispatch: () => void
-      }) => {
-        await input.beforeDispatch({ inputTokens: 100, outputTokens: 4_000, totalTokens: 4_100 })
-        input.onDispatch()
-        return mediaResult
-      }
-    )
-    const createMedia = vi.fn(async () => ({ config: {}, capabilities, pricing: { imageGeneration: pricing }, transport: { generateImage } }))
-    const media = vi.fn(async () => {})
-    const text = vi.fn(async () => {})
-    const result = await new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-      { ...mediaRequest(), dispatchBudget },
-      { text, media, event: async () => {} }
-    )
-    expect(generateImage).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'A copper observatory at dusk', images: [] }), expect.any(AbortSignal))
-    expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 4_100, costMicros: 8_100 })
-    expect(dispatchBudget.reconcile).toHaveBeenCalledWith(expect.anything(), { inputTokens: 100, outputTokens: 500, totalTokens: 600, costMicros: 1_100 })
-    expect(media).toHaveBeenCalledWith([{ payload: image, mimeType: 'image/png', filename: 'generated-image-1.png' }])
-    expect(text).toHaveBeenCalledWith('Your image is ready.')
-    expect(result.totalTokens).toBe(600)
+    } as unknown as AgentProviderFactory
+    const result = await new AxAgentEngine(factory).execute({ ...mediaRequest(), dispatchBudget }, sink())
+    expect(result.totalTokens).toBe(0)
+    expect(result.costMicros).toBe(30000)
+    expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 0, costMicros: 30000 })
+    expect(dispatchBudget.reconcile).toHaveBeenCalledTimes(1)
   })
-  it('does not dispatch when unconfigured or when there is no admitted budget', async () => {
-    const generateImage = vi.fn()
-    const createMedia = vi.fn(async () => ({ config: {}, capabilities, pricing: {}, transport: { generateImage } }))
-    const engine = new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory)
-    const sink = { media: async () => {}, text: async () => {}, event: async () => {} }
-    await expect(engine.execute(mediaRequest(), sink)).rejects.toMatchObject({ code: 'MEDIA_BUDGET_REQUIRED' })
-    expect(createMedia).not.toHaveBeenCalled()
-    await expect(engine.execute({ ...mediaRequest(), dispatchBudget: budget() }, sink)).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
-    expect(generateImage).not.toHaveBeenCalled()
-  })
-  it('releases unused reservations before inference and retains ambiguous dispatched exposure', async () => {
-    for (const dispatched of [false, true]) {
+
+  for (const dispatched of [false, true])
+    it(`releases only proven pre-dispatch failures (dispatched=${dispatched})`, async () => {
       const dispatchBudget = budget()
-      const generateImage = vi.fn(
-        async (input: {
-          beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
-          onDispatch: () => void
-        }) => {
-          await input.beforeDispatch({ inputTokens: 100, outputTokens: 4_000, totalTokens: 4_100 })
+      const engine = new AxAgentEngine(
+        factoryFor(async input => {
+          await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
           if (dispatched) input.onDispatch()
           throw new Error('bounded failure')
-        }
+        })
       )
-      const createMedia = async () => ({ config: {}, capabilities, pricing: { imageGeneration: pricing }, transport: { generateImage } })
-      await expect(
-        new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-          { ...mediaRequest(), dispatchBudget },
-          { media: async () => {}, text: async () => {}, event: async () => {} }
-        )
-      ).rejects.toThrow('bounded failure')
+      const output = sink()
+      await expect(engine.execute({ ...mediaRequest(), dispatchBudget }, output)).rejects.toThrow('bounded failure')
+      expect(dispatchBudget.reserve).toHaveBeenCalledTimes(1)
       expect(dispatchBudget.release).toHaveBeenCalledTimes(dispatched ? 0 : 1)
       expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
-    }
-  })
-  it('does not reserve budget when upload or token counting fails before admission', async () => {
-    const dispatchBudget = budget()
-    const createMedia = async () => ({
-      config: {},
-      capabilities,
-      pricing: { imageGeneration: pricing },
-      transport: {
-        generateImage: async () => {
-          throw new Error('preparation failed')
-        }
-      }
+      expect(output.media).not.toHaveBeenCalled()
     })
-    await expect(
-      new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-        { ...mediaRequest(), dispatchBudget },
-        { media: async () => {}, text: async () => {}, event: async () => {} }
+
+  for (const revokeAt of ['upload', 'dispatch'] as const)
+    it(`rechecks current authorization before ${revokeAt}`, async () => {
+      let revoked = false
+      const authorizeMedia = async () => {
+        if (revoked) throw new Error('permission revoked')
+      }
+      const dispatchBudget = budget()
+      const engine = new AxAgentEngine(
+        factoryFor(async input => {
+          if (revokeAt === 'upload') revoked = true
+          await input.beforeUpload()
+          revoked = true
+          await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+          input.onDispatch()
+          return receipt
+        })
       )
-    ).rejects.toThrow('preparation failed')
-    expect(dispatchBudget.reserve).not.toHaveBeenCalled()
+      await expect(engine.execute({ ...mediaRequest(), authorizeMedia, dispatchBudget }, sink())).rejects.toThrow('permission revoked')
+      expect(dispatchBudget.release).toHaveBeenCalledTimes(revokeAt === 'upload' ? 0 : 1)
+      expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
+    })
+
+  it('does not publish artifacts if settlement fails', async () => {
+    const dispatchBudget = budget()
+    dispatchBudget.reconcile.mockImplementation(async () => {
+      throw new Error('settlement failed')
+    })
+    const output = sink()
+    const engine = new AxAgentEngine(
+      factoryFor(async input => {
+        await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+        input.onDispatch()
+        return receipt
+      })
+    )
+    await expect(engine.execute({ ...mediaRequest(), dispatchBudget }, output)).rejects.toThrow('settlement failed')
+    expect(output.media).not.toHaveBeenCalled()
     expect(dispatchBudget.release).not.toHaveBeenCalled()
   })
-  it('keeps media unpublished when usage settlement fails', async () => {
-    const dispatchBudget = {
-      ...budget(),
-      reconcile: vi.fn(async () => {
-        throw new Error('settlement failed')
-      })
-    }
-    const createMedia = async () => ({
-      config: {},
-      capabilities,
-      pricing: { imageGeneration: pricing },
-      transport: {
-        generateImage: async (input: { beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void> }) => {
-          await input.beforeDispatch({ inputTokens: 100, outputTokens: 4_000, totalTokens: 4_100 })
-          return mediaResult
-        }
-      }
-    })
-    const media = vi.fn(async () => {})
-    await expect(
-      new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-        { ...mediaRequest(), dispatchBudget },
-        { media, text: async () => {}, event: async () => {} }
-      )
-    ).rejects.toThrow('settlement failed')
-    expect(media).not.toHaveBeenCalled()
+
+  it('requires binding, admission budget and live authorization before loading a provider', async () => {
+    const createMediaBinding = vi.fn()
+    const engine = new AxAgentEngine({ createMediaBinding } as unknown as AgentProviderFactory)
+    await expect(engine.execute({ ...mediaRequest(), mediaBindings: {} }, sink())).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    await expect(engine.execute(mediaRequest(), sink())).rejects.toMatchObject({ code: 'MEDIA_BUDGET_REQUIRED' })
+    const { authorizeMedia: _authorizeMedia, ...unauthorized } = mediaRequest()
+    await expect(engine.execute({ ...unauthorized, dispatchBudget: budget() }, sink())).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    expect(createMediaBinding).not.toHaveBeenCalled()
   })
-  it('offers only configured and selected generation tools to root Agent conversations', async () => {
-    for (const enabled of [false, true])
-      for (const generationTools of [undefined, [], ['image', 'music']] as const) {
-        let offered: readonly { name: string }[] = []
-        const factory = {
-          create: async () => ({
-            service: {
-              chat: async (input: AxChatRequest) => {
-                offered = input.functions ?? []
-                return {
-                  results: [{ index: 0, content: 'Hello.' }],
-                  modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
-                }
-              }
-            },
-            capabilities,
-            model: 'test',
-            transportKind: 'gemini-api',
-            capabilityRevision: 'test',
-            pricingRevision: 'test',
-            pricing,
-            ...(enabled
-              ? {
-                  mediaConfig: {
-                    imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'v1|1|1' },
-                    videoGeneration: { model: 'gemini-omni-1.1-flash' },
-                    musicGeneration: { model: 'lyria-3.5' }
-                  }
-                }
-              : {})
-          })
-        } as unknown as AgentProviderFactory
-        const actions: AgentActionSessionProvider = {
-          open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
-        }
-        await new AxAgentEngine(factory, actions).execute(
-          { ...request(new AbortController().signal), generationTools, messages: [{ role: 'user', content: 'Hello' }] },
-          { text: async () => {}, event: async () => {} }
+
+  for (const restriction of ['planner', 'subagent'] as const)
+    it(`rejects direct generation under ${restriction} without acquiring providers`, async () => {
+      const createMediaBinding = vi.fn()
+      const dispatchBudget = budget()
+      await expect(
+        new AxAgentEngine({ createMediaBinding } as unknown as AgentProviderFactory).execute(
+          {
+            ...mediaRequest(),
+            dispatchBudget,
+            purpose: restriction
+          },
+          sink()
         )
-        for (const kind of ['image', 'video', 'music'] as const)
-          expect(offered.some(tool => tool.name === `wiki_generate_${kind}`)).toBe(
-            enabled && (generationTools === undefined || (generationTools as readonly string[]).includes(kind))
-          )
+      ).rejects.toMatchObject({ code: 'ACTION_NOT_OFFERED' })
+      expect(createMediaBinding).not.toHaveBeenCalled()
+      expect(dispatchBudget.reserve).not.toHaveBeenCalled()
+    })
+
+  it('runs an independent image tool under a text-only LLM and synthesizes artifact metadata without binary replay', async () => {
+    let turn = 0
+    const prompts: AxChatRequest[] = []
+    const dispatchBudget = budget()
+    const generate = vi.fn(async (input: Hooks) => {
+      await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+      input.onDispatch()
+      return receipt
+    })
+    const factory = {
+      create: async () => ({
+        service: {
+          chat: async (input: AxChatRequest) => {
+            prompts.push(input)
+            return {
+              results: [
+                ++turn === 1
+                  ? {
+                      index: 0,
+                      functionCalls: [{ id: 'make-image', type: 'function', function: { name: 'wiki_generate_image', params: '{"prompt":"An observatory"}' } }]
+                    }
+                  : { index: 0, content: 'Your observatory image is ready.' }
+              ],
+              modelUsage: { ai: 'openai', model: 'text-only', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+            }
+          }
+        },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100000,
+          maxOutputTokens: 4000
+        },
+        model: 'text-only',
+        transportKind: 'openai-chat',
+        capabilityRevision: 'test',
+        pricingRevision: 'test',
+        pricing,
+        mediaInputs: { images: false, documents: false, audio: false, video: false }
+      }),
+      createMediaBinding: async () => ({ config, transport: { generate } })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+    }
+    const output = sink()
+    await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        mediaBindings: { image: bindingId },
+        dispatchBudget,
+        currentPage: null,
+        skills: [],
+        priorActivity: [],
+        messages: [{ role: 'user', content: 'Generate an observatory image.' }]
+      },
+      {
+        ...output,
+        media: async () => {
+          await output.media()
+          return [
+            {
+              id: bindingId,
+              kind: 'generated-image',
+              filename: 'observatory.png',
+              mimeType: 'image/png',
+              byteLength: image.length,
+              available: true,
+              detached: false
+            }
+          ]
+        }
       }
+    )
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(output.media).toHaveBeenCalledTimes(1)
+    expect(output.text).toHaveBeenCalledWith('Your observatory image is ready.')
+    expect(prompts).toHaveLength(2)
+    expect(JSON.stringify(prompts[1])).not.toContain(image.toString('base64'))
+    expect(prompts[1]!.chatPrompt.some(message => message.role === 'function')).toBe(true)
+    expect(JSON.stringify(prompts[1])).toContain('observatory.png')
   })
-  it('never exposes chargeable media tools excluded by request or loaded-skill action restrictions', async () => {
-    for (const restrictBy of ['request', 'skill'] as const) {
+
+  for (const restriction of ['legacy-absent', 'explicit-empty', 'planner', 'subagent', 'allowlist', 'synthesis'] as const)
+    it(`never acquires independent tools under ${restriction}`, async () => {
+      const createMediaBinding = vi.fn()
       let offered: readonly { name: string }[] = []
+      const taskId = '00000000-0000-4000-8000-000000000081'
+      const childPacket = JSON.stringify({
+        taskId,
+        outcome: 'blocked',
+        claims: [],
+        conflicts: [],
+        unanswered: ['No source-reading tools are available for this task.'],
+        recommendedFollowups: []
+      })
       const factory = {
         create: async () => ({
           service: {
             chat: async (input: AxChatRequest) => {
               offered = input.functions ?? []
               return {
-                results: [{ index: 0, content: 'No media generation was requested.' }],
-                modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+                results: [{ index: 0, content: restriction === 'subagent' ? childPacket : 'Hello.' }],
+                modelUsage: { ai: 'openai', model: 'text-only', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
               }
             }
           },
-          capabilities,
-          model: 'test',
-          transportKind: 'gemini-api',
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: false,
+            structuredOutput: 'native-json-schema',
+            usage: 'terminal',
+            cancellation: true,
+            maxContextTokens: 100000,
+            maxOutputTokens: 4000
+          },
+          model: 'text-only',
+          transportKind: 'openai-chat',
           capabilityRevision: 'test',
           pricingRevision: 'test',
-          pricing,
-          mediaConfig: { imageGeneration: {} }
-        })
+          pricing
+        }),
+        createMediaBinding
       } as unknown as AgentProviderFactory
       const actions: AgentActionSessionProvider = {
         open: async () => ({
           authoritySha256: null,
           functions: [],
-          ...(restrictBy === 'skill' ? { allowedActions: ['pages.get' as const] } : {}),
+          ...(restriction === 'synthesis' ? { allowedActions: [] } : {}),
           invoke: async () => null,
           snapshot: async () => ({}),
           close: () => {}
         })
       }
+      const base = request(new AbortController().signal)
+      const output = { ...sink(), text: vi.fn(async (_text: string) => {}) }
+      await new AxAgentEngine(factory, actions).execute(
+        {
+          ...base,
+          currentPage: null,
+          skills: [],
+          priorActivity: [],
+          messages: [{ role: 'user', content: 'Hello' }],
+          ...(restriction === 'legacy-absent' ? {} : { mediaBindings: { image: bindingId } }),
+          ...(restriction === 'explicit-empty' ? { generationTools: [] } : {}),
+          ...(restriction === 'planner' || restriction === 'subagent' ? { purpose: restriction } : {}),
+          ...(restriction === 'subagent'
+            ? {
+                task: {
+                  id: taskId,
+                  kind: 'source_scout' as const,
+                  title: 'Read sources',
+                  question: 'What do the sources say?',
+                  sourceScope: [],
+                  requiredEvidenceCount: 1
+                },
+                subagentRunId: '00000000-0000-4000-8000-000000000082'
+              }
+            : {}),
+          ...(restriction === 'allowlist' ? { actionAllowlist: ['pages.get'] } : {})
+        },
+        output
+      )
+      expect(createMediaBinding).not.toHaveBeenCalled()
+      expect(offered.some(tool => tool.name.startsWith('wiki_generate_'))).toBe(false)
+      if (restriction === 'subagent') expect(output.text.mock.calls.map(([text]) => text).join('')).toBe(childPacket)
+    })
+
+  for (const state of ['revoked', 'expired', 'detached'] as const)
+    it(`rejects ${state} owned reference sources before transferring bytes`, async () => {
+      const generate = vi.fn()
+      const dispatchBudget = budget()
+      const loadPayload = vi.fn(async () => image)
+      const authorizePayload = vi.fn(async () => {
+        throw new Error(`source ${state}`)
+      })
+      const engine = new AxAgentEngine(factoryFor(generate))
+      await expect(
+        engine.execute(
+          {
+            ...mediaRequest(),
+            dispatchBudget,
+            messages: [
+              {
+                role: 'user',
+                content: 'Edit this image',
+                attachments: [
+                  {
+                    id: '00000000-0000-4000-8000-000000000088',
+                    filename: 'source.png',
+                    mimeType: 'image/png',
+                    byteLength: image.length,
+                    loadPayload,
+                    authorizePayload
+                  }
+                ]
+              }
+            ]
+          },
+          sink()
+        )
+      ).rejects.toThrow(`source ${state}`)
+      expect(loadPayload).not.toHaveBeenCalled()
+      expect(generate).not.toHaveBeenCalled()
+      expect(dispatchBudget.reserve).not.toHaveBeenCalled()
+    })
+
+  for (const api of ['openai-images', 'gemini-interactions', 'stability-images'] as const)
+    it(`offers only implemented reference inputs for ${api} under a text-only LLM`, async () => {
+      const kind = api === 'gemini-interactions' ? 'video' : 'image'
+      let prompt: AxChatRequest | undefined
+      const factory = {
+        create: async () => ({
+          service: {
+            chat: async (input: AxChatRequest) => {
+              prompt = input
+              return {
+                results: [{ index: 0, content: 'The reference is available to the generation tool.' }],
+                modelUsage: { ai: 'openai', model: 'text-only', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+              }
+            }
+          },
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: false,
+            structuredOutput: 'native-json-schema',
+            usage: 'terminal',
+            cancellation: true,
+            maxContextTokens: 100000,
+            maxOutputTokens: 4000
+          },
+          model: 'text-only',
+          transportKind: 'openai-chat',
+          capabilityRevision: 'test',
+          pricingRevision: 'test',
+          pricing,
+          mediaInputs: { images: false, documents: false, audio: false, video: false }
+        }),
+        createMediaBinding: async () => ({
+          config: {
+            ...config,
+            kind,
+            api,
+            model: api === 'gemini-interactions' ? 'gemini-omni-1.1-flash' : api === 'stability-images' ? 'stable-image-core' : config.model
+          }
+        })
+      } as unknown as AgentProviderFactory
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+      }
       await new AxAgentEngine(factory, actions).execute(
         {
           ...request(new AbortController().signal),
-          generationTools: ['image'],
-          ...(restrictBy === 'request' ? { actionAllowlist: ['pages.get' as const] } : {}),
-          messages: [{ role: 'user', content: 'Hello' }]
+          mediaBindings: { [kind]: bindingId },
+          generationTools: [kind],
+          messages: [
+            {
+              role: 'user',
+              content: 'Use this reference',
+              attachments:
+                api === 'stability-images'
+                  ? []
+                  : [
+                      {
+                        id: '00000000-0000-4000-8000-000000000088',
+                        filename: 'source.png',
+                        mimeType: 'image/png',
+                        byteLength: image.length,
+                        payload: image
+                      }
+                    ]
+            }
+          ]
         },
-        { text: async () => {}, event: async () => {} }
+        sink()
       )
-      expect(offered.some(tool => tool.name === 'wiki_generate_image')).toBe(false)
-    }
-  })
-  it('rechecks synthetic media admission immediately before any provider charge', async () => {
-    const createMedia = vi.fn()
-    let turn = 0
-    const factory = {
-      create: async () => ({
-        service: {
-          chat: async () => ({
-            results: [
-              ++turn === 1
-                ? {
-                    index: 0,
-                    functionCalls: [{ id: 'make-image', type: 'function', function: { name: 'wiki_generate_image', params: '{"prompt":"Create a diagram"}' } }]
-                  }
-                : { index: 0, content: 'The image was not generated because access changed.' }
-            ],
-            modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
-          })
-        },
-        capabilities,
-        model: 'test',
-        transportKind: 'gemini-api',
-        capabilityRevision: 'test',
-        pricingRevision: 'test',
-        pricing,
-        mediaConfig: { imageGeneration: {} }
-      }),
-      createMedia
-    } as unknown as AgentProviderFactory
-    const authorizeSyntheticAction = vi.fn(async () => false)
-    const actions: AgentActionSessionProvider = {
-      open: async () => ({
-        authoritySha256: null,
-        functions: [],
-        authorizeSyntheticAction,
-        invoke: async () => null,
-        snapshot: async () => ({}),
-        close: () => {}
-      })
-    }
-    const event = vi.fn(async () => {})
-    await new AxAgentEngine(factory, actions).execute(
-      {
-        ...request(new AbortController().signal),
-        generationTools: ['image'],
-        dispatchBudget: budget(),
-        messages: [{ role: 'user', content: 'Generate an image.' }]
-      },
-      { text: async () => {}, event }
-    )
-    expect(authorizeSyntheticAction).toHaveBeenCalledTimes(1)
-    expect(createMedia).not.toHaveBeenCalled()
-    expect(event.mock.calls).toContainEqual(['tool.failed', expect.objectContaining({ errorCode: 'ACTION_NOT_OFFERED' })])
-  })
-  it('rejects generation disabled by the request before loading or charging a media provider', async () => {
-    const createMedia = vi.fn()
+      if (api !== 'stability-images') expect(JSON.stringify(prompt)).toContain('Image tool reference (not visible to this model)')
+      expect(JSON.stringify(prompt)).not.toContain(image.toString('base64'))
+      expect(prompt?.functions?.some(tool => tool.name === `wiki_generate_${kind}`)).toBe(true)
+      const tool = prompt?.functions?.find(tool => tool.name === `wiki_generate_${kind}`)
+      expect(Object.hasOwn(tool?.parameters?.properties ?? {}, 'attachmentIds')).toBe(api !== 'stability-images')
+    })
+
+  it('settles video text, video, and unattributed residual usage at their configured rates', async () => {
     const dispatchBudget = budget()
-    for (const kind of ['image', 'video', 'music'] as const) {
-      await expect(
-        new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-          { ...mediaRequest(), mediaRequest: { kind }, generationTools: [], dispatchBudget },
-          { text: async () => {}, event: async () => {}, media: async () => {} }
-        )
-      ).rejects.toMatchObject({ code: 'ACTION_NOT_OFFERED' })
-    }
-    expect(createMedia).not.toHaveBeenCalled()
-    expect(dispatchBudget.reserve).not.toHaveBeenCalled()
-  })
-  it('uses image and music tools within one normal text conversation', async () => {
-    let turn = 0
-    const chat = vi.fn(
-      async (): Promise<AxChatResponse> => ({
-        results: [
-          ++turn === 1
-            ? {
-                index: 0,
-                functionCalls: ['image', 'music'].map(kind => ({
-                  id: `make-${kind}`,
-                  type: 'function' as const,
-                  function: { name: `wiki_generate_${kind}`, params: JSON.stringify({ prompt: `Create ${kind} for an observatory` }) }
-                }))
-              }
-            : { index: 0, content: 'Your image and music are ready.' }
-        ],
-        modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
-      })
-    )
-    const generate = (kind: 'image' | 'music') =>
-      vi.fn(
-        async (input: {
-          beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
-          onDispatch: () => void
-        }) => {
-          await input.beforeDispatch({ inputTokens: 100, outputTokens: 500, totalTokens: 600 })
-          input.onDispatch()
-          return kind === 'image'
-            ? mediaResult
-            : {
-                text: '',
-                files: [{ bytes: Buffer.from('music'), mimeType: 'audio/mpeg' }],
-                usage: mediaResult.usage,
-                usageSource: 'reported' as const
-              }
-        }
-      )
-    const generateImage = generate('image')
-    const generateMusic = generate('music')
     const factory = {
-      create: async () => ({
-        service: { chat },
-        capabilities: { ...capabilities, parallelToolCalls: true },
-        model: 'test',
-        transportKind: 'gemini-api',
-        capabilityRevision: 'test',
-        pricingRevision: 'test',
-        pricing,
-        mediaConfig: { imageGeneration: {}, musicGeneration: {} }
-      }),
-      createMedia: async () => ({
-        config: {},
-        capabilities,
-        pricing: { imageGeneration: pricing, musicGeneration: { costMicrosPerSong: 80000 } },
-        transport: { generateImage, generateMusic }
+      createMediaBinding: async () => ({
+        config: {
+          ...config,
+          kind: 'video',
+          api: 'gemini-interactions',
+          model: 'gemini-omni-1.1-flash',
+          maxOutputTokens: 65536,
+          pricing: { kind: 'tokens', pricingRevision: 'video-v1|1500000|17500000', textOutputMicrosPerMillionTokens: 9000000 }
+        },
+        transport: {
+          generate: async (input: Hooks) => {
+            await input.beforeDispatch({ inputTokens: 100, outputTokens: 65536, totalTokens: 65636 })
+            input.onDispatch()
+            return {
+              text: 'Generation completed',
+              files: [],
+              usage: { inputTokens: 100, outputTokens: 1000, totalTokens: 1200 },
+              usageSource: 'reported',
+              outputTokensByModality: { text: 100, video: 900 }
+            }
+          }
+        }
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => null)
-    const actions: AgentActionSessionProvider = {
-      open: async () => ({ authoritySha256: null, functions: [], invoke, snapshot: async () => ({}), close: () => {} })
-    }
-    const media = vi.fn(async () => {})
-    const text = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory).execute(
       {
-        ...request(new AbortController().signal),
-        generationTools: ['image', 'music'],
-        dispatchBudget: budget(),
-        messages: [{ role: 'user', content: 'Create an observatory image and accompanying music.' }]
+        ...mediaRequest(),
+        mediaRequest: { kind: 'video' },
+        mediaBindings: { video: bindingId },
+        dispatchBudget
       },
-      { media, text, event: async () => {} }
+      sink()
     )
-    expect(generateImage).toHaveBeenCalledTimes(1)
-    expect(generateMusic).toHaveBeenCalledTimes(1)
-    expect(media).toHaveBeenCalledTimes(2)
-    expect(text).toHaveBeenCalledWith('Your image and music are ready.')
-    expect(invoke).not.toHaveBeenCalled()
-    expect(result.totalTokens).toBe(1208)
-    expect(result.costMicros).toBe(81112)
+    expect(result.costMicros).toBe(18550)
+    expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 65636, costMicros: 1147030 })
+    expect(dispatchBudget.reconcile).toHaveBeenCalledWith(expect.anything(), { inputTokens: 100, outputTokens: 1000, totalTokens: 1200, costMicros: 18550 })
+    expect(dispatchBudget.reconcile).toHaveBeenCalledTimes(1)
   })
 })
 
 const minimalPdf = (): Buffer => {
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>',
-    '<< /Length 0 >>\nstream\n\nendstream'
-  ]
-  let value = '%PDF-1.7\n'
-  const offsets = objects.map((object, index) => {
-    const offset = Buffer.byteLength(value)
-    value += `${index + 1} 0 obj\n${object}\nendobj\n`
-    return offset
-  })
-  const xref = Buffer.byteLength(value)
-  value += `xref\n0 5\n0000000000 65535 f \n${offsets.map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
-  return Buffer.from(value)
+  const pdf = new PdfFixtureDocument()
+  const catalog = pdf.reserveObject()
+  const pages = pdf.reserveObject()
+  const page = pdf.reserveObject()
+  const content = pdf.addStream('', Buffer.alloc(0))
+  pdf.setObject(catalog, `<< /Type /Catalog /Pages ${pages} 0 R >>`)
+  pdf.setObject(pages, `<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`)
+  pdf.setObject(page, `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents ${content} 0 R >>`)
+  return pdf.toBuffer(catalog)
 }
 
 describe('Agent chat attachment dispatch', () => {
@@ -7894,11 +7902,11 @@ describe('Agent chat attachment dispatch', () => {
     it(`maps owned PDFs through Files API and cleans up after ${failure}`, async () => {
       const controller = new AbortController()
       const base = request(controller.signal)
-      let authorizationChecks = 0
       const authorizeMedia = async () => {
-        if (++authorizationChecks === 3 && failure === 'authorization') throw new Error('permission revoked')
+        if (failure === 'authorization' && dispatchBudget.reserve.mock.calls.length > 0) throw new Error('permission revoked')
       }
-      const attachment = { id: '00000000-0000-4000-8000-000000000010', mimeType: 'application/pdf', filename: 'brief.pdf', payload: minimalPdf() }
+      const payload = minimalPdf()
+      const attachment = { id: '00000000-0000-4000-8000-000000000010', mimeType: 'application/pdf', filename: 'brief.pdf', byteLength: payload.length, payload }
       const uri = 'https://generativelanguage.googleapis.com/v1beta/files/brief'
       const upload = vi.fn(async () => ({ name: 'files/brief', uri, mimeType: 'application/pdf' }))
       const countTokens = vi.fn(async () => {
@@ -7941,9 +7949,10 @@ describe('Agent chat attachment dispatch', () => {
           transportKind: 'gemini-api',
           capabilityRevision: 'test',
           pricingRevision: 'test',
+          mediaInputs: { images: true, documents: true, audio: false, video: false },
           pricing
         }),
-        createMedia: async () => ({ config: { attachments: true }, capabilities, transport: { upload, countTokens, delete: remove } })
+        createMediaInput: async () => ({ config: { attachments: true }, capabilities, transport: { upload, countTokens, delete: remove } })
       } as unknown as AgentProviderFactory
       const dispatchBudget = {
         reserve: vi.fn(async (input: { tokens: number; costMicros: number }) => {
@@ -7955,7 +7964,13 @@ describe('Agent chat attachment dispatch', () => {
         consumeTool: vi.fn(async () => {}),
         unsettledExposure: { tokens: 0, costMicros: 0 }
       }
-      const action = new AxAgentEngine(factory).execute(
+      const preparedPaths: string[] = []
+      const preparePdf: typeof prepareAgentPdf = async (bytes, signal) => {
+        const prepared = await prepareAgentPdf(bytes, signal)
+        preparedPaths.push(...prepared.parts.map(part => part.path))
+        return prepared
+      }
+      const action = new AxAgentEngine(factory, undefined, preparePdf).execute(
         {
           ...base,
           run: { ...base.run, executionMode: 'generation-only' },
@@ -7978,6 +7993,8 @@ describe('Agent chat attachment dispatch', () => {
       expect(dispatchBudget.release).toHaveBeenCalledTimes(failure === 'authorization' ? 1 : 0)
       expect(dispatchBudget.reserve).toHaveBeenCalledTimes(failure === 'count' ? 0 : 1)
       if (failure !== 'count') expect(dispatchBudget.reserve.mock.calls[0]?.[0].tokens).toBeLessThan(32_000)
+      expect(preparedPaths).toHaveLength(1)
+      for (const path of preparedPaths) await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' })
     })
 })
 
@@ -8011,9 +8028,10 @@ const pdfDispatchFixture = (preparePdf: typeof prepareAgentPdf, options: { uploa
       transportKind: 'gemini-api',
       capabilityRevision: 'test',
       pricingRevision: 'test',
+      mediaInputs: { images: true, documents: true, audio: false, video: false },
       pricing
     }),
-    createMedia: async () => ({ config: { attachments: true }, capabilities, transport: { upload, countTokens, delete: remove } })
+    createMediaInput: async () => ({ config: { attachments: true }, capabilities, transport: { upload, countTokens, delete: remove } })
   } as unknown as AgentProviderFactory
   const reserve = vi.fn(async (input: { tokens: number; costMicros: number }) => ({ id: 1, ...input }))
   const base = request(new AbortController().signal)
@@ -8023,6 +8041,7 @@ const pdfDispatchFixture = (preparePdf: typeof prepareAgentPdf, options: { uploa
     currentPage: null,
     skills: [],
     priorActivity: [],
+    authorizeMedia: async () => {},
     dispatchBudget: {
       reserve,
       reconcile: async () => {},
@@ -8039,7 +8058,7 @@ const preparedPdfFixture = async (pageCount: number, partCount: number) => {
   const parts = []
   for (let index = 0; index < partCount; index++) {
     const path = join(directory, `${index + 1}.pdf`)
-    const bytes = Buffer.from(`part ${index + 1}`)
+    const bytes = minimalPdf()
     await writeFile(path, bytes)
     parts.push({
       path,
@@ -8054,7 +8073,10 @@ const preparedPdfFixture = async (pageCount: number, partCount: number) => {
   return { pageCount, parts, cleanup }
 }
 
-const pdfAttachment = (id: string, filename = 'source.pdf') => ({ id, filename, mimeType: 'application/pdf', payload: minimalPdf() })
+const pdfAttachment = (id: string, filename = 'source.pdf') => {
+  const payload = minimalPdf()
+  return { id, filename, mimeType: 'application/pdf', byteLength: payload.length, payload }
+}
 
 describe('Agent PDF preparation', () => {
   it('uploads a 250 MiB logical PDF through lazy preparation without loading its original into memory', async () => {
@@ -8084,11 +8106,12 @@ describe('Agent PDF preparation', () => {
 
   it('rejects an unreadable PDF before uploading or reserving inference budget', async () => {
     const fixture = pdfDispatchFixture(prepareAgentPdf)
+    const payload = Buffer.from('%PDF-1.7 invalid')
     fixture.engineRequest.messages = [
       {
         role: 'user',
         content: 'Read this',
-        attachments: [{ ...pdfAttachment('00000000-0000-4000-8000-000000000025'), payload: Buffer.from('%PDF-1.7 invalid') }]
+        attachments: [{ ...pdfAttachment('00000000-0000-4000-8000-000000000025'), byteLength: payload.length, payload }]
       }
     ]
     await expect(fixture.engine.execute(fixture.engineRequest, { text: async () => {}, event: async () => {} })).rejects.toMatchObject({ code: 'PDF_INVALID' })

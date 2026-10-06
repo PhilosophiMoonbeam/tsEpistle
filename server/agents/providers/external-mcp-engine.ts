@@ -17,6 +17,8 @@ import {
   type ExternalMcpToolCallName
 } from '../../../shared/agents/contracts.ts'
 import type { ExternalMcpAttribution } from '../../../shared/agents/external-mcp.ts'
+import type { AgentMediaInputs } from '../../../shared/agents/media-providers.ts'
+import { agentMediaInputModality, assertAgentMediaInput } from './media-input-policy.ts'
 import { type ExternalMcpLease, type ExternalMcpService, EXTERNAL_MCP_LIMITS } from '../external-mcp.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import type { AgentProviderTransportKind } from './registry.ts'
@@ -66,13 +68,12 @@ const contentFor = (result: AxMCPToolCallResult): AxFunctionResultContent =>
 export const assertExternalMcpResultMedia = (
   content: AxFunctionResultContent | undefined,
   media: AxAIFeatures['media'] | undefined,
-  transportKind: AgentProviderTransportKind
+  transportKind: AgentProviderTransportKind,
+  inputs: Readonly<AgentMediaInputs> | undefined
 ): void => {
   for (const part of content ?? []) {
     if (part.type === 'text' || part.type === 'url') continue
-    const capability = part.type === 'image' ? media?.images : part.type === 'audio' ? media?.audio : media?.files
     const mimeType = part.mimeType
-    const format = mimeType === 'audio/mpeg' ? 'mp3' : mimeType?.split('/').at(-1)?.replace(/^x-/u, '')
     if (
       // Generic input-media support does not mean the native function-result serializer carries binary payloads.
       !(
@@ -81,11 +82,10 @@ export const assertExternalMcpResultMedia = (
         transportKind === 'openresponses' ||
         (transportKind === 'anthropic-messages' && part.type === 'image')
       ) ||
-      !capability?.supported ||
       mimeType === undefined ||
-      !capability.formats.some(
-        allowed => allowed === mimeType || allowed === format || allowed === '*/*' || (allowed.endsWith('/*') && mimeType.startsWith(allowed.slice(0, -1)))
-      )
+      (part.type === 'image' && agentMediaInputModality(mimeType) !== 'images') ||
+      (part.type === 'audio' && agentMediaInputModality(mimeType) !== 'audio') ||
+      (part.type === 'file' && transportKind !== 'gemini-api' && agentMediaInputModality(mimeType) !== 'documents')
     )
       throw new AgentRepositoryError(
         'EXTERNAL_MCP_MODALITY_UNSUPPORTED',
@@ -93,12 +93,17 @@ export const assertExternalMcpResultMedia = (
         409
       )
     const data = part.type === 'image' ? part.image : part.data
-    if ('maxSize' in capability && typeof capability.maxSize === 'number' && Buffer.byteLength(data, 'base64') > capability.maxSize)
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(data) || data.length === 0)
+      throw new AgentRepositoryError('EXTERNAL_MCP_RESULT_INVALID', 'External MCP returned invalid binary content', 502)
+    try {
+      assertAgentMediaInput(mimeType, Buffer.byteLength(data, 'base64'), inputs, transportKind, media)
+    } catch {
       throw new AgentRepositoryError(
         'EXTERNAL_MCP_MODALITY_UNSUPPORTED',
-        'External MCP media exceeds the agent input limit; the operation was not retried.',
+        'The agent is not enabled to consume this external MCP media result; the operation was not retried.',
         409
       )
+    }
   }
 }
 

@@ -33,6 +33,7 @@ import { AgentUtilityModel } from './agents/providers/utility.ts'
 import { assertWikiAgentMediaAccess, createWikiActionSessionProvider, loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
 import { AgentProductRuntime } from './agents/runtime.ts'
 import { DecisionProviderRegistry } from './agents/decision-providers.ts'
+import { AgentMediaProviderRegistry } from './agents/media-providers.ts'
 import { ExternalMcpService } from './agents/external-mcp.ts'
 import { AgentRoutingPolicyRegistry, AgentTurnRouter } from './agents/routing.ts'
 import { configureTransportRuntime } from './controllers/_types.ts'
@@ -342,6 +343,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   let providerConformance: AgentProviderConformanceRunner | undefined
   let utilityModel: AgentUtilityModel | undefined
   let decisionProviders: DecisionProviderRegistry | undefined
+  let mediaProviders: AgentMediaProviderRegistry | undefined
   let externalMcp: ExternalMcpService | undefined
   let routingPolicies: AgentRoutingPolicyRegistry | undefined
   if (wiki.config.agents.provider.enabled) {
@@ -359,6 +361,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     const snapshotSigningSecret = actionSnapshotSigningSecret
     providerRegistry = new AgentProviderRegistry(wiki.models.knex, secrets, keys)
     decisionProviders = new DecisionProviderRegistry(wiki.models.knex, secrets)
+    mediaProviders = new AgentMediaProviderRegistry(wiki.models.knex, secrets)
     externalMcp = new ExternalMcpService({
       knex: wiki.models.knex,
       secrets,
@@ -557,6 +560,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     ...wiki,
     agentLimits,
     ...(decisionProviders === undefined ? {} : { decisionProviders }),
+    ...(mediaProviders === undefined ? {} : { mediaProviders }),
     ...(externalMcp === undefined ? {} : { externalMcp }),
     ...(routingPolicies === undefined ? {} : { routingPolicies }),
     ...(providerRegistry === undefined ? {} : { providerRegistry }),

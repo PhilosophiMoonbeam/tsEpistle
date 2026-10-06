@@ -1,5 +1,6 @@
 import type { AgentKnowledgeContext } from './knowledge-context.ts'
 import type { SpecialistInvocationView } from './specialists.ts'
+import type { AgentMediaInputs, AgentMediaKind } from './media-providers.ts'
 export const AGENT_PERMISSION_KEYS = ['use:agents', 'use:agent-browser', 'use:mcp'] as const
 
 export type AgentPermissionKey = (typeof AGENT_PERMISSION_KEYS)[number]
@@ -236,6 +237,12 @@ export interface AgentMediaCapabilities {
   readonly videoGeneration?: boolean
   readonly musicGeneration?: boolean
   readonly transcription: boolean
+  /** Authorized model-input opt-ins, independent of media generation and dictation. */
+  readonly inputModalities?: Readonly<AgentMediaInputs>
+  /** Exact authorized model-input formats; generation references and dictation are separate. */
+  readonly inputMimeTypes?: readonly string[]
+  /** Authorized independent tools and the reference modalities their actual APIs accept. */
+  readonly mediaToolInputs?: Readonly<Partial<Record<AgentMediaKind, Readonly<AgentMediaInputs>>>>
 }
 
 export interface AgentMediaView {

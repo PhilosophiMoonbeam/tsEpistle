@@ -18,6 +18,10 @@ import {
   transitionAgentRun
 } from '../../agents/coordinator.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
+import { AgentMediaProviderRegistry } from '../../agents/media-providers.ts'
+import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
+import { up as addAgentSecrets } from '../../db/migrations/2.5.141.ts'
+import { up as addAgentMediaProviders } from '../../db/migrations/tsepistle-000055-agent-media-providers.ts'
 import { projectAgentThread, reduceAgentEvents } from '../../agents/projection.ts'
 import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import {
@@ -104,6 +108,8 @@ const compactionReceiptFor = (request: Parameters<AgentEngine['execute']>[0], co
 const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('users', table => {
     table.integer('id').primary()
+    table.boolean('isActive').notNullable().defaultTo(true)
+    table.integer('authVersion').notNullable().defaultTo(1)
   })
   await knex.schema.createTable('agentSessions', table => {
     table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
@@ -302,6 +308,7 @@ const createTables = async (knex: Knex): Promise<void> => {
   })
   await knex.schema.createTable('groups', table => {
     table.integer('id').primary()
+    table.text('permissions').notNullable().defaultTo('["use:agents"]')
   })
   await knex.schema.createTable('userGroups', table => {
     table.integer('userId').notNullable()
@@ -463,8 +470,18 @@ describe('durable agent repositories', () => {
       table.text('config').notNullable()
     })
     await addAgentSpecialists(knex)
+    await addAgentSecrets(knex)
+    await addAgentMediaProviders(knex)
     await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
-    await knex('groups').insert([{ id: 1 }])
+    await knex('groups').insert([
+      { id: 1, permissions: '["manage:system","use:agents"]' },
+      { id: 2, permissions: '["use:agents"]' }
+    ])
+    await knex('userGroups').insert([
+      { userId: 7, groupId: 1 },
+      { userId: 8, groupId: 2 },
+      { userId: 9, groupId: 2 }
+    ])
     await createAgentSession(knex, { id: sessionId, ownerId: 7, title: 'Thread', retention: 'saved', providerProfileId: null, executionMode: 'agent' })
     await appendAgentMessage(knex, { id: userMessageId, ownerId: 7, sessionId, role: 'user', status: 'complete', content: 'Question' })
     await appendAgentMessage(knex, { id: assistantMessageId, ownerId: 7, sessionId, role: 'assistant', status: 'streaming', content: '' })
@@ -2456,6 +2473,7 @@ describe('durable agent repositories', () => {
     const secondSessionId = '00000000-0000-4000-8000-000000000031'
     await createAgentSession(knex, { id: secondSessionId, ownerId: 7, title: '', retention: 'temporary', providerProfileId: null, executionMode: 'agent' })
     const input = {
+      mediaBindings: {},
       id: '00000000-0000-4000-8000-000000000032',
       userMessageId: '00000000-0000-4000-8000-000000000033',
       assistantMessageId: '00000000-0000-4000-8000-000000000034',
@@ -2483,10 +2501,72 @@ describe('durable agent repositories', () => {
       reservationExpiresAt: new Date('2026-08-17T00:05:00.000Z'),
       now: new Date('2026-08-17T00:00:00.000Z')
     }
+    const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'fixture', keys: { fixture: new Uint8Array(32).fill(7) } })
+    const mediaRegistry = new AgentMediaProviderRegistry(knex, vault)
+    const actor = { id: 7, authVersion: 1 }
+    const write = {
+      displayName: 'Admission images',
+      exposureMode: 'all_agent_users' as const,
+      secretValue: 'admission-fixture-key',
+      config: {
+        kind: 'image' as const,
+        api: 'openai-images' as const,
+        model: 'gpt-image-1',
+        baseUrl: 'https://api.openai.com/v1',
+        timeoutMs: 30_000,
+        maxInputTokens: 16_000,
+        maxOutputTokens: 4_000,
+        pricing: { kind: 'fixed' as const, pricingRevision: 'admission-price', costMicros: 100 }
+      }
+    }
+    const createMedia = async (displayName: string, enabled = true) => {
+      const created = await mediaRegistry.create({ ...write, displayName }, actor)
+      return enabled ? mediaRegistry.setEnabled(created.id, true, created.revision, actor) : created
+    }
+    const firstMedia = await createMedia('Images')
+    const alternative = await createMedia('Alternative images')
+    const disabled = await createMedia('Disabled images', false)
+    const restricted = await mediaRegistry.create({ ...write, displayName: 'Restricted images', exposureMode: 'groups', groupIds: [1] }, actor)
+    await mediaRegistry.setEnabled(restricted.id, true, restricted.revision, actor)
+    await knex('agentMediaProviderGrants').where({ providerId: restricted.id }).delete()
+    const stale = await createMedia('Changed images')
+    await mediaRegistry.update(stale.id, { ...write, displayName: 'Changed images again' }, stale.revision, actor)
+    const credentialless = await createMedia('Lost credential images')
+    const credential = await knex('agentMediaProviderVersions').where({ id: credentialless.profileVersionId }).first('secretReference')
+    await vault.delete(String(credential.secretReference), knex)
+    const rejectedPins = [
+      [{ image: 'not-a-version' }, 'INVALID_AGENT_MEDIA_BINDINGS'],
+      [{ image: firstMedia.profileVersionId, extra: alternative.profileVersionId }, 'INVALID_AGENT_MEDIA_BINDINGS'],
+      [{ video: firstMedia.profileVersionId }, 'MEDIA_PROVIDER_CHANGED'],
+      [{ image: stale.profileVersionId }, 'MEDIA_PROVIDER_CHANGED'],
+      [{ image: disabled.profileVersionId }, 'AGENT_MEDIA_DISABLED'],
+      [{ image: restricted.profileVersionId }, 'AGENT_MEDIA_DISABLED'],
+      [{ image: credentialless.profileVersionId }, 'AGENT_MEDIA_DISABLED']
+    ] as const
+    const counts = async () =>
+      Promise.all(
+        ['agentRuns', 'agentMessages', 'agentEvents', 'agentQuotaReservations', 'agentQuotaDaily'].map(async table => {
+          const row = await knex(table).count<{ count: number }[]>({ count: '*' }).first()
+          return Number(row?.count)
+        })
+      )
+    const before = await counts()
+    await expect(admitAgentRun(knex, { ...input, mediaBindings: {}, generationTools: ['image'] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    expect(await counts()).toEqual(before)
+    for (const [mediaBindings, code] of rejectedPins) {
+      await expect(admitAgentRun(knex, { ...input, mediaBindings })).rejects.toMatchObject({ code })
+      expect(await counts()).toEqual(before)
+      expect(await knex('agentSessions').where({ id: secondSessionId }).first('version')).toEqual({ version: 1 })
+    }
+    input.mediaBindings = { image: firstMedia.profileVersionId }
     const created = await admitAgentRun(knex, input)
     const replay = await admitAgentRun(knex, input)
     expect(created.replayed).toBe(false)
     expect(replay).toMatchObject({ replayed: true, run: { id: input.id, eventSequence: 1, status: 'queued' } })
+    await expect(admitAgentRun(knex, { ...input, mediaBindings: { image: alternative.profileVersionId } })).rejects.toMatchObject({
+      code: 'RUN_IDEMPOTENCY_MISMATCH',
+      status: 409
+    })
     await expect(Promise.resolve(admitAgentRun(knex, { ...input, content: 'Different' }))).rejects.toMatchObject({
       code: 'RUN_IDEMPOTENCY_MISMATCH',
       status: 409
@@ -2495,6 +2575,7 @@ describe('durable agent repositories', () => {
     const queuedEvent = await knex('agentEvents').where({ runId: input.id }).first('type', 'data')
     expect(queuedEvent?.type).toBe('run.queued')
     expect(JSON.parse(String(queuedEvent?.data))).toMatchObject({ runId: input.id, status: 'queued', currentPage: input.currentPage })
+    expect(JSON.parse(String(queuedEvent?.data)).mediaBindings).toEqual({ image: firstMedia.profileVersionId })
 
     const failedSessionId = '00000000-0000-4000-8000-000000000038'
     await createAgentSession(knex, { id: failedSessionId, ownerId: 8, retention: 'temporary', providerProfileId: null, executionMode: 'agent' })
@@ -2509,6 +2590,7 @@ describe('durable agent repositories', () => {
           sessionId: failedSessionId,
           ownerId: 8,
           clientRequestId: '00000000-0000-4000-8000-000000000040',
+          mediaBindings: {},
           quotaLimits: { dailyTokens: 0, dailyCostMicros: 0 }
         })
       )

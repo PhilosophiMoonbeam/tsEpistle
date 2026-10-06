@@ -12,6 +12,8 @@ import {
 } from '../../agents/providers/factory.ts'
 import { readAgentProviderUsage, readAgentUsageEvent } from '../../agents/providers/usage.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
+import type { AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
+import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
@@ -56,7 +58,7 @@ const openAIResponsesStream = (
 }
 
 describe('guarded provider fetch', () => {
-  it('retains bounded native image responses and denies retired media endpoints', async () => {
+  it('bounds configured GenerateContent image responses and denies cross-protocol media endpoints', async () => {
     const largerBody = new Uint8Array(16 * 1024 * 1024 + 1)
     const limits = { ...deriveAgentProviderResourceLimits(65_536), rawBodyBytes: 64 * 1024 * 1024, rawChunkBytes: 64 * 1024 * 1024 }
     let called = 0
@@ -69,7 +71,10 @@ describe('guarded provider fetch', () => {
         return new Response(largerBody)
       }) as typeof fetch,
       publicResolver as never,
-      limits
+      limits,
+      undefined,
+      'gemini-3.1-flash-image',
+      { generateModels: ['gemini-3.1-flash-image'], countModels: ['gemini-3.1-flash-image'], files: false }
     )
     for (const model of ['gemini-omni-1.1-flash', 'lyria-3.5']) {
       await expect(
@@ -547,9 +552,382 @@ describe('provider continuation wire', () => {
   })
 })
 
+const mediaProviderId = '00000000-0000-4000-8000-000000000041'
+const mediaVersionId = '00000000-0000-4000-8000-000000000042'
+const mediaImage = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==',
+  'base64'
+)
+const imageConfig: AgentMediaProviderConfig = {
+  kind: 'image',
+  api: 'openai-images',
+  model: 'gpt-image-2',
+  baseUrl: 'https://api.openai.com/v1',
+  timeoutMs: 10_000,
+  maxInputTokens: 1_000,
+  maxOutputTokens: 2_000,
+  pricing: { kind: 'tokens', pricingRevision: 'image-v2|1000000|2000000' }
+}
+const seedMediaProvider = async (db: Knex): Promise<DatabaseAgentSecretRegistry> => {
+  await db.schema.createTable('users', table => {
+    table.integer('id').primary()
+    table.boolean('isActive')
+    table.integer('authVersion')
+  })
+  await db.schema.createTable('groups', table => {
+    table.integer('id').primary()
+    table.text('permissions')
+  })
+  await db.schema.createTable('userGroups', table => {
+    table.integer('userId')
+    table.integer('groupId')
+  })
+  await db.schema.createTable('agentMediaProviderConfiguration', table => {
+    table.integer('id').primary()
+    table.integer('revision')
+  })
+  await db.schema.createTable('agentMediaProviders', table => {
+    table.uuid('id').primary()
+    table.string('displayName')
+    table.uuid('currentVersionId')
+    table.integer('revision')
+    table.boolean('enabled')
+    table.boolean('isDefault')
+    table.string('exposureMode')
+    table.dateTime('deletedAt').nullable()
+  })
+  await db.schema.createTable('agentMediaProviderVersions', table => {
+    table.uuid('id').primary()
+    table.uuid('providerId')
+    table.integer('version')
+    table.text('config')
+    table.string('secretReference')
+  })
+  await db.schema.createTable('agentMediaProviderGrants', table => {
+    table.uuid('providerId')
+    table.integer('groupId')
+  })
+  await db.schema.createTable('agentProviderSecrets', table => {
+    table.uuid('id').primary()
+    table.string('keyId')
+    table.string('algorithm')
+    table.binary('nonce')
+    table.binary('ciphertext')
+    table.binary('authTag')
+    table.integer('createdBy')
+    table.dateTime('createdAt')
+  })
+  await db('users').insert({ id: 7, isActive: true, authVersion: 1 })
+  await db('groups').insert({ id: 100, permissions: JSON.stringify(['use:agents']) })
+  await db('userGroups').insert({ userId: 7, groupId: 100 })
+  await db('agentMediaProviderConfiguration').insert({ id: 1, revision: 1 })
+  const secrets = new DatabaseAgentSecretRegistry(db, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 11) } })
+  const secretReference = await db.transaction(transaction => secrets.store('independent-media-key', 7, transaction))
+  await db('agentMediaProviders').insert({
+    id: mediaProviderId,
+    displayName: 'Independent images',
+    currentVersionId: mediaVersionId,
+    revision: 1,
+    enabled: true,
+    isDefault: true,
+    exposureMode: 'groups',
+    deletedAt: null
+  })
+  await db('agentMediaProviderVersions').insert({
+    id: mediaVersionId,
+    providerId: mediaProviderId,
+    version: 1,
+    config: JSON.stringify(imageConfig),
+    secretReference
+  })
+  await db('agentMediaProviderGrants').insert({ providerId: mediaProviderId, groupId: 100 })
+  return secrets
+}
+
+const seedInputProvider = async (db: Knex): Promise<string> => {
+  const versionId = '00000000-0000-4000-8000-000000000051'
+  const profileId = '00000000-0000-4000-8000-000000000052'
+  await db.schema.createTable('agentProviderProfiles', table => {
+    table.uuid('id').primary()
+    table.uuid('currentVersionId')
+    table.boolean('conformed')
+    table.string('status')
+    table.dateTime('deletedAt').nullable()
+  })
+  await db.schema.createTable('agentProviderProfileVersions', table => {
+    table.uuid('id').primary()
+    table.uuid('profileId')
+    table.string('transportKind')
+    table.string('model')
+    table.string('utilityModel').nullable()
+    table.string('baseUrl')
+    table.string('authMode')
+    table.string('secretReference')
+    table.text('adapterConfig')
+    table.text('capabilities')
+    table.boolean('conformed')
+  })
+  await db('agentProviderProfiles').insert({ id: profileId, currentVersionId: versionId, conformed: true, status: 'enabled', deletedAt: null })
+  await db('agentProviderProfileVersions').insert({
+    id: versionId,
+    profileId,
+    transportKind: 'gemini-api',
+    model: 'gemini-3.7-flash',
+    utilityModel: 'gemini-3.7-flash-lite',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    authMode: 'google-api-key',
+    secretReference: 'env:LLM_INPUT_KEY',
+    adapterConfig: JSON.stringify({
+      timeoutMs: 10_000,
+      maxRetries: 0,
+      additionalHeaders: {},
+      mediaInputs: { images: true, documents: true, audio: false, video: false }
+    }),
+    capabilities: JSON.stringify({
+      streaming: true,
+      toolCalling: 'native',
+      parallelToolCalls: false,
+      structuredOutput: 'native-json-schema',
+      usage: 'terminal',
+      cancellation: true,
+      maxContextTokens: 32_000,
+      maxOutputTokens: 4_000
+    }),
+    conformed: true
+  })
+  return versionId
+}
+
 describe('Ax provider factory', () => {
   let db: Knex | undefined
   afterEach(async () => db?.destroy())
+
+  it('generates from an independently bound image version without any LLM profile or conformance', async () => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const secrets = await seedMediaProvider(db)
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const implementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      requests.push({ url: String(input), init })
+      return Response.json({
+        data: [{ b64_json: mediaImage.toString('base64') }],
+        usage: { input_tokens: 7, output_tokens: 11, total_tokens: 18 }
+      })
+    }
+    const factory = new AgentProviderFactory(db, secrets, implementation as typeof fetch, publicResolver as never)
+    const bound = await factory.createMediaBinding(7, 'image', mediaVersionId)
+    const dispatch: string[] = []
+    const result = await bound.transport.generate({
+      prompt: 'A blue tree',
+      beforeDispatch: async () => {
+        dispatch.push('reserved')
+      },
+      onDispatch: () => {
+        dispatch.push('dispatched')
+      }
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe('https://api.openai.com/v1/images/generations')
+    expect(new Headers(requests[0]?.init?.headers).get('authorization')).toBe('Bearer independent-media-key')
+    expect(JSON.parse(String(requests[0]?.init?.body))).toMatchObject({ model: 'gpt-image-2', prompt: 'A blue tree', n: 1 })
+    expect(result).toMatchObject({ usageSource: 'reported', usage: { inputTokens: 7, outputTokens: 11, totalTokens: 18 } })
+    expect(result.files).toEqual([{ bytes: mediaImage, mimeType: 'image/png' }])
+    expect(dispatch).toEqual(['reserved', 'dispatched'])
+
+    const nextVersionId = '00000000-0000-4000-8000-000000000043'
+    const secretReference = await db.transaction(transaction => secrets.store('revised-media-key', 7, transaction))
+    await db('agentMediaProviderVersions').insert({
+      id: nextVersionId,
+      providerId: mediaProviderId,
+      version: 2,
+      secretReference,
+      config: JSON.stringify({ ...imageConfig, model: 'gpt-image-1.5', pricing: { kind: 'fixed', pricingRevision: 'revised-image-price', costMicros: 30_000 } })
+    })
+    await db('agentMediaProviders').where({ id: mediaProviderId }).update({ currentVersionId: nextVersionId, revision: 2 })
+    await expect(factory.createMediaBinding(7, 'image', mediaVersionId)).rejects.toMatchObject({ code: 'MEDIA_PROVIDER_CHANGED', status: 409 })
+    const revised = await factory.createMediaBinding(7, 'image', nextVersionId)
+    await revised.transport.generate({ prompt: 'A red tree' })
+    expect(JSON.parse(String(requests[1]?.init?.body))).toMatchObject({ model: 'gpt-image-1.5', prompt: 'A red tree' })
+    expect(new Headers(requests[1]?.init?.headers).get('authorization')).toBe('Bearer revised-media-key')
+    expect(revised.config.pricing).toEqual({ kind: 'fixed', pricingRevision: 'revised-image-price', costMicros: 30_000 })
+    expect(bound.config.pricing).toEqual({ kind: 'tokens', pricingRevision: 'image-v2|1000000|2000000' })
+    const historical = await db('agentMediaProviderVersions').where({ id: mediaVersionId }).first('config', 'secretReference')
+    expect(JSON.parse(historical.config)).toEqual(imageConfig)
+    expect(await secrets.get(historical.secretReference)).toBe('independent-media-key')
+  })
+
+  it.each(['grant', 'disabled', 'version', 'account'] as const)('rechecks live %s authority after binding and before media egress', async revocation => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const secrets = await seedMediaProvider(db)
+    let called = 0
+    const implementation = async (): Promise<Response> => {
+      called++
+      return Response.json({ data: [{ b64_json: mediaImage.toString('base64') }] })
+    }
+    const factory = new AgentProviderFactory(db, secrets, implementation as typeof fetch, publicResolver as never)
+    const bound = await factory.createMediaBinding(7, 'image', mediaVersionId)
+    if (revocation === 'grant') await db('agentMediaProviderGrants').where({ providerId: mediaProviderId }).delete()
+    if (revocation === 'disabled') await db('agentMediaProviders').where({ id: mediaProviderId }).update({ enabled: false })
+    if (revocation === 'version')
+      await db('agentMediaProviders').where({ id: mediaProviderId }).update({
+        currentVersionId: '00000000-0000-4000-8000-000000000043'
+      })
+    if (revocation === 'account') await db('users').where({ id: 7 }).update({ isActive: false })
+    await expect(bound.transport.generate({ prompt: 'Must not leave Wiki' })).rejects.toThrow()
+    expect(called).toBe(0)
+  })
+
+  it.each([
+    { revocation: 'grant', code: 'AGENT_MEDIA_DISABLED', status: 403 },
+    { revocation: 'disabled', code: 'AGENT_MEDIA_DISABLED', status: 403 },
+    { revocation: 'version', code: 'MEDIA_PROVIDER_CHANGED', status: 409 },
+    { revocation: 'secret', code: 'AGENT_MEDIA_DISABLED', status: 403 },
+    { revocation: 'account', code: 'AGENT_ACCESS_REVOKED', status: 403 }
+  ] as const)('denies a committed $revocation revocation during DNS before credential-bearing media HTTP', async ({ revocation, code, status }) => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const secrets = await seedMediaProvider(db)
+    const resolving = Promise.withResolvers<void>()
+    const resolved = Promise.withResolvers<LookupAddress[]>()
+    const resolver = async (): Promise<LookupAddress[]> => {
+      resolving.resolve()
+      return resolved.promise
+    }
+    let called = 0
+    let paidDispatch = false
+    const implementation = async (): Promise<Response> => {
+      called++
+      return Response.json({ data: [{ b64_json: mediaImage.toString('base64') }] })
+    }
+    const factory = new AgentProviderFactory(db, secrets, implementation as typeof fetch, resolver as never)
+    const bound = await factory.createMediaBinding(7, 'image', mediaVersionId)
+    const generation = bound.transport
+      .generate({
+        prompt: 'Must not leave Wiki',
+        onDispatch: () => {
+          paidDispatch = true
+        }
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      )
+    await resolving.promise
+    try {
+      await db.transaction(async transaction => {
+        if (revocation === 'grant') await transaction('agentMediaProviderGrants').where({ providerId: mediaProviderId }).delete()
+        if (revocation === 'disabled') await transaction('agentMediaProviders').where({ id: mediaProviderId }).update({ enabled: false })
+        if (revocation === 'version') {
+          const nextVersionId = '00000000-0000-4000-8000-000000000043'
+          const secretReference = await secrets.store('revised-media-key', 7, transaction)
+          await transaction('agentMediaProviderVersions').insert({
+            id: nextVersionId,
+            providerId: mediaProviderId,
+            version: 2,
+            secretReference,
+            config: JSON.stringify({ ...imageConfig, model: 'gpt-image-1.5' })
+          })
+          await transaction('agentMediaProviders').where({ id: mediaProviderId }).update({ currentVersionId: nextVersionId, revision: 2 })
+        }
+        if (revocation === 'secret') {
+          const secretReference = await secrets.store('replacement-media-key', 7, transaction)
+          await transaction('agentMediaProviderVersions').where({ id: mediaVersionId }).update({ secretReference })
+        }
+        if (revocation === 'account') await transaction('users').where({ id: 7 }).update({ isActive: false })
+      })
+    } finally {
+      resolved.resolve(await publicResolver())
+    }
+    const denial = await generation
+    expect(called).toBe(0)
+    expect(paidDispatch).toBe(false)
+    expect(denial).toBeInstanceOf(AgentRepositoryError)
+    expect(denial).toMatchObject({ code, status })
+  })
+
+  it('uses the LLM credential and model for opted-in context input, without a media-generation profile', async () => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const versionId = await seedInputProvider(db)
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const implementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      requests.push({ url: String(input), init })
+      return Response.json({ totalTokens: 23 })
+    }
+    const factory = new AgentProviderFactory(
+      db,
+      { get: reference => (reference === 'env:LLM_INPUT_KEY' ? 'llm-input-key' : null) },
+      implementation as typeof fetch,
+      publicResolver as never
+    )
+    const bound = await factory.createMediaInput(versionId)
+    const uri = 'https://generativelanguage.googleapis.com/v1beta/files/attachment'
+    expect(
+      await bound.transport.countTokens('gemini-3.7-flash', [
+        { type: 'image', uri, mime_type: 'image/png' },
+        { type: 'document', uri, mime_type: 'application/pdf' }
+      ])
+    ).toBe(23)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:countTokens')
+    expect(new Headers(requests[0]?.init?.headers).get('x-goog-api-key')).toBe('llm-input-key')
+    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+      contents: [{ role: 'user', parts: [{ fileData: { fileUri: uri, mimeType: 'image/png' } }, { fileData: { fileUri: uri, mimeType: 'application/pdf' } }] }]
+    })
+    await expect(bound.transport.countTokens('gemini-3.7-flash', [{ type: 'audio', uri, mime_type: 'audio/wav' }])).rejects.toMatchObject({
+      code: 'INVALID_MEDIA_INPUT',
+      status: 400
+    })
+    await expect(bound.transport.upload({ bytes: new Uint8Array([1]), mimeType: 'video/mp4' })).rejects.toMatchObject({
+      code: 'INVALID_MEDIA_INPUT',
+      status: 400
+    })
+    await expect(bound.transport.countTokens('gemini-3.1-flash-image', [{ type: 'text', text: 'Not the admitted model' }])).rejects.toMatchObject({
+      code: 'INVALID_MEDIA_INPUT',
+      status: 400
+    })
+    expect(requests).toHaveLength(1)
+  })
+
+  it.each(['inputs', 'omitted', 'disabled', 'conformance', 'version'] as const)(
+    'rejects native context transport when the current LLM %s is unavailable',
+    async revocation => {
+      db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+      const versionId = await seedInputProvider(db)
+      if (revocation === 'inputs')
+        await db('agentProviderProfileVersions')
+          .where({ id: versionId })
+          .update({
+            adapterConfig: JSON.stringify({
+              timeoutMs: 10_000,
+              maxRetries: 0,
+              additionalHeaders: {},
+              mediaInputs: { images: false, documents: false, audio: false, video: false }
+            })
+          })
+      if (revocation === 'omitted')
+        await db('agentProviderProfileVersions')
+          .where({ id: versionId })
+          .update({
+            adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} })
+          })
+      if (revocation === 'disabled') await db('agentProviderProfiles').update({ status: 'disabled' })
+      if (revocation === 'conformance') await db('agentProviderProfileVersions').where({ id: versionId }).update({ conformed: false })
+      if (revocation === 'version')
+        await db('agentProviderProfiles').update({
+          currentVersionId: '00000000-0000-4000-8000-000000000053'
+        })
+      let called = 0
+      const factory = new AgentProviderFactory(
+        db,
+        { get: () => 'llm-input-key' },
+        (async () => {
+          called++
+          return Response.json({ totalTokens: 23 })
+        }) as typeof fetch,
+        publicResolver as never
+      )
+      await expect(factory.createMediaInput(versionId)).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED', status: 403 })
+      expect(called).toBe(0)
+    }
+  )
 
   it('loads OpenAI Responses settings and forces storage-off encrypted reasoning requests', async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })

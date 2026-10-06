@@ -29,11 +29,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { fetchAssets, fetchAssetFolders, type Asset, type AssetFolder } from '../../helpers/assets-api.ts'
-import { validateAgentAttachment } from '../../helpers/agent-media.ts'
+import { validateAgentAttachment, type AgentGenerationTool } from '../../helpers/agent-media.ts'
+import type { AgentMediaCapabilities } from '../../../shared/agents/contracts.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
-const props = defineProps<{ imageOnly: boolean; busy: boolean; disabled: boolean; attachmentError: string }>()
+const props = defineProps<{ imageOnly: boolean; busy: boolean; disabled: boolean; attachmentError: string; capabilities?: AgentMediaCapabilities; generationTools?: readonly AgentGenerationTool[] }>()
 const emit = defineEmits<{ close: []; select: [asset: Asset] }>()
 const searchInput = useTemplateRef<HTMLInputElement>('searchInput')
 const trail = ref<AssetFolder[]>([])
@@ -44,14 +45,26 @@ const loading = ref(false)
 const error = ref('')
 let controller: AbortController | null = null
 let disposed = false
-const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf' }
-const mimeType = (asset: Asset): string => mimeTypes[asset.ext.replace(/^\./, '').toLowerCase()] ?? ''
+const mimeTypes: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf',
+  wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac',
+  mp4: 'video/mp4', webm: 'video/webm', weba: 'audio/webm'
+}
+const mimeType = (asset: Asset): string => {
+  const type = mimeTypes[asset.ext.replace(/^\./, '').toLowerCase()] ?? ''
+  if (type === 'video/mp4' || type === 'video/webm') {
+    const allowed = props.capabilities?.inputMimeTypes ?? []
+    const audio = type.replace('video/', 'audio/')
+    if (!allowed.includes(type) && allowed.includes(audio)) return audio
+  }
+  return type
+}
 const visibleAssets = computed(() => assets.value.filter(asset => mimeType(asset) && asset.filename.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())))
 const unavailable = (asset: Asset): string | null => {
   const type = mimeType(asset)
-  if (props.imageOnly && type === 'application/pdf') return t('common:agentAssetPicker.imagesOnlyImageMode')
+  if (props.imageOnly && !type.startsWith('image/')) return t('common:agentAssetPicker.imagesOnlyImageMode')
   if (!Number.isSafeInteger(asset.fileSize) || asset.fileSize < 0) return t('common:agentAssetPicker.fileUnavailable')
-  const problem = validateAgentAttachment({ type, size: asset.fileSize })
+  const problem = validateAgentAttachment({ type, size: asset.fileSize }, props.capabilities, props.generationTools)
   return problem ? t(problem) : null
 }
 const assetLabel = (asset: Asset): string => {

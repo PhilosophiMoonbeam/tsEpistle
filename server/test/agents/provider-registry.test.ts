@@ -593,7 +593,7 @@ describe('agent provider profile registry', () => {
     expect(await vault.get(previousReference)).toBe('retained-provider-key')
   })
 
-  it('retains credentials referenced by admitted runs and revokes unreferenced replacements', async () => {
+  it('retains credentials referenced by all immutable versions, even without an admitted run', async () => {
     const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 12) } })
     const managedRegistry = new AgentProviderRegistry(knex, vault, {
       currentKeyId: 'primary',
@@ -622,22 +622,26 @@ describe('agent provider profile registry', () => {
     })
     expect(await vault.get(admittedReference)).toBe('admitted-key')
 
-    const revoked = await managedRegistry.create({
+    const historical = await managedRegistry.create({
       ...profileInput,
       secretReference: null,
-      secretValue: 'revoked-key',
-      displayName: 'Revoked',
+      secretValue: 'historical-key',
+      displayName: 'Historical',
       exposureMode: 'all_agent_users',
       actorId: 1
     })
-    const revokedVersionId = await currentSettingsId(knex, revoked.id)
-    const revokedReference = (
-      (await knex('agentProviderProfileVersions').where({ id: revokedVersionId }).first('secretReference')) as { secretReference: string }
+    const historicalVersionId = await currentSettingsId(knex, historical.id)
+    const historicalReference = (
+      (await knex('agentProviderProfileVersions').where({ id: historicalVersionId }).first('secretReference')) as { secretReference: string }
     ).secretReference
-    await managedRegistry.update(revoked.id, { ...profileInput, secretReference: null, secretValue: 'current-key', model: 'current-model', actorId: 2 })
-    expect(await vault.get(revokedReference)).toBeNull()
+    await managedRegistry.update(historical.id, { ...profileInput, secretReference: null, secretValue: 'current-key', model: 'current-model', actorId: 2 })
+    expect(await vault.get(historicalReference)).toBe('historical-key')
+    expect(await knex('agentProviderProfileVersions').where({ id: historicalVersionId }).first('model', 'secretReference')).toEqual({
+      model: profileInput.model,
+      secretReference: historicalReference
+    })
   })
-  it('soft-removes a profile, revokes resolution, deletes managed credentials, and permits name reuse', async () => {
+  it('soft-removes a profile, revokes resolution, retains historical credentials, and permits name reuse', async () => {
     const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 9) } })
     const managedRegistry = new AgentProviderRegistry(knex, vault, {
       currentKeyId: 'primary',
@@ -671,7 +675,7 @@ describe('agent provider profile registry', () => {
 
     await expect(Promise.resolve(managedRegistry.get(created.id))).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
     expect(await managedRegistry.listAll()).toEqual([])
-    expect(await vault.get(reference)).toBeNull()
+    expect(await vault.get(reference)).toBe('removed-provider-key')
     expect(await knex('agentProviderProfiles').where({ id: created.id }).first('status', 'isGlobalDefault', 'deletedAt')).toMatchObject({
       status: 'disabled',
       isGlobalDefault: 0,
@@ -692,59 +696,122 @@ describe('agent provider profile registry', () => {
     })
   })
 
-  it('keeps media opt-in, Google-only, and independently priced', async () => {
-    const media = {
-      attachments: true,
-      imageGeneration: { model: 'gemini-3.1-flash-image' as const, pricingRevision: 'image-v1|500000|60000000' },
-      videoGeneration: {
-        model: 'gemini-omni-1.1-flash' as const,
-        pricingRevision: 'video-v1|1500000|17500000',
-        textOutputMicrosPerMillionTokens: 9000000,
-        usagePolicy: 'reported-or-estimated' as const
-      },
-      musicGeneration: { model: 'lyria-3.5' as const, costMicrosPerSong: 80000, usagePolicy: 'reported-or-estimated' as const },
-      transcription: { model: 'gemini-3.5-transcribe' as const, pricingRevision: 'speech-v1|1000000|2000000' }
-    }
+  it('persists explicit LLM image/document input opt-ins and routes their modalities', async () => {
+    const mediaInputs = { images: true, documents: true, audio: false, video: false }
     const input = {
       ...profileInput,
       transportKind: 'gemini-api' as const,
       model: 'gemini-3.7-flash',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       authMode: 'google-api-key' as const,
-      adapterConfig: { ...profileInput.adapterConfig, media },
-      displayName: 'Media Gemini',
+      adapterConfig: { ...profileInput.adapterConfig, mediaInputs },
+      displayName: 'Input Gemini',
       exposureMode: 'all_agent_users' as const,
       actorId: 1
     }
     const created = await registry.create(input)
-    expect((await registry.getAdmin(created.id)).adapterConfig.media).toEqual(media)
     const versionId = await currentSettingsId(knex, created.id)
     await registry.setConformed(created.id, versionId, true, 1)
     await registry.setEnabled(created.id, true, 1, versionId)
     await knex('userGroups').insert({ userId: 7, groupId: 100 })
     await knex('agentSessions').insert({ id: 'media-routing', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent' })
     const candidates = await knex.transaction(transaction => registry.listRoutingCandidates(transaction, { ownerId: 7, sessionId: 'media-routing' }))
-    expect(candidates[0]).toMatchObject({
-      generationTools: ['image'],
-      transcription: true,
-      media: { attachments: true, imageGeneration: true, transcription: true, videoGeneration: false, musicGeneration: false }
+    expect((await registry.getAdmin(created.id)).adapterConfig.mediaInputs).toEqual(mediaInputs)
+    expect(candidates[0]?.modalities).toEqual(['text', 'image', 'file'])
+
+    const updated = await registry.update(created.id, {
+      ...input,
+      adapterConfig: { ...input.adapterConfig, mediaInputs: { ...mediaInputs, images: false } }
     })
-    expect(candidates[0]?.modalities).toEqual(['text', 'image', 'audio', 'video', 'file'])
-    await expect(registry.create({ ...input, displayName: 'Wrong destination', baseUrl: 'https://api.example.test/v1' })).rejects.toMatchObject({
-      code: 'INVALID_PROVIDER_CONFIG'
+    expect(updated.adapterConfig.mediaInputs).toEqual({ ...mediaInputs, images: false })
+    const historical = await knex('agentProviderProfileVersions').where({ id: versionId }).first('adapterConfig')
+    expect(JSON.parse(historical.adapterConfig).mediaInputs).toEqual(mediaInputs)
+    const textOnly = await registry.create({ ...profileInput, displayName: 'Text only', exposureMode: 'all_agent_users', actorId: 1 })
+    expect((await registry.getAdmin(textOnly.id)).adapterConfig.mediaInputs ?? { images: false, documents: false, audio: false, video: false }).toEqual({
+      images: false,
+      documents: false,
+      audio: false,
+      video: false
     })
-    await expect(registry.create({ ...input, displayName: 'Wrong protocol', transportKind: 'openai-responses', authMode: 'bearer' })).rejects.toMatchObject({
-      code: 'INVALID_PROVIDER_CONFIG'
+  })
+
+  it('reads immutable historical media settings but rejects legacy generation config on new writes', async () => {
+    const created = await registry.create({
+      ...profileInput,
+      transportKind: 'gemini-api',
+      model: 'gemini-3.7-flash',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      authMode: 'google-api-key',
+      displayName: 'Historical Gemini',
+      exposureMode: 'all_agent_users',
+      actorId: 1
     })
+    const versionId = await currentSettingsId(knex, created.id)
+    const media = {
+      attachments: true,
+      imageGeneration: { model: 'gemini-3.1-flash-image' as const, pricingRevision: 'image-v1|500000|60000000' },
+      transcription: { model: 'gemini-3.5-transcribe' as const, pricingRevision: 'speech-v1|1000000|2000000' }
+    }
+    // Only pre-cutover stored versions can contain this block.
+    await knex('agentProviderProfileVersions')
+      .where({ id: versionId })
+      .update({
+        adapterConfig: JSON.stringify({ ...profileInput.adapterConfig, media })
+      })
+    expect((await registry.getAdmin(created.id)).adapterConfig.media).toEqual(media)
+    await registry.setConformed(created.id, versionId, true, 1)
+    await registry.setEnabled(created.id, true, 1, versionId)
+    await knex('userGroups').insert({ userId: 7, groupId: 100 })
+    await knex('agentSessions').insert({ id: 'historical-routing', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent' })
+    const candidates = await knex.transaction(transaction => registry.listRoutingCandidates(transaction, { ownerId: 7, sessionId: 'historical-routing' }))
+    expect(candidates[0]?.modalities).toEqual(['text', 'image', 'file'])
+    const invalid = { ...profileInput, adapterConfig: { ...profileInput.adapterConfig, media }, actorId: 1 }
+    await expect(registry.create({ ...invalid, displayName: 'Legacy write', exposureMode: 'all_agent_users' })).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_CONFIG',
+      status: 400
+    })
+    await expect(registry.update(created.id, invalid)).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG', status: 400 })
+  })
+
+  it.each([
+    { transportKind: 'openai-chat' as const, mediaInputs: { images: false, documents: true, audio: false, video: false } },
+    { transportKind: 'anthropic-messages' as const, mediaInputs: { images: false, documents: false, audio: true, video: false } },
+    { transportKind: 'openai-responses' as const, mediaInputs: { images: false, documents: false, audio: false, video: true } }
+  ])('rejects unsupported $transportKind media input combinations before persisting', async ({ transportKind, mediaInputs }) => {
     await expect(
       registry.create({
-        ...input,
-        displayName: 'Unpriced media',
-        adapterConfig: { ...input.adapterConfig, media: { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'image-v1|0|60000000' } } }
+        ...profileInput,
+        transportKind,
+        authMode: transportKind === 'anthropic-messages' ? 'anthropic-api-key' : 'bearer',
+        adapterConfig: { ...profileInput.adapterConfig, mediaInputs },
+        displayName: 'Impossible inputs',
+        exposureMode: 'all_agent_users',
+        actorId: 1
       })
-    ).rejects.toThrow()
-    const textOnly = await registry.create({ ...profileInput, displayName: 'Text only', exposureMode: 'all_agent_users', actorId: 1 })
-    expect((await registry.getAdmin(textOnly.id)).adapterConfig.media).toBeUndefined()
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG', status: 400 })
+    expect(await registry.listAll()).toEqual([])
+  })
+
+  it('rolls back a truly unreferenced temporary credential when profile creation fails', async () => {
+    const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 10) } })
+    const managedRegistry = new AgentProviderRegistry(knex, vault, {
+      currentKeyId: 'primary',
+      keys: { primary: 'a-profile-resolution-secret-with-rotation-room' }
+    })
+    const input = {
+      ...profileInput,
+      secretReference: null,
+      secretValue: 'retained-key',
+      displayName: 'Duplicate',
+      exposureMode: 'all_agent_users' as const,
+      actorId: 1
+    }
+    const created = await managedRegistry.create(input)
+    const reference = (await knex('agentProviderProfileVersions').where({ profileId: created.id }).first('secretReference')).secretReference
+    await expect(managedRegistry.create({ ...input, secretValue: 'temporary-failed-create-key' })).rejects.toThrow()
+    expect(await knex('agentProviderSecrets').select('id')).toEqual([{ id: reference.slice('managed:'.length) }])
+    expect(await vault.get(reference)).toBe('retained-key')
+    expect(await knex('agentProviderProfileVersions').select('profileId')).toEqual([{ profileId: created.id }])
   })
 
   it('fails closed for private endpoints, forbidden headers, incompatible modes, and invalid credentials', async () => {

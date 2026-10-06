@@ -1,7 +1,13 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
+import type { AgentCurrentPageHint, AgentEventData } from '../../../shared/agents/contracts.ts'
+import type { RoutingTurnDecision } from '../../../shared/agents/routing.ts'
+import { canonicalJson } from '../../helpers/canonical-json.ts'
+import { SUBAGENT_READ_ACTIONS } from '../../agents/orchestration.ts'
 import { projectAgentThread } from '../../agents/projection.ts'
+import { appendAgentEvent } from '../../agents/repository.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
+import { AgentSpecialistStore } from '../../agents/specialists.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { createRoutingTables, type RoutingFixture, routingFixture } from './runtime-routing.fixture.ts'
 
@@ -10,7 +16,7 @@ const report = 'Independent draft: Good morning, everyone.'
 const synthesis = 'Good morning, everyone!'
 const usage = { inputTokens: 5, outputTokens: 3, totalTokens: 8, costMicros: 10 }
 
-describe('optional independent specialist runtime', () => {
+describe('retained independent specialist runtime history', () => {
   let db: Knex
   let f: RoutingFixture
   let children: AgentEngineRequest[]
@@ -36,10 +42,9 @@ describe('optional independent specialist runtime', () => {
       outputExposureTokens: 3,
       totalExposureTokens: request.specialist ? 23 : 20_003
     })
-    f.router.decisionProviders.decide = async request => {
+    f.router.decisionProviders.decide = async () => {
       classifierCalls += 1
-      const choice = Object.keys(request.criteria).find(label => label.startsWith('REUSE(') && label.endsWith(':writing:simple')) ?? 'NEW:writing:simple'
-      return { ...f.answer, choice, probabilities: Object.fromEntries(Object.keys(request.criteria).map(label => [label, label === choice ? 1 : 0])) }
+      return f.answer
     }
     f.engine.execute = async (request, sink) => {
       await request.authorizeDispatch?.()
@@ -83,33 +88,121 @@ describe('optional independent specialist runtime', () => {
   const enable = () => Object.assign(f.view.policy, { specialistEnabled: true })
   const warmup = async () => {
     const sessionId = await f.session(true)
+    f.view.policy.enabled = false
     await f.submit(sessionId)
     await f.runtime.runOnce()
     expect(roots).toHaveLength(1)
     expect(children).toHaveLength(0)
+    f.view.policy.enabled = true
     enable()
     return sessionId
+  }
+  const scopeSha256 = createHash('sha256')
+    .update(canonicalJson({ version: 1, actionAllowlist: SUBAGENT_READ_ACTIONS, currentPage: null, knowledgeContext: null }))
+    .digest('hex')
+  // Load a durable pre-cutover receipt, not a new routing proposal. The current
+  // stay/swap writer cannot create NEW/REUSE labels even with saved policy enabled.
+  const historical = async (sessionId: string, contextId: string | null = null, currentPage?: AgentCurrentPageHint) => {
+    const saved = await db('agentSessions').where({ id: sessionId }).first('version')
+    const admitted = await f.runtime.submit({
+      ownerId: 7,
+      sessionId,
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: Number(saved.version),
+      profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
+      content: greeting,
+      ...(currentPage === undefined ? {} : { currentPage })
+    })
+    const candidates = await db.transaction(transaction => f.registry.listRoutingCandidates(transaction, { ownerId: 7, sessionId }))
+    const root = candidates.find(candidate => candidate.profileVersionId === f.current.versionId)!
+    const child = candidates.find(candidate => candidate.profileVersionId === f.alternate.versionId)!
+    const context =
+      contextId === null
+        ? null
+        : (await new AgentSpecialistStore(db).list({ ownerId: 7, rootSessionId: sessionId, scopeSha256, maximumContexts: 4 })).find(
+            context => context.id === contextId
+          )!
+    const choice = `${contextId === null ? 'NEW' : `REUSE(${contextId})`}:writing:simple`
+    const decision: RoutingTurnDecision = {
+      version: 1,
+      ownerId: 7,
+      sessionId,
+      runId: admitted.run.id,
+      policyRevision: f.view.policy.revision,
+      profileId: root.profileId,
+      profileVersionId: root.profileVersionId,
+      modelPolicyRevision: f.view.models[0]!.revision,
+      switched: false,
+      strategy: 'delegate',
+      specialist: {
+        contextId,
+        contextVersion: context?.version ?? null,
+        profileId: child.profileId,
+        profileVersionId: child.profileVersionId,
+        taskClass: 'writing',
+        complexity: 'simple'
+      },
+      reason: 'lower-estimated-cost',
+      taskClass: 'writing',
+      complexity: 'simple',
+      estimatedCurrentCostMicros: 420_000,
+      estimatedSelectedCostMicros: 146_156,
+      estimatedSavingsMicros: 272_831,
+      classifierExpectedCost: null,
+      classifierReservation: { tokens: 64_000, costMicros: 2_688, basis: 'documented-native-context', source: 'Historical classifier reservation' },
+      unknownExposure: null,
+      classifierFailure: null,
+      classification: { ...f.answer, choice, probabilities: { [choice]: 1 } }
+    }
+    const event = await appendAgentEvent(db, {
+      id: randomUUID(),
+      runId: admitted.run.id,
+      ownerId: 7,
+      type: 'model.turn',
+      attempt: 1,
+      data: {
+        purpose: 'routing',
+        routingAutomatic: false,
+        usageVersion: 2,
+        ...f.answer.usage,
+        costMicros: f.answer.estimatedCostMicros,
+        usageSource: 'reported',
+        costSource: 'configured-estimate',
+        content: '',
+        contentTruncated: false,
+        actionCallIds: [],
+        routingDecision: decision,
+        routingSessionVersion: Number((await db('agentSessions').where({ id: sessionId }).first('version')).version),
+        routingIncumbent: root.admission,
+        routingSelected: root.admission,
+        routingSpecialistAdmission: child.admission,
+        routingSpecialistScopeSha256: scopeSha256,
+        routingSpecialistExpiresAt: context?.expiresAt ?? new Date(Date.now() + 60_000).toISOString()
+      } as unknown as AgentEventData
+    })
+    return { ...admitted, event }
   }
   const requeue = async (runId: string) => {
     await db('agentRuns').where({ id: runId }).update({ status: 'queued', leaseOwner: null, leaseToken: null, leaseExpiresAt: null, availableAt: new Date() })
   }
 
-  it('leaves specialist execution disabled by default, including a pinned root', async () => {
-    expect(f.view.policy.specialistEnabled).toBe(false)
+  it('does not create specialist work from a saved policy or obsolete session preference', async () => {
     const sessionId = await f.session(true)
-    await f.submit(sessionId)
-    await f.runtime.runOnce()
-    expect(classifierCalls).toBe(0)
+    for (const enabled of [false, true]) {
+      f.view.policy.specialistEnabled = enabled
+      await f.submit(sessionId)
+      await f.runtime.runOnce()
+    }
     expect(children).toHaveLength(0)
-    expect(roots[0]?.run.model).toBe('incumbent')
+    expect(roots.map(root => root.run.model)).toEqual(['alternate', 'alternate'])
     expect((await thread(sessionId)).specialistInvocations).toEqual([])
     expect(await db('agentSpecialistContexts').select('id')).toEqual([])
   })
 
-  it('selects NEW then REUSE without changing the pinned provider or publishing the child as the answer', async () => {
+  it('executes recorded NEW then REUSE without changing the admitted root or publishing the child as the answer', async () => {
     f.engine.routingRequirements = async () => ({ externalMcp: true })
     const sessionId = await warmup()
-    const first = await f.submit(sessionId)
+    const first = await historical(sessionId)
     rootBoundary = async () => {
       const pending = await thread(sessionId)
       expect(pending.messages.some(message => message.content === report)).toBe(false)
@@ -120,7 +213,7 @@ describe('optional independent specialist runtime', () => {
     await f.runtime.runOnce()
     rootBoundary = undefined
     expect(children).toHaveLength(1)
-    const second = await f.submit(sessionId)
+    const second = await historical(sessionId, children[0]!.specialist!.contextId)
     await f.runtime.runOnce()
     expect(children).toHaveLength(2)
     expect(children[0]!.messages).toEqual([{ role: 'user', content: greeting }])
@@ -147,7 +240,9 @@ describe('optional independent specialist runtime', () => {
     const projected = await thread(sessionId)
     expect(projected.specialistInvocations.map(receipt => receipt.reused)).toEqual([false, true])
     expect(projected.messages.filter(message => message.role === 'assistant').map(message => message.content)).toEqual([synthesis, synthesis, synthesis])
-    for (const runId of [first.run.id, second.run.id]) {
+    for (const receipt of [first, second]) {
+      const runId = receipt.run.id
+      expect((await db('agentEvents').where({ id: receipt.event.id }).first('data')).data).toBe(canonicalJson(receipt.event.data))
       expect(await db('agentRuns').where({ id: runId }).first()).toMatchObject({
         status: 'succeeded',
         inputTokens: 143,
@@ -161,17 +256,16 @@ describe('optional independent specialist runtime', () => {
       expect(events.filter(event => event.specialistInvocationId)).toHaveLength(3)
       const decision = events.find(event => event.purpose === 'routing').routingDecision
       expect(decision.strategy).toBe('delegate')
-      expect(decision.strategyCosts.rootWorkTurns).toBe(runId === first.run.id ? 3 : 4)
       expect(decision.classification.choice).toBe(runId === first.run.id ? 'NEW:writing:simple' : `REUSE(${children[0]!.specialist!.contextId}):writing:simple`)
     }
-    expect(classifierCalls).toBe(2)
+    expect(classifierCalls).toBe(0)
     expect(await f.runtime.runOnce()).toBe(false)
     expect(Number((await db('agentQuotaDaily').where({ ownerId: 7 }).first()).consumedTokens)).toBe(24 + 222 * 2)
   })
 
   it('replays a completed receipt after root worker replacement without recharging or redispatching the child', async () => {
     const sessionId = await warmup()
-    const admitted = await f.submit(sessionId)
+    const admitted = await historical(sessionId)
     rootBoundary = async () => {
       rootBoundary = undefined
       await requeue(admitted.run.id)
@@ -181,16 +275,32 @@ describe('optional independent specialist runtime', () => {
     expect(children).toHaveLength(1)
     await f.runtime.runOnce()
     expect(children).toHaveLength(1)
-    expect(classifierCalls).toBe(1)
+    expect(classifierCalls).toBe(0)
     expect(await db('agentRuns').where({ id: admitted.run.id }).first()).toMatchObject({ status: 'succeeded', totalTokens: 222, estimatedCostMicros: 53 })
     expect(await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()).toMatchObject({ consumedTokens: 222, consumedCostMicros: 53 })
     expect((await thread(sessionId)).specialistInvocations).toHaveLength(1)
   })
 
+  it('refuses a pending historical child after the retained specialist policy is disabled', async () => {
+    const sessionId = await warmup()
+    const admitted = await historical(sessionId)
+    f.view.policy.specialistEnabled = false
+    await f.runtime.runOnce()
+    expect(children).toHaveLength(0)
+    expect(roots).toHaveLength(1)
+    expect(classifierCalls).toBe(0)
+    expect((await db('agentRuns').where({ id: admitted.run.id }).first()).status).toBe('failed')
+    expect(await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()).toMatchObject({
+      consumedTokens: 190,
+      consumedCostMicros: 13,
+      status: 'consumed'
+    })
+  })
+
   for (const outcome of ['ambiguous', 'failed'] as const) {
     it(`fails closed after a ${outcome} child receipt without a second child or root dispatch`, async () => {
       const sessionId = await warmup()
-      const admitted = await f.submit(sessionId)
+      const admitted = await historical(sessionId)
       if (outcome === 'failed') incomplete = true
       else
         childBoundary = async () => {
@@ -204,40 +314,34 @@ describe('optional independent specialist runtime', () => {
       await f.runtime.runOnce()
       expect(children).toHaveLength(1)
       expect(roots).toHaveLength(1)
-      expect(classifierCalls).toBe(1)
+      expect(classifierCalls).toBe(0)
       expect((await db('agentRuns').where({ id: admitted.run.id }).first()).status).toBe('failed')
       expect((await thread(sessionId)).messages.some(message => message.content === report)).toBe(false)
     })
   }
 
   for (const change of ['scope', 'provider', 'permission'] as const) {
-    it(`does not offer unsafe reuse after current ${change} changes`, async () => {
+    it(`rejects recorded reuse after current ${change} changes`, async () => {
       const sessionId = await warmup()
-      await f.submit(sessionId)
+      await historical(sessionId)
       await f.runtime.runOnce()
       expect(children).toHaveLength(1)
       const oldId = children[0]!.specialist!.contextId
+      const admitted = await historical(
+        sessionId,
+        oldId,
+        change === 'scope' ? { id: 17, locale: 'en', path: 'changed-source', observedUpdatedAt: new Date().toISOString() } : undefined
+      )
       if (change === 'provider') {
         await f.registry.setEnabled(f.alternate.profileId, false, 1, f.alternate.versionId)
       } else if (change === 'permission') {
-        await db('userGroups').where({ userId: 7, groupId: 1 }).delete()
-        await db('users').where({ id: 7 }).increment('authVersion', 1)
+        await db('agentProviderGrants').where({ profileId: f.alternate.profileId, groupId: 1 }).delete()
       }
-      if (change === 'scope') {
-        const saved = await db('agentSessions').where({ id: sessionId }).first('version')
-        await f.runtime.submit({
-          ownerId: 7,
-          sessionId,
-          clientRequestId: randomUUID(),
-          expectedSessionVersion: Number(saved.version),
-          profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
-          content: greeting,
-          currentPage: { id: 17, locale: 'en', path: 'changed-source', observedUpdatedAt: new Date().toISOString() }
-        })
-      } else await f.submit(sessionId)
       await f.runtime.runOnce()
-      expect(children.slice(1).some(child => child.specialist?.contextId === oldId)).toBe(false)
-      if (change !== 'scope') expect(children).toHaveLength(1)
+      expect(children).toHaveLength(1)
+      expect(roots).toHaveLength(2)
+      expect((await db('agentRuns').where({ id: admitted.run.id }).first()).status).toBe('failed')
+      expect(classifierCalls).toBe(0)
       expect(roots.at(-1)?.run.model).toBe('incumbent')
     })
   }

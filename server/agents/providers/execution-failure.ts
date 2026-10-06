@@ -19,6 +19,18 @@ export type AgentExecutionFailureStage = (typeof AGENT_EXECUTION_FAILURE_STAGES)
 
 export type AgentExecutionFailureCode =
   | 'AGENT_MEDIA_WINDOW_LIMIT'
+  | 'AGENT_MEDIA_INPUT_UNSUPPORTED'
+  | 'AGENT_MEDIA_INPUT_LIMIT'
+  | 'AGENT_MEDIA_DISABLED'
+  | 'AGENT_MEDIA_NOT_FOUND'
+  | 'AGENT_MEDIA_CORRUPT'
+  | 'INVALID_MEDIA_INPUT'
+  | 'INVALID_AGENT_MEDIA'
+  | 'MEDIA_BUDGET_REQUIRED'
+  | 'MEDIA_PROVIDER_CHANGED'
+  | 'MEDIA_PROVIDER_CORRUPT'
+  | 'AGENT_ACCESS_REVOKED'
+  | 'AGENT_EVENT_CORRUPT'
   | AgentPdfErrorCode
   | 'AGENT_PDF_PAGE_LIMIT'
   | 'AGENT_MEDIA_PART_LIMIT'
@@ -109,6 +121,18 @@ const SAFE_EXTERNAL_MCP_CODES: Readonly<Record<string, true>> = {
 const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
   ...SAFE_EXTERNAL_MCP_CODES,
   AGENT_MEDIA_WINDOW_LIMIT: true,
+  AGENT_MEDIA_INPUT_UNSUPPORTED: true,
+  AGENT_MEDIA_INPUT_LIMIT: true,
+  AGENT_MEDIA_DISABLED: true,
+  AGENT_MEDIA_NOT_FOUND: true,
+  AGENT_MEDIA_CORRUPT: true,
+  INVALID_MEDIA_INPUT: true,
+  INVALID_AGENT_MEDIA: true,
+  MEDIA_BUDGET_REQUIRED: true,
+  MEDIA_PROVIDER_CHANGED: true,
+  MEDIA_PROVIDER_CORRUPT: true,
+  AGENT_ACCESS_REVOKED: true,
+  AGENT_EVENT_CORRUPT: true,
   ...Object.fromEntries(Object.keys(AGENT_PDF_ERRORS).map(code => [code, true as const])),
   AGENT_PDF_PAGE_LIMIT: true,
   AGENT_MEDIA_PART_LIMIT: true,
@@ -184,6 +208,18 @@ const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
   EXTERNAL_MCP_SIDE_EFFECT_FENCE_REQUIRED: 'External MCP requires a durable run fence before an operation can start.',
   EXTERNAL_MCP_CALL_FAILED: 'The external MCP operation could not be confirmed. It was not retried; do not assume success.',
   EXTERNAL_MCP_MODALITY_UNSUPPORTED: 'The selected model cannot consume the external MCP media result. The operation was not retried.',
+  AGENT_MEDIA_INPUT_UNSUPPORTED: 'The selected model is not enabled to consume this attachment format. Choose a supported attachment or model.',
+  AGENT_MEDIA_INPUT_LIMIT: 'The attachment exceeds the selected model’s input limit. Choose a smaller file or shorter recording.',
+  AGENT_MEDIA_DISABLED: 'The requested media operation is no longer available. Check media access before starting another run.',
+  AGENT_MEDIA_NOT_FOUND: 'The attachment is no longer available in this conversation. Attach it again.',
+  AGENT_MEDIA_CORRUPT: 'The saved attachment failed integrity validation. Attach it again.',
+  INVALID_MEDIA_INPUT: 'The media input is invalid for this operation. Choose supported attachments.',
+  INVALID_AGENT_MEDIA: 'The media file is invalid or exceeds the supported limits.',
+  MEDIA_BUDGET_REQUIRED: 'Media requires an admitted run budget.',
+  MEDIA_PROVIDER_CHANGED: 'The admitted media provider version is no longer current. Start another run to resolve an available provider.',
+  MEDIA_PROVIDER_CORRUPT: 'The saved media provider configuration is invalid. Contact an administrator.',
+  AGENT_ACCESS_REVOKED: 'Current account access to Wiki Agents is no longer available.',
+  AGENT_EVENT_CORRUPT: 'The saved run context failed integrity validation. Contact an administrator.',
   AGENT_MEDIA_WINDOW_LIMIT:
     'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new conversation with the files needed for this request.',
   ...Object.fromEntries(Object.entries(AGENT_PDF_ERRORS).map(([code, detail]) => [code, detail.message])),
@@ -193,6 +229,18 @@ const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
 }
 const SAFE_STATUS_BY_CODE: Readonly<Record<string, number>> = {
   AGENT_MEDIA_WINDOW_LIMIT: 413,
+  AGENT_MEDIA_INPUT_UNSUPPORTED: 409,
+  AGENT_MEDIA_INPUT_LIMIT: 413,
+  AGENT_MEDIA_DISABLED: 403,
+  AGENT_MEDIA_NOT_FOUND: 404,
+  AGENT_MEDIA_CORRUPT: 500,
+  INVALID_MEDIA_INPUT: 400,
+  INVALID_AGENT_MEDIA: 400,
+  MEDIA_BUDGET_REQUIRED: 409,
+  MEDIA_PROVIDER_CHANGED: 409,
+  MEDIA_PROVIDER_CORRUPT: 500,
+  AGENT_ACCESS_REVOKED: 403,
+  AGENT_EVENT_CORRUPT: 500,
   EXTERNAL_MCP_ACCESS_DENIED: 403,
   EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED: 409,
   EXTERNAL_MCP_TOOL_COLLISION: 409,

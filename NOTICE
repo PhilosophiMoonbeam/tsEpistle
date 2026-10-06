@@ -13,3 +13,14 @@ repository.
 The complete work is licensed under the GNU Affero General Public License,
 version 3, as provided in LICENSE. A running tsEpistle instance exposes
 a revision-specific Source Code link for the exact deployed build.
+
+Audio/video validation uses separately packaged FFmpeg and ffprobe, developed
+by the FFmpeg contributors (https://ffmpeg.org/). The Alpine 6.1.2 binaries
+report GPL-3.0-or-later with `ffmpeg -L`; COPYING.GPL-3.0 is included alongside
+this notice. Separately packaged libraries retain their respective licenses.
+Corresponding FFmpeg source is available at
+https://ffmpeg.org/releases/ffmpeg-6.1.2.tar.xz. Alpine's build recipes,
+dependencies and patches are at
+https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.22-stable/community/ffmpeg.
+Additional upstream licensing information is at https://ffmpeg.org/legal.html.
+The development container uses Debian's separately packaged FFmpeg build.

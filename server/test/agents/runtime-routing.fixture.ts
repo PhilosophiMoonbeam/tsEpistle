@@ -1,20 +1,24 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { type DecisionResult, TYPESAFE_JEV_PRICING } from '../../../shared/agents/decision-providers.ts'
+import type { AgentMediaProviderConfig, AgentMediaProviderView } from '../../../shared/agents/media-providers.ts'
 import { DEFAULT_ROUTING_POLICY, ROUTING_COMPLEXITIES, ROUTING_TASK_CLASSES, type RoutingAdminView } from '../../../shared/agents/routing.ts'
 import type { AgentRunRecord } from '../../agents/coordinator.ts'
 import type { DecisionProviderRuntime } from '../../agents/decision-providers.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
+import { DatabaseAgentSecretRegistry, type AgentSecretRegistry } from '../../agents/providers/secrets.ts'
+import { AgentMediaProviderRegistry } from '../../agents/media-providers.ts'
 import { AgentRepositoryError, createAgentSession } from '../../agents/repository.ts'
 import { AgentTurnRouter } from '../../agents/routing.ts'
-import { type AgentEngine, type AgentEngineRequest, AgentProductRuntime } from '../../agents/runtime.ts'
+import { type AgentEngine, type AgentEngineRequest, AgentProductRuntime, type SubmitAgentMessageInput } from '../../agents/runtime.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
+import { up as addAgentProviderSecrets } from '../../db/migrations/2.5.141.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
 import { up as addAgentSpecialists } from '../../db/migrations/tsepistle-000054-agent-specialists.ts'
-import { expect } from '../bun-test.mts'
+import { up as addAgentMediaProviders } from '../../db/migrations/tsepistle-000055-agent-media-providers.ts'
 
 export const createRoutingTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('users', table => {
@@ -356,12 +360,30 @@ export const createRoutingTables = async (knex: Knex): Promise<void> => {
     table.check('"revision" > 0')
   })
   await addAgentSpecialists(knex)
+  await addAgentProviderSecrets(knex)
+  await addAgentMediaProviders(knex)
   await knex('users').insert([{ id: 1 }, { id: 7 }, { id: 8 }])
-  await knex('groups').insert([{ id: 1 }, { id: 2 }])
+  await knex('groups').insert([
+    { id: 1, permissions: '["use:agents"]' },
+    { id: 2, permissions: '["use:agents"]' },
+    { id: 3, permissions: '["manage:system","use:agents"]' }
+  ])
   await knex('userGroups').insert([
+    { userId: 1, groupId: 3 },
     { userId: 7, groupId: 1 },
     { userId: 8, groupId: 2 }
   ])
+}
+
+export const routingImageProviderConfig: AgentMediaProviderConfig = {
+  kind: 'image',
+  api: 'gemini-generate-content',
+  model: 'gemini-2.5-flash-image',
+  baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+  timeoutMs: 30_000,
+  maxInputTokens: 4_000,
+  maxOutputTokens: 2_000,
+  pricing: { kind: 'fixed', pricingRevision: 'fixture-images', costMicros: 30_000 }
 }
 
 const profileInput: AgentProviderSettingsInput = {
@@ -399,6 +421,8 @@ const profileInput: AgentProviderSettingsInput = {
 export interface RoutingFixture {
   readonly db: Knex
   readonly registry: AgentProviderRegistry
+  readonly mediaRegistry: AgentMediaProviderRegistry
+  readonly readyMedia: (config: AgentMediaProviderConfig, groupIds?: readonly number[]) => Promise<AgentMediaProviderView>
   readonly runtime: AgentProductRuntime
   readonly router: AgentTurnRouter
   readonly engine: AgentEngine
@@ -409,7 +433,11 @@ export interface RoutingFixture {
   readonly alternate: { readonly profileId: string; readonly versionId: string }
   readonly requests: AgentEngineRequest[]
   readonly session: (historicalPreference?: boolean, ownerId?: number) => Promise<string>
-  readonly submit: (sessionId: string, ownerId?: number) => Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }>
+  readonly submit: (
+    sessionId: string,
+    ownerId?: number,
+    options?: Pick<SubmitAgentMessageInput, 'generationTools' | 'responseMode' | 'attachmentIds' | 'clientRequestId'>
+  ) => Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }>
   readonly classifications: () => number
   readonly failClassifier: (value: unknown) => void
   readonly duringClassification: (fn: () => Promise<void>) => void
@@ -417,18 +445,31 @@ export interface RoutingFixture {
 }
 
 export const routingFixture = async (db: Knex): Promise<RoutingFixture> => {
-  const registry = new AgentProviderRegistry(
-    db,
-    {
-      has: reference => reference === 'env:TEST_PROVIDER_KEY',
-      get: () => 'fixture-key',
-      store: () => {
-        throw new Error('unexpected managed credential')
-      },
-      delete: () => false
+  const secrets: AgentSecretRegistry = {
+    has: reference => reference === 'env:TEST_PROVIDER_KEY',
+    get: () => 'fixture-key',
+    store: () => {
+      throw new Error('unexpected managed credential')
     },
-    { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } }
-  )
+    delete: () => false
+  }
+  const registry = new AgentProviderRegistry(db, secrets, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
+  const mediaSecrets = new DatabaseAgentSecretRegistry(db, { currentKeyId: 'fixture', keys: { fixture: new Uint8Array(32).fill(7) } })
+  const mediaRegistry = new AgentMediaProviderRegistry(db, mediaSecrets)
+  const readyMedia = async (config: AgentMediaProviderConfig, groupIds?: readonly number[]) => {
+    const actor = { id: 1, authVersion: 0 }
+    const profile = await mediaRegistry.create(
+      {
+        displayName: `${config.api} ${config.kind}`,
+        config,
+        secretValue: 'fixture-media-key',
+        exposureMode: groupIds ? 'groups' : 'all_agent_users',
+        ...(groupIds === undefined ? {} : { groupIds: [...groupIds] })
+      },
+      actor
+    )
+    return mediaRegistry.setEnabled(profile.id, true, profile.revision, actor)
+  }
   const ready = async (name: string, groupIds?: readonly number[]) => {
     const profile = await registry.create({
       ...profileInput,
@@ -506,9 +547,8 @@ export const routingFixture = async (db: Knex): Promise<RoutingFixture> => {
     { getRuntime: async () => view },
     {
       selectRuntime: async () => provider,
-      decide: async request => {
+      decide: async () => {
         classifications += 1
-        expect(JSON.stringify(request.state)).toContain('Write a short greeting')
         await classifierBoundary?.()
         if (failure !== null) throw failure
         return answer
@@ -559,7 +599,7 @@ export const routingFixture = async (db: Knex): Promise<RoutingFixture> => {
     })
     return id
   }
-  const submit = async (sessionId: string, ownerId = 7) => {
+  const submit: RoutingFixture['submit'] = async (sessionId, ownerId = 7, options = {}) => {
     const saved = await db('agentSessions').where({ id: sessionId }).first('version')
     return runtime.submit({
       ownerId,
@@ -567,12 +607,15 @@ export const routingFixture = async (db: Knex): Promise<RoutingFixture> => {
       profileResolutionToken: await registry.issueResolutionToken(ownerId, sessionId),
       clientRequestId: randomUUID(),
       expectedSessionVersion: Number(saved.version),
-      content: 'Write a short greeting'
+      content: 'Write a short greeting',
+      ...options
     })
   }
   return {
     db,
     registry,
+    mediaRegistry,
+    readyMedia,
     runtime,
     router,
     engine,

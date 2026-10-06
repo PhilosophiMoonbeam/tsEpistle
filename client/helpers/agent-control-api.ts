@@ -1,5 +1,15 @@
 import { z } from 'zod'
 import { requestJson } from './agents-api.ts'
+import { AgentApiError } from './agents-api.ts'
+import { sameOriginJsonFetch } from './json-transport.ts'
+import { translate } from '../modules/localization.ts'
+import {
+  AgentMediaProviderConfigSchema,
+  AgentMediaProviderWriteSchema,
+  type AgentMediaProviderView,
+  type AgentMediaProviderWrite
+} from '../../shared/agents/media-providers.ts'
+export type { AgentMediaProviderView, AgentMediaProviderWrite }
 import {
   RoutingAdminViewSchema,
   RoutingPolicyInputSchema,
@@ -241,4 +251,66 @@ export const setAgentRoutingModel = async (f: typeof fetch, c: string, profileId
 }
 export const deleteAgentRoutingModel = async (f: typeof fetch, c: string, profileId: string, expectedRevision: number): Promise<void> => {
   await requestJson(f, c, `${root}/admin/routing/models/${key(profileId)}`, deleted, body('DELETE', { expectedRevision: revision(expectedRevision) }))
+}
+
+const MediaProvider: z.ZodType<AgentMediaProviderView> = z.object({
+  id: z.string().uuid(),
+  profileVersionId: z.string().uuid(),
+  revision: z.number().int().positive(),
+  displayName: z.string(),
+  config: AgentMediaProviderConfigSchema,
+  enabled: z.boolean(),
+  isDefault: z.boolean(),
+  exposureMode: z.enum(['all_agent_users', 'groups']),
+  groupIds: z.array(z.number().int().positive()),
+  secretConfigured: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+const mediaRoot = `${root}/admin/media-providers`
+export const listMediaProviders = async (f: typeof fetch, c: string, signal?: AbortSignal) =>
+  (await requestJson(f, c, mediaRoot, z.object({ providers: z.array(MediaProvider) }), { signal })).providers
+export const createMediaProvider = async (f: typeof fetch, c: string, input: AgentMediaProviderWrite) =>
+  (await requestJson(f, c, mediaRoot, z.object({ provider: MediaProvider }), body('POST', AgentMediaProviderWriteSchema.parse(input)))).provider
+export const updateMediaProvider = async (f: typeof fetch, c: string, id: string, input: AgentMediaProviderWrite, expectedRevision: number) =>
+  (
+    await requestJson(
+      f,
+      c,
+      `${mediaRoot}/${key(id)}`,
+      z.object({ provider: MediaProvider }),
+      body('PATCH', { ...AgentMediaProviderWriteSchema.parse(input), expectedRevision: revision(expectedRevision) })
+    )
+  ).provider
+export const enableMediaProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number, enabled: boolean) =>
+  (
+    await requestJson(
+      f,
+      c,
+      `${mediaRoot}/${key(id)}/enabled`,
+      z.object({ provider: MediaProvider }),
+      body('POST', { enabled, expectedRevision: revision(expectedRevision) })
+    )
+  ).provider
+export const defaultMediaProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number) =>
+  (
+    await requestJson(
+      f,
+      c,
+      `${mediaRoot}/${key(id)}/default`,
+      z.object({ provider: MediaProvider }),
+      body('POST', { expectedRevision: revision(expectedRevision) })
+    )
+  ).provider
+export const deleteMediaProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number): Promise<void> => {
+  const response = await sameOriginJsonFetch(f, `${mediaRoot}/${key(id)}`, {
+    ...body('DELETE', { expectedRevision: revision(expectedRevision) }),
+    credentials: 'same-origin',
+    headers: { accept: 'application/json', 'content-type': 'application/json', 'x-wiki-csrf': c }
+  })
+  if (!response.ok) {
+    const value = (await response.json().catch(() => ({}))) as { message?: string; error?: string }
+    throw new AgentApiError(response.status, value.message || value.error || response.statusText)
+  }
+  if (response.status !== 204) throw new AgentApiError(502, translate('admin:agentAdmin.mediaInvalidResponse'))
 }

@@ -1,5 +1,6 @@
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
+import { up as addAgentMediaProviders } from '../../db/migrations/tsepistle-000055-agent-media-providers.ts'
 import { randomUUID } from 'node:crypto'
 
 import knexModule, { type Knex } from 'knex'
@@ -120,9 +121,12 @@ suite('PostgreSQL agent conversation folder repository', () => {
 const createAdmissionTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('users', table => {
     table.integer('id').primary()
+    table.boolean('isActive').notNullable().defaultTo(true)
+    table.integer('authVersion').notNullable().defaultTo(1)
   })
   await db.schema.createTable('groups', table => {
     table.integer('id').primary()
+    table.text('permissions').notNullable().defaultTo('["use:agents"]')
   })
   await db.schema.createTable('agentProviderProfiles', table => {
     table.uuid('id').primary()
@@ -437,9 +441,14 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
     await createAdmissionTables(db)
     await addAgentMedia(db)
     await addAgentMediaContextState(db)
+    await addAgentMediaProviders(db)
   })
 
   beforeEach(async () => {
+    await db('agentMediaProviderGrants').delete()
+    await db('agentMediaProviders').update({ currentVersionId: null, isDefault: false })
+    await db('agentMediaProviderVersions').delete()
+    await db('agentMediaProviders').delete()
     for (const table of [
       'agentRunTasks',
       'agentQuotaReservations',
@@ -952,6 +961,32 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
         })
       ).rejects.toMatchObject({ code: 'INVALID_SKILL' })
       expect(await durableCounts()).toEqual({ agentMessages: 0, agentRuns: 0, agentRunSkills: 0, agentQuotaReservations: 0, agentEvents: 0 })
+      await runtime.shutdown()
+    }
+  })
+
+  it('rejects unbound generation atomically while admitting ordinary work with an empty queued binding map', async () => {
+    const provider = await createProvider('Nonmedia admission')
+    const sessionId = await createSession(provider.profileId)
+    const token = await registry.issueResolutionToken(7, sessionId)
+    const runtime = createRuntime(registry)
+    const request = {
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: token,
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: 1,
+      content: 'No media authority'
+    }
+    try {
+      await expect(runtime.submit({ ...request, generationTools: ['image'] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+      expect(await durableCounts()).toEqual({ agentMessages: 0, agentRuns: 0, agentRunSkills: 0, agentQuotaReservations: 0, agentEvents: 0 })
+      const admitted = await runtime.submit(request)
+      const replay = await runtime.submit(request)
+      expect(replay).toMatchObject({ replayed: true, run: { id: admitted.run.id } })
+      const queued = await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('data')
+      expect(JSON.parse(String(queued.data)).mediaBindings).toEqual({})
+    } finally {
       await runtime.shutdown()
     }
   })
