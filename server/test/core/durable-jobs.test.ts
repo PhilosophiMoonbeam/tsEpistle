@@ -6,8 +6,6 @@ import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
 // Asset relocation captures WIKI during module initialization, so seed the test fixture before loading the handler registry.
 global.WIKI = {}
 const { cleanupDurableJobs } = await import('../../jobs/durable-job-handlers.ts')
-import { createContentExtensionRerenderHandler } from '../../jobs/content-extension-rerender.ts'
-import type { ContentExtensionRerenderContext } from '../../content-extensions/rerender.ts'
 
 let knex: Knex
 let store: DurableJobStore
@@ -27,6 +25,35 @@ beforeEach(async () => {
 afterEach(async () => {
   await knex.destroy()
 })
+
+const oldCleanupJob = (id: string, state: string, completedAt: Date | null = new Date('2026-01-01T00:00:00.000Z'), type = 'old-job') => ({
+  id,
+  type,
+  version: 1,
+  payload: '{}',
+  state,
+  attempts: 1,
+  maxAttempts: 1,
+  nextRunAt: new Date('2026-01-01T00:00:00.000Z'),
+  leaseOwner: null,
+  leaseExpiresAt: null,
+  leaseToken: null,
+  lastError: null,
+  deduplicationKey: null,
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+  completedAt
+})
+
+const insertCleanupBacklog = async (total: number): Promise<void> => {
+  const terminalStates = ['succeeded', 'failed', 'cancelled']
+  for (let offset = 0; offset < total; offset += 100) {
+    const rows = Array.from({ length: Math.min(100, total - offset) }, (_, index) =>
+      oldCleanupJob(`00000000-0000-4000-8000-${String(offset + index + 1000).padStart(12, '0')}`, terminalStates[(offset + index) % 3]!)
+    )
+    await knex('durableJobs').insert(rows)
+  }
+}
 
 describe('portable durable jobs', () => {
   it('allows only one instance to claim a ready job', async () => {
@@ -194,110 +221,6 @@ describe('portable durable jobs', () => {
     }
   })
 
-  it('stops content-extension rerender effects after its lease is replaced', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-08-14T12:00:00.000Z'))
-    const entered = Promise.withResolvers<void>()
-    const release = Promise.withResolvers<void>()
-    const effects: string[] = []
-    let batch: Promise<unknown> | undefined
-
-    try {
-      await knex.schema.createTable('pages', table => {
-        table.integer('id').primary()
-        table.string('hash').notNullable()
-        table.text('content').notNullable()
-      })
-      const content = '```wiki-extension\n{"key":"spoiler","version":1,"props":{"content":"Secret"}}\n```'
-      await knex('pages').insert([
-        { id: 1, hash: 'first-page', content },
-        { id: 2, hash: 'second-page', content }
-      ])
-      const job = await store.enqueue({
-        type: 'rerender-content-extension',
-        version: 1,
-        payload: { key: 'spoiler' }
-      })
-      const wiki: ContentExtensionRerenderContext = {
-        data: {
-          searchEngine: {
-            async deleted(page) {
-              effects.push(`deleted:${page.id}`)
-            },
-            async updated(page) {
-              effects.push(`updated:${page.id}`)
-            }
-          }
-        },
-        events: {
-          outbound: {
-            emit(_event, hash) {
-              effects.push(`emit:${String(hash)}`)
-            }
-          }
-        },
-        models: {
-          pages: {
-            async deletePageFromCache(hash) {
-              effects.push(`cache:${hash}`)
-            },
-            async getPageFromDb(pageId) {
-              effects.push(`fetch:${pageId}`)
-              return {
-                id: pageId,
-                hash: pageId === 1 ? 'first-page' : 'second-page',
-                content,
-                visibility: 'public',
-                isPublished: true,
-                safeContent: ''
-              }
-            },
-            async prepareSearchDocument(page) {
-              effects.push(`prepare:${page.id}`)
-              return page
-            },
-            async renderPage(page) {
-              effects.push(`render:${page.id}`)
-              entered.resolve()
-              await release.promise
-            }
-          }
-        }
-      }
-      batch = runDurableJobBatch(knex, {
-        workerId: 'instance-a',
-        leaseMs: 1_000,
-        handlers: {
-          'rerender-content-extension@1': createContentExtensionRerenderHandler(wiki)
-        }
-      })
-      await entered.promise
-
-      const [replacement] = await store.claim({
-        workerId: 'instance-b',
-        leaseMs: 1_000,
-        now: new Date('2026-08-14T12:00:02.000Z')
-      })
-      expect(replacement).toMatchObject({ id: job.id, leaseOwner: 'instance-b', attempts: 2 })
-
-      await vi.advanceTimersByTimeAsync(500)
-      release.resolve()
-      await batch
-
-      expect(effects).toEqual(['cache:first-page', 'emit:first-page', 'fetch:1', 'deleted:1', 'render:1'])
-      expect(await store.get(job.id)).toMatchObject({
-        state: 'running',
-        leaseOwner: 'instance-b',
-        leaseToken: replacement.leaseToken
-      })
-      expect(vi.getTimerCount()).toBe(0)
-    } finally {
-      release.resolve()
-      await batch?.catch(() => undefined)
-      vi.useRealTimers()
-    }
-  })
-
   it('recovers an expired lease after a worker disappears', async () => {
     await store.enqueue({
       type: 'cleanup-durable-jobs',
@@ -444,6 +367,113 @@ describe('portable durable jobs', () => {
 
     expect(await knex('durableJobs').where('type', 'old-job')).toEqual([])
     expect(pool.numUsed()).toBe(usedBefore)
+  })
+
+  it('drains cleanup backlogs in at most 500-row handlers with deduplicated continuations and preserved data', async () => {
+    await insertCleanupBacklog(1100)
+    await knex.schema.createTable('assetRelocationEffects', table => {
+      table.uuid('id').primary()
+      table.uuid('jobId').notNullable().references('id').inTable('durableJobs').onDelete('CASCADE')
+      table.string('status', 16).notNullable()
+    })
+    const recent = new Date()
+    const retained = [
+      oldCleanupJob('00000000-0000-4000-8000-000000000010', 'pending', null),
+      oldCleanupJob('00000000-0000-4000-8000-000000000011', 'running', null),
+      oldCleanupJob('00000000-0000-4000-8000-000000000012', 'succeeded', recent),
+      oldCleanupJob('00000000-0000-4000-8000-000000000013', 'failed', recent),
+      oldCleanupJob('00000000-0000-4000-8000-000000000014', 'cancelled', recent),
+      oldCleanupJob('00000000-0000-4000-8000-000000000015', 'failed', undefined, 'asset-relocation'),
+      oldCleanupJob('00000000-0000-4000-8000-000000000016', 'cancelled', undefined, 'asset-relocation')
+    ]
+    const resolved = oldCleanupJob('00000000-0000-4000-8000-000000000017', 'succeeded', undefined, 'asset-relocation')
+    await knex('durableJobs').insert([...retained, resolved])
+    await knex('assetRelocationEffects').insert([
+      { id: '00000000-0000-4000-8000-000000000115', jobId: retained[5]!.id, status: 'failed' },
+      { id: '00000000-0000-4000-8000-000000000117', jobId: resolved.id, status: 'succeeded' }
+    ])
+    const beforeRetained = await knex('durableJobs')
+      .whereIn(
+        'id',
+        retained.map(job => job.id)
+      )
+      .orderBy('id')
+    const job = await store.enqueue({ type: 'cleanup-durable-jobs', version: 1, payload: {}, maxAttempts: 3 })
+    const [claimed] = await store.claim({ workerId: 'cleanup-worker', limit: 1, supportedIdentities: ['cleanup-durable-jobs@1'] })
+    expect(claimed?.id).toBe(job.id)
+    if (!claimed) throw new Error('Cleanup job was not claimed')
+    const context = { knex, signal: new AbortController().signal }
+
+    await cleanupDurableJobs(claimed, context)
+
+    expect(
+      await knex('durableJobs')
+        .whereNotIn(
+          'id',
+          retained.map(job => job.id)
+        )
+        .whereNot('type', 'cleanup-durable-jobs')
+    ).toHaveLength(601)
+    const [continuation] = await knex('durableJobs').where({ type: 'cleanup-durable-jobs', state: 'pending' })
+    expect(continuation).toMatchObject({ version: 1, payload: '{}', attempts: 0 })
+    expect(await knex('durableJobs').where({ type: 'cleanup-durable-jobs', state: 'pending' })).toHaveLength(1)
+
+    // A retried handler must reuse its queued continuation, not create a second cleanup chain.
+    await cleanupDurableJobs(claimed, context)
+
+    expect(
+      await knex('durableJobs')
+        .whereNotIn(
+          'id',
+          retained.map(job => job.id)
+        )
+        .whereNot('type', 'cleanup-durable-jobs')
+    ).toHaveLength(101)
+    expect(await knex('durableJobs').where({ type: 'cleanup-durable-jobs', state: 'pending' })).toEqual([continuation])
+    expect(await store.complete(claimed)).toBe(true)
+    const batch = await runDurableJobBatch(knex, {
+      workerId: 'cleanup-worker',
+      limit: 1,
+      handlers: { 'cleanup-durable-jobs@1': cleanupDurableJobs }
+    })
+
+    expect(batch).toEqual([expect.objectContaining({ id: continuation.id })])
+    expect(await knex('durableJobs').where('type', 'old-job')).toHaveLength(5)
+    expect(await knex('durableJobs').where({ id: resolved.id })).toEqual([])
+    expect(await knex('durableJobs').where({ type: 'cleanup-durable-jobs', state: 'pending' })).toEqual([])
+    expect(
+      await knex('durableJobs')
+        .whereIn(
+          'id',
+          retained.map(job => job.id)
+        )
+        .orderBy('id')
+    ).toEqual(beforeRetained)
+    expect(await knex('assetRelocationEffects')).toEqual([{ id: '00000000-0000-4000-8000-000000000115', jobId: retained[5]!.id, status: 'failed' }])
+  })
+
+  it('rolls back bounded cleanup when continuation persistence fails and retries without losing the backlog', async () => {
+    await insertCleanupBacklog(501)
+    const job = await store.enqueue({ type: 'cleanup-durable-jobs', version: 1, payload: {} })
+    const context = { knex, signal: new AbortController().signal }
+    await knex.raw(`CREATE TRIGGER reject_cleanup_continuation BEFORE INSERT ON durableJobs
+      WHEN NEW.type = 'cleanup-durable-jobs'
+      BEGIN SELECT RAISE(ABORT, 'continuation persistence failed'); END`)
+
+    await expect(cleanupDurableJobs(job, context)).rejects.toThrow('continuation persistence failed')
+
+    expect(await knex('durableJobs').where('type', 'old-job')).toHaveLength(501)
+    expect(await knex('durableJobs').where('type', 'cleanup-durable-jobs')).toHaveLength(1)
+    expect(knex.client.pool.numUsed()).toBe(0)
+    await knex.raw('DROP TRIGGER reject_cleanup_continuation')
+
+    await cleanupDurableJobs(job, context)
+
+    expect(await knex('durableJobs').where('type', 'old-job')).toHaveLength(1)
+    const continuations = await knex('durableJobs').where({ type: 'cleanup-durable-jobs', state: 'pending' }).whereNot('id', job.id)
+    expect(continuations).toHaveLength(1)
+    expect(continuations[0]).toMatchObject({ version: 1, payload: '{}', attempts: 0 })
+    expect(knex.client.pool.numUsed()).toBe(0)
   })
 
   it('retains old unresolved asset relocation evidence and reservations', async () => {

@@ -1472,19 +1472,24 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
   const perUserConcurrency = Math.max(1, Math.floor(options.perUserConcurrency))
   const leaseMilliseconds = options.leaseMilliseconds ?? 60_000
   const now = options.now ?? new Date()
+  const candidateQuery = knex<RunRow>('agentRuns')
+    .where(query =>
+      query
+        .where(subquery => subquery.where({ status: 'queued' }).andWhere('availableAt', '<=', now))
+        .orWhere(subquery => subquery.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now))
+    )
+    .whereNull('cancelRequestedAt')
+    .modify(query => excludeAgentRunsWithPendingQuotaSettlement(query, knex))
+  // Idle polls must not contend with admission or scan active leases. Re-read under the lock before claiming.
+  if (!(await candidateQuery.clone().first('id'))) return null
   return knex.transaction(async transaction => {
     await acquireAgentCoordinatorAdvisoryLocks(transaction)
     const active = await activeLeaseCounts(transaction, now, globalConcurrency)
     if (active.global >= globalConcurrency) return null
     const saturatedOwnerIds = [...active.byOwner].flatMap(([ownerId, count]) => (count >= perUserConcurrency ? [ownerId] : []))
-    const candidates = await transaction<RunRow>('agentRuns')
-      .where(query =>
-        query
-          .where(subquery => subquery.where({ status: 'queued' }).andWhere('availableAt', '<=', now))
-          .orWhere(subquery => subquery.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now))
-      )
-      .whereNull('cancelRequestedAt')
-      .modify(query => excludeAgentRunsWithPendingQuotaSettlement(query, transaction))
+    const candidates = await candidateQuery
+      .clone()
+      .transacting(transaction)
       .modify(query => {
         if (saturatedOwnerIds.length > 0) {
           query.where(eligible =>

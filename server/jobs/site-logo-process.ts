@@ -3,6 +3,7 @@ import { gzipSync } from 'node:zlib'
 import type { Knex } from 'knex'
 
 import type { DurableJob, DurableJobHandler } from '../core/durable-jobs.ts'
+import { DurableJobStore } from '../core/durable-jobs.ts'
 import { parseParticleV1, processSiteLogoSource, SiteLogoProcessingError, type SiteLogoArtifacts } from '../helpers/site-logo-processing.ts'
 import {
   SITE_LOGO_FAVICON_ICO_BYTE_LIMIT,
@@ -910,7 +911,7 @@ const objectReference = (kind: ObjectKind): { kindColumn: keyof RevisionRow; has
   }
 }
 
-export const cleanupSiteLogoRevisions: DurableJobHandler = async (_job, { knex, signal }) => {
+export const cleanupSiteLogoRevisions: DurableJobHandler = async (job, { knex, signal }) => {
   signal.throwIfAborted()
   await knex.transaction(async transaction => {
     const now = new Date()
@@ -923,7 +924,9 @@ export const cleanupSiteLogoRevisions: DurableJobHandler = async (_job, { knex, 
       .where('retiredAt', '<=', cutoff)
     if (state.activeRevisionId !== null) retiredQuery.whereNot({ id: state.activeRevisionId })
     if (state.desiredRevisionId !== null) retiredQuery.whereNot({ id: state.desiredRevisionId })
-    const retired = await retiredQuery.forUpdate()
+    const retired = await retiredQuery.orderBy('retiredAt').orderBy('id').limit(51).forUpdate()
+    const hasMore = retired.length > 50
+    if (hasMore) retired.pop()
 
     let expiredDesired: RevisionRow | undefined
     if (state.desiredRevisionId && state.desiredRevisionId !== state.activeRevisionId) {
@@ -976,6 +979,7 @@ export const cleanupSiteLogoRevisions: DurableJobHandler = async (_job, { knex, 
       .delete()
 
     for (const { kind, hash } of identities.values()) {
+      signal.throwIfAborted()
       let reachable: Pick<RevisionRow, 'id'> | undefined
       if (kind === 'icon-png') {
         reachable = await transaction<RevisionRow>('siteLogoRevisions')
@@ -999,5 +1003,15 @@ export const cleanupSiteLogoRevisions: DurableJobHandler = async (_job, { knex, 
       }
       if (!reachable) await transaction<ObjectRow>('siteLogoObjects').where({ kind, sha256: hash }).delete()
     }
+    if (hasMore) {
+      await new DurableJobStore(transaction).enqueue({
+        type: job.type,
+        version: job.version,
+        payload: {},
+        maxAttempts: job.maxAttempts,
+        deduplicationKey: `${job.type}:continuation:${job.id}`
+      })
+    }
+    signal.throwIfAborted()
   })
 }

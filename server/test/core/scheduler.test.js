@@ -2,8 +2,9 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 
-const { forkMock } = vi.hoisted(() => ({ forkMock: vi.fn() }))
+const { forkMock, inlineJobMock } = vi.hoisted(() => ({ forkMock: vi.fn(), inlineJobMock: vi.fn() }))
 vi.mockModule('node:child_process', import.meta.url, () => ({ fork: forkMock }))
+vi.mockModule('../../jobs/render-page.ts', import.meta.url, () => ({ default: inlineJobMock }))
 
 const loadScheduler = async (jobs = {}) => {
   vi.resetModules()
@@ -18,6 +19,7 @@ const loadScheduler = async (jobs = {}) => {
 
 class WorkerProcess extends EventEmitter {
   exitCode = null
+  pid = 1234
   killed = false
   stderr = new PassThrough()
   signals = []
@@ -40,6 +42,7 @@ class WorkerProcess extends EventEmitter {
 describe('scheduler lifecycle', () => {
   beforeEach(() => {
     forkMock.mockReset()
+    inlineJobMock.mockReset().mockResolvedValue(undefined)
     vi.useFakeTimers()
   })
 
@@ -67,6 +70,168 @@ describe('scheduler lifecycle', () => {
     const scheduler = await loadScheduler()
 
     expect(() => scheduler.registerJob({ name: '../worker', schedule: 'PT1M' })).toThrow('Invalid scheduler job name')
+    expect(scheduler.jobs).toHaveLength(0)
+  })
+
+  it('admits only two workers, hands closed slots off FIFO, and leaves non-worker jobs independent', async () => {
+    const children = Array.from({ length: 4 }, () => new WorkerProcess())
+    for (const child of children) forkMock.mockReturnValueOnce(child)
+    const scheduler = await loadScheduler()
+    const first = scheduler.registerJob({ name: 'first-worker', immediate: true, worker: true })
+    const second = scheduler.registerJob({ name: 'second-worker', immediate: true, worker: true })
+    const third = scheduler.registerJob({ name: 'third-worker', immediate: true, worker: true })
+    const fourth = scheduler.registerJob({ name: 'fourth-worker', immediate: true, worker: true })
+    const thirdFinished = third.finished
+    let thirdSettled = false
+    void thirdFinished.then(() => { thirdSettled = true })
+
+    expect(forkMock).toHaveBeenCalledTimes(2)
+    expect(third.process).toBeUndefined()
+    expect(fourth.process).toBeUndefined()
+    expect(scheduler.snapshot().jobs.find(job => job.name === 'third-worker')).toMatchObject({
+      state: 'waiting', runs: 0, lastStartedAt: null, nextRunAt: null
+    })
+    const inline = scheduler.registerJob({ name: 'render-page', immediate: true }, { pageId: 42 })
+    await inline.finished
+    expect(inlineJobMock).toHaveBeenCalledWith({ pageId: 42 })
+    expect(forkMock).toHaveBeenCalledTimes(2)
+    expect(thirdSettled).toBe(false)
+
+    children[0].emit('exit', 0, null)
+    await Promise.resolve()
+    expect(forkMock).toHaveBeenCalledTimes(2)
+    children[0].emit('close', 0, null)
+    await first.finished
+    expect(forkMock).toHaveBeenCalledTimes(3)
+    expect(forkMock.mock.calls[2][1]).toEqual(['--job=third-worker'])
+    expect(third.process).toBe(children[2])
+    expect(third.finished).toBe(thirdFinished)
+    expect(fourth.process).toBeUndefined()
+    expect(thirdSettled).toBe(false)
+
+    children[1].emitExit(0, null)
+    await second.finished
+    expect(forkMock.mock.calls[3][1]).toEqual(['--job=fourth-worker'])
+    children[2].emitExit(0, null)
+    children[3].emitExit(0, null)
+    await Promise.all([thirdFinished, fourth.finished])
+    expect(scheduler.jobs).toHaveLength(0)
+  })
+
+  it('settles a cancelled queued worker without later forking or repeating it', async () => {
+    const children = Array.from({ length: 3 }, () => new WorkerProcess())
+    for (const child of children) forkMock.mockReturnValueOnce(child)
+    const scheduler = await loadScheduler()
+    const first = scheduler.registerJob({ name: 'first-worker', immediate: true, worker: true })
+    const second = scheduler.registerJob({ name: 'second-worker', immediate: true, worker: true })
+    const cancelled = scheduler.registerJob({ name: 'cancelled-worker', immediate: true, worker: true, repeat: true, schedule: 'PT1S' })
+    const next = scheduler.registerJob({ name: 'next-worker', immediate: true, worker: true })
+    const finished = cancelled.finished
+    const stopping = cancelled.stop()
+    expect(cancelled.stop()).toBe(stopping)
+    await Promise.all([finished, stopping])
+    expect(scheduler.jobs).not.toContain(cancelled)
+    expect(scheduler.snapshot().jobs.find(job => job.name === 'cancelled-worker')).toMatchObject({
+      state: 'stopped', runs: 0, lastStartedAt: null, nextRunAt: null
+    })
+
+    children[0].emitExit(0, null)
+    await first.finished
+    expect(forkMock.mock.calls[2][1]).toEqual(['--job=next-worker'])
+    children[1].emitExit(0, null)
+    children[2].emitExit(0, null)
+    await Promise.all([second.finished, next.finished])
+    vi.advanceTimersByTime(10_000)
+    expect(forkMock).toHaveBeenCalledTimes(3)
+    expect(scheduler.jobs).toHaveLength(0)
+  })
+
+  it('cancels queued workers before shutdown can hand off terminating child slots', async () => {
+    const children = Array.from({ length: 2 }, () => new WorkerProcess())
+    for (const child of children) {
+      child.exitOnKill = false
+      forkMock.mockReturnValueOnce(child)
+    }
+    const scheduler = await loadScheduler()
+    const first = scheduler.registerJob({ name: 'first-worker', immediate: true, worker: true })
+    const second = scheduler.registerJob({ name: 'second-worker', immediate: true, worker: true })
+    const queued = scheduler.registerJob({ name: 'queued-worker', immediate: true, worker: true, repeat: true, schedule: 'PT1S' })
+    const stopping = scheduler.stop()
+    expect(() => scheduler.registerJob({ name: 'during-shutdown', immediate: true, worker: true })).toThrow('Scheduler is stopping')
+    await queued.finished
+    expect(queued.process).toBeUndefined()
+    expect(children.map(child => child.signals)).toEqual([['SIGTERM'], ['SIGTERM']])
+    children[0].emit('exit', 0, null)
+    await Promise.resolve()
+    expect(forkMock).toHaveBeenCalledTimes(2)
+    children[0].emit('close', 0, null)
+    children[1].emitExit(0, null)
+    await Promise.all([stopping, first.finished, second.finished, queued.stop()])
+    vi.advanceTimersByTime(10_000)
+    expect(forkMock).toHaveBeenCalledTimes(2)
+    expect(scheduler.jobs).toHaveLength(0)
+    expect(scheduler.started).toBe(false)
+  })
+
+  it('retains an errored live worker slot until both termination and close are confirmed', async () => {
+    const children = Array.from({ length: 3 }, () => new WorkerProcess())
+    children[0].exitOnKill = false
+    for (const child of children) forkMock.mockReturnValueOnce(child)
+    const scheduler = await loadScheduler()
+    const first = scheduler.registerJob({ name: 'first-worker', immediate: true, worker: true })
+    const second = scheduler.registerJob({ name: 'second-worker', immediate: true, worker: true })
+    const third = scheduler.registerJob({ name: 'third-worker', immediate: true, worker: true })
+    children[0].emit('error', new Error('worker transport failed'))
+    children[0].emit('close', 1, null)
+    const stopping = first.stop()
+    vi.advanceTimersByTime(5_000)
+    await expect(stopping).rejects.toMatchObject({ code: 'SCHEDULER_WORKER_TERMINATION_UNCONFIRMED' })
+    expect(forkMock).toHaveBeenCalledTimes(2)
+    expect(first.process).toBe(children[0])
+    children[0].emit('exit', 1, 'SIGKILL')
+    await first.finished
+    expect(forkMock).toHaveBeenCalledTimes(3)
+    children[1].emitExit(0, null)
+    children[2].emitExit(0, null)
+    await Promise.all([second.finished, third.finished])
+  })
+
+  it('hands slots on after queued serialization, synchronous fork, and asynchronous spawn failures', async () => {
+    const firstChild = new WorkerProcess()
+    const secondChild = new WorkerProcess()
+    const spawnFailureChild = new WorkerProcess()
+    spawnFailureChild.pid = undefined
+    const lastChild = new WorkerProcess()
+    forkMock
+      .mockReturnValueOnce(firstChild)
+      .mockReturnValueOnce(secondChild)
+      .mockImplementationOnce(() => { throw new Error('synchronous spawn failure') })
+      .mockReturnValueOnce(spawnFailureChild)
+      .mockReturnValueOnce(lastChild)
+    const scheduler = await loadScheduler()
+    const first = scheduler.registerJob({ name: 'first-worker', immediate: true, worker: true })
+    const second = scheduler.registerJob({ name: 'second-worker', immediate: true, worker: true })
+    const circular = {}
+    circular.self = circular
+    const serializationFailure = scheduler.registerJob({ name: 'serialization-failure', immediate: true, worker: true }, circular)
+    const forkFailure = scheduler.registerJob({ name: 'fork-failure', immediate: true, worker: true })
+    const spawnFailure = scheduler.registerJob({ name: 'spawn-failure', immediate: true, worker: true })
+    const last = scheduler.registerJob({ name: 'last-worker', immediate: true, worker: true })
+
+    expect(forkMock).toHaveBeenCalledTimes(2)
+    firstChild.emitExit(0, null)
+    await first.finished
+    await expect(serializationFailure.finished).rejects.toBeInstanceOf(Error)
+    await expect(forkFailure.finished).rejects.toThrow('synchronous spawn failure')
+    expect(spawnFailure.process).toBe(spawnFailureChild)
+    expect(last.process).toBeUndefined()
+    spawnFailureChild.emit('error', new Error('asynchronous spawn failure'))
+    spawnFailureChild.emit('close', -1, null)
+    await expect(spawnFailure.finished).rejects.toThrow('asynchronous spawn failure')
+    expect(last.process).toBe(lastChild)
+    lastChild.emitExit(0, null)
+    secondChild.emitExit(0, null)
+    await Promise.all([last.finished, second.finished])
     expect(scheduler.jobs).toHaveLength(0)
   })
 

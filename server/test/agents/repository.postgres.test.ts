@@ -7,8 +7,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-te
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { AgentProductRuntime, type AgentEngineRequest } from '../../agents/runtime.ts'
 import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
-import { admitAgentRun } from '../../agents/coordinator.ts'
-import { createAgentConversationFolder } from '../../agents/repository.ts'
+import { acquireAgentCoordinatorAdvisoryLocks, admitAgentRun, claimAgentRun } from '../../agents/coordinator.ts'
+import type { AgentRunClaim } from '../../agents/coordinator.ts'
+import { AgentRepositoryError, createAgentConversationFolder } from '../../agents/repository.ts'
 
 const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 
@@ -633,10 +634,135 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
     })
     mutationRelease.resolve()
     await mutation
-    await expect(rejected).rejects.toMatchObject({ code: 'PROFILE_UNAVAILABLE', status: 409 })
+    await expect(rejected).rejects.toBeInstanceOf(AgentRepositoryError)
+    await expect(rejected).rejects.toMatchObject({ status: 409 })
     expect(await durableCounts()).toEqual({ agentMessages: 0, agentRuns: 0, agentRunSkills: 0, agentQuotaReservations: 0, agentEvents: 0 })
     await runtime.shutdown()
   }
+  it.each(['empty', 'deferred', 'running', 'awaiting_approval', 'cancelled', 'pending_settlement'] as const)(
+    'does not wait for admission serialization when polling %s work',
+    async state => {
+      const now = new Date()
+      const runtime = createRuntime(registry)
+      const pollingDb = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [admissionSchema], pool: { min: 0, max: 1 } })
+      let holder: Knex.Transaction | undefined
+      try {
+        if (state !== 'empty') {
+          const provider = await createProvider('Idle polling provider')
+          const sessionId = await createSession(provider.profileId)
+          const token = await registry.issueResolutionToken(7, sessionId)
+          const admitted = await runtime.submit({
+            ownerId: 7,
+            sessionId,
+            profileResolutionToken: token,
+            clientRequestId: randomUUID(),
+            expectedSessionVersion: 1,
+            content: 'wait for eligible work'
+          })
+          await db('agentRuns').where({ id: admitted.run.id }).update({ availableAt: now })
+          if (state === 'deferred') {
+            await db('agentRuns')
+              .where({ id: admitted.run.id })
+              .update({ availableAt: new Date(now.valueOf() + 60_000) })
+          } else if (state === 'running' || state === 'awaiting_approval') {
+            await db('agentRuns')
+              .where({ id: admitted.run.id })
+              .update({
+                status: state,
+                leaseOwner: 'other-worker',
+                leaseToken: randomUUID(),
+                leaseExpiresAt: new Date(now.valueOf() + 60_000)
+              })
+          } else if (state === 'cancelled') {
+            await db('agentRuns').where({ id: admitted.run.id }).update({ cancelRequestedAt: now })
+          } else {
+            await db('agentQuotaReservations').where({ runId: admitted.run.id }).update({ consumedTokens: 1 })
+          }
+        }
+        // Bound the regression at PostgreSQL's real lock boundary, without timing sleeps or mocked queries.
+        await pollingDb.raw("SET statement_timeout = '2s'")
+        holder = await secondDb.transaction()
+        await acquireAgentCoordinatorAdvisoryLocks(holder)
+        expect(
+          await claimAgentRun(pollingDb, {
+            workerId: 'idle-polling-worker',
+            globalConcurrency: 2,
+            perUserConcurrency: 1,
+            now
+          })
+        ).toBeNull()
+      } finally {
+        if (holder) await holder.rollback()
+        await runtime.shutdown()
+        await pollingDb.destroy()
+      }
+    }
+  )
+
+  it('rechecks a newly pending settlement after waiting for admission serialization', async () => {
+    const provider = await createProvider('Claim recheck provider')
+    const sessionId = await createSession(provider.profileId)
+    const token = await registry.issueResolutionToken(7, sessionId)
+    const runtime = createRuntime(registry)
+    const pollingDb = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [admissionSchema], pool: { min: 0, max: 1 } })
+    let holder: Knex.Transaction | undefined
+    let claiming: Promise<AgentRunClaim | null> | undefined
+    try {
+      const admitted = await runtime.submit({
+        ownerId: 7,
+        sessionId,
+        profileResolutionToken: token,
+        clientRequestId: randomUUID(),
+        expectedSessionVersion: 1,
+        content: 'recheck accounting before claim'
+      })
+      await pollingDb.raw("SET statement_timeout = '5s'")
+      const claimant = await pollingDb.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')
+      const claimantPid = claimant.rows[0]?.pid
+      if (!claimantPid) throw new Error('claimant backend missing')
+      holder = await secondDb.transaction()
+      await acquireAgentCoordinatorAdvisoryLocks(holder)
+      const blocker = await holder.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')
+      const blockerPid = blocker.rows[0]?.pid
+      if (!blockerPid) throw new Error('admission lock holder backend missing')
+      claiming = claimAgentRun(pollingDb, { workerId: 'claim-recheck-worker', globalConcurrency: 2, perUserConcurrency: 1 })
+      const settledClaim = Promise.allSettled([claiming])
+      const deadline = process.hrtime.bigint() + 2_000_000_000n
+      while (true) {
+        const observation = await db.raw<{ rows: Array<{ blocked: boolean }> }>('SELECT ?::integer = ANY(pg_blocking_pids(?::integer)) AS blocked', [
+          blockerPid,
+          claimantPid
+        ])
+        if (observation.rows[0]?.blocked) break
+        if (process.hrtime.bigint() >= deadline) throw new Error('claim did not wait for admission serialization')
+        await db.raw('SELECT pg_sleep(0.01)')
+      }
+      await holder('agentQuotaReservations').where({ runId: admitted.run.id }).update({ consumedTokens: 1 })
+      await holder.commit()
+      holder = undefined
+      const [outcome] = await settledClaim
+      if (!outcome) throw new Error('claim outcome missing')
+      if (outcome.status === 'rejected') throw outcome.reason
+      expect(outcome.value).toBeNull()
+      expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'attempts', 'leaseOwner', 'leaseToken')).toEqual({
+        status: 'queued',
+        attempts: 0,
+        leaseOwner: null,
+        leaseToken: null
+      })
+      expect(await db('agentQuotaReservations').where({ runId: admitted.run.id }).first('status', 'consumedTokens', 'reconciledAt')).toEqual({
+        status: 'reserved',
+        consumedTokens: '1',
+        reconciledAt: null
+      })
+    } finally {
+      if (holder) await holder.rollback()
+      if (claiming) await Promise.allSettled([claiming])
+      await runtime.shutdown()
+      await pollingDb.destroy()
+    }
+  })
+
   it('linearizes provider disable against submit with admission-wins and revocation-wins outcomes', async () => {
     const provider = await createProvider('Disable race')
     const sessionId = await createSession(provider.profileId)
@@ -764,9 +890,7 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
         version: Number(current.version) + 1,
         model: 'gpt-replaced'
       })
-      await transaction('agentProviderProfiles')
-        .where({ id: provider.profileId })
-        .update({ currentVersionId: replacementVersionId })
+      await transaction('agentProviderProfiles').where({ id: provider.profileId }).update({ currentVersionId: replacementVersionId })
       ready.resolve()
       await release.promise
     })

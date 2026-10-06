@@ -108,6 +108,7 @@ nativeSuite('PostgreSQL content extension durable render lifecycle', () => {
   let wiki: ContentExtensionRerenderContext
   let engine: NativeSearchEngine
   let lifecycle: PageProjectionLifecycle
+  let projectionRuntime: ConstructorParameters<typeof PageProjectionLifecycle>[2]
 
   const settleProjections = async (pageIds: readonly number[], signal: AbortSignal): Promise<void> => {
     for (let tick = 0; tick < 10; tick += 1) {
@@ -254,14 +255,14 @@ nativeSuite('PostgreSQL content extension durable render lifecycle', () => {
     runtime.data.searchEngine = engine
     await engine.init()
     wiki = runtime as unknown as ContentExtensionRerenderContext
-    lifecycle = new PageProjectionLifecycle(db, 'extension-render-worker', {
+    projectionRuntime = {
       async renderPage(pageId, fence) {
         await PageModel.renderPage({ id: pageId }, fence)
       },
       async evictLocation() {},
       reconcileSearchPage: pageId => engine.reconcilePage(pageId),
       removeSearchPage: pageId => engine.removePage(pageId)
-    })
+    }
   })
 
   beforeEach(async () => {
@@ -271,6 +272,8 @@ nativeSuite('PostgreSQL content extension durable render lifecycle', () => {
     await db('pagesVector').delete()
     await db('pages').delete()
     await db('contentExtensions').update({ isEnabled: true })
+    // Each isolated dataset starts a fresh worker; a completed prior dataset must not lend it an audit cooldown.
+    lifecycle = new PageProjectionLifecycle(db, 'extension-render-worker', projectionRuntime)
   })
 
   afterAll(async () => {

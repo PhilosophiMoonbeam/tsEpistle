@@ -27,6 +27,7 @@ interface WikiContext {
 }
 const wiki = WIKI as unknown as WikiContext
 const validJobName = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+const MAX_FORKED_WORKERS = 2
 const MAX_RETAINED_STDERR_BYTES = 65_536
 const STDERR_TRUNCATION_MARKER = '\n[truncated]'
 const SCHEDULER_WORKER_TERMINATION_UNCONFIRMED = 'SCHEDULER_WORKER_TERMINATION_UNCONFIRMED'
@@ -50,6 +51,7 @@ class Job {
   sigtermSent = false
   sigkillSent = false
   observation: ScheduledObservation
+  invoking = false
 
   constructor({ name, immediate = false, schedule = 'P1D', repeat = false, worker = false }: JobOptions, queue: Scheduler) {
     if (!validJobName.test(name)) throw new TypeError(`Invalid scheduler job name: ${name}`)
@@ -110,8 +112,26 @@ class Job {
     }, this.schedule.asMilliseconds())
   }
 
-  async invoke(data?: unknown): Promise<void> {
+  invoke(data?: unknown): void {
     this.timeout = undefined
+    if (this.stopping || this.invoking) return
+    this.invoking = true
+    const { promise, reject, resolve } = Promise.withResolvers<unknown>()
+    this.finished = promise
+    const execute = (): void => {
+      void this.execute(data, resolve, reject)
+    }
+    if (this.worker) {
+      this.observation.state = 'waiting'
+      this.observation.nextRunAt = null
+      this.queue.admitWorker(this, execute, () => {
+        this.invoking = false
+        resolve(undefined)
+      })
+    } else execute()
+  }
+
+  async execute(data: unknown, resolve: (value: unknown) => void, reject: (reason?: unknown) => void): Promise<void> {
     const started = Date.now()
     this.observation.state = 'running'
     this.observation.nextRunAt = null
@@ -120,8 +140,6 @@ class Job {
     let failed = false
     try {
       if (this.worker) {
-        const { promise, reject, resolve } = Promise.withResolvers<unknown>()
-        this.finished = promise
         let proc: ChildProcess | undefined
         let stderrClosed = false
         let childError: Error | undefined
@@ -139,7 +157,9 @@ class Job {
           return materializedOutput
         }
         const finish = (): void => {
-          if ((!this.processExited && !childError) || !stderrClosed || !proc || this.process !== proc) return
+          if (!stderrClosed || !proc || this.process !== proc) return
+          // A transport error does not prove a spawned child terminated.
+          if (!this.processExited && !(childError && proc.pid === undefined)) return
           const output = materializeOutput()
           let error: Error | undefined
           if (childError || exitCode !== 0) {
@@ -195,9 +215,9 @@ class Job {
         }
       } else {
         // Job name is selected from the validated runtime scheduler registry.
-        this.finished = import(new URL(`../jobs/${this.name}.ts`, import.meta.url).href).then((module: { default: (value: unknown) => Promise<unknown> }) =>
-          module.default(data)
-        )
+        import(new URL(`../jobs/${this.name}.ts`, import.meta.url).href)
+          .then((module: { default: (value: unknown) => Promise<unknown> }) => module.default(data))
+          .then(resolve, reject)
       }
       await this.finished
     } catch (error) {
@@ -209,6 +229,8 @@ class Job {
     this.observation.lastOutcome = this.stopping ? 'stopped' : failed ? 'failed' : 'succeeded'
     if (failed && !this.stopping) this.observation.failures++
     this.observation.state = this.stopping ? 'stopped' : 'finished'
+    this.invoking = false
+    if (this.worker) this.queue.releaseWorker(this)
 
     if (this.repeat && !this.stopping && this.queue.jobs.includes(this)) {
       this.enqueue(data)
@@ -225,6 +247,7 @@ class Job {
     this.observation.nextRunAt = null
     if (!proc) {
       this.observation.state = 'stopped'
+      this.queue.cancelWorker(this)
       this.queue.remember(this)
     }
     if (this.timeout) {
@@ -276,10 +299,17 @@ class Job {
 interface Scheduler {
   jobs: Job[]
   started: boolean
+  stopping: boolean
+  activeWorkers: Set<Job>
+  pendingWorkers: Array<{ job: Job; start(): void; cancel(): void }>
   recent: ScheduledObservation[]
   skipped: ScheduledObservation[]
   stopPromise: Promise<void> | undefined
   remember(job: Job): void
+  admitWorker(job: Job, start: () => void, cancel: () => void): void
+  drainWorkers(): void
+  releaseWorker(job: Job): void
+  cancelWorker(job: Job): void
   snapshot(): { started: boolean; jobs: ScheduledObservation[] }
   init(): Scheduler
   start(): void
@@ -289,11 +319,39 @@ interface Scheduler {
 const scheduler: Scheduler = {
   jobs: [],
   started: false,
+  stopping: false,
+  activeWorkers: new Set(),
+  pendingWorkers: [],
   recent: [],
   skipped: [],
   stopPromise: undefined,
   remember(job) {
     this.recent = [{ ...job.observation }, ...this.recent.filter(row => row.id !== job.observation.id)].slice(0, 50)
+  },
+  admitWorker(job, start, cancel) {
+    this.pendingWorkers.push({ job, start, cancel })
+    this.drainWorkers()
+  },
+  drainWorkers() {
+    while (!this.stopping && this.activeWorkers.size < MAX_FORKED_WORKERS && this.pendingWorkers.length > 0) {
+      const pending = this.pendingWorkers.shift()!
+      if (pending.job.stopping) {
+        pending.cancel()
+        continue
+      }
+      this.activeWorkers.add(pending.job)
+      pending.start()
+    }
+  },
+  releaseWorker(job) {
+    this.activeWorkers.delete(job)
+    this.drainWorkers()
+  },
+  cancelWorker(job) {
+    const index = this.pendingWorkers.findIndex(pending => pending.job === job)
+    if (index < 0) return
+    const [pending] = this.pendingWorkers.splice(index, 1)
+    pending!.cancel()
   },
   snapshot() {
     const active = this.jobs.map(job => ({ ...job.observation }))
@@ -309,7 +367,7 @@ const scheduler: Scheduler = {
     return this
   },
   start() {
-    if (this.started) return
+    if (this.started || this.stopping) return
     this.started = true
     this.stopPromise = undefined
     this.skipped = []
@@ -344,12 +402,14 @@ const scheduler: Scheduler = {
     })
   },
   registerJob(opts, data) {
+    if (this.stopping) throw new Error('Scheduler is stopping')
     const job = new Job(opts, this)
     job.start(data)
     return job
   },
   stop() {
     if (this.stopPromise) return this.stopPromise
+    this.stopping = true
     const jobs = [...this.jobs]
     let stopping: Promise<void>
     stopping = Promise.all(
@@ -362,6 +422,7 @@ const scheduler: Scheduler = {
     )
       .then(() => {
         this.started = false
+        this.stopping = false
       })
       .finally(() => {
         if (this.stopPromise === stopping) this.stopPromise = undefined

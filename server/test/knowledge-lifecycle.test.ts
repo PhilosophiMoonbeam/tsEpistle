@@ -484,10 +484,28 @@ describe('page knowledge lifecycle', () => {
     const enrichKnowledge = vi.fn(async () => utilityResult('quasarrepairtoken'))
     const lifecycle = new PageKnowledgeLifecycle(db, 'derived-repair-worker', { enrichKnowledge })
     await lifecycle.runOnce()
-    const columns = ['sourceSha256', 'schemaVersion', 'deterministicVersion', 'state', 'conceptType', 'summary', 'searchText', 'lifecycleStatus', 'trustTier', 'verification', 'staleAfter']
+    const columns = [
+      'sourceSha256',
+      'schemaVersion',
+      'deterministicVersion',
+      'state',
+      'conceptType',
+      'summary',
+      'searchText',
+      'lifecycleStatus',
+      'trustTier',
+      'verification',
+      'staleAfter'
+    ]
     const healthy = await db('pageKnowledgeProjections').first(...columns)
     const paid = await db('pageKnowledgeProjections').first(
-      'projection', 'enrichmentState', 'utilityProfileVersionId', 'utilityModel', 'utilityInputSha256', 'utilityOutputSha256', 'utilityGeneratedAt'
+      'projection',
+      'enrichmentState',
+      'utilityProfileVersionId',
+      'utilityModel',
+      'utilityInputSha256',
+      'utilityOutputSha256',
+      'utilityGeneratedAt'
     )
     const immutableEffect = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256', 'attempts')
     await db('pageKnowledgeProjections').update({
@@ -512,14 +530,16 @@ describe('page knowledge lifecycle', () => {
     vi.stubGlobal('WIKI', { auth: { checkAccess: () => true, checkPageAccess: () => true } })
     try {
       const repository = new PageKnowledgeRepository(db)
-      expect(await repository.searchVisible({
-        query: 'quasarrepairtoken',
-        requester,
-        authority: pageRuleAuthority(requester),
-        authorizedPageIds: [42],
-        filter: { trustTier: 'unverified', conceptType: 'Procedure' },
-        limit: 1
-      })).toEqual([expect.objectContaining({ id: 42, sourceRevision: '1' })])
+      expect(
+        await repository.searchVisible({
+          query: 'quasarrepairtoken',
+          requester,
+          authority: pageRuleAuthority(requester),
+          authorizedPageIds: [42],
+          filter: { trustTier: 'unverified', conceptType: 'Procedure' },
+          limit: 1
+        })
+      ).toEqual([expect.objectContaining({ id: 42, sourceRevision: '1' })])
     } finally {
       vi.unstubAllGlobals()
     }
@@ -668,6 +688,48 @@ describe('page knowledge lifecycle', () => {
     expect(result).toMatchObject({ enrichmentState: 'succeeded' })
   })
 
+  it('bounds utility recovery past ineligible pages without starving an eligible tail', async () => {
+    await enableUtilityEnrichment()
+    for (let id = 1; id <= 61; id += 1) {
+      const source = page({ id, path: `ops/utility-sweep-${id}`, publishStartDate: id === 61 ? null : '2026-08-20T00:00:00.000Z' })
+      await db('pages').insert(source)
+      await enqueuePageKnowledge(source)
+    }
+    const initial = new PageKnowledgeLifecycle(db, 'utility-sweep-initial', undefined, { utilityConcurrency: 128 })
+    for (let tick = 0; tick < 3; tick += 1) await initial.runOnce()
+    const enrichKnowledge = vi.fn(async () => utilityResult('eligible-tail'))
+    const lifecycle = new PageKnowledgeLifecycle(db, 'utility-sweep-recovery', { enrichKnowledge })
+
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
+    expect(enrichKnowledge).not.toHaveBeenCalled()
+    vi.setSystemTime(new Date(Date.now() + 1_000))
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 1, processed: 1 })
+    expect(await new PageKnowledgeRepository(db).getCurrent(61)).toMatchObject({ searchTerms: expect.arrayContaining(['eligible-tail']) })
+    expect(await db('pageKnowledgeProjections').where('pageId', '<=', 60).whereNot('enrichmentState', 'withheld-unpublished')).toEqual([])
+  })
+
+  it('continues a capped utility recovery batch without skipping unexamined eligible pages', async () => {
+    await enableUtilityEnrichment()
+    for (let id = 1; id <= 55; id += 1) {
+      const source = page({ id, path: `ops/utility-cap-${id}` })
+      await db('pages').insert(source)
+      await enqueuePageKnowledge(source)
+    }
+    const initial = new PageKnowledgeLifecycle(db, 'utility-cap-initial', undefined, { utilityConcurrency: 128 })
+    for (let tick = 0; tick < 3; tick += 1) await initial.runOnce()
+    const enrichKnowledge = vi.fn(async () => utilityResult('recovered-gap'))
+    const lifecycle = new PageKnowledgeLifecycle(db, 'utility-cap-recovery', { enrichKnowledge }, { utilityConcurrency: 128 })
+
+    for (const requeued of [25, 25, 5]) {
+      await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued, processed: requeued })
+      vi.setSystemTime(new Date(Date.now() + 1_000))
+    }
+    expect(await db('pageKnowledgeProjections').whereNot('enrichmentState', 'succeeded')).toEqual([])
+    expect(await new PageKnowledgeRepository(db).getCurrent(55)).toMatchObject({ searchTerms: expect.arrayContaining(['recovered-gap']) })
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
+    expect(enrichKnowledge).toHaveBeenCalledTimes(55)
+  })
+
   it('withholds enrichment for unpublished sources and requeues it only when publication becomes eligible', async () => {
     await enableUtilityEnrichment()
     const current = page({ isPublished: false })
@@ -688,6 +750,8 @@ describe('page knowledge lifecycle', () => {
     expect(await lifecycle.runOnce()).toMatchObject({ requeued: 0, processed: 0 })
 
     await db('pages').where({ id: 42 }).update({ isPublished: true })
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
+    vi.setSystemTime(new Date(Date.now() + 30_000))
     await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 1, processed: 1 })
     expect(enrichKnowledge).toHaveBeenCalledTimes(1)
     const enriched = (await db('pageKnowledgeProjections').first('enrichmentState', 'utilityModel')) as
@@ -716,6 +780,8 @@ describe('page knowledge lifecycle', () => {
     expect(await lifecycle.runOnce()).toMatchObject({ requeued: 0, processed: 0 })
 
     await db('pages').where({ id: 42 }).update({ isSearchable: true })
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
+    vi.setSystemTime(new Date(Date.now() + 30_000))
     await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 1, processed: 1 })
     expect(enrichKnowledge).toHaveBeenCalledTimes(1)
     expect(await db('pageKnowledgeProjections').first('enrichmentState', 'utilityModel')).toMatchObject({
@@ -878,8 +944,7 @@ describe('page knowledge lifecycle', () => {
     const immutableEffect = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')
     let admittedProjection: { projection: string; sourceSha256: string } | undefined
     const enrichKnowledge = vi.fn(async () => {
-      admittedProjection = await db<{ projection: string; sourceSha256: string }>('pageKnowledgeProjections')
-        .first('projection', 'sourceSha256')
+      admittedProjection = await db<{ projection: string; sourceSha256: string }>('pageKnowledgeProjections').first('projection', 'sourceSha256')
       await db('pages').where({ id: 42 }).delete()
       return utilityResult('discarded-hint')
     })
@@ -1208,7 +1273,13 @@ describe('page knowledge lifecycle', () => {
       page({ id: 2, path: 'filtered', title: 'Common filtered', extra: JSON.stringify({ okf: { type: 'Reference', status: 'stable' } }) }),
       page({ id: 3, path: 'eligible/z', title: 'Common eligible Z', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) }),
       page({ id: 4, path: 'eligible/a', title: 'Common eligible A', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) }),
-      page({ id: 5, path: 'eligible/opted-out', title: 'Common eligible opted out', isSearchable: false, extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) })
+      page({
+        id: 5,
+        path: 'eligible/opted-out',
+        title: 'Common eligible opted out',
+        isSearchable: false,
+        extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } })
+      })
     ]
     for (const source of sources) {
       await db('pages').insert(source)

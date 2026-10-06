@@ -1043,12 +1043,7 @@ const claimMaintenanceEpoch = async (knex: Knex, workerId: string, now: Date): P
     }
   })
 
-const maintainCurrentProjections = async (
-  knex: Knex,
-  workerId: string,
-  now: Date,
-  limit: number
-): Promise<{ repaired: number; nextRunAt: number } | null> => {
+const maintainCurrentProjections = async (knex: Knex, workerId: string, now: Date, limit: number): Promise<{ repaired: number; nextRunAt: number } | null> => {
   const claim = await claimMaintenanceEpoch(knex, workerId, now)
   if (claim === null) return null
   if (claim.epoch === null) return { repaired: 0, nextRunAt: claim.nextRunAt }
@@ -1199,48 +1194,54 @@ const recoverTerminalFailures = async (knex: Knex, now: Date): Promise<number> =
   return rearmed
 }
 
-const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now: Date): Promise<number> => {
-  if (profileVersionId === null) return 0
+const KNOWLEDGE_RECOVERY_INTERVAL_MILLISECONDS = 30_000
+
+const requeueRetryable = async (
+  knex: Knex,
+  profileVersionId: string,
+  now: Date,
+  afterPageId: number,
+  highWater: number
+): Promise<{ requeued: number; cursor: number; finished: boolean }> => {
   return withKnowledgeSearchContract(knex, async transaction => {
     const retryBefore = new Date(now.valueOf() - RETRY_FAILED_AFTER_MILLISECONDS).toISOString()
     const rows: Array<{ id: string; pageId: number; sourceRevision: string | number }> = []
-    let afterPageId = 0
-    while (rows.length < 25) {
-      const batch = (await transaction<PublicationWindowRow & { id: string; pageId: number; sourceRevision: string | number }>(
-        'pageKnowledgeProjections as projections'
+    let cursor = afterPageId
+    const batch = (await transaction<PublicationWindowRow & { id: string; pageId: number; sourceRevision: string | number }>(
+      'pageKnowledgeProjections as projections'
+    )
+      .join('pages', function () {
+        this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
+      })
+      .join('pageMutationOutbox as effects', function () {
+        this.on('effects.pageId', '=', 'projections.pageId').andOn('effects.sourceRevision', '=', 'projections.sourceRevision')
+      })
+      .where('pages.id', '>', afterPageId)
+      .where('pages.id', '<=', highWater)
+      .where('effects.effectKind', 'knowledge')
+      .where('effects.status', 'succeeded')
+      .where('pages.visibility', 'public')
+      .where('pages.isPublished', true)
+      .where('pages.isSearchable', true)
+      .whereNotExists(function () {
+        this.select(transaction.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
+      })
+      .where(builder =>
+        builder
+          .where('projections.enrichmentState', 'unavailable')
+          .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore))
+          .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-unsearchable', 'withheld-protected']))
+          .orWhere(retry => retry.where('projections.enrichmentState', 'succeeded').andWhereNot('projections.utilityProfileVersionId', profileVersionId))
       )
-        .join('pages', function () {
-          this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
-        })
-        .join('pageMutationOutbox as effects', function () {
-          this.on('effects.pageId', '=', 'projections.pageId').andOn('effects.sourceRevision', '=', 'projections.sourceRevision')
-        })
-        .where('pages.id', '>', afterPageId)
-        .where('effects.effectKind', 'knowledge')
-        .where('effects.status', 'succeeded')
-        .where('pages.visibility', 'public')
-        .where('pages.isPublished', true)
-        .where('pages.isSearchable', true)
-        .whereNotExists(function () {
-          this.select(transaction.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
-        })
-        .where(builder =>
-          builder
-            .where('projections.enrichmentState', 'unavailable')
-            .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore))
-            .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-unsearchable', 'withheld-protected']))
-            .orWhere(retry => retry.where('projections.enrichmentState', 'succeeded').andWhereNot('projections.utilityProfileVersionId', profileVersionId))
-        )
-        .select('effects.id', 'pages.id as pageId', 'projections.sourceRevision', 'pages.publishStartDate', 'pages.publishEndDate')
-        .orderBy('pages.id')
-        .limit(50)) as Array<PublicationWindowRow & { id: string; pageId: number; sourceRevision: string | number }>
-      if (batch.length === 0) break
-      afterPageId = Number(batch.at(-1)?.pageId ?? afterPageId)
-      for (const row of batch) {
-        if (publicationWindowOpen(row, now.valueOf())) rows.push({ id: row.id, pageId: Number(row.pageId), sourceRevision: row.sourceRevision })
-        if (rows.length === 25) break
-      }
+      .select('effects.id', 'pages.id as pageId', 'projections.sourceRevision', 'pages.publishStartDate', 'pages.publishEndDate')
+      .orderBy('pages.id')
+      .limit(50)) as Array<PublicationWindowRow & { id: string; pageId: number; sourceRevision: string | number }>
+    for (const row of batch) {
+      cursor = Number(row.pageId)
+      if (publicationWindowOpen(row, now.valueOf())) rows.push({ id: row.id, pageId: cursor, sourceRevision: row.sourceRevision })
+      if (rows.length === 25) break
     }
+    const finished = batch.length === 0 || cursor >= highWater || (batch.length < 50 && cursor === Number(batch.at(-1)?.pageId))
     let requeued = 0
     for (const row of rows) {
       await lockKnowledgePage(transaction, row.pageId)
@@ -1293,7 +1294,7 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
         })
       if (updated === 1) requeued += 1
     }
-    return requeued
+    return { requeued, cursor, finished }
   })
 }
 
@@ -1310,6 +1311,11 @@ export class PageKnowledgeLifecycle {
   #projectionScanCursor = 0
   #projectionScanHighWater: number | null = null
   #nextProjectionScanAt = 0
+  #nextTerminalRecoveryAt = 0
+  #utilityProfileVersionId: string | null = null
+  #utilityScanCursor = 0
+  #utilityScanHighWater: number | null = null
+  #nextUtilityScanAt = 0
 
   constructor(knex: Knex, workerId: string, enricher?: AgentKnowledgeEnricher, options: PageKnowledgeLifecycleOptions = {}) {
     this.#knex = knex
@@ -1386,7 +1392,33 @@ export class PageKnowledgeLifecycle {
           }
         }
       }
-      const requeued = (await recoverTerminalFailures(this.#knex, now)) + (this.#enricher ? await requeueRetryable(this.#knex, profileVersionId, now) : 0)
+      let requeued = 0
+      if (now.valueOf() >= this.#nextTerminalRecoveryAt) {
+        const recovered = await recoverTerminalFailures(this.#knex, now)
+        requeued += recovered
+        this.#nextTerminalRecoveryAt = recovered === 25 ? 0 : Date.now() + KNOWLEDGE_RECOVERY_INTERVAL_MILLISECONDS
+      }
+      if (profileVersionId !== this.#utilityProfileVersionId) {
+        this.#utilityProfileVersionId = profileVersionId
+        this.#utilityScanCursor = 0
+        this.#utilityScanHighWater = null
+        this.#nextUtilityScanAt = 0
+      }
+      if (profileVersionId !== null && now.valueOf() >= this.#nextUtilityScanAt) {
+        if (this.#utilityScanHighWater === null) {
+          this.#utilityScanHighWater = Number(
+            ((await this.#knex('pages').max('id as highWater').first()) as { highWater?: number | string } | undefined)?.highWater ?? 0
+          )
+        }
+        const recovery = await requeueRetryable(this.#knex, profileVersionId, now, this.#utilityScanCursor, this.#utilityScanHighWater)
+        requeued += recovery.requeued
+        this.#utilityScanCursor = recovery.cursor
+        if (recovery.finished) {
+          this.#utilityScanCursor = 0
+          this.#utilityScanHighWater = null
+          this.#nextUtilityScanAt = Date.now() + KNOWLEDGE_RECOVERY_INTERVAL_MILLISECONDS
+        }
+      }
       const claims = await claimPageMutationEffects(this.#knex, {
         leaseOwner: this.#workerId,
         limit: this.#utilityConcurrency,
