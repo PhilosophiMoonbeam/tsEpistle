@@ -7,7 +7,7 @@ type TestJob = { finished: Promise<unknown>; process?: ChildProcess; stop(): Pro
 type TestScheduler = {
   jobs: TestJob[]
   started: boolean
-  registerJob(options: { name: string; immediate?: boolean; worker?: boolean }, data?: unknown): TestJob
+  registerJob(options: { name: string; immediate?: boolean; worker?: boolean; repeat?: boolean; schedule?: string }, data?: unknown): TestJob
   start(): void
   stop(): Promise<void>
   snapshot(): { started: boolean; jobs: Array<Record<string, unknown>> }
@@ -63,6 +63,23 @@ await Promise.resolve()
 unlinkSync(workMarker)
 if (process.connected) process.disconnect?.()
 if (shouldFail) process.exitCode = 7
+`
+  )
+}
+const writeAdmissionWorkerFixture = async (rootPath: string): Promise<void> => {
+  await mkdir(join(rootPath, 'server', 'core'), { recursive: true })
+  await writeFile(
+    join(rootPath, 'server', 'core', 'worker.ts'),
+    `import { writeFileSync } from 'node:fs'
+const dataArgument = process.argv.find(argument => argument.startsWith('--data='))
+const { readyMarker } = JSON.parse(dataArgument!.slice('--data='.length))
+const { promise, resolve } = Promise.withResolvers<void>()
+process.on('message', message => {
+  if (message === 'finish') resolve()
+})
+writeFileSync(readyMarker, String(process.pid))
+await promise
+if (process.connected) process.disconnect?.()
 `
   )
 }
@@ -208,6 +225,89 @@ describe('real scheduler worker lifecycle', () => {
       }
       process.execArgv.splice(0, process.execArgv.length, ...originalExecArgv)
       await rm(rootPath, { recursive: true, force: true })
+    }
+  })
+  it('holds a third real worker until close and cancels unspawned workers during individual stop and shutdown', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'tsepistle-scheduler-worker-admission-'))
+    const originalExecArgv = [...process.execArgv]
+    const children = new Map<ChildProcess, Promise<void>>()
+    let scheduler: TestScheduler | undefined
+    const track = (job: TestJob): ChildProcess | undefined => {
+      const child = job.process
+      if (child && !children.has(child)) {
+        const { promise, resolve } = Promise.withResolvers<void>()
+        child.once('close', resolve)
+        children.set(child, promise)
+      }
+      return child
+    }
+    try {
+      await writeAdmissionWorkerFixture(rootPath)
+      globalThis.WIKI = {
+        ROOTPATH: rootPath,
+        config: { offline: false },
+        data: { jobs: {} },
+        logger: { info: vi.fn(), warn: vi.fn() }
+      } as never
+      scheduler = (await vi.importFresh('../../core/scheduler.ts', import.meta.url)).default as TestScheduler
+      const firstMarker = join(rootPath, 'first.ready')
+      const secondMarker = join(rootPath, 'second.ready')
+      const thirdMarker = join(rootPath, 'third.ready')
+      const cancelledMarker = join(rootPath, 'cancelled.ready')
+      const shutdownMarker = join(rootPath, 'shutdown.ready')
+      const first = scheduler.registerJob({ name: 'first-worker', immediate: true, worker: true }, { readyMarker: firstMarker })
+      const second = scheduler.registerJob({ name: 'second-worker', immediate: true, worker: true }, { readyMarker: secondMarker })
+      const third = scheduler.registerJob({ name: 'third-worker', immediate: true, worker: true }, { readyMarker: thirdMarker })
+      const cancelled = scheduler.registerJob(
+        { name: 'cancelled-worker', immediate: true, worker: true, repeat: true, schedule: 'PT0.01S' },
+        { readyMarker: cancelledMarker }
+      )
+      for (const job of [first, second, third, cancelled]) track(job)
+      await Promise.all([waitForFile(firstMarker), waitForFile(secondMarker)])
+      expect(third.process).toBeUndefined()
+      expect(cancelled.process).toBeUndefined()
+      expect(await fileExists(thirdMarker)).toBe(false)
+      expect(scheduler.snapshot().jobs.find(job => job.name === 'third-worker')).toMatchObject({
+        state: 'waiting',
+        runs: 0,
+        lastStartedAt: null
+      })
+      const thirdFinished = third.finished
+      await awaitBounded(Promise.all([cancelled.stop(), cancelled.finished]))
+
+      first.process!.send('finish')
+      await awaitBounded(first.finished)
+      expect(first.process).toBeUndefined()
+      expect(third.finished).toBe(thirdFinished)
+      const thirdChild = track(third)
+      expect(thirdChild?.pid).toBeGreaterThan(0)
+      await waitForFile(thirdMarker)
+      const livePids = [second.process?.pid, thirdChild?.pid]
+      expect(new Set(livePids).size).toBe(2)
+      expect(livePids.every(pid => typeof pid === 'number' && pid > 0)).toBe(true)
+      expect(await fileExists(cancelledMarker)).toBe(false)
+
+      const shutdownQueued = scheduler.registerJob({ name: 'shutdown-worker', immediate: true, worker: true }, { readyMarker: shutdownMarker })
+      expect(shutdownQueued.process).toBeUndefined()
+      await awaitBounded(scheduler.stop())
+      await awaitBounded(Promise.all([second.finished, thirdFinished, shutdownQueued.finished, shutdownQueued.stop()]))
+      expect(await fileExists(shutdownMarker)).toBe(false)
+      expect(await fileExists(cancelledMarker)).toBe(false)
+      expect(scheduler.jobs).toHaveLength(0)
+      expect(scheduler.started).toBe(false)
+      await awaitBounded(Promise.all(children.values()))
+    } finally {
+      for (const job of scheduler?.jobs ?? []) track(job)
+      for (const child of children.keys()) {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      }
+      try {
+        await awaitBounded(Promise.all(children.values()), 2_000)
+        await scheduler?.stop()
+      } finally {
+        process.execArgv.splice(0, process.execArgv.length, ...originalExecArgv)
+        await rm(rootPath, { recursive: true, force: true })
+      }
     }
   })
   it('retains one bounded stderr prefix across chunks for successful and failed workers', async () => {

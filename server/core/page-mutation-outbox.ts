@@ -466,8 +466,28 @@ export const claimPageMutationEffects = async (
   if (effects.length === 0 || new Set(effects).size !== effects.length || effects.some(effect => !PAGE_PROJECTION_EFFECT_KINDS.includes(effect))) {
     throw new PageMutationOutboxError('INVALID_EFFECT_SET', 'Projection claim effects must be unique and supported')
   }
+  const now = input.now ?? new Date()
+  const nowIso = now.toISOString()
+  const candidate = await knex<PageMutationOutboxRow>('pageMutationOutbox')
+    .where(ready =>
+      ready
+        .where(pending =>
+          pending
+            .whereIn('status', ['pending', 'retry'])
+            .whereIn('effectKind', effects)
+            .where('availableAt', '<=', nowIso)
+            .where(token => token.whereNull('leaseToken').orWhere('leaseExpiresAt', '<=', nowIso))
+        )
+        .orWhere(expired => {
+          expired.where('status', 'running').where('leaseExpiresAt', '<=', nowIso)
+          if (input.maxActive !== undefined) expired.whereIn('effectKind', effects)
+        })
+    )
+    .first('id')
+  if (!candidate) return []
   return knex.transaction(async transaction => {
     if (input.maxActive !== undefined) await acquirePageMutationClaimLocks(transaction, effects)
+    // The probe is only a superset; locks and readiness fences remain authoritative here.
     const now = input.now ?? new Date()
     const nowIso = now.toISOString()
     let expiredLeases = transaction<PageMutationOutboxRow>('pageMutationOutbox').where('status', 'running').where('leaseExpiresAt', '<=', nowIso)
@@ -1186,12 +1206,15 @@ const searchStateDisagrees = async (knex: Knex | Knex.Transaction, page: Project
 
 const PAGE_PROJECTION_LEASE_MILLISECONDS = 60_000
 const PAGE_PROJECTION_HEARTBEAT_MILLISECONDS = 20_000
-const SEARCH_MAINTENANCE_LIMIT = 10
-const GRAPH_MAINTENANCE_LIMIT = 10
-const GRAPH_MAINTENANCE_SCAN_BATCH = 32
-const GRAPH_MAINTENANCE_SCAN_LIMIT = 128
-const SEARCH_MAINTENANCE_SCAN_BATCH = 32
-const SEARCH_MAINTENANCE_SCAN_LIMIT = 128
+const PAGE_PROJECTION_AUDIT_INTERVAL_MILLISECONDS = 10 * 60_000
+const PAGE_PROJECTION_MAINTENANCE_SCAN_LIMIT = 25
+const PAGE_PROJECTION_MAINTENANCE_MILLISECONDS = 100
+const PAGE_PROJECTION_TEMPORAL_SCAN_LIMIT = 10
+
+interface ProjectionMaintenanceBudget {
+  remaining: number
+  readonly deadline: number
+}
 
 export class PageProjectionLifecycle {
   readonly #knex: Knex
@@ -1201,6 +1224,17 @@ export class PageProjectionLifecycle {
   #graphMaintenanceCursor = 0
   #searchMaintenanceCursor = 0
   #searchAbsentCursor: { pageId: number; id: string } | null = null
+  #auditDueAt = 0
+  #auditUpperPageId: number | null = null
+  #auditStartedAt = ''
+  #graphAuditComplete = false
+  #searchAuditComplete = false
+  #absentAuditComplete = false
+  #temporalCursor = 0
+  #temporalUpperPageId = 0
+  #temporalActive = false
+  #temporalRefreshNeeded = true
+  #nextTemporalCheckAt = Number.POSITIVE_INFINITY
 
   constructor(knex: Knex, workerId: string, runtime: PageProjectionRuntime) {
     this.#knex = knex
@@ -1212,147 +1246,235 @@ export class PageProjectionLifecycle {
     }
   }
 
-  async #maintainGraphEffects(): Promise<void> {
-    let scanned = 0
-    let repaired = 0
-    while (scanned < GRAPH_MAINTENANCE_SCAN_LIMIT && repaired < GRAPH_MAINTENANCE_LIMIT) {
-      const batchLimit = Math.min(GRAPH_MAINTENANCE_SCAN_BATCH, GRAPH_MAINTENANCE_SCAN_LIMIT - scanned)
-      const candidates = await this.#knex<ProjectionPageRow>('pages')
-        .select('id')
-        .where('id', '>', this.#graphMaintenanceCursor)
-        .where('visibility', 'public')
-        .where('isPublished', true)
-        .orderBy('id')
-        .limit(batchLimit)
-      if (candidates.length === 0) {
-        this.#graphMaintenanceCursor = 0
-        break
+  async #repairSearchPage(pageId: number): Promise<boolean> {
+    return withLockedProjectionPage(this.#knex, pageId, async (transaction, page) => {
+      if (!page) return false
+      const existing = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
+        .where({ pageId: page.id, sourceRevision: revisionString(page.sourceRevision), effectKind: 'search' })
+        .forUpdate()
+        .first()
+      if (existing) {
+        const payload = parseRowPayload(existing)
+        if (payload.desiredState !== 'present' || !isExactProjectionSource(page, payload)) return false
       }
-      for (const candidate of candidates) {
-        scanned += 1
-        this.#graphMaintenanceCursor = Number(candidate.id)
-        const changed = await withLockedProjectionPage(this.#knex, candidate.id, async (transaction, page) => {
-          if (!page || page.visibility !== 'public' || (page.isPublished !== true && page.isPublished !== 1)) return false
-          const renderChanged = await ensureRenderDependency(transaction, page)
-          const links = await admitCurrentEffect(transaction, page, 'links')
-          return renderChanged || links.changed
-        }).catch((error: unknown) => {
-          if (error instanceof PageMutationOutboxError) return false
-          throw error
-        })
-        if (changed) repaired += 1
-        if (repaired >= GRAPH_MAINTENANCE_LIMIT) break
-      }
-      if (repaired >= GRAPH_MAINTENANCE_LIMIT) break
-      if (candidates.length < batchLimit) {
-        this.#graphMaintenanceCursor = 0
-        break
-      }
+      const protectedPage = await transaction('pageAccessPasswords').where({ pageId: page.id }).first('pageId')
+      const renderChanged = pageSearchEligible(page) && !protectedPage ? await ensureRenderDependency(transaction, page) : false
+      const search = await admitCurrentEffect(transaction, page, 'search', {
+        rearm: await searchStateDisagrees(transaction, page)
+      })
+      return renderChanged || search.changed
+    }).catch((error: unknown) => {
+      if (error instanceof PageMutationOutboxError) return false
+      throw error
+    })
+  }
+
+  async #maintainGraphEffects(budget: ProjectionMaintenanceBudget, signal: AbortSignal): Promise<boolean> {
+    const limit = budget.remaining
+    if (limit === 0 || signal.aborted || performance.now() >= budget.deadline) return false
+    const candidates = await this.#knex<ProjectionPageRow>('pages')
+      .select('id')
+      .where('id', '>', this.#graphMaintenanceCursor)
+      .where('id', '<=', this.#auditUpperPageId!)
+      .where('visibility', 'public')
+      .where('isPublished', true)
+      .orderBy('id')
+      .limit(limit)
+    for (const candidate of candidates) {
+      if (signal.aborted || performance.now() >= budget.deadline) return false
+      budget.remaining -= 1
+      await withLockedProjectionPage(this.#knex, candidate.id, async (transaction, page) => {
+        if (!page || page.visibility !== 'public' || (page.isPublished !== true && page.isPublished !== 1)) return
+        const renderChanged = await ensureRenderDependency(transaction, page)
+        let linksDisagree = false
+        if (!renderChanged && hasCertifiedRender(page)) {
+          const expected = extractRenderedPageLinks(page.render, page.localeCode)
+          const rows = await transaction<PageLinkRow>('pageLinks').select('localeCode', 'path').where({ pageId: page.id })
+          const persisted = rows.map(row => ({ localeCode: row.localeCode, path: row.path })).sort(comparePageLinkIdentities)
+          linksDisagree = canonicalJson(persisted) !== canonicalJson(expected)
+        }
+        await admitCurrentEffect(transaction, page, 'links', { rearm: linksDisagree })
+      }).catch((error: unknown) => {
+        if (!(error instanceof PageMutationOutboxError)) throw error
+      })
+      this.#graphMaintenanceCursor = Number(candidate.id)
+    }
+    return candidates.length < limit
+  }
+
+  async #maintainSearchEffects(budget: ProjectionMaintenanceBudget, signal: AbortSignal): Promise<boolean> {
+    const limit = budget.remaining
+    if (limit === 0 || signal.aborted || performance.now() >= budget.deadline) return false
+    const candidates = await this.#knex<ProjectionPageRow>('pages')
+      .select('id')
+      .where('id', '>', this.#searchMaintenanceCursor)
+      .where('id', '<=', this.#auditUpperPageId!)
+      .orderBy('id')
+      .limit(limit)
+    for (const candidate of candidates) {
+      if (signal.aborted || performance.now() >= budget.deadline) return false
+      budget.remaining -= 1
+      await this.#repairSearchPage(candidate.id)
+      this.#searchMaintenanceCursor = Number(candidate.id)
+    }
+    return candidates.length < limit
+  }
+
+  async #maintainAbsentSearchEffects(budget: ProjectionMaintenanceBudget, signal: AbortSignal): Promise<boolean> {
+    const limit = budget.remaining
+    if (limit === 0 || signal.aborted || performance.now() >= budget.deadline) return false
+    const knex = this.#knex
+    const query = knex<PageMutationOutboxRow>('pageMutationOutbox as searchEffect')
+      .select('searchEffect.*')
+      .where('searchEffect.effectKind', 'search')
+      .where('searchEffect.desiredState', 'absent')
+      .where('searchEffect.createdAt', '<=', this.#auditStartedAt)
+      .whereIn('searchEffect.status', ['succeeded', 'failed'])
+      .whereNotExists(function () {
+        this.select(knex.raw('1')).from('pages as currentPage').whereRaw('?? = ??', ['currentPage.id', 'searchEffect.pageId'])
+      })
+      .where(rows =>
+        rows
+          .whereExists(function () {
+            this.select(knex.raw('1')).from('pagesVector as searchVector').whereRaw('?? = ??', ['searchVector.pageId', 'searchEffect.pageId'])
+          })
+          .orWhereExists(function () {
+            this.select(knex.raw('1')).from('pagesWords as searchWords').whereRaw('?? = ??', ['searchWords.pageId', 'searchEffect.pageId'])
+          })
+      )
+    const cursor = this.#searchAbsentCursor
+    if (cursor)
+      query.where(after =>
+        after
+          .where('searchEffect.pageId', '>', cursor.pageId)
+          .orWhere(samePage => samePage.where('searchEffect.pageId', cursor.pageId).where('searchEffect.id', '>', cursor.id))
+      )
+    const candidates = await query.orderBy('searchEffect.pageId').orderBy('searchEffect.id').limit(limit)
+    for (const effect of candidates) {
+      if (signal.aborted || performance.now() >= budget.deadline) return false
+      budget.remaining -= 1
+      await withLockedProjectionPage(this.#knex, effect.pageId, async (transaction, page) => {
+        if (page) return
+        const payload = parseRowPayload(effect)
+        if (payload.desiredState !== 'absent') return
+        const rows = await loadSearchRows(transaction, effect.pageId)
+        if (!rows.vector && !rows.hasWords) return
+        await rearmPageMutationEffect(transaction, { id: effect.id, payload })
+      }).catch((error: unknown) => {
+        if (!(error instanceof PageMutationOutboxError)) throw error
+      })
+      this.#searchAbsentCursor = { pageId: Number(effect.pageId), id: effect.id }
+    }
+    return candidates.length < limit
+  }
+
+  async #maintainAudit(signal: AbortSignal): Promise<void> {
+    if (signal.aborted || (this.#auditUpperPageId === null && Date.now() < this.#auditDueAt)) return
+    if (this.#auditUpperPageId === null) {
+      const startedAt = new Date().toISOString()
+      const maximum = await this.#knex('pages').max<{ id: number | string | null }>({ id: 'id' }).first()
+      this.#auditUpperPageId = Number(maximum?.id ?? 0)
+      this.#auditStartedAt = startedAt
+      this.#graphMaintenanceCursor = 0
+      this.#searchMaintenanceCursor = 0
+      this.#searchAbsentCursor = null
+      this.#graphAuditComplete = false
+      this.#searchAuditComplete = false
+      this.#absentAuditComplete = false
+      this.#temporalRefreshNeeded = true
+    }
+    const budget = {
+      remaining: PAGE_PROJECTION_MAINTENANCE_SCAN_LIMIT,
+      deadline: performance.now() + PAGE_PROJECTION_MAINTENANCE_MILLISECONDS
+    }
+    if (!this.#graphAuditComplete) this.#graphAuditComplete = await this.#maintainGraphEffects(budget, signal)
+    if (!this.#searchAuditComplete) this.#searchAuditComplete = await this.#maintainSearchEffects(budget, signal)
+    if (!this.#absentAuditComplete) this.#absentAuditComplete = await this.#maintainAbsentSearchEffects(budget, signal)
+    if (this.#graphAuditComplete && this.#searchAuditComplete && this.#absentAuditComplete) {
+      // Cooling starts after the entire finite pass, not after its first batch.
+      this.#auditDueAt = Date.now() + PAGE_PROJECTION_AUDIT_INTERVAL_MILLISECONDS
+      this.#auditUpperPageId = null
+      this.#temporalRefreshNeeded = true
     }
   }
 
-  async #maintainSearchEffects(): Promise<void> {
-    let repaired = 0
-    let scanned = 0
-    while (scanned < SEARCH_MAINTENANCE_SCAN_LIMIT && repaired < SEARCH_MAINTENANCE_LIMIT) {
-      const batchLimit = Math.min(SEARCH_MAINTENANCE_SCAN_BATCH, SEARCH_MAINTENANCE_SCAN_LIMIT - scanned)
-      const candidates = await this.#knex<ProjectionPageRow>('pages')
-        .select('id')
-        .where('id', '>', this.#searchMaintenanceCursor)
-        .orderBy('id')
-        .limit(batchLimit)
-      if (candidates.length === 0) {
-        this.#searchMaintenanceCursor = 0
-        break
-      }
-      for (const candidate of candidates) {
-        scanned += 1
-        this.#searchMaintenanceCursor = Number(candidate.id)
-        const changed = await withLockedProjectionPage(this.#knex, candidate.id, async (transaction, page) => {
-          if (!page) return false
-          const existing = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
-            .where({ pageId: page.id, sourceRevision: revisionString(page.sourceRevision), effectKind: 'search' })
-            .forUpdate()
-            .first()
-          if (existing) {
-            const payload = parseRowPayload(existing)
-            if (payload.desiredState !== 'present' || !isExactProjectionSource(page, payload)) return false
-          }
-          const protectedPage = await transaction('pageAccessPasswords').where({ pageId: page.id }).first('pageId')
-          const renderChanged = pageSearchEligible(page) && !protectedPage ? await ensureRenderDependency(transaction, page) : false
-          const search = await admitCurrentEffect(transaction, page, 'search', {
-            rearm: await searchStateDisagrees(transaction, page)
-          })
-          return renderChanged || search.changed
-        }).catch((error: unknown) => {
-          if (error instanceof PageMutationOutboxError) return false
-          throw error
-        })
-        if (changed) repaired += 1
-        if (repaired >= SEARCH_MAINTENANCE_LIMIT) break
-      }
-      if (repaired >= SEARCH_MAINTENANCE_LIMIT) break
-      if (candidates.length < batchLimit) {
-        this.#searchMaintenanceCursor = 0
-        break
-      }
-    }
+  async #refreshTemporalSchedule(): Promise<void> {
+    const nowIso = new Date().toISOString()
+    const postgres = isPostgres(this.#knex)
+    const start = postgres ? publicationTimestampSql('"publishStartDate"::text') : 'julianday(NULLIF("publishStartDate", \'\'))'
+    const end = postgres ? publicationTimestampSql('"publishEndDate"::text') : 'julianday(NULLIF("publishEndDate", \'\'))'
+    const now = postgres ? '?::timestamptz' : 'julianday(?)'
+    const bounds = await this.#knex('pages')
+      .select(
+        this.#knex.raw(
+          `max(id) AS "upperPageId", min(CASE WHEN ${start} > ${now} THEN ${start} END) AS "start", min(CASE WHEN ${end} >= ${now} THEN ${end} END) AS "end"`,
+          [nowIso, nowIso]
+        )
+      )
+      .where({ visibility: 'public', isPublished: true, isSearchable: true })
+      .whereRaw('(NULLIF("publishStartDate", \'\') IS NOT NULL OR NULLIF("publishEndDate", \'\') IS NOT NULL)')
+      .first<{ upperPageId: number | null; start: Date | string | number | null; end: Date | string | number | null }>()
+    const startAt =
+      bounds?.start == null
+        ? Number.POSITIVE_INFINITY
+        : postgres
+          ? bounds.start instanceof Date
+            ? bounds.start.valueOf()
+            : Date.parse(String(bounds.start))
+          : Math.round((Number(bounds.start) - 2440587.5) * 86_400_000)
+    const endAt =
+      bounds?.end == null
+        ? Number.POSITIVE_INFINITY
+        : postgres
+          ? bounds.end instanceof Date
+            ? bounds.end.valueOf()
+            : Date.parse(String(bounds.end))
+          : Math.round((Number(bounds.end) - 2440587.5) * 86_400_000)
+    this.#nextTemporalCheckAt = Math.min(startAt, endAt + 1)
+    this.#temporalUpperPageId = Number(bounds?.upperPageId ?? 0)
+  }
 
-    scanned = 0
-    while (scanned < SEARCH_MAINTENANCE_SCAN_LIMIT && repaired < SEARCH_MAINTENANCE_LIMIT) {
-      const knex = this.#knex
-      const batchLimit = Math.min(SEARCH_MAINTENANCE_SCAN_BATCH, SEARCH_MAINTENANCE_SCAN_LIMIT - scanned)
-      const query = knex<PageMutationOutboxRow>('pageMutationOutbox as searchEffect')
-        .select('searchEffect.*')
-        .where('searchEffect.effectKind', 'search')
-        .where('searchEffect.desiredState', 'absent')
-        .whereIn('searchEffect.status', ['succeeded', 'failed'])
-        .whereNotExists(function () {
-          this.select(knex.raw('1')).from('pages as currentPage').whereRaw('?? = ??', ['currentPage.id', 'searchEffect.pageId'])
-        })
-        .where(rows =>
-          rows
-            .whereExists(function () {
-              this.select(knex.raw('1')).from('pagesVector as searchVector').whereRaw('?? = ??', ['searchVector.pageId', 'searchEffect.pageId'])
-            })
-            .orWhereExists(function () {
-              this.select(knex.raw('1')).from('pagesWords as searchWords').whereRaw('?? = ??', ['searchWords.pageId', 'searchEffect.pageId'])
-            })
-        )
-      const cursor = this.#searchAbsentCursor
-      if (cursor)
-        query.where(after =>
-          after
-            .where('searchEffect.pageId', '>', cursor.pageId)
-            .orWhere(samePage => samePage.where('searchEffect.pageId', cursor.pageId).where('searchEffect.id', '>', cursor.id))
-        )
-      const candidates = await query.orderBy('searchEffect.pageId').orderBy('searchEffect.id').limit(batchLimit)
-      if (candidates.length === 0) {
-        this.#searchAbsentCursor = null
-        break
-      }
-      for (const effect of candidates) {
-        scanned += 1
-        this.#searchAbsentCursor = { pageId: Number(effect.pageId), id: effect.id }
-        const changed = await withLockedProjectionPage(this.#knex, effect.pageId, async (transaction, page) => {
-          if (page) return false
-          const payload = parseRowPayload(effect)
-          if (payload.desiredState !== 'absent') return false
-          const rows = await loadSearchRows(transaction, effect.pageId)
-          if (!rows.vector && !rows.hasWords) return false
-          return rearmPageMutationEffect(transaction, { id: effect.id, payload })
-        }).catch((error: unknown) => {
-          if (error instanceof PageMutationOutboxError) return false
-          throw error
-        })
-        if (changed) repaired += 1
-        if (repaired >= SEARCH_MAINTENANCE_LIMIT) break
-      }
-      if (repaired >= SEARCH_MAINTENANCE_LIMIT) break
-      if (candidates.length < batchLimit) {
-        this.#searchAbsentCursor = null
-        break
-      }
+  async #maintainTemporalSearch(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return
+    if (!this.#temporalActive) {
+      if (!this.#temporalRefreshNeeded && Date.now() < this.#nextTemporalCheckAt) return
+      await this.#refreshTemporalSchedule()
+      this.#temporalRefreshNeeded = false
+      this.#temporalCursor = 0
+      this.#temporalActive = true
+    }
+    const deadline = performance.now() + PAGE_PROJECTION_MAINTENANCE_MILLISECONDS
+    const nowIso = new Date().toISOString()
+    const postgres = isPostgres(this.#knex)
+    const start = postgres ? publicationTimestampSql('"scheduledPage"."publishStartDate"::text') : 'julianday(NULLIF("scheduledPage"."publishStartDate", \'\'))'
+    const end = postgres ? publicationTimestampSql('"scheduledPage"."publishEndDate"::text') : 'julianday(NULLIF("scheduledPage"."publishEndDate", \'\'))'
+    const now = postgres ? '?::timestamptz' : 'julianday(?)'
+    const eligible = `COALESCE(((NULLIF("scheduledPage"."publishStartDate", '') IS NULL OR ${start} <= ${now}) AND (NULLIF("scheduledPage"."publishEndDate", '') IS NULL OR ${end} >= ${now})), ${postgres ? 'false' : '0'})`
+    const candidates = await this.#knex<ProjectionPageRow>('pages as scheduledPage')
+      .select('scheduledPage.id')
+      .where('scheduledPage.visibility', 'public')
+      .where('scheduledPage.isPublished', true)
+      .where('scheduledPage.isSearchable', true)
+      .where('scheduledPage.id', '>', this.#temporalCursor)
+      .where('scheduledPage.id', '<=', this.#temporalUpperPageId)
+      .whereRaw('(NULLIF("scheduledPage"."publishStartDate", \'\') IS NOT NULL OR NULLIF("scheduledPage"."publishEndDate", \'\') IS NOT NULL)')
+      .whereRaw(
+        `((${eligible} AND NOT EXISTS (SELECT 1 FROM "pagesVector" WHERE "pageId" = "scheduledPage"."id" AND "sourceRevision" = "scheduledPage"."sourceRevision")) OR (NOT ${eligible} AND (EXISTS (SELECT 1 FROM "pagesVector" WHERE "pageId" = "scheduledPage"."id") OR EXISTS (SELECT 1 FROM "pagesWords" WHERE "pageId" = "scheduledPage"."id"))))`,
+        [nowIso, nowIso, nowIso, nowIso]
+      )
+      .orderBy('scheduledPage.id')
+      .limit(PAGE_PROJECTION_TEMPORAL_SCAN_LIMIT)
+    for (const candidate of candidates) {
+      if (signal.aborted || performance.now() >= deadline) return
+      await this.#repairSearchPage(candidate.id)
+      this.#temporalCursor = Number(candidate.id)
+    }
+    if (candidates.length < PAGE_PROJECTION_TEMPORAL_SCAN_LIMIT) {
+      // A boundary or mutation behind the cursor requires another finite pass.
+      const repeat = this.#temporalRefreshNeeded || Date.now() >= this.#nextTemporalCheckAt
+      await this.#refreshTemporalSchedule()
+      this.#temporalRefreshNeeded = repeat
+      this.#temporalActive = false
     }
   }
 
@@ -1391,8 +1513,8 @@ export class PageProjectionLifecycle {
     if (this.#running) return { processed: 0 }
     this.#running = true
     try {
-      await this.#maintainGraphEffects()
-      await this.#maintainSearchEffects()
+      await this.#maintainAudit(signal)
+      await this.#maintainTemporalSearch(signal)
       let processed = 0
       while (processed < 10 && !signal.aborted) {
         const [claim] = await claimPageMutationEffects(this.#knex, {
@@ -1403,6 +1525,7 @@ export class PageProjectionLifecycle {
         })
         if (!claim) break
         processed += 1
+        this.#temporalRefreshNeeded = true
         try {
           await this.#executeClaim(claim, signal)
         } catch {

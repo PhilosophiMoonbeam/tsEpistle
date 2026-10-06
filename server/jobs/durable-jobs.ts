@@ -15,33 +15,51 @@ type WikiContext = PageWatchWikiContext &
   }
 
 const wiki = WIKI as unknown as WikiContext
+let cleanupEnqueuedDay: string | undefined
 
 export default async function runDurableJobs(): Promise<void> {
-  const store = new DurableJobStore(wiki.models.knex)
-  const day = new Date().toISOString().slice(0, 10)
-  await store.enqueue({
-    type: 'cleanup-durable-jobs',
-    version: 1,
-    payload: {},
-    maxAttempts: 3,
-    deduplicationKey: `cleanup-durable-jobs:${day}`
-  })
-  await store.enqueue({
-    type: 'cleanup-site-logo',
-    version: 1,
-    payload: {},
-    maxAttempts: 3,
-    deduplicationKey: `cleanup-site-logo:${day}`
-  })
-  await publishOutboxEvents(wiki.models.knex)
-  const now = new Date()
-  await failExhaustedSiteLogoJobs(wiki.models.knex, now)
-  await failExhaustedAssetRelocationEffects(wiki.models.knex, now)
-  await runDurableJobBatch(wiki.models.knex, {
-    workerId: wiki.INSTANCE_ID,
-    limit: 10,
-    leaseMs: 30_000,
-    now,
-    handlers: createDurableJobHandlers(wiki.config.sessionSecret, wiki)
-  })
+  let enqueueFailed = false
+  let enqueueError: unknown
+  try {
+    const day = new Date().toISOString().slice(0, 10)
+    if (cleanupEnqueuedDay !== day) {
+      const store = new DurableJobStore(wiki.models.knex)
+      await store.enqueue({
+        type: 'cleanup-durable-jobs',
+        version: 1,
+        payload: {},
+        maxAttempts: 3,
+        deduplicationKey: `cleanup-durable-jobs:${day}`
+      })
+      await store.enqueue({
+        type: 'cleanup-site-logo',
+        version: 1,
+        payload: {},
+        maxAttempts: 3,
+        deduplicationKey: `cleanup-site-logo:${day}`
+      })
+      cleanupEnqueuedDay = day
+    }
+  } catch (error) {
+    enqueueFailed = true
+    enqueueError = error
+  }
+  // Claims, publication, and exhausted-job recovery must not wait for daily cleanup scheduling.
+  try {
+    await publishOutboxEvents(wiki.models.knex)
+    const now = new Date()
+    await failExhaustedSiteLogoJobs(wiki.models.knex, now)
+    await failExhaustedAssetRelocationEffects(wiki.models.knex, now)
+    await runDurableJobBatch(wiki.models.knex, {
+      workerId: wiki.INSTANCE_ID,
+      limit: 2,
+      leaseMs: 30_000,
+      now,
+      handlers: createDurableJobHandlers(wiki.config.sessionSecret, wiki)
+    })
+  } catch (error) {
+    if (enqueueFailed) throw new AggregateError([enqueueError, error], 'Durable cleanup scheduling and tick processing both failed')
+    throw error
+  }
+  if (enqueueFailed) throw enqueueError
 }

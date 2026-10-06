@@ -3942,6 +3942,35 @@ describe('durable agent repositories', () => {
     })
   })
 
+  it.each(['queued', 'running', 'awaiting_approval'] as const)('claims newly eligible %s work on the next poll after an idle result', async status => {
+    const now = new Date('2026-08-17T00:02:00.000Z')
+    const readyAt = new Date(now.valueOf() + 1_000)
+    await knex('agentRuns')
+      .where({ id: runId })
+      .update({
+        status,
+        attempts: status === 'queued' ? 0 : 1,
+        availableAt: status === 'queued' ? readyAt : now,
+        leaseOwner: status === 'queued' ? null : 'previous-worker',
+        leaseToken: status === 'queued' ? null : '00000000-0000-4000-8000-000000000006',
+        leaseExpiresAt: status === 'queued' ? null : readyAt,
+        sideEffectsStarted: false
+      })
+    const options = { workerId: 'next-poll-worker', globalConcurrency: 2, perUserConcurrency: 1, leaseMilliseconds: 1_000 }
+    expect(await claimAgentRun(knex, { ...options, now })).toBeNull()
+    const before = await knex('agentRuns').where({ id: runId }).first('status', 'attempts', 'leaseToken')
+    const claim = await claimAgentRun(knex, { ...options, now: readyAt })
+    expect(claim).toMatchObject({
+      id: runId,
+      ownerId: 7,
+      status: status === 'awaiting_approval' ? 'awaiting_approval' : 'running',
+      attempts: status === 'running' ? 2 : 1,
+      leaseOwner: options.workerId,
+      leaseExpiresAt: new Date(readyAt.valueOf() + options.leaseMilliseconds).toISOString()
+    })
+    expect(claim?.leaseToken).not.toBe(before.leaseToken)
+  })
+
   it('recovers only eligible owner-local leases and settles usage once', async () => {
     const now = new Date('2026-08-17T00:02:00.000Z')
     const recoveryNow = new Date('2026-08-17T00:02:02.000Z')

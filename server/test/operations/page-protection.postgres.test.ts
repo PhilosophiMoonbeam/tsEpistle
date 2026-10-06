@@ -3,15 +3,12 @@
 import { createHash } from 'node:crypto'
 import knexModule from 'knex'
 import type { Knex } from 'knex'
-import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
+import { afterAll, beforeAll, describe, expect, it, vi } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { up as createProtectionSchema } from '../../db/migrations/2.5.134.ts'
 import { up as createKnowledgeSchema } from '../../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearch } from '../../db/migrations/tsepistle-000027-knowledge-search.ts'
-import {
-  enqueuePageMutationEffects,
-  PageProjectionLifecycle
-} from '../../core/page-mutation-outbox.ts'
+import { enqueuePageMutationEffects, PageProjectionLifecycle } from '../../core/page-mutation-outbox.ts'
 import type PageModel from '../../models/pages.ts'
 import type pageOperations from '../../operations/pages.ts'
 import type * as pageProtection from '../../operations/page-protection.ts'
@@ -30,7 +27,9 @@ const connection = getPostgresTestConnection('_page_protection_test', import.met
 const suite = connection ? describe : describe.skip
 const deferred = () => {
   let release!: () => void
-  const promise = new Promise<void>(resolve => { release = resolve })
+  const promise = new Promise<void>(resolve => {
+    release = resolve
+  })
   return { promise, release }
 }
 
@@ -93,9 +92,17 @@ suite('PostgreSQL protection search withdrawal', () => {
     await db('users').insert({ id: 7, name: 'Editor', email: requester.email })
     await db('assets').insert({ id: 101, hash: createHash('sha1').update(assetPath).digest('hex') })
     await db('pages').insert({
-      id: 42, sourceRevision: 8, renderedSourceRevision: 8, path: 'neutral/handbook', localeCode: 'en',
-      title: 'Neutral Handbook', description: 'Public overview', content: source, render,
-      visibility: 'public', isPublished: true
+      id: 42,
+      sourceRevision: 8,
+      renderedSourceRevision: 8,
+      path: 'neutral/handbook',
+      localeCode: 'en',
+      title: 'Neutral Handbook',
+      description: 'Public overview',
+      content: source,
+      render,
+      visibility: 'public',
+      isPublished: true
     })
     const checkAccess = (_requester: unknown, permissions: readonly string[]) =>
       permissions.some(permission => ['read:pages', 'write:pages'].includes(permission))
@@ -114,8 +121,11 @@ suite('PostgreSQL protection search withdrawal', () => {
     Reflect.set(globalThis, 'WIKI', wiki)
     // These application modules capture WIKI at evaluation; bind the isolated native runtime before loading them.
     const [{ default: PageRuntime }, { default: Tag }, { default: plugin }, { default: pageOps }, protectionOps] = await Promise.all([
-      import('../../models/pages.ts'), import('../../models/tags.ts'), import('../../modules/search/postgres/engine.ts'),
-      import('../../operations/pages.ts'), import('../../operations/page-protection.ts')
+      import('../../models/pages.ts'),
+      import('../../models/tags.ts'),
+      import('../../modules/search/postgres/engine.ts'),
+      import('../../operations/pages.ts'),
+      import('../../operations/page-protection.ts')
     ])
     Page = PageRuntime
     Page.knex(db)
@@ -138,17 +148,26 @@ suite('PostgreSQL protection search withdrawal', () => {
     expect((await operations.search({ query: bodyToken, pageIds: [42] })).results.map(page => page.id)).toEqual([42])
     const canonical = await observer('pages').where({ id: 42 }).first('content', 'render', 'sourceRevision', 'renderedSourceRevision')
     await enqueuePageMutationEffects(db, {
-      pageId: 42, sourceRevision: 8, desiredState: 'present', action: 'update', source,
-      location: { locale: 'en', path: 'neutral/handbook', visibility: 'public', ownerId: null }, effects: ['render', 'search']
+      pageId: 42,
+      sourceRevision: 8,
+      desiredState: 'present',
+      action: 'update',
+      source,
+      location: { locale: 'en', path: 'neutral/handbook', visibility: 'public', ownerId: null },
+      effects: ['render', 'search']
     })
     await db('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'succeeded' })
-    const immutable = await observer('pageMutationOutbox').where({ effectKind: 'search' }).first('id', 'sourceRevision', 'effectKey', 'payload', 'payloadSha256')
+    const immutable = await observer('pageMutationOutbox')
+      .where({ effectKind: 'search' })
+      .first('id', 'sourceRevision', 'effectKey', 'payload', 'payloadSha256')
     const oldEntered = deferred()
     const oldRelease = deferred()
     const callbackEntered = deferred()
     const callbackRelease = deferred()
     const runtime = {
-      renderPage: async () => { throw new Error('A protection-only repair must preserve the certified authored render') },
+      renderPage: async () => {
+        throw new Error('A protection-only repair must preserve the certified authored render')
+      },
       evictLocation: async () => undefined,
       reconcileSearchPage: (pageId: number) => engine.reconcilePage(pageId),
       removeSearchPage: (pageId: number) => engine.removePage(pageId)
@@ -169,10 +188,22 @@ suite('PostgreSQL protection search withdrawal', () => {
     }
     let setting: Promise<unknown> | undefined
     try {
-      await Promise.race([oldEntered.promise, oldWork.then(() => { throw new Error('Old search did not enter its provider') })])
-      setting = protection.setPageProtection({ requester, pageId: 42, password: 'durable protection password', sessionId: 'manager-session' })
-        .then(() => null, (error: unknown) => error)
-      await Promise.race([callbackEntered.promise, setting.then(error => { throw error ?? new Error('Protection did not enter its post-commit callback') })])
+      await Promise.race([
+        oldEntered.promise,
+        oldWork.then(() => {
+          throw new Error('Old search did not enter its provider')
+        })
+      ])
+      setting = protection.setPageProtection({ requester, pageId: 42, password: 'durable protection password', sessionId: 'manager-session' }).then(
+        () => null,
+        (error: unknown) => error
+      )
+      await Promise.race([
+        callbackEntered.promise,
+        setting.then(error => {
+          throw error ?? new Error('Protection did not enter its post-commit callback')
+        })
+      ])
 
       // A separate database connection sees committed protection while the immediate callback is still blocked.
       expect(await observer('pageAccessPasswords').where({ pageId: 42 }).first()).toMatchObject({ pageId: 42, version: 1, updatedBy: 7 })
@@ -187,8 +218,15 @@ suite('PostgreSQL protection search withdrawal', () => {
       const negativeAbsent = await operations.search({ query: '-absentbodyuniquetoken', pageIds: [42] })
       expect(negativeBody).toEqual(negativeAbsent)
       expect(negativeBody.results).toEqual([])
-      expect(await observer('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts', 'leaseOwner', 'leaseToken', 'result', 'postcondition')).toEqual({
-        status: 'retry', attempts: 0, leaseOwner: null, leaseToken: null, result: null, postcondition: null
+      expect(
+        await observer('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts', 'leaseOwner', 'leaseToken', 'result', 'postcondition')
+      ).toEqual({
+        status: 'retry',
+        attempts: 0,
+        leaseOwner: null,
+        leaseToken: null,
+        result: null,
+        postcondition: null
       })
 
       callbackRelease.release()
@@ -197,17 +235,24 @@ suite('PostgreSQL protection search withdrawal', () => {
       oldAbort.abort()
       oldRelease.release()
       await oldWork
-      expect(await observer('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts', 'leaseToken')).toEqual({ status: 'retry', attempts: 0, leaseToken: null })
+      expect(await observer('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts', 'leaseToken')).toEqual({
+        status: 'retry',
+        attempts: 0,
+        leaseToken: null
+      })
 
       await new PageProjectionLifecycle(db, 'protection-repair-worker', runtime).runOnce()
       expect(await observer('pageMutationOutbox').where({ effectKind: 'search' }).first('status', 'attempts')).toEqual({ status: 'succeeded', attempts: 1 })
-      expect(await observer('pageMutationOutbox').where({ effectKind: 'search' }).first('id', 'sourceRevision', 'effectKey', 'payload', 'payloadSha256')).toEqual(immutable)
+      expect(
+        await observer('pageMutationOutbox').where({ effectKind: 'search' }).first('id', 'sourceRevision', 'effectKey', 'payload', 'payloadSha256')
+      ).toEqual(immutable)
       const repairedNegative = await operations.search({ query: `-${bodyToken}`, pageIds: [42] })
       expect(repairedNegative.results.map(page => page.id)).toEqual([42])
       expect(repairedNegative).toEqual(await operations.search({ query: '-absentbodyuniquetoken', pageIds: [42] }))
       expect((await operations.search({ query: bodyToken, pageIds: [42] })).results).toEqual([])
       const body = await observer.raw<{ rows: Array<{ body: string }> }>(
-        `SELECT ts_filter(tokens, ARRAY['C']::"char"[])::text AS body FROM "pagesVector" WHERE "pageId" = ?`, [42]
+        `SELECT ts_filter(tokens, ARRAY['C']::"char"[])::text AS body FROM "pagesVector" WHERE "pageId" = ?`,
+        [42]
       )
       expect(body.rows).toEqual([{ body: '' }])
       expect(await observer('pagesWords').where({ pageId: 42, word: bodyToken })).toEqual([])
@@ -216,6 +261,74 @@ suite('PostgreSQL protection search withdrawal', () => {
       callbackRelease.release()
       oldRelease.release()
       await Promise.all([setting, oldWork])
+    }
+  })
+
+  it('reconciles scheduled native search during audit cooldown and fails closed on malformed boundaries', async () => {
+    const pageId = 43
+    const path = 'neutral/scheduled'
+    vi.setSystemTime(new Date('2100-01-01T00:00:00.000Z'))
+    try {
+      await db('pages').insert({
+        id: pageId,
+        sourceRevision: 9,
+        renderedSourceRevision: 9,
+        path,
+        localeCode: 'en',
+        title: 'Scheduled Handbook',
+        content: 'schedulednativetoken',
+        render: '<p>schedulednativetoken</p>',
+        visibility: 'public',
+        isPublished: true,
+        publishStartDate: '2100-01-01T00:00:02.000Z',
+        publishEndDate: '2100-01-01T00:00:04.000Z'
+      })
+      await enqueuePageMutationEffects(db, {
+        pageId,
+        sourceRevision: 9,
+        desiredState: 'present',
+        action: 'update',
+        source: 'schedulednativetoken',
+        location: { locale: 'en', path, visibility: 'public', ownerId: null },
+        effects: ['render', 'search']
+      })
+      await db('pageMutationOutbox').where({ pageId, effectKind: 'render' }).update({ status: 'succeeded' })
+      const lifecycle = new PageProjectionLifecycle(db, 'native-scheduled-worker', {
+        renderPage: async () => {
+          throw new Error('Certified temporal search must not rerender')
+        },
+        evictLocation: async () => undefined,
+        reconcileSearchPage: id => engine.reconcilePage(id),
+        removeSearchPage: id => engine.removePage(id)
+      })
+      const immutable = await db('pageMutationOutbox').where({ pageId, effectKind: 'search' }).first('id', 'payload', 'payloadSha256')
+      await lifecycle.runOnce()
+      await lifecycle.runOnce()
+      expect(await observer('pagesVector').where({ pageId })).toEqual([])
+      vi.setSystemTime(new Date('2100-01-01T00:00:02.000Z'))
+      await lifecycle.runOnce()
+      expect(await observer('pagesVector').where({ pageId }).select('sourceRevision')).toEqual([{ sourceRevision: '9' }])
+      const body = await observer.raw<{ rows: Array<{ matches: boolean }> }>(
+        `SELECT tokens @@ plainto_tsquery('simple', 'schedulednativetoken') AS matches FROM "pagesVector" WHERE "pageId" = ?`,
+        [pageId]
+      )
+      expect(body.rows).toEqual([{ matches: true }])
+
+      vi.setSystemTime(new Date('2100-01-01T00:00:04.000Z'))
+      await lifecycle.runOnce()
+      expect(await observer('pagesVector').where({ pageId }).select('sourceRevision')).toEqual([{ sourceRevision: '9' }])
+      // An invalid bound must not raise a PostgreSQL cast error during due discovery.
+      await db('pages').where({ id: pageId }).update({ publishStartDate: '2100-02-29T00:00:00.000Z' })
+      vi.setSystemTime(new Date('2100-01-01T00:00:04.001Z'))
+      await lifecycle.runOnce()
+      expect(await observer('pagesVector').where({ pageId })).toEqual([])
+      expect(await observer('pagesWords').where({ pageId })).toEqual([])
+      expect(await observer('pageMutationOutbox').where({ pageId, effectKind: 'search' }).first('id', 'payload', 'payloadSha256')).toEqual(immutable)
+    } finally {
+      vi.setSystemTime()
+      await db('pageMutationOutbox').where({ pageId }).delete()
+      await db('pages').where({ id: pageId }).delete()
+      await engine.removePage(pageId)
     }
   })
 })

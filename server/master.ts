@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import compression from 'compression'
@@ -217,6 +218,7 @@ const snapshotSigningSecret = (required: boolean): Uint8Array => {
 }
 
 export default async function startMaster(wiki: HttpTransportRuntime): Promise<true> {
+  const workerIdentity = `${process.pid}-${randomUUID()}`
   configureTransportRuntime(wiki)
   wiki.lang = localization.init()
   wiki.auth = authCore.init()
@@ -390,7 +392,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       router,
       authorizeMedia: ownerId =>
         assertWikiAgentMediaAccess(ownerId, { enabled: wiki.config.agents.enabled, providerEnabled: wiki.config.agents.provider.enabled }),
-      workerId: `http-${process.pid}`,
+      workerId: `http-${workerIdentity}`,
       globalConcurrency: agentLimits.provider.globalConcurrency,
       perUserConcurrency: agentLimits.provider.perUserConcurrency,
       utilityModel,
@@ -400,10 +402,10 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     })
     wiki.agentRuntime = agentRuntime
   }
-  const knowledgeLifecycle = new PageKnowledgeLifecycle(wiki.models.knex, `knowledge-${process.pid}`, utilityModel, {
+  const knowledgeLifecycle = new PageKnowledgeLifecycle(wiki.models.knex, `knowledge-${workerIdentity}`, utilityModel, {
     utilityConcurrency: agentLimits.provider.globalConcurrency
   })
-  const projectionLifecycle = new PageProjectionLifecycle(wiki.models.knex, `page-projection-${process.pid}`, {
+  const projectionLifecycle = new PageProjectionLifecycle(wiki.models.knex, `page-projection-${workerIdentity}`, {
     async renderPage(pageId, fence): Promise<void> {
       const page = await wiki.models.pages.getPageFromDb(pageId)
       if (!page) return

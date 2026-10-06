@@ -152,6 +152,31 @@ The current-attempt correction phase is derived from persisted `model.turn` and 
 
 API-key create/revoke and search-engine save responses preserve valid HTTP error statuses, but expose detailed validation messages only from application-owned 4xx errors. Backend exceptions, including statusful 4xx and all 5xx errors, receive fixed route-specific messages. Search-index rebuild failures return a fixed 500 message. Authentication responses retain genuine application validation and legacy login messages; unexpected 4xx and all 5xx failures use a fixed authentication-failure message. Controller tests exercise both backend-secret redaction and useful public validation errors.
 
+### Background workers on a small VPS
+
+Start with one Wiki application replica on a 2-vCPU/4-GB host. Keep foreground requests, PostgreSQL and the operating system in the resource budget; multiplying application replicas also multiplies timers, connection pools and process-local audits. Do not disable integrity, publication, recovery or accounting checks to reduce idle CPU.
+
+| Lane | Cadence and resource boundary |
+| --- | --- |
+| Canonical page effects | One-second polling remains responsive. Empty claims use an uncached candidate probe; available work and expired leases are rechecked under the existing authoritative locks. |
+| Link/search integrity | Finite high-water pass: at most 25 page checks and a 100-ms soft admission budget per tick across graph, current-search and absent-search phases; ten-minute cooldown after completion. Cooldown is process-local, so restarting a replica can start this audit again. |
+| Scheduled publication | Startup catch-up and a scalar next start/end deadline; bounded mismatch repair on due ticks and after processed mutations. At most ten candidates and a separate 100-ms soft budget per tick. Ends are inclusive; expiry begins after the end instant. Large simultaneous cohorts drain across ticks, not in one unbounded sweep. |
+| Knowledge integrity | Finite 25-page batches with ten-minute post-completion cooldown, coordinated by the existing durable maintenance row. Canonical queue claims continue during cooldown. |
+| Utility/terminal rediscovery | Terminal-failure recovery runs every 30 seconds, continuing next tick when a full batch is rearmed. Utility recovery examines at most 50 candidates and requeues at most 25 per tick through a finite pass, then cools for 30 seconds. A changed utility profile version starts a fresh pass immediately. Canonical mutation intents bypass this rediscovery delay. |
+| Agent dispatch | Existing configured polling interval, no idle backoff. Empty/ineligible-only polls avoid admission locks and active-lease aggregation. Ready work retains authoritative concurrency, lease and positive-settlement fences. Master dispatch remains locally single-flight; configured concurrency is a ceiling, not guaranteed local utilization. |
+| Agent retention/recovery | Existing ten-minute, non-overlapping maintenance with bounded batches. Active lease heartbeats and cancellation are unchanged. |
+| Durable jobs | Existing ten-second scheduler tick; at most two handlers in flight from that tick. Daily housekeeping enqueue is cached only after both enqueues succeed; durable deduplication remains authoritative. Thirty-day terminal-job cleanup deletes at most 500 eligible rows per handler. Logo cleanup processes at most 50 retired revisions plus an expired failed desired revision while preserving reachable objects. Both atomically enqueue deduplicated continuations when needed. |
+| Forked scheduler jobs | At most two child processes per scheduler, FIFO admission. Inline jobs remain independent. Cancellation removes waiting jobs; capacity is released only after confirmed child termination and pipe close. |
+| Upload cleanup | Existing fifteen-minute cadence and ctime-based, minute-granularity expiry; streamed directory iteration with sequential stat/unlink rather than a directory-sized promise fan-out. |
+
+The 100-ms limits stop admission of the next maintenance candidate; they do not cancel an already-running SQL statement or rewrite. Cooldowns delay repair of silently corrupted derived state, not authoritative mutation admission or live authorization. Outbox payload/hash/source validation, render certificates, row locks and lease tokens remain required. Bootstrap worker identities include a fresh UUID, so identical PIDs in different containers cannot impersonate the same knowledge-maintenance lease owner.
+
+For provider-enabled installations, a global concurrency ceiling of two and per-user ceiling of one are conservative starting points, not automatic changes to existing operator settings. Utility concurrency uses the selected provider ceiling. Review corpus backfill cost separately: bounded concurrency is not a total provider-spend quota. Isolated browser/PDF execution and storage/rebuild jobs consume additional resources; do not assume the whole feature set fits merely because the Wiki process is healthy.
+
+Configure Knex options under the existing top-level `pool`, not `db.pool`. Account for the application pool, **each** forked worker's pool, optional HA notification connection, PostgreSQL role limits and administrative headroom. A low `min` reduces idle retained connections; a lower `max` can also cause foreground waits or nested-transaction starvation. Preserve explicit settings and tune from observed pool waits and aggregate active connections, rather than imposing an unqualified universal pool size. No pool, provider, database or container limit is changed by this scheduling refinement.
+
+Measure warmed idle CPU/RSS and SQL/transaction rates separately from startup, rebuilds and active work. Track oldest eligible queue age, failed/expired leases, finite-audit completion, PostgreSQL waits and event-loop/HTTP latency under a real mutation or scheduled publication boundary. A stable repair count alone is not proof of idle scheduling, and a health response is not behavioral proof. Use container CPU/memory limits with headroom for the host and database; qualify the intended corpus and enabled workload before raising concurrency.
+
 ### Development Sprint local-tailnet deployment and rollback
 
 Use this path for routine code-only feature and fix deployment to the maintained local tailnet:

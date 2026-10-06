@@ -3,7 +3,8 @@ import { createStorageActionHandler } from './storage-action.ts'
 import type { DurableJobIdentity } from '../../shared/durable-job-catalog.ts'
 import type { Knex } from 'knex'
 import type { ContentExtensionRerenderContext } from '../content-extensions/rerender.ts'
-import { type DurableJobHandler } from '../core/durable-jobs.ts'
+import { DurableJobStore } from '../core/durable-jobs.ts'
+import type { DurableJobHandler } from '../core/durable-jobs.ts'
 import {
   decryptWebhookSecret,
   isCommentWebhookPageEligible,
@@ -22,23 +23,53 @@ import { cleanupSiteLogoRevisions, createSiteLogoProcessHandler } from './site-l
 import { createAssetRelocationHandler } from './asset-relocation.ts'
 
 const cleanupRetentionMs = 30 * 24 * 60 * 60 * 1_000
+const cleanupBatchSize = 500
 
-export const cleanupDurableJobs: DurableJobHandler = async (_job, { knex, signal }) => {
+export const cleanupDurableJobs: DurableJobHandler = async (job, { knex, signal }) => {
   const before = new Date(Date.now() - cleanupRetentionMs)
   signal.throwIfAborted()
-  const query = knex('durableJobs').whereIn('state', ['succeeded', 'failed', 'cancelled']).where('completedAt', '<', before)
-  if (await knex.schema.hasTable('assetRelocationEffects')) {
-    query.andWhere(relocationJobs => {
-      relocationJobs.whereNot('durableJobs.type', 'asset-relocation').orWhereExists(successfulEffect => {
-        successfulEffect
-          .select(knex.raw('1'))
-          .from('assetRelocationEffects as effect')
-          .whereRaw('?? = ??', ['effect.jobId', 'durableJobs.id'])
-          .where('effect.status', 'succeeded')
+  await knex.transaction(async transaction => {
+    const query = transaction('durableJobs').whereIn('state', ['succeeded', 'failed', 'cancelled']).where('completedAt', '<', before)
+    if (await transaction.schema.hasTable('assetRelocationEffects')) {
+      query.andWhere(relocationJobs => {
+        relocationJobs.whereNot('durableJobs.type', 'asset-relocation').orWhereExists(successfulEffect => {
+          successfulEffect
+            .select(transaction.raw('1'))
+            .from('assetRelocationEffects as effect')
+            .whereRaw('?? = ??', ['effect.jobId', 'durableJobs.id'])
+            .where('effect.status', 'succeeded')
+        })
       })
-    })
-  }
-  await query.delete()
+    }
+    const candidates = await query
+      .clone()
+      .select<{ id: string }[]>('id')
+      .orderBy('completedAt')
+      .orderBy('id')
+      .limit(cleanupBatchSize + 1)
+    signal.throwIfAborted()
+    if (candidates.length === 0) return
+    const hasMore = candidates.length > cleanupBatchSize
+    if (hasMore) candidates.pop()
+    await query
+      .clone()
+      .whereIn(
+        'id',
+        candidates.map(candidate => candidate.id)
+      )
+      .delete()
+    if (hasMore) {
+      // Keep deletion and its retry-deduplicated continuation atomic so failures cannot strand the backlog.
+      await new DurableJobStore(transaction).enqueue({
+        type: job.type,
+        version: job.version,
+        payload: {},
+        maxAttempts: job.maxAttempts,
+        deduplicationKey: `${job.type}:continuation:${job.id}`
+      })
+    }
+    signal.throwIfAborted()
+  })
 }
 
 const hasLiteralCommentSubscription = (value: unknown, eventType: string): boolean => {
@@ -82,17 +113,23 @@ const isCommentWebhookEligible = async (
   const commentId = Reflect.get(payload, 'commentId')
   const action = Reflect.get(payload, 'action')
   if (
-    typeof pageId !== 'number' || !Number.isSafeInteger(pageId) || pageId < 1 ||
-    typeof commentId !== 'number' || !Number.isSafeInteger(commentId) || commentId < 1 ||
+    typeof pageId !== 'number' ||
+    !Number.isSafeInteger(pageId) ||
+    pageId < 1 ||
+    typeof commentId !== 'number' ||
+    !Number.isSafeInteger(commentId) ||
+    commentId < 1 ||
     (action !== 'created' && action !== 'updated' && action !== 'deleted')
-  ) return false
+  )
+    return false
 
   const currentWebhook = await knex('webhooks').where('id', webhookId).first('events', 'isEnabled')
   if (
     !currentWebhook ||
     !(currentWebhook.isEnabled === true || currentWebhook.isEnabled === 1) ||
     !hasLiteralCommentSubscription(currentWebhook.events, eventType)
-  ) return false
+  )
+    return false
 
   const activeProviders = await knex<{ key: string }>('commentProviders').where('isEnabled', true).select('key')
   if (activeProviders.length !== 1 || activeProviders[0]?.key !== 'default') return false
@@ -113,17 +150,11 @@ const isCommentWebhookEligible = async (
   if (!pageContext) return false
 
   const guest = await wiki.models.users.getGuestUser()
-  if (
-    !guest ||
-    Reflect.get(guest, 'id') !== 2 ||
-    !(Reflect.get(guest, 'isActive') === true || Reflect.get(guest, 'isActive') === 1)
-  ) return false
+  if (!guest || Reflect.get(guest, 'id') !== 2 || !(Reflect.get(guest, 'isActive') === true || Reflect.get(guest, 'isActive') === 1)) return false
   Reflect.set(guest, 'ownershipUserId', null)
   const authority: PageRuleAuthority = await wiki.auth.loadPageRuleAuthority(guest)
-  if (
-    !wiki.auth.checkPageAccess(guest, ['read:pages'], pageContext, authority) ||
-    !wiki.auth.checkPageAccess(guest, ['read:comments'], pageContext, authority)
-  ) return false
+  if (!wiki.auth.checkPageAccess(guest, ['read:pages'], pageContext, authority) || !wiki.auth.checkPageAccess(guest, ['read:comments'], pageContext, authority))
+    return false
   if (eventType !== 'comment.deleted') {
     const visibleComment = await knex('comments').where({ id: commentId, pageId }).where('isHidden', false).first('id')
     if (!visibleComment) return false
@@ -170,9 +201,8 @@ export const createWebhookDeliveryHandler =
       throw new TypeError(`Outbox event ${eventId} payload must be an object`)
     }
     const eventPayload = payload as Record<string, unknown>
-    const deliveryPayload: Record<string, unknown> = commentEventType !== undefined
-      ? projectCommentWebhookPayload(commentEventType, eventPayload)
-      : eventPayload
+    const deliveryPayload: Record<string, unknown> =
+      commentEventType !== undefined ? projectCommentWebhookPayload(commentEventType, eventPayload) : eventPayload
 
     try {
       const target = await resolveWebhookUrl(String(webhook.url))
@@ -186,8 +216,7 @@ export const createWebhookDeliveryHandler =
         payload: deliveryPayload,
         ...(commentEventType !== undefined
           ? {
-              commentEligibility: () =>
-                isCommentWebhookEligible(knex, wiki, webhookId, commentEventType, deliveryPayload, signal)
+              commentEligibility: () => isCommentWebhookEligible(knex, wiki, webhookId, commentEventType, deliveryPayload, signal)
             }
           : {}),
         secret: decryptWebhookSecret(String(webhook.secretCiphertext), sessionSecret),

@@ -687,6 +687,30 @@ describe('managed site logo v7 durable publication', () => {
 })
 
 describe('managed site logo v7 cleanup', () => {
+  it('drains retired revision backlogs in bounded continuations without deleting reachable objects', async () => {
+    const old = new Date(Date.now() - 38 * 24 * 60 * 60 * 1_000)
+    const retiredHash = await insertSource()
+    for (let index = 0; index < 105; index += 1) {
+      await insertRevision({ hash: retiredHash, status: 'ready', completedAt: old, retiredAt: old })
+    }
+    const activeHash = await insertSource(Buffer.concat([sourceBytes, Buffer.from('retained-active')]))
+    const activeId = await insertRevision({ hash: activeHash, status: 'ready', completedAt: old, retiredAt: old })
+    await knex('siteLogoState').where({ id: 1 }).update({ activeRevisionId: activeId, desiredRevisionId: activeId })
+    const store = new DurableJobStore(knex)
+    await store.enqueue({ type: 'cleanup-site-logo', version: 1, payload: {}, maxAttempts: 3 })
+    for (const remaining of [55, 5, 0]) {
+      const [job] = await store.claim({ workerId: 'bounded-logo-cleanup', limit: 1 })
+      if (!job) throw new Error('Cleanup continuation was not claimed')
+      await cleanupSiteLogoRevisions(job, { knex, signal: new AbortController().signal })
+      expect(await knex('siteLogoRevisions').where({ sourceHash: retiredHash })).toHaveLength(remaining)
+      expect(await knex('siteLogoObjects').where({ kind: 'source', sha256: retiredHash })).toHaveLength(remaining > 0 ? 1 : 0)
+      expect(await knex('siteLogoRevisions').where({ id: activeId })).toHaveLength(1)
+      expect(await knex('siteLogoObjects').where({ kind: 'source', sha256: activeHash })).toHaveLength(1)
+      expect(await store.complete(job)).toBe(true)
+    }
+    expect(await store.claim({ workerId: 'bounded-logo-cleanup', limit: 1 })).toEqual([])
+  })
+
   it('deletes every unreachable v7 role while retaining active references', async () => {
     const old = new Date(Date.now() - 38 * 24 * 60 * 60 * 1_000)
     const active = artifacts('active-cleanup')
