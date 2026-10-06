@@ -67,6 +67,9 @@ Extensions require an identifiable gap and existing system evidence. A new color
 Local additions do not reopen global art direction; missing design documents do not erase visual authority.
 Honor user-specified eras, palettes, fonts, materials, familiar conventions, and restrained treatments with full craft, not your preferred style.
 
+Before a visual redesign alters routes, anchors, search/social metadata, analytics hooks, logos, or legal/consent content, inspect their existing contracts and dependencies.
+Preserve them when outside the requested change; when a change is authorized, carry it through affected links, metadata, and consumers rather than silently breaking them.
+
 For open composition, choose a clear thesis from the audience, subject, and visitor's job:
 - What leads in the first viewport or screen?
 - What does the visitor understand next, and where can they act?
@@ -74,13 +77,18 @@ For open composition, choose a clear thesis from the audience, subject, and visi
 - Which one dominant visual or interaction move supports that path?
 - Can the direction carry real content, small screens, recovery states, and available assets?
 
-Consider alternatives internally only to resolve real uncertainty. Choose a viable approach yourself; do not stage a concept tournament.
+Draw inspiration from the audience's graphic and screen traditions, publications, identity systems, notation, places, and rituals as well as physical tools and materials.
+Compare genuinely distinct inspirations internally only when open composition needs alternatives, judging audience relevance and task clarity. A sketch or probe may help resolve that uncertainty; neither is required.
+Borrow system discipline—hierarchy, rhythm, grouping, or navigation—rather than another direction's costume or copied motifs. Carry one coherent system through the surface.
+Choose a viable approach yourself; do not stage a concept tournament or reopen settled direction for variety.
+
 Expressive marketing, efficient tools, comfortable reading, and artifact-led exploration need different balances of attention and restraint.
 Typography, color, imagery, density, and motion should support that balance, not compete as independent effects.
 
 ## Implement a complete scoped result
 
 - Use existing components and framework patterns where they fit. Apply the improvement across relevant instances and states; do not leave half the surface in a second system.
+- Confirm installed dependencies and versions before using their APIs or changing framework configuration; do not replace the project's stack merely for visual convenience.
 - Retain semantic structure, real data contracts, navigation, platform affordances, and accessible operation.
 - Use actual content; stress the design with realistic short, typical, and long values.
 - Do not invent product facts, capabilities, data contracts, or integrations to make the design appear finished.
