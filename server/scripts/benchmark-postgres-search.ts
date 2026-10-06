@@ -1,9 +1,4 @@
-import {
-  evaluateSearchRelevance,
-  SEARCH_AUGMENTED_RELEVANCE_CASES,
-  SEARCH_RELEVANCE_ACCEPTANCE_CASES,
-  SEARCH_RELEVANCE_CASES
-} from './search-relevance.ts'
+import { evaluateSearchRelevance, SEARCH_AUGMENTED_RELEVANCE_CASES, SEARCH_RELEVANCE_ACCEPTANCE_CASES, SEARCH_RELEVANCE_CASES } from './search-relevance.ts'
 import type { SearchRelevanceEvaluation } from './search-relevance.ts'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
@@ -415,7 +410,8 @@ const positiveNumber = (name: string, fallback: number): number => {
 
 const recreateSourceSchema = async (knex: Knex): Promise<void> => {
   await knex.raw(`
-    DROP TABLE IF EXISTS "pageKnowledgeProjections", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages CASCADE;
+    DROP TABLE IF EXISTS "searchEngines", "pageKnowledgeProjections", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages CASCADE;
+    CREATE TABLE "searchEngines" (key text PRIMARY KEY, "isEnabled" boolean NOT NULL, config jsonb NOT NULL);
     CREATE TABLE pages (
       id integer PRIMARY KEY,
       "sourceRevision" bigint NOT NULL,
@@ -465,6 +461,11 @@ const recreateSourceSchema = async (knex: Knex): Promise<void> => {
       "pageId" integer PRIMARY KEY REFERENCES pages(id) ON DELETE CASCADE
     );
   `)
+  await knex('searchEngines').insert({
+    key: 'postgres',
+    isEnabled: true,
+    config: JSON.stringify({ dictLanguage: POSTGRES_SEARCH_DICTIONARY })
+  })
 }
 
 const prepareCorpus = async (knex: Knex): Promise<void> => {
@@ -902,7 +903,7 @@ export const runPostgresSearchBenchmark = async (): Promise<void> => {
       corpus:
         'The same seeded 20,000-page, 11-query PostgreSQL relevance corpus as the lexical baseline, with a current revisioned pageKnowledgeProjections fixture for page 42.',
       provenance:
-        'The benchmark adapter unions PostgreSQL engine and PageKnowledgeRepository candidates, including deterministic title acronym AFR and fixture-generated concept.searchTerms paraphrase. This is deterministic fixture evidence, not live utility-model output; server/test/search-foundation.postgres.test.ts provides separate actual operations.search PostgreSQL proof.',
+        'The benchmark adapter unions PostgreSQL engine and PageKnowledgeRepository candidates, including deterministic title acronym AFR and fixture-generated concept.searchTerms paraphrase. This is deterministic fixture evidence, not live utility-model output; server/test/search-foundation.postgres.test.ts provides separate actual operations.pages.search PostgreSQL proof.',
       cases: SEARCH_AUGMENTED_RELEVANCE_CASES
     })
     const relevance = { lexicalBaseline, lexicalAcceptance, augmentedFixture }

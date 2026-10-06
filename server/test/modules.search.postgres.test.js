@@ -33,7 +33,7 @@ describe('PostgreSQL web-search syntax', () => {
     for (const query of ['"Amber Falcon"', 'Amber OR Falcon', 'Amber -Marmot', 'Amber - Falcon', '-(falcon)', '-!falcon', '---falcon']) {
       expect(isStructuredSearchQuery(query)).toBe(true)
     }
-    for (const query of ['Amber- Falcon', 'amber-or-falcon', 'part-number-42']) {
+    for (const query of ['Amber- Falcon', 'amber-or-falcon', 'part-number-42', 'manuals/or/falcn']) {
       expect(isStructuredSearchQuery(query)).toBe(false)
     }
   })
@@ -317,6 +317,114 @@ if (connection) {
       expect(pinned.totalHits).toBe(1)
     })
 
+    it.each([
+      ['priority', 'falcon', 'revision', { sourceRevision: 2, renderedSourceRevision: 2 }],
+      ['priority', 'falcon', 'route', { path: 'runbooks/relocated' }],
+      ['lexical', '"falcon"', 'revision', { sourceRevision: 2, renderedSourceRevision: 2 }],
+      ['lexical', '"falcon"', 'route', { path: 'runbooks/relocated' }],
+      ['fuzzy', 'falcn', 'revision', { sourceRevision: 2, renderedSourceRevision: 2 }],
+      ['fuzzy', 'falcn', 'route', { path: 'runbooks/relocated' }]
+    ])('admits the current competitor before the %s cap for %s after an authorized candidate changes %s', async (_branch, query, _change, mutation) => {
+      await db('pages').insert([
+        page(42, { path: 'runbooks/falcon', title: 'Falcon' }),
+        page(43, { path: 'runbooks/kestrel', title: 'Falcon Runbook' })
+      ])
+      await plugin.rebuild()
+      // Authorization captured both revision-1 pages before the canonical mutation.
+      const allowed = await db('pages').orderBy('id').select('id', 'sourceRevision')
+      const options = {
+        pageIds: allowed.map(entry => entry.id),
+        pageRevisions: Object.fromEntries(allowed.map(entry => [entry.id, entry.sourceRevision])),
+        limit: 1
+      }
+      expect((await plugin.query(query, options)).results.map(result => result.id)).toEqual([42])
+      expect((await plugin.query(query, { ...options, pageIds: [43] })).results.map(result => result.id)).toEqual([43])
+      await db('pages').where({ id: 42 }).update(mutation)
+      expect(await db('pagesVector').where({ pageId: 42 }).select('sourceRevision', 'path')).toEqual([
+        { sourceRevision: '1', path: 'runbooks/falcon' }
+      ])
+
+      const current = await plugin.query(query, options)
+      expect(current.results).toEqual([expect.objectContaining({ id: 43, sourceRevision: '1', path: 'runbooks/kestrel' })])
+      expect(current.totalHits).toBe(1)
+    })
+
+    it('uses trigram fallback for an ordinary path containing an embedded slash-delimited or', async () => {
+      await db('pages').insert(page(42, {
+        path: 'manuals/or/falcon',
+        title: 'Maintenance Reference',
+        description: '',
+        content: 'neutral source',
+        render: '<p>neutral body</p>'
+      }))
+      await plugin.rebuild()
+      const query = 'manuals/or/falcn'
+      // Establish actual PostgreSQL fallback evidence, rather than relying on title/body recall.
+      const evidence = await db.raw(`
+        SELECT tokens @@ websearch_to_tsquery('english', ?) AS lexical,
+          facets ILIKE ? AS literal,
+          ? <% facets AS fuzzy
+        FROM "pagesVector" WHERE "pageId" = 42
+      `, [query, `%${query}%`, query])
+      expect(evidence.rows[0]).toEqual({ lexical: false, literal: false, fuzzy: true })
+      expect((await plugin.query(query, { limit: 1 })).results).toEqual([
+        expect.objectContaining({ id: 42, path: 'manuals/or/falcon' })
+      ])
+    })
+
+    it.each(['query', 'inspect', 'init', 'rebuild'])('excludes malformed persisted publication boundaries without poisoning healthy retrieval during %s', async operation => {
+      await db('pages').insert([
+        page(42, { title: 'Falcon' }),
+        page(43, { title: 'Healthy Falcon' }),
+        page(44, { title: 'Falcon' }),
+        page(45, { title: 'Falcon' }),
+        page(46, { title: 'Falcon' })
+      ])
+      await plugin.rebuild()
+      for (const [id, boundary, value] of [
+        [42, 'publishStartDate', 'not-a-date'],
+        [44, 'publishEndDate', 'not-a-date'],
+        [45, 'publishStartDate', '2020-02-30T00:00:00.000Z'],
+        [46, 'publishEndDate', '2020-02-30T00:00:00.000Z']
+      ]) {
+        await db('pages').where({ id }).update({ [boundary]: value })
+      }
+      const canonical = await db('pages').orderBy('id').select('id', 'publishStartDate', 'publishEndDate')
+      if (operation === 'inspect') {
+        expect(await plugin.inspectIndex()).toMatchObject({
+          publicPages: 1, indexedPages: 5, missingPages: 0, stalePages: 0, excludedEntries: 4
+        })
+      } else if (operation !== 'query') {
+        await plugin[operation]()
+        expect(await db('pagesVector').orderBy('pageId').select('pageId')).toEqual([{ pageId: 43 }])
+        expect(await plugin.inspectIndex()).toMatchObject({
+          publicPages: 1, indexedPages: 1, missingPages: 0, stalePages: 0, excludedEntries: 0
+        })
+      }
+
+      expect((await plugin.query('falcon', { limit: 1 })).results).toEqual([
+        expect.objectContaining({ id: 43, title: 'Healthy Falcon' })
+      ])
+      expect((await plugin.query('"falcon"', { pageIds: [42, 44, 45, 46] })).results).toEqual([])
+      expect(await db('pages').orderBy('id').select('id', 'publishStartDate', 'publishEndDate')).toEqual(canonical)
+    })
+
+    it('does not label a title-and-tag conjunction as content while retaining genuine body evidence', async () => {
+      await db('pages').insert([
+        page(42, { path: 'runbooks/metadata', title: 'Amber', render: '<p>unrelated maintenance material</p>' }),
+        page(43, { path: 'runbooks/body', title: 'Maintenance Reference', render: '<p>amber falcon</p>' })
+      ])
+      await db('tags').insert({ id: 1, tag: 'falcon', title: 'Falcon' })
+      await db('pageTags').insert({ pageId: 42, tagId: 1 })
+      await plugin.rebuild()
+      const query = '"amber" "falcon"'
+      const metadata = await plugin.query(query, { pageIds: [42] })
+      expect(metadata.results).toEqual([expect.objectContaining({ id: 42 })])
+      expect(metadata.results[0].matchedFields).not.toContain('content')
+      const body = await plugin.query(query, { pageIds: [43] })
+      expect(body.results).toEqual([expect.objectContaining({ id: 43, matchedFields: ['content'] })])
+    })
+
     it('immediately excludes canonical opt-out while its indexed row still exists and preserves its competitor', async () => {
       await db('pages').insert([
         page(42, { path: 'runbooks/opted-out', title: 'Falcon' }),
@@ -427,6 +535,55 @@ if (connection) {
       await plugin.rebuild()
       expect(await db('pagesSearchMetadata').select('dictionary')).toEqual([{ dictionary: 'simple' }])
       expect((await plugin.query('"run"', { pageIds: [42] })).results).toEqual([])
+    })
+
+    it.each([
+      ['missing singleton', async () => db('pagesSearchMetadata').where({ contractId: 1 }).delete()],
+      ['missing table', async () => db.schema.dropTable('pagesSearchMetadata')],
+      ['invalid dictionary', async () => db('pagesSearchMetadata').where({ contractId: 1 }).update({ dictionary: 'nonexistent_search_dictionary' })]
+    ])('reconstructs %s from the saved provider and current canonical pages', async (_state, damageMetadata) => {
+      await db('pages').insert(page(42, { title: 'Runner Manual', render: '<p>running obsoletebodytoken</p>' }))
+      await plugin.rebuild()
+      expect((await plugin.query('"run"', { pageIds: [42] })).results.map(result => result.id)).toEqual([42])
+
+      // Another worker saved a new provider dictionary; this worker still has its English runtime config.
+      await db('searchEngines').where({ key: 'postgres' }).update({ config: JSON.stringify({ dictLanguage: 'simple' }) })
+      await db('pages').where({ id: 42 }).update({
+        sourceRevision: 2,
+        renderedSourceRevision: 2,
+        render: '<p>running restoredbodytoken</p>'
+      })
+      expect(plugin.config.dictLanguage).toBe('english')
+      const before = await snapshot()
+      await damageMetadata()
+
+      await plugin.rebuild()
+
+      expect(await db('pagesSearchMetadata').select('contractId', 'schemaVersion', 'dictionary')).toEqual([
+        { contractId: 1, schemaVersion: 2, dictionary: 'simple' }
+      ])
+      expect(await plugin.inspectIndex()).toMatchObject({
+        publicPages: 1,
+        indexedPages: 1,
+        missingPages: 0,
+        stalePages: 0,
+        excludedEntries: 0,
+        configuredDictionary: 'simple',
+        indexedDictionary: 'simple',
+        schemaVersion: 2,
+        expectedSchemaVersion: 2
+      })
+      for (const token of ['running', 'restoredbodytoken']) {
+        expect((await plugin.query(`"${token}"`, { pageIds: [42] })).results).toEqual([
+          expect.objectContaining({ id: 42, sourceRevision: '2', matchedFields: ['content'] })
+        ])
+      }
+      expect((await plugin.query('"run"', { pageIds: [42] })).results).toEqual([])
+      expect((await plugin.query('"obsoletebodytoken"', { pageIds: [42] })).results).toEqual([])
+      const after = await snapshot()
+      for (const table of ['searchEngines', 'pages', 'tags', 'pageTags', 'pageLinks', 'pageAccessPasswords', 'pageMutationOutbox']) {
+        expect(after[table]).toEqual(before[table])
+      }
     })
 
     it('waits during startup while an explicit overlapping rebuild fails without changing rows', async () => {

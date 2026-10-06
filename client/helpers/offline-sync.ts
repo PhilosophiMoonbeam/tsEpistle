@@ -2,6 +2,7 @@ import { fetchOfflinePageSnapshot, fetchOfflinePrivatePageSnapshot, fetchPagesBy
 import { OfflineGenerationFencedError, OfflinePolicyRevisionFencedError, OfflineStorageError, type OfflineStorage } from './offline-storage.ts'
 import { encryptOfflinePrivateRecord, generateOfflineReadingPairId, type OfflinePrivateRecordSelectors } from './offline-crypto.ts'
 import { isCurrentOfflineReadingHandle, type OfflineReadingHandleV1 } from './offline-session.ts'
+import { normalizeOfflineSearchText } from './offline-search.ts'
 import {
   offlineIneligibleReason,
   OfflinePrivateSearchDocumentV1Schema,
@@ -162,7 +163,7 @@ const privateSearchDocument = (siteId: string, snapshot: OfflinePageSnapshotV1):
     canonicalPath: snapshot.canonicalPath,
     title: snapshot.title,
     description: snapshot.description,
-    searchText: snapshot.searchText.normalize('NFKC').toLocaleLowerCase().trim().replace(/\s+/gu, ' '),
+    searchText: normalizeOfflineSearchText(snapshot.searchText),
     capturedAt: snapshot.capturedAt,
     sourceRevision: snapshot.sourceRevision,
     byteSize: 0

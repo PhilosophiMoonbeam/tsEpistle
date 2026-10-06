@@ -6,6 +6,7 @@ import { BlockList, type LookupFunction } from 'node:net'
 
 import { COMMENT_WEBHOOK_ACTIONS, isCommentWebhookEventName } from '../../shared/webhook-events.ts'
 import type { CommentWebhookAction } from '../../shared/webhook-events.ts'
+import { publicationWindowOpen } from '../../shared/publication-window.ts'
 const blockedAddresses = new BlockList()
 for (const [network, prefix] of [
   ['0.0.0.0', 8],
@@ -40,7 +41,6 @@ export interface ResolvedWebhookUrl {
   family: 4 | 6
 }
 
-
 export interface CommentWebhookPage {
   visibility?: unknown
   isPublished?: unknown
@@ -49,24 +49,15 @@ export interface CommentWebhookPage {
   publishEndDate?: unknown
 }
 
-const publicationBoundary = (value: unknown): number | null => {
-  if (value === undefined || value === null || value === '') return null
-  const timestamp = value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(String(value))
-  return Number.isFinite(timestamp) ? timestamp : Number.NaN
-}
-
-export const isCommentWebhookPageEligible = (
-  page: CommentWebhookPage,
-  protectedPage: boolean,
-  now = new Date()
-): boolean => {
-  if (page.visibility !== 'public' || (page.isPublished !== true && page.isPublished !== 1) ||
-    (page.isSearchable !== true && page.isSearchable !== 1) || protectedPage) return false
-  const start = publicationBoundary(page.publishStartDate)
-  const end = publicationBoundary(page.publishEndDate)
-  const timestamp = now.getTime()
-  return !Number.isNaN(start) && !Number.isNaN(end) &&
-    (start === null || start <= timestamp) && (end === null || end >= timestamp)
+export const isCommentWebhookPageEligible = (page: CommentWebhookPage, protectedPage: boolean, now = new Date()): boolean => {
+  if (
+    page.visibility !== 'public' ||
+    (page.isPublished !== true && page.isPublished !== 1) ||
+    (page.isSearchable !== true && page.isSearchable !== 1) ||
+    protectedPage
+  )
+    return false
+  return publicationWindowOpen(page, now.getTime())
 }
 
 export interface CommentWebhookPayload extends Record<string, unknown> {
@@ -75,14 +66,16 @@ export interface CommentWebhookPayload extends Record<string, unknown> {
   action: CommentWebhookAction
 }
 
-export const projectCommentWebhookPayload = (
-  eventType: `comment.${CommentWebhookAction}`,
-  payload: Record<string, unknown>
-): CommentWebhookPayload => {
+export const projectCommentWebhookPayload = (eventType: `comment.${CommentWebhookAction}`, payload: Record<string, unknown>): CommentWebhookPayload => {
   const action = eventType.slice('comment.'.length) as CommentWebhookAction
-  if (!COMMENT_WEBHOOK_ACTIONS.includes(action) || payload.action !== action ||
-    !Number.isSafeInteger(payload.pageId) || Number(payload.pageId) < 1 ||
-    !Number.isSafeInteger(payload.commentId) || Number(payload.commentId) < 1) {
+  if (
+    !COMMENT_WEBHOOK_ACTIONS.includes(action) ||
+    payload.action !== action ||
+    !Number.isSafeInteger(payload.pageId) ||
+    Number(payload.pageId) < 1 ||
+    !Number.isSafeInteger(payload.commentId) ||
+    Number(payload.commentId) < 1
+  ) {
     throw new TypeError('Comment webhook event payload is invalid')
   }
   return { pageId: Number(payload.pageId), commentId: Number(payload.commentId), action }
@@ -176,9 +169,7 @@ export const sendSignedWebhook = async (input: WebhookDeliveryRequest): Promise<
   input.signal?.throwIfAborted()
   const timestamp = (input.timestamp ?? new Date()).toISOString()
   const commentEventType = isCommentWebhookEventName(input.eventType) ? input.eventType : undefined
-  const payload = commentEventType !== undefined
-    ? projectCommentWebhookPayload(commentEventType, input.payload)
-    : input.payload
+  const payload = commentEventType !== undefined ? projectCommentWebhookPayload(commentEventType, input.payload) : input.payload
   if (commentEventType !== undefined) {
     if (!input.commentEligibility) throw new TypeError('Comment webhook delivery requires a current visibility check')
     const eligible = await input.commentEligibility()

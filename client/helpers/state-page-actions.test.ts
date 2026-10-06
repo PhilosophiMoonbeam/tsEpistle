@@ -9,6 +9,25 @@ describe('searchQueryFromPath', () => {
     expect(searchQueryFromPath('/release-notes.html', ['en'])).toBe('release notes')
   })
 
+  for (const action of ['e', 'h', 's']) {
+    it(`removes the /${action} action before the private scope and locale`, () => {
+      expect(searchQueryFromPath(`/${action}/en/missing-guide`, ['en', 'de'])).toBe('missing guide')
+      expect(searchQueryFromPath(`/${action}/_private/en/missing-guide`, ['en', 'de'])).toBe('missing guide')
+      expect(searchQueryFromPath(`/${action}/de/missing-guide.html`, ['en', 'de'])).toBe('missing guide')
+      expect(searchQueryFromPath(`/${action}/_private/de/missing-guide.html`, ['en', 'de'])).toBe('missing guide')
+      expect(searchQueryFromPath(`/${action}/missing-guide`, ['en', 'de'])).toBe('missing guide')
+    })
+  }
+
+  it('keeps document segments instead of stripping arbitrary single-letter or action-like names', () => {
+    expect(searchQueryFromPath('/x/missing-guide', ['en'])).toBe('x missing guide')
+    expect(searchQueryFromPath('/guides/missing-guide', ['en'])).toBe('guides missing guide')
+    expect(searchQueryFromPath('/history/missing-guide', ['en'])).toBe('history missing guide')
+    expect(searchQueryFromPath('/en/h/missing-guide', ['en'])).toBe('h missing guide')
+    expect(searchQueryFromPath('/_private/en/s/missing-guide', ['en'])).toBe('s missing guide')
+    expect(searchQueryFromPath('/_private/de/missing-guide.html', ['en', 'de'])).toBe('missing guide')
+  })
+
   it('keeps a lone segment that looks like a locale', () => {
     expect(searchQueryFromPath('/de', ['de'])).toBe('de')
     expect(searchQueryFromPath('/', ['en'])).toBe('')

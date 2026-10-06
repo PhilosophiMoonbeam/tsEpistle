@@ -9,6 +9,7 @@ const connection = getPostgresTestConnection('_tag_browse_test', import.meta.pat
 const suite = connection ? describe : describe.skip
 
 interface ListedPage {
+  id: number
   path: string
   tags: string[]
 }
@@ -43,12 +44,7 @@ interface PageTagOperations {
     offset?: number
   }): Promise<ListedPage[]>
   listRecent(input: { requester?: Express.User; locale?: string; limit?: number }): Promise<RecentPageEvidenceResult>
-  searchTags(input: {
-    requester?: Express.User
-    query: string
-    limit?: number
-    agentScope?: { kind: 'selected'; pageIds: number[] }
-  }): Promise<string[]>
+  searchTags(input: { requester?: Express.User; query: string; limit?: number; agentScope?: { kind: 'selected'; pageIds: number[] } }): Promise<string[]>
 }
 
 suite('PostgreSQL page tag authorization candidates', () => {
@@ -188,9 +184,7 @@ suite('PostgreSQL page tag authorization candidates', () => {
     const loadPageRuleAuthority = async (requester: unknown) => {
       const tags = await db('tags').select('id', 'tag', 'redirectToId', 'isArchived')
       const byId = new Map(tags.map(tag => [tag.id, tag]))
-      const tagAliases = Object.fromEntries(
-        tags.map(tag => [tag.tag, tag.redirectToId === null ? tag.tag : byId.get(tag.redirectToId)?.tag ?? null])
-      )
+      const tagAliases = Object.fromEntries(tags.map(tag => [tag.tag, tag.redirectToId === null ? tag.tag : (byId.get(tag.redirectToId)?.tag ?? null)]))
       return { requester, permissions: [], groups: [], tagAliases }
     }
     const wiki = {
@@ -286,12 +280,27 @@ suite('PostgreSQL page tag authorization candidates', () => {
     const andRows = await operations.list({ requester, tags: ['old-topic', 'topic-zulu'] })
     expect(andRows.map(row => row.path)).toEqual(['docs/topic-allow-needed'])
   })
-  it('applies root limits and offsets without truncating tags needed for later authorization', async () => {
-    expect(await operations.list({ requester, tags: ['old-topic'], limit: 1 })).toEqual([])
+  it('paginates all-tag matches without letting an earlier public partial match consume the limit or offset', async () => {
+    await db('pageTags').where({ pageId: 1, tagId: tagIds['deny-access'] }).delete()
+    const tags = ['topic', 'allow-access']
 
-    const offsetRows = await operations.list({ requester, tags: ['old-topic'], limit: 1, offset: 1 })
-    expect(offsetRows.map(row => row.path)).toEqual(['docs/topic-allow-needed'])
-    expect(new Set(offsetRows[0]?.tags)).toEqual(new Set(['topic', 'allow-access', 'topic-zulu']))
+    const matchingRows = await operations.list({ requester, tags })
+    expect(matchingRows.map(row => row.id)).toEqual([2, 3, 5, 7, 8, 9])
+
+    const firstRows = await operations.list({ requester, tags, limit: 1 })
+    expect(firstRows.map(row => row.id)).toEqual([2])
+    const offsetRows = await operations.list({ requester, tags, limit: 1, offset: 1 })
+    expect(offsetRows.map(row => row.id)).toEqual([3])
+  })
+
+  it('paginates authorized tag matches without letting an earlier denied row consume the limit or offset', async () => {
+    const firstRows = await operations.list({ requester, tags: ['old-topic'], limit: 1 })
+    expect(firstRows.map(row => row.id)).toEqual([2])
+    expect(new Set(firstRows[0]?.tags)).toEqual(new Set(['topic', 'allow-access', 'topic-zulu']))
+
+    const offsetRows = await operations.list({ requester, tags: ['old-topic'], limit: 2, offset: 1 })
+    expect(offsetRows.map(row => row.id)).toEqual([3, 5])
+    expect(new Set(offsetRows[0]?.tags)).toEqual(new Set(['topic', 'allow-access', 'topic-alpha']))
   })
 
   it('filters denied recent pages after fetching their complete tag relation', async () => {
@@ -378,17 +387,15 @@ suite('PostgreSQL page tag authorization candidates', () => {
     const manager = { id: 1, permissions: ['manage:system'] } as Express.User
     expect(await operations.searchTags({ requester: manager, query: 'manager-only' })).toEqual(['manager-only'])
     expect((await operations.listTags({ requester: manager })).map(tag => tag.tag)).toContain('manager-only')
+    expect((await operations.list({ requester, tags: ['manager-only'] })).map(row => row.id)).toEqual([])
+    expect((await operations.list({ requester: manager, tags: ['manager-only'] })).map(row => row.id)).toEqual([6])
     const agentScope = { kind: 'selected' as const, pageIds: [5] }
     expect(await operations.searchTags({ requester: manager, query: 'manager-only', agentScope })).toEqual([])
     expect((await operations.listTags({ requester: manager, agentScope })).map(tag => tag.tag)).not.toContain('manager-only')
   })
 
   it('excludes public drafts and closed windows while applying current private ownership and searchability policy', async () => {
-    const states = [
-      { isPublished: false },
-      { publishStartDate: '2099-01-01T00:00:00.000Z' },
-      { publishEndDate: '2000-01-01T00:00:00.000Z' }
-    ]
+    const states = [{ isPublished: false }, { publishStartDate: '2099-01-01T00:00:00.000Z' }, { publishEndDate: '2000-01-01T00:00:00.000Z' }]
     for (const [index, state] of states.entries()) {
       const publicId = 20 + index
       const privateId = 30 + index

@@ -26,7 +26,9 @@ class FakeQuery {
     queries.push(table)
   }
 
-  select(..._columns: unknown[]) { return this }
+  select(..._columns: unknown[]) {
+    return this
+  }
 
   where(columnOrValues: string | Row, operatorOrValue?: unknown, value?: unknown) {
     if (typeof columnOrValues === 'object' && columnOrValues !== null) {
@@ -50,22 +52,42 @@ class FakeQuery {
     return this
   }
 
-  andWhere(column: string, operator: unknown, value: unknown) { return this.where(column, operator, value) }
-  whereNot(column: string, value: unknown) { this.#filters.push(row => !this.#equal(row[column], value)); return this }
-  whereIn(column: string, values: unknown[]) { this.#filters.push(row => values.some(value => this.#equal(row[column], value))); return this }
-  orderBy(column: string, direction: 'asc' | 'desc' = 'asc') { this.#orders.push({ column, direction }); return this }
-  limit(value: number) { this.#rowLimit = value; return this }
+  andWhere(column: string, operator: unknown, value: unknown) {
+    return this.where(column, operator, value)
+  }
+  whereNot(column: string, value: unknown) {
+    this.#filters.push(row => !this.#equal(row[column], value))
+    return this
+  }
+  whereIn(column: string, values: unknown[]) {
+    this.#filters.push(row => values.some(value => this.#equal(row[column], value)))
+    return this
+  }
+  orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
+    this.#orders.push({ column, direction })
+    return this
+  }
+  limit(value: number) {
+    this.#rowLimit = value
+    return this
+  }
   max(selection: Record<string, string>) {
     const [alias, column] = Object.entries(selection)[0]!
     this.#maximum = { alias, column }
     return this
   }
 
-  first(..._columns: unknown[]) { return Promise.resolve(this.#rows()[0]) }
-  then(resolve?: (value: Row[]) => unknown, reject?: (reason: unknown) => unknown) { return Promise.resolve(this.#rows()).then(resolve, reject) }
+  first(..._columns: unknown[]) {
+    return Promise.resolve(this.#rows()[0])
+  }
+  then(resolve?: (value: Row[]) => unknown, reject?: (reason: unknown) => unknown) {
+    return Promise.resolve(this.#rows()).then(resolve, reject)
+  }
 
   #equal(actual: unknown, expected: unknown): boolean {
-    return actual === expected || (actual !== null && actual !== undefined && expected !== null && expected !== undefined && String(actual) === String(expected))
+    return (
+      actual === expected || (actual !== null && actual !== undefined && expected !== null && expected !== undefined && String(actual) === String(expected))
+    )
   }
 
   #rows(): Row[] {
@@ -81,7 +103,18 @@ class FakeQuery {
         const rawB = right[order.column]
         const a = rawA instanceof Date ? rawA.valueOf() : rawA
         const b = rawB instanceof Date ? rawB.valueOf() : rawB
-        const comparison = a === b ? 0 : a === undefined || a === null ? -1 : b === undefined || b === null ? 1 : typeof a === 'number' && typeof b === 'number' ? a < b ? -1 : 1 : String(a).localeCompare(String(b))
+        const comparison =
+          a === b
+            ? 0
+            : a === undefined || a === null
+              ? -1
+              : b === undefined || b === null
+                ? 1
+                : typeof a === 'number' && typeof b === 'number'
+                  ? a < b
+                    ? -1
+                    : 1
+                  : String(a).localeCompare(String(b))
         return order.direction === 'desc' ? -comparison : comparison
       })
     }
@@ -131,11 +164,18 @@ const makeDatabase = (input: { pages?: Row[]; allowed?: boolean; afterFirstTrans
     pageAccessPasswords: [],
     pageProtectedAssets: [],
     assets: [],
-    storage: [{
-      key: 'disk',
-      isEnabled: true,
-      state: JSON.stringify({ status: 'warning', message: 'credential-secret', lastAttempt: '2026-09-02T00:00:00.000Z', lastOperation: { message: 'private-storage-message' } })
-    }]
+    storage: [
+      {
+        key: 'disk',
+        isEnabled: true,
+        state: JSON.stringify({
+          status: 'warning',
+          message: 'credential-secret',
+          lastAttempt: '2026-09-02T00:00:00.000Z',
+          lastOperation: { message: 'private-storage-message' }
+        })
+      }
+    ]
   }
   const queries: string[] = []
   const transaction = async (callback: (tx: unknown) => Promise<unknown>, _configuration: unknown) => {
@@ -200,18 +240,49 @@ describe('page integrity diagnostics', () => {
     expect(identities.find(check => check.pageId === 4)?.outcome).toBe('finding')
   })
 
+  it('distinguishes correct closed-window absence from retained ineligible vectors at one scan clock', async () => {
+    const now = new Date('2026-10-06T00:00:00Z')
+    const records = [
+      page(1, { publishStartDate: '2100-01-01T00:00:00Z' }),
+      page(2, { publishEndDate: '2000-01-01T00:00:00Z' }),
+      page(3, { publishEndDate: '2100-02-30T00:00:00Z' }),
+      page(4, { publishStartDate: '2000-02-29T12:00:00+05:30' }),
+      page(5, { publishStartDate: now.toISOString(), publishEndDate: now.toISOString() }),
+      page(6, { visibility: 'private', ownerId: 7 })
+    ]
+    const { db, tables } = makeDatabase({ pages: records })
+    tables.pagesVector = tables.pagesVector!.filter(row => row.pageId !== 1)
+    tables.pagesWords = tables.pagesWords!.filter(row => row.pageId !== 1)
+    const result = await createPageIntegrityOperations({ db: db as never, now: () => now }).scan(requester, { limit: 6 })
+    expect(result.checks.filter(check => check.checkCode === 'SEARCH_INDEX_STATE').map(check => [check.pageId, check.outcome])).toEqual([
+      [1, 'healthy'],
+      [2, 'finding'],
+      [3, 'finding'],
+      [4, 'healthy'],
+      [5, 'healthy'],
+      [6, 'finding']
+    ])
+  })
+
   it('marks every page observation stale when its revision changes during the scan', async () => {
     const records = [page(1)]
-    const { db } = makeDatabase({ pages: records, afterFirstTransaction: () => { records[0]!.sourceRevision = '5' } })
+    const { db } = makeDatabase({
+      pages: records,
+      afterFirstTransaction: () => {
+        records[0]!.sourceRevision = '5'
+      }
+    })
     const operations = createPageIntegrityOperations({ db: db as never })
     const result = await operations.scan(requester, { limit: 1 })
     expect(result.state).toBe('complete')
-    expect(result.checks).toContainEqual(expect.objectContaining({
-      pageId: 1,
-      checkCode: 'SOURCE_REVISION_INVALID',
-      sourceRevision: '4',
-      outcome: 'changed'
-    }))
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        pageId: 1,
+        checkCode: 'SOURCE_REVISION_INVALID',
+        sourceRevision: '4',
+        outcome: 'changed'
+      })
+    )
     expect(result.checks.every(item => item.outcome === 'changed' && item.sourceRevision === '4')).toBe(true)
   })
 
@@ -221,7 +292,14 @@ describe('page integrity diagnostics', () => {
     await expect(operations.scan(requester, {})).rejects.toMatchObject({ status: 403 })
     expect(queries).not.toContain('pages')
 
-    const response = PageIntegrityScanResponseSchema.parse({ upperWatermark: 0, nextCursor: null, state: 'complete', pagesScanned: 0, checks: [], localStorage: [] })
+    const response = PageIntegrityScanResponseSchema.parse({
+      upperWatermark: 0,
+      nextCursor: null,
+      state: 'complete',
+      pagesScanned: 0,
+      checks: [],
+      localStorage: []
+    })
     expect(PageIntegrityScanResponseSchema.safeParse({ ...response, source: 'private page content' }).success).toBe(false)
   })
 })

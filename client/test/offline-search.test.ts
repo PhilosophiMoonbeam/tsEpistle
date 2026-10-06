@@ -228,6 +228,18 @@ describe('offline search', () => {
     expect(pageIds(searchPreparedOfflineDocuments(corpus, '\n café\u00a0').results)).toEqual([1])
     expect(pageIds(searchPreparedOfflineDocuments(corpus, ' release \t review ').results)).toEqual([2])
   })
+
+  test.each(['synchronous', 'asynchronous'])('preserves combining marks when requiring title query terms: %s', async mode => {
+    const corpus = await prepareOfflineSearchCorpus([
+      makeDocument(1, { title: 'क', description: '', searchText: '' }),
+      makeDocument(2, { title: 'की', description: '', searchText: '' })
+    ])
+
+    expect(normalizeOfflineSearchText('की')).toBe('की')
+    const response = mode === 'asynchronous' ? await searchPreparedOfflineDocumentsAsync(corpus, 'की') : searchPreparedOfflineDocuments(corpus, 'की')
+    expect(pageIds(response.results)).toEqual([2])
+  })
+
   test('rejects an already-aborted signal before synchronous ranking starts', async () => {
     const controller = new AbortController()
     controller.abort()

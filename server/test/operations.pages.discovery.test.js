@@ -52,8 +52,8 @@ describe('structured page discovery', () => {
         "authorId" integer NOT NULL,
         "isPublished" boolean NOT NULL,
         "isSearchable" boolean NOT NULL,
-        "publishStartDate" timestamptz,
-        "publishEndDate" timestamptz,
+        "publishStartDate" varchar(255),
+        "publishEndDate" varchar(255),
         "createdAt" timestamptz NOT NULL,
         "updatedAt" timestamptz NOT NULL
       );
@@ -518,7 +518,9 @@ describe('structured page discovery', () => {
     const closedStates = [
       { isPublished: false },
       { publishStartDate: '2099-01-01T00:00:00.000Z' },
-      { publishEndDate: '2000-01-01T00:00:00.000Z' }
+      { publishEndDate: '2000-01-01T00:00:00.000Z' },
+      ...['not-a-date', '2020-02-30T00:00:00Z', '1900-02-29T00:00:00Z', '0000-01-01T00:00:00Z', '2020-01-01T24:00:00Z', '2020-01-01T00:00:00+14:01']
+        .flatMap(value => [{ publishStartDate: value }, { publishEndDate: value }])
     ]
     const excluded = Array.from({ length: PAGE_INDEX_CANDIDATE_LIMIT + 1 }, (_, index) =>
       pageRow(index + 100, `docs/a-hidden-${String(index).padStart(5, '0')}`, closedStates[index % closedStates.length])
@@ -527,11 +529,11 @@ describe('structured page discovery', () => {
       ...excluded,
       pageRow(1, 'docs/z-live', {
         sourceRevision: '9007199254740993',
-        publishStartDate: '2000-01-01T00:00:00.000Z',
-        publishEndDate: '2099-01-01T00:00:00.000Z'
+        publishStartDate: new Date('2000-02-29T00:00:00.000+05:30'),
+        publishEndDate: new Date('2099-01-01T00:00:00.000-05:30')
       }),
-      pageRow(2, 'docs/b-owned', { visibility: 'private', ownerId: 7, isPublished: false, publishStartDate: '2099-01-01T00:00:00.000Z' }),
-      pageRow(3, 'docs/b-foreign', { visibility: 'private', ownerId: 8, publishEndDate: '2000-01-01T00:00:00.000Z' }),
+      pageRow(2, 'docs/b-owned', { visibility: 'private', ownerId: 7, isPublished: false, publishStartDate: '2020-02-30T00:00:00Z' }),
+      pageRow(3, 'docs/b-foreign', { visibility: 'private', ownerId: 8, publishEndDate: 'not-a-date' }),
       pageRow(4, 'docs/z-not-searchable', { isSearchable: false })
     ], [[1, ['live']], [2, ['owned']], [3, ['foreign']]])
     const candidates = await realPageIndex.listPageIndexCandidates(db, { locale: 'en', path: 'docs', scope: () => {} })

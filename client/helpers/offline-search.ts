@@ -76,7 +76,7 @@ export const normalizeOfflineSearchText = (value: string): string =>
     .replace(/\s+/gu, ' ')
     .trim()
 
-const tokenize = (value: string): string[] => value.match(/[\p{L}\p{N}]+/gu) ?? []
+const tokenize = (value: string): string[] => value.match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu) ?? []
 
 const throwIfAborted = (signal: AbortSignal | undefined): void => {
   if (!signal?.aborted) return

@@ -1,3 +1,5 @@
+import { publicationBoundaryTimestamp } from '../../../../shared/publication-window.ts'
+
 // One answer to "who can see this page?" for the Properties dialog and the
 // editor header. Mirrors the reader check in server/controllers/common.ts:
 // unpublished or out-of-window pages are visible only to people who can edit.
@@ -21,14 +23,6 @@ export type PageVisibilitySummary = {
   readonly values: Readonly<Record<string, string>>
 }
 
-const parseDate = (value: string | null | undefined): Date | null => {
-  if (!value) return null
-  // Date-only values are local calendar days, as moment() reads them on the server.
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  const date = dateOnly ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])) : new Date(value)
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
 const formatDate = (date: Date, locale?: string): string => {
   try {
     return new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(date)
@@ -39,13 +33,36 @@ const formatDate = (date: Date, locale?: string): string => {
 
 export const describePageVisibility = (input: PageVisibilityInput, now = new Date(), locale?: string): PageVisibilitySummary => {
   if (input.visibility === 'private') {
-    return { state: 'private', summaryKey: 'editor:props.visibilityPrivate', chipKey: 'editor:props.visibilityChipPrivate', icon: 'mdi-lock-outline', values: {} }
+    return {
+      state: 'private',
+      summaryKey: 'editor:props.visibilityPrivate',
+      chipKey: 'editor:props.visibilityChipPrivate',
+      icon: 'mdi-lock-outline',
+      values: {}
+    }
   }
   if (!input.isPublished) {
-    return { state: 'unpublished', summaryKey: 'editor:props.visibilityUnpublished', chipKey: 'editor:props.visibilityChipUnpublished', icon: 'mdi-eye-off-outline', values: {} }
+    return {
+      state: 'unpublished',
+      summaryKey: 'editor:props.visibilityUnpublished',
+      chipKey: 'editor:props.visibilityChipUnpublished',
+      icon: 'mdi-eye-off-outline',
+      values: {}
+    }
   }
-  const start = parseDate(input.publishStartDate)
-  const end = parseDate(input.publishEndDate)
+  const startTimestamp = publicationBoundaryTimestamp(input.publishStartDate)
+  const endTimestamp = publicationBoundaryTimestamp(input.publishEndDate)
+  if ((startTimestamp !== null && !Number.isFinite(startTimestamp)) || (endTimestamp !== null && !Number.isFinite(endTimestamp))) {
+    return {
+      state: 'unpublished',
+      summaryKey: 'editor:props.visibilityUnpublished',
+      chipKey: 'editor:props.visibilityChipUnpublished',
+      icon: 'mdi-eye-off-outline',
+      values: {}
+    }
+  }
+  const start = startTimestamp === null ? null : new Date(startTimestamp)
+  const end = endTimestamp === null ? null : new Date(endTimestamp)
   if (end && end.getTime() < now.getTime()) {
     return {
       state: 'expired',

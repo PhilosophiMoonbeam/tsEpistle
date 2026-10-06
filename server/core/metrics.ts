@@ -2,6 +2,7 @@ import _ from 'lodash'
 import { collectDefaultMetrics, Gauge, register } from 'prom-client'
 import type { Response } from 'express'
 import type { Knex } from 'knex'
+import { publicationTimestampSql } from '../helpers/search-contract.ts'
 
 interface Query {
   count(expression: string): Query
@@ -159,12 +160,12 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
                     AND "currentPage"."isPublished" = true
                     AND "currentPage"."isSearchable" = true
                     AND (
-                      NULLIF("currentPage"."publishStartDate", '')::timestamptz IS NULL
-                      OR NULLIF("currentPage"."publishStartDate", '')::timestamptz <= statement_timestamp()
+                      NULLIF("currentPage"."publishStartDate", '') IS NULL
+                      OR ${publicationTimestampSql('"currentPage"."publishStartDate"')} <= statement_timestamp()
                     )
                     AND (
-                      NULLIF("currentPage"."publishEndDate", '')::timestamptz IS NULL
-                      OR NULLIF("currentPage"."publishEndDate", '')::timestamptz >= statement_timestamp()
+                      NULLIF("currentPage"."publishEndDate", '') IS NULL
+                      OR ${publicationTimestampSql('"currentPage"."publishEndDate"')} >= statement_timestamp()
                     )
                     AND NOT EXISTS (
                       SELECT 1 FROM "pageAccessPasswords" protection
@@ -223,10 +224,10 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
         WHERE visibility = 'public'
           AND "isPublished" = true
           AND "isSearchable" = true
-          AND (NULLIF("publishStartDate", '')::timestamptz IS NULL
-            OR NULLIF("publishStartDate", '')::timestamptz <= statement_timestamp())
-          AND (NULLIF("publishEndDate", '')::timestamptz IS NULL
-            OR NULLIF("publishEndDate", '')::timestamptz >= statement_timestamp())
+          AND (NULLIF("publishStartDate", '') IS NULL
+            OR ${publicationTimestampSql('"publishStartDate"')} <= statement_timestamp())
+          AND (NULLIF("publishEndDate", '') IS NULL
+            OR ${publicationTimestampSql('"publishEndDate"')} >= statement_timestamp())
       `
       )
       const indexed = await rawRows<{ total: unknown }>(
@@ -258,10 +259,10 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
               AND page.visibility = 'public'
               AND page."isPublished" = true
               AND page."isSearchable" = true
-              AND (NULLIF(page."publishStartDate", '')::timestamptz IS NULL
-                OR NULLIF(page."publishStartDate", '')::timestamptz <= statement_timestamp())
-              AND (NULLIF(page."publishEndDate", '')::timestamptz IS NULL
-                OR NULLIF(page."publishEndDate", '')::timestamptz >= statement_timestamp())
+              AND (NULLIF(page."publishStartDate", '') IS NULL
+                OR ${publicationTimestampSql('page."publishStartDate"')} <= statement_timestamp())
+              AND (NULLIF(page."publishEndDate", '') IS NULL
+                OR ${publicationTimestampSql('page."publishEndDate"')} >= statement_timestamp())
               AND vector."sourceRevision" IS DISTINCT FROM page."sourceRevision"
           ) AS "revisionMismatch",
           COUNT(*) FILTER (
@@ -269,8 +270,12 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
               OR page.visibility IS DISTINCT FROM 'public'
               OR page."isPublished" IS DISTINCT FROM true
               OR page."isSearchable" IS DISTINCT FROM true
-              OR NULLIF(page."publishStartDate", '')::timestamptz > statement_timestamp()
-              OR NULLIF(page."publishEndDate", '')::timestamptz < statement_timestamp()
+              OR (NULLIF(page."publishStartDate", '') IS NOT NULL
+                AND (${publicationTimestampSql('page."publishStartDate"')} IS NULL
+                  OR ${publicationTimestampSql('page."publishStartDate"')} > statement_timestamp()))
+              OR (NULLIF(page."publishEndDate", '') IS NOT NULL
+                AND (${publicationTimestampSql('page."publishEndDate"')} IS NULL
+                  OR ${publicationTimestampSql('page."publishEndDate"')} < statement_timestamp()))
           ) AS orphan
         FROM "pagesVector" vector
         LEFT JOIN pages page ON page.id = vector."pageId"
@@ -323,8 +328,7 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
       )
       const totals = new Map(rows.map(row => [`${row.state}:${row.enrichment}`, numeric(row.total)]))
       for (const state of ['missing', 'valid'] as const)
-        for (const enrichment of KNOWLEDGE_ENRICHMENT_STATES)
-          this.set({ state, enrichment }, totals.get(`${state}:${enrichment}`) ?? 0)
+        for (const enrichment of KNOWLEDGE_ENRICHMENT_STATES) this.set({ state, enrichment }, totals.get(`${state}:${enrichment}`) ?? 0)
     }
   })
   target.pageKnowledgeMaintenance = new Gauge({
@@ -394,7 +398,11 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
       `
       )
       const status = rows[0]?.status
-      for (const state of ['idle', 'running', 'ready'] as const) this.set({ state }, state === 'running' ? Number(status === 'running') : state === 'ready' ? Number(status === 'complete') : Number(status === undefined))
+      for (const state of ['idle', 'running', 'ready'] as const)
+        this.set(
+          { state },
+          state === 'running' ? Number(status === 'running') : state === 'ready' ? Number(status === 'complete') : Number(status === undefined)
+        )
     }
   })
 }

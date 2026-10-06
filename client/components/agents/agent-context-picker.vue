@@ -463,6 +463,13 @@ const loadMoreSources = async (): Promise<void> => {
   const query = sourceQuery.value.trim()
   const cursor = sourceResult.value.nextCursor
   if (!cursor) return
+  const continuation = document.activeElement
+  const dialog = continuation?.closest('[role="dialog"]')
+  let restoreFocus = continuation instanceof HTMLElement && continuation.classList.contains('agent-context__more')
+  const preserveMovedFocus = (event: FocusEvent): void => {
+    if (event.target !== continuation && event.target !== document.body) restoreFocus = false
+  }
+  if (restoreFocus) document.addEventListener('focusin', preserveMovedFocus)
   const controller = new AbortController()
   moreController = controller
   loadingMore.value = true
@@ -481,10 +488,23 @@ const loadMoreSources = async (): Promise<void> => {
       return id !== null && !existingIds.has(id)
     })
     sourceResult.value = { ...next, results: [...existingResults, ...added] }
+    if (!next.nextCursor && restoreFocus) {
+      await nextTick()
+      if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value || query !== sourceQuery.value.trim() || !restoreFocus) return
+      if (document.activeElement !== continuation && document.activeElement !== document.body) return
+      let firstEnabled: HTMLInputElement | null | undefined
+      for (const row of added) {
+        firstEnabled = dialog?.querySelector<HTMLInputElement>(`input[aria-describedby="${rowDomId(row)}"]:not(:disabled)`)
+        if (firstEnabled) break
+      }
+      if (firstEnabled) firstEnabled.focus()
+      else focusElement(sourceSearchInput.value)
+    }
   } catch (value) {
     if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
     moreError.value = value instanceof Error ? value.message : t('common:agentContextPicker.moreResultsCouldNot')
   } finally {
+    document.removeEventListener('focusin', preserveMovedFocus)
     if (moreController === controller) moreController = null
     if (generation === requestGeneration) loadingMore.value = false
   }

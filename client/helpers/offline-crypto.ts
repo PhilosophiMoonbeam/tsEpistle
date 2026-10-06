@@ -623,6 +623,7 @@ export type OfflinePrivateCorpus = {
   readonly snapshots: readonly unknown[]
   readonly searchDocuments: readonly unknown[]
   readonly policies: readonly unknown[]
+  readonly nextExpiresAt: number | null
   readonly corpusRevision?: number
 }
 export type OfflinePrivateCorpusStorage = {
@@ -657,6 +658,7 @@ export const readPrivateCorpus = async (
   const decryptedPolicyPages = new Map<string, OfflinePagePolicyRecord>()
   let policyState: OfflinePrivateEnvelopeV1 | undefined
   let decryptedPolicyState: OfflinePolicyState | undefined
+  let nextExpiresAt: number | null = null
   if (!Array.isArray(records)) throw readingCryptoOpaque()
   for (const record of records) {
     const parsedRecord = OfflinePrivateEnvelopeV1Schema.safeParse(record)
@@ -754,7 +756,22 @@ export const readPrivateCorpus = async (
     searches.push(search)
   }
   if (!isCurrentOfflineReadingHandle(handle)) throw readingCryptoOpaque()
-  return { snapshots, searchDocuments: searches, policies, corpusRevision: capturedCorpusRevision }
+  const now = Date.now()
+  let retained = 0
+  for (let index = 0; index < snapshots.length; index += 1) {
+    const snapshot = snapshots[index] as { readonly expiresAt?: string | null }
+    const expiresAt = snapshot.expiresAt ? Date.parse(snapshot.expiresAt) : NaN
+    if (Number.isFinite(expiresAt)) {
+      if (expiresAt <= now) continue
+      if (nextExpiresAt === null || expiresAt < nextExpiresAt) nextExpiresAt = expiresAt
+    }
+    snapshots[retained] = snapshots[index]
+    searches[retained] = searches[index]
+    retained += 1
+  }
+  snapshots.length = retained
+  searches.length = retained
+  return { snapshots, searchDocuments: searches, policies, nextExpiresAt, corpusRevision: capturedCorpusRevision }
 }
 
 const privateSubtle = (): SubtleCrypto => {

@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { publicationWindowOpen } from '../../shared/publication-window.ts'
 import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
@@ -99,12 +100,6 @@ const positiveId = (value: unknown): number | undefined => {
 
 const dbBoolean = (value: unknown): boolean => value === true || value === 1 || value === '1' || value === 'true'
 
-const publicationWindowOpen = (page: Pick<LinkPage, 'publishStartDate' | 'publishEndDate'>, now: number): boolean => {
-  const start = page.publishStartDate
-  const end = page.publishEndDate
-  return (!start || new Date(String(start)).valueOf() <= now) && (!end || new Date(String(end)).valueOf() >= now)
-}
-
 const pageWithTags = async (db: Knex | Knex.Transaction, pageIds: readonly number[]): Promise<Map<number, LinkPage>> => {
   if (pageIds.length === 0) return new Map()
   const rows = (await db('pages as page')
@@ -193,18 +188,14 @@ const receiptKeys = async (db: Knex | Knex.Transaction, pages: readonly LinkPage
   )
 }
 
-const candidateIds = async (
-  db: Knex | Knex.Transaction,
-  page: LinkPage,
-  direction: PageLinksDirection,
-  afterId: number,
-  limit: number
-): Promise<number[]> => {
+const candidateIds = async (db: Knex | Knex.Transaction, page: LinkPage, direction: PageLinksDirection, afterId: number, limit: number): Promise<number[]> => {
   const query =
     direction === 'outgoing'
-      ? db('pageLinks as links').join('pages as endpoint', function () {
-          this.on('endpoint.localeCode', '=', 'links.localeCode').andOn('endpoint.path', '=', 'links.path')
-        }).where('links.pageId', page.id)
+      ? db('pageLinks as links')
+          .join('pages as endpoint', function () {
+            this.on('endpoint.localeCode', '=', 'links.localeCode').andOn('endpoint.path', '=', 'links.path')
+          })
+          .where('links.pageId', page.id)
       : db('pageLinks as links')
           .join('pages as endpoint', 'endpoint.id', 'links.pageId')
           .where({ 'links.localeCode': page.localeCode, 'links.path': page.path })
@@ -224,8 +215,7 @@ const candidateIds = async (
   })
 }
 
-const cursorSignature = (secret: string, payload: string): Buffer =>
-  createHmac('sha256', secret).update(`page-links-cursor:v1.${payload}`).digest()
+const cursorSignature = (secret: string, payload: string): Buffer => createHmac('sha256', secret).update(`page-links-cursor:v1.${payload}`).digest()
 
 const issueCursor = (cursor: LinkCursor, secret: string): string => {
   const payload = Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
@@ -431,8 +421,7 @@ export const getPageLinks = async (input: unknown): Promise<PageLinksResponse> =
       }
     }
 
-    const hasUnscannedCandidate =
-      (await candidateIds(transaction, page, direction, lastScannedId, 1)).length > 0
+    const hasUnscannedCandidate = (await candidateIds(transaction, page, direction, lastScannedId, 1)).length > 0
     if (hasUnscannedCandidate) {
       throw new ApplicationError('Page links are temporarily unavailable.', {
         code: 'PAGE_LINKS_SCAN_LIMIT',

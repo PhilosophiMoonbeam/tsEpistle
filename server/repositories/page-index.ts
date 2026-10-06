@@ -1,4 +1,5 @@
 import type { Knex } from 'knex'
+import { publicationTimestampSql } from '../helpers/search-contract.ts'
 
 export const PAGE_INDEX_CANDIDATE_LIMIT = 5_001
 
@@ -44,8 +45,10 @@ export const listPageIndexCandidates = async (
     .where(visibility => {
       visibility.where('pages.visibility', 'private').orWhere(publicPages => {
         publicPages.where('pages.visibility', 'public').where('pages.isPublished', true)
-        publicPages.whereRaw("(NULLIF(??::text, '') IS NULL OR NULLIF(??::text, '')::timestamptz <= CURRENT_TIMESTAMP)", ['pages.publishStartDate', 'pages.publishStartDate'])
-        publicPages.whereRaw("(NULLIF(??::text, '') IS NULL OR NULLIF(??::text, '')::timestamptz >= CURRENT_TIMESTAMP)", ['pages.publishEndDate', 'pages.publishEndDate'])
+        publicPages.whereRaw(
+          `(NULLIF("pages"."publishStartDate", '') IS NULL OR ${publicationTimestampSql('"pages"."publishStartDate"')} <= CURRENT_TIMESTAMP)`
+        )
+        publicPages.whereRaw(`(NULLIF("pages"."publishEndDate", '') IS NULL OR ${publicationTimestampSql('"pages"."publishEndDate"')} >= CURRENT_TIMESTAMP)`)
       })
     })
   if (input.path.length > 0) {

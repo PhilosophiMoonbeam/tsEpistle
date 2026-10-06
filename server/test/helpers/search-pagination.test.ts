@@ -6,13 +6,39 @@ const window = (ids: number[]) => ({ results: ids.map(row), suggestions: [], tot
 describe('authorized search continuation', () => {
   it('preserves ranking across pages and drops revoked results without disclosing them or skipping accessible rows', async () => {
     const ids = Array.from({ length: 45 }, (_, index) => index + 1)
-    const first = await paginateSearch({ owner: 'alice', queryKey: 'docs', search: async () => window(ids) })
+    const first = await paginateSearch({
+      owner: 'alice',
+      queryKey: 'docs',
+      search: async retainedPageIds => {
+        expect(retainedPageIds).toBeUndefined()
+        return window(ids)
+      }
+    })
     expect(first.results.map(row => row.id)).toEqual(ids.slice(0, 20))
-    const second = await paginateSearch({ owner: 'alice', queryKey: 'docs', cursor: first.nextCursor!, search: async () => window([99, ...ids.filter(id => id !== 21).reverse()]) })
+    const second = await paginateSearch({
+      owner: 'alice',
+      queryKey: 'docs',
+      cursor: first.nextCursor!,
+      search: async retainedPageIds => {
+        expect(retainedPageIds).toEqual(ids)
+        const current = window([99, ...ids.filter(id => id !== 21).reverse()])
+        current.results = current.results.map(result => ({ ...result, title: `Current page ${result.id}` }))
+        return current
+      }
+    })
     expect(second.results.map(row => row.id)).toEqual(ids.slice(21, 41))
     expect(second.totalHits).toBe(44)
     expect(second.results.some(row => row.id === 99)).toBe(false)
-    const third = await paginateSearch({ owner: 'alice', queryKey: 'docs', cursor: second.nextCursor!, search: async () => window(ids) })
+    expect(second.results[0]?.title).toBe('Current page 22')
+    const third = await paginateSearch({
+      owner: 'alice',
+      queryKey: 'docs',
+      cursor: second.nextCursor!,
+      search: async retainedPageIds => {
+        expect(retainedPageIds).toEqual(ids)
+        return window(ids)
+      }
+    })
     expect(third.results.map(row => row.id)).toEqual([42, 43, 44, 45])
     expect(third.nextCursor).toBeNull()
   })

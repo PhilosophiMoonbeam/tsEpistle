@@ -535,10 +535,11 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     if (!response.success) throw operationFailure('Page search returned an invalid result')
     const hydrated = (
       await Promise.all(
-        response.data.results.map(async result => {
+        response.data.results.map(async (result, rawIndex) => {
           if (!withinPageScope(scope, result)) return null
           try {
             const rawPage = await operations.get({ id: result.id, requester })
+            if (rawPage === null || rawPage === undefined) return null
             const page = parsePage(rawPage, false)
             const visibility =
               rawPage !== null && typeof rawPage === 'object' && 'visibility' in rawPage && rawPage.visibility === 'private' ? 'private' : 'public'
@@ -552,6 +553,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
             )
               return null
             return {
+              rawIndex,
               ...page,
               tags: normalizedPageTags(rawPage !== null && typeof rawPage === 'object' && 'tags' in rawPage ? rawPage.tags : undefined),
               score: result.score,
@@ -576,8 +578,10 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
         }
       })
       .filter(result => (result.knowledge !== null ? matchesKnowledgeFilter(result.knowledge, input.knowledge) : input.knowledge === undefined))
-    const selected = filtered.slice(input.offset, input.offset + input.limit)
-    const consumedThrough = input.offset + selected.length
+    const remaining = filtered.filter(result => result.rawIndex >= input.offset)
+    const selectedCandidates = remaining.slice(0, input.limit)
+    const selected = selectedCandidates.map(({ rawIndex: _rawIndex, ...result }) => result)
+    const consumedThrough = selectedCandidates.length > 0 ? selectedCandidates[selectedCandidates.length - 1]!.rawIndex + 1 : input.offset
     const allCandidatesVerified = hydrated.length === response.data.results.length && filtered.length === hydrated.length
     return {
       results: selected,
@@ -585,7 +589,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
       totalInWindow: filtered.length,
       windowLimit: response.data.windowLimit,
       windowTruncated: scope === undefined ? response.data.windowTruncated : allCandidatesVerified && response.data.windowTruncated,
-      nextOffset: consumedThrough < filtered.length ? consumedThrough : null
+      nextOffset: remaining.length > selectedCandidates.length ? consumedThrough : null
     }
   })
 
@@ -652,6 +656,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
           if (!withinPageScope(scope, item)) return null
           try {
             const rawPage = await operations.get({ id: item.id, requester })
+            if (rawPage === null || rawPage === undefined) return null
             const parsed = PageRowSchema.safeParse(rawPage)
             if (!parsed.success) throw operationFailure('Page operation returned an invalid bounded result')
             const raw = parsed.data
@@ -698,13 +703,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
       pages,
       totalInWindow,
       windowLimit: response.data.windowLimit,
-      nextOffset: knowledgeFilter
-        ? input.offset + pages.length < totalInWindow
-          ? input.offset + pages.length
-          : null
-        : allCandidatesVerified
-          ? response.data.nextOffset
-          : null
+      nextOffset: knowledgeFilter ? (input.offset + pages.length < totalInWindow ? input.offset + pages.length : null) : response.data.nextOffset
     }
   })
 

@@ -40,11 +40,12 @@ function compileComponent(relativePath: string, id: string): (modules: Record<st
       if (!module) throw new Error(`Missing component dependency: ${declaration.source.value}`)
       for (const specifier of declaration.specifiers) {
         if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue
-        bindings[specifier.local.name] = specifier.type === 'ImportDefaultSpecifier'
-          ? module.default
-          : specifier.type === 'ImportNamespaceSpecifier'
-            ? module
-            : module[specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value]
+        bindings[specifier.local.name] =
+          specifier.type === 'ImportDefaultSpecifier'
+            ? module.default
+            : specifier.type === 'ImportNamespaceSpecifier'
+              ? module
+              : module[specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value]
       }
     }
     return new Function(...Object.keys(bindings), executable)(...Object.values(bindings)) as Vue.Component
@@ -59,10 +60,20 @@ const defaults = { timezone: '', dateFormat: '', timeFormat: 'locale' } as const
 const cached = { timezone: 'America/New_York', dateFormat: 'YYYY-MM-DD', timeFormat: '24h' } as const
 const reconnected = { timezone: 'Europe/Berlin', dateFormat: 'DD/MM/YYYY', timeFormat: '12h' } as const
 const datesKey = 'tsepistle.offline.dates.v1'
-const passthrough = Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('div', slots.default?.()) })
+const passthrough = Vue.defineComponent({
+  setup:
+    (_props, { slots }) =>
+    () =>
+      Vue.h('div', slots.default?.())
+})
 const empty = Vue.defineComponent({ setup: () => () => null })
 const DateSettings = Vue.defineComponent({
-  setup: () => () => Vue.h('output', { 'data-reader-dates': '', 'data-reader-zone': String(presentation.helpers.timeZoneKnown()) }, String(presentation.helpers.formatMoment(instant, 'L LT')))
+  setup: () => () =>
+    Vue.h(
+      'output',
+      { 'data-reader-dates': '', 'data-reader-zone': String(presentation.helpers.timeZoneKnown()) },
+      String(presentation.helpers.formatMoment(instant, 'L LT'))
+    )
 })
 let app: Vue.App | undefined
 const originalLocale = moment.locale()
@@ -118,9 +129,19 @@ describe('offline shell reader-date authentication lifecycle', () => {
       './components/pwa/offline-library.vue': { default: empty },
       './components/pwa/offline-navigation.vue': { default: empty },
       './components/pwa/offline-settings.vue': { default: DateSettings },
-      './helpers/offline-storage.ts': { openOfflineStorage: async () => { throw new Error('IndexedDB unavailable') } },
+      './helpers/offline-storage.ts': {
+        openOfflineStorage: async () => {
+          throw new Error('IndexedDB unavailable')
+        }
+      },
       './helpers/offline-session.ts': { currentOfflineReadingHandle: () => null, OFFLINE_READING_STATE_EVENT: 'test-reading-state' },
-      './helpers/offline-sync.ts': { OFFLINE_SYNC_COORDINATOR_KEY: 'offline-sync-coordinator', createOfflineSyncUnavailableResult: () => ({ status: 'unavailable' }), createOfflineSyncCoordinator: () => { throw new Error('No storage') } },
+      './helpers/offline-sync.ts': {
+        OFFLINE_SYNC_COORDINATOR_KEY: 'offline-sync-coordinator',
+        createOfflineSyncUnavailableResult: () => ({ status: 'unavailable' }),
+        createOfflineSyncCoordinator: () => {
+          throw new Error('No storage')
+        }
+      },
       './helpers/pwa.ts': { pwaState, retryServerConnection: async () => true },
       './store/index.ts': { wikiStore: store },
       './helpers/use-translate.ts': { useTranslate: () => (key: string) => key },
@@ -128,7 +149,8 @@ describe('offline shell reader-date authentication lifecycle', () => {
       './helpers/offline-presentation.ts': offlinePresentation
     })
     app = Vue.createApp(component)
-    for (const name of ['v-app', 'v-navigation-drawer', 'v-main', 'v-icon', 'v-btn', 'v-alert', 'nav-header', 'search-results', 'notify']) app.component(name, passthrough)
+    for (const name of ['v-app', 'v-navigation-drawer', 'v-main', 'v-icon', 'v-btn', 'v-alert', 'nav-header', 'search-results', 'notify'])
+      app.component(name, passthrough)
     app.config.globalProperties.$vuetify = { display: { mdAndUp: true, smAndDown: false } }
     app.config.globalProperties.$t = (key: string) => key
     const host = document.createElement('div')
@@ -203,10 +225,20 @@ const lifecycleTranslate = (key: string, options: Record<string, unknown> = {}):
 
 async function savedRecord(siteId: string, pageId: number, title: string, html = `<p>${title} body</p>`): Promise<OfflineSnapshotRecord> {
   const snapshot: OfflinePageSnapshotV1 = {
-    schemaVersion: 1, pageId, locale: 'en', path: `saved/${pageId}`, canonicalPath: `/en/saved/${pageId}`,
-    title, description: '', sourceRevision: 'r1', capturedAt: '2026-09-01T00:00:00.000Z', expiresAt: null,
+    schemaVersion: 1,
+    pageId,
+    locale: 'en',
+    path: `saved/${pageId}`,
+    canonicalPath: `/en/saved/${pageId}`,
+    title,
+    description: '',
+    sourceRevision: 'r1',
+    capturedAt: '2026-09-01T00:00:00.000Z',
+    expiresAt: null,
     content: { representation: 'sanitized-html-fragment', sanitizerVersion: 'offline-html-allowlist-v1', html },
-    searchText: `${title} body`, contentType: 'sanitized-html-fragment', integrity: 'pending'
+    searchText: `${title} body`,
+    contentType: 'sanitized-html-fragment',
+    integrity: 'pending'
   }
   snapshot.integrity = await offlineRenderer.offlineSnapshotIntegrity(snapshot)
   return { siteId, pageId, locale: 'en', snapshot, lastOpenedAt: snapshot.capturedAt, byteSize: 512 }
@@ -222,15 +254,25 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
     sessionGeneration: 0
   } as unknown as OfflineReadingHandleV1
   const state = {
-    generation: 0, revision: 1, epoch: 0,
-    activeHandle: options.unlocked ? handle : null as OfflineReadingHandleV1 | null,
+    generation: 0,
+    revision: 1,
+    epoch: 0,
+    activeHandle: options.unlocked ? handle : (null as OfflineReadingHandleV1 | null),
     publicBodies: options.privateOnly ? [] : [await savedRecord(origin, 1, 'Reader A'), await savedRecord(origin, 2, 'Reader B')],
     privateBodies: options.privateVault ? [await savedRecord(privateSite, 1, 'Private reader')] : [],
-    publicPolicyRevision: 3, privatePolicyRevision: 17,
-    beforePolicyRead: null as ((options: OfflineStorageGenerationOptions) => Promise<void>) | null
+    publicPolicyRevision: 3,
+    privatePolicyRevision: 17,
+    beforePolicyRead: null as ((options: OfflineStorageGenerationOptions) => Promise<void>) | null,
+    beforeSnapshotRead: null as ((options: OfflineStorageGenerationOptions & { selector?: OfflineSnapshotSelector }) => Promise<void>) | null
   }
   const listeners = new Set<OfflineStorageNoticeListener>()
   const pendingPreparations = new Set<Promise<unknown>>()
+  const pendingSearches = new Set<Promise<offlineSearch.OfflineSearchResponse>>()
+  const searchOperations: Array<{
+    query: string
+    signal: AbortSignal | undefined
+    promise: Promise<offlineSearch.OfflineSearchResponse>
+  }> = []
   const settleLibrary = () => settleOffline(pendingPreparations)
   const publish = (kind: 'corpus' | 'generation' | 'policy') => {
     for (const listener of listeners) listener({ kind, sessionGeneration: state.generation, corpusRevision: state.revision })
@@ -238,8 +280,7 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
   const check = (opts: OfflineStorageGenerationOptions) => {
     if (opts.expectedSessionGeneration !== undefined && opts.expectedSessionGeneration !== state.generation)
       throw new OfflineStorageError('generation-fenced', 'Session changed.')
-    if (opts.readingHandle && opts.readingHandle !== state.activeHandle)
-      throw new OfflineStorageError('generation-fenced', 'Private reading changed.')
+    if (opts.readingHandle && opts.readingHandle !== state.activeHandle) throw new OfflineStorageError('generation-fenced', 'Private reading changed.')
     const revision = opts.readingHandle ? state.privatePolicyRevision : state.publicPolicyRevision
     if (opts.expectedPolicyRevision !== undefined && opts.expectedPolicyRevision !== revision)
       throw new OfflineStorageError('policy-revision-fenced', 'Policy changed.')
@@ -247,38 +288,67 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
   const policyFor = (privateAudience: boolean) => ({
     sessionGeneration: state.generation,
     state: {
-      key: 'state', recordType: 'state', schemaVersion: 1, automaticSavingEnabled: false, selectedTags: [],
-      policyRevision: privateAudience ? state.privatePolicyRevision : state.publicPolicyRevision, byteSize: 1,
+      key: 'state',
+      recordType: 'state',
+      schemaVersion: 1,
+      automaticSavingEnabled: false,
+      selectedTags: [],
+      policyRevision: privateAudience ? state.privatePolicyRevision : state.publicPolicyRevision,
+      byteSize: 1,
       syncDiagnostics: { status: 'idle', lastAttemptAt: null, lastSuccessAt: null, lastError: null, pendingCount: 0, retainedCount: 0, removedCount: 0 }
     },
     pages: (privateAudience ? state.privateBodies : state.publicBodies).map(record => ({
-      key: `${record.siteId}/${record.pageId}/${record.locale}`, recordType: 'page', schemaVersion: 1,
-      siteId: record.siteId, pageId: record.pageId, locale: record.locale,
-      manual: !privateAudience, automatic: false, tag: privateAudience, tagNames: [],
-      availability: privateAudience ? 'transient-failure' : 'available', excluded: false,
-      visitCount: 0, lastVisitedAt: null, lastEditedAt: null, automaticSelectedAt: null, byteSize: 1
+      key: `${record.siteId}/${record.pageId}/${record.locale}`,
+      recordType: 'page',
+      schemaVersion: 1,
+      siteId: record.siteId,
+      pageId: record.pageId,
+      locale: record.locale,
+      manual: !privateAudience,
+      automatic: false,
+      tag: privateAudience,
+      tagNames: [],
+      availability: privateAudience ? 'transient-failure' : 'available',
+      excluded: false,
+      visitCount: 0,
+      lastVisitedAt: null,
+      lastEditedAt: null,
+      automaticSelectedAt: null,
+      byteSize: 1
     }))
   })
   const storage = {
     close: vi.fn(),
     currentSessionGeneration: async () => state.generation,
-    getReadingVault: async () => options.privateVault ? { keyId: handle.context.keyId } : null,
-    storageStatus: async () => ({ snapshotCount: state.publicBodies.length + state.privateBodies.length, managedBytes: 512, persisted: false, usageBytes: null, quotaBytes: null, lockedDraftCount: 0 }),
+    getReadingVault: async () => (options.privateVault ? { keyId: handle.context.keyId } : null),
+    storageStatus: async () => ({
+      snapshotCount: state.publicBodies.length + state.privateBodies.length,
+      managedBytes: 512,
+      persisted: false,
+      usageBytes: null,
+      quotaBytes: null,
+      lockedDraftCount: 0
+    }),
     readOfflinePolicy: vi.fn(async (opts: OfflineStorageGenerationOptions = {}) => {
       await state.beforePolicyRead?.(opts)
       check(opts)
       return policyFor(Boolean(opts.readingHandle))
     }),
     readSnapshotCorpus: vi.fn(async (opts: OfflineStorageGenerationOptions & { selector?: OfflineSnapshotSelector } = {}) => {
+      await state.beforeSnapshotRead?.(opts)
       check(opts)
       if (opts.expectedCorpusRevision !== undefined && opts.expectedCorpusRevision !== state.revision)
         throw new OfflineStorageError('transaction', 'Corpus changed.')
       const bodies = opts.readingHandle ? state.privateBodies : state.publicBodies
       return {
-        sessionGeneration: state.generation, corpusRevision: state.revision,
-        snapshots: structuredClone(bodies.filter(record => !opts.selector || (
-          record.siteId === opts.selector.siteId && record.pageId === opts.selector.pageId && record.locale === opts.selector.locale
-        )))
+        sessionGeneration: state.generation,
+        corpusRevision: state.revision,
+        snapshots: structuredClone(
+          bodies.filter(
+            record =>
+              !opts.selector || (record.siteId === opts.selector.siteId && record.pageId === opts.selector.pageId && record.locale === opts.selector.locale)
+          )
+        )
       }
     }),
     markSnapshotOpened: vi.fn(async () => true),
@@ -311,7 +381,8 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
   }
   const modules: Record<string, Record<string, unknown>> = {
     '../../helpers/offline-storage.ts': {
-      OfflineStorageError, openOfflineStorage: async () => storage,
+      OfflineStorageError,
+      openOfflineStorage: async () => storage,
       subscribeOfflineStorageChanges: (listener: OfflineStorageNoticeListener) => {
         listeners.add(listener)
         return () => listeners.delete(listener)
@@ -327,6 +398,16 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
           () => pendingPreparations.delete(preparation)
         )
         return preparation
+      },
+      searchPreparedOfflineDocumentsAsync: (...args: Parameters<typeof offlineSearch.searchPreparedOfflineDocumentsAsync>) => {
+        const search = offlineSearch.searchPreparedOfflineDocumentsAsync(...args)
+        searchOperations.push({ query: args[1] ?? '', signal: args[2]?.signal, promise: search })
+        pendingSearches.add(search)
+        void search.then(
+          () => pendingSearches.delete(search),
+          () => pendingSearches.delete(search)
+        )
+        return search
       }
     },
     '../../helpers/offline-routes.ts': offlineRoutes,
@@ -336,9 +417,19 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
     '../../helpers/offline-session.ts': sessionModule,
     '../../helpers/offline-sync.ts': { OFFLINE_SYNC_COORDINATOR_KEY, createOfflineSyncUnavailableResult },
     '../../helpers/use-translate.ts': { useTranslate: () => lifecycleTranslate },
-    '../../store/index.ts': { wikiStore: Vue.reactive({ authRefreshOutcome: options.guest ? 'anonymous' : 'authenticated', offlineIdentityReady: true, user: { authenticated: !options.guest, id: 1, authVersion: 1 } }) },
+    '../../store/index.ts': {
+      wikiStore: Vue.reactive({
+        authRefreshOutcome: options.guest ? 'anonymous' : 'authenticated',
+        offlineIdentityReady: true,
+        user: { authenticated: !options.guest, id: 1, authVersion: 1 }
+      })
+    },
     '../../helpers/pwa.ts': { notifyReloadSafetyChanged: () => undefined, setReloadSafetyProvider: () => undefined },
-    '../common/modal-focus-scope.ts': { createModalFocusScope: () => { throw new Error('Unexpected modal in library regression') } },
+    '../common/modal-focus-scope.ts': {
+      createModalFocusScope: () => {
+        throw new Error('Unexpected modal in library regression')
+      }
+    },
     './pwa-status.vue': { default: empty }
   }
   const library = libraryComponent(modules)
@@ -350,7 +441,15 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
       reconcile: async () => createOfflineSyncUnavailableResult('No server connection in lifecycle fixture.')
     })
     for (const name of ['v-container', 'v-avatar', 'v-icon', 'v-card', 'v-chip', 'v-divider', 'v-alert']) app.component(name, passthrough)
-    app.component('v-btn', Vue.defineComponent({ setup: (_props, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.()) }))
+    app.component(
+      'v-btn',
+      Vue.defineComponent({
+        setup:
+          (_props, { attrs, slots }) =>
+          () =>
+            Vue.h('button', attrs, slots.default?.())
+      })
+    )
     app.component('v-text-field', empty)
     app.config.globalProperties.$t = lifecycleTranslate
     const errors: unknown[] = []
@@ -361,7 +460,7 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
     await settleLibrary()
     return { host, props, errors }
   }
-  return { origin, privateSite, handle, state, storage, publish, mount, sessionModule, settle: settleLibrary }
+  return { origin, privateSite, handle, state, storage, publish, mount, sessionModule, pendingSearches, searchOperations, settle: settleLibrary }
 }
 
 async function settleOffline(pendingPreparations: ReadonlySet<Promise<unknown>>) {
@@ -375,6 +474,149 @@ async function settleOffline(pendingPreparations: ReadonlySet<Promise<unknown>>)
 }
 
 describe('saved-page reader and library settings lifecycle', () => {
+  it.each([
+    ['blank saved-page list', ''],
+    ['private title query', 'Private']
+  ])('recovers the %s after a transient private read without a new corpus revision', async (_view, query) => {
+    const fixture = await offlineFixture({ privateVault: true, unlocked: true })
+    let rejectedPrivateRead = false
+    fixture.state.beforeSnapshotRead = async opts => {
+      if (opts.readingHandle && !rejectedPrivateRead) {
+        rejectedPrivateRead = true
+        throw new OfflineStorageError('transaction', 'Private storage temporarily unavailable.')
+      }
+    }
+    const { host, props, errors } = await fixture.mount()
+    const cardTitles = () => [...host.querySelectorAll('.page-card-title')].map(card => card.textContent)
+    expect(rejectedPrivateRead).toBe(true)
+    expect(cardTitles()).toEqual(['Reader A', 'Reader B'])
+    const input = host.querySelector<HTMLInputElement>('#downloaded-pages-search')!
+    if (query) {
+      input.value = query
+      input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await fixture.settle()
+      expect(cardTitles()).toEqual([])
+    }
+
+    const revision = fixture.state.revision
+    fixture.state.beforeSnapshotRead = null
+    props.refreshToken += 1
+    await fixture.settle()
+
+    expect(fixture.state.revision).toBe(revision)
+    expect(fixture.state.generation).toBe(0)
+    expect(fixture.state.activeHandle).toBe(fixture.handle)
+    expect(cardTitles()).toEqual(query ? ['Private reader'] : ['Private reader', 'Reader A', 'Reader B'])
+    const privateCard = [...host.querySelectorAll('.page-card')].find(card => card.querySelector('.page-card-title')?.textContent === 'Private reader')!
+    privateCard.querySelector<HTMLButtonElement>('.secondary-button')!.click()
+    await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Private reader body'))
+    expect(host.querySelector('#offline-reader-status')!.classList.contains('is-ready')).toBe(true)
+    expect(errors).toEqual([])
+  })
+
+  it('cancels obsolete scoring at its real cooperative yield and leaves no predecessor work after unmount', async () => {
+    const fixture = await offlineFixture()
+    const longBody = `obsolete ${'neutral '.repeat(4_000)}`
+    const longRecord = await savedRecord(fixture.origin, 1, 'PrivateUniqueA', `<p>${longBody}</p>`)
+    longRecord.snapshot.searchText = `PrivateUniqueA ${longBody}`
+    longRecord.snapshot.integrity = await offlineRenderer.offlineSnapshotIntegrity(longRecord.snapshot)
+    fixture.state.publicBodies[0] = longRecord
+    fixture.state.publicBodies[1] = await savedRecord(fixture.origin, 2, 'SpecificB')
+    const { host, errors } = await fixture.mount()
+    const cardTitles = () => [...host.querySelectorAll('.page-card-title')].map(card => card.textContent)
+    expect(cardTitles()).toEqual(['PrivateUniqueA', 'SpecificB'])
+    const input = host.querySelector<HTMLInputElement>('#downloaded-pages-search')!
+    const scoringYields: Array<() => void> = []
+    const nativeSetTimeout = globalThis.setTimeout
+    let releasePredecessor: (() => void) | undefined
+    // Only defer the real scorer's event-loop boundary, not its ranking or result.
+    // The body exceeds one 16 KiB scoring chunk, so obsolete work must stop here.
+    vi.stubGlobal('setTimeout', (...args: Parameters<typeof setTimeout>) => {
+      const [callback, delay] = args
+      if (delay !== 0 || typeof callback !== 'function') return nativeSetTimeout(...args)
+      scoringYields.push(() => callback(...args.slice(2)))
+      return scoringYields.length
+    })
+    const changeQuery = (query: string) => {
+      input.value = query
+      input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    }
+    const finishCurrentSearch = async (search: (typeof fixture.searchOperations)[number]) => {
+      for (let turn = 0; turn < 8 && fixture.pendingSearches.has(search.promise); turn += 1) {
+        for (const resume of scoringYields.splice(0)) resume()
+        await fixture.settle()
+      }
+      expect(fixture.pendingSearches.has(search.promise)).toBe(false)
+      await search.promise
+      await Vue.nextTick()
+    }
+    try {
+      changeQuery('obsolete')
+      await fixture.settle()
+      const obsolete = fixture.searchOperations.at(-1)!
+      expect(obsolete.query).toBe('obsolete')
+      expect(obsolete.signal?.aborted).toBe(false)
+      expect(fixture.pendingSearches.has(obsolete.promise)).toBe(true)
+      expect(scoringYields).toHaveLength(1)
+      releasePredecessor = scoringYields.shift()!
+
+      changeQuery('SpecificB')
+      await Vue.nextTick()
+      expect(obsolete.signal?.aborted).toBe(true)
+      await fixture.settle()
+      const current = fixture.searchOperations.at(-1)!
+      expect(current.query).toBe('SpecificB')
+      expect(scoringYields).toHaveLength(1)
+      await finishCurrentSearch(current)
+      expect(cardTitles()).toEqual(['SpecificB'])
+      expect(host.querySelector('#downloaded-pages-search-detail')!.textContent).toBe('common:offlineLibrary.matchingSavedPage')
+      releasePredecessor()
+      releasePredecessor = undefined
+      await expect(obsolete.promise).rejects.toMatchObject({ name: 'AbortError' })
+      await fixture.settle()
+      // An aborted scan must not request its next chunk or return stale matches.
+      expect(scoringYields).toHaveLength(0)
+      expect(fixture.pendingSearches.has(obsolete.promise)).toBe(false)
+      expect(cardTitles()).toEqual(['SpecificB'])
+      expect(fixture.pendingSearches.size).toBe(0)
+
+      changeQuery('obsolete')
+      await fixture.settle()
+      const predecessor = fixture.searchOperations.at(-1)!
+      expect(scoringYields).toHaveLength(1)
+      releasePredecessor = scoringYields.shift()!
+      changeQuery('missing')
+      await Vue.nextTick()
+      expect(predecessor.signal?.aborted).toBe(true)
+      await fixture.settle()
+      const last = fixture.searchOperations.at(-1)!
+      expect(last.query).toBe('missing')
+      expect(scoringYields).toHaveLength(1)
+      app!.unmount()
+      app = undefined
+      expect(predecessor.signal?.aborted).toBe(true)
+      expect(last.signal?.aborted).toBe(true)
+      releasePredecessor()
+      releasePredecessor = undefined
+      for (const resume of scoringYields.splice(0)) resume()
+      await expect(predecessor.promise).rejects.toMatchObject({ name: 'AbortError' })
+      await expect(last.promise).rejects.toMatchObject({ name: 'AbortError' })
+      await fixture.settle()
+      expect(scoringYields).toHaveLength(0)
+      expect(fixture.pendingSearches.size).toBe(0)
+      expect(host.querySelector('.page-list')).toBeNull()
+      expect(errors).toEqual([])
+    } finally {
+      // Also release the baseline's un-aborted predecessor after a failed assertion.
+      app?.unmount()
+      app = undefined
+      vi.stubGlobal('setTimeout', nativeSetTimeout)
+      releasePredecessor?.()
+      for (const resume of scoringYields.splice(0)) resume()
+      await Promise.allSettled([...fixture.pendingSearches])
+    }
+  })
+
   it('focuses direct and in-app saved-page fragments in the guest-capable settings surface', async () => {
     const fixture = await offlineFixture({ guest: true })
     setLocation('/p/offline#downloaded-pages-title')
@@ -409,7 +651,7 @@ describe('saved-page reader and library settings lifecycle', () => {
     let windowScrollY = 456
     Object.defineProperty(browserWindow, 'scrollY', { configurable: true, get: () => windowScrollY })
     vi.spyOn(browserWindow, 'scrollTo').mockImplementation((leftOrOptions: ScrollToOptions | number, top?: number) => {
-      windowScrollY = typeof leftOrOptions === 'object' ? leftOrOptions.top ?? windowScrollY : top ?? windowScrollY
+      windowScrollY = typeof leftOrOptions === 'object' ? (leftOrOptions.top ?? windowScrollY) : (top ?? windowScrollY)
     })
 
     fixture.state.publicBodies[1] = await savedRecord(fixture.origin, 2, 'Reader B updated')
@@ -424,7 +666,9 @@ describe('saved-page reader and library settings lifecycle', () => {
     expect(browserWindow.location.href).toBe(url)
     expect(document.activeElement).toBe(heading)
     expect(browserWindow.scrollY).toBe(456)
-    const back = [...host.querySelectorAll<HTMLButtonElement>('.reader-actions button')].find(button => button.textContent === 'common:offlineLibrary.backSavedPages')!
+    const back = [...host.querySelectorAll<HTMLButtonElement>('.reader-actions button')].find(
+      button => button.textContent === 'common:offlineLibrary.backSavedPages'
+    )!
     back.click()
     await vi.waitFor(() => expect(host.querySelector('.page-list')?.textContent).toContain('Reader B updated'))
     expect(errors).toEqual([])

@@ -35,13 +35,15 @@ suite('PostgreSQL graph rank privacy boundary', () => {
     path,
     title,
     sourceRevision = id,
-    render = `<article>${title}</article>`
+    render = `<article>${title}</article>`,
+    tagId = 1
   }: {
     id: number
     path: string
     title: string
     sourceRevision?: number
     render?: string
+    tagId?: number
   }): Promise<void> => {
     await db('pages').insert({
       id,
@@ -53,9 +55,11 @@ suite('PostgreSQL graph rank privacy boundary', () => {
       description: '',
       render,
       visibility: 'public',
-      isPublished: true
+      isPublished: true,
+      publishStartDate: '',
+      publishEndDate: ''
     })
-    await db('pageTags').insert({ pageId: id, tagId: 1 })
+    await db('pageTags').insert({ pageId: id, tagId })
   }
 
   const graphResults = async (): Promise<SearchResultEntry[]> => {
@@ -66,10 +70,39 @@ suite('PostgreSQL graph rank privacy boundary', () => {
       .sort((left, right) => left.id - right.id)
   }
 
+  const promotionPageIds = [80, 81, 82, 83, 84]
+  const insertPromotionPages = async (manualBody = 'Routine procedures'): Promise<void> => {
+    await db('tags').insert([
+      { id: 2, tag: 'falcon', title: 'falcon' },
+      { id: 3, tag: 'falcon manual', title: 'falcon manual' }
+    ])
+    await insertPage({ id: 80, path: 'promotion/reference', title: 'Zulu reference', render: '<article>Reference notes</article>', tagId: 2 })
+    await insertPage({ id: 81, path: 'promotion/manual', title: 'Falcon manual', render: `<article>${manualBody}</article>`, tagId: 3 })
+    for (const [index, label] of ['One', 'Two', 'Three'].entries()) {
+      await insertPage({
+        id: 82 + index,
+        path: `promotion/relay-${index}`,
+        title: `Falcon Relay ${label}`,
+        render: '<article>Routine relay notes</article>',
+        tagId: 3
+      })
+    }
+    await db('pageMutationOutbox').insert(
+      promotionPageIds.map(pageId => ({ pageId, sourceRevision: pageId, effectKind: 'links', desiredState: 'present', status: 'succeeded' }))
+    )
+    await engine.rebuild()
+  }
+
+  const linkPromotionPages = async (): Promise<void> => {
+    await db('pageLinks').insert([82, 83, 84].map(pageId => ({ pageId, localeCode: 'en', path: 'promotion/manual' })))
+  }
+
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined })
     await db.raw(`
-      DROP TABLE IF EXISTS "pagesSearchMetadata", "pagesWords", "pagesVector", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages CASCADE;
+      DROP TABLE IF EXISTS "searchEngines", "pagesSearchMetadata", "pagesWords", "pagesVector", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages CASCADE;
+      CREATE TABLE "searchEngines" (key text PRIMARY KEY, "isEnabled" boolean NOT NULL, config jsonb NOT NULL);
+      INSERT INTO "searchEngines" VALUES ('postgres', true, '{"dictLanguage":"english"}'::jsonb);
       CREATE TABLE pages (
         id integer PRIMARY KEY,
         "sourceRevision" bigint NOT NULL,
@@ -228,9 +261,7 @@ suite('PostgreSQL graph rank privacy boundary', () => {
       expect(admittedTail!.score).toBeGreaterThan(baselineTail!.score)
 
       await db('pages').where({ id: boundary.id }).update(boundary.update)
-      await db('pageMutationOutbox')
-        .where({ pageId: boundary.id, effectKind: 'links' })
-        .update({ sourceRevision: boundary.receiptRevision })
+      await db('pageMutationOutbox').where({ pageId: boundary.id, effectKind: 'links' }).update({ sourceRevision: boundary.receiptRevision })
       const afterWithdrawal = await graphResults()
       expect(afterWithdrawal.find(candidate => candidate.id === 69)?.score).toBe(baselineTail!.score)
       if (boundary.label !== 'stale') expect(afterWithdrawal.some(candidate => candidate.id === boundary.id)).toBe(false)
@@ -274,5 +305,125 @@ suite('PostgreSQL graph rank privacy boundary', () => {
     expect(Number.isFinite(completedTail?.score)).toBe(true)
     expect(completedTail!.score).toBeGreaterThan(pendingTail!.score)
     expect(completedTail?.matchedFields).toContain('graph')
+  })
+
+  it('keeps an isolated exact tag strictly ahead of a lower-scoring prefix match after graph promotion and a numeric resort', async () => {
+    await insertPromotionPages()
+    const baseline = (await engine.query('falcon', { pageIds: promotionPageIds, limit: 5 })).results
+    expect(baseline.map(candidate => candidate.id).sort((left, right) => left - right)).toEqual(promotionPageIds)
+    const exactBefore = baseline.find(candidate => candidate.id === 80)!
+    const manualBefore = baseline.find(candidate => candidate.id === 81)!
+    expect(exactBefore.matchedFields).toContain('tag')
+    expect(exactBefore.matchedFields).not.toContain('graph')
+    expect(manualBefore.matchedFields).not.toContain('graph')
+    expect(exactBefore.score).toBeGreaterThan(manualBefore.score)
+    // The existing 1.25 graph bonus crosses this preliminary gap without a numeric ceiling.
+    expect(exactBefore.score - manualBefore.score).toBeLessThan(1.25)
+
+    await linkPromotionPages()
+    const linked = (await engine.query('falcon', { pageIds: promotionPageIds, limit: 5 })).results
+    expect(linked.map(candidate => candidate.id).sort((left, right) => left - right)).toEqual(promotionPageIds)
+    const exactAfter = linked.find(candidate => candidate.id === 80)!
+    const manualAfter = linked.find(candidate => candidate.id === 81)!
+    expect(exactAfter.score).toBe(exactBefore.score)
+    expect(exactAfter.matchedFields).not.toContain('graph')
+    expect(manualAfter.matchedFields).toContain('graph')
+    expect(manualAfter.score).toBeGreaterThan(manualBefore.score)
+    expect(exactAfter.score).toBeGreaterThan(manualAfter.score)
+    // Shared search preserves engine scores and resorts its union numerically, without match classes.
+    const numericOrder = [...linked]
+      .reverse()
+      .sort((left, right) => right.score - left.score)
+      .map(candidate => candidate.id)
+    expect(numericOrder.indexOf(80)).toBeLessThan(numericOrder.indexOf(81))
+  })
+
+  it('keeps a graph-supported exact title below a strictly stronger exact title while allowing exact baseline ties to settle', async () => {
+    const pageIds = [90, 91, 92, 93, 94, 95]
+    await insertPage({
+      id: 90,
+      path: 'exact-ceiling/stronger',
+      title: 'Falcon',
+      render: '<article>Falcon routine reference notes</article>'
+    })
+    await insertPage({ id: 91, path: 'exact-ceiling/peer', title: 'Falcon', render: '<article>Routine reference notes</article>' })
+    await insertPage({ id: 92, path: 'exact-ceiling/weaker', title: 'Falcon', render: '<article>Routine reference notes</article>' })
+    for (const [index, label] of ['One', 'Two', 'Three'].entries()) {
+      await insertPage({
+        id: 93 + index,
+        path: `exact-ceiling/relay-${index}`,
+        title: `Falcon Relay ${label}`,
+        render: '<article>Routine relay notes</article>'
+      })
+    }
+    await db('pageMutationOutbox').insert(
+      pageIds.map(pageId => ({ pageId, sourceRevision: pageId, effectKind: 'links', desiredState: 'present', status: 'succeeded' }))
+    )
+    await engine.rebuild()
+
+    const baseline = (await engine.query('falcon', { pageIds, limit: pageIds.length })).results
+    expect(baseline.map(candidate => candidate.id).sort((left, right) => left - right)).toEqual(pageIds)
+    const strongerBefore = baseline.find(candidate => candidate.id === 90)!
+    const peerBefore = baseline.find(candidate => candidate.id === 91)!
+    const weakerBefore = baseline.find(candidate => candidate.id === 92)!
+    for (const candidate of [strongerBefore, peerBefore, weakerBefore]) {
+      expect(candidate.matchedFields).toContain('title')
+      expect(candidate.matchedFields).not.toContain('graph')
+    }
+    expect(strongerBefore.matchedFields).toContain('content')
+    expect(weakerBefore.matchedFields).not.toContain('content')
+    expect(peerBefore.score).toBe(weakerBefore.score)
+    expect(strongerBefore.score - weakerBefore.score).toBeGreaterThan(0.000001)
+    expect(strongerBefore.score - weakerBefore.score).toBeLessThan(1.25)
+    expect(baseline.indexOf(strongerBefore)).toBeLessThan(baseline.indexOf(weakerBefore))
+
+    await db('pageLinks').insert([93, 94, 95].map(pageId => ({ pageId, localeCode: 'en', path: 'exact-ceiling/weaker' })))
+    const linked = (await engine.query('falcon', { pageIds, limit: pageIds.length })).results
+    expect(linked.map(candidate => candidate.id).sort((left, right) => left - right)).toEqual(pageIds)
+    const strongerAfter = linked.find(candidate => candidate.id === 90)!
+    const peerAfter = linked.find(candidate => candidate.id === 91)!
+    const weakerAfter = linked.find(candidate => candidate.id === 92)!
+    expect(strongerAfter.score).toBe(strongerBefore.score)
+    expect(peerAfter.score).toBe(peerBefore.score)
+    expect(strongerAfter.matchedFields).not.toContain('graph')
+    expect(peerAfter.matchedFields).not.toContain('graph')
+    expect(weakerAfter.matchedFields).toContain('graph')
+    expect(weakerAfter.score).toBeGreaterThan(weakerBefore.score)
+    expect(weakerAfter.score).toBeLessThan(strongerBefore.score)
+    expect(strongerAfter.score).toBeGreaterThan(weakerAfter.score)
+    expect(weakerAfter.score).toBeGreaterThan(peerAfter.score)
+    expect(linked.indexOf(strongerAfter)).toBeLessThan(linked.indexOf(weakerAfter))
+    expect(linked.indexOf(weakerAfter)).toBeLessThan(linked.indexOf(peerAfter))
+    const numericOrder = [...linked]
+      .reverse()
+      .sort((left, right) => right.score - left.score)
+      .map(candidate => candidate.id)
+    expect(numericOrder.indexOf(90)).toBeLessThan(numericOrder.indexOf(92))
+    expect(numericOrder.indexOf(92)).toBeLessThan(numericOrder.indexOf(91))
+  })
+
+  it('does not demote an already-superior preliminary prefix match when graph promotion is clamped', async () => {
+    await insertPromotionPages(Array.from({ length: 100 }, () => 'falcon').join(' '))
+    const baseline = (await engine.query('falcon', { pageIds: promotionPageIds, limit: 5 })).results
+    expect(baseline.map(candidate => candidate.id).sort((left, right) => left - right)).toEqual(promotionPageIds)
+    const exactBefore = baseline.find(candidate => candidate.id === 80)!
+    const manualBefore = baseline.find(candidate => candidate.id === 81)!
+    expect(manualBefore.matchedFields).not.toContain('graph')
+    expect(manualBefore.score).toBeGreaterThan(exactBefore.score)
+
+    await linkPromotionPages()
+    const linked = (await engine.query('falcon', { pageIds: promotionPageIds, limit: 5 })).results
+    expect(linked.map(candidate => candidate.id).sort((left, right) => left - right)).toEqual(promotionPageIds)
+    const exactAfter = linked.find(candidate => candidate.id === 80)!
+    const manualAfter = linked.find(candidate => candidate.id === 81)!
+    expect(exactAfter.score).toBe(exactBefore.score)
+    expect(manualAfter.matchedFields).toContain('graph')
+    expect(manualAfter.score).toBeGreaterThan(manualBefore.score)
+    expect(manualAfter.score).toBeGreaterThan(exactAfter.score)
+    const numericOrder = [...linked]
+      .reverse()
+      .sort((left, right) => right.score - left.score)
+      .map(candidate => candidate.id)
+    expect(numericOrder.indexOf(81)).toBeLessThan(numericOrder.indexOf(80))
   })
 })

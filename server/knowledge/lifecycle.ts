@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { publicationWindowOpen } from '../../shared/publication-window.ts'
 import type { Knex } from 'knex'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { canReadPage, scopePageQuery } from '../helpers/page-access.ts'
@@ -175,12 +176,6 @@ interface CurrentUtilityPageRow extends PublicationWindowRow {
   readonly isSearchable: boolean | number
 }
 
-const publicationWindowOpen = (page: PublicationWindowRow, now = Date.now()): boolean => {
-  const start = page.publishStartDate
-  const end = page.publishEndDate
-  return (!start || new Date(String(start)).valueOf() <= now) && (!end || new Date(String(end)).valueOf() >= now)
-}
-
 const utilityEligibility = async (
   knex: Knex,
   payload: Pick<PageProjectionPayload, 'pageId' | 'sourceRevision' | 'sourceSha256'>
@@ -264,7 +259,22 @@ const currentSourceDigests = async (
   const ids = [...requestedRevisions.keys()]
   const pages = await knex<CurrentSourceRow>('pages')
     .whereIn('id', ids)
-    .select('id', 'sourceRevision', 'localeCode', 'path', 'visibility', 'isSearchable', 'contentType', 'content', 'title', 'description', 'authorId', 'extra', 'ownerId', 'updatedAt')
+    .select(
+      'id',
+      'sourceRevision',
+      'localeCode',
+      'path',
+      'visibility',
+      'isSearchable',
+      'contentType',
+      'content',
+      'title',
+      'description',
+      'authorId',
+      'extra',
+      'ownerId',
+      'updatedAt'
+    )
   if (tagsByPage === undefined) {
     const tagRows = (await knex('pageTags')
       .join('tags', 'tags.id', 'pageTags.tagId')
@@ -606,8 +616,7 @@ const repairProjectionColumns = async (
     if (key === 'projection' || key === 'enrichmentState' || key === 'lastError' || key === 'updatedAt' || key === 'searchTokens') continue
     healthy.where({ [key]: value })
   }
-  if (dictionary !== null)
-    healthy.whereRaw('?? = to_tsvector(?::regconfig, ?)', ['searchTokens', dictionary, knowledgeSearchText(projection)])
+  if (dictionary !== null) healthy.whereRaw('?? = to_tsvector(?::regconfig, ?)', ['searchTokens', dictionary, knowledgeSearchText(projection)])
   if (await healthy.first('pageId')) return 0
   await transaction('pageKnowledgeProjections').where({ pageId: row.pageId, sourceRevision: row.sourceRevision }).update(columns)
   return 1
@@ -784,7 +793,10 @@ export class PageKnowledgeRepository {
         .orderBy('pages.id')
       const tagRows = (await transaction('pageTags')
         .join('tags', 'tags.id', 'pageTags.tagId')
-        .whereIn('pageTags.pageId', rows.map(row => Number(row.id)))
+        .whereIn(
+          'pageTags.pageId',
+          rows.map(row => Number(row.id))
+        )
         .orderBy('tags.tag')
         .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>
       const tagsByPage = new Map<number, string[]>()
@@ -794,7 +806,11 @@ export class PageKnowledgeRepository {
         tags.push(tag.tag)
         tagsByPage.set(pageId, tags)
       }
-      const sourceDigests = await currentSourceDigests(transaction, rows.map(row => ({ pageId: Number(row.id), sourceRevision: row.sourceRevision })), tagsByPage)
+      const sourceDigests = await currentSourceDigests(
+        transaction,
+        rows.map(row => ({ pageId: Number(row.id), sourceRevision: row.sourceRevision })),
+        tagsByPage
+      )
       const visibleIds = new Set<number>()
       for (const row of rows) {
         const pageId = Number(row.id)
@@ -897,7 +913,10 @@ export class PageKnowledgeRepository {
         afterId = Number(rows.at(-1)?.id ?? afterId)
         const tagRows = (await transaction('pageTags')
           .join('tags', 'tags.id', 'pageTags.tagId')
-          .whereIn('pageTags.pageId', rows.map(row => Number(row.id)))
+          .whereIn(
+            'pageTags.pageId',
+            rows.map(row => Number(row.id))
+          )
           .orderBy('tags.tag')
           .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>
         const tagsByPage = new Map<number, string[]>()
@@ -907,7 +926,11 @@ export class PageKnowledgeRepository {
           tags.push(tag.tag)
           tagsByPage.set(pageId, tags)
         }
-        const sourceDigests = await currentSourceDigests(transaction, rows.map(row => ({ pageId: Number(row.id), sourceRevision: row.sourceRevision })), tagsByPage)
+        const sourceDigests = await currentSourceDigests(
+          transaction,
+          rows.map(row => ({ pageId: Number(row.id), sourceRevision: row.sourceRevision })),
+          tagsByPage
+        )
         for (const row of rows) {
           const pageId = Number(row.id)
           if (row.isSearchable === false || row.isSearchable === 0) continue
@@ -1149,7 +1172,8 @@ const recoverTerminalFailures = async (knex: Knex, now: Date): Promise<number> =
       if (!effect) return 0
       const projection = await transaction<StoredProjectionRow>('pageKnowledgeProjections').where({ pageId: row.pageId, sourceRevision }).forUpdate().first()
       const authoritativeSource = await loadSource(transaction, Number(row.pageId), sourceRevision)
-      if (!authoritativeSource || validatedSourceProjection(projection, Number(row.pageId), sourceRevision, knowledgeSourceSha256(authoritativeSource))) return 0
+      if (!authoritativeSource || validatedSourceProjection(projection, Number(row.pageId), sourceRevision, knowledgeSourceSha256(authoritativeSource)))
+        return 0
       const rearmed = await rearmFailedKnowledgeEffect(transaction, {
         id: row.id,
         pageId: Number(row.pageId),
@@ -1177,7 +1201,9 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
     const rows: Array<{ id: string; pageId: number; sourceRevision: string | number }> = []
     let afterPageId = 0
     while (rows.length < 25) {
-      const batch = (await transaction<PublicationWindowRow & { id: string; pageId: number; sourceRevision: string | number }>('pageKnowledgeProjections as projections')
+      const batch = (await transaction<PublicationWindowRow & { id: string; pageId: number; sourceRevision: string | number }>(
+        'pageKnowledgeProjections as projections'
+      )
         .join('pages', function () {
           this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
         })
@@ -1224,7 +1250,7 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
         page.isSearchable === false ||
         page.isSearchable === 0 ||
         !publicationWindowOpen(page, now.valueOf()) ||
-        await transaction('pageAccessPasswords').where({ pageId: row.pageId }).first('pageId')
+        (await transaction('pageAccessPasswords').where({ pageId: row.pageId }).first('pageId'))
       )
         continue
       const effect = await transaction<CurrentKnowledgeEffectRow>('pageMutationOutbox')

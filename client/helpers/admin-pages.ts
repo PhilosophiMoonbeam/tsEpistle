@@ -1,15 +1,16 @@
 import { fetchPage, type PageDetails, type PageListRow } from './pages-api'
 import { sameOriginJsonFetch } from './json-transport'
+import { publicationBoundaryTimestamp } from '../../shared/publication-window.ts'
 
 export type PublicationState = 'Unavailable' | 'Draft' | 'Scheduled' | 'Window ended' | 'Published' | 'Enabled' | 'Invalid schedule'
 export function publicationState(page: Pick<PageListRow, 'isPublished' | 'publishStartDate' | 'publishEndDate'>, now = Date.now()): PublicationState {
   if (page.isPublished === undefined) return 'Unavailable'
   if (page.isPublished === false) return 'Draft'
-  if (page.publishStartDate === undefined || page.publishEndDate === undefined) return 'Enabled'
-  const start = page.publishStartDate ? Date.parse(page.publishStartDate) : null
-  const end = page.publishEndDate ? Date.parse(page.publishEndDate) : null
+  const start = publicationBoundaryTimestamp(page.publishStartDate)
+  const end = publicationBoundaryTimestamp(page.publishEndDate)
   if ((start !== null && !Number.isFinite(start)) || (end !== null && !Number.isFinite(end)) || (start !== null && end !== null && end <= start))
     return 'Invalid schedule'
+  if (page.publishStartDate === undefined || page.publishEndDate === undefined) return 'Enabled'
   if (end !== null && end < now) return 'Window ended'
   if (start !== null && start > now) return 'Scheduled'
   return 'Published'
@@ -49,7 +50,12 @@ export async function inspectPublication(row: PublicationReview): Promise<void> 
 }
 export async function applyPublication(row: PublicationReview, enabled: boolean): Promise<void> {
   if (row.status !== 'ready' || !row.page) return
-  if (!row.page.capabilities?.viewStewardContacts || row.page.isPublished === undefined || row.page.publishStartDate === undefined || row.page.publishEndDate === undefined) {
+  if (
+    !row.page.capabilities?.viewStewardContacts ||
+    row.page.isPublished === undefined ||
+    row.page.publishStartDate === undefined ||
+    row.page.publishEndDate === undefined
+  ) {
     row.status = 'error'
     row.error = 'Publication controls are unavailable for this page.'
     return

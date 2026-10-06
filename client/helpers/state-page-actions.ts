@@ -18,16 +18,21 @@ export const goBackOrHome = (fallback = '/'): void => {
   window.location.assign(fallback)
 }
 
-const SCOPE_PREFIXES = new Set(['_private'])
+const SCOPE_PREFIXES: Record<string, true> = { _private: true }
+const ACTION_PREFIXES: Record<string, true> = { e: true, h: true, s: true }
 
 /**
- * Turns a missing page path into search words: drops the scope and locale
+ * Turns a missing page path into search words: drops the action, scope and locale
  * prefixes and joins the remaining segments, with - and _ read as spaces.
  */
 export const searchQueryFromPath = (pathname: string, localeCodes: readonly string[] = []): string => {
   const locales = new Set(localeCodes.map(code => code.toLowerCase()))
-  const segments = pathname.split('/').map(segment => segment.trim()).filter(Boolean)
-  while (segments.length > 0 && SCOPE_PREFIXES.has(segments[0]!)) segments.shift()
+  const segments = pathname
+    .split('/')
+    .map(segment => segment.trim())
+    .filter(Boolean)
+  if (segments.length > 1 && ACTION_PREFIXES[segments[0]!] === true) segments.shift()
+  while (segments.length > 0 && SCOPE_PREFIXES[segments[0]!] === true) segments.shift()
   if (segments.length > 1 && locales.has(segments[0]!.toLowerCase())) segments.shift()
   return segments
     .map(segment => segment.replace(/\.[a-z0-9]{1,5}$/i, '').replace(/[-_+.]+/g, ' '))

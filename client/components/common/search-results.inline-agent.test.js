@@ -1,8 +1,16 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import * as ts from 'typescript'
-import { OFFLINE_CONTENT_TYPE, OFFLINE_HTML_SANITIZER_VERSION, OfflineSnapshotRecordSchema } from '../../../shared/offline.ts'
+import {
+  OFFLINE_CONTENT_TYPE,
+  OFFLINE_HTML_SANITIZER_VERSION,
+  OfflinePagePolicyRecordSchema,
+  OfflinePolicyStateSchema,
+  OfflinePrivateSearchDocumentV1Schema,
+  OfflineSnapshotRecordSchema
+} from '../../../shared/offline.ts'
 import { currentOfflineReadingEpoch, currentOfflineReadingHandle } from '../../helpers/offline-session.ts'
+import { readPrivateCorpus } from '../../helpers/offline-crypto.ts'
 import { mergeOfflineSearchCorpora, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync } from '../../helpers/offline-search.ts'
 
 const compileSearchMethods = (source, names, dependencies) => {
@@ -24,7 +32,7 @@ const compileSearchMethods = (source, names, dependencies) => {
   const declarations = methods.properties.filter(node => ts.isMethodDeclaration(node) && selected.has(node.name.getText(sourceFile)))
   if (declarations.length !== selected.size) throw new Error('A requested search method was not found.')
 
-  const factorySource = `(searchPages, getErrorMessage, wikiStore, useAgentsStore, isAgentSessionId, emptySearchResponse, retryServerConnection, openOfflineStorage, isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync, OFFLINE_SEARCH_RESULT_LIMIT, currentOfflineReadingHandle, currentOfflineReadingEpoch, mergeOfflineSearchCorpora) => ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`
+  const factorySource = `(searchPages, getErrorMessage, wikiStore, useAgentsStore, isAgentSessionId, emptySearchResponse, retryServerConnection, openOfflineStorage, isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync, OFFLINE_SEARCH_RESULT_LIMIT, currentOfflineReadingHandle, currentOfflineReadingEpoch, mergeOfflineSearchCorpora, readPrivateCorpus, toOfflinePrivateSearchDocument) => ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`
   const compiled = ts.transpileModule(`const factory = ${factorySource}`, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -49,7 +57,9 @@ const compileSearchMethods = (source, names, dependencies) => {
     dependencies.OFFLINE_SEARCH_RESULT_LIMIT,
     dependencies.currentOfflineReadingHandle ?? currentOfflineReadingHandle,
     dependencies.currentOfflineReadingEpoch ?? currentOfflineReadingEpoch,
-    dependencies.mergeOfflineSearchCorpora ?? mergeOfflineSearchCorpora
+    dependencies.mergeOfflineSearchCorpora ?? mergeOfflineSearchCorpora,
+    dependencies.readPrivateCorpus ?? readPrivateCorpus,
+    dependencies.toOfflinePrivateSearchDocument
   )
 }
 
@@ -57,7 +67,14 @@ const compileSnapshotAdapters = source => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
   if (!script) throw new Error('Search component script was not found.')
   const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const names = new Set(['OFFLINE_LOCALE_PATTERN', 'isOfflineLocale', 'isOfflineSnapshotRecord', 'isOfflineSnapshotExpired', 'toOfflineSearchDocument'])
+  const names = new Set([
+    'OFFLINE_LOCALE_PATTERN',
+    'isOfflineLocale',
+    'isOfflineSnapshotRecord',
+    'isOfflineSnapshotExpired',
+    'toOfflineSearchDocument',
+    'toOfflinePrivateSearchDocument'
+  ])
   const declarations = sourceFile.statements.filter(
     statement =>
       ts.isVariableStatement(statement) &&
@@ -65,10 +82,10 @@ const compileSnapshotAdapters = source => {
   )
   if (declarations.length !== names.size) throw new Error('Offline snapshot adapters were not found.')
   const compiled = ts.transpileModule(
-    `${declarations.map(node => node.getText(sourceFile)).join('\n')}\nreturn { isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument }`,
+    `${declarations.map(node => node.getText(sourceFile)).join('\n')}\nreturn { isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument, toOfflinePrivateSearchDocument }`,
     { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }
   ).outputText
-  return new Function(compiled)()
+  return new Function('OfflinePrivateSearchDocumentV1Schema', compiled)(OfflinePrivateSearchDocumentV1Schema)
 }
 
 const deferred = () => {
@@ -109,6 +126,213 @@ const useSearchScheduler = () => {
     restore: () => {
       if (originalWindow === undefined) delete globalThis.window
       else globalThis.window = originalWindow
+    }
+  }
+}
+
+const createPrivateExpirySearch = (source, { deferFirstRanking = false } = {}) => {
+  const origin = 'https://wiki.example.test'
+  const siteId = 'private-search-site'
+  const capturedAt = '2026-09-01T12:00:00.000Z'
+  let now = Date.parse(capturedAt)
+  const expiresAt = now + 1000
+  const corpusRevision = 1
+  const adapters = compileSnapshotAdapters(source)
+  const pairs = [
+    { pageId: 1, title: 'Quasar stellar transient', searchText: 'quasar stellar transient', expiresAt: new Date(expiresAt).toISOString() },
+    { pageId: 2, title: 'Observatory notes', searchText: 'quasar stellar durable', expiresAt: null }
+  ].map(({ pageId, title, searchText, expiresAt }) => {
+    const record = OfflineSnapshotRecordSchema.parse({
+      siteId,
+      pageId,
+      locale: 'en',
+      byteSize: 128,
+      lastOpenedAt: capturedAt,
+      snapshot: {
+        schemaVersion: 1,
+        pageId,
+        locale: 'en',
+        path: `private/page-${pageId}`,
+        canonicalPath: `/en/private/page-${pageId}`,
+        title,
+        description: '',
+        sourceRevision: `revision-${pageId}`,
+        capturedAt,
+        expiresAt,
+        content: { representation: OFFLINE_CONTENT_TYPE, sanitizerVersion: OFFLINE_HTML_SANITIZER_VERSION, html: `<p>${searchText}</p>` },
+        searchText,
+        contentType: OFFLINE_CONTENT_TYPE,
+        integrity: `snapshot-${pageId}`
+      }
+    })
+    return {
+      snapshot: record.snapshot,
+      searchDocument: OfflinePrivateSearchDocumentV1Schema.parse({
+        ...adapters.toOfflineSearchDocument(record),
+        sourceRevision: record.snapshot.sourceRevision
+      })
+    }
+  })
+  const policies = [
+    OfflinePolicyStateSchema.parse({
+      key: 'state',
+      recordType: 'state',
+      schemaVersion: 1,
+      automaticSavingEnabled: true,
+      automaticSavingDefaultApplied: true,
+      selectedTags: [],
+      policyRevision: 1,
+      byteSize: 0,
+      syncDiagnostics: {
+        status: 'idle',
+        lastAttemptAt: null,
+        lastSuccessAt: null,
+        lastError: null,
+        pendingCount: 0,
+        retainedCount: 0,
+        removedCount: 0
+      }
+    }),
+    ...pairs.map(({ snapshot }) =>
+      OfflinePagePolicyRecordSchema.parse({
+        key: `${siteId}\u0000${snapshot.pageId}\u0000${snapshot.locale}`,
+        recordType: 'page',
+        schemaVersion: 1,
+        siteId,
+        pageId: snapshot.pageId,
+        locale: snapshot.locale,
+        manual: true,
+        automatic: false,
+        tag: false,
+        tagNames: [],
+        visitCount: 0,
+        lastVisitedAt: null,
+        lastEditedAt: null,
+        automaticSelectedAt: null,
+        excluded: false,
+        availability: 'available',
+        byteSize: 0
+      })
+    )
+  ]
+  let readingHandle = {
+    context: { canonicalOrigin: origin, siteId, accountId: 7, authVersion: 3, keyId: 'reading-key' },
+    sessionGeneration: 1
+  }
+  let readingEpoch = 1
+  let rankingCount = 0
+  const rankingStarted = deferred()
+  const releaseRanking = deferred()
+  const replacementFinished = deferred()
+  const storage = {
+    readSnapshotCorpus: async () => ({ snapshots: [], corpusRevision, sessionGeneration: 1 }),
+    currentCorpusRevision: async () => corpusRevision,
+    currentSessionGeneration: async () => 1,
+    close: () => {}
+  }
+  const methods = compileSearchMethods(source, ['queueSearch', 'runSearch', 'runOfflineSearch', 'handleOfflineReadingStateChange'], {
+    openOfflineStorage: async () => storage,
+    emptySearchResponse: () => ({ results: [], suggestions: [], totalHits: 0 }),
+    getErrorMessage: value => (value instanceof Error ? value.message : String(value)),
+    currentOfflineReadingHandle: () => readingHandle,
+    currentOfflineReadingEpoch: () => readingEpoch,
+    // This boundary returns the already-admitted decrypted body/search pairs, not ranked results.
+    readPrivateCorpus: async () => {
+      const activePairs = pairs.filter(({ snapshot }) => snapshot.expiresAt === null || Date.parse(snapshot.expiresAt) > now)
+      return {
+        snapshots: activePairs.map(pair => pair.snapshot),
+        searchDocuments: activePairs.map(pair => pair.searchDocument),
+        policies,
+        corpusRevision,
+        nextExpiresAt: activePairs.reduce((soonest, { snapshot }) => {
+          if (snapshot.expiresAt === null) return soonest
+          const expiry = Date.parse(snapshot.expiresAt)
+          return soonest === null || expiry < soonest ? expiry : soonest
+        }, null)
+      }
+    },
+    ...adapters,
+    prepareOfflineSearchCorpus,
+    searchPreparedOfflineDocumentsAsync: async (...args) => {
+      const ranked = await searchPreparedOfflineDocumentsAsync(...args)
+      rankingCount += 1
+      if (deferFirstRanking && rankingCount === 1) {
+        rankingStarted.resolve(ranked)
+        await releaseRanking.promise
+      }
+      return ranked
+    },
+    OFFLINE_SEARCH_RESULT_LIMIT: 50
+  })
+  const state = {
+    search: '',
+    searchMode: 'search',
+    searchContextLabel: 'Saved pages',
+    offlineSearchActive: true,
+    offlineSearchCorpus: null,
+    offlineSearchCorpusRevision: null,
+    offlineSearchCorpusSessionGeneration: null,
+    offlineSearchCorpusExpiresAt: null,
+    offlinePrivateSearchCorpus: null,
+    offlinePrivateSearchCorpusRevision: null,
+    offlinePrivateSearchCorpusSessionGeneration: null,
+    offlinePrivateSearchCorpusExpiresAt: null,
+    offlinePrivateSearchEnabled: false,
+    offlineCorpusCount: null,
+    offlineResultsTruncated: false,
+    response: { results: [], suggestions: [], totalHits: 0 },
+    responseKey: '',
+    searchRequestId: 0,
+    searchRetryId: 0,
+    searchRequestKey: '',
+    searchAbortController: null,
+    moreAbortController: null,
+    searchTimer: null,
+    searchIsLoading: false,
+    searchError: '',
+    moreError: '',
+    loadingMore: false,
+    cursor: -1,
+    queueSearch(query) {
+      return methods.queueSearch.call(this, query)
+    },
+    async runSearch(...args) {
+      await methods.runSearch.apply(this, args)
+      replacementFinished.resolve()
+    },
+    runOfflineSearch(...args) {
+      return methods.runOfflineSearch.apply(this, args)
+    }
+  }
+  const scheduler = useSearchScheduler()
+  window.location = { origin }
+  const originalNow = Date.now
+  Date.now = () => now
+  return {
+    state,
+    methods,
+    scheduler,
+    expiresAt,
+    rankingStarted,
+    releaseRanking,
+    replacementFinished,
+    advanceToDeadline: () => {
+      now = expiresAt
+    },
+    lock: () => {
+      readingHandle = null
+      readingEpoch += 1
+    },
+    runQuery(query) {
+      state.search = query
+      state.searchRequestKey = `private:${query}`
+      state.searchRequestId += 1
+      state.searchIsLoading = true
+      return state.runOfflineSearch(query, state.searchRequestKey, state.searchRequestId)
+    },
+    restore() {
+      Date.now = originalNow
+      scheduler.restore()
     }
   }
 }
@@ -556,7 +780,10 @@ describe('inline Ask mode contract', () => {
     })
     try {
       const pendingByQuery = new Map()
-      const rankingStarted = new Map([['stale', deferred()], ['latest', deferred()]])
+      const rankingStarted = new Map([
+        ['stale', deferred()],
+        ['latest', deferred()]
+      ])
       const adapters = compileSnapshotAdapters(search)
       const snapshots = [
         [1, 'stale', 'Stale'],
@@ -765,13 +992,22 @@ describe('inline Ask mode contract', () => {
     window.location = { origin: 'https://wiki.example.test' }
     try {
       let revision = 1
-      let snapshots = [{
-        schemaVersion: 1, siteId: window.location.origin, pageId: 1,
-        locale: 'en', path: 'downloaded', canonicalPath: '/en/downloaded',
-        title: 'Saved specimen', description: '', searchText: 'downloaded',
-        byteSize: 128, capturedAt: '2026-01-01T00:00:00.000Z',
-        snapshot: { expiresAt: null }
-      }]
+      let snapshots = [
+        {
+          schemaVersion: 1,
+          siteId: window.location.origin,
+          pageId: 1,
+          locale: 'en',
+          path: 'downloaded',
+          canonicalPath: '/en/downloaded',
+          title: 'Saved specimen',
+          description: '',
+          searchText: 'downloaded',
+          byteSize: 128,
+          capturedAt: '2026-01-01T00:00:00.000Z',
+          snapshot: { expiresAt: null }
+        }
+      ]
       const replacementFinished = deferred()
       const methods = compileSearchMethods(search, ['handleOfflineStorageChange', 'queueSearch', 'runSearch', 'runOfflineSearch'], {
         openOfflineStorage: async () => ({
@@ -792,19 +1028,33 @@ describe('inline Ask mode contract', () => {
         OFFLINE_SEARCH_RESULT_LIMIT: 50
       })
       const state = {
-        search: 'downloaded', searchMode: 'search', offlineSearchActive: true,
-        offlineSearchCorpus: null, offlineSearchCorpusRevision: null,
-        offlineSearchCorpusSessionGeneration: null, offlineSearchCorpusExpiresAt: null,
-        response: { results: [], suggestions: [], totalHits: 0 }, responseKey: '',
-        searchRequestId: 1, searchRequestKey: 'same-query',
-        searchAbortController: null, moreAbortController: null, searchTimer: null,
-        searchIsLoading: false, searchError: '', cursor: -1,
-        queueSearch(query) { return methods.queueSearch.call(this, query) },
+        search: 'downloaded',
+        searchMode: 'search',
+        offlineSearchActive: true,
+        offlineSearchCorpus: null,
+        offlineSearchCorpusRevision: null,
+        offlineSearchCorpusSessionGeneration: null,
+        offlineSearchCorpusExpiresAt: null,
+        response: { results: [], suggestions: [], totalHits: 0 },
+        responseKey: '',
+        searchRequestId: 1,
+        searchRequestKey: 'same-query',
+        searchAbortController: null,
+        moreAbortController: null,
+        searchTimer: null,
+        searchIsLoading: false,
+        searchError: '',
+        cursor: -1,
+        queueSearch(query) {
+          return methods.queueSearch.call(this, query)
+        },
         async runSearch(...args) {
           await methods.runSearch.apply(this, args)
           replacementFinished.resolve()
         },
-        runOfflineSearch(...args) { return methods.runOfflineSearch.apply(this, args) }
+        runOfflineSearch(...args) {
+          return methods.runOfflineSearch.apply(this, args)
+        }
       }
       await state.runOfflineSearch(state.search, state.searchRequestKey, state.searchRequestId)
       expect(state.response.results.map(result => result.id)).toEqual([1])
@@ -837,10 +1087,18 @@ describe('inline Ask mode contract', () => {
       let rankings = 0
       let reads = 0
       const document = title => ({
-        schemaVersion: 1, siteId: window.location.origin, pageId: revision,
-        locale: 'en', path: 'downloaded', canonicalPath: '/en/downloaded',
-        title, description: '', searchText: 'downloaded', byteSize: 128,
-        capturedAt: '2026-01-01T00:00:00.000Z', snapshot: { expiresAt: null }
+        schemaVersion: 1,
+        siteId: window.location.origin,
+        pageId: revision,
+        locale: 'en',
+        path: 'downloaded',
+        canonicalPath: '/en/downloaded',
+        title,
+        description: '',
+        searchText: 'downloaded',
+        byteSize: 128,
+        capturedAt: '2026-01-01T00:00:00.000Z',
+        snapshot: { expiresAt: null }
       })
       const storage = {
         readSnapshotCorpus: async () => {
@@ -873,18 +1131,32 @@ describe('inline Ask mode contract', () => {
       })
       const retained = { results: [{ id: 9, title: 'Retained' }], suggestions: [], totalHits: 1 }
       const state = {
-        offlineSearchActive: true, offlineSearchCorpus: null,
-        offlineSearchCorpusRevision: null, offlineSearchCorpusSessionGeneration: null,
-        offlineSearchCorpusExpiresAt: null, response: retained, responseKey: 'same-key',
-        searchRequestId: 1, searchRequestKey: 'same-key', searchMode: 'search',
-        searchAbortController: null, moreAbortController: null, searchTimer: null,
-        searchIsLoading: true, searchError: '', cursor: -1,
-        queueSearch(query) { return methods.queueSearch.call(this, query) },
+        offlineSearchActive: true,
+        offlineSearchCorpus: null,
+        offlineSearchCorpusRevision: null,
+        offlineSearchCorpusSessionGeneration: null,
+        offlineSearchCorpusExpiresAt: null,
+        response: retained,
+        responseKey: 'same-key',
+        searchRequestId: 1,
+        searchRequestKey: 'same-key',
+        searchMode: 'search',
+        searchAbortController: null,
+        moreAbortController: null,
+        searchTimer: null,
+        searchIsLoading: true,
+        searchError: '',
+        cursor: -1,
+        queueSearch(query) {
+          return methods.queueSearch.call(this, query)
+        },
         async runSearch(...args) {
           await methods.runSearch.apply(this, args)
           replacementFinished.resolve()
         },
-        runOfflineSearch(...args) { return methods.runOfflineSearch.apply(this, args) }
+        runOfflineSearch(...args) {
+          return methods.runOfflineSearch.apply(this, args)
+        }
       }
       const first = state.runOfflineSearch('downloaded', 'same-key', 1)
       await rankingStarted.promise
@@ -918,6 +1190,92 @@ describe('inline Ask mode contract', () => {
       expect(scheduler.pending()).toBe(0)
     } finally {
       scheduler.restore()
+    }
+  })
+  test('expires a cached private pair at the deadline without a corpus revision change', async () => {
+    const harness = createPrivateExpirySearch(search)
+    const { state } = harness
+    try {
+      await harness.runQuery('quasar')
+      expect(state.response.results.map(result => result.id)).toEqual([1, 2])
+      expect(state.response.results.every(result => result.visibility === 'private')).toBe(true)
+      expect(state.offlineCorpusCount).toBe(2)
+      expect(state.offlinePrivateSearchCorpus).not.toBeNull()
+
+      harness.advanceToDeadline()
+      await harness.runQuery('transient')
+      expect(state.response.results).toEqual([])
+      expect(state.responseKey).toBe('private:transient')
+      expect(state.offlineCorpusCount).toBe(1)
+      expect(state.searchError).toBe('')
+
+      await harness.runQuery('stellar')
+      expect(state.response.results.map(result => result.id)).toEqual([2])
+      expect(state.response.results[0].visibility).toBe('private')
+      expect(state.offlineCorpusCount).toBe(1)
+      expect(state.offlinePrivateSearchCorpusExpiresAt).toBeNull()
+      expect(state.searchError).toBe('')
+    } finally {
+      harness.restore()
+    }
+  })
+  test('cannot publish private ranking across its deadline and refreshes the same query without an authentication error', async () => {
+    const harness = createPrivateExpirySearch(search, { deferFirstRanking: true })
+    const { state, scheduler } = harness
+    try {
+      const first = harness.runQuery('stellar')
+      const ranked = await harness.rankingStarted.promise
+      expect(ranked.results.map(result => result.document.pageId)).toEqual([1, 2])
+      harness.advanceToDeadline()
+      harness.releaseRanking.resolve()
+      await first
+
+      expect(state.response.results).toEqual([])
+      expect(state.responseKey).toBe('')
+      expect(state.searchError).toBe('')
+      expect(state.offlinePrivateSearchCorpus).toBeNull()
+      expect(state.offlinePrivateSearchCorpusExpiresAt).toBeNull()
+      expect(scheduler.pending()).toBe(1)
+
+      scheduler.runNext()
+      await harness.replacementFinished.promise
+      expect(state.search).toBe('stellar')
+      expect(state.responseQuery).toBe('stellar')
+      expect(state.responseKey).toBe('private:stellar')
+      expect(state.response.results.map(result => result.id)).toEqual([2])
+      expect(state.response.results[0].visibility).toBe('private')
+      expect(state.offlineCorpusCount).toBe(1)
+      expect(state.offlinePrivateSearchEnabled).toBe(true)
+      expect(state.searchError).toBe('')
+      expect(state.searchIsLoading).toBe(false)
+      expect(scheduler.pending()).toBe(0)
+    } finally {
+      harness.releaseRanking.resolve()
+      harness.restore()
+    }
+  })
+  test.each(['reading-state event', 'search without a reading handle'])('clears the private cache deadline after %s', async reset => {
+    const harness = createPrivateExpirySearch(search)
+    const { state, methods } = harness
+    try {
+      await harness.runQuery('quasar')
+      expect(state.response.results.map(result => result.id)).toEqual([1, 2])
+      // Seed cache metadata so the reset contract is exercised independently of deadline population.
+      state.offlinePrivateSearchCorpusExpiresAt = harness.expiresAt
+      harness.lock()
+      if (reset === 'reading-state event') methods.handleOfflineReadingStateChange.call(state)
+      else await harness.runQuery('stellar')
+
+      expect(state.response.results).toEqual([])
+      expect(state.offlinePrivateSearchCorpus).toBeNull()
+      expect(state.offlinePrivateSearchCorpusRevision).toBeNull()
+      expect(state.offlinePrivateSearchCorpusSessionGeneration).toBeNull()
+      expect(state.offlinePrivateSearchCorpusExpiresAt).toBeNull()
+      expect(state.offlinePrivateSearchEnabled).toBe(false)
+      expect(state.searchError).toBe('')
+      expect(harness.scheduler.pending()).toBe(0)
+    } finally {
+      harness.restore()
     }
   })
 })

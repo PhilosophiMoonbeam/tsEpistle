@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { publicationWindowOpen } from '../../shared/publication-window.ts'
 import type { Knex } from 'knex'
 import { z } from 'zod'
 import { canonicalJson as encodeCanonicalJson, CanonicalJsonError } from '../helpers/canonical-json.ts'
 import { load } from 'cheerio'
-import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
+import { lockSearchIndex, lockSearchPage, publicationTimestampSql } from '../helpers/search-contract.ts'
 
 export const PAGE_PROJECTION_EFFECT_KINDS = ['render', 'links', 'search', 'knowledge'] as const
 export type PageProjectionEffectKind = (typeof PAGE_PROJECTION_EFFECT_KINDS)[number]
@@ -534,19 +535,22 @@ export const claimPageMutationEffects = async (
                 .where('currentPage.isSearchable', true)
                 .whereRaw(
                   transaction.client.config.client === 'pg'
-                    ? "(NULLIF(??::text, '') IS NULL OR NULLIF(??::text, '')::timestamptz <= ?::timestamptz)"
+                    ? `(NULLIF(??::text, '') IS NULL OR ${publicationTimestampSql('"currentPage"."publishStartDate"::text')} <= ?::timestamptz)`
                     : "(NULLIF(??, '') IS NULL OR julianday(NULLIF(??, '')) <= julianday(?))",
-                  ['currentPage.publishStartDate', 'currentPage.publishStartDate', nowIso]
+                  transaction.client.config.client === 'pg'
+                    ? ['currentPage.publishStartDate', nowIso]
+                    : ['currentPage.publishStartDate', 'currentPage.publishStartDate', nowIso]
                 )
                 .whereRaw(
                   transaction.client.config.client === 'pg'
-                    ? "(NULLIF(??::text, '') IS NULL OR NULLIF(??::text, '')::timestamptz >= ?::timestamptz)"
+                    ? `(NULLIF(??::text, '') IS NULL OR ${publicationTimestampSql('"currentPage"."publishEndDate"::text')} >= ?::timestamptz)`
                     : "(NULLIF(??, '') IS NULL OR julianday(NULLIF(??, '')) >= julianday(?))",
-                  ['currentPage.publishEndDate', 'currentPage.publishEndDate', nowIso]
+                  transaction.client.config.client === 'pg'
+                    ? ['currentPage.publishEndDate', nowIso]
+                    : ['currentPage.publishEndDate', 'currentPage.publishEndDate', nowIso]
                 )
                 .whereNotExists(function () {
-                  this.select(transaction.raw('1')).from('pageAccessPasswords as protection')
-                    .whereRaw('?? = ??', ['protection.pageId', 'currentPage.id'])
+                  this.select(transaction.raw('1')).from('pageAccessPasswords as protection').whereRaw('?? = ??', ['protection.pageId', 'currentPage.id'])
                 })
             })
             .orWhereExists(function () {
@@ -719,12 +723,26 @@ export interface PageProjectionRuntime {
 }
 
 const projectionPageColumns = [
-  'id', 'sourceRevision', 'content', 'render', 'renderedSourceRevision', 'isPublished', 'isSearchable',
-  'publishStartDate', 'publishEndDate', 'localeCode', 'path', 'visibility', 'ownerId'
+  'id',
+  'sourceRevision',
+  'content',
+  'render',
+  'renderedSourceRevision',
+  'isPublished',
+  'isSearchable',
+  'publishStartDate',
+  'publishEndDate',
+  'localeCode',
+  'path',
+  'visibility',
+  'ownerId'
 ] as const
 
 const loadProjectionPage = async (knex: Knex | Knex.Transaction, pageId: number): Promise<ProjectionPageRow | undefined> =>
-  knex<ProjectionPageRow>('pages').select(...projectionPageColumns).where({ id: pageId }).first()
+  knex<ProjectionPageRow>('pages')
+    .select(...projectionPageColumns)
+    .where({ id: pageId })
+    .first()
 
 const withLockedProjectionPage = async <T>(
   db: Knex | Knex.Transaction,
@@ -734,7 +752,11 @@ const withLockedProjectionPage = async <T>(
   const run = async (transaction: Knex.Transaction): Promise<T> => {
     await lockSearchIndex(transaction, false)
     await lockSearchPage(transaction, pageId)
-    const page = await transaction<ProjectionPageRow>('pages').select(...projectionPageColumns).where({ id: pageId }).forUpdate().first()
+    const page = await transaction<ProjectionPageRow>('pages')
+      .select(...projectionPageColumns)
+      .where({ id: pageId })
+      .forUpdate()
+      .first()
     return work(transaction, page)
   }
   return db.isTransaction ? run(db as Knex.Transaction) : db.transaction(run)
@@ -744,14 +766,16 @@ const pageSearchEligible = (page: ProjectionPageRow, now = Date.now()): boolean 
   page.visibility === 'public' &&
   (page.isPublished === true || page.isPublished === 1) &&
   (page.isSearchable === true || page.isSearchable === 1) &&
-  (!page.publishStartDate || Date.parse(page.publishStartDate) <= now) &&
-  (!page.publishEndDate || Date.parse(page.publishEndDate) >= now)
+  publicationWindowOpen(page, now)
 
 const hasCertifiedRender = (page: ProjectionPageRow): boolean =>
   page.renderedSourceRevision !== null && String(page.renderedSourceRevision) === String(page.sourceRevision)
 
 const projectionLocation = (page: ProjectionPageRow): PageProjectionLocation => ({
-  locale: page.localeCode, path: page.path, visibility: page.visibility, ownerId: page.ownerId
+  locale: page.localeCode,
+  path: page.path,
+  visibility: page.visibility,
+  ownerId: page.ownerId
 })
 
 const admitCurrentEffect = async (
@@ -762,11 +786,18 @@ const admitCurrentEffect = async (
 ): Promise<{ readonly id: string; readonly changed: boolean }> => {
   const sourceRevision = revisionString(page.sourceRevision)
   const existing = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
-    .where({ pageId: page.id, sourceRevision, effectKind: kind }).forUpdate().first()
+    .where({ pageId: page.id, sourceRevision, effectKind: kind })
+    .forUpdate()
+    .first()
   if (!existing) {
     const [id] = await enqueuePageMutationEffects(transaction, {
-      pageId: page.id, sourceRevision, desiredState: 'present', action: input.action ?? 'update',
-      source: page.content, location: projectionLocation(page), effects: [kind]
+      pageId: page.id,
+      sourceRevision,
+      desiredState: 'present',
+      action: input.action ?? 'update',
+      source: page.content,
+      location: projectionLocation(page),
+      effects: [kind]
     })
     if (!id) throw new PageMutationOutboxError('OUTBOX_ADMISSION_FAILED', 'Current page projection intent could not be admitted')
     return { id, changed: true }
@@ -779,12 +810,17 @@ const admitCurrentEffect = async (
   const fence = input.fenceRunning === true && existing.status === 'running'
   if (!rearm && !fence) return { id: existing.id, changed: false }
   const now = (input.now ?? new Date()).toISOString()
-  const changed = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
-    .where({ id: existing.id, status: existing.status })
-    .update({
-      status: 'retry', attempts: 0, availableAt: now, result: null, postcondition: null,
-      leaseOwner: null, leaseToken: null, leaseExpiresAt: null, updatedAt: now
-    })
+  const changed = await transaction<PageMutationOutboxRow>('pageMutationOutbox').where({ id: existing.id, status: existing.status }).update({
+    status: 'retry',
+    attempts: 0,
+    availableAt: now,
+    result: null,
+    postcondition: null,
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    updatedAt: now
+  })
   return { id: existing.id, changed: changed === 1 }
 }
 
@@ -797,7 +833,9 @@ const invalidateRenderedProjections = async (transaction: Knex.Transaction, page
 
 const ensureRenderDependency = async (transaction: Knex.Transaction, page: ProjectionPageRow): Promise<boolean> => {
   const existing = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
-    .where({ pageId: page.id, sourceRevision: revisionString(page.sourceRevision), effectKind: 'render' }).forUpdate().first()
+    .where({ pageId: page.id, sourceRevision: revisionString(page.sourceRevision), effectKind: 'render' })
+    .forUpdate()
+    .first()
   if (existing) {
     const payload = parseRowPayload(existing)
     if (payload.desiredState !== 'present' || !isExactProjectionSource(page, payload)) {
@@ -815,15 +853,14 @@ const ensureRenderDependency = async (transaction: Knex.Transaction, page: Proje
   return render.changed
 }
 
-export const admitPageSearchEffect = async (
-  db: Knex | Knex.Transaction,
-  input: { readonly pageId: number; readonly now?: Date }
-): Promise<string> => {
+export const admitPageSearchEffect = async (db: Knex | Knex.Transaction, input: { readonly pageId: number; readonly now?: Date }): Promise<string> => {
   if (!Number.isSafeInteger(input.pageId) || input.pageId < 1) throw new PageMutationOutboxError('INVALID_PAGE_ID', 'Page mutation page ID is invalid')
   return withLockedProjectionPage(db, input.pageId, async (transaction, page) => {
     if (!page) throw new PageMutationOutboxError('PAGE_NOT_FOUND', 'Current page search intent requires an existing page')
     const effect = await admitCurrentEffect(transaction, page, 'search', {
-      rearm: true, fenceRunning: true, ...(input.now === undefined ? {} : { now: input.now })
+      rearm: true,
+      fenceRunning: true,
+      ...(input.now === undefined ? {} : { now: input.now })
     })
     const protectedPage = await transaction('pageAccessPasswords').where({ pageId: page.id }).first('pageId')
     if (pageSearchEligible(page) && !protectedPage) await ensureRenderDependency(transaction, page)
@@ -998,7 +1035,8 @@ class LinksProjectionSink implements PageProjectionSink {
     const renderEffect = await this.#knex<PageMutationOutboxRow>('pageMutationOutbox')
       .where({ pageId: payload.pageId, sourceRevision: payload.sourceRevision, effectKind: 'render', status: 'succeeded' })
       .first('id')
-    if (!renderEffect || !hasCertifiedRender(before)) throw new PageMutationOutboxError('RENDER_PROJECTION_NOT_READY', 'Exact certified render projection has not completed')
+    if (!renderEffect || !hasCertifiedRender(before))
+      throw new PageMutationOutboxError('RENDER_PROJECTION_NOT_READY', 'Exact certified render projection has not completed')
     const links = extractRenderedPageLinks(before.render, location.locale)
 
     const outcome = await withLockedProjectionPage(this.#knex, payload.pageId, async (transaction, current) => {
@@ -1007,7 +1045,8 @@ class LinksProjectionSink implements PageProjectionSink {
         return { superseded: false, observed: current, invalid: true }
       }
       const currentRender = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
-        .where({ pageId: payload.pageId, sourceRevision: payload.sourceRevision, effectKind: 'render', status: 'succeeded' }).first('id')
+        .where({ pageId: payload.pageId, sourceRevision: payload.sourceRevision, effectKind: 'render', status: 'succeeded' })
+        .first('id')
       if (!currentRender) return { superseded: false, observed: current, invalid: true }
       await transaction('pageLinks').where({ pageId: payload.pageId }).delete()
       if (links.length > 0) {
@@ -1091,7 +1130,8 @@ class SearchProjectionSink implements PageProjectionSink {
     const protectedPage = await this.#knex('pageAccessPasswords').where({ pageId: payload.pageId }).first('pageId')
     if (publishedPublic && !protectedPage) {
       const renderEffect = await this.#knex<PageMutationOutboxRow>('pageMutationOutbox')
-        .where({ pageId: payload.pageId, sourceRevision: payload.sourceRevision, effectKind: 'render', status: 'succeeded' }).first('id')
+        .where({ pageId: payload.pageId, sourceRevision: payload.sourceRevision, effectKind: 'render', status: 'succeeded' })
+        .first('id')
       if (!renderEffect || !hasCertifiedRender(before)) {
         await withLockedProjectionPage(this.#knex, payload.pageId, async (transaction, page) => {
           if (page && isExactProjectionSource(page, payload)) await ensureRenderDependency(transaction, page)
@@ -1178,8 +1218,12 @@ export class PageProjectionLifecycle {
     while (scanned < GRAPH_MAINTENANCE_SCAN_LIMIT && repaired < GRAPH_MAINTENANCE_LIMIT) {
       const batchLimit = Math.min(GRAPH_MAINTENANCE_SCAN_BATCH, GRAPH_MAINTENANCE_SCAN_LIMIT - scanned)
       const candidates = await this.#knex<ProjectionPageRow>('pages')
-        .select('id').where('id', '>', this.#graphMaintenanceCursor)
-        .where('visibility', 'public').where('isPublished', true).orderBy('id').limit(batchLimit)
+        .select('id')
+        .where('id', '>', this.#graphMaintenanceCursor)
+        .where('visibility', 'public')
+        .where('isPublished', true)
+        .orderBy('id')
+        .limit(batchLimit)
       if (candidates.length === 0) {
         this.#graphMaintenanceCursor = 0
         break
@@ -1213,7 +1257,10 @@ export class PageProjectionLifecycle {
     while (scanned < SEARCH_MAINTENANCE_SCAN_LIMIT && repaired < SEARCH_MAINTENANCE_LIMIT) {
       const batchLimit = Math.min(SEARCH_MAINTENANCE_SCAN_BATCH, SEARCH_MAINTENANCE_SCAN_LIMIT - scanned)
       const candidates = await this.#knex<ProjectionPageRow>('pages')
-        .select('id').where('id', '>', this.#searchMaintenanceCursor).orderBy('id').limit(batchLimit)
+        .select('id')
+        .where('id', '>', this.#searchMaintenanceCursor)
+        .orderBy('id')
+        .limit(batchLimit)
       if (candidates.length === 0) {
         this.#searchMaintenanceCursor = 0
         break
@@ -1224,7 +1271,9 @@ export class PageProjectionLifecycle {
         const changed = await withLockedProjectionPage(this.#knex, candidate.id, async (transaction, page) => {
           if (!page) return false
           const existing = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
-            .where({ pageId: page.id, sourceRevision: revisionString(page.sourceRevision), effectKind: 'search' }).forUpdate().first()
+            .where({ pageId: page.id, sourceRevision: revisionString(page.sourceRevision), effectKind: 'search' })
+            .forUpdate()
+            .first()
           if (existing) {
             const payload = parseRowPayload(existing)
             if (payload.desiredState !== 'present' || !isExactProjectionSource(page, payload)) return false
@@ -1255,20 +1304,28 @@ export class PageProjectionLifecycle {
       const batchLimit = Math.min(SEARCH_MAINTENANCE_SCAN_BATCH, SEARCH_MAINTENANCE_SCAN_LIMIT - scanned)
       const query = knex<PageMutationOutboxRow>('pageMutationOutbox as searchEffect')
         .select('searchEffect.*')
-        .where('searchEffect.effectKind', 'search').where('searchEffect.desiredState', 'absent')
+        .where('searchEffect.effectKind', 'search')
+        .where('searchEffect.desiredState', 'absent')
         .whereIn('searchEffect.status', ['succeeded', 'failed'])
         .whereNotExists(function () {
           this.select(knex.raw('1')).from('pages as currentPage').whereRaw('?? = ??', ['currentPage.id', 'searchEffect.pageId'])
         })
-        .where(rows => rows.whereExists(function () {
-          this.select(knex.raw('1')).from('pagesVector as searchVector').whereRaw('?? = ??', ['searchVector.pageId', 'searchEffect.pageId'])
-        }).orWhereExists(function () {
-          this.select(knex.raw('1')).from('pagesWords as searchWords').whereRaw('?? = ??', ['searchWords.pageId', 'searchEffect.pageId'])
-        }))
+        .where(rows =>
+          rows
+            .whereExists(function () {
+              this.select(knex.raw('1')).from('pagesVector as searchVector').whereRaw('?? = ??', ['searchVector.pageId', 'searchEffect.pageId'])
+            })
+            .orWhereExists(function () {
+              this.select(knex.raw('1')).from('pagesWords as searchWords').whereRaw('?? = ??', ['searchWords.pageId', 'searchEffect.pageId'])
+            })
+        )
       const cursor = this.#searchAbsentCursor
-      if (cursor) query.where(after => after.where('searchEffect.pageId', '>', cursor.pageId).orWhere(samePage =>
-        samePage.where('searchEffect.pageId', cursor.pageId).where('searchEffect.id', '>', cursor.id)
-      ))
+      if (cursor)
+        query.where(after =>
+          after
+            .where('searchEffect.pageId', '>', cursor.pageId)
+            .orWhere(samePage => samePage.where('searchEffect.pageId', cursor.pageId).where('searchEffect.id', '>', cursor.id))
+        )
       const candidates = await query.orderBy('searchEffect.pageId').orderBy('searchEffect.id').limit(batchLimit)
       if (candidates.length === 0) {
         this.#searchAbsentCursor = null

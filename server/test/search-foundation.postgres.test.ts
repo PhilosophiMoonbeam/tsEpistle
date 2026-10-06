@@ -7,20 +7,34 @@ import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { knowledgeSearchText, mergeKnowledgeUtilityResult, projectPageKnowledge } from '../knowledge/projection.ts'
 import { up as createKnowledgeProjectionSchema } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchIndex } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
+import { paginateSearch } from '../helpers/search-pagination.ts'
 import type PageModel from '../models/pages.ts'
 
 interface SearchSummary {
   id: number
+  locale: string
+  path: string
+  visibility: 'public' | 'private'
   sourceRevision: string
   matchedFields: string[]
 }
 
 interface SearchResponse {
   results: SearchSummary[]
+  suggestions: string[]
+  totalHits: number
 }
 
 interface SearchOperations {
-  search(input: { query: string; requester?: Express.User; locale?: string; path?: string; pageIds?: number[]; limit?: number }): Promise<SearchResponse>
+  search(input: {
+    query: string
+    requester?: Express.User
+    locale?: string
+    path?: string
+    pageIds?: number[]
+    agentScope?: { kind: 'selected'; pageIds: readonly number[] }
+    limit?: number
+  }): Promise<SearchResponse>
   listLinks(input: { locale: string; requester?: Express.User }): Promise<Array<{ id: number; links: string[] }>>
   listRelated(input: {
     pageId: number
@@ -53,7 +67,9 @@ suite('PostgreSQL shared search foundation', () => {
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined })
     await db.raw(`
-      DROP TABLE IF EXISTS "pageKnowledgeProjections", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages, users CASCADE;
+      DROP TABLE IF EXISTS "searchEngines", "pageKnowledgeProjections", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages, users CASCADE;
+      CREATE TABLE "searchEngines" (key text PRIMARY KEY, "isEnabled" boolean NOT NULL, config jsonb NOT NULL);
+      INSERT INTO "searchEngines" VALUES ('postgres', true, '{"dictLanguage":"english"}'::jsonb);
       CREATE TABLE users (
         id integer PRIMARY KEY,
         name text NOT NULL,
@@ -709,6 +725,80 @@ suite('PostgreSQL shared search foundation', () => {
     expect(selected.results).toEqual([expect.objectContaining({ id: 19000, sourceRevision: '19000' })])
   })
 
+  it('returns every retained private snapshot result exactly once when a higher-ranked page displaces the original tail', async () => {
+    const query = 'Snapshotzircon'
+    const path = 'snapshot-pagination-regression'
+    const requester = { id: 7 } as Express.User
+    const originalIds = Array.from({ length: 50 }, (_, index) => 90_000 + index)
+    const newPageId = 90_050
+    const fixtureIds = [...originalIds, newPageId]
+    const search = (retainedPageIds?: readonly number[]) =>
+      operations.search({
+        query,
+        requester,
+        locale: 'en',
+        path,
+        limit: 1001,
+        ...(retainedPageIds === undefined ? {} : { agentScope: { kind: 'selected' as const, pageIds: retainedPageIds } })
+      })
+    const paginationInput = { owner: 'snapshot-fixture-owner-7', queryKey: JSON.stringify([query, 'en', path]), search }
+
+    try {
+      await db('pages').insert(
+        originalIds.map((id, index) => ({
+          id,
+          sourceRevision: 1,
+          renderedSourceRevision: 1,
+          path: `${path}/rank-${String(index + 1).padStart(2, '0')}`,
+          localeCode: 'en',
+          title: `${query} ${String(index + 1).padStart(2, '0')}`,
+          visibility: 'private',
+          ownerId: 7,
+          isPublished: true
+        }))
+      )
+      expect((await search()).results.map(result => result.id)).toEqual(originalIds)
+      const first = await paginateSearch(paginationInput)
+      expect(first.results.map(result => result.id)).toEqual(originalIds.slice(0, 20))
+      expect(first.snapshotCount).toBe(50)
+      expect(first.nextCursor).not.toBeNull()
+
+      await db('pages').insert({
+        id: newPageId,
+        sourceRevision: 1,
+        renderedSourceRevision: 1,
+        path: `${path}/new-arrival`,
+        localeCode: 'en',
+        title: query,
+        visibility: 'private',
+        ownerId: 7,
+        isPublished: true
+      })
+      const fresh = await search()
+      expect(fresh.results).toHaveLength(50)
+      expect(fresh.results[0]?.id).toBe(newPageId)
+      expect(fresh.results.map(result => result.id)).not.toContain(originalIds[49])
+
+      const returnedIds = first.results.map(result => result.id)
+      const followedCursors = new Set<string>()
+      let cursor = first.nextCursor
+      while (cursor !== null) {
+        expect(followedCursors.has(cursor)).toBe(false)
+        followedCursors.add(cursor)
+        const next = await paginateSearch({ ...paginationInput, cursor })
+        returnedIds.push(...next.results.map(result => result.id))
+        cursor = next.nextCursor
+      }
+
+      expect(returnedIds).toContain(originalIds[49])
+      expect(returnedIds).toEqual(originalIds)
+      expect(new Set(returnedIds).size).toBe(50)
+      expect(returnedIds).not.toContain(newPageId)
+    } finally {
+      await db('pages').whereIn('id', fixtureIds).delete()
+    }
+  })
+
   it('excludes unpublished, protected, stale, and foreign-private projection candidates while retaining the owner private result', async () => {
     const publicBoundaryQueries = [
       ['unpublished projection boundary', 700],
@@ -728,9 +818,7 @@ suite('PostgreSQL shared search foundation', () => {
 
   it('pins PostgreSQL lexical candidates to the authorized metadata revision', async () => {
     const query = '"ultraviolet marmot checksum"'
-    expect((await operations.search({ query, pageIds: [42], limit: 5 })).results).toContainEqual(
-      expect.objectContaining({ id: 42, sourceRevision: '42' })
-    )
+    expect((await operations.search({ query, pageIds: [42], limit: 5 })).results).toContainEqual(expect.objectContaining({ id: 42, sourceRevision: '42' }))
     expect((await engine.query(query, { pageIds: [42], pageRevisions: { 42: '42' }, limit: 5 })).results).toContainEqual(
       expect.objectContaining({ id: 42, sourceRevision: '42' })
     )
@@ -819,16 +907,18 @@ suite('PostgreSQL shared search foundation', () => {
       { id: 832, title: 'Neutral Raven', visibility: 'public', isPublished: true, ownerId: null }
     )
     const ids = details.map(source => source.id)
-    await db('pages').insert(details.map(source => ({
-      ...source,
-      sourceRevision: source.id,
-      renderedSourceRevision: source.id,
-      path: `search-audit/punctuation-boundary-${source.id}`,
-      localeCode: 'en',
-      description: 'Boundary control',
-      content: source.id === 832 ? 'falcon punctuationsecretcipher' : source.title,
-      render: `<article>${source.id === 832 ? 'falcon punctuationsecretcipher' : source.title}</article>`
-    })))
+    await db('pages').insert(
+      details.map(source => ({
+        ...source,
+        sourceRevision: source.id,
+        renderedSourceRevision: source.id,
+        path: `search-audit/punctuation-boundary-${source.id}`,
+        localeCode: 'en',
+        description: 'Boundary control',
+        content: source.id === 832 ? 'falcon punctuationsecretcipher' : source.title,
+        render: `<article>${source.id === 832 ? 'falcon punctuationsecretcipher' : source.title}</article>`
+      }))
+    )
     await db('pageAccessPasswords').insert([822, 825, 828, 832].map(pageId => ({ pageId })))
     try {
       await engine.rebuild()
@@ -844,7 +934,13 @@ suite('PostgreSQL shared search foundation', () => {
       }
       expect((await operations.search({ query: '"punctuationsecretcipher"', pageIds: [832] })).results).toEqual([])
       expect(await db('pagesVector').whereIn('pageId', [821, 824, 827, 831]).select('pageId')).toEqual([])
-      expect((await db.raw('SELECT count(*)::integer AS count FROM "pagesVector" WHERE "pageId" = 832 AND tokens @@ plainto_tsquery(\'english\', \'punctuationsecretcipher\')')).rows[0].count).toBe(0)
+      expect(
+        (
+          await db.raw(
+            'SELECT count(*)::integer AS count FROM "pagesVector" WHERE "pageId" = 832 AND tokens @@ plainto_tsquery(\'english\', \'punctuationsecretcipher\')'
+          )
+        ).rows[0].count
+      ).toBe(0)
     } finally {
       await db('pages').whereIn('id', ids).delete()
       for (const id of ids) await engine.removePage(id)
@@ -853,20 +949,22 @@ suite('PostgreSQL shared search foundation', () => {
 
   it('uses the active English dictionary for protected inflection without searching secret bodies', async () => {
     const ids = [840, 841, 842]
-    await db('pages').insert(ids.map(id => ({
-      id,
-      sourceRevision: id,
-      renderedSourceRevision: id,
-      path: `search-audit/stem-boundary-${id}`,
-      localeCode: 'en',
-      title: 'Falcon',
-      description: 'Bird reference',
-      content: 'protectedinflectionsecretcipher',
-      render: '<article>protectedinflectionsecretcipher</article>',
-      visibility: id === 842 ? 'private' : 'public',
-      ownerId: id === 842 ? 7 : null,
-      isPublished: id !== 842
-    })))
+    await db('pages').insert(
+      ids.map(id => ({
+        id,
+        sourceRevision: id,
+        renderedSourceRevision: id,
+        path: `search-audit/stem-boundary-${id}`,
+        localeCode: 'en',
+        title: 'Falcon',
+        description: 'Bird reference',
+        content: 'protectedinflectionsecretcipher',
+        render: '<article>protectedinflectionsecretcipher</article>',
+        visibility: id === 842 ? 'private' : 'public',
+        ownerId: id === 842 ? 7 : null,
+        isPublished: id !== 842
+      }))
+    )
     await db('pageAccessPasswords').insert([{ pageId: 840 }, { pageId: 842 }])
     try {
       await engine.rebuild()
@@ -878,7 +976,9 @@ suite('PostgreSQL shared search foundation', () => {
         expect(result.matchedFields).toContain('title')
         expect(result.matchedFields).not.toContain('content')
       }
-      expect((await engine.query('"falcons"', { pageIds: [840, 841], limit: 10 })).results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual([840, 841])
+      expect((await engine.query('"falcons"', { pageIds: [840, 841], limit: 10 })).results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual([
+        840, 841
+      ])
       const secretBody = await operations.search({ query: '"protectedinflectionsecretcipher"', requester: { id: 7 } as Express.User, pageIds: ids, limit: 10 })
       expect(secretBody.results).toEqual([expect.objectContaining({ id: 841, matchedFields: ['content'] })])
 
@@ -887,8 +987,14 @@ suite('PostgreSQL shared search foundation', () => {
       expect(await db('pagesSearchMetadata').select('dictionary')).toEqual([{ dictionary: 'simple' }])
       expect(engine.config.dictLanguage).toBe('english')
       expect((await operations.search({ query: '"falcons"', requester: { id: 7 } as Express.User, pageIds: ids, limit: 10 })).results).toEqual([])
-      expect((await operations.search({ query: '"Falcon"', requester: { id: 7 } as Express.User, pageIds: ids, limit: 10 })).results.map(candidate => candidate.id).sort((a, b) => a - b)).toEqual(ids)
-      expect((await operations.search({ query: '"protectedinflectionsecretcipher"', requester: { id: 7 } as Express.User, pageIds: [840, 842], limit: 10 })).results).toEqual([])
+      expect(
+        (await operations.search({ query: '"Falcon"', requester: { id: 7 } as Express.User, pageIds: ids, limit: 10 })).results
+          .map(candidate => candidate.id)
+          .sort((a, b) => a - b)
+      ).toEqual(ids)
+      expect(
+        (await operations.search({ query: '"protectedinflectionsecretcipher"', requester: { id: 7 } as Express.User, pageIds: [840, 842], limit: 10 })).results
+      ).toEqual([])
     } finally {
       await engine.init()
       await db('pages').whereIn('id', ids).delete()

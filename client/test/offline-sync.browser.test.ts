@@ -30,6 +30,13 @@ type SyncRun = {
   requests: string[]
   privateCorpus?: { snapshots: OfflineSnapshotRecord[] }
   privateRecords?: OfflinePrivateEnvelopeV1[]
+  privateLocaleSearch?: {
+    sourceText: string
+    decryptedText: string
+    sourcePageIds: number[]
+    decryptedPageIds: number[]
+    decryptedAsyncPageIds: number[]
+  }
   privateRollback?: {
     before: PrivateTransactionState
     after: PrivateTransactionState
@@ -49,6 +56,8 @@ const driverSource = (absoluteStoragePath: string, absoluteSyncPath: string): st
 import { openOfflineStorage, OfflineStorageError } from ${JSON.stringify(absoluteStoragePath)};
 import { createOfflineSyncCoordinator } from ${JSON.stringify(absoluteSyncPath)};
 import { enrollOfflineReading } from ${JSON.stringify(fileURLToPath(new URL('../helpers/offline-session.ts', import.meta.url)))};
+import { readPrivateCorpus } from ${JSON.stringify(fileURLToPath(new URL('../helpers/offline-crypto.ts', import.meta.url)))};
+import { prepareOfflineSearchCorpus, searchPreparedOfflineDocuments, searchPreparedOfflineDocumentsAsync } from ${JSON.stringify(fileURLToPath(new URL('../helpers/offline-search.ts', import.meta.url)))};
 
 const SITE_ID = globalThis.location.origin;
 const PRIVATE_SITE_ID = SITE_ID + '/private';
@@ -218,6 +227,14 @@ export async function run(operation, payload = {}) {
       if (kind === 'private-denied-404' && privateSuccessCount > 0) return json({ message: 'Private snapshot unavailable.', reason: 'render-pending' }, 404);
       if (kind === 'private-strict-context') return privateResponse(pageId, 200, { accountId: PRIVATE_ACCOUNT_ID + 1 });
       privateSuccessCount += 1;
+      if (kind === 'private-default-locale') {
+        const response = await privateResponse(pageId).json();
+        response.snapshot.title = 'Location';
+        response.snapshot.description = '';
+        response.snapshot.content.html = '<p>IĞDIR</p>';
+        response.snapshot.searchText = 'IĞDIR';
+        return json(response);
+      }
       return privateResponse(pageId);
     }
     if (requestURL.pathname.endsWith('/offline-snapshot')) {
@@ -242,6 +259,7 @@ export async function run(operation, payload = {}) {
       if (kind === 'private-public-404') return json({ message: 'Guest cannot read this page.' }, 404);
       if (kind === 'private-public-410') return json({ message: 'Guest page expired.' }, 410);
       if (kind === 'private-public-422') return json({ message: 'Guest page is not eligible.' }, 422);
+      if (kind === 'private-default-locale') return json({ message: 'Guest cannot read this page.' }, 404);
       if (kind.startsWith('private-denied-') || kind === 'private-retirement' || kind === 'private-strict-context') return json({ message: 'Guest cannot read this page.' }, 404);
       if (kind === 'fence' && !fenceMutationDone) {
         fenceMutationDone = true;
@@ -563,6 +581,7 @@ export async function run(operation, payload = {}) {
     });
     let result;
     let privateCorpus;
+    let privateLocaleSearch;
     if (retryScenario) {
       await storage.recordEligibleReaderVisit(selector(1, 'fr'));
       await coordinator.reconcile('manual');
@@ -604,7 +623,33 @@ export async function run(operation, payload = {}) {
       await storage.removeOfflinePage(selector(1));
       result = await coordinator.reconcile('manual');
     } else if (privateScenario) {
-      result = await coordinator.reconcile('manual');
+      if (kind === 'private-default-locale') {
+        const originalToLocaleLowerCase = String.prototype.toLocaleLowerCase;
+        try {
+          String.prototype.toLocaleLowerCase = function (locales) {
+            return originalToLocaleLowerCase.call(this, locales ?? 'tr');
+          };
+          result = await coordinator.reconcile('manual');
+        } finally {
+          String.prototype.toLocaleLowerCase = originalToLocaleLowerCase;
+        }
+        const decrypted = await readPrivateCorpus(privateHandle, storage);
+        if (decrypted.snapshots.length !== 1 || decrypted.searchDocuments.length !== 1)
+          throw new Error('The synchronized private body/search pair was not readable.');
+        const snapshot = decrypted.snapshots[0];
+        const { sourceRevision, ...document } = decrypted.searchDocuments[0];
+        if (snapshot.sourceRevision !== sourceRevision) throw new Error('The private pair revisions disagree.');
+        const sourceCorpus = await prepareOfflineSearchCorpus([{ ...document, searchText: snapshot.searchText }]);
+        const decryptedCorpus = await prepareOfflineSearchCorpus([document]);
+        const ids = response => response.results.map(result => result.document.pageId);
+        privateLocaleSearch = {
+          sourceText: snapshot.searchText,
+          decryptedText: document.searchText,
+          sourcePageIds: ids(searchPreparedOfflineDocuments(sourceCorpus, 'IĞDIR')),
+          decryptedPageIds: ids(searchPreparedOfflineDocuments(decryptedCorpus, 'IĞDIR')),
+          decryptedAsyncPageIds: ids(await searchPreparedOfflineDocumentsAsync(decryptedCorpus, 'IĞDIR'))
+        };
+      } else result = await coordinator.reconcile('manual');
       if (kind === 'private-denied-403' || kind === 'private-denied-404') result = await coordinator.reconcile('manual');
       if (kind === 'private-manual') {
         await coordinator.reconcile('manual');
@@ -691,6 +736,7 @@ export async function run(operation, payload = {}) {
         requests,
         ...(privateScenario ? { privateRecords, privateVault, privatePolicy, privateCorpus, privateRollback } : {}),
         pendingFetchAborted,
+        privateLocaleSearch,
         recoveryStatus,
         recoveryFetchAborted
       }
@@ -1112,10 +1158,24 @@ describe('foreground offline sync coordinator', () => {
     if (kind === 'private-manual') expect(run.privateCorpus?.snapshots).toMatchObject([{ pageId: 1, locale: 'en', snapshot: { sourceRevision: 'revision-1' } }])
     expect(run.privateRecords?.every(record => record.ciphertext.length > 16)).toBe(true)
     const persisted = JSON.stringify({ records: run.privateRecords, vault: run.privateVault })
-    const secrets = kind === 'private-tags'
-      ? ['Page 200', 'docs/en/200', '<p>Page 200</p>', 'alpha', 'beta', currentTime]
-      : ['Page 1', 'docs/en/1', '<p>Page 1</p>', currentTime]
+    const secrets =
+      kind === 'private-tags'
+        ? ['Page 200', 'docs/en/200', '<p>Page 200</p>', 'alpha', 'beta', currentTime]
+        : ['Page 1', 'docs/en/1', '<p>Page 1</p>', currentTime]
     for (const secret of secrets) expect(persisted).not.toContain(secret)
+  })
+
+  test('keeps encrypted private body search independent of the default case-conversion locale', async () => {
+    const run = await runScenario('private-default-locale')
+    expect(run.result.status).toBe('complete')
+    expect(run.result.saved).toBe(1)
+    expect(run.privateRecords?.filter(record => record.kind === 'snapshot' || record.kind === 'search')).toHaveLength(2)
+    expect(JSON.stringify(run.privateRecords)).not.toContain('IĞDIR')
+    expect(run.privateLocaleSearch?.sourceText).toBe('IĞDIR')
+    expect(run.privateLocaleSearch?.sourcePageIds).toEqual([1])
+    expect(run.privateLocaleSearch?.decryptedPageIds).toEqual([1])
+    expect(run.privateLocaleSearch?.decryptedAsyncPageIds).toEqual([1])
+    expect(run.privateLocaleSearch?.decryptedPageIds).toEqual(run.privateLocaleSearch?.sourcePageIds)
   })
 
   test('rolls back a quota-failed encrypted body/search pair and its policy revision', async () => {

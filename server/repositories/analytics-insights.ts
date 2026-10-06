@@ -1,18 +1,14 @@
 import type { Knex } from 'knex'
-import {
-  analyticsPolicyFromConfiguration,
-  decideAnalyticsCollection,
-  type AnalyticsInsights,
-  type AnalyticsRequestContext
-} from '../../shared/analytics-policy.ts'
-import { analyticsConfiguration, type AnalyticsSetting } from './analytics-runtime.ts'
+import { analyticsPolicyFromConfiguration, decideAnalyticsCollection } from '../../shared/analytics-policy.ts'
+import type { AnalyticsInsights, AnalyticsRequestContext } from '../../shared/analytics-policy.ts'
+import { publicationWindowOpen } from '../../shared/publication-window.ts'
+import { publicationTimestampSql } from '../helpers/search-contract.ts'
+import { analyticsConfiguration } from './analytics-runtime.ts'
+import type { AnalyticsSetting } from './analytics-runtime.ts'
 const dayOf = (date: Date): string => date.toISOString().slice(0, 10)
 export const analyticsRetentionStart = (now: Date, days: number): string =>
   dayOf(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days + 1)))
-const published = (page: Record<string, unknown>, now: Date): boolean =>
-  page.isPublished === true &&
-  (!page.publishStartDate || new Date(String(page.publishStartDate)).getTime() <= now.getTime()) &&
-  (!page.publishEndDate || new Date(String(page.publishEndDate)).getTime() >= now.getTime())
+const published = (page: Record<string, unknown>, now: Date): boolean => page.isPublished === true && publicationWindowOpen(page, now.getTime())
 export const recordAnalyticsResponse = async (db: Knex, pageId: number, request: AnalyticsRequestContext, now = new Date()): Promise<boolean> =>
   db.transaction(async tx => {
     // Serialize with reviewed policy publication and erasure. Recheck policy and page state after response completion.
@@ -53,8 +49,8 @@ export const readAnalyticsInsights = async (tx: Knex | Knex.Transaction, retenti
       .join('pages as p', 'p.id', 'd.pageId')
       .whereBetween('d.day', [from, through])
       .where({ 'p.visibility': 'public', 'p.isPublished': true })
-      .whereRaw('(NULLIF(p."publishStartDate", ?) IS NULL OR NULLIF(p."publishStartDate", ?)::timestamptz <= ?)', ['', '', now.toISOString()])
-      .whereRaw('(NULLIF(p."publishEndDate", ?) IS NULL OR NULLIF(p."publishEndDate", ?)::timestamptz >= ?)', ['', '', now.toISOString()])
+      .whereRaw(`(NULLIF(p."publishStartDate", '') IS NULL OR ${publicationTimestampSql('p."publishStartDate"')} <= ?)`, [now.toISOString()])
+      .whereRaw(`(NULLIF(p."publishEndDate", '') IS NULL OR ${publicationTimestampSql('p."publishEndDate"')} >= ?)`, [now.toISOString()])
       .whereNotExists(tx('pageAccessPasswords as protection').select(tx.raw('1')).whereRaw('protection."pageId" = p.id'))
   const totals = await scoped().sum({ responses: 'd.responses' }).countDistinct({ pages: 'd.pageId' }).first()
   const daily = await scoped()

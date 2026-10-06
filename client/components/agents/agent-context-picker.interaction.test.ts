@@ -578,6 +578,142 @@ describe('Agent context source search recovery', () => {
   }
 })
 
+describe('Agent context final source continuation focus', () => {
+  const moreButton = (): HTMLButtonElement => {
+    const button = document.body.querySelector<HTMLButtonElement>('.agent-context__more')
+    if (!button) throw new Error('Source continuation action did not render')
+    return button
+  }
+  const searchInput = (): HTMLInputElement => {
+    const input = document.body.querySelector<HTMLInputElement>('.agent-context__search input')
+    if (!input) throw new Error('Source search field did not render')
+    return input
+  }
+
+  it('moves focus from the exhausted continuation to the first newly appended enabled source', async () => {
+    const finalPage = deferred<PageSearchResult>()
+    const mounted = mountPicker(
+      vi.fn((_fetchImpl: unknown, _query: string, options: Record<string, unknown>) =>
+        options.cursor ? finalPage.promise : Promise.resolve(result([row(71)], 'last-page'))
+      ),
+      vi.fn(async (selector: { id: number }) => source(selector.id)),
+      emptyDraft([source(72)])
+    )
+    await openPicker(mounted)
+    await search(mounted, 'topics')
+    const more = moreButton()
+    more.focus()
+    expect(document.activeElement).toBe(more)
+    more.click()
+    await settle()
+
+    finalPage.resolve(result([row(72), row(73), row(74)], null))
+    await settle()
+
+    expect(document.body.querySelector('.agent-context__more')).toBeNull()
+    expect(Array.from(document.body.querySelectorAll('.agent-context__result strong'), element => element.textContent)).toEqual([
+      'Topic 71',
+      'Topic 72',
+      'Topic 73',
+      'Topic 74'
+    ])
+    expect(resultCheckboxes()[1]?.disabled).toBe(true)
+    expect(resultCheckboxes()[2]?.disabled).toBe(false)
+    expect(document.activeElement).toBe(resultCheckboxes()[2])
+    expect(mounted.changes).toHaveLength(0)
+  })
+
+  it('returns focus to the surviving search input when the final page appends no unique source', async () => {
+    const finalPage = deferred<PageSearchResult>()
+    const mounted = mountPicker(
+      vi.fn((_fetchImpl: unknown, _query: string, options: Record<string, unknown>) =>
+        options.cursor ? finalPage.promise : Promise.resolve(result([row(75)], 'last-page'))
+      ),
+      vi.fn(async (selector: { id: number }) => source(selector.id))
+    )
+    await openPicker(mounted)
+    await search(mounted, 'topics')
+    const input = searchInput()
+    const more = moreButton()
+    more.focus()
+    expect(document.activeElement).toBe(more)
+    more.click()
+    await settle()
+
+    finalPage.resolve(result([row('75')], null))
+    await settle()
+
+    expect(document.body.querySelector('.agent-context__more')).toBeNull()
+    expect(resultCheckboxes()).toHaveLength(1)
+    expect(searchInput()).toBe(input)
+    expect(document.activeElement).toBe(input)
+  })
+
+  it('does not steal focus when the exhausted continuation was not focused', async () => {
+    const finalPage = deferred<PageSearchResult>()
+    const mounted = mountPicker(
+      vi.fn((_fetchImpl: unknown, _query: string, options: Record<string, unknown>) =>
+        options.cursor ? finalPage.promise : Promise.resolve(result([row(76)], 'last-page'))
+      ),
+      vi.fn(async (selector: { id: number }) => source(selector.id))
+    )
+    await openPicker(mounted)
+    await search(mounted, 'topics')
+    const existingCheckbox = resultCheckboxes()[0]
+    existingCheckbox.focus()
+    expect(document.activeElement).toBe(existingCheckbox)
+    moreButton().click()
+    await settle()
+
+    finalPage.resolve(result([row(77)], null))
+    await settle()
+
+    expect(document.body.querySelector('.agent-context__more')).toBeNull()
+    expect(resultCheckboxes()).toHaveLength(2)
+    expect(document.activeElement).toBe(existingCheckbox)
+  })
+
+  for (const replacement of ['reopened', 'query-replaced'] as const) {
+    it(`does not let a cancelled final continuation steal focus from the ${replacement} dialog`, async () => {
+      const staleFinalPage = deferred<PageSearchResult>()
+      const mounted = mountPicker(
+        vi.fn((_fetchImpl: unknown, query: string, options: Record<string, unknown>) => {
+          if (options.cursor) return staleFinalPage.promise
+          return Promise.resolve(query === 'original' ? result([row(78)], 'last-page') : result([row(79), row(80)]))
+        }),
+        vi.fn(async (selector: { id: number }) => source(selector.id))
+      )
+      await openPicker(mounted)
+      await search(mounted, 'original')
+      const more = moreButton()
+      more.focus()
+      expect(document.activeElement).toBe(more)
+      more.click()
+      await settle()
+
+      if (replacement === 'reopened') {
+        const cancel = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')
+        if (!cancel) throw new Error('Cancel action did not render')
+        cancel.click()
+        await settle()
+        await openPicker(mounted)
+      }
+      await search(mounted, 'replacement')
+      const freshCheckbox = resultCheckboxes()[1]
+      freshCheckbox.focus()
+      expect(document.activeElement).toBe(freshCheckbox)
+
+      staleFinalPage.resolve(result([row(81)], null))
+      await settle()
+
+      expect(Array.from(document.body.querySelectorAll('.agent-context__result strong'), element => element.textContent)).toEqual(['Topic 79', 'Topic 80'])
+      expect(document.body.querySelector('.agent-context__more')).toBeNull()
+      expect(document.activeElement).toBe(freshCheckbox)
+      expect(mounted.changes).toHaveLength(0)
+    })
+  }
+})
+
 describe('Agent context source debounce', () => {
   it('shows loading while a valid query is debounced, then renders its results without Enter', async () => {
     const pending = deferred<PageSearchResult>()

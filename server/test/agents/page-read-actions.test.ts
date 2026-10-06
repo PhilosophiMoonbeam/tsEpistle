@@ -244,23 +244,43 @@ describe('permission-safe page read actions', () => {
           windowLimit: 100,
           windowTruncated: true
         })),
-        discover: vi.fn(async () => ({
-          pages: [
-            {
-              id: 43,
-              sourceRevision: '8',
-              locale: scenario.excludedLocale,
-              path: scenario.excludedPath,
-              title: 'Secret Page',
-              description: 'SECRET DESCRIPTION',
-              updatedAt: new Date('2026-08-17T00:00:00.000Z'),
-              tags: ['secret-tag']
-            }
-          ],
-          totalInWindow: 1,
-          windowLimit: 100,
-          nextOffset: 1
-        })),
+        discover: vi.fn(async input =>
+          Number(input.offset) > 0
+            ? {
+                pages: [
+                  {
+                    id: 42,
+                    sourceRevision: '8',
+                    locale: 'en',
+                    path: 'docs/start',
+                    title: 'Start',
+                    description: null,
+                    updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+                    tags: []
+                  }
+                ],
+                totalInWindow: 2,
+                windowLimit: 100,
+                nextOffset: null
+              }
+            : {
+                pages: [
+                  {
+                    id: 43,
+                    sourceRevision: '8',
+                    locale: scenario.excludedLocale,
+                    path: scenario.excludedPath,
+                    title: 'Secret Page',
+                    description: 'SECRET DESCRIPTION',
+                    updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+                    tags: ['secret-tag']
+                  }
+                ],
+                totalInWindow: 1,
+                windowLimit: 100,
+                nextOffset: 1
+              }
+        ),
         listRecent: vi.fn(async () => ({
           kind: 'recent-page-evidence',
           requestedLimit: 2,
@@ -347,8 +367,11 @@ describe('permission-safe page read actions', () => {
         pages: [],
         totalInWindow: 0,
         windowLimit: 100,
-        nextOffset: null
+        nextOffset: 1
       })
+      const continued = await execute('pages.discover', { locale: 'en', path: 'docs', tags: [], limit: 5, offset: 1 }, scenario.context)
+      expect(continued.pages).toEqual([expect.objectContaining({ id: 42, path: 'docs/start' })])
+      expect(continued.nextOffset).toBeNull()
       expect(await execute('pages.listRecent', { limit: 2 }, scenario.context)).toMatchObject({
         pages: [],
         exhausted: true
@@ -510,6 +533,90 @@ describe('permission-safe page read actions', () => {
     expect(response.results[1]).toMatchObject({ matchedFields: ['title'], knowledge: null })
   })
 
+  it.each([
+    ['locked', new PageLocked()],
+    ['unavailable', new PageNotFound()]
+  ] as const)('keeps search continuation stable when an earlier result becomes %s', async (_kind, failure) => {
+    let firstPageUnavailable = false
+    const candidates = [
+      { id: 42, sourceRevision: '8', locale: 'en', path: 'docs/a', visibility: 'public' },
+      { id: 43, sourceRevision: '8', locale: 'en', path: 'docs/b', visibility: 'public' },
+      { id: 44, sourceRevision: '8', locale: 'en', path: 'docs/c', visibility: 'public' }
+    ]
+    const { execute } = setup({
+      search: async () => ({
+        results: candidates,
+        suggestions: [],
+        totalHits: 3,
+        windowLimit: 100,
+        windowTruncated: false
+      }),
+      get: async input => {
+        if (input.id === 42 && firstPageUnavailable) throw failure
+        const candidate = candidates.find(item => item.id === input.id)!
+        return page({ id: candidate.id, path: candidate.path })
+      }
+    })
+
+    const first = (await execute('pages.search', { query: 'guide', limit: 1, offset: 0 })) as {
+      results: Array<{ id: number }>
+      nextOffset: number | null
+    }
+    expect(first.results.map(result => result.id)).toEqual([42])
+    expect(first.nextOffset).toBe(1)
+
+    firstPageUnavailable = true
+    const second = (await execute('pages.search', { query: 'guide', limit: 1, offset: first.nextOffset })) as typeof first
+    expect(second.results.map(result => result.id)).toEqual([43])
+    expect(second.nextOffset).toBe(2)
+
+    const third = (await execute('pages.search', { query: 'guide', limit: 1, offset: second.nextOffset })) as typeof first
+    expect(third.results.map(result => result.id)).toEqual([44])
+    expect(third.nextOffset).toBeNull()
+  })
+
+  it('advances search continuation over unavailable and out-of-scope raw positions without exposing them', async () => {
+    const candidates = [
+      { id: 42, sourceRevision: '8', locale: 'en', path: 'docs/a', visibility: 'public' },
+      { id: 43, sourceRevision: '8', locale: 'en', path: 'docs/locked', visibility: 'public' },
+      { id: 44, sourceRevision: '8', locale: 'en', path: 'private/secret', visibility: 'public' },
+      { id: 45, sourceRevision: '8', locale: 'en', path: 'docs/deleted', visibility: 'public' },
+      { id: 46, sourceRevision: '8', locale: 'en', path: 'docs/b', visibility: 'public' },
+      { id: 47, sourceRevision: '8', locale: 'en', path: 'docs/c', visibility: 'public' }
+    ]
+    const context: AgentKnowledgeContext = { scope: { kind: 'section', locale: 'en', path: 'docs' }, sources: [] }
+    const { execute } = setup({
+      search: async () => ({
+        results: candidates,
+        suggestions: [],
+        totalHits: 6,
+        windowLimit: 100,
+        windowTruncated: false
+      }),
+      get: async input => {
+        if (input.id === 43) throw new PageLocked()
+        if (input.id === 45) throw new PageNotFound()
+        const candidate = candidates.find(item => item.id === input.id)!
+        return page({ id: candidate.id, path: candidate.path })
+      }
+    })
+
+    const first = (await execute('pages.search', { query: 'guide', limit: 1, offset: 0 }, context)) as {
+      results: Array<{ id: number }>
+      nextOffset: number | null
+    }
+    expect(first.results.map(result => result.id)).toEqual([42])
+    expect(first.nextOffset).toBe(1)
+
+    const second = (await execute('pages.search', { query: 'guide', limit: 1, offset: first.nextOffset }, context)) as typeof first
+    expect(second.results.map(result => result.id)).toEqual([46])
+    expect(second.nextOffset).toBe(5)
+
+    const third = (await execute('pages.search', { query: 'guide', limit: 1, offset: second.nextOffset }, context)) as typeof first
+    expect(third.results.map(result => result.id)).toEqual([47])
+    expect(third.nextOffset).toBeNull()
+  })
+
   it('attaches matching knowledge and preserves internal hydration failures', async () => {
     const projection = knowledgeProjection()
     const knowledge: KnowledgeDependency = {
@@ -568,6 +675,30 @@ describe('permission-safe page read actions', () => {
     expect(operations.listTags).toHaveBeenCalledWith(principal)
   })
 
+  it('accepts its emitted tag continuation through kernel input validation', async () => {
+    const { execute } = setup({
+      listTags: async () =>
+        Array.from({ length: 5_101 }, (_, index) => ({
+          tag: `tag-${String(index).padStart(5, '0')}`,
+          title: null
+        }))
+    })
+
+    const first = (await execute('pages.listTags', { limit: 100, offset: 5_000 })) as {
+      tags: Array<{ tag: string; title: string | null }>
+      nextOffset: number | null
+    }
+    expect(first.tags).toHaveLength(100)
+    expect(first.tags[0]).toEqual({ tag: 'tag-05000', title: null })
+    expect(first.tags[99]).toEqual({ tag: 'tag-05099', title: null })
+    expect(first.nextOffset).toBe(5_100)
+
+    expect(await execute('pages.listTags', { limit: 100, offset: first.nextOffset })).toEqual({
+      tags: [{ tag: 'tag-05100', title: null }],
+      nextOffset: null
+    })
+  })
+
   it('hydrates structured path and tag discovery results', async () => {
     const { execute, operations } = setup({
       discover: vi.fn(async () => ({
@@ -614,22 +745,76 @@ describe('permission-safe page read actions', () => {
     expect(operations.discover).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en', path: 'docs', depth: 1, order: 'path', requester: principal }))
   })
 
+  it('preserves discovery continuation when its first page contains only a locked candidate', async () => {
+    const candidates = [
+      {
+        id: 42,
+        sourceRevision: '8',
+        locale: 'en',
+        path: 'docs/locked',
+        title: 'Locked',
+        description: null,
+        updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+        tags: []
+      },
+      {
+        id: 43,
+        sourceRevision: '8',
+        locale: 'en',
+        path: 'docs/visible',
+        title: 'Visible',
+        description: null,
+        updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+        tags: []
+      }
+    ]
+    const { execute } = setup({
+      discover: async input => {
+        const offset = Number(input.offset)
+        const end = offset + Number(input.limit)
+        return {
+          pages: candidates.slice(offset, end),
+          totalInWindow: 2,
+          windowLimit: 100,
+          nextOffset: end < candidates.length ? end : null
+        }
+      },
+      get: async input => {
+        if (input.id === 42) throw new PageLocked()
+        return page({ id: 43, path: 'docs/visible', title: 'Visible' })
+      }
+    })
+
+    const first = (await execute('pages.discover', { locale: 'en', path: 'docs', tags: [], limit: 1, offset: 0 })) as {
+      pages: Array<{ id: number; path: string }>
+      nextOffset: number | null
+    }
+    expect(first.pages).toEqual([])
+    expect(first.nextOffset).toBe(1)
+
+    const second = (await execute('pages.discover', { locale: 'en', path: 'docs', tags: [], limit: 1, offset: first.nextOffset })) as typeof first
+    expect(second.pages).toEqual([expect.objectContaining({ id: 43, path: 'docs/visible' })])
+    expect(second.nextOffset).toBeNull()
+  })
+
   it.each([51, 100])('bounds discovery summaries after normalizing %i authored tags without narrowing the filter', async count => {
     const authoredTags = Array.from({ length: count }, (_, index) => ` TAG-${String(index).padStart(3, '0')} `).reverse()
     if (count === 100) authoredTags[0] = 'tag-098'
     const requestedTag = count === 100 ? 'tag-098' : 'tag-050'
     const { execute } = setup({
       discover: async () => ({
-        pages: [{
-          id: 42,
-          sourceRevision: 8,
-          locale: 'en',
-          path: 'docs/start',
-          title: 'Start',
-          description: null,
-          updatedAt: new Date('2026-08-17T00:00:00.000Z'),
-          tags: authoredTags
-        }],
+        pages: [
+          {
+            id: 42,
+            sourceRevision: 8,
+            locale: 'en',
+            path: 'docs/start',
+            title: 'Start',
+            description: null,
+            updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+            tags: authoredTags
+          }
+        ],
         totalInWindow: 1,
         windowLimit: 100,
         nextOffset: null
@@ -637,16 +822,18 @@ describe('permission-safe page read actions', () => {
       get: async () => page({ tags: authoredTags.map(tag => ({ tag })) })
     })
 
-    const result = await execute('pages.discover', { locale: 'en', path: 'docs', tags: [requestedTag], limit: 1 }) as {
+    const result = (await execute('pages.discover', { locale: 'en', path: 'docs', tags: [requestedTag], limit: 1 })) as {
       pages: Array<{ tags: string[] }>
     }
     expect(result).toMatchObject({
-      pages: [{
-        id: 42,
-        sourceRevision: '8',
-        tags: Array.from({ length: 50 }, (_, index) => `tag-${String(index).padStart(3, '0')}`),
-        citation: { evidenceId: 'page:42:revision:8', href: '/en/docs/start' }
-      }],
+      pages: [
+        {
+          id: 42,
+          sourceRevision: '8',
+          tags: Array.from({ length: 50 }, (_, index) => `tag-${String(index).padStart(3, '0')}`),
+          citation: { evidenceId: 'page:42:revision:8', href: '/en/docs/start' }
+        }
+      ],
       totalInWindow: 1,
       nextOffset: null
     })
@@ -664,33 +851,73 @@ describe('permission-safe page read actions', () => {
   ] as const)('omits discovery candidates whose %s changes before hydration', async (_case, changes) => {
     let currentPage = page({ tags: [{ tag: 'runbook' }] })
     const getCurrentMany = vi.fn(async () => new Map([[42, knowledgeProjection()]]))
-    const { execute } = setup({
-      discover: async () => {
-        currentPage = page({ tags: [{ tag: 'runbook' }], ...changes })
-        return {
-          pages: [{
-            id: 42,
-            sourceRevision: '8',
-            locale: 'en',
-            path: 'docs/start',
-            title: 'Start',
-            description: null,
-            updatedAt: new Date('2026-08-17T00:00:00.000Z'),
-            tags: ['runbook']
-          }],
-          totalInWindow: 2,
-          windowLimit: 100,
-          nextOffset: 1
-        }
+    const { execute } = setup(
+      {
+        discover: async input => {
+          if (Number(input.offset) === 1) {
+            return {
+              pages: [
+                {
+                  id: 43,
+                  sourceRevision: '8',
+                  locale: 'en',
+                  path: 'docs/visible',
+                  title: 'Visible',
+                  description: null,
+                  updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+                  tags: ['runbook']
+                }
+              ],
+              totalInWindow: 2,
+              windowLimit: 100,
+              nextOffset: null
+            }
+          }
+          currentPage = page({ tags: [{ tag: 'runbook' }], ...changes })
+          return {
+            pages: [
+              {
+                id: 42,
+                sourceRevision: '8',
+                locale: 'en',
+                path: 'docs/start',
+                title: 'Start',
+                description: null,
+                updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+                tags: ['runbook']
+              }
+            ],
+            totalInWindow: 2,
+            windowLimit: 100,
+            nextOffset: 1
+          }
+        },
+        get: async input => (Number(input.id) === 43 ? page({ id: 43, path: 'docs/visible', title: 'Visible', tags: [{ tag: 'runbook' }] }) : currentPage)
       },
-      get: async () => currentPage
-    }, { getCurrent: async () => null, getRevision: async () => null, getCurrentMany })
+      { getCurrent: async () => null, getRevision: async () => null, getCurrentMany }
+    )
 
-    expect(await execute('pages.discover', { locale: 'en', path: 'docs', tags: [' Runbook '], limit: 1 }, {
-      scope: { kind: 'section', locale: 'en', path: 'docs' },
-      sources: []
-    })).toEqual({ pages: [], totalInWindow: 0, windowLimit: 100, nextOffset: null })
+    expect(
+      await execute(
+        'pages.discover',
+        { locale: 'en', path: 'docs', tags: [' Runbook '], limit: 1 },
+        {
+          scope: { kind: 'section', locale: 'en', path: 'docs' },
+          sources: []
+        }
+      )
+    ).toEqual({ pages: [], totalInWindow: 0, windowLimit: 100, nextOffset: 1 })
     expect(getCurrentMany).toHaveBeenCalledWith([])
+    const continued = await execute(
+      'pages.discover',
+      { locale: 'en', path: 'docs', tags: [' Runbook '], limit: 1, offset: 1 },
+      {
+        scope: { kind: 'section', locale: 'en', path: 'docs' },
+        sources: []
+      }
+    )
+    expect(continued.pages).toEqual([expect.objectContaining({ id: 43, path: 'docs/visible' })])
+    expect(continued.nextOffset).toBeNull()
   })
 
   it('skips locked discovery and recent candidates while direct reads remain explicit', async () => {
@@ -1280,21 +1507,23 @@ describe('permission-safe page read actions', () => {
 
   it('preserves uncapped related distances above 32 across cursor continuation while bounding explicit depth', async () => {
     const { execute } = setup({
-      get: async input => Number(input.id) === 42 ? page() : page({ id: Number(input.id), path: `docs/node-${input.id}` }),
+      get: async input => (Number(input.id) === 42 ? page() : page({ id: Number(input.id), path: `docs/node-${input.id}` })),
       listRelated: async input => ({
-        pages: [page({
-          id: Number(input.offset) === 0 ? 74 : 75,
-          path: Number(input.offset) === 0 ? 'docs/node-74' : 'docs/node-75',
-          distance: Number(input.offset) === 0 ? 32 : 33,
-          direction: 'outgoing',
-          viaPageId: Number(input.offset) === 0 ? 73 : 74
-        })],
+        pages: [
+          page({
+            id: Number(input.offset) === 0 ? 74 : 75,
+            path: Number(input.offset) === 0 ? 'docs/node-74' : 'docs/node-75',
+            distance: Number(input.offset) === 0 ? 32 : 33,
+            direction: 'outgoing',
+            viaPageId: Number(input.offset) === 0 ? 73 : 74
+          })
+        ],
         truncated: Number(input.offset) === 0,
         nextOffset: Number(input.offset) === 0 ? 1 : null
       })
     })
 
-    const first = await execute('pages.related', { pageId: 42, limit: 1 }) as { nextCursor: string | null }
+    const first = (await execute('pages.related', { pageId: 42, limit: 1 })) as { nextCursor: string | null }
     const opaqueCursor = first.nextCursor
     expect(typeof opaqueCursor).toBe('string')
     expect(first).toMatchObject({ pages: [{ id: 74, distance: 32 }] })

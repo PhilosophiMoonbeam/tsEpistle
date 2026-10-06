@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { publicationBoundaryTimestamp, publicationWindowOpen } from '../../shared/publication-window.ts'
 import createDOMPurify from 'dompurify'
 import jsdomModule from 'jsdom'
 import {
@@ -501,14 +502,12 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
       : input.capturedAt instanceof Date
         ? new Date(input.capturedAt.valueOf())
         : invalid('The capture time is invalid')
-  const publicationStart = parseDate(page.publishStartDate, 'Publication start')
-  const publicationEnd = parseDate(page.publishEndDate, 'Publication end')
-  if (publicationStart && publicationEnd && publicationStart.valueOf() > publicationEnd.valueOf()) invalid('The publication window is invalid')
-  if (
-    normalizedBoolean(page.isPublished) !== true ||
-    (publicationStart !== null && publicationStart.valueOf() > capturedAt.valueOf()) ||
-    (publicationEnd !== null && publicationEnd.valueOf() < capturedAt.valueOf())
-  ) {
+  const publicationStart = publicationBoundaryTimestamp(page.publishStartDate)
+  const publicationEnd = publicationBoundaryTimestamp(page.publishEndDate)
+  if (publicationStart !== null && !Number.isFinite(publicationStart)) invalid('Publication start is invalid')
+  if (publicationEnd !== null && !Number.isFinite(publicationEnd)) invalid('Publication end is invalid')
+  if (publicationStart !== null && publicationEnd !== null && publicationStart > publicationEnd) invalid('The publication window is invalid')
+  if (normalizedBoolean(page.isPublished) !== true || !publicationWindowOpen(page, capturedAt.valueOf())) {
     if (canWritePage(input.requester, accessPage, input.authority)) refuse('The page is not currently published', 'unpublished')
     throw new OfflinePageProjectionError()
   }
@@ -543,7 +542,7 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
     description: typeof description === 'string' ? description : '',
     sourceRevision,
     capturedAt: capturedAt.toISOString(),
-    expiresAt: publicationEnd?.toISOString() ?? null,
+    expiresAt: publicationEnd === null ? null : new Date(publicationEnd).toISOString(),
     content: { representation: OFFLINE_CONTENT_TYPE, sanitizerVersion: OFFLINE_HTML_SANITIZER_VERSION, html },
     searchText,
     contentType: OFFLINE_CONTENT_TYPE
