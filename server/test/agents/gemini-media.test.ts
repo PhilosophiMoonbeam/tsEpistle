@@ -246,7 +246,9 @@ describe('Gemini independent media and input factory configuration', () => {
   })
   afterEach(async () => db.destroy())
 
-  it('dispatches the independently configured alternate image model with its own credential and immutable pricing', async () => {
+  it('dispatches an image model absent from the bundled catalog with its own credential and immutable pricing', async () => {
+    const configured = { ...mediaConfig, model: 'gemini-nano-banana-2.1' }
+    await db('agentMediaProviderVersions').where({ id: mediaVersion }).update({ config: JSON.stringify(configured) })
     await db('agentProviderProfiles').update({ status: 'disabled', conformed: false })
     const requests: { url: string; init: RequestInit }[] = []
     const factory = new AgentProviderFactory(
@@ -262,7 +264,7 @@ describe('Gemini independent media and input factory configuration', () => {
       resolve
     )
     const binding = await factory.createMediaBinding(7, 'image', mediaVersion)
-    expect(binding.config).toEqual(mediaConfig)
+    expect(binding.config).toEqual(configured)
     const result = await binding.transport.generate({
       prompt: 'Draw a sky',
       beforeDispatch: async exposure => {
@@ -276,13 +278,13 @@ describe('Gemini independent media and input factory configuration', () => {
       usageSource: 'reported'
     })
     expect(requests.map(request => request.url)).toEqual([
-      `${origin}/v1beta/models/gemini-2.5-flash-image:countTokens`,
-      `${origin}/v1beta/models/gemini-2.5-flash-image:generateContent`
+      `${origin}/v1beta/models/gemini-nano-banana-2.1:countTokens`,
+      `${origin}/v1beta/models/gemini-nano-banana-2.1:generateContent`
     ])
     expect(new Headers(requests[1]?.init.headers).get('x-goog-api-key')).toBe('media-key')
   })
 
-  it('rejects unsupported generation models and invalid official bases without egress', async () => {
+  it('rejects unsafe or wrong-vendor model IDs and invalid official bases without egress', async () => {
     let calls = 0
     const factory = new AgentProviderFactory(
       db,
@@ -297,8 +299,8 @@ describe('Gemini independent media and input factory configuration', () => {
       resolve
     )
     for (const changed of [
-      { model: 'gemini-2.5-flash' },
-      { model: 'gemini-omni-1.1-flash' },
+      { model: 'gemini-' },
+      { model: 'gpt-image-1' },
       { model: 'gemini-2.5-flash-image/other' },
       { baseUrl: 'https://proxy.example/v1beta' }
     ]) {
