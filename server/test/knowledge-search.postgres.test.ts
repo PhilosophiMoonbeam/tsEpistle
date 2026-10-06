@@ -2,7 +2,7 @@
 
 import knexModule from 'knex'
 import type { Knex } from 'knex'
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { up as createKnowledgeProjectionStore } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
@@ -42,6 +42,8 @@ const pageRuleAuthority = (requester: unknown): PageRuleAuthority => ({
 })
 
 const connection = getPostgresTestConnection('_knowledge_search_test', import.meta.path)
+const AUDIT_COOLDOWN_MILLISECONDS = 10 * 60 * 1_000
+const advanceToNextAudit = (): void => vi.setSystemTime(new Date(Date.now() + AUDIT_COOLDOWN_MILLISECONDS))
 
 const suite = connection ? describe : describe.skip
 
@@ -293,12 +295,15 @@ suite('PostgreSQL knowledge projection search', () => {
   })
 
   beforeEach(async () => {
+    vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'))
     await db.raw('TRUNCATE TABLE "pageKnowledgeMaintenance", "pageKnowledgeProjections", "pageMutationOutbox", "agentProviderProfiles", "agentProviderProfileVersions", "pageAccessPasswords", "pageTags", tags, pages RESTART IDENTITY CASCADE')
     await db('pageKnowledgeMaintenance').insert({ id: 1 })
     await db('pagesSearchMetadata').insert({ contractId: 1, schemaVersion: 2, dictionary: 'english' }).onConflict('contractId').merge()
     const data = Reflect.get(wikiRuntime.WIKI as object, 'data') as { searchEngine: { config: { dictLanguage: string } } | undefined }
     data.searchEngine = { config: { dictLanguage: 'english' } }
   })
+  afterEach(() => vi.setSystemTime())
+
 
   afterAll(async () => {
     if (db) {
@@ -476,6 +481,55 @@ suite('PostgreSQL knowledge projection search', () => {
     expect(await repository.searchVisible({ query: 'signal', requester, authority, limit: 1 })).toEqual([])
   })
 
+  it('shares a completed audit cooldown across restarted PostgreSQL replicas and admits one repair at expiry', async () => {
+    await enableUtilityEnrichment()
+    const current = fixture({ id: 42, path: 'knowledge/replica-cooldown', title: 'Opaque' })
+    await insertPage(current)
+    await db('pageKnowledgeProjections').where({ pageId: 42 }).delete()
+    await enqueueKnowledge(current)
+    const enrichKnowledge = vi.fn(async () => utilityResult('replicarepairtoken'))
+    const original = new PageKnowledgeLifecycle(db, 'cooldown-original', { enrichKnowledge })
+    await original.runOnce()
+    const completed = await db('pageKnowledgeMaintenance').first()
+    expect(completed).toMatchObject({ status: 'complete' })
+    expect(Number(completed.scanned)).toBe(1)
+    const due = new Date(completed.completedAt).valueOf() + AUDIT_COOLDOWN_MILLISECONDS
+    const paidColumns = ['projection', 'sourceSha256', 'enrichmentState', 'utilityProfileVersionId', 'utilityModel', 'utilityInputSha256', 'utilityOutputSha256', 'utilityGeneratedAt']
+    const paid = await db('pageKnowledgeProjections').where({ pageId: 42 }).first(...paidColumns)
+    await db('pageKnowledgeProjections').where({ pageId: 42 }).update({ searchTokens: null, searchText: '' })
+    const secondDb = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 1 } })
+    const replica = new PageKnowledgeLifecycle(secondDb, 'cooldown-replica', { enrichKnowledge })
+    const restarted = new PageKnowledgeLifecycle(db, 'cooldown-restarted', { enrichKnowledge })
+    try {
+      vi.setSystemTime(new Date(due - 1))
+      for (const lifecycle of [replica, restarted, original]) {
+        await expect(lifecycle.runOnce()).resolves.toEqual({ backfilled: 0, requeued: 0, processed: 0 })
+        expect(await db('pageKnowledgeMaintenance').first()).toEqual(completed)
+        expect(await db('pageKnowledgeProjections').where({ pageId: 42 }).first('searchTokens', 'searchText')).toEqual({
+          searchTokens: null,
+          searchText: ''
+        })
+      }
+
+      vi.setSystemTime(new Date(due))
+      const results = await Promise.all([replica.runOnce(), restarted.runOnce()])
+      expect(results.reduce((total, result) => total + result.backfilled, 0)).toBe(1)
+      expect(results.every(result => result.processed === 0 && result.requeued === 0)).toBe(true)
+      const next = await db('pageKnowledgeMaintenance').first('status', 'epochId', 'scanned')
+      expect(next.status).toBe('complete')
+      expect(Number(next.epochId)).toBe(Number(completed.epochId) + 1)
+      expect(Number(next.scanned)).toBe(1)
+      const requester = { id: 9, canReadPublic: true } as never
+      expect(await new PageKnowledgeRepository(secondDb).searchVisible({
+        query: 'replicarepairtoken', requester, authority: pageRuleAuthority(requester), limit: 1
+      })).toEqual([expect.objectContaining({ id: 42, sourceRevision: '1' })])
+      expect(await db('pageKnowledgeProjections').where({ pageId: 42 }).first(...paidColumns)).toEqual(paid)
+      expect(enrichKnowledge).toHaveBeenCalledOnce()
+    } finally {
+      await secondDb.destroy()
+    }
+  })
+
   it('restores null PostgreSQL tokens and corrupted filters from paid projection JSON without another utility call', async () => {
     await enableUtilityEnrichment()
     const current = fixture({ id: 42, path: 'knowledge/paid-repair', title: 'Opaque', tags: ['canonical-source-tag'] })
@@ -491,6 +545,7 @@ suite('PostgreSQL knowledge projection search', () => {
     const paid = await db('pageKnowledgeProjections').where({ pageId: 42 }).first(...paidColumns)
     const immutableEffect = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256', 'attempts')
     await db('pageKnowledgeProjections').where({ pageId: 42 }).update({ searchTokens: null })
+    advanceToNextAudit()
     await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, requeued: 0, processed: 0 })
     const restoredNullTokens = await db.raw<{ rows: Array<{ matches: boolean }> }>(
       `SELECT "searchTokens" @@ websearch_to_tsquery('english', 'quasarrepairtoken') AS matches FROM "pageKnowledgeProjections" WHERE "pageId" = 42`
@@ -511,6 +566,7 @@ suite('PostgreSQL knowledge projection search', () => {
       staleAfter: '2000-01-01T00:00:00.000Z'
     })
 
+    advanceToNextAudit()
     await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
     expect(await db('pageKnowledgeProjections').where({ pageId: 42 }).first(...columns)).toEqual(healthy)
     expect(await db('pageKnowledgeProjections').where({ pageId: 42 }).first(...paidColumns)).toEqual(paid)
@@ -551,6 +607,7 @@ suite('PostgreSQL knowledge projection search', () => {
         await transaction('pagesSearchMetadata').where({ contractId: 1 }).update({ dictionary: 'french' })
       })
       data.searchEngine.config.dictLanguage = 'french'
+      advanceToNextAudit()
       await expect(secondLifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
       expect(await secondRepository.searchVisible(searchInput)).toEqual([expect.objectContaining({ id: 42 })])
 
