@@ -18,10 +18,12 @@ suite('PostgreSQL Browse page access', () => {
       ...[...writePaths].map(path => ({ match: 'EXACT', path, deny: false, roles: ['write:pages'], locales: ['en'] })),
       ...[...readTags].map(path => ({ match: 'TAG', path, deny: false, roles: ['read:pages'], locales: ['en'] }))
     ]
-    await db('groups').where('id', 1).update({
-      permissions: JSON.stringify(['read:pages', 'write:pages']),
-      pageRules: JSON.stringify(pageRules)
-    })
+    await db('groups')
+      .where('id', 1)
+      .update({
+        permissions: JSON.stringify(['read:pages', 'write:pages']),
+        pageRules: JSON.stringify(pageRules)
+      })
   }
   const tree = async (extra = {}) => {
     await syncAuthority()
@@ -31,7 +33,15 @@ suite('PostgreSQL Browse page access', () => {
     const { parent = null, ancestors = [], folder = false, page = true, tag, ...pageOptions } = options
     const identity = { path, localeCode: 'en', visibility: 'public', ownerId: null, ...pageOptions }
     if (page) await db('pages').insert({ id, title: `Private title ${id}`, isPublished: true, ...identity })
-    await db('pageTree').insert({ id, ...identity, title: `Private title ${id}`, parent, ancestors: JSON.stringify(ancestors), isFolder: folder, pageId: page ? id : null })
+    await db('pageTree').insert({
+      id,
+      ...identity,
+      title: `Private title ${id}`,
+      parent,
+      ancestors: JSON.stringify(ancestors),
+      isFolder: folder,
+      pageId: page ? id : null
+    })
     if (tag) {
       await db('tags').insert({ id, tag })
       await db('pageTags').insert({ pageId: id, tagId: id })
@@ -40,23 +50,48 @@ suite('PostgreSQL Browse page access', () => {
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined })
     await db.schema.createTable('pages', t => {
-      t.integer('id').primary(); t.string('path'); t.string('title'); t.string('localeCode'); t.string('visibility'); t.integer('ownerId')
-      t.boolean('isPublished'); t.string('publishStartDate'); t.string('publishEndDate')
+      t.integer('id').primary()
+      t.string('path')
+      t.string('title')
+      t.string('localeCode')
+      t.string('visibility')
+      t.integer('ownerId')
+      t.boolean('isPublished')
+      t.string('publishStartDate')
+      t.string('publishEndDate')
     })
     await db.schema.createTable('pageTree', t => {
-      t.integer('id').primary(); t.string('path'); t.string('title'); t.string('localeCode'); t.string('visibility'); t.integer('ownerId')
-      t.integer('parent'); t.integer('pageId'); t.boolean('isFolder'); t.json('ancestors')
+      t.integer('id').primary()
+      t.string('path')
+      t.string('title')
+      t.string('localeCode')
+      t.string('visibility')
+      t.integer('ownerId')
+      t.integer('parent')
+      t.integer('pageId')
+      t.boolean('isFolder')
+      t.json('ancestors')
     })
     await db.schema.createTable('groups', t => {
-      t.integer('id').primary(); t.string('name'); t.jsonb('permissions'); t.jsonb('pageRules')
+      t.integer('id').primary()
+      t.string('name')
+      t.jsonb('permissions')
+      t.jsonb('pageRules')
     })
     await db.schema.createTable('userGroups', t => {
-      t.integer('userId'); t.integer('groupId')
+      t.integer('userId')
+      t.integer('groupId')
     })
     await db.schema.createTable('tags', t => {
-      t.integer('id').primary(); t.string('tag'); t.integer('redirectToId'); t.boolean('isArchived').notNullable().defaultTo(false)
+      t.integer('id').primary()
+      t.string('tag')
+      t.integer('redirectToId')
+      t.boolean('isArchived').notNullable().defaultTo(false)
     })
-    await db.schema.createTable('pageTags', t => { t.integer('pageId'); t.integer('tagId') })
+    await db.schema.createTable('pageTags', t => {
+      t.integer('pageId')
+      t.integer('tagId')
+    })
     await db('groups').insert({
       id: 1,
       name: 'Navigation readers',
@@ -78,14 +113,20 @@ suite('PostgreSQL Browse page access', () => {
   })
   afterAll(async () => {
     globalThis.WIKI = originalWiki
-    if (db) { for (const table of tables) await db.schema.dropTableIfExists(table); await db.destroy() }
+    if (db) {
+      for (const table of tables) await db.schema.dropTableIfExists(table)
+      await db.destroy()
+    }
   })
   beforeEach(async () => {
     for (const table of ['pageTags', 'tags', 'pageTree', 'pages']) await db(table).delete()
-    readPaths = new Set(); writePaths = new Set(); readTags = new Set()
+    readPaths = new Set()
+    writePaths = new Set()
+    readTags = new Set()
   })
   it('omits denied page metadata and only includes the current principal’s private pages', async () => {
-    await seed(1, 'allowed'); await seed(2, 'denied')
+    await seed(1, 'allowed')
+    await seed(2, 'denied')
     await seed(3, 'mine', { visibility: 'private', ownerId: 3 })
     await seed(4, 'theirs', { visibility: 'private', ownerId: 4 })
     readPaths.add('allowed')
@@ -101,7 +142,8 @@ suite('PostgreSQL Browse page access', () => {
     await seed(2, 'authorized/hidden', { folder: true, parent: 1, ancestors: [1] })
     await seed(3, 'authorized/hidden/guide', { parent: 2, ancestors: [1, 2] })
     await seed(4, 'denied')
-    readPaths.add('authorized'); readPaths.add('authorized/hidden/guide')
+    readPaths.add('authorized')
+    readPaths.add('authorized/hidden/guide')
     const root = await tree()
     expect(root.map(row => row.path)).toEqual(['authorized'])
     expect(root[0]).toMatchObject({ id: 1, title: 'Private title 1', pageId: 1, isFolder: true })
@@ -110,7 +152,11 @@ suite('PostgreSQL Browse page access', () => {
     expect(expanded.map(row => row.id).sort()).toEqual([1, 2, 3])
     expect(expanded.find(row => row.id === 1)).toMatchObject({ title: 'Private title 1', pageId: 1 })
     expect(expanded.find(row => row.id === 2)).toMatchObject({
-      path: 'authorized/hidden', title: 'hidden', pageId: null, canEdit: false, isFolder: true
+      path: 'authorized/hidden',
+      title: 'hidden',
+      pageId: null,
+      canEdit: false,
+      isFolder: true
     })
     expect(expanded.find(row => row.id === 3)).toMatchObject({ title: 'Private title 3', pageId: 3 })
     expect(JSON.stringify(expanded)).not.toContain('Private title 2')
@@ -119,7 +165,8 @@ suite('PostgreSQL Browse page access', () => {
     await seed(1, 'restricted', { folder: true })
     await seed(2, 'restricted/deep', { folder: true, page: false, parent: 1, ancestors: [1] })
     await seed(3, 'restricted/deep/guide', { parent: 2, ancestors: [1, 2], tag: 'reader' })
-    await seed(4, 'closed', { folder: true }); await seed(5, 'closed/secret', { parent: 4, ancestors: [4] })
+    await seed(4, 'closed', { folder: true })
+    await seed(5, 'closed/secret', { parent: 4, ancestors: [4] })
     readTags.add('reader')
     const root = await tree()
     expect(root).toHaveLength(1)
@@ -128,25 +175,40 @@ suite('PostgreSQL Browse page access', () => {
     expect((await tree({ mode: 'FOLDERS' })).map(row => row.id)).toEqual([1])
     expect((await tree({ parent: 2 })).map(row => row.id)).toEqual([3])
     expect((await tree({ path: 'restricted/deep/guide', parent: undefined, includeAncestors: true })).map(row => row.id).sort()).toEqual([1, 2, 3])
-    readTags.clear(); readPaths.add('restricted/deep/guide')
+    readTags.clear()
+    readPaths.add('restricted/deep/guide')
     expect((await tree()).map(row => row.id)).toEqual([1])
     readPaths.clear()
     expect(await tree()).toEqual([])
   })
   it('respects draft and publication windows while allowing authorized writer selection', async () => {
-    for (const [id, path] of [[1, 'draft'], [2, 'future'], [3, 'expired'], [4, 'published']] as const) { await seed(id, path); readPaths.add(path) }
+    for (const [id, path] of [
+      [1, 'draft'],
+      [2, 'future'],
+      [3, 'expired'],
+      [4, 'published'],
+      [5, 'malformed']
+    ] as const) {
+      await seed(id, path)
+      readPaths.add(path)
+    }
     await db('pages').where('id', 1).update('isPublished', false)
     await db('pages').where('id', 2).update('publishStartDate', '2099-01-01T00:00:00Z')
     await db('pages').where('id', 3).update('publishEndDate', '2000-01-01T00:00:00Z')
+    await db('pages').where('id', 5).update('publishStartDate', '2020-02-30T00:00:00Z')
     expect((await tree()).map(row => row.path)).toEqual(['published'])
-    writePaths.add('draft'); writePaths.add('future'); writePaths.add('expired')
+    writePaths.add('draft')
+    writePaths.add('future')
+    writePaths.add('expired')
+    writePaths.add('malformed')
     const writerRows = await tree()
-    expect(writerRows).toHaveLength(4)
-    expect(writerRows.filter(row => row.canEdit)).toHaveLength(3)
+    expect(writerRows).toHaveLength(5)
+    expect(writerRows.filter(row => row.canEdit)).toHaveLength(4)
     expect(writerRows.map(({ path, canEdit }) => ({ path, canEdit })).sort((a, b) => a.path.localeCompare(b.path))).toEqual([
       { path: 'draft', canEdit: true },
       { path: 'expired', canEdit: true },
       { path: 'future', canEdit: true },
+      { path: 'malformed', canEdit: true },
       { path: 'published', canEdit: false }
     ])
   })
@@ -162,8 +224,11 @@ suite('PostgreSQL Browse page access', () => {
     expect((await tree({ path: 'folder/allowed', parent: undefined, includeAncestors: true, mode: 'PAGES' })).map(row => row.id)).toEqual([3])
   })
   it('ignores stale tree entries after a path, ownership or visibility change', async () => {
-    await seed(1, 'moved'); await seed(2, 'privatized'); await seed(3, 'transferred', { visibility: 'private', ownerId: 3 })
-    readPaths.add('moved'); readPaths.add('privatized')
+    await seed(1, 'moved')
+    await seed(2, 'privatized')
+    await seed(3, 'transferred', { visibility: 'private', ownerId: 3 })
+    readPaths.add('moved')
+    readPaths.add('privatized')
     await db('pages').where('id', 1).update('path', 'new-path')
     await db('pages').where('id', 2).update({ visibility: 'private', ownerId: 4 })
     await db('pages').where('id', 3).update('ownerId', 4)
@@ -179,9 +244,21 @@ suite('PostgreSQL Browse page access', () => {
     expect((await tree({ path: 'shared/page', parent: undefined, visibility: 'private', includeAncestors: true })).map(row => row.id)).toEqual([3, 4])
   })
   it('continues through bounded metadata batches without truncating a later authorized page', async () => {
-    const pages = Array.from({ length: 1002 }, (_, index) => ({ id: index + 1, path: `page-${index + 1}`, localeCode: 'en', visibility: 'public', ownerId: null, title: 'Hidden title', isPublished: true }))
+    const pages = Array.from({ length: 1002 }, (_, index) => ({
+      id: index + 1,
+      path: `page-${index + 1}`,
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null,
+      title: 'Hidden title',
+      isPublished: true
+    }))
     await db.batchInsert('pages', pages, 250)
-    await db.batchInsert('pageTree', pages.map(({ isPublished: _, ...page }) => ({ ...page, pageId: page.id, isFolder: false, ancestors: '[]' })), 250)
+    await db.batchInsert(
+      'pageTree',
+      pages.map(({ isPublished: _, ...page }) => ({ ...page, pageId: page.id, isFolder: false, ancestors: '[]' })),
+      250
+    )
     readPaths.add('page-1002')
     expect((await tree()).map(row => row.id)).toEqual([1002])
   })
