@@ -63,7 +63,7 @@ Online summaries distinguish returned rows, total matches, and bounded-window lo
 
 Continuation cancels on a new query, retry, mode change, offline-session change, close, or unmount. Late responses and late cleanup cannot overwrite or stop a newer continuation. Appending pages preserves keyed rows, scroll context, selected result identity, and suggestion position. Errors retain loaded pages and offer **Search again** for expired continuation recovery. When the final continuation removes its focused button, focus moves to the newly added result or the input.
 
-The Add Sources dialog transfers focus from a disappearing, keyboard-focused continuation button to the first enabled newly added checkbox, or back to its query input when nothing usable was added. Cancellation, a replacement query/dialog, or an intervening user focus move prevents that transfer.
+The Add Sources dialog transfers focus from a disappearing, keyboard-focused continuation button to the first enabled newly added checkbox, or back to its query input when nothing usable was added. The hidden native checkbox receives focus without native ancestor scrolling; only the results list scrolls to reveal its row, preserving the modal's visible contents. Cancellation, a replacement query/dialog, or an intervening user focus move prevents that transfer.
 
 Result titles wrap without truncation; descriptions remain bounded and paths wrap. Preview has a separate target rather than overlapping the result link. Below 600px, Preview moves beneath its row with a visible label and full touch target. The mobile header field is 44px tall with 16px text in a 52px extension; the Search overlay starts below that extension.
 

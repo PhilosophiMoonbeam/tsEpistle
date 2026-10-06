@@ -497,8 +497,18 @@ const loadMoreSources = async (): Promise<void> => {
         firstEnabled = dialog?.querySelector<HTMLInputElement>(`input[aria-describedby="${rowDomId(row)}"]:not(:disabled)`)
         if (firstEnabled) break
       }
-      if (firstEnabled) firstEnabled.focus()
-      else focusElement(sourceSearchInput.value)
+      if (firstEnabled) {
+        // Native scrolling of the visually hidden input can scroll the modal itself.
+        firstEnabled.focus({ preventScroll: true })
+        const results = firstEnabled.closest<HTMLElement>('.agent-context__results')
+        const row = firstEnabled.closest<HTMLElement>('.agent-context__result')
+        if (results && row) {
+          const top = results.getBoundingClientRect().top + results.clientTop
+          const target = row.getBoundingClientRect()
+          if (target.bottom > top + results.clientHeight) results.scrollTop += target.bottom - top - results.clientHeight
+          else if (target.top < top) results.scrollTop -= top - target.top
+        }
+      } else focusElement(sourceSearchInput.value)
     }
   } catch (value) {
     if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
