@@ -289,9 +289,13 @@ The neutral shell includes:
 
 Local search normalizes title, description, and safe plain `searchText`; it is bounded to the downloaded corpus, cancelable, deterministic, and may run in a worker. Ranking prioritizes exact title, title prefix/token, description, then body term frequency. Results state **Searching N downloaded pages** and never imply parity with server lexical/semantic/Agent search. Structured server-query syntax may be treated as plain text or explain that advanced search requires connection.
 
+Snapshot production and query preparation share locale-independent text normalization, and combining marks remain attached to letter/number tokens. Replacing a coherent private body/search pair advances the corpus revision even when its page count is unchanged. A superseding saved-library query aborts its old scorer; a transient incomplete private read cannot mark a public-only preparation reusable for that same revision.
+
 The existing search overlay switches explicitly between online wiki search and downloaded search. Ask/Agent, server preview, comments, watch, approvals, protection, history, administration, and mutations remain visible when contextually useful but disabled with concise explanations and a Retry action. Hiding them without explanation is prohibited; enabling them from cached permission state is prohibited.
 
 The same-document private reader and downloaded-search overlay decrypt only after a current handle passes account, site, auth-version, generation, policy, revision, and pair-coherence checks. Opening a saved private result never places ciphertext, key material, or private query data in a URL. A cold restart presents the unlock control; successful unlock restores local reading without requesting page content from the server.
+
+Expired coherent private pairs are omitted from both body and search results after integrity validation. Prepared private search caches also track the earliest retained pair expiry: the same revision must be read again at that deadline, and deferred preparation/ranking rechecks it before publishing. Expiry schedules a fresh current query rather than showing expired hits or reporting an authentication failure.
 
 ## 9. Install, update, sharing, and platform behavior
 

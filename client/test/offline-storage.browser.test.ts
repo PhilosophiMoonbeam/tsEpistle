@@ -125,6 +125,8 @@ import {
   enrollOfflineReading
 } from ${JSON.stringify(absoluteSessionPath)};
 import { encryptOfflinePrivateRecord, generateOfflineReadingPairId } from ${JSON.stringify(absoluteCryptoPath)};
+import { readPrivateCorpus } from ${JSON.stringify(absoluteCryptoPath)};
+import { prepareOfflineSearchCorpus, searchPreparedOfflineDocuments } from ${JSON.stringify(fileURLToPath(new URL('../helpers/offline-search.ts', import.meta.url)))};
 
 type RawHandle = IDBDatabase;
 const handles = new Map<string, OfflineStorage>();
@@ -467,7 +469,7 @@ export async function run(operation: string, payload: Record<string, unknown> = 
       }
     }
     if (operation === 'isClosed') return { ok: true, value: storageFor(payload.id).isClosed };
-    if (operation === 'removePrivateWithForeignRows') {
+    if (operation === 'removePrivateWithForeignRows' || operation === 'replaceCoherentPrivatePair') {
       const storage = storageFor(payload.id);
       const snapshot = payload.snapshot as never;
       const enroll = async (target: OfflineStorage, siteId: string, accountId: number, keyId: string) => {
@@ -498,6 +500,62 @@ export async function run(operation: string, payload: Record<string, unknown> = 
           expectedSessionGeneration: await target.currentSessionGeneration(), confirmSecret: () => true
         });
       };
+      if (operation === 'replaceCoherentPrivatePair') {
+        const active = await enroll(storage, 'private-site', 1, privateKeyId);
+        active.secret.fill(0);
+        const source = payload.snapshot as Record<string, unknown>;
+        const writePair = async (revision: number, text: string, expectedRecordRevision: number | null) => {
+          const selectors = { pageId: 42, locale: 'en', recordRevision: revision, pairId: generateOfflineReadingPairId() };
+          const body = await encryptOfflinePrivateRecord(active.handle, 'snapshot', {
+            schemaVersion: 1, audience: 'private',
+            context: { canonicalOrigin: location.origin, siteId: 'private-site', accountId: 1, authVersion: 1 },
+            snapshot: { ...source, sourceRevision: String(revision), searchText: text, content: { ...source.content as object, html: '<p>' + text + '</p>' } }
+          }, selectors);
+          const search = await encryptOfflinePrivateRecord(active.handle, 'search', {
+            schemaVersion: 1, siteId: 'private-site', pageId: 42, locale: 'en',
+            path: source.path, canonicalPath: source.canonicalPath, title: source.title,
+            description: source.description, searchText: text, capturedAt: source.capturedAt,
+            sourceRevision: String(revision), byteSize: 0
+          }, selectors);
+          const policy = await storage.readOfflinePolicy({ readingHandle: active.handle });
+          await storage.putPrivateSnapshotRecords(body, search, {
+            readingHandle: active.handle, expectedRecordRevision,
+            expectedCorpusRevision: await storage.currentCorpusRevision(),
+            policyState: { ...policy.state, policyRevision: revision },
+            policyPage: {
+              key: 'private-site\\u000042\\u0000en', recordType: 'page', schemaVersion: 1,
+              siteId: 'private-site', pageId: 42, locale: 'en', manual: true, automatic: false,
+              tag: false, tagNames: [], visitCount: 0, lastVisitedAt: null, lastEditedAt: null,
+              automaticSelectedAt: null, excluded: false, availability: 'available', byteSize: 0
+            }
+          });
+          return selectors.pairId;
+        };
+        const originalPairId = await writePair(1, 'oldprivatetoken', null);
+        const original = await readPrivateCorpus(active.handle, storage);
+        const prepared = await prepareOfflineSearchCorpus(original.searchDocuments.map(value => {
+          const { sourceRevision, ...document } = value as Record<string, unknown>;
+          return document;
+        }) as never);
+        const replacementPairId = await writePair(2, 'newprivatetoken', 1);
+        const replacement = await readPrivateCorpus(active.handle, storage);
+        let staleRevisionRejected = false;
+        try { await readPrivateCorpus(active.handle, storage, original.corpusRevision); }
+        catch { staleRevisionRejected = true; }
+        const refreshed = await prepareOfflineSearchCorpus(replacement.searchDocuments.map(value => {
+          const { sourceRevision, ...document } = value as Record<string, unknown>;
+          return document;
+        }) as never);
+        return { ok: true, value: {
+          originalRevision: original.corpusRevision, replacementRevision: replacement.corpusRevision,
+          originalCount: original.snapshots.length, replacementCount: replacement.snapshots.length,
+          pairChanged: originalPairId !== replacementPairId, staleRevisionRejected,
+          oldPreparedMatches: searchPreparedOfflineDocuments(prepared, 'oldprivatetoken').results.length,
+          refreshedOldMatches: searchPreparedOfflineDocuments(refreshed, 'oldprivatetoken').results.length,
+          refreshedNewMatches: searchPreparedOfflineDocuments(refreshed, 'newprivatetoken').results.length,
+          replacementText: (replacement.snapshots[0] as Record<string, unknown> | undefined)?.searchText
+        } };
+      }
       const foreignStorage = await openOfflineStorage({ databaseName: String(payload.foreignName) });
       const foreign = await enroll(foreignStorage, 'foreign-site', 2, 'C'.repeat(21) + 'A');
       const foreignBody = await encryptOfflinePrivateRecord(foreign.handle, 'snapshot', {
@@ -1067,6 +1125,32 @@ describe('real IndexedDB offline storage adapter', () => {
     await failedWith('listPrivate', { id: 'storage', keyId: 'C'.repeat(22) }, 'generation-fenced')
   })
 
+  test('advances the private corpus revision when replacing a coherent pair without changing its count', async () => {
+    const name = freshDatabase('private-pair-replacement')
+    await succeeded('open', { id: 'storage', name })
+    const result = await succeeded<{
+      originalRevision: number
+      replacementRevision: number
+      originalCount: number
+      replacementCount: number
+      pairChanged: boolean
+      staleRevisionRejected: boolean
+      oldPreparedMatches: number
+      refreshedOldMatches: number
+      refreshedNewMatches: number
+      replacementText: string
+    }>('replaceCoherentPrivatePair', { id: 'storage', snapshot: makeSnapshot() })
+    expect(result.originalCount).toBe(1)
+    expect(result.replacementCount).toBe(1)
+    expect(result.pairChanged).toBe(true)
+    expect(result.replacementRevision).toBeGreaterThan(result.originalRevision)
+    expect(result.staleRevisionRejected).toBe(true)
+    expect(result.oldPreparedMatches).toBe(1)
+    expect(result.refreshedOldMatches).toBe(0)
+    expect(result.refreshedNewMatches).toBe(1)
+    expect(result.replacementText).toBe('newprivatetoken')
+  })
+
   test('removes active private pages without inspecting or changing foreign encrypted and opaque vault rows', async () => {
     const name = freshDatabase('private-foreign-removal')
     const foreignName = freshDatabase('private-foreign-key')
@@ -1097,9 +1181,17 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('putPrivatePair', { id: 'storage', accountId: 1, revision: 1, expectedRecordRevision: null })
     await succeeded(operation, { name })
     await failedWith('listPrivate', { id: 'storage', keyId: privateKeyId }, 'metadata-recovery')
-    await failedWith('putPrivatePair', {
-      id: 'storage', accountId: 1, revision: 2, pairId: 'E'.repeat(22), expectedRecordRevision: 1
-    }, 'metadata-recovery')
+    await failedWith(
+      'putPrivatePair',
+      {
+        id: 'storage',
+        accountId: 1,
+        revision: 2,
+        pairId: 'E'.repeat(22),
+        expectedRecordRevision: 1
+      },
+      'metadata-recovery'
+    )
   })
 
   test('retires private authority atomically and fences a stale tab', async () => {

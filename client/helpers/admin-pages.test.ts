@@ -18,7 +18,15 @@ describe('page administration workflows', () => {
     expect(publicationState({ ...page, publishEndDate: 'invalid' }, now)).toBe('Invalid schedule')
     expect(publicationState({ isPublished: true }, now)).toBe('Enabled')
     expect(publicationState({ ...page, publishEndDate: new Date(now).toISOString() }, now)).toBe('Published')
+    expect(publicationState({ ...page, publishStartDate: '2024-02-29T12:00:00+05:30' }, now)).toBe('Published')
   })
+  it.each(['2020-02-30T00:00:00Z', '0000-01-01T00:00:00Z', '2020-01-01T24:00:00Z', '2020-01-01T00:00:00+14:01'])(
+    'shows an invalid schedule rather than enabling a malformed boundary: %s',
+    boundary => {
+      expect(publicationState({ isPublished: true, publishStartDate: boundary, publishEndDate: '' }, now)).toBe('Invalid schedule')
+      expect(publicationState({ isPublished: true, publishEndDate: boundary }, now)).toBe('Invalid schedule')
+    }
+  )
   it('encodes navigation paths and preserves the private namespace', () => {
     expect(pageHref({ visibility: 'private', locale: 'en', path: 'notes/a?b#c' }, '/e')).toBe('/e/_private/en/notes/a%3Fb%23c')
   })
@@ -31,7 +39,13 @@ describe('page administration workflows', () => {
         return new Response(JSON.stringify({ error: 'Page changed; review it again' }), { status: 409, headers: { 'content-type': 'application/json' } })
       }
     } as unknown as Window & typeof globalThis
-    const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7', capabilities: { viewStewardContacts: true }, isPublished: true, publishStartDate: null, publishEndDate: null }, error: '' } as PublicationReview
+    const row = {
+      id: 5,
+      title: 'Page',
+      status: 'ready',
+      page: { sourceRevision: '7', capabilities: { viewStewardContacts: true }, isPublished: true, publishStartDate: null, publishEndDate: null },
+      error: ''
+    } as PublicationReview
     await applyPublication(row, false)
     expect(row.status).toBe('error')
     expect(row.error).toContain('Page changed')
@@ -39,7 +53,13 @@ describe('page administration workflows', () => {
     expect(requests).toEqual([{ isPublished: false, expectedSourceRevision: '7' }])
   })
   it('skips unchanged publication without writing and clears old snapshots when review fails', async () => {
-    const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7', capabilities: { viewStewardContacts: true }, isPublished: true, publishStartDate: null, publishEndDate: null }, error: '' } as PublicationReview
+    const row = {
+      id: 5,
+      title: 'Page',
+      status: 'ready',
+      page: { sourceRevision: '7', capabilities: { viewStewardContacts: true }, isPublished: true, publishStartDate: null, publishEndDate: null },
+      error: ''
+    } as PublicationReview
     const requests: unknown[] = []
     let rejectReview = false
     globalThis.window = {

@@ -1,7 +1,8 @@
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createReaderAnalytics } from '../../helpers/reader-analytics.ts'
-import knexModule, { type Knex } from 'knex'
+import knexModule from 'knex'
+import type { Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
 import { createAnalyticsAdministrationStore } from '../../operations/analytics-administration.ts'
 import { recordAnalyticsResponse, pruneAnalyticsInsights, analyticsRetentionStart } from '../../repositories/analytics-insights.ts'
@@ -258,6 +259,45 @@ suite('PostgreSQL reviewed analytics and aggregate reader responses', () => {
     await recordAnalyticsResponse(db, 1, request, now)
     await db('pages').where('id', 1).update({ publishStartDate: '2026-09-06T13:00:00+02:00', publishEndDate: '2026-09-06T08:00:00-05:00' })
     expect((await read()).insights.totalResponses).toBe(1)
+  })
+  it('excludes malformed calendar and time windows from collection and retained insights without discarding valid counters', async () => {
+    await save({ localEnabled: true })
+    await db('pages').insert({
+      id: 4,
+      path: 'valid',
+      title: 'Valid',
+      localeCode: 'en',
+      visibility: 'public',
+      isPublished: true,
+      publishStartDate: '2000-02-29T00:00:00+05:30',
+      publishEndDate: null
+    })
+    expect(await recordAnalyticsResponse(db, 4, request, now)).toBe(true)
+    expect(await recordAnalyticsResponse(db, 1, request, now)).toBe(true)
+    const malformed = [
+      'not-a-date',
+      '2020-02-30T00:00:00Z',
+      '1900-02-29T00:00:00Z',
+      '0000-01-01T00:00:00Z',
+      '2020-01-01T24:00:00Z',
+      '2020-01-01T00:00:00+14:01'
+    ]
+    for (const boundary of ['publishStartDate', 'publishEndDate']) {
+      for (const value of malformed) {
+        await db('pages')
+          .where('id', 1)
+          .update({ publishStartDate: '', publishEndDate: '', [boundary]: value })
+        expect(await recordAnalyticsResponse(db, 1, request, now)).toBe(false)
+        const insights = (await read()).insights
+        expect(insights.totalResponses).toBe(1)
+        expect(insights.pages).toBe(1)
+        expect(insights.daily).toEqual([{ day: '2026-09-06', responses: 1 }])
+        expect(insights.topPages.map(page => page.id)).toEqual([4])
+        expect((await db('analyticsDaily').where('pageId', 1).first()).responses).toBe('1')
+      }
+    }
+    await db('pages').where('id', 1).update({ publishStartDate: null, publishEndDate: '' })
+    expect((await read()).insights.totalResponses).toBe(2)
   })
   it('changes the reporting window without changing policy or review identity and caps it to retention', async () => {
     await save({ retentionDays: 30 })

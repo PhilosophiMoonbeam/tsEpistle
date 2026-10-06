@@ -1,15 +1,8 @@
 import { isStructuredSearchQuery } from '../../../helpers/search-query.ts'
-import { lockSearchIndex, lockSearchPage, readSearchDictionary, withSearchContract } from '../../../helpers/search-contract.ts'
+import { lockSearchIndex, lockSearchPage, publicationTimestampSql, withSearchContract } from '../../../helpers/search-contract.ts'
+import { publicationWindowOpen } from '../../../../shared/publication-window.ts'
 import { wiki } from '../../types.ts'
-import type {
-  SearchConfig,
-  SearchContext,
-  SearchOptions,
-  SearchPlugin,
-  SearchResult,
-  SearchResultEntry,
-  WikiPage
-} from '../../types.ts'
+import type { SearchConfig, SearchContext, SearchOptions, SearchPlugin, SearchResult, SearchResultEntry, WikiPage } from '../../types.ts'
 import type { Knex } from 'knex'
 
 const VECTOR_TABLE = 'pagesVector'
@@ -292,17 +285,14 @@ const searchEligibility = (alias: string): string => `(
   ${alias}.visibility = 'public'
   AND ${alias}."isPublished" = true
   AND ${alias}."isSearchable" = true
-  AND (NULLIF(${alias}."publishStartDate", '')::timestamptz IS NULL
-    OR NULLIF(${alias}."publishStartDate", '')::timestamptz <= statement_timestamp())
-  AND (NULLIF(${alias}."publishEndDate", '')::timestamptz IS NULL
-    OR NULLIF(${alias}."publishEndDate", '')::timestamptz >= statement_timestamp())
+  AND (${alias}."publishStartDate" IS NULL OR ${alias}."publishStartDate" = ''
+    OR ${publicationTimestampSql(`${alias}."publishStartDate"`)} <= statement_timestamp())
+  AND (${alias}."publishEndDate" IS NULL OR ${alias}."publishEndDate" = ''
+    OR ${publicationTimestampSql(`${alias}."publishEndDate"`)} >= statement_timestamp())
 )`
 
 const canonicalPageIsEligible = (page: CanonicalSearchPageRow): boolean => {
-  const now = Date.now()
-  return page.visibility === 'public' && page.isPublished === true && page.isSearchable === true
-    && (!page.publishStartDate || Date.parse(page.publishStartDate) <= now)
-    && (!page.publishEndDate || Date.parse(page.publishEndDate) >= now)
+  return page.visibility === 'public' && page.isPublished === true && page.isSearchable === true && publicationWindowOpen(page)
 }
 
 const unsafeBodyTokens = `
@@ -366,10 +356,7 @@ const canonicalPageSelection = `
 const readCanonicalPage = async (transaction: Knex.Transaction, pageId: number): Promise<CanonicalSearchPageRow | undefined> => {
   // Relations must be sampled after any row-lock wait, not in the statement which waits.
   await transaction('pages').select('id').where({ id: pageId }).forShare()
-  const result = await transaction.raw<PostgresRawResult<CanonicalSearchPageRow>>(
-    `${canonicalPageSelection} WHERE page.id = ?`,
-    [pageId]
-  )
+  const result = await transaction.raw<PostgresRawResult<CanonicalSearchPageRow>>(`${canonicalPageSelection} WHERE page.id = ?`, [pageId])
   return result.rows[0]
 }
 
@@ -520,10 +507,24 @@ const indexPage = async (transaction: Knex.Transaction, dictionary: string, page
   )
 }
 
+const readSavedSearchDictionary = async (transaction: Knex.Transaction): Promise<string> => {
+  const result = await transaction.raw<PostgresRawResult<{ dictionary: unknown }>>(`
+    SELECT config ->> 'dictLanguage' AS dictionary
+    FROM "searchEngines"
+    WHERE key = 'postgres' AND "isEnabled" = true
+  `)
+  const dictionary = result.rows[0]?.dictionary
+  if (result.rows.length !== 1 || typeof dictionary !== 'string' || !dictionary || dictionary.trim() !== dictionary) {
+    throw new Error('Canonical PostgreSQL search dictionary configuration is missing or invalid')
+  }
+  await transaction.raw('SELECT ?::regconfig', [dictionary])
+  return dictionary
+}
+
 const ensureSearchIndex = async (db: Knex | Knex.Transaction, configuredDictionary: string | undefined, forceRebuild: boolean): Promise<boolean> => {
   const run = async (transaction: Knex.Transaction): Promise<boolean> => {
     await lockSearchIndex(transaction, true, !forceRebuild)
-    const dictionary = forceRebuild ? await readSearchDictionary(transaction) : configuredDictionary
+    const dictionary = forceRebuild ? await readSavedSearchDictionary(transaction) : configuredDictionary
     if (typeof dictionary !== 'string' || !dictionary) throw new Error('PostgreSQL search requires a dictionary')
     await transaction.raw('CREATE EXTENSION IF NOT EXISTS pg_trgm')
 
@@ -601,6 +602,9 @@ const queryPages = async (
       SELECT vector."pageId"
       FROM "pagesVector" vector
       JOIN pages current_page ON current_page.id = vector."pageId" AND ${searchEligibility('current_page')}
+        AND vector."sourceRevision" = current_page."sourceRevision"
+        AND vector.locale = current_page."localeCode"
+        AND vector.path = current_page.path
       CROSS JOIN query_input input
       WHERE NOT input.is_structured
         AND (
@@ -630,6 +634,9 @@ const queryPages = async (
       SELECT vector."pageId"
       FROM "pagesVector" vector
       JOIN pages current_page ON current_page.id = vector."pageId" AND ${searchEligibility('current_page')}
+        AND vector."sourceRevision" = current_page."sourceRevision"
+        AND vector.locale = current_page."localeCode"
+        AND vector.path = current_page.path
       CROSS JOIN query_input input
       WHERE (SELECT count(*) FROM priority_ids) < ?
       AND NOT EXISTS (SELECT 1 FROM priority_ids exact JOIN "pagesVector" direct ON direct."pageId" = exact."pageId" WHERE lower(direct.path) = input.raw_query)
@@ -662,6 +669,9 @@ const queryPages = async (
       SELECT vector."pageId"
       FROM "pagesVector" vector
       JOIN pages current_page ON current_page.id = vector."pageId" AND ${searchEligibility('current_page')}
+        AND vector."sourceRevision" = current_page."sourceRevision"
+        AND vector.locale = current_page."localeCode"
+        AND vector.path = current_page.path
       CROSS JOIN query_input input
       WHERE (SELECT count(*) FROM exact_ids) < 5
       AND NOT EXISTS (SELECT 1 FROM priority_ids exact JOIN "pagesVector" direct ON direct."pageId" = exact."pageId" WHERE lower(direct.path) = input.raw_query OR lower(direct.title) = input.raw_query)
@@ -772,10 +782,27 @@ const queryPages = async (
         least(1.25, sum(root_score * CASE depth WHEN 1 THEN 0.08 ELSE 0.03 END))::double precision AS graph_score
       FROM reachable
       GROUP BY page_id
+    ), rounded_candidates AS (
+      SELECT candidate.*, round(candidate.preliminary_score::numeric, 6) AS rounded_score
+      FROM candidates candidate
+    ), promotion_limits AS (
+      SELECT candidate.*,
+        -- Exact recipients skip self/equal peers; six-decimal numeric scores give a strictly superior ceiling.
+        CASE WHEN candidate.exact_title OR candidate.exact_tag
+          THEN min(candidate.rounded_score) FILTER (WHERE candidate.exact_title OR candidate.exact_tag)
+            OVER (ORDER BY candidate.rounded_score DESC RANGE BETWEEN UNBOUNDED PRECEDING AND 0.000001 PRECEDING)
+          ELSE min(candidate.rounded_score) FILTER (WHERE candidate.exact_title OR candidate.exact_tag)
+            OVER (ORDER BY candidate.rounded_score DESC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        END AS exact_ceiling
+      FROM rounded_candidates candidate
     ), ranked AS (
       SELECT
         candidate.*,
-        coalesce(support.graph_score, 0.0) AS graph_score,
+        CASE WHEN candidate.exact_ceiling IS NULL
+          THEN coalesce(support.graph_score, 0.0)::numeric
+          ELSE least(coalesce(support.graph_score, 0.0)::numeric,
+            greatest(0::numeric, candidate.exact_ceiling - 0.000001 - candidate.rounded_score))
+        END AS graph_score,
         candidate.exact_title OR
           (candidate.has_positive_evidence AND candidate.query @@ to_tsvector(candidate.dictionary, candidate.title)) OR
           (NOT candidate.is_structured AND word_similarity(candidate.raw_query, candidate.title) >= 0.6) AS title_match,
@@ -787,7 +814,7 @@ const queryPages = async (
           (NOT candidate.is_structured AND word_similarity(candidate.raw_query, replace(candidate.path, '/', ' ')) >= 0.6) AS path_match,
         (candidate.has_positive_evidence AND candidate.query @@ to_tsvector(candidate.dictionary, candidate.description)) OR
           (NOT candidate.is_structured AND word_similarity(candidate.raw_query, candidate.description) >= 0.6) AS description_match
-      FROM candidates candidate
+      FROM promotion_limits candidate
       LEFT JOIN graph_support support ON support.page_id = candidate."pageId"
     )
     SELECT
@@ -798,13 +825,13 @@ const queryPages = async (
       ranked.title,
       ranked.description,
       ranked.tags,
-      round((ranked.preliminary_score + ranked.graph_score)::numeric, 6)::double precision AS score,
+      round(ranked.rounded_score + ranked.graph_score, 6)::double precision AS score,
       array_remove(ARRAY[
         CASE WHEN ranked.title_match THEN 'title' END,
         CASE WHEN ranked.tag_match THEN 'tag' END,
         CASE WHEN ranked.path_match THEN 'path' END,
         CASE WHEN ranked.description_match THEN 'description' END,
-        CASE WHEN ranked.has_positive_evidence AND ranked.lexical_rank > 0 AND NOT (ranked.title_match OR ranked.tag_match OR ranked.path_match OR ranked.description_match) THEN 'content' END,
+        CASE WHEN ranked.has_positive_evidence AND ts_filter(ranked.tokens, ARRAY['C']::"char"[]) @@ querytree(ranked.query)::tsquery THEN 'content' END,
         CASE WHEN ranked.graph_score > 0 THEN 'graph' END
       ], NULL)::text[] AS "matchedFields"
     FROM ranked

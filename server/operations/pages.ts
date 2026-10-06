@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto'
+import { publicationBoundaryTimestamp, publicationWindowOpen } from '../../shared/publication-window.ts'
 import { CollaborationRoomStore } from '../core/collaboration-store.ts'
-import {
-  openPageMoveReviewCursor,
-  pageMoveSessionDigest,
-  sealPageMoveReviewCursor,
-  signPageMoveReviewToken
-} from '../helpers/page-move-review-token.ts'
+import { openPageMoveReviewCursor, pageMoveSessionDigest, sealPageMoveReviewCursor, signPageMoveReviewToken } from '../helpers/page-move-review-token.ts'
 import type { PageMoveReviewTokenPayload } from '../helpers/page-move-review-token.ts'
 import { rewriteMovedPageLinks } from '../helpers/page-move-link-rewrite.ts'
 import type { PageMoveLinkRewriteResult } from '../helpers/page-move-link-rewrite.ts'
@@ -23,17 +19,9 @@ import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
 import type { SearchOptions, SearchResult as ProviderSearchResult } from '../modules/types.ts'
-import {
-  buildOfflinePageSnapshot,
-  canonicalOfflineOrigin,
-  OfflinePageAuthorityError,
-  OfflinePageProjectionError
-} from '../helpers/offline-page.ts'
+import { buildOfflinePageSnapshot, canonicalOfflineOrigin, OfflinePageAuthorityError, OfflinePageProjectionError } from '../helpers/offline-page.ts'
 import type { OfflinePageSource } from '../helpers/offline-page.ts'
-import {
-  OFFLINE_PRIVATE_SNAPSHOT_RESPONSE_SCHEMA_VERSION,
-  OfflinePrivateSnapshotResponseV1Schema
-} from '../../shared/offline.ts'
+import { OFFLINE_PRIVATE_SNAPSHOT_RESPONSE_SCHEMA_VERSION, OfflinePrivateSnapshotResponseV1Schema } from '../../shared/offline.ts'
 import type { OfflinePageSnapshotV1, OfflinePrivateSnapshotResponseV1 } from '../../shared/offline.ts'
 import { accountSessionIsCurrent, sessionVersion } from '../helpers/account-session.ts'
 import { isApiPrincipal } from '../helpers/api-principal.ts'
@@ -119,16 +107,15 @@ const moveRendererConfiguration = async (): Promise<{
     const [markdown, html] = await Promise.all([getPipeline('markdown'), getPipeline('html')])
     const markdownConfig = markdown.find(stage => stage.key === 'markdownCore')?.config
     const htmlConfig = html.find(stage => stage.key === 'htmlCore')?.config
-    markdownAllowHTML =
-      typeof markdownConfig !== 'object' || markdownConfig === null || Reflect.get(markdownConfig, 'allowHTML') !== false
-    wikiLinksEnabled =
-      typeof markdownConfig === 'object' && markdownConfig !== null && Reflect.get(markdownConfig, 'wikilinks') === true
-    absoluteLinks =
-      typeof htmlConfig === 'object' && htmlConfig !== null && Reflect.get(htmlConfig, 'absoluteLinks') === true
+    markdownAllowHTML = typeof markdownConfig !== 'object' || markdownConfig === null || Reflect.get(markdownConfig, 'allowHTML') !== false
+    wikiLinksEnabled = typeof markdownConfig === 'object' && markdownConfig !== null && Reflect.get(markdownConfig, 'wikilinks') === true
+    absoluteLinks = typeof htmlConfig === 'object' && htmlConfig !== null && Reflect.get(htmlConfig, 'absoluteLinks') === true
   }
   const defaultLocale = wiki.config.lang.code
   const namespaced = wiki.config.lang.namespacing === true
-  const digest = moveSourceDigest(JSON.stringify({ version: MOVE_LINK_REWRITE_VERSION, defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled }))
+  const digest = moveSourceDigest(
+    JSON.stringify({ version: MOVE_LINK_REWRITE_VERSION, defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled })
+  )
   return { defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled, digest }
 }
 
@@ -137,21 +124,23 @@ const moveRewrite = (
   oldTarget: { locale: string; path: string },
   newTarget: { locale: string; path: string },
   config: { defaultLocale: string; namespaced: boolean; absoluteLinks: boolean; markdownAllowHTML: boolean; wikiLinksEnabled: boolean }
-) => rewriteMovedPageLinks({
-  source: page.content,
-  editor: page.editorKey,
-  oldTarget,
-  newTarget,
-  sourcePage: { locale: page.localeCode, path: page.path },
-  defaultLocale: config.defaultLocale,
-  namespaced: config.namespaced,
-  absoluteLinks: config.absoluteLinks,
-  markdownAllowHTML: config.markdownAllowHTML,
-  wikiLinksEnabled: config.wikiLinksEnabled
-})
+) =>
+  rewriteMovedPageLinks({
+    source: page.content,
+    editor: page.editorKey,
+    oldTarget,
+    newTarget,
+    sourcePage: { locale: page.localeCode, path: page.path },
+    defaultLocale: config.defaultLocale,
+    namespaced: config.namespaced,
+    absoluteLinks: config.absoluteLinks,
+    markdownAllowHTML: config.markdownAllowHTML,
+    wikiLinksEnabled: config.wikiLinksEnabled
+  })
 
 const currentLinkReceipt = async (pageId: number, revision: string): Promise<boolean> => {
-  const receipt = await wiki.models.knex('pageMutationOutbox')
+  const receipt = await wiki.models
+    .knex('pageMutationOutbox')
     .where({ pageId, sourceRevision: revision, effectKind: 'links', desiredState: 'present', status: 'succeeded' })
     .first('id')
   return receipt !== undefined
@@ -179,8 +168,9 @@ const evaluateMoveCandidate = async (input: {
     page.visibility !== 'public' ||
     page.ownerId !== null ||
     !canAccessCurrentPageSource(input.requester, page, input.authority) ||
-    await pageRequiresUnlock({ requester: input.requester as Express.User, pageId: page.id, sessionId: input.sessionId })
-  ) return null
+    (await pageRequiresUnlock({ requester: input.requester as Express.User, pageId: page.id, sessionId: input.sessionId }))
+  )
+    return null
 
   const revision = currentSourceRevision(page.sourceRevision)
   if (revision === undefined) return null
@@ -194,7 +184,7 @@ const evaluateMoveCandidate = async (input: {
     changes: []
   }
   const beforeDigest = moveSourceDigest(page.content)
-  const indexIsCurrent = input.candidateConfirmedByIndex && await currentLinkReceipt(page.id, revision)
+  const indexIsCurrent = input.candidateConfirmedByIndex && (await currentLinkReceipt(page.id, revision))
   if (!indexIsCurrent && !input.allowUnindexedSource) {
     item.reason = 'The current link index is pending; refresh after indexing completes.'
     return { page, item, outputSource: page.content, beforeDigest, afterDigest: beforeDigest, sourceReviewComplete: false, hasSourceLinks: false }
@@ -212,9 +202,7 @@ const evaluateMoveCandidate = async (input: {
   const byteLength = Buffer.byteLength(page.content, 'utf8')
   const outputByteLength = Buffer.byteLength(rewritten.source, 'utf8')
   if (rewritten.changes.length === 0) {
-    item.reason = rewritten.unsupported > 0
-      ? 'This source has links that require manual repair.'
-      : 'No supported incoming links were found in this source.'
+    item.reason = rewritten.unsupported > 0 ? 'This source has links that require manual repair.' : 'No supported incoming links were found in this source.'
   } else if (!canWritePage(input.requester, page, input.authority)) {
     item.reason = 'You do not have permission to repair links in this source.'
   } else if (!indexIsCurrent && !input.allowUnindexedSource) {
@@ -253,9 +241,12 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
   const hasSelection = Object.hasOwn(raw, 'selectedPageIds')
   let selectedPageIds: number[] | undefined
   if (hasSelection) {
-    if (!Array.isArray(raw.selectedPageIds) || raw.selectedPageIds.length > 20 ||
+    if (
+      !Array.isArray(raw.selectedPageIds) ||
+      raw.selectedPageIds.length > 20 ||
       raw.selectedPageIds.some(value => typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) ||
-      new Set(raw.selectedPageIds).size !== raw.selectedPageIds.length) {
+      new Set(raw.selectedPageIds).size !== raw.selectedPageIds.length
+    ) {
       throw new ApplicationError('selectedPageIds must contain at most 20 distinct positive page IDs.', { code: 'INVALID_INPUT', status: 400 })
     }
     selectedPageIds = raw.selectedPageIds as number[]
@@ -290,7 +281,8 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     destinationContext === null ||
     !canWritePage(requester, destinationContext, authority) ||
     !wiki.auth.checkPageAccess(requester, ['write:pages'], destinationContext, authority)
-  ) throw new wiki.Error.PageMoveForbidden()
+  )
+    throw new wiki.Error.PageMoveForbidden()
 
   const oldTarget = { locale: page.localeCode, path: page.path }
   const newTarget = { locale: destinationLocale, path: destinationPath }
@@ -317,7 +309,8 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
       cursor.sessionDigest !== sessionDigest ||
       cursor.issuedAt > now + 60_000 ||
       now - cursor.issuedAt > MOVE_REVIEW_CURSOR_TTL
-    ) throw new ApplicationError('The link-review page cursor is invalid or expired.', { code: 'MOVE_REVIEW_CURSOR_INVALID', status: 400 })
+    )
+      throw new ApplicationError('The link-review page cursor is invalid or expired.', { code: 'MOVE_REVIEW_CURSOR_INVALID', status: 400 })
     afterId = cursor.afterId
   }
 
@@ -345,23 +338,25 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     const targetCollaboration = await new CollaborationRoomStore(wiki.models.knex).inspectSourceRepair(id, targetRevision, page.content)
     if (targetCollaboration !== 'ready') {
       automaticItem.eligible = false
-      automaticItem.reason = targetCollaboration === 'active'
-        ? 'Automatically included with the moved page; its collaboration session must be inactive.'
-        : 'Automatically included with the moved page; its collaboration draft must match the current source.'
+      automaticItem.reason =
+        targetCollaboration === 'active'
+          ? 'Automatically included with the moved page; its collaboration session must be inactive.'
+          : 'Automatically included with the moved page; its collaboration draft must match the current source.'
     } else {
       targetOutput = targetEvaluation.outputSource
     }
   }
 
   const getCandidateIds = async (fromId: number, limit: number): Promise<number[]> => {
-    const rows = await wiki.models.knex('pageLinks as link')
+    const rows = (await wiki.models
+      .knex('pageLinks as link')
       .join('pages as source', 'source.id', 'link.pageId')
       .where({ 'link.localeCode': page.localeCode, 'link.path': page.path, 'source.visibility': 'public' })
       .whereNull('source.ownerId')
       .where('source.id', '>', fromId)
       .distinct({ id: 'source.id' })
       .orderBy('source.id', 'asc')
-      .limit(limit) as Array<{ id: number | string }>
+      .limit(limit)) as Array<{ id: number | string }>
     return rows.flatMap(row => {
       const candidateId = Number(row.id)
       return Number.isSafeInteger(candidateId) && candidateId > 0 ? [candidateId] : []
@@ -383,7 +378,8 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     })
   }
 
-  const coverageNotice = 'The incoming-link index is not exhaustive. Only reviewed supported source occurrences on selected public pages are repaired; other links may require manual repair.'
+  const coverageNotice =
+    'The incoming-link index is not exhaustive. Only reviewed supported source occurrences on selected public pages are repaired; other links may require manual repair.'
   if (selectedPageIds !== undefined) {
     if (!targetEvaluation.sourceReviewComplete) {
       throw new ApplicationError('The moved page source could not be trusted for link review. Refresh after indexing completes.', {
@@ -409,14 +405,19 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     const selectedEvaluations: MoveReviewEvaluation[] = []
     let aggregateBytes = targetOutput === page.content ? 0 : Buffer.byteLength(targetOutput, 'utf8')
     for (const selectedId of selectedPageIds) {
-      if (selectedId === id) throw new ApplicationError('The moved page is included automatically and cannot be selected as a referrer.', { code: 'INVALID_INPUT', status: 400 })
-      const indexed = await wiki.models.knex('pageLinks').where({
-        pageId: selectedId,
-        localeCode: page.localeCode,
-        path: page.path
-      }).first('pageId')
+      if (selectedId === id)
+        throw new ApplicationError('The moved page is included automatically and cannot be selected as a referrer.', { code: 'INVALID_INPUT', status: 400 })
+      const indexed = await wiki.models
+        .knex('pageLinks')
+        .where({
+          pageId: selectedId,
+          localeCode: page.localeCode,
+          path: page.path
+        })
+        .first('pageId')
       const evaluation = indexed ? await evaluateId(selectedId) : null
-      if (!evaluation) throw new ApplicationError('The selection is no longer available for review. Refresh the review.', { code: 'MOVE_REVIEW_STALE', status: 409 })
+      if (!evaluation)
+        throw new ApplicationError('The selection is no longer available for review. Refresh the review.', { code: 'MOVE_REVIEW_STALE', status: 409 })
       if (!evaluation.item.eligible) {
         throw new ApplicationError('One or more selected pages are no longer eligible. Refresh the review.', {
           code: 'MOVE_REVIEW_INELIGIBLE',
@@ -463,8 +464,7 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     }
   }
 
-  const items: MoveReviewItem[] =
-    !targetEvaluation.sourceReviewComplete || targetEvaluation.hasSourceLinks ? [automaticItem] : []
+  const items: MoveReviewItem[] = !targetEvaluation.sourceReviewComplete || targetEvaluation.hasSourceLinks ? [automaticItem] : []
   let scanId = afterId
   let lastVisibleId = afterId
   let scanned = 0
@@ -491,21 +491,23 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     if (hasAuthorizedLookahead || ids.length < batchLimit) break
   }
   const nextCursor = hasAuthorizedLookahead
-    ? sealPageMoveReviewCursor({
-        version: 1,
-        targetId: id,
-        expectedSourceRevision: revision,
-        destinationLocale,
-        destinationPath,
-        requesterId,
-        sessionDigest,
-        issuedAt: now,
-        afterId: lastVisibleId
-      }, wiki.config.sessionSecret)
+    ? sealPageMoveReviewCursor(
+        {
+          version: 1,
+          targetId: id,
+          expectedSourceRevision: revision,
+          destinationLocale,
+          destinationPath,
+          requesterId,
+          sessionDigest,
+          issuedAt: now,
+          afterId: lastVisibleId
+        },
+        wiki.config.sessionSecret
+      )
     : null
   return { schemaVersion: 1, items, nextCursor, coverageNotice }
 }
-
 
 const { ApplicationError } = errors
 const propertyValue = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined)
@@ -532,6 +534,8 @@ interface PageRecord extends Record<string, unknown> {
   visibility: PageVisibility
   ownerId: number | null
   isPublished: boolean
+  publishStartDate?: string | Date | null
+  publishEndDate?: string | Date | null
   isSearchable: boolean
   tags: TagRecord[]
 }
@@ -1204,65 +1208,88 @@ const list = async (input: OperationInput) => {
     if (resolved.some(tag => tag === null)) return []
     args.tags = resolved as string[]
   }
-  const pages = (
-    await wiki.models.pages
-      .query()
-      .column([
-        'pages.id',
-        'path',
-        { locale: 'localeCode' },
-        'title',
-        'description',
-        'isPublished',
-        'isSearchable',
-        'publishStartDate',
-        'publishEndDate',
-        'visibility',
-        'ownerId',
-        'contentType',
-        'createdAt',
-        'updatedAt'
-      ])
-      .withGraphFetched('tags')
-      .modifyGraph('tags', builder => {
-        builder.select('tag')
-      })
-      .modify(queryBuilder => {
-        scopePageQuery(queryBuilder, requester, { table: 'pages' })
-        if (args.limit) queryBuilder.limit(args.limit)
-        if (args.offset > 0) queryBuilder.offset(args.offset)
-        if (args.locale) queryBuilder.where('localeCode', args.locale)
-        if (args.creatorId && args.authorId && args.creatorId > 0 && args.authorId > 0) {
-          queryBuilder.where(builder => {
-            builder.where('creatorId', args.creatorId).orWhere('authorId', args.authorId)
-          })
-        } else {
-          if (args.creatorId && args.creatorId > 0) queryBuilder.where('creatorId', args.creatorId)
-          if (args.authorId && args.authorId > 0) queryBuilder.where('authorId', args.authorId)
-        }
-        if (args.tags && args.tags.length > 0) {
-          queryBuilder.whereExists(builder => {
-            builder
-              .select('pageTags.pageId')
-              .from('pageTags')
-              .join('tags', 'tags.id', 'pageTags.tagId')
-              .whereRaw('?? = ??', ['pageTags.pageId', 'pages.id'])
-              .whereIn('tags.tag', args.tags!)
-          })
-        }
-        const orderDirection = args.orderByDirection === 'DESC' ? 'desc' : 'asc'
-        const orderColumns = { CREATED: 'pages.createdAt', PATH: 'pages.path', TITLE: 'pages.title', UPDATED: 'pages.updatedAt' }
-        const orderColumn = orderColumns[args.orderBy as keyof typeof orderColumns] ?? 'pages.id'
-        queryBuilder.orderBy(orderColumn, orderDirection)
-        if (orderColumn !== 'pages.id') queryBuilder.orderBy('pages.id', 'asc')
-      })
-  ).map(normalizePageBooleans)
+  const fetchCandidates = async (candidateOffset: number, batchLimit?: number) =>
+    (
+      await wiki.models.pages
+        .query()
+        .column([
+          'pages.id',
+          'path',
+          { locale: 'localeCode' },
+          'title',
+          'description',
+          'isPublished',
+          'isSearchable',
+          'publishStartDate',
+          'publishEndDate',
+          'visibility',
+          'ownerId',
+          'contentType',
+          'createdAt',
+          'updatedAt'
+        ])
+        .withGraphFetched('tags')
+        .modifyGraph('tags', builder => {
+          builder.select('tag')
+        })
+        .modify(queryBuilder => {
+          scopePageQuery(queryBuilder, requester, { table: 'pages', includeAllForSystemManager: true })
+          if (batchLimit !== undefined) queryBuilder.limit(batchLimit)
+          if (candidateOffset > 0) queryBuilder.offset(candidateOffset)
+          if (args.locale) queryBuilder.where('localeCode', args.locale)
+          if (args.creatorId && args.authorId && args.creatorId > 0 && args.authorId > 0) {
+            queryBuilder.where(builder => {
+              builder.where('creatorId', args.creatorId).orWhere('authorId', args.authorId)
+            })
+          } else {
+            if (args.creatorId && args.creatorId > 0) queryBuilder.where('creatorId', args.creatorId)
+            if (args.authorId && args.authorId > 0) queryBuilder.where('authorId', args.authorId)
+          }
+          if (args.tags && args.tags.length > 0) {
+            for (const tag of new Set(args.tags)) {
+              queryBuilder.whereExists(builder => {
+                builder
+                  .select('pageTags.pageId')
+                  .from('pageTags')
+                  .join('tags', 'tags.id', 'pageTags.tagId')
+                  .whereRaw('?? = ??', ['pageTags.pageId', 'pages.id'])
+                  .where('tags.tag', tag)
+              })
+            }
+          }
+          const orderDirection = args.orderByDirection === 'DESC' ? 'desc' : 'asc'
+          const orderColumns = { CREATED: 'pages.createdAt', PATH: 'pages.path', TITLE: 'pages.title', UPDATED: 'pages.updatedAt' }
+          const orderColumn = orderColumns[args.orderBy as keyof typeof orderColumns] ?? 'pages.id'
+          queryBuilder.orderBy(orderColumn, orderDirection)
+          if (orderColumn !== 'pages.id') queryBuilder.orderBy('pages.id', 'asc')
+        })
+    ).map(normalizePageBooleans)
 
-  const accessiblePages = pages.filter(page => canReadPage(requester, page, authority)).map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
-  if (args.tags && args.tags.length > 0) {
-    return accessiblePages.filter(page => _.every(args.tags, tag => _.includes(page.tags, tag)))
+  if (args.limit === undefined) {
+    const pages = await fetchCandidates(0)
+    return pages
+      .filter(page => canReadPage(requester, page, authority))
+      .slice(args.offset)
+      .map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
   }
-  return accessiblePages
+  const selected: PageRecord[] = []
+  let candidateOffset = 0
+  let authorizedOffset = 0
+  while (selected.length < args.limit) {
+    const batchLimit = Math.min(100, args.offset - authorizedOffset + args.limit - selected.length)
+    const candidates = await fetchCandidates(candidateOffset, batchLimit)
+    candidateOffset += candidates.length
+    for (const page of candidates) {
+      if (!canReadPage(requester, page, authority)) continue
+      if (authorizedOffset < args.offset) {
+        authorizedOffset++
+      } else {
+        selected.push(page)
+      }
+    }
+    if (candidates.length < batchLimit) break
+  }
+  return selected.map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
 }
 
 export interface PageIndexItem {
@@ -1289,9 +1316,11 @@ const listIndex = async (input: OperationInput): Promise<PageIndexItem[]> => {
   const eligible = (page: PageIndexCandidate): boolean => {
     if (!page.path.startsWith(prefix)) return false
     const relativePath = page.path.slice(prefix.length)
-    return relativePath.length > 0 &&
+    return (
+      relativePath.length > 0 &&
       relativePath.split('/').length <= depth + 1 &&
       canReadPage(requester, { ...page, tags: page.tags.map(tag => tag.tag) }, authority)
+    )
   }
 
   const pages = await listPageIndexCandidates(wiki.models.knex, {
@@ -1309,7 +1338,8 @@ const listIndex = async (input: OperationInput): Promise<PageIndexItem[]> => {
   }
   accessible.sort((left, right) => {
     if (order === 'title') return left.title.localeCompare(right.title) || left.path.localeCompare(right.path) || left.id - right.id
-    if (order === 'updated') return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf() || left.path.localeCompare(right.path) || left.id - right.id
+    if (order === 'updated')
+      return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf() || left.path.localeCompare(right.path) || left.id - right.id
     return left.path.localeCompare(right.path) || left.id - right.id
   })
   return accessible.slice(0, limit).map(page => ({
@@ -1416,7 +1446,12 @@ const listTags = async (inputOrRequester?: OperationInput | Express.User, suppli
     })
     .withGraphJoined('tags')
   const tags = pages
-    .filter(page => pageMatchesAgentScope(page, operationInput.agentScope) && (page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))) && canReadPage(requester, page, authority))
+    .filter(
+      page =>
+        pageMatchesAgentScope(page, operationInput.agentScope) &&
+        (page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))) &&
+        canReadPage(requester, page, authority)
+    )
     .flatMap(page => page.tags)
   return _.orderBy(_.uniqBy(tags, 'id'), ['tag'], ['asc'])
 }
@@ -1616,7 +1651,12 @@ const searchTags = async (input: OperationInput) => {
     })
   return _.uniq(
     pages
-      .filter(page => pageMatchesAgentScope(page, input.agentScope) && (page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))) && canReadPage(requester, page, authority))
+      .filter(
+        page =>
+          pageMatchesAgentScope(page, input.agentScope) &&
+          (page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))) &&
+          canReadPage(requester, page, authority)
+      )
       .flatMap(page => page.tags)
       .map(tag => tag.tag)
       .filter(tag => tag.toLowerCase().includes(normalizedQuery))
@@ -1652,11 +1692,6 @@ const get = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority)
   }
 }
 
-const publicationWindowOpen = (page: Record<string, unknown>, now = Date.now()): boolean => {
-  const start = page.publishStartDate
-  const end = page.publishEndDate
-  return (!start || new Date(String(start)).valueOf() <= now) && (!end || new Date(String(end)).valueOf() >= now)
-}
 const canAccessCurrentPageSource = (requester: Express.User | undefined, page: PageRecord, authority: PageRuleAuthority): boolean =>
   page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))
     ? canReadPage(requester, page, authority)
@@ -2181,8 +2216,9 @@ const structuredPrivateSearch = async (
   bindings: readonly Knex.RawBinding[],
   limit: number
 ): Promise<PrivateSearchRankRow[]> => {
-  const ranked = await withSearchContract(wiki.models.knex, (trx, dictionary) => trx.raw<{ rows: PrivateSearchRankRow[] }>(
-    `
+  const ranked = await withSearchContract(wiki.models.knex, (trx, dictionary) =>
+    trx.raw<{ rows: PrivateSearchRankRow[] }>(
+      `
       WITH query_input AS (
         SELECT ?::regconfig AS dictionary, websearch_to_tsquery(?::regconfig, ?::text) AS query
       ), matched AS MATERIALIZED (
@@ -2263,8 +2299,9 @@ const structuredPrivateSearch = async (
       ) fields
       ORDER BY bounded.score DESC, bounded.title_order, bounded.path_order, bounded.id
     `,
-    [dictionary, dictionary, query, dictionary, dictionary, ...bindings, limit]
-  ))
+      [dictionary, dictionary, query, dictionary, dictionary, ...bindings, limit]
+    )
+  )
   return ranked.rows
 }
 
@@ -2419,8 +2456,9 @@ const protectedPageIds = async (): Promise<Set<number>> =>
 
 const matchingProtectedMetadataIds = async (query: string, pageIds: readonly number[]): Promise<Set<number>> => {
   if (pageIds.length === 0) return new Set()
-  const matched = await withSearchContract(wiki.models.knex, (trx, dictionary) => trx.raw<{ rows: Array<{ id: number }> }>(
-    `
+  const matched = await withSearchContract(wiki.models.knex, (trx, dictionary) =>
+    trx.raw<{ rows: Array<{ id: number }> }>(
+      `
       WITH query_input AS (
         SELECT websearch_to_tsquery(?::regconfig, ?::text) AS query
       ), metadata AS MATERIALIZED (
@@ -2443,8 +2481,9 @@ const matchingProtectedMetadataIds = async (query: string, pageIds: readonly num
       WHERE metadata.tokens @@ query_input.query
         OR (?::boolean AND strpos(lower(metadata.metadata_text), lower(?::text)) > 0)
     `,
-    [dictionary, query, dictionary, [...pageIds], !isStructuredSearchQuery(query), query]
-  ))
+      [dictionary, query, dictionary, [...pageIds], !isStructuredSearchQuery(query), query]
+    )
+  )
   return new Set(matched.rows.map(row => row.id))
 }
 
@@ -2675,7 +2714,7 @@ const search = async (input: OperationInput) => {
   ])
 
   const publicResultIds = publicResponse.results.map(result => result.id)
-  const candidatePageIds = [...new Set([...publicResultIds, ...knowledgeCandidates.map(candidate => candidate.id)])]
+  const candidatePageIds = [...new Set([...publicResultIds, ...privatePages.map(page => page.id), ...knowledgeCandidates.map(candidate => candidate.id)])]
   const rawLivePages =
     candidatePageIds.length === 0
       ? []
@@ -2713,13 +2752,15 @@ const search = async (input: OperationInput) => {
   const livePages = rawLivePages.filter(page => pageMatchesAgentScope(page, input.agentScope)).map(normalizePageBooleans)
   const livePagesById = new Map(livePages.map(page => [page.id, page]))
   const currentProtectedPageIds = await protectedPageIds()
+  // Graph scores cannot be separated from support admitted before protection changed.
+  const publicGraphAuthorityDegraded = filteredPublicIds.some(pageId => currentProtectedPageIds.has(pageId) && !initialProtectedPageIds.has(pageId))
   const currentProtectedMetadataIds = await matchingProtectedMetadataIds(
     query,
     livePages.filter(page => page.visibility === 'public' && currentProtectedPageIds.has(page.id)).map(page => page.id)
   )
   const currentPrivateMetadataIds = await matchingProtectedMetadataIds(
     query,
-    privatePages.filter(page => currentProtectedPageIds.has(page.id)).map(page => page.id)
+    livePages.filter(page => page.visibility === 'private' && currentProtectedPageIds.has(page.id)).map(page => page.id)
   )
   const publicResults = publicResponse.results.flatMap(result => {
     const id = result.id
@@ -2739,6 +2780,8 @@ const search = async (input: OperationInput) => {
       !page.isSearchable ||
       !publicationWindowOpen(page) ||
       !canReadPage(requester, page, authority) ||
+      (currentProtectedPageIds.has(page.id) && !initialProtectedPageIds.has(page.id)) ||
+      (publicGraphAuthorityDegraded && Array.isArray(result.matchedFields) && result.matchedFields.includes('graph')) ||
       (currentProtectedPageIds.has(page.id) && !currentProtectedMetadataIds.has(page.id))
     ) {
       return []
@@ -2752,19 +2795,33 @@ const search = async (input: OperationInput) => {
         title: page.title,
         description: page.description ?? '',
         tags: resultTags(page.tags),
-        matchedFields: metadataOnly && Array.isArray(result.matchedFields) ? result.matchedFields.filter(field => field !== 'content') : result.matchedFields,
+        matchedFields:
+          metadataOnly && Array.isArray(result.matchedFields)
+            ? result.matchedFields.filter(field => field !== 'content' && field !== 'graph')
+            : result.matchedFields,
         metadataOnly,
         visibility: 'public' as const
       }
     ]
   })
-  const privateResults = privatePages.flatMap(page => {
-    const sourceRevision = currentSourceRevision(page.sourceRevision)
-    const metadataOnly = currentProtectedPageIds.has(page.id)
+  const privateResults = privatePages.flatMap(rankedPage => {
+    const page = livePagesById.get(rankedPage.id)
+    const sourceRevision = currentSourceRevision(page?.sourceRevision)
+    const rankedRevision = currentSourceRevision(rankedPage.sourceRevision)
+    const metadataOnly = currentProtectedPageIds.has(rankedPage.id)
     if (
+      !page ||
+      page.id !== rankedPage.id ||
       sourceRevision === undefined ||
+      rankedRevision === undefined ||
+      sourceRevision !== rankedRevision ||
+      page.localeCode !== (rankedPage.locale ?? rankedPage.localeCode) ||
+      page.path !== rankedPage.path ||
+      page.visibility !== rankedPage.visibility ||
+      page.visibility !== 'private' ||
       !pageMatchesAgentScope(page, input.agentScope) ||
       !page.isSearchable ||
+      (metadataOnly && rankedPage.metadataOnly !== true) ||
       (metadataOnly && !currentPrivateMetadataIds.has(page.id)) ||
       !canReadPage(requester, page, authority)
     ) {
@@ -2774,9 +2831,11 @@ const search = async (input: OperationInput) => {
       rankedSearchResult(
         {
           ...page,
-          locale: page.locale ?? page.localeCode,
+          locale: page.localeCode,
           sourceRevision,
-          matchedFields: metadataOnly && Array.isArray(page.matchedFields) ? page.matchedFields.filter(field => field !== 'content') : page.matchedFields,
+          score: rankedPage.score,
+          matchedFields:
+            metadataOnly && Array.isArray(rankedPage.matchedFields) ? rankedPage.matchedFields.filter(field => field !== 'content') : rankedPage.matchedFields,
           metadataOnly
         },
         query
@@ -3073,29 +3132,8 @@ const setPublication = async (input: OperationInput): Promise<unknown> => {
   const expected = expectedSourceRevision(input.expectedSourceRevision)
   if (!expected) throw new ApplicationError('Review the current page revision before changing publication.', { code: 'INVALID_INPUT' })
   if (typeof input.isPublished !== 'boolean') throw new ApplicationError('Publication state must be a boolean.', { code: 'INVALID_INPUT' })
-  const validDate = (value: string): boolean => {
-    const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(value)
-    if (!parts) return false
-    const [, year, month, day, hour, minute, second, , offsetHour, offsetMinute] = parts
-    const y = Number(year),
-      m = Number(month),
-      d = Number(day)
-    const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)
-    const days = m === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31
-    return (
-      m >= 1 &&
-      m <= 12 &&
-      d >= 1 &&
-      d <= days &&
-      Number(hour) <= 23 &&
-      Number(minute) <= 59 &&
-      Number(second) <= 59 &&
-      Number(offsetHour || 0) <= 14 &&
-      Number(offsetMinute || 0) <= 59 &&
-      (Number(offsetHour) !== 14 || Number(offsetMinute) === 0) &&
-      Number.isFinite(Date.parse(value))
-    )
-  }
+  const validDate = (value: string): boolean =>
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(publicationBoundaryTimestamp(value))
   const dates: Record<string, string> = {}
   for (const field of ['publishStartDate', 'publishEndDate']) {
     if (input[field] === undefined) continue
@@ -3130,11 +3168,16 @@ const move = async (input: OperationInput): Promise<unknown> => {
   const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS', 'updateLinks', 'selectedPageIds', 'cursor'])
   const id = positiveInteger(payload.id, 'id')
   await assertUnlocked(input, id)
-  return wiki.models.pages.movePage(withRequester({
-    ...payload,
-    ...(raw.updateLinks === true ? { updateLinks: true } : {}),
-    sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
-  }, input.requester))
+  return wiki.models.pages.movePage(
+    withRequester(
+      {
+        ...payload,
+        ...(raw.updateLinks === true ? { updateLinks: true } : {}),
+        sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
+      },
+      input.requester
+    )
+  )
 }
 const authorizeMutation = async (input: OperationInput): Promise<void> => {
   const requester = input.requester
@@ -3246,9 +3289,7 @@ const recoveryConflict = (): Error =>
     code: 'PAGE_RECOVERY_CONFLICT',
     status: 409
   })
-const restoreDeletedPage = async (
-  input: OperationInput
-): Promise<{ pageId: number; sourceRevision: string; quarantined: boolean }> => {
+const restoreDeletedPage = async (input: OperationInput): Promise<{ pageId: number; sourceRevision: string; quarantined: boolean }> => {
   const requester = input.requester
   if (!requester || isApiPrincipal(requester) || !managesSystem(requester)) {
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
@@ -3264,20 +3305,21 @@ const restoreDeletedPage = async (
   }
   const ownerId = input.ownerId === undefined ? undefined : positiveInteger(input.ownerId, 'ownerId')
 
-  const latestVersion = (await wiki.models.knex('pageHistory')
+  const latestVersion = (await wiki.models
+    .knex('pageHistory')
     .select('id', 'action')
     .where({ pageId })
     .orderBy('versionDate', 'desc')
     .orderBy('id', 'desc')
     .first()) as { id: number; action: string } | undefined
   if (!latestVersion || Number(latestVersion.id) !== deletionVersionId || latestVersion.action !== 'deleted') throw recoveryConflict()
-  const history = (await wiki.models.knex('pageHistory')
-    .select('id', 'pageId', 'sourceRevision')
-    .where({ id: deletionVersionId, pageId })
-    .first()) as { id: number; pageId: number; sourceRevision: string | number } | undefined
+  const history = (await wiki.models.knex('pageHistory').select('id', 'pageId', 'sourceRevision').where({ id: deletionVersionId, pageId }).first()) as
+    | { id: number; pageId: number; sourceRevision: string | number }
+    | undefined
   if (!history) throw recoveryConflict()
 
-  const recoveryRow = (await wiki.models.knex('deletedPageRecovery')
+  const recoveryRow = (await wiki.models
+    .knex('deletedPageRecovery')
     .select('deletionRevision', 'securityContext')
     .where({ pageId, deletionVersionId })
     .first()) as { deletionRevision: string | number; securityContext: unknown } | undefined
@@ -3289,8 +3331,7 @@ const restoreDeletedPage = async (
       storedSecurityContext = null
     }
   }
-  const parsedSecurityContext =
-    recoveryRow === undefined ? null : DeletedPageRecoverySecurityContextSchema.safeParse(storedSecurityContext)
+  const parsedSecurityContext = recoveryRow === undefined ? null : DeletedPageRecoverySecurityContextSchema.safeParse(storedSecurityContext)
   const recordRevision = recoveryRow === undefined ? null : recoveryRevision(recoveryRow.deletionRevision)
   const validRecoveryRecord = parsedSecurityContext?.success === true && recordRevision !== null
   const legacyQuarantine = !validRecoveryRecord
@@ -3298,10 +3339,9 @@ const restoreDeletedPage = async (
   if (expectedDeletionRevision === null) {
     const historyRevision = recoveryRevision(history.sourceRevision)
     if (historyRevision === null) throw recoveryConflict()
-    const effectMaximumRow = (await wiki.models.knex('pageMutationOutbox')
-      .where({ pageId })
-      .max({ maximumRevision: 'sourceRevision' })
-      .first()) as { maximumRevision: string | number | null } | undefined
+    const effectMaximumRow = (await wiki.models.knex('pageMutationOutbox').where({ pageId }).max({ maximumRevision: 'sourceRevision' }).first()) as
+      | { maximumRevision: string | number | null }
+      | undefined
     const effectMaximum = effectMaximumRow?.maximumRevision == null ? null : recoveryRevision(effectMaximumRow.maximumRevision)
     if (effectMaximumRow?.maximumRevision != null && effectMaximum === null) throw recoveryConflict()
     expectedDeletionRevision = String(

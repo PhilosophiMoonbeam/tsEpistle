@@ -386,6 +386,28 @@ describe('core/metrics', () => {
       expectSample(samples, 'wiki_page_search_vector_anomalies', 0, { kind: 'orphan' })
     })
 
+    it('reports malformed publication windows as ineligible orphan vectors without losing valid metrics', async () => {
+      const malformed = [
+        'not-a-date', '2020-02-30T00:00:00Z', '1900-02-29T00:00:00Z',
+        '0000-01-01T00:00:00Z', '2020-01-01T24:00:00Z', '2020-01-01T00:00:00+14:01'
+      ]
+      const invalidPages = malformed.flatMap((value, index) => [
+        { id: index * 2 + 1, sourceRevision: 8, publishStartDate: value },
+        { id: index * 2 + 2, sourceRevision: 8, publishEndDate: value }
+      ])
+      const validId = invalidPages.length + 1
+      await db('pages').insert([
+        ...invalidPages,
+        { id: validId, sourceRevision: 8, publishStartDate: '2000-02-29T00:00:00+05:30', publishEndDate: '' }
+      ])
+      await db('pagesVector').insert([...invalidPages, { id: validId }].map(page => ({ pageId: page.id, sourceRevision: 7 })))
+      const samples = await scrape()
+      expectSample(samples, 'wiki_page_search_documents', 1, { kind: 'eligible_pages' })
+      expectSample(samples, 'wiki_page_search_documents', invalidPages.length + 1, { kind: 'indexed_vectors' })
+      expectSample(samples, 'wiki_page_search_vector_anomalies', 1, { kind: 'revision_mismatch' })
+      expectSample(samples, 'wiki_page_search_vector_anomalies', invalidPages.length, { kind: 'orphan' })
+    })
+
     it('keeps a currently active offset window behind its render dependency', async () => {
       const now = Date.now()
       await db('pages').insert({
@@ -454,6 +476,8 @@ describe('core/metrics', () => {
       ['unpublished page', { sourceRevision: 8, isPublished: false }, 'present', 'retry'],
       ['future publication', { sourceRevision: 8, publishStartDate: '2999-01-01T00:00:00.000Z' }, 'present', 'pending'],
       ['expired publication', { sourceRevision: 8, publishEndDate: '2000-01-01T00:00:00.000Z' }, 'present', 'retry'],
+      ['malformed publication start', { sourceRevision: 8, publishStartDate: '2020-02-30T00:00:00Z' }, 'present', 'pending'],
+      ['malformed publication end', { sourceRevision: 8, publishEndDate: 'not-a-date' }, 'present', 'retry'],
       ['protected metadata', { sourceRevision: 8 }, 'protected', 'pending']
     ])('keeps %s search cleanup eligible despite failed render', async (_name, page, desiredState, status) => {
       if (page) await db('pages').insert({ id: 1, ...page })

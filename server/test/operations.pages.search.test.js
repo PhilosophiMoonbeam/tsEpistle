@@ -153,7 +153,7 @@ describe('page search visibility', () => {
       metadataMatches: [[3], [3]],
       pageResults: [[protectedPage], [protectedPage]],
       engineResponse: {
-        results: [{ id: 3, sourceRevision: '8', locale: 'en', path: 'docs/runbook', score: 8, matchedFields: ['title'] }],
+        results: [{ id: 3, sourceRevision: '8', locale: 'en', path: 'docs/runbook', score: 8, matchedFields: ['title', 'content', 'graph'] }],
         suggestions: [],
         totalHits: 1
       }
@@ -183,7 +183,7 @@ describe('page search visibility', () => {
 
   it('preserves empty field evidence for a private negative-only candidate', async () => {
     const privatePage = page({ id: 17, sourceRevision: '4', visibility: 'private', ownerId: 7, path: 'private/open-notes', title: 'Open notes' })
-    installSearchWiki({ pageResults: [[], [privatePage]], privateRanks: [{ id: 17, sourceRevision: '4', score: 0, matchedFields: [] }] })
+    installSearchWiki({ pageResults: [[], [privatePage], [privatePage]], privateRanks: [{ id: 17, sourceRevision: '4', score: 0, matchedFields: [] }] })
     const operations = await loadOperations()
 
     await expect(operations.search({ requester: { id: 7 }, query: '-secret' })).resolves.toMatchObject({
@@ -201,7 +201,7 @@ describe('page search visibility', () => {
       title: `Draft ${index + 1}`
     }))
     const ranks = ownerPages.map(candidate => ({ id: candidate.id, sourceRevision: candidate.sourceRevision, score: 1 }))
-    installSearchWiki({ pageResults: [[], ownerPages], rawRows: [ranks] })
+    installSearchWiki({ pageResults: [[], ownerPages, ownerPages], rawRows: [ranks] })
     let operations = await loadOperations()
     const ownerResult = await operations.search({ requester: { id: 7 }, query: 'draft', limit: 1001 })
     expect(ownerResult.results).toHaveLength(50)
@@ -211,13 +211,91 @@ describe('page search visibility', () => {
     const managerPage = page({ id: 81, sourceRevision: '5', visibility: 'private', ownerId: 8, path: 'private/other-owner', title: 'Managed draft' })
     installSearchWiki({
       isManager: true,
-      pageResults: [[], [managerPage]],
+      pageResults: [[], [managerPage], [managerPage]],
       privateRanks: [{ id: 81, sourceRevision: '5', score: 1 }]
     })
     operations = await loadOperations()
     await expect(operations.search({ requester: { id: 1 }, query: 'draft', limit: 1001 })).resolves.toMatchObject({
       results: [{ id: 81, visibility: 'private', ownerId: 8 }]
     })
+  })
+
+  it.each([
+    ['ownership transfer', { ownerId: 8 }],
+    ['revision and route drift', { sourceRevision: '4', path: 'private/renamed-draft', title: 'Revised private draft' }],
+    ['search opt-out', { isSearchable: false }]
+  ])('rechecks private lexical candidates after %s while retaining unchanged authorized pages', async (_boundary, canonicalChange) => {
+    const privateSnapshotRows = [
+      page({
+        id: 63,
+        sourceRevision: '3',
+        visibility: 'private',
+        ownerId: 7,
+        isSearchable: true,
+        path: 'private/needle-sensitive-draft',
+        title: 'Needle sensitive draft',
+        description: 'Owner-only confidential procedures',
+        tags: [{ tag: 'confidential' }]
+      }),
+      page({
+        id: 64,
+        sourceRevision: '3',
+        visibility: 'private',
+        ownerId: 7,
+        isSearchable: true,
+        path: 'private/needle-authorized-draft',
+        title: 'Needle authorized draft',
+        description: 'Unchanged owner draft',
+        tags: [{ tag: 'owned-draft' }]
+      })
+    ]
+    const canonicalRows = privateSnapshotRows.map(candidate => ({ ...candidate, tags: candidate.tags.map(tag => ({ ...tag })) }))
+    let markPrivateHydrated
+    const privateHydrated = new Promise(resolve => { markPrivateHydrated = resolve })
+    let releasePublicResponse
+    const publicResponse = new Promise(resolve => { releasePublicResponse = resolve })
+    const { pages, query } = installSearchWiki({
+      pageResults: [[], privateSnapshotRows, canonicalRows],
+      privateRanks: privateSnapshotRows.map(candidate => ({
+        id: candidate.id,
+        sourceRevision: candidate.sourceRevision,
+        score: 1,
+        matchedFields: ['title']
+      }))
+    })
+    const createPageQuery = pages.query.getMockImplementation()
+    pages.query.mockImplementation(() => {
+      const builder = createPageQuery()
+      const readRows = builder.then
+      builder.then = resolve => readRows(rows => {
+        resolve(rows)
+        // Run after the awaiting private hydration has consumed its independent snapshot.
+        if (rows === privateSnapshotRows) queueMicrotask(markPrivateHydrated)
+      })
+      return builder
+    })
+    query.mockReturnValue(publicResponse)
+    const operations = await loadOperations()
+
+    const pendingSearch = operations.search({ requester: { id: 7 }, query: 'needle' })
+    await privateHydrated
+    canonicalRows[0] = { ...canonicalRows[0], ...canonicalChange }
+    releasePublicResponse({ results: [], suggestions: [], totalHits: 0 })
+    const result = await pendingSearch
+
+    expect(result.results).toEqual([expect.objectContaining({
+      id: 64,
+      sourceRevision: '3',
+      visibility: 'private',
+      ownerId: 7,
+      locale: 'en',
+      path: 'private/needle-authorized-draft',
+      title: 'Needle authorized draft',
+      description: 'Unchanged owner draft',
+      tags: ['owned-draft'],
+      matchedFields: ['title']
+    })])
+    expect(result.totalHits).toBe(1)
   })
 
   it('caps the combined private lexical and knowledge contribution at fifty', async () => {
@@ -241,7 +319,7 @@ describe('page search visibility', () => {
       knowledge: {}
     }])
     installSearchWiki({
-      pageResults: [[], lexicalPages, [knowledgePage]],
+      pageResults: [[], lexicalPages, [...lexicalPages, knowledgePage]],
       privateRanks: lexicalPages.map(candidate => ({ id: candidate.id, sourceRevision: '1', score: 1 }))
     })
     const operations = await loadOperations()
@@ -255,7 +333,7 @@ describe('page search visibility', () => {
   it('drops a private content candidate when protection is added before final hydration', async () => {
     const privatePage = page({ id: 61, sourceRevision: '3', visibility: 'private', ownerId: 7, path: 'private/changed-protection' })
     installSearchWiki({
-      pageResults: [[], [privatePage]],
+      pageResults: [[], [privatePage], [privatePage]],
       protectedIdSnapshots: [[], [61]],
       rawRows: [[{ id: 61, sourceRevision: '3', score: 1 }], []]
     })
@@ -264,24 +342,75 @@ describe('page search visibility', () => {
     await expect(operations.search({ requester: { id: 7 }, query: 'classified' })).resolves.toMatchObject({ results: [], totalHits: 0 })
   })
 
-  it('preserves structured private field evidence but removes body evidence when protection is added', async () => {
-    const privatePage = page({ id: 62, sourceRevision: '3', visibility: 'private', ownerId: 7, title: 'Falcon', path: 'private/field-evidence' })
-    const installCandidate = protectedIdSnapshots => installSearchWiki({
-      pageResults: [[], [privatePage]],
-      protectedIdSnapshots,
-      rawRows: [[{ id: 62, sourceRevision: '3', score: 1, matchedFields: ['title', 'content'] }], [{ id: 62 }]]
+  it('omits private body-ranked metadata matches after protection while retaining stable metadata-only and unrelated results', async () => {
+    const candidates = [
+      page({ id: 62, visibility: 'private', ownerId: 7, title: 'Falcon', path: 'private/newly-protected' }),
+      page({ id: 63, visibility: 'private', ownerId: 7, title: 'Falcon', path: 'private/stably-protected' }),
+      page({ id: 64, visibility: 'private', ownerId: 7, title: 'Falcon', path: 'private/unrelated' })
+    ]
+    installSearchWiki({
+      pageResults: [[], candidates, candidates],
+      protectedIdSnapshots: [[63], [62, 63]],
+      rawRows: [
+        [
+          { id: 62, sourceRevision: '1', score: 99, metadataOnly: false, matchedFields: ['title', 'content'] },
+          { id: 63, sourceRevision: '1', score: 2, metadataOnly: true, matchedFields: ['title'] },
+          { id: 64, sourceRevision: '1', score: 1, metadataOnly: false, matchedFields: ['title'] }
+        ],
+        [{ id: 62 }, { id: 63 }]
+      ]
     })
-    installCandidate([[], []])
-    let operations = await loadOperations()
-    await expect(operations.search({ requester: { id: 7 }, query: '"falcons"' })).resolves.toMatchObject({
-      results: [{ id: 62, matchedFields: ['title', 'content'] }]
-    })
+    const operations = await loadOperations()
+    const result = await operations.search({ requester: { id: 7 }, query: '"falcons"' })
+    expect(result.results.map(candidate => candidate.id)).toEqual([63, 64])
+    expect(result.results[0].matchedFields).toEqual(['title'])
+    expect(result.totalHits).toBe(2)
+  })
 
-    vi.resetModules()
-    installCandidate([[], [62]])
-    operations = await loadOperations()
-    await expect(operations.search({ requester: { id: 7 }, query: '"falcons"' })).resolves.toMatchObject({
-      results: [{ id: 62, matchedFields: ['title'] }]
+  it('omits newly protected public body ranks and graph ranks supported by newly protected admitted pages', async () => {
+    const candidates = [
+      page({ id: 81, title: 'Falcon', path: 'docs/body-ranked' }),
+      page({ id: 82, title: 'Falcon', path: 'docs/graph-support' }),
+      page({ id: 83, title: 'Falcon', path: 'docs/graph-target' }),
+      page({ id: 84, title: 'Falcon', path: 'docs/unrelated' }),
+      page({ id: 85, title: 'Falcon', path: 'docs/stably-protected' })
+    ]
+    installSearchWiki({
+      pageResults: [candidates, candidates],
+      protectedIdSnapshots: [[85], [81, 82, 85]],
+      rawRows: [[{ id: 85 }], [{ id: 81 }, { id: 85 }]],
+      engineResponse: {
+        results: [
+          { id: 81, sourceRevision: '1', locale: 'en', path: 'docs/body-ranked', score: 99, matchedFields: ['title', 'content'] },
+          { id: 83, sourceRevision: '1', locale: 'en', path: 'docs/graph-target', score: 80, matchedFields: ['title', 'graph'] },
+          { id: 84, sourceRevision: '1', locale: 'en', path: 'docs/unrelated', score: 1, matchedFields: ['title'] },
+          { id: 85, sourceRevision: '1', locale: 'en', path: 'docs/stably-protected', score: 2, matchedFields: ['title'] }
+        ],
+        suggestions: [],
+        totalHits: 4
+      }
+    })
+    const operations = await loadOperations()
+    const result = await operations.search({ query: 'falcon' })
+    expect(result.results.map(candidate => candidate.id)).toEqual([85, 84])
+    expect(result.totalHits).toBe(2)
+  })
+
+  it('retains public graph ranks when newly protected pages are outside the admitted public scope', async () => {
+    const target = page({ id: 86, title: 'Falcon', path: 'docs/graph-target' })
+    installSearchWiki({
+      pageResults: [[target], [target]],
+      protectedIdSnapshots: [[], [999]],
+      engineResponse: {
+        results: [{ id: 86, sourceRevision: '1', locale: 'en', path: target.path, score: 80, matchedFields: ['title', 'graph'] }],
+        suggestions: [],
+        totalHits: 1
+      }
+    })
+    const operations = await loadOperations()
+    await expect(operations.search({ query: 'falcon' })).resolves.toMatchObject({
+      results: [{ id: 86, score: 80, matchedFields: ['title', 'graph'] }],
+      totalHits: 1
     })
   })
   it('filters opted-out pages at request time across public, private, and knowledge candidates while defaulting missing flags to searchable', async () => {
@@ -527,7 +656,7 @@ describe('page search visibility', () => {
     const ownedPage = page({ id: 91, sourceRevision: '3', visibility: 'private', ownerId: 7, path: 'private/owner-seven', title: 'Needle Seven' })
     const otherOwnerPage = page({ id: 92, sourceRevision: '4', visibility: 'private', ownerId: 8, path: 'private/owner-eight', title: 'Needle Eight' })
     installSearchWiki({
-      pageResults: [[], [ownedPage, otherOwnerPage]],
+      pageResults: [[], [ownedPage, otherOwnerPage], [ownedPage, otherOwnerPage]],
       privateRanks: [
         { id: ownedPage.id, sourceRevision: ownedPage.sourceRevision, score: 2 },
         { id: otherOwnerPage.id, sourceRevision: otherOwnerPage.sourceRevision, score: 2 }

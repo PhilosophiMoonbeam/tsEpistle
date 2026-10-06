@@ -3285,7 +3285,7 @@ export class OfflineStorage {
       if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT || projectedCount > OFFLINE_SNAPSHOT_LIMIT)
         throw new OfflineStorageError('quota', 'Offline private limits would be exceeded.')
       for (const value of parsed) await store.put(clonePrivateEnvelope(value), privateRecordKey(value))
-      const nextMeta = await this.putAccountingDelta(tx, meta, managedBytesDelta, snapshotCountDelta, snapshotCountDelta !== 0)
+      const nextMeta = await this.putAccountingDelta(tx, meta, managedBytesDelta, snapshotCountDelta, paired || snapshotCountDelta !== 0)
       await this.finish(tx, undefined)
       notifyPostCommit({ kind: 'corpus', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
       return parsed.map(clonePrivateEnvelope)

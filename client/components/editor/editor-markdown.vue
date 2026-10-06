@@ -207,7 +207,7 @@ import { decodeBase64Text } from '../../helpers/base64'
 
 /* global siteConfig, siteLangs */
 
-import { autocompletion, type CompletionContext } from '@codemirror/autocomplete'
+import { autocompletion, insertCompletionText, pickedCompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorView, keymap } from '@codemirror/view'
 import {
@@ -1165,10 +1165,25 @@ export default defineComponent({
         const response = await searchPages(window.fetch.bind(window), title, { locale: this.locale })
         return {
           from: context.pos,
-          options: response.results.map(result => ({
-            label: siteLangs.length > 0 ? `/${result.locale}/${result.path} - ${result.title}` : `/${result.path} - ${result.title}`,
-            apply: (siteLangs.length > 0 ? `/${result.locale}/${result.path}` : `/${result.path}`) + ')'
-          }))
+          options: response.results.map(result => {
+            const href = `${result.visibility === 'private' ? '/_private' : ''}/${siteLangs.length > 0 ? `${encodeURIComponent(result.locale)}/` : ''}${result.path.split('/').map(encodeURIComponent).join('/')}`
+            return {
+              label: `${href} - ${result.title}`,
+              apply: (view: EditorView, completion: Completion, from: number, to: number) => {
+                // Match the normal completion prefix at every cursor before consuming its own closer.
+                const insertion = insertCompletionText(view.state, `${href})`, from, to)
+                const insertions = view.state.changes(insertion.changes)
+                const closers: Array<{ from: number; to: number }> = []
+                insertions.iterChanges((_fromA, toA, _fromB, toB) => {
+                  if (view.state.sliceDoc(toA, toA + 1) === ')') closers.push({ from: toB, to: toB + 1 })
+                }, true)
+                view.dispatch(
+                  { ...insertion, changes: insertions, annotations: pickedCompletion.of(completion) },
+                  { changes: closers, sequential: true }
+                )
+              }
+            }
+          })
         }
       } catch {
         return null

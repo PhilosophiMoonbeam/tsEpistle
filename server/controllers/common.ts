@@ -8,7 +8,7 @@ import { prepareReaderAnalytics } from '../helpers/reader-analytics.ts'
 import { canReadPage, canWritePage, managesSystem, pageAuthorizationContext, pageRoute, principalId, type PageVisibility } from '../helpers/page-access.ts'
 import _ from 'lodash'
 import CleanCSS from 'clean-css'
-import moment from 'moment'
+import { publicationWindowOpen } from '../../shared/publication-window.ts'
 import qs from 'node:querystring'
 import { isPageProtected, pageRequiresUnlock, protectedAssetRequiresUnlock, unlockPage } from '../operations/page-protection.ts'
 import pageOperations from '../operations/pages.ts'
@@ -183,24 +183,15 @@ interface RenderingPipelineStage {
   config: unknown
 }
 
-const rendererConfigBoolean = (
-  pipeline: readonly RenderingPipelineStage[],
-  rendererKey: string,
-  optionKey: string
-): boolean => {
+const rendererConfigBoolean = (pipeline: readonly RenderingPipelineStage[], rendererKey: string, optionKey: string): boolean => {
   const renderer = pipeline.find(stage => stage.key === rendererKey)
   return typeof renderer?.config === 'object' && renderer.config !== null && Reflect.get(renderer.config, optionKey) === true
 }
 
-const getEditorWikiLinkSettings = async (
-  wiki: CommonWiki
-): Promise<{ wikiLinksEnabled: boolean; absoluteLinks: boolean }> => {
+const getEditorWikiLinkSettings = async (wiki: CommonWiki): Promise<{ wikiLinksEnabled: boolean; absoluteLinks: boolean }> => {
   const getRenderingPipeline = wiki.models.renderers?.getRenderingPipeline
   if (!getRenderingPipeline) return { wikiLinksEnabled: false, absoluteLinks: false }
-  const [markdownPipeline, htmlPipeline] = await Promise.all([
-    getRenderingPipeline('markdown'),
-    getRenderingPipeline('html')
-  ])
+  const [markdownPipeline, htmlPipeline] = await Promise.all([getRenderingPipeline('markdown'), getRenderingPipeline('html')])
   return {
     wikiLinksEnabled: rendererConfigBoolean(markdownPipeline, 'markdownCore', 'wikilinks'),
     absoluteLinks: rendererConfigBoolean(htmlPipeline, 'htmlCore', 'absoluteLinks')
@@ -374,13 +365,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     _.set(res.locals, 'pageMeta.title', page.title)
     _.set(res.locals, 'pageMeta.description', page.description)
 
-    let pageIsPublished = page.isPublished
-    if (pageIsPublished && !_.isEmpty(page.publishStartDate)) {
-      pageIsPublished = moment(page.publishStartDate).isSameOrBefore()
-    }
-    if (pageIsPublished && !_.isEmpty(page.publishEndDate)) {
-      pageIsPublished = moment(page.publishEndDate).isSameOrAfter()
-    }
+    const pageIsPublished = page.isPublished && publicationWindowOpen(page)
     if (!pageIsPublished && !effectivePermissions.pages.write) {
       _.set(res.locals, 'pageMeta.title', 'Unauthorized')
       return res.status(403).render('unauthorized', { action: 'view' })
@@ -524,7 +509,6 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     }
     res.json({ enabled: wiki.config.metrics.isEnabled })
   })
-
 
   /**
    * Metrics (Prometheus)

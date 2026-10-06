@@ -65,7 +65,9 @@ describe('source preview access', () => {
       })
       for (const identity of [{ id: 42 }, { locale: 'en', path: 'docs/start' }]) {
         const failure = await operations.preview({ ...input, ...identity }).then(
-          () => { throw new Error('An uncertified render must not produce a preview') },
+          () => {
+            throw new Error('An uncertified render must not produce a preview')
+          },
           error => error
         )
         expect(failure).toMatchObject({ name: 'PAGE_RENDER_PENDING', status: 503 })
@@ -106,6 +108,13 @@ describe('source preview access', () => {
     await expect(operations.preview({ id: 42, requester: { id: 7 } })).rejects.toMatchObject({ status: 404 })
     getPage.mockResolvedValue({ ...page, publishEndDate: '2000-01-01T00:00:00Z' })
     await expect(operations.preview({ id: 42, requester: { id: 7 } })).rejects.toMatchObject({ status: 404 })
+    for (const publishStartDate of ['2020-02-30T00:00:00Z', '0000-01-01T00:00:00Z', '2020-01-01T24:00:00Z', '2020-01-01T00:00:00+14:01']) {
+      getPage.mockResolvedValue({ ...page, publishStartDate })
+      await expect(operations.preview({ id: 42, requester: { id: 7 } })).rejects.toMatchObject({ status: 404 })
+      await expect(operations.getSource({ id: 42, requester: { id: 7 } })).rejects.toMatchObject({ status: 404 })
+    }
+    getPage.mockResolvedValue({ ...page, publishStartDate: '2020-02-29T12:00:00+05:30', publishEndDate: '' })
+    await expect(operations.preview({ id: 42, requester: { id: 7 } })).resolves.toMatchObject({ id: 42, excerpt: 'Authorized preview text' })
   })
 
   it('denies unpublished or expired direct reads to readers while allowing the scoped editor', async () => {

@@ -1,5 +1,7 @@
 import type { Knex } from 'knex'
 import { parseMarkdownCodeFences } from '../../shared/markdown-code-fence.ts'
+import { admitPageRenderEffect } from '../core/page-mutation-outbox.ts'
+import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
 
 interface ExtensionPage {
   id: number
@@ -7,35 +9,24 @@ interface ExtensionPage {
   content: string
 }
 
-interface SearchableExtensionPage extends ExtensionPage {
-  visibility: string
-  isSearchable: boolean | number
-  isPublished: boolean | number
-  safeContent: string
+interface CanonicalExtensionPage extends ExtensionPage {
+  sourceRevision: string | number
+  localeCode: string
+  path: string
+  visibility: 'public' | 'private'
+  ownerId: number | null
 }
 
 export interface ContentExtensionRerenderContext {
-  data: {
-    searchEngine: {
-      deleted(page: SearchableExtensionPage): Promise<unknown>
-      updated(page: SearchableExtensionPage): Promise<unknown>
-    }
-  }
   events: { outbound: { emit(event: string, value: unknown): void } }
   models: {
     pages: {
       deletePageFromCache(hash: string): Promise<unknown>
-      getPageFromDb(pageId: number): Promise<SearchableExtensionPage | undefined>
-      prepareSearchDocument(page: SearchableExtensionPage): Promise<SearchableExtensionPage>
-      renderPage(page: ExtensionPage): Promise<unknown>
     }
   }
 }
 
 const rerenderBatchSize = 250
-
-const isPublishedPublicPage = (page: SearchableExtensionPage): boolean =>
-  page.visibility === 'public' && (page.isPublished === true || page.isPublished === 1) && page.isSearchable !== false && page.isSearchable !== 0
 
 const pageContainsExtension = (content: string, key: string): boolean => {
   for (const fence of parseMarkdownCodeFences(content)) {
@@ -74,25 +65,38 @@ export const rerenderPagesForContentExtension = async (
     const pages = candidates.filter(page => pageContainsExtension(page.content, key))
     for (const page of pages) {
       signal.throwIfAborted()
-      await wiki.models.pages.deletePageFromCache(page.hash)
-      signal.throwIfAborted()
-      wiki.events.outbound.emit('deletePageFromCache', page.hash)
-      signal.throwIfAborted()
-      const indexedPage = await wiki.models.pages.getPageFromDb(page.id)
-      if (!indexedPage) continue
-      signal.throwIfAborted()
-      await wiki.data.searchEngine.deleted(indexedPage)
-      signal.throwIfAborted()
-      await wiki.models.pages.renderPage(page)
+      const admittedPage = await knex.transaction(async transaction => {
+        await lockSearchIndex(transaction, false)
+        signal.throwIfAborted()
+        await lockSearchPage(transaction, page.id)
+        signal.throwIfAborted()
+        const currentPage = await transaction<CanonicalExtensionPage>('pages')
+          .select('id', 'hash', 'content', 'sourceRevision', 'localeCode', 'path', 'visibility', 'ownerId')
+          .where({ id: page.id })
+          .forUpdate()
+          .first()
+        signal.throwIfAborted()
+        if (!currentPage || !pageContainsExtension(currentPage.content, key)) return undefined
+        await admitPageRenderEffect(transaction, {
+          pageId: currentPage.id,
+          sourceRevision: currentPage.sourceRevision,
+          source: currentPage.content,
+          location: {
+            locale: currentPage.localeCode,
+            path: currentPage.path,
+            visibility: currentPage.visibility,
+            ownerId: currentPage.ownerId
+          }
+        })
+        signal.throwIfAborted()
+        return currentPage
+      })
+      if (!admittedPage) continue
       rerendered += 1
       signal.throwIfAborted()
-      const renderedPage = await wiki.models.pages.getPageFromDb(page.id)
-      if (renderedPage && isPublishedPublicPage(renderedPage)) {
-        signal.throwIfAborted()
-        const searchDocument = await wiki.models.pages.prepareSearchDocument(renderedPage)
-        signal.throwIfAborted()
-        await wiki.data.searchEngine.updated(searchDocument)
-      }
+      await wiki.models.pages.deletePageFromCache(admittedPage.hash)
+      signal.throwIfAborted()
+      wiki.events.outbound.emit('deletePageFromCache', admittedPage.hash)
     }
     signal.throwIfAborted()
     if (candidates.length < rerenderBatchSize) break

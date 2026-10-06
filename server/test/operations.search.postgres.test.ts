@@ -1,5 +1,8 @@
 /// <reference types="bun" />
 
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import knexModule from 'knex'
 import type { Knex } from 'knex'
@@ -51,7 +54,18 @@ suite('PostgreSQL atomic search administration', () => {
 
   const snapshot = async (database: Knex = db) => {
     const state: Record<string, unknown> = {}
-    for (const table of ['searchEngines', 'pages', 'tags', 'pageTags', 'pageLinks', 'pageAccessPasswords', 'pageMutationOutbox', 'pagesVector', 'pagesWords', 'pagesSearchMetadata']) {
+    for (const table of [
+      'searchEngines',
+      'pages',
+      'tags',
+      'pageTags',
+      'pageLinks',
+      'pageAccessPasswords',
+      'pageMutationOutbox',
+      'pagesVector',
+      'pagesWords',
+      'pagesSearchMetadata'
+    ]) {
       const result = await database.raw<{ rows: Array<{ rows: unknown }> }>(
         `SELECT COALESCE(jsonb_agg(to_jsonb(entry) ORDER BY to_jsonb(entry)::text), '[]'::jsonb) AS rows FROM ?? entry`,
         [table]
@@ -273,6 +287,10 @@ suite('PostgreSQL atomic search administration', () => {
   })
 
   it('commits saved configuration and rebuilt metadata together, then makes both older runtimes use the new dictionary', async () => {
+    const operatorSetting = { retained: true, options: ['operator-managed'] }
+    await db('searchEngines')
+      .where({ key: 'postgres' })
+      .update({ config: { dictLanguage: 'english', operatorSetting } })
     const oldEngine = activeRuntime()
     await expectContentMatch(firstRuntime, '"runs"')
     await expectContentMatch(oldEngine, '"runs"')
@@ -287,17 +305,23 @@ suite('PostgreSQL atomic search administration', () => {
     )
 
     try {
-      await vi.waitFor(async () => {
-        const result = await observer.raw<{ rows: Array<{ waiting: boolean }> }>(`
+      await vi.waitFor(
+        async () => {
+          const result = await observer.raw<{ rows: Array<{ waiting: boolean }> }>(
+            `
           SELECT EXISTS (
             SELECT 1 FROM pg_locks lock
             JOIN pg_stat_activity activity ON activity.pid = lock.pid
             WHERE lock.locktype = 'advisory' AND NOT lock.granted
               AND activity.datname = current_database() AND activity.application_name = ?
           ) AS waiting
-        `, [mutatorName])
-        expect(result.rows[0]?.waiting).toBe(true)
-      }, { timeout: 3000 })
+        `,
+            [mutatorName]
+          )
+          expect(result.rows[0]?.waiting).toBe(true)
+        },
+        { timeout: 3000 }
+      )
       // The candidate trigger has already verified its simple vectors/config. An
       // independent connection still sees the old committed config and metadata.
       expect(await savedContract()).toEqual([{ dictionary: 'english', indexedDictionary: 'english', isEnabled: true }])
@@ -312,6 +336,10 @@ suite('PostgreSQL atomic search administration', () => {
     expect(activeRuntime()).not.toBe(oldEngine)
     expect(activeRuntime().config.dictLanguage).toBe('simple')
     expect(await savedContract()).toEqual([{ dictionary: 'simple', indexedDictionary: 'simple', isEnabled: true }])
+    expect((await observer('searchEngines').where({ key: 'postgres' }).first<{ config: unknown }>())?.config).toEqual({
+      dictLanguage: 'simple',
+      operatorSetting
+    })
     expect(await vectorLexemes()).toEqual([{ sourceRevision: '1', hasRun: false, hasRunning: true }])
     const after = await snapshot()
     for (const table of ['pages', 'tags', 'pageTags', 'pageLinks', 'pageAccessPasswords', 'pageMutationOutbox']) {
@@ -355,7 +383,9 @@ suite('PostgreSQL atomic search administration', () => {
 
   it('fills only missing registry defaults and leaves an already current configuration unwritten', async () => {
     const oldEngine = activeRuntime()
-    await db('searchEngines').where({ key: 'postgres' }).update({ config: { operatorSetting: { retained: true } } })
+    await db('searchEngines')
+      .where({ key: 'postgres' })
+      .update({ config: { operatorSetting: { retained: true } } })
     await SearchEngine.refreshSearchEnginesFromDisk({ strict: true })
     const configuration = await observer('searchEngines').where({ key: 'postgres' }).first<{ config: unknown }>()
     expect(configuration?.config).toEqual({ dictLanguage: 'english', operatorSetting: { retained: true } })
@@ -368,6 +398,48 @@ suite('PostgreSQL atomic search administration', () => {
     expect(await configurationWrites()).toEqual(writesBefore)
     expect((await observer('searchEngines').where({ key: 'postgres' }).first<{ config: unknown }>())?.config).toEqual(configuration?.config)
     expect(activeRuntime()).toBe(oldEngine)
+  })
+
+  it.each(['empty directory', 'wrong canonical key'])('rejects a registry with %s before changing saved configuration or published engines', async scenario => {
+    const config = { dictLanguage: 'simple', operatorSetting: { retained: true, options: ['operator-managed'] } }
+    await db('searchEngines').where({ key: 'postgres' }).update({ config })
+    await SearchEngine.initEngine()
+    const oldEngine = activeRuntime()
+    const definitions = wiki.data.searchEngines
+    const before = await snapshot(observer)
+    const writesBefore = await configurationWrites()
+    const serverPath = wiki.SERVERPATH
+    const temporaryServerPath = await mkdtemp(path.join(tmpdir(), 'search-registry-preservation-'))
+
+    try {
+      const registryPath = path.join(temporaryServerPath, 'modules/search')
+      await mkdir(registryPath, { recursive: true })
+      if (scenario === 'wrong canonical key') {
+        const definition = await readFile(path.join(serverPath, 'modules/search/postgres/definition.yml'), 'utf8')
+        await mkdir(path.join(registryPath, 'postgres'))
+        await writeFile(path.join(registryPath, 'postgres/definition.yml'), definition.replace(/^key: postgres$/m, 'key: wrong-provider'))
+      }
+      wiki.SERVERPATH = temporaryServerPath
+      const outcome = await SearchEngine.refreshSearchEnginesFromDisk({ strict: true }).then(
+        () => ({ error: undefined }),
+        (error: unknown) => ({ error })
+      )
+
+      // Assert the real persisted state first: a fulfilled refresh that deleted
+      // postgres must not hide the data-loss regression behind an error assertion.
+      expect(await observer('searchEngines').orderBy('key')).toEqual([{ key: 'postgres', isEnabled: true, config }])
+      expect(await snapshot(observer)).toEqual(before)
+      expect(await configurationWrites()).toEqual(writesBefore)
+      expect(wiki.data.searchEngines).toBe(definitions)
+      expect(activeRuntime()).toBe(oldEngine)
+      expect(oldEngine.config.dictLanguage).toBe('simple')
+      await expectContentMatch(oldEngine, '"running"')
+      expect((await oldEngine.query('"runs"', {})).results).toEqual([])
+      expect(outcome.error).toBeInstanceOf(Error)
+    } finally {
+      wiki.SERVERPATH = serverPath
+      await rm(temporaryServerPath, { recursive: true, force: true })
+    }
   })
 
   it('rolls back registry defaults and removals without publishing unsuccessful definition metadata', async () => {
@@ -421,14 +493,20 @@ suite('PostgreSQL atomic search administration', () => {
     )
     let refresh: Promise<{ error: unknown }> | undefined
     const waitForBlockedConnections = async (count: number) => {
-      await vi.waitFor(async () => {
-        const result = await observer.raw<{ rows: Array<{ blocked: string }> }>(`
+      await vi.waitFor(
+        async () => {
+          const result = await observer.raw<{ rows: Array<{ blocked: string }> }>(
+            `
           SELECT count(*) AS blocked FROM pg_stat_activity
           WHERE datname = current_database() AND application_name = ?
             AND cardinality(pg_blocking_pids(pid)) > 0
-        `, [mutatorName])
-        expect(Number(result.rows[0]?.blocked)).toBe(count)
-      }, { timeout: 3000 })
+        `,
+            [mutatorName]
+          )
+          expect(Number(result.rows[0]?.blocked)).toBe(count)
+        },
+        { timeout: 3000 }
+      )
     }
 
     try {

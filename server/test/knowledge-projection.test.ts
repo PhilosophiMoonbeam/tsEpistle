@@ -380,6 +380,7 @@ describe('terminal knowledge effect recovery', () => {
     await db.schema.createTable('pages', table => {
       table.integer('id').primary()
       table.bigInteger('sourceRevision').notNullable()
+      table.bigInteger('renderedSourceRevision').nullable()
       table.text('content').notNullable()
       table.string('localeCode').notNullable()
       table.string('path').notNullable()

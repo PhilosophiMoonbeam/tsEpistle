@@ -488,11 +488,7 @@ router.post('/deleted/:pageId/:versionId/restore', async (req, res, next) => {
   const parsed = DeletedPageRecoveryRestoreRequestSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: 'Deleted page restore request is invalid.' })
   try {
-    res.status(201).json(
-      DeletedPageRecoveryResultSchema.parse(
-        await deletedPageRecovery.restore(req.user, { pageId, versionId, body: parsed.data })
-      )
-    )
+    res.status(201).json(DeletedPageRecoveryResultSchema.parse(await deletedPageRecovery.restore(req.user, { pageId, versionId, body: parsed.data })))
   } catch (err) {
     sendDeletedPageRecoveryError(res, next, err)
   }
@@ -666,18 +662,28 @@ router.get('/search', async (req, res, next) => {
   res.vary('Cookie')
   const query = _.get(req, 'query.query')
   if (!_.isString(query) || query.length < 1 || query.length > 256) return res.status(400).json({ error: 'query must contain 1–256 characters' })
+  // The simple query parser leaves bracket-shaped values as literal keys.
+  if (Object.keys(req.query).some(key => /^(locale|path|cursor|paginated)\[/.test(key)))
+    return res.status(400).json({ error: 'Search scope, cursor, and pagination values must be scalar' })
+  for (const name of ['locale', 'path', 'cursor'] as const) {
+    if (req.query[name] !== undefined && typeof req.query[name] !== 'string') return res.status(400).json({ error: `${name} must be a string` })
+  }
+  if (req.query.cursor === '') return res.status(400).json({ error: 'cursor must be a non-empty string' })
+  if (req.query.paginated !== undefined && req.query.paginated !== 'true' && req.query.paginated !== 'false')
+    return res.status(400).json({ error: 'paginated must be true or false' })
   try {
     const locale = optionalStringQuery(req.query.locale)
     const path = optionalStringQuery(req.query.path)
     const cursor = optionalStringQuery(req.query.cursor)
     const paginated = req.query.paginated === 'true'
     if (cursor && !paginated) return res.status(400).json({ error: 'Cursor requires paginated search' })
-    const search = () =>
+    const search = (retainedPageIds?: readonly number[]) =>
       pageOperations.search({
         ...requesterInput(req),
         query,
         ...(locale === undefined ? {} : { locale }),
         ...(path === undefined ? {} : { path }),
+        ...(retainedPageIds === undefined ? {} : { agentScope: { kind: 'selected' as const, pageIds: retainedPageIds } }),
         ...(paginated ? { limit: 1001 } : {})
       })
     res.json(

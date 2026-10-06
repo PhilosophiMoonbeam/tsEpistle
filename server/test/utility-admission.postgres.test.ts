@@ -4,18 +4,15 @@ import knexModule from 'knex'
 import type { Knex } from 'knex'
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
-import {
-  claimPageMutationEffects,
-  enqueuePageMutationEffects,
-  executePageMutationEffect
-} from '../core/page-mutation-outbox.ts'
-import type { ClaimedPageProjectionEffect } from '../core/page-mutation-outbox.ts'
+import { claimPageMutationEffects, enqueuePageMutationEffects, executePageMutationEffect } from '../core/page-mutation-outbox.ts'
+import type { ClaimedPageProjectionEffect, PageProjectionEffectKind } from '../core/page-mutation-outbox.ts'
 import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { up as createKnowledgeProjectionStore } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { up as createKnowledgeMaintenanceStore } from '../db/migrations/tsfranki-000006-knowledge-maintenance.ts'
-import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
+import { lockSearchIndex, lockSearchPage, publicationTimestampSql } from '../helpers/search-contract.ts'
 import { PageKnowledgeLifecycle, PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
+import type { AgentKnowledgeEnrichmentRequest } from '../agents/providers/utility.ts'
 
 const connection = getPostgresTestConnection('_utility_admission_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -24,7 +21,7 @@ const schema = `utility_admission_${randomUUID().replaceAll('-', '')}`
 suite('Utility admission on PostgreSQL', () => {
   let db: Knex
 
-  const enqueueKnowledge = async (pageId: number): Promise<void> => {
+  const enqueuePageEffects = async (pageId: number, effects: readonly PageProjectionEffectKind[] = ['knowledge']): Promise<void> => {
     await db('pages').insert({
       id: pageId,
       sourceRevision: '1',
@@ -53,7 +50,7 @@ suite('Utility admission on PostgreSQL', () => {
       action: 'update',
       source: `# Knowledge ${pageId}\n`,
       location: { locale: 'en', path: `knowledge/${pageId}`, visibility: 'public', ownerId: null },
-      effects: ['knowledge']
+      effects
     })
   }
 
@@ -170,8 +167,104 @@ suite('Utility admission on PostgreSQL', () => {
     await db('pages').delete()
   })
 
+  it('admits malformed publication windows for search cleanup without blocking later rendered pages', async () => {
+    const now = new Date('2100-08-21T00:00:00.000Z')
+    const windows = [
+      { pageId: 1, publishStartDate: null, publishEndDate: 'not-a-date' },
+      { pageId: 2, publishStartDate: now.toISOString(), publishEndDate: now.toISOString() },
+      { pageId: 3, publishStartDate: '', publishEndDate: '' },
+      { pageId: 4, publishStartDate: '2100-08-21T10:00:00+10:00', publishEndDate: '2100-08-20T14:00:00-10:00' },
+      { pageId: 5, publishStartDate: null, publishEndDate: null }
+    ]
+    for (const window of windows) {
+      await enqueuePageEffects(window.pageId, ['render', 'search'])
+      await db('pages').where({ id: window.pageId }).update({
+        publishStartDate: window.publishStartDate,
+        publishEndDate: window.publishEndDate
+      })
+      await db('pageMutationOutbox')
+        .where({ pageId: window.pageId, effectKind: 'search' })
+        .update({
+          availableAt: new Date(now.valueOf() - 60_000 + window.pageId * 1_000).toISOString()
+        })
+    }
+    await db('pageMutationOutbox').where({ pageId: 5, sourceRevision: '1', effectKind: 'render' }).update({
+      status: 'succeeded',
+      result: '{"rendered":true}',
+      postcondition: '{"satisfied":true,"observedSourceRevision":"1"}'
+    })
+
+    const claims = await claimPageMutationEffects(db, {
+      leaseOwner: 'publication-window-worker',
+      limit: 2,
+      maxActive: 2,
+      effects: ['search'],
+      now
+    })
+
+    expect(claims.map(claim => ({ pageId: claim.payload.pageId, effectKind: claim.payload.effectKind, desiredState: claim.payload.desiredState }))).toEqual([
+      { pageId: 1, effectKind: 'search', desiredState: 'present' },
+      { pageId: 5, effectKind: 'search', desiredState: 'present' }
+    ])
+    expect(await db('pageMutationOutbox').where({ effectKind: 'search' }).select('pageId', 'status', 'attempts').orderBy('pageId')).toEqual([
+      { pageId: 1, status: 'running', attempts: 1 },
+      { pageId: 2, status: 'pending', attempts: 0 },
+      { pageId: 3, status: 'pending', attempts: 0 },
+      { pageId: 4, status: 'pending', attempts: 0 },
+      { pageId: 5, status: 'running', attempts: 1 }
+    ])
+  })
+
+  it('withholds invalid publication calendars from utility source dispatch while preserving empty and leap-offset windows', async () => {
+    const profileVersionId = '00000000-0000-4000-8000-000000000001'
+    await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
+    await db('agentProviderProfiles').insert({
+      id: '00000000-0000-4000-8000-000000000002',
+      status: 'enabled',
+      isGlobalDefault: true,
+      conformed: true,
+      currentVersionId: profileVersionId,
+      deletedAt: null
+    })
+    const windows = [
+      { publishStartDate: '2020-02-30T00:00:00Z', publishEndDate: '' },
+      { publishStartDate: '0000-01-01T00:00:00Z', publishEndDate: '' },
+      { publishStartDate: '2020-01-01T24:00:00Z', publishEndDate: '' },
+      { publishStartDate: '2020-01-01T00:00:00+14:01', publishEndDate: '' },
+      { publishStartDate: '', publishEndDate: '' },
+      { publishStartDate: '2020-02-29T12:00:00+05:30', publishEndDate: '2999-01-01T00:00:00-05:30' },
+      { publishStartDate: '', publishEndDate: '2999-02-30T00:00:00Z' }
+    ]
+    for (const [index, window] of windows.entries()) {
+      await enqueuePageEffects(index + 1)
+      await db('pages')
+        .where({ id: index + 1 })
+        .update(window)
+    }
+    const eligible = await db('pages')
+      .select('id')
+      .whereRaw(`("publishStartDate" IS NULL OR "publishStartDate" = '' OR ${publicationTimestampSql('"publishStartDate"')} <= statement_timestamp())`)
+      .whereRaw(`("publishEndDate" IS NULL OR "publishEndDate" = '' OR ${publicationTimestampSql('"publishEndDate"')} >= statement_timestamp())`)
+      .orderBy('id')
+    expect(eligible.map(row => row.id)).toEqual([5, 6])
+
+    const enrichKnowledge = vi.fn(async (_request: AgentKnowledgeEnrichmentRequest) => ({
+      value: { type: null, summary: null, tags: [], entities: [], relationships: [], openQuestions: [], searchTerms: ['calendaradmission'] },
+      model: 'utility-small',
+      inputSha256: 'a'.repeat(64),
+      outputSha256: 'b'.repeat(64),
+      inputTokens: 1,
+      outputTokens: 1
+    }))
+    await new PageKnowledgeLifecycle(db, 'publication-calendar-worker', { enrichKnowledge }).runOnce()
+    expect(enrichKnowledge.mock.calls.map(call => call[0].page.content).sort()).toEqual(['# Knowledge 5\n', '# Knowledge 6\n'])
+    expect(await db('pageKnowledgeProjections').whereIn('pageId', [1, 2, 3, 4, 7]).select('pageId', 'enrichmentState').orderBy('pageId')).toEqual(
+      [1, 2, 3, 4, 7].map(pageId => ({ pageId, enrichmentState: 'withheld-unpublished' }))
+    )
+  })
+
   it('serializes concurrent knowledge claims before checking global capacity', async () => {
-    for (let pageId = 1; pageId <= 4; pageId += 1) await enqueueKnowledge(pageId)
+    for (let pageId = 1; pageId <= 4; pageId += 1) await enqueuePageEffects(pageId)
     const functionName = `utility_admission_claim_pause_${randomUUID().replaceAll('-', '')}`
     const triggerName = `utility_admission_claim_pause_${randomUUID().replaceAll('-', '')}`
     await db.raw(`
@@ -216,8 +309,8 @@ suite('Utility admission on PostgreSQL', () => {
   })
 
   it('admits replacement work after completion and reclaims expired utility leases', async () => {
-    await enqueueKnowledge(1)
-    await enqueueKnowledge(2)
+    await enqueuePageEffects(1)
+    await enqueuePageEffects(2)
     const now = new Date('2100-08-19T00:00:00.000Z')
     const [first] = await claimPageMutationEffects(db, {
       leaseOwner: 'completion-worker',
@@ -274,7 +367,7 @@ suite('Utility admission on PostgreSQL', () => {
     expect(reclaimed).toMatchObject({ id: replacement.id, attempts: 2 })
   })
   it('starts an implicit lease clock after waiting for the scoped admission lock', async () => {
-    await enqueueKnowledge(1)
+    await enqueuePageEffects(1)
     const initial = new Date('2100-08-20T00:00:00.000Z')
     const claimant = knexModule({
       client: 'pg',
@@ -344,7 +437,7 @@ suite('Utility admission on PostgreSQL', () => {
   })
 
   it('preserves a competing lease acquired after utility requeue selects its candidate', async () => {
-    await enqueueKnowledge(1)
+    await enqueuePageEffects(1)
     const profileVersionId = '00000000-0000-4000-8000-000000000001'
     await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
     await db('agentProviderProfiles').insert({
@@ -359,17 +452,22 @@ suite('Utility admission on PostgreSQL', () => {
     const immutableEffect = await db('pageMutationOutbox').where({ pageId: 1, effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')
     // Keep the maintenance epoch leased elsewhere so this worker reaches utility
     // requeue before waiting on the canonical page held by the competing scheduler.
-    await db('pageKnowledgeMaintenance').where({ id: 1 }).update({
-      status: 'running',
-      epochId: 1,
-      highWaterPageId: 1,
-      cursorPageId: 0,
-      leaseOwner: 'other-maintenance-worker',
-      leaseToken: randomUUID(),
-      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString()
-    })
+    await db('pageKnowledgeMaintenance')
+      .where({ id: 1 })
+      .update({
+        status: 'running',
+        epochId: 1,
+        highWaterPageId: 1,
+        cursorPageId: 0,
+        leaseOwner: 'other-maintenance-worker',
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() + 60_000).toISOString()
+      })
     const retryDb = knexModule({
-      client: 'pg', connection: connection ?? undefined, searchPath: [schema], pool: { min: 0, max: 1 }
+      client: 'pg',
+      connection: connection ?? undefined,
+      searchPath: [schema],
+      pool: { min: 0, max: 1 }
     })
     const ready = Promise.withResolvers<number>()
     const acquireClaim = Promise.withResolvers<void>()
@@ -383,7 +481,11 @@ suite('Utility admission on PostgreSQL', () => {
       await acquireClaim.promise
       await transaction('pageMutationOutbox').where({ id: immutableEffect.id, status: 'succeeded' }).update({ status: 'pending' })
       const [claim] = await claimPageMutationEffects(transaction, {
-        leaseOwner: 'competing-worker', limit: 1, maxActive: 1, leaseMs: 60_000, effects: ['knowledge']
+        leaseOwner: 'competing-worker',
+        limit: 1,
+        maxActive: 1,
+        leaseMs: 60_000,
+        effects: ['knowledge']
       })
       if (!claim) throw new Error('competing knowledge claim missing')
       return claim
@@ -408,9 +510,10 @@ suite('Utility admission on PostgreSQL', () => {
       const settledRetry = Promise.allSettled([retry])
       const deadline = process.hrtime.bigint() + 2_000_000_000n
       while (true) {
-        const observation = await db.raw<{ rows: Array<{ blocked: boolean }> }>(
-          'SELECT ?::integer = ANY(pg_blocking_pids(?::integer)) AS blocked', [holderPid, retryPid]
-        )
+        const observation = await db.raw<{ rows: Array<{ blocked: boolean }> }>('SELECT ?::integer = ANY(pg_blocking_pids(?::integer)) AS blocked', [
+          holderPid,
+          retryPid
+        ])
         if (observation.rows[0]?.blocked) break
         if (process.hrtime.bigint() >= deadline) throw new Error('utility requeue did not wait for the competing scheduler')
         await db.raw('SELECT pg_sleep(0.01)')
@@ -423,11 +526,14 @@ suite('Utility admission on PostgreSQL', () => {
       expect(outcome.value).toMatchObject({ requeued: 0, processed: 0 })
       expect(enrichKnowledge).not.toHaveBeenCalled()
       expect(await db('pageMutationOutbox').where({ id: claim.id }).first('status', 'leaseOwner', 'leaseToken')).toEqual({
-        status: 'running', leaseOwner: 'competing-worker', leaseToken: claim.leaseToken
+        status: 'running',
+        leaseOwner: 'competing-worker',
+        leaseToken: claim.leaseToken
       })
       expect(await db('pageMutationOutbox').where({ id: claim.id }).first('id', 'payload', 'payloadSha256')).toEqual(immutableEffect)
       expect(await db('pageKnowledgeProjections').where({ pageId: 1 }).first('enrichmentState', 'utilityModel')).toEqual({
-        enrichmentState: 'unavailable', utilityModel: null
+        enrichmentState: 'unavailable',
+        utilityModel: null
       })
     } finally {
       acquireClaim.resolve()
@@ -437,7 +543,7 @@ suite('Utility admission on PostgreSQL', () => {
   }, 15_000)
 
   it('overlaps canonical-page maintenance and utility requeue without an effect-to-page deadlock', async () => {
-    await enqueueKnowledge(1)
+    await enqueuePageEffects(1)
     const profileVersionId = '00000000-0000-4000-8000-000000000001'
     await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
     await db('agentProviderProfiles').insert({
@@ -453,22 +559,29 @@ suite('Utility admission on PostgreSQL', () => {
     expect(healthy.enrichmentState).toBe('unavailable')
     const projection = JSON.parse(String(healthy.projection))
     projection.source.sha256 = '0'.repeat(64)
-    await db('pageKnowledgeProjections').where({ pageId: 1 }).update({
-      sourceSha256: projection.source.sha256,
-      projection: JSON.stringify(projection)
-    })
+    await db('pageKnowledgeProjections')
+      .where({ pageId: 1 })
+      .update({
+        sourceSha256: projection.source.sha256,
+        projection: JSON.stringify(projection)
+      })
     const immutableEffect = await db('pageMutationOutbox').where({ pageId: 1, effectKind: 'knowledge' }).first('id', 'payload', 'payloadSha256')
-    await db('pageKnowledgeMaintenance').where({ id: 1 }).update({
-      status: 'running',
-      epochId: 1,
-      highWaterPageId: 1,
-      cursorPageId: 0,
-      leaseOwner: 'maintenance-worker',
-      leaseToken: randomUUID(),
-      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString()
-    })
+    await db('pageKnowledgeMaintenance')
+      .where({ id: 1 })
+      .update({
+        status: 'running',
+        epochId: 1,
+        highWaterPageId: 1,
+        cursorPageId: 0,
+        leaseOwner: 'maintenance-worker',
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() + 60_000).toISOString()
+      })
     const retryDb = knexModule({
-      client: 'pg', connection: connection ?? undefined, searchPath: [schema], pool: { min: 0, max: 1 }
+      client: 'pg',
+      connection: connection ?? undefined,
+      searchPath: [schema],
+      pool: { min: 0, max: 1 }
     })
     const ready = Promise.withResolvers<number>()
     const repair = Promise.withResolvers<void>()
@@ -503,9 +616,10 @@ suite('Utility admission on PostgreSQL', () => {
       const settledRetry = Promise.allSettled([retry])
       const deadline = process.hrtime.bigint() + 2_000_000_000n
       while (true) {
-        const observation = await db.raw<{ rows: Array<{ blocked: boolean }> }>(
-          'SELECT ?::integer = ANY(pg_blocking_pids(?::integer)) AS blocked', [maintenancePid, retryPid]
-        )
+        const observation = await db.raw<{ rows: Array<{ blocked: boolean }> }>('SELECT ?::integer = ANY(pg_blocking_pids(?::integer)) AS blocked', [
+          maintenancePid,
+          retryPid
+        ])
         if (observation.rows[0]?.blocked) break
         if (process.hrtime.bigint() >= deadline) throw new Error('utility requeue did not overlap the held canonical page')
         await db.raw('SELECT pg_sleep(0.01)')
@@ -525,7 +639,8 @@ suite('Utility admission on PostgreSQL', () => {
       })
       expect(await new PageKnowledgeRepository(db).getCurrent(1)).toMatchObject({ sourceRevision: '1' })
       expect(await db('pages').where({ id: 1 }).first('content', 'sourceRevision')).toEqual({
-        content: '# Knowledge 1\n', sourceRevision: '1'
+        content: '# Knowledge 1\n',
+        sourceRevision: '1'
       })
     } finally {
       repair.resolve()

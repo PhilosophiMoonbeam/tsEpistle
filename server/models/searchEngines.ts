@@ -160,6 +160,21 @@ export default class SearchEngine extends Model {
         ...searchEngine,
         props: commonHelper.parseModuleProps(searchEngine.props)
       }))
+      if (diskSearchEngines.length !== 1 || diskSearchEngines[0]?.key !== 'postgres') {
+        throw new Error('Expected exactly one canonical postgres search provider')
+      }
+      const dictionary = diskSearchEngines[0].props.dictLanguage
+      const choices = dictionary?.enum
+      if (
+        dictionary?.type !== 'string' ||
+        !Array.isArray(choices) ||
+        choices.length === 0 ||
+        !choices.every(choice => typeof choice === 'string' && choice.trim().length > 0) ||
+        typeof dictionary.default !== 'string' ||
+        !choices.includes(dictionary.default)
+      ) {
+        throw new Error(`Invalid module property definition: ${path.join(wiki.SERVERPATH, 'modules/search', searchEnginesDirs[0]!, 'definition.yml')}`)
+      }
       const changes = await wiki.models.knex.transaction(async trx => {
         // Configuration may have committed while definitions were loading or
         // this lock was waiting. Read only after taking the configure/startup lock.
@@ -231,16 +246,22 @@ export default class SearchEngine extends Model {
     validateDictionary(wiki, dictLanguage)
     const engine = await wiki.models.knex.transaction(async trx => {
       await lockSearchIndex(trx, true)
-      const changed = await wiki.models.searchEngines.query(trx).patch({
-        isEnabled: true,
-        config: { dictLanguage }
-      }).where('key', 'postgres')
+      const searchEngine = await wiki.models.searchEngines.query(trx).findById('postgres')
+      if (!searchEngine) throw new Error('Canonical postgres search provider is missing')
+      const config = { ...(isRecord(searchEngine.config) ? searchEngine.config : {}), dictLanguage }
+      const changed = await wiki.models.searchEngines
+        .query(trx)
+        .patch({
+          isEnabled: true,
+          config
+        })
+        .where('key', 'postgres')
       if (changed !== 1) throw new Error('Canonical postgres search provider is missing')
       const enabledSearchEngines = await wiki.models.searchEngines.query(trx).where('isEnabled', true)
       if (enabledSearchEngines.length !== 1 || enabledSearchEngines[0]?.key !== 'postgres') {
         throw new Error('Expected exactly one enabled postgres search provider')
       }
-      return initializeEngine(wiki, { dictLanguage }, trx)
+      return initializeEngine(wiki, config, trx)
     })
     // The old runtime remains available through the entire transaction, including rollback.
     wiki.data.searchEngine = engine

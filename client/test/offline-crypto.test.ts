@@ -768,10 +768,12 @@ describe('offline draft crypto', () => {
 
     const foreignContext = { ...context, accountId: ACCOUNT_ID + 1 }
     const blockedFetch = installFetch(octetStreamResponse(tsodk1Frame(foreignContext)))
-    await expect(requestDraftKey(fetchType(blockedFetch), {
-      expectedAccountId: foreignContext.accountId,
-      expectedSessionGeneration: SESSION_GENERATION
-    })).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(
+      requestDraftKey(fetchType(blockedFetch), {
+        expectedAccountId: foreignContext.accountId,
+        expectedSessionGeneration: SESSION_GENERATION
+      })
+    ).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
     expect(blockedFetch).not.toHaveBeenCalled()
 
     invalidateOfflineSession()
@@ -1134,6 +1136,56 @@ describe('offline draft crypto', () => {
     expect(corpus.searchDocuments).toEqual([{ ...readingSearchDocument, sourceRevision: readingSnapshot.sourceRevision }])
     expect(corpus.corpusRevision).toBe(4)
 
+    const expiredSnapshot = { ...readingSnapshot, expiresAt: '2000-01-01T00:00:00.000Z' }
+    const expiredBody = await encryptOfflinePrivateRecord(enrolled.handle, 'snapshot', { ...responsePayload, snapshot: expiredSnapshot }, selectors)
+    const futureRecords: OfflinePrivateEnvelopeV1[] = []
+    const futureSnapshots = []
+    const futureDocuments = []
+    for (const [pageId, expiresAt] of [
+      [13, '2999-01-01T00:00:00.000Z'],
+      [14, '2998-01-01T00:00:00.000Z']
+    ] as const) {
+      const snapshot = { ...readingSnapshot, pageId, path: `/guide-${pageId}`, canonicalPath: `/guide-${pageId}`, expiresAt }
+      const document = { ...readingSearchDocument, pageId, path: snapshot.path, canonicalPath: snapshot.canonicalPath, sourceRevision: snapshot.sourceRevision }
+      const futureSelectors = { ...selectors, pageId, pairId: generateOfflineReadingPairId() }
+      futureRecords.push(
+        await encryptOfflinePrivateRecord(enrolled.handle, 'snapshot', { ...responsePayload, snapshot }, futureSelectors),
+        await encryptOfflinePrivateRecord(enrolled.handle, 'search', document, futureSelectors),
+        await encryptOfflinePrivateRecord(
+          enrolled.handle,
+          'policy-page',
+          {
+            ...readingPolicyPage,
+            pageId,
+            key: `${SITE_ID}\u0000${pageId}\u0000en`
+          },
+          { pageId, locale: 'en', recordRevision: 2, pairId: null }
+        )
+      )
+      futureSnapshots.push(snapshot)
+      futureDocuments.push(document)
+    }
+    const expiryCorpus = await readPrivateCorpus(enrolled.handle, storageFor([expiredBody, search, policyStateEnvelope, policyPageEnvelope, ...futureRecords]))
+    expect(expiryCorpus.snapshots).toEqual(futureSnapshots)
+    expect(expiryCorpus.searchDocuments).toEqual(futureDocuments)
+    expect(expiryCorpus).toHaveProperty('nextExpiresAt', Date.parse('2998-01-01T00:00:00.000Z'))
+    const expiredOnly = await readPrivateCorpus(enrolled.handle, storageFor([expiredBody, search, policyStateEnvelope, policyPageEnvelope]))
+    expect(expiredOnly.snapshots).toEqual([])
+    expect(expiredOnly.searchDocuments).toEqual([])
+    expect(expiredOnly).toHaveProperty('nextExpiresAt', null)
+
+    expect(corpus).toHaveProperty('nextExpiresAt', null)
+    const malformedExpiredBody = clonePrivateEnvelope(expiredBody)
+    malformedExpiredBody.ciphertext[0] = (malformedExpiredBody.ciphertext[0] ?? 0) ^ 1
+    const expiredMismatchedSearch = await encryptOfflinePrivateRecord(enrolled.handle, 'search', { ...readingSearchDocument, sourceRevision: '8' }, selectors)
+    for (const expiredRecords of [
+      [expiredBody, policyStateEnvelope, policyPageEnvelope],
+      [malformedExpiredBody, search, policyStateEnvelope, policyPageEnvelope],
+      [expiredBody, expiredMismatchedSearch, policyStateEnvelope, policyPageEnvelope]
+    ]) {
+      await expect(readPrivateCorpus(enrolled.handle, storageFor(expiredRecords))).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    }
+
     const pairTampered = clonePrivateEnvelope(body)
     pairTampered.pairId = generateOfflineReadingPairId()
     await expect(readPrivateCorpus(enrolled.handle, storageFor([pairTampered, search, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(
@@ -1145,7 +1197,9 @@ describe('offline draft crypto', () => {
       OfflineDraftOpaqueError
     )
     await expect(readPrivateCorpus(enrolled.handle, storageFor(coherentRecords), 3)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
-    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
 
     const mismatchedSearch = await encryptOfflinePrivateRecord(enrolled.handle, 'search', { ...readingSearchDocument, sourceRevision: '8' }, selectors)
     await expect(readPrivateCorpus(enrolled.handle, storageFor([body, mismatchedSearch, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(

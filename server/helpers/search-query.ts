@@ -1,6 +1,6 @@
 import { hasSearchQueryNegation } from '../../shared/search-query.ts'
 
-const STANDALONE_OR = /(?:^|[^\p{L}\p{N}_-])or(?=$|[^\p{L}\p{N}_-])/iu
+const STANDALONE_OR = /(?:^|[\s()])or(?=$|[\s()])/iu
 
 /**
  * Whether a query uses web-search syntax whose boolean meaning must not be

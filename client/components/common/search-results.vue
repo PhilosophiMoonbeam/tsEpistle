@@ -434,6 +434,7 @@ export default defineComponent({
       offlinePrivateSearchCorpus: null as OfflineSearchCorpus | null,
       offlinePrivateSearchCorpusRevision: null as number | null,
       offlinePrivateSearchCorpusSessionGeneration: null as number | null,
+      offlinePrivateSearchCorpusExpiresAt: null as number | null,
       offlinePrivateSearchEnabled: false,
       serverRetryPending: false,
       searchRetryId: 0,
@@ -791,6 +792,10 @@ export default defineComponent({
     this.searchTimer = null
     this.serverRetryPending = false
     this.searchIsLoading = false
+    this.offlinePrivateSearchCorpus = null
+    this.offlinePrivateSearchCorpusRevision = null
+    this.offlinePrivateSearchCorpusSessionGeneration = null
+    this.offlinePrivateSearchCorpusExpiresAt = null
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
     offSearchExit(this.handleSearchExit)
@@ -1032,6 +1037,7 @@ export default defineComponent({
       this.offlinePrivateSearchCorpus = null
       this.offlinePrivateSearchCorpusRevision = null
       this.offlinePrivateSearchCorpusSessionGeneration = null
+      this.offlinePrivateSearchCorpusExpiresAt = null
       this.offlinePrivateSearchEnabled = typeof currentOfflineReadingHandle === 'function' && Boolean(currentOfflineReadingHandle())
       this.search = ''
     },
@@ -1518,9 +1524,21 @@ export default defineComponent({
         }, null)
 
         let privateDocuments: OfflineSearchDocumentV1[] = []
+        let privateNextExpiry: number | null = null
+        const retryExpiredPrivateCorpus = (): boolean => {
+          if (!isCurrent() || privateNextExpiry === null || privateNextExpiry > Date.now()) return false
+          this.offlinePrivateSearchCorpus = null
+          this.offlinePrivateSearchCorpusRevision = null
+          this.offlinePrivateSearchCorpusSessionGeneration = null
+          this.offlinePrivateSearchCorpusExpiresAt = null
+          this.responseKey = ''
+          this.queueSearch(query)
+          return true
+        }
         if (readingHandle) {
           const privateCorpus = await readPrivateCorpus(readingHandle, storage, corpusRevision)
           if (!isCurrent()) return
+          privateNextExpiry = privateCorpus.nextExpiresAt
           privateDocuments = privateCorpus.searchDocuments.flatMap(value => {
             const document = toOfflinePrivateSearchDocument(value)
             return document ? [document] : []
@@ -1531,6 +1549,7 @@ export default defineComponent({
           this.offlinePrivateSearchCorpus = null
           this.offlinePrivateSearchCorpusRevision = null
           this.offlinePrivateSearchCorpusSessionGeneration = null
+          this.offlinePrivateSearchCorpusExpiresAt = null
         }
 
         const cacheExpired =
@@ -1552,14 +1571,19 @@ export default defineComponent({
         if (readingHandle && (
           this.offlinePrivateSearchCorpus === null ||
           this.offlinePrivateSearchCorpusRevision !== corpusRevision ||
-          this.offlinePrivateSearchCorpusSessionGeneration !== sessionGeneration
+          this.offlinePrivateSearchCorpusSessionGeneration !== sessionGeneration ||
+          (this.offlinePrivateSearchCorpusExpiresAt !== null &&
+            this.offlinePrivateSearchCorpusExpiresAt <= Date.now())
         )) {
           const preparedPrivate = await prepareOfflineSearchCorpus(privateDocuments, { signal: controller.signal })
           if (!isCurrent()) return
+          if (retryExpiredPrivateCorpus()) return
           this.offlinePrivateSearchCorpus = preparedPrivate
           this.offlinePrivateSearchCorpusRevision = corpusRevision
           this.offlinePrivateSearchCorpusSessionGeneration = sessionGeneration
+          this.offlinePrivateSearchCorpusExpiresAt = privateNextExpiry
         }
+        if (retryExpiredPrivateCorpus()) return
         const preparedPublic = this.offlineSearchCorpus
         if (!preparedPublic) throw new Error(this.$t('common:searchResults.downloadedSearchCorpusUnavailable'))
         const preparedCorpus = mergeOfflineSearchCorpora(preparedPublic, readingHandle ? this.offlinePrivateSearchCorpus : null)
@@ -1583,10 +1607,12 @@ export default defineComponent({
           this.offlinePrivateSearchCorpus = null
           this.offlinePrivateSearchCorpusRevision = null
           this.offlinePrivateSearchCorpusSessionGeneration = null
+          this.offlinePrivateSearchCorpusExpiresAt = null
           this.responseKey = ''
           this.queueSearch(query)
           return
         }
+        if (retryExpiredPrivateCorpus()) return
 
         const privateIdentities = new Set(privateDocuments.map(documentIdentity))
         const resultDocuments = new Set<string>()

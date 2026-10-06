@@ -112,6 +112,8 @@ const publicRecords = shallowRef<readonly OfflineVisibleRecord[]>([])
 const privateRecords = shallowRef<readonly OfflineVisibleRecord[]>([])
 const corpus = shallowRef<OfflineSnapshotCorpus | null>(null)
 const preparedCorpus = shallowRef<OfflineSearchCorpus | null>(null)
+// A transient private read can commit a public-only corpus, but not a reusable complete cache.
+let preparedPrivateComplete = false
 const corpusRevision = ref<number | null>(null)
 const publicPolicy = shallowRef<OfflinePolicySnapshot | null>(null)
 const privatePolicy = shallowRef<OfflinePolicySnapshot | null>(null)
@@ -552,6 +554,7 @@ const copySelectedText = async (): Promise<void> => {
   }
 }
 const runSearch = async (): Promise<void> => {
+  searchController?.abort()
   const controller = new AbortController()
   searchController = controller
   const requestId = ++searchRequestId
@@ -948,10 +951,13 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     const loadedAt = Date.now()
     const previousRevision = corpusRevision.value
     const previousGeneration = sessionGeneration.value
+    const privateReadComplete = !reading.handle || loadedPrivate !== null
     const sameCommittedCorpus =
       previousRevision === loadedPublic.corpusRevision &&
       previousGeneration === loadedPublic.sessionGeneration &&
       preparedCorpus.value !== null &&
+      preparedPrivateComplete &&
+      privateReadComplete &&
       readingHandle.value === reading.handle &&
       readingEpoch.value === reading.epoch &&
       !records.value.some(record => isExpired(record, loadedAt))
@@ -1032,6 +1038,7 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     records.value = Object.freeze(validRecords)
     corpus.value = nextCorpus
     preparedCorpus.value = prepared
+    preparedPrivateComplete = privateReadComplete
     corpusRevision.value = loadedPublic.corpusRevision
     sessionGeneration.value = loadedPublic.sessionGeneration
     publicPolicyRevision.value = loadedPublicPolicy.state.policyRevision
