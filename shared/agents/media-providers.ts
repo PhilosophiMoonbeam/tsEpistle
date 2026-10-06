@@ -124,7 +124,7 @@ export const AgentMediaProviderConfigSchema = z
     if (config.api === 'gemini-generate-content') {
       supported =
         config.kind === 'image'
-          ? /^gemini-\d+(?:\.\d+)*-(?:flash|pro)(?:-[a-z0-9]+)*-image(?:-[a-z0-9]+)*$/u.test(config.model)
+          ? /^gemini-[a-z0-9][a-z0-9.-]*$/u.test(config.model)
           : config.kind === 'transcription' &&
             /^gemini-\d+(?:\.\d+)*-(?:flash|pro|transcribe)(?:-[a-z0-9]+)*$/u.test(config.model) &&
             !/(?:^|-)image(?:-|$)/u.test(config.model)

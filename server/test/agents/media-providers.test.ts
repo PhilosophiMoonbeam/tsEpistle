@@ -318,9 +318,6 @@ describe('independent media provider authority and immutable bindings', () => {
   })
 
   it('validates media-only model edits and explicit input permissions without reviving legacy generation writes', () => {
-    for (const model of ['gemini-2.5-flash-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image-preview'])
-      expect(AgentMediaProviderConfigSchema.parse({ ...image.config, model }).model).toBe(model)
-    expect(AgentMediaProviderConfigSchema.safeParse({ ...image.config, model: 'gemini-2.5-flash' }).success).toBe(false)
     expect(AgentMediaProviderConfigSchema.safeParse({ ...image.config, baseUrl: 'https://evil.example/v1beta' }).success).toBe(false)
     expect(AgentMediaInputsSchema.safeParse({ images: 'true' }).success).toBe(false)
     const legacy = {

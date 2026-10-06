@@ -75,7 +75,7 @@ const credentialOriginChanged = computed(() => {
   const previous = editing.value
   return Boolean(previous?.secretConfigured && parsed.value.success && new URL(previous.config.baseUrl).origin !== new URL(parsed.value.data.config.baseUrl).origin)
 })
-const fieldError = (path: string): string[] => submitted.value && !parsed.value.success && parsed.value.error.issues.some(issue => issue.path.join('.').startsWith(path)) ? [tr('mediaFieldInvalid')] : []
+const fieldError = (path: string): string[] => submitted.value && !parsed.value.success && parsed.value.error.issues.some(issue => issue.path.join('.').startsWith(path)) ? [tr(path === 'config.model' ? 'mediaModelInvalid' : 'mediaFieldInvalid')] : []
 const groupNames = (ids: readonly number[]) => ids.map(id => groups.find(group => group.id === id)?.name ?? String(id)).join(', ')
 const message = (value: unknown) => value instanceof AgentApiError && value.status === 409 ? tr('mediaStaleRevision') : value instanceof Error ? value.message : tr('mediaRequestFailed')
 const load = async (): Promise<boolean> => {
