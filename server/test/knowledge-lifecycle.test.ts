@@ -11,6 +11,9 @@ import type { PageRuleAuthority } from '../helpers/group-access.ts'
 
 let db: Knex
 
+const AUDIT_COOLDOWN_MILLISECONDS = 10 * 60 * 1_000
+const advanceToNextAudit = (): void => vi.setSystemTime(new Date(Date.now() + AUDIT_COOLDOWN_MILLISECONDS))
+
 const createSchema = async (): Promise<void> => {
   await db.schema.createTable('pages', table => {
     table.integer('id').primary()
@@ -192,12 +195,111 @@ const utilityResult = (tag: string) => ({
 })
 
 beforeEach(async () => {
+  vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'))
   db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
   await createSchema()
 })
-afterEach(async () => db.destroy())
+afterEach(async () => {
+  try {
+    await db.destroy()
+  } finally {
+    vi.setSystemTime()
+  }
+})
 
 describe('page knowledge lifecycle', () => {
+  it('keeps a completed 98-page audit idle across one-second queue ticks', async () => {
+    for (let id = 1; id <= 98; id += 1) {
+      const source = page({ id, path: `ops/idle-${id}` })
+      await db('pages').insert(source)
+      await enqueuePageKnowledge(source)
+    }
+    const lifecycle = new PageKnowledgeLifecycle(db, 'idle-worker', undefined, { utilityConcurrency: 128 })
+    for (let tick = 0; tick < 4; tick += 1) {
+      vi.setSystemTime(new Date(Date.now() + 1_000))
+      await lifecycle.runOnce()
+    }
+    const completed = await db('pageKnowledgeMaintenance').first()
+    expect(completed).toMatchObject({ status: 'complete', scanned: 98, cursorPageId: 98 })
+    expect(await db('pageMutationOutbox').whereNot({ status: 'succeeded' })).toHaveLength(0)
+    const healthy = await db('pageKnowledgeProjections').orderBy('pageId')
+    expect(healthy).toHaveLength(98)
+
+    for (let tick = 0; tick < 5; tick += 1) {
+      vi.setSystemTime(new Date(Date.now() + 1_000))
+      await expect(lifecycle.runOnce()).resolves.toEqual({ backfilled: 0, requeued: 0, processed: 0 })
+      expect(await db('pageKnowledgeMaintenance').first()).toEqual(completed)
+    }
+    // The cooldown starts when the fourth batch finishes, not when the epoch begins.
+    vi.setSystemTime(new Date(new Date(completed.startedAt).valueOf() + AUDIT_COOLDOWN_MILLISECONDS))
+    await expect(lifecycle.runOnce()).resolves.toEqual({ backfilled: 0, requeued: 0, processed: 0 })
+    expect(await db('pageKnowledgeMaintenance').first()).toEqual(completed)
+    expect(await db('pageKnowledgeProjections').orderBy('pageId')).toEqual(healthy)
+  })
+
+  it('projects a new source revision during cooldown and repairs corruption at the exact next audit deadline', async () => {
+    const current = page()
+    await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const lifecycle = new PageKnowledgeLifecycle(db, 'cooldown-freshness-worker')
+    await lifecycle.runOnce()
+    const completed = await db('pageKnowledgeMaintenance').first()
+    const due = new Date(completed.completedAt).valueOf() + AUDIT_COOLDOWN_MILLISECONDS
+
+    vi.setSystemTime(new Date(Date.now() + 1_000))
+    const { updatedAt: versionDate, ...historySnapshot } = current
+    await db('pageHistory').insert({ ...historySnapshot, pageId: 42, versionDate })
+    const revised = page({ sourceRevision: '2', title: 'Revised Runbook', content: '# Revised Runbook\n\nDeploy the revised service.\n' })
+    await db('pages').where({ id: 42 }).update(revised)
+    await enqueueKnowledge('2', String(revised.content), 'update')
+    await expect(lifecycle.runOnce()).resolves.toEqual({ backfilled: 0, requeued: 0, processed: 1 })
+    expect(await new PageKnowledgeRepository(db).getCurrent(42)).toMatchObject({ sourceRevision: '2' })
+    expect(await db('pageKnowledgeMaintenance').first()).toEqual(completed)
+
+    await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '2' }).update({ projection: '{' })
+    vi.setSystemTime(new Date(due - 1))
+    await expect(lifecycle.runOnce()).resolves.toEqual({ backfilled: 0, requeued: 0, processed: 0 })
+    expect(await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '2' }).first('projection')).toEqual({ projection: '{' })
+    expect(await db('pageKnowledgeMaintenance').first()).toEqual(completed)
+
+    vi.setSystemTime(new Date(due))
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
+    expect(await new PageKnowledgeRepository(db).getCurrent(42)).toMatchObject({ sourceRevision: '2' })
+    expect(await db('pageKnowledgeMaintenance').first('status', 'completedAt')).toEqual({
+      status: 'complete',
+      completedAt: new Date(due).toISOString()
+    })
+  })
+
+  it('cools a missing-maintenance-table audit only after its last batch and restarts repair from the first page', async () => {
+    await db.schema.dropTable('pageKnowledgeMaintenance')
+    for (let id = 1; id <= 27; id += 1) {
+      const source = page({ id, path: `ops/volatile-${id}` })
+      await db('pages').insert(source)
+      await enqueuePageKnowledge(source)
+    }
+    const lifecycle = new PageKnowledgeLifecycle(db, 'volatile-worker', undefined, { utilityConcurrency: 128 })
+    await lifecycle.runOnce()
+    // The first batch already passed page 1; the final batch must still repair page 27.
+    await db('pageKnowledgeProjections').whereIn('pageId', [1, 27]).delete()
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
+    expect(await db('pageKnowledgeProjections').where({ pageId: 1 }).first()).toBeUndefined()
+    expect(await new PageKnowledgeRepository(db).getCurrent(27)).toMatchObject({ sourceRevision: '1' })
+    const due = Date.now() + AUDIT_COOLDOWN_MILLISECONDS
+
+    for (let tick = 0; tick < 2; tick += 1) {
+      vi.setSystemTime(new Date(Date.now() + 1_000))
+      await expect(lifecycle.runOnce()).resolves.toEqual({ backfilled: 0, requeued: 0, processed: 0 })
+      expect(await db('pageKnowledgeProjections').where({ pageId: 1 }).first()).toBeUndefined()
+    }
+    vi.setSystemTime(new Date(due - 1))
+    await expect(lifecycle.runOnce()).resolves.toEqual({ backfilled: 0, requeued: 0, processed: 0 })
+    expect(await db('pageKnowledgeProjections').where({ pageId: 1 }).first()).toBeUndefined()
+    vi.setSystemTime(new Date(due))
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
+    expect(await new PageKnowledgeRepository(db).getCurrent(1)).toMatchObject({ sourceRevision: '1' })
+  })
+
   it('projects delayed revisions from production-shaped immutable history snapshots', async () => {
     const generatedAt = '2026-08-01T09:00:00.000Z'
     const verifiedAt = '2026-08-02T10:00:00.000Z'
@@ -255,6 +357,7 @@ describe('page knowledge lifecycle', () => {
     const healthySourceSha256 = healthy.sourceSha256
 
     const expectRepair = async (backfilled = 1) => {
+      if (backfilled > 0) advanceToNextAudit()
       await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled, processed: 1 })
       const stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('sourceSha256', 'projection')
       const projection = JSON.parse(String(stored.projection))
@@ -399,6 +502,7 @@ describe('page knowledge lifecycle', () => {
       staleAfter: '2000-01-01T00:00:00.000Z'
     })
 
+    advanceToNextAudit()
     await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 0, processed: 0 })
     expect(await db('pageKnowledgeProjections').first(...columns)).toEqual(healthy)
     expect(await db('pageKnowledgeProjections').first(...Object.keys(paid))).toEqual(paid)
@@ -442,6 +546,7 @@ describe('page knowledge lifecycle', () => {
 
     await db('pageKnowledgeProjections').delete()
     await db('pageMutationOutbox').update({ status: 'failed' })
+    advanceToNextAudit()
     await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
     expect(await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first()).toBeDefined()
   })
@@ -470,9 +575,10 @@ describe('page knowledge lifecycle', () => {
       await db('pages').insert(source)
       await enqueuePageKnowledge(source)
     }
-    const lifecycle = new PageKnowledgeLifecycle(db, 'finite-epoch-repair-worker')
+    const lifecycle = new PageKnowledgeLifecycle(db, 'finite-epoch-repair-worker', undefined, { utilityConcurrency: 128 })
     await lifecycle.runOnce()
     await lifecycle.runOnce()
+    advanceToNextAudit()
     await lifecycle.runOnce()
     expect(await db('pageKnowledgeProjections').count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 27 })
 
@@ -481,6 +587,7 @@ describe('page knowledge lifecycle', () => {
     expect(await db('pageKnowledgeProjections').where({ pageId: 1 }).first()).toBeUndefined()
     expect(await db('pageKnowledgeProjections').where({ pageId: 26 }).first()).toBeDefined()
 
+    advanceToNextAudit()
     await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
     expect(await db('pageKnowledgeProjections').whereIn('pageId', [1, 26]).orderBy('pageId').pluck('pageId')).toEqual([1, 26])
   })
@@ -499,6 +606,7 @@ describe('page knowledge lifecycle', () => {
       .where({ effectKind: 'knowledge' })
       .update({ payload: JSON.stringify(tampered) })
 
+    advanceToNextAudit()
     await expect(lifecycle.runOnce()).rejects.toMatchObject({ code: 'OUTBOX_PAYLOAD_TAMPERED' })
     expect(await db('pageKnowledgeProjections').first()).toBeUndefined()
     const unchanged = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status', 'payload', 'payloadSha256')

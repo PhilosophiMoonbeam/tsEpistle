@@ -34,6 +34,7 @@ import type { KnowledgePageSource, KnowledgeProjection, KnowledgeProjectionView 
 const RETRY_FAILED_AFTER_MILLISECONDS = 24 * 60 * 60 * 1_000
 const KNOWLEDGE_EFFECT_LEASE_MILLISECONDS = 120_000
 const KNOWLEDGE_EFFECT_HEARTBEAT_MILLISECONDS = KNOWLEDGE_EFFECT_LEASE_MILLISECONDS / 2
+const KNOWLEDGE_VALIDATION_INTERVAL_MILLISECONDS = 10 * 60_000
 
 interface SourceSnapshotRow {
   readonly sourceRevision: string | number
@@ -311,7 +312,7 @@ const projectionColumns = (
   error: string | null,
   now: string,
   dictionary: string | null
-): Record<string, unknown> => {
+): Record<string, unknown> & { searchText: string } => {
   const searchText = knowledgeSearchText(projection)
   if (usesPostgres(knex) && dictionary === null) throw new Error('PostgreSQL knowledge search dictionary is unavailable')
   return {
@@ -340,7 +341,6 @@ const projectionColumns = (
     utilityInputSha256: projection.provenance.utility?.inputSha256 ?? null,
     utilityOutputSha256: projection.provenance.utility?.outputSha256 ?? null,
     utilityGeneratedAt: projection.provenance.utility?.generatedAt ?? null,
-    projection: canonicalJson(projection),
     lastError: error,
     updatedAt: now
   }
@@ -418,6 +418,7 @@ class KnowledgeProjectionSink implements PageProjectionSink {
         const authoritativeSource = await loadSource(transaction, payload.pageId, sourceRevision)
         if (!authoritativeSource || knowledgeSourceSha256(authoritativeSource) !== value.source.sha256) return false
         const columns = projectionColumns(transaction, value, state, lastError, now, dictionary)
+        columns.projection = canonicalJson(value)
         await transaction('pageKnowledgeProjections')
           .insert({ ...columns, createdAt: now })
           .onConflict(['pageId', 'sourceRevision'])
@@ -464,6 +465,7 @@ class KnowledgeProjectionSink implements PageProjectionSink {
         }
         if (!authoritativeMatches) return false
         const columns = projectionColumns(transaction, projection, 'superseded', null, now, dictionary)
+        columns.projection = canonicalJson(projection)
         await transaction('pageKnowledgeProjections')
           .insert({ ...columns, createdAt: now })
           .onConflict(['pageId', 'sourceRevision'])
@@ -613,10 +615,10 @@ const repairProjectionColumns = async (
   const columns = projectionColumns(transaction, projection, row.enrichmentState, row.lastError, now.toISOString(), dictionary)
   const healthy = transaction('pageKnowledgeProjections').where({ pageId: row.pageId, sourceRevision: row.sourceRevision })
   for (const [key, value] of Object.entries(columns)) {
-    if (key === 'projection' || key === 'enrichmentState' || key === 'lastError' || key === 'updatedAt' || key === 'searchTokens') continue
+    if (key === 'enrichmentState' || key === 'lastError' || key === 'updatedAt' || key === 'searchTokens') continue
     healthy.where({ [key]: value })
   }
-  if (dictionary !== null) healthy.whereRaw('?? = to_tsvector(?::regconfig, ?)', ['searchTokens', dictionary, knowledgeSearchText(projection)])
+  if (dictionary !== null) healthy.whereRaw('?? = to_tsvector(?::regconfig, ?)', ['searchTokens', dictionary, columns.searchText])
   if (await healthy.first('pageId')) return 0
   await transaction('pageKnowledgeProjections').where({ pageId: row.pageId, sourceRevision: row.sourceRevision }).update(columns)
   return 1
@@ -975,6 +977,7 @@ interface KnowledgeMaintenanceRow {
   readonly leaseToken: string | null
   readonly leaseExpiresAt: string | Date | null
   readonly startedAt: string | Date | null
+  readonly completedAt: string | Date | null
 }
 
 const loadCurrentProjectionScan = async (knex: Knex, afterPageId: number, limit: number, highWaterPageId?: number): Promise<CurrentProjectionScanRow[]> => {
@@ -983,49 +986,50 @@ const loadCurrentProjectionScan = async (knex: Knex, afterPageId: number, limit:
   return query.select('id', 'sourceRevision').orderBy('id').limit(limit)
 }
 
-const isMissingMaintenanceTable = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  (Reflect.get(error, 'code') === '42P01' || (Reflect.get(error, 'code') === 'SQLITE_ERROR' && String(error).includes('no such table')))
+interface KnowledgeMaintenanceClaim {
+  readonly epoch: KnowledgeMaintenanceRow | null
+  readonly nextRunAt: number
+}
 
-const claimMaintenanceEpoch = async (knex: Knex, workerId: string, now: Date): Promise<KnowledgeMaintenanceRow | null> => {
-  try {
-    return await withKnowledgeSearchContract(knex, async transaction => {
-      const current = (await transaction<KnowledgeMaintenanceRow>('pageKnowledgeMaintenance').where({ id: 1 }).forUpdate().first()) as
-        | KnowledgeMaintenanceRow
-        | undefined
-      if (!current) return null
-      const expires = current.leaseExpiresAt === null ? 0 : new Date(current.leaseExpiresAt).valueOf()
-      if (current.status === 'running' && expires > now.valueOf() && current.leaseOwner !== workerId) return null
-      const starting = current.status !== 'running'
-      const highWater = starting
-        ? Number(((await transaction('pages').max('id as highWater').first()) as { highWater?: number | string } | undefined)?.highWater ?? 0)
-        : Number(current.highWaterPageId)
-      const epochId = starting ? Number(current.epochId) + 1 : Number(current.epochId)
-      const cursorPageId = starting ? 0 : Number(current.cursorPageId)
-      const leaseToken = starting || current.leaseOwner !== workerId ? randomUUID() : current.leaseToken
-      const updatedAt = now.toISOString()
-      await transaction('pageKnowledgeMaintenance')
-        .where({ id: 1 })
-        .update({
-          version: 1,
-          epochId,
-          status: 'running',
-          highWaterPageId: highWater,
-          cursorPageId,
-          scanned: starting ? 0 : Number(current.scanned),
-          repaired: starting ? 0 : Number(current.repaired),
-          requeued: starting ? 0 : Number(current.requeued),
-          leaseOwner: workerId,
-          leaseToken,
-          leaseExpiresAt: new Date(now.valueOf() + KNOWLEDGE_EFFECT_LEASE_MILLISECONDS).toISOString(),
-          startedAt: starting ? updatedAt : current.startedAt,
-          completedAt: null,
-          updatedAt,
-          lastProgressAt: updatedAt,
-          lastError: null
-        })
-      return {
+const claimMaintenanceEpoch = async (knex: Knex, workerId: string, now: Date): Promise<KnowledgeMaintenanceClaim | null> =>
+  withKnowledgeSearchContract(knex, async transaction => {
+    const current = await transaction<KnowledgeMaintenanceRow>('pageKnowledgeMaintenance').where({ id: 1 }).forUpdate().first()
+    if (!current) return null
+    const completedAt = current.completedAt === null ? Number.NaN : new Date(current.completedAt).valueOf()
+    const nextRunAt = completedAt + KNOWLEDGE_VALIDATION_INTERVAL_MILLISECONDS
+    if (current.status === 'complete' && nextRunAt > now.valueOf()) return { epoch: null, nextRunAt }
+    const expires = current.leaseExpiresAt === null ? 0 : new Date(current.leaseExpiresAt).valueOf()
+    if (current.status === 'running' && expires > now.valueOf() && current.leaseOwner !== workerId) return { epoch: null, nextRunAt: expires }
+    const starting = current.status !== 'running'
+    const highWater = starting
+      ? Number(((await transaction('pages').max('id as highWater').first()) as { highWater?: number | string } | undefined)?.highWater ?? 0)
+      : Number(current.highWaterPageId)
+    const epochId = starting ? Number(current.epochId) + 1 : Number(current.epochId)
+    const cursorPageId = starting ? 0 : Number(current.cursorPageId)
+    const leaseToken = starting || current.leaseOwner !== workerId ? randomUUID() : current.leaseToken
+    const updatedAt = now.toISOString()
+    await transaction('pageKnowledgeMaintenance')
+      .where({ id: 1 })
+      .update({
+        version: 1,
+        epochId,
+        status: 'running',
+        highWaterPageId: highWater,
+        cursorPageId,
+        scanned: starting ? 0 : Number(current.scanned),
+        repaired: starting ? 0 : Number(current.repaired),
+        requeued: starting ? 0 : Number(current.requeued),
+        leaseOwner: workerId,
+        leaseToken,
+        leaseExpiresAt: new Date(now.valueOf() + KNOWLEDGE_EFFECT_LEASE_MILLISECONDS).toISOString(),
+        startedAt: starting ? updatedAt : current.startedAt,
+        completedAt: null,
+        updatedAt,
+        lastProgressAt: updatedAt,
+        lastError: null
+      })
+    return {
+      epoch: {
         ...current,
         epochId,
         status: 'running',
@@ -1034,22 +1038,21 @@ const claimMaintenanceEpoch = async (knex: Knex, workerId: string, now: Date): P
         leaseOwner: workerId,
         leaseToken,
         leaseExpiresAt: new Date(now.valueOf() + KNOWLEDGE_EFFECT_LEASE_MILLISECONDS).toISOString()
-      }
-    })
-  } catch (error: unknown) {
-    if (isMissingMaintenanceTable(error)) return null
-    throw error
-  }
-}
+      },
+      nextRunAt: 0
+    }
+  })
 
 const maintainCurrentProjections = async (
   knex: Knex,
   workerId: string,
   now: Date,
   limit: number
-): Promise<{ repaired: number; cursor: number; durable: boolean } | null> => {
-  const epoch = await claimMaintenanceEpoch(knex, workerId, now)
-  if (epoch === null) return null
+): Promise<{ repaired: number; nextRunAt: number } | null> => {
+  const claim = await claimMaintenanceEpoch(knex, workerId, now)
+  if (claim === null) return null
+  if (claim.epoch === null) return { repaired: 0, nextRunAt: claim.nextRunAt }
+  const epoch = claim.epoch
   const cursor = Number(epoch.cursorPageId)
   const highWater = Number(epoch.highWaterPageId)
   const rows = await loadCurrentProjectionScan(knex, cursor, limit, highWater)
@@ -1057,7 +1060,9 @@ const maintainCurrentProjections = async (
   for (const row of rows) repaired += await repairCurrentProjection(knex, row, now)
   const nextCursor = rows.at(-1)?.id ?? cursor
   const finished = rows.length === 0 || nextCursor >= highWater
-  await knex('pageKnowledgeMaintenance')
+  const progressedAt = new Date()
+  const progressTimestamp = progressedAt.toISOString()
+  const updated = await knex('pageKnowledgeMaintenance')
     .where({ id: 1, status: 'running', leaseToken: epoch.leaseToken })
     .update({
       cursorPageId: nextCursor,
@@ -1067,11 +1072,11 @@ const maintainCurrentProjections = async (
       leaseOwner: finished ? null : epoch.leaseOwner,
       leaseToken: finished ? null : epoch.leaseToken,
       leaseExpiresAt: finished ? null : epoch.leaseExpiresAt,
-      completedAt: finished ? now.toISOString() : null,
-      lastProgressAt: now.toISOString(),
-      updatedAt: now.toISOString()
+      completedAt: finished ? progressTimestamp : null,
+      lastProgressAt: progressTimestamp,
+      updatedAt: progressTimestamp
     })
-  return { repaired, cursor: nextCursor, durable: true }
+  return { repaired, nextRunAt: updated === 1 && finished ? progressedAt.valueOf() + KNOWLEDGE_VALIDATION_INTERVAL_MILLISECONDS : 0 }
 }
 
 const parseKnowledgeEffectPayload = (value: string): PageProjectionPayload => {
@@ -1303,6 +1308,8 @@ export class PageKnowledgeLifecycle {
   readonly #utilityConcurrency: number
   #running = false
   #projectionScanCursor = 0
+  #projectionScanHighWater: number | null = null
+  #nextProjectionScanAt = 0
 
   constructor(knex: Knex, workerId: string, enricher?: AgentKnowledgeEnricher, options: PageKnowledgeLifecycleOptions = {}) {
     this.#knex = knex
@@ -1354,20 +1361,30 @@ export class PageKnowledgeLifecycle {
     this.#running = true
     try {
       const now = new Date()
-      const profileVersionId = await currentProfileVersionId(this.#knex).catch(() => null)
+      const profileVersionId = this.#enricher ? await currentProfileVersionId(this.#knex).catch(() => null) : null
       let backfilled = 0
-      let hasMaintenanceTable = false
-      try {
-        hasMaintenanceTable = await this.#knex.schema.hasTable('pageKnowledgeMaintenance')
-      } catch {
-        hasMaintenanceTable = false
-      }
-      if (hasMaintenanceTable) {
-        backfilled = (await maintainCurrentProjections(this.#knex, this.#workerId, now, 25))?.repaired ?? 0
-      } else {
-        const validation = await validateVolatileCurrentProjections(this.#knex, this.#projectionScanCursor, 25, now)
-        this.#projectionScanCursor = validation.cursor
-        backfilled = validation.repaired
+      if (now.valueOf() >= this.#nextProjectionScanAt) {
+        const hasMaintenanceTable = await this.#knex.schema.hasTable('pageKnowledgeMaintenance')
+        if (hasMaintenanceTable) {
+          const validation = await maintainCurrentProjections(this.#knex, this.#workerId, now, 25)
+          if (validation) {
+            backfilled = validation.repaired
+            this.#nextProjectionScanAt = validation.nextRunAt
+          }
+        } else {
+          if (this.#projectionScanHighWater === null) {
+            this.#projectionScanHighWater = Number(
+              ((await this.#knex('pages').max('id as highWater').first()) as { highWater?: number | string } | undefined)?.highWater ?? 0
+            )
+          }
+          const validation = await validateVolatileCurrentProjections(this.#knex, this.#projectionScanCursor, 25, now, this.#projectionScanHighWater)
+          this.#projectionScanCursor = validation.cursor
+          backfilled = validation.repaired
+          if (validation.finished) {
+            this.#projectionScanHighWater = null
+            this.#nextProjectionScanAt = Date.now() + KNOWLEDGE_VALIDATION_INTERVAL_MILLISECONDS
+          }
+        }
       }
       const requeued = (await recoverTerminalFailures(this.#knex, now)) + (this.#enricher ? await requeueRetryable(this.#knex, profileVersionId, now) : 0)
       const claims = await claimPageMutationEffects(this.#knex, {
@@ -1384,9 +1401,17 @@ export class PageKnowledgeLifecycle {
     }
   }
 }
-const validateVolatileCurrentProjections = async (knex: Knex, afterPageId: number, limit: number, now: Date): Promise<{ repaired: number; cursor: number }> => {
-  const rows = await loadCurrentProjectionScan(knex, afterPageId, limit)
+const validateVolatileCurrentProjections = async (
+  knex: Knex,
+  afterPageId: number,
+  limit: number,
+  now: Date,
+  highWaterPageId: number
+): Promise<{ repaired: number; cursor: number; finished: boolean }> => {
+  const rows = await loadCurrentProjectionScan(knex, afterPageId, limit, highWaterPageId)
   let repaired = 0
   for (const row of rows) repaired += await repairCurrentProjection(knex, row, now)
-  return { repaired, cursor: rows.at(-1)?.id ?? 0 }
+  const cursor = rows.at(-1)?.id ?? afterPageId
+  const finished = rows.length === 0 || cursor >= highWaterPageId
+  return { repaired, cursor: finished ? 0 : cursor, finished }
 }
