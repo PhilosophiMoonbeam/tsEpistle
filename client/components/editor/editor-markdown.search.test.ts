@@ -184,11 +184,11 @@ describe('Markdown search link completion', () => {
     })
   }
 
-  test('retains the private namespace when locale namespaces are disabled', async () => {
+  test('retains the mandatory private locale route when public locale namespaces are disabled', async () => {
     const { editor, view } = createEditor([page(2, 'private')], false)
     await openCompletions(view, 1)
     acceptNamedCompletion(view, 'Alpha private')
-    expect(editor.getValue()).toBe('[Alpha](/_private/alpha)')
+    expect(editor.getValue()).toBe('[Alpha](/_private/en/alpha)')
   })
 
   test('accepts a completion after ordinary bracket autoclosing without doubling the closer', async () => {

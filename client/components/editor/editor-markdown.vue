@@ -1166,7 +1166,7 @@ export default defineComponent({
         return {
           from: context.pos,
           options: response.results.map(result => {
-            const href = `${result.visibility === 'private' ? '/_private' : ''}/${siteLangs.length > 0 ? `${encodeURIComponent(result.locale)}/` : ''}${result.path.split('/').map(encodeURIComponent).join('/')}`
+            const href = `${result.visibility === 'private' ? '/_private' : ''}/${result.visibility === 'private' || siteLangs.length > 0 ? `${encodeURIComponent(result.locale)}/` : ''}${result.path.split('/').map(encodeURIComponent).join('/')}`
             return {
               label: `${href} - ${result.title}`,
               apply: (view: EditorView, completion: Completion, from: number, to: number) => {
