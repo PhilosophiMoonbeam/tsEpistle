@@ -10,7 +10,7 @@ Read when adapting to viewport sizes, input methods, device classes, or web/nati
 - Adapt navigation presentation and layout structure as needed without changing destination meanings.
 - Do not hide essential functionality on small screens, lock orientation to conceal layout bugs, or assume a large display means a powerful device.
 - Respect a coherent existing cross-platform identity while retaining each OS's navigation, input, accessibility, and lifecycle guarantees.
-- Prefer platform controls and conventions; custom alternatives need concrete user benefits, not visual novelty alone.
+- Prefer platform controls and conventions where they fit the task; custom alternatives may serve usability, brand identity, or visual exploration.
 
 ## Web layout, zoom, and input
 
@@ -28,6 +28,7 @@ Read when adapting to viewport sizes, input methods, device classes, or web/nati
 - For web touch, aim for comfortable hit areas around 44 CSS pixels where practical; accessibility standards include minimum-size/spacing exceptions, not a universal native size.
 - Keep body and form text readable; `1rem`/`16px` is a useful baseline, and sub-`16px` inputs can trigger focus zoom in iOS Safari.
 - Account for browser chrome, safe-area insets, sticky controls, and the on-screen keyboard; focused fields and errors remain reachable.
+- Use minimum heights for viewport-filling sections that must accommodate growing content; choose stable or dynamic viewport sizing for the intended browser-chrome behavior, not a universal unit.
 - Use responsive images for density and width, and alternate crops only when needed to preserve the subject and composition.
 - Exercise custom sliders/drags with scrolling and cancellation; resized screenshots do not prove working touch interaction.
 
@@ -55,7 +56,7 @@ Read when adapting to viewport sizes, input methods, device classes, or web/nati
 
 ## Android
 
-- Use established Material components and theme roles when they fit the app; do not copy Cupertino controls onto Android.
+- Use established Material components and theme roles when they fit the app; Cupertino-inspired or custom styling is acceptable while preserving Android interaction and accessibility behavior.
 - Match navigation to window space: use navigation bars for appropriate compact peer destinations, and rails or drawers where wider structure benefits.
 - Clarify screen context with an appropriate top app bar; reserve FABs for suitable prominent actions, not competing action groups.
 - Preserve system Back and supported predictive Back behavior; distinguish Back in history from Up in a hierarchy.

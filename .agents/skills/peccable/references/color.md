@@ -38,9 +38,10 @@ A role defines a color's purpose; a primitive defines its value. Themes can rema
 - For a more assertive target, amplify an existing identity palette relationship and quiet neighboring elements within the authorized scope.
 - For a calmer target, remove redundant colored surfaces or reduce decorative chroma before lowering text or control contrast.
 - Neutral gray is legitimate. Tint neutrals for cohesion, not because every palette supposedly requires a tint.
-- Tune supporting text against its actual colored surface. A hue-related foreground may cohere better than generic gray, but readability decides.
+- Tune supporting text against its actual colored surface. Near-black or dark neutral ink can work on chromatic surfaces; a hue-related foreground may cohere better, but readability decides.
 - Gradients, glass, shadows, and strong accents can be legitimate materials. Keep them only when they clarify depth, content, state, or an intentional visual world.
 - A glow is not automatically elevation; depth should communicate what sits above what and why.
+- When simulating a physical material, make shadows and edge highlights agree on the intended light direction. Tint shadows when the surrounding color supports it, not as a universal replacement for neutral shadows.
 
 ## Compose themes and ramps
 
@@ -50,8 +51,10 @@ Perceptual lightness is not a WCAG contrast ratio; compute the rendered foregrou
 - Adjust ramp lightness deliberately; usually reduce chroma near white and black.
 - Check output in the supported color gamut; highly chromatic values can clip or shift across displays and browsers.
 - Design dark-theme surfaces, elevation, text, and accents together rather than mechanically inverting the light theme.
+- Preserve relative action, selection, and content emphasis across themes while keeping brand colors recognizable; identical token values are not the goal.
 - Inspect selected, disabled, error, hover, pressed, and focus states in every supported theme.
 - Prefer explicit foreground/surface pairs when stacked translucent layers make their final contrast hard to predict.
+- Give translucent surfaces a legible solid-fill fallback when blur is unavailable or reduced transparency is requested. Blur alone cannot guarantee contrast against changing content.
 - For sequential data, make ordering legible through lightness; for diverging data, make the meaningful midpoint clear.
 - For categorical data, pair distinguishable colors with labels or other redundant cues. More hues cannot fix an unreadable legend.
 
@@ -74,7 +77,7 @@ At standard CSS units, large-text thresholds are 24px regular or about 18.67px b
 
 ## Inspect evidence
 
-- List critical foreground/background pairs, measured ratios, and states; do not assert accessibility from appearance.
+- List critical foreground/background pairs, measured composited contrast ratios, and states; do not assert accessibility from appearance or reject colors by gray-named classes, shade labels, or lightness alone.
 - For text over photography or gradients, inspect the weakest area behind the text and provide a stable backing if needed.
 - In grayscale or with common color-vision deficiencies simulated, confirm action, selection, status, and data meaning remain recoverable.
 - Inspect empty, dense, error, and loading states for accents that change meaning or overpower the intended task.

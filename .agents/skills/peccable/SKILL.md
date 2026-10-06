@@ -117,7 +117,7 @@ Read only the references needed for the current decision. Each is self-contained
 | [Layout](references/layout.md) | Resolving composition, grouping, density, spacing, responsiveness, or overflow. |
 | [Motion](references/motion.md) | Designing transitions, expressive movement, feedback, or reduced-motion behavior. |
 | [Interaction](references/interaction.md) | Building controls, navigation, forms, focus behavior, gestures, or robust interaction states. |
-| [Content](references/content.md) | Improving information structure, labels, errors, onboarding, proof, or truthful illustrative content. |
+| [Content](references/content.md) | Improving information structure, labels, errors, onboarding, proof, or truthful illustrative content, or considering optional visual composition prompts. |
 | [Systems](references/systems.md) | Reusing or evolving tokens/components and retaining design decisions that help later tasks. |
 | [Performance](references/performance.md) | Diagnosing slow UI, jank, asset delivery, expensive effects, or unnecessary work. |
 | [Platforms](references/platforms.md) | Adapting to web/native conventions, device classes, input methods, or platform accessibility. |
