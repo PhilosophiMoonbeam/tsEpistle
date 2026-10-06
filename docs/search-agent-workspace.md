@@ -79,7 +79,7 @@ Malformed explicitly supplied locale, path, cursor, or pagination values—inclu
 
 The permission prefilter currently reads scoped public metadata to evaluate the application's existing page-rule logic. This prioritizes one consistent authorization policy over a second SQL implementation. Large deployments should monitor whole-request latency and metadata volume; the included engine benchmark does not claim to measure that entire HTTP path. PostgreSQL is the sole maintained provider, and registry refresh rejects missing or unusable definitions before changing saved configuration.
 
-Markdown page-link completion preserves public/private route identity, language namespacing, and encoded path segments. It consumes each matching cursor's own pre-existing closing parenthesis independently, including mixed autoclosing and pasted unfinished links, without skipping secondary cursors.
+Markdown page-link completion preserves public/private route identity and encoded path segments. Private destinations always retain their mandatory locale segment; public destinations follow the site's language namespacing. It consumes each matching cursor's own pre-existing closing parenthesis independently, including mixed autoclosing and pasted unfinished links, without skipping secondary cursors.
 
 ## Answers and changes
 
