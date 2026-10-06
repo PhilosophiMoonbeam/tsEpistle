@@ -88,6 +88,8 @@ Old queued admissions without media bindings do not acquire new generation autho
 
 The affected application image includes real `ffmpeg`/`ffprobe` for complete bounded decoding, alongside existing `qpdf`. File protocols/demuxers, process concurrency, CPU/memory/time/output and sample/frame/dimension limits are constrained. FFmpeg's separate GPL distribution notices and source references are in `NOTICE` and `COPYING.GPL-3.0`; this is not a link-time replacement of the application license.
 
+The independent media administration/input controls have an approved **24 KiB aggregate JavaScript allowance**. The clean image build measured 13,671.3 KiB against the maintained image's 13,653.2 KiB; the fixed aggregate ceiling is now 13,678 KiB. Every initial-load, largest-chunk, login and lazy-scene budget remains unchanged.
+
 ## Primary API references
 
 - [Ax library](https://github.com/ax-llm/ax)
